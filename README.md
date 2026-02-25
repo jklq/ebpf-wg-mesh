@@ -1,4 +1,4 @@
-# networking-rig
+# ebpf-wg-mesh
 
 Stateful WireGuard mesh daemon written in Go with an eBPF TCX firewall data plane.
 
