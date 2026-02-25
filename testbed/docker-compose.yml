@@ -1,0 +1,93 @@
+services:
+  node1:
+    build:
+      context: ..
+      dockerfile: testbed/Dockerfile
+    image: networking-rig-node:latest
+    container_name: rig-node1
+    privileged: true
+    command: ["-config", "/config/node1.yaml"]
+    volumes:
+      - ./config/node1.yaml:/config/node1.yaml:ro
+    networks:
+      transport:
+        ipv4_address: 172.30.0.11
+    healthcheck:
+      test: ["CMD-SHELL", "ip link show wg0 | grep -q UP"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  node2:
+    image: networking-rig-node:latest
+    container_name: rig-node2
+    privileged: true
+    command: ["-config", "/config/node2.yaml"]
+    volumes:
+      - ./config/node2.yaml:/config/node2.yaml:ro
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+    networks:
+      transport:
+        ipv4_address: 172.30.0.12
+      external:
+        ipv4_address: 172.31.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "ip link show wg0 | grep -q UP"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    depends_on:
+      - node1
+
+  node3:
+    image: networking-rig-node:latest
+    container_name: rig-node3
+    privileged: true
+    command: ["-config", "/config/node3.yaml"]
+    volumes:
+      - ./config/node3.yaml:/config/node3.yaml:ro
+    networks:
+      transport:
+        ipv4_address: 172.30.0.13
+    healthcheck:
+      test: ["CMD-SHELL", "ip link show wg0 | grep -q UP"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    depends_on:
+      - node1
+
+  ext:
+    image: networking-rig-node:latest
+    container_name: rig-ext
+    privileged: true
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      [
+        "ip route replace 10.44.0.0/24 via 172.31.0.2 && python3 -m http.server 8080 --bind 172.31.0.10",
+      ]
+    networks:
+      external:
+        ipv4_address: 172.31.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://172.31.0.10:8080 >/dev/null"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    depends_on:
+      - node2
+
+networks:
+  transport:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  external:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
