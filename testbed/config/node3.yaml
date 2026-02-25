@@ -1,0 +1,34 @@
+nodeName: node3
+wireguard:
+  interfaceName: wg0
+  privateKey: "sJ1BBYQdLN3CXcmG+tRfVgwVVj+ClN29nMZnD2lGuG8="
+  listenPort: 51820
+  addresses:
+    - 10.44.0.3/24
+  peers:
+    - name: node1
+      publicKey: "63cD/YSipj3wiNZlIQHZEnyYw69tqa8CcCcR6NrbwVo="
+      endpoint: "172.30.0.11:51820"
+      allowedIPs:
+        - 10.44.0.1/32
+      trustCIDRs:
+        - 10.44.0.1/32
+      persistentKeepaliveSeconds: 15
+    - name: node2
+      publicKey: "k1fR/RyZ/P0y7EMoQMeP5B3rptgDqe52RXQbyxVMPgY="
+      endpoint: "172.30.0.12:51820"
+      allowedIPs:
+        - 10.44.0.2/32
+      trustCIDRs:
+        - 10.44.0.2/32
+      persistentKeepaliveSeconds: 15
+firewall:
+  conntrackEntries: 131072
+  trustEntries: 8192
+sync:
+  enabled: true
+  listen: "0.0.0.0:7003"
+  authKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+  peers:
+    - "172.30.0.11:7001"
+    - "172.30.0.12:7002"
