@@ -13,6 +13,9 @@ func TestApplyDefaultsSyncWindow(t *testing.T) {
 func TestValidateSyncRequiresAuthKey(t *testing.T) {
 	cfg := Config{
 		NodeName: "n1",
+		Host: HostConfig{
+			IPv4: "10.0.0.1",
+		},
 		WireGuard: WireGuard{
 			PrivateKey: "k",
 			ListenPort: 51820,
@@ -32,6 +35,7 @@ func TestValidateSyncRequiresAuthKey(t *testing.T) {
 			Peers:   []string{"127.0.0.1:7002"},
 		},
 	}
+	applyDefaults(&cfg)
 	if err := validate(cfg); err == nil {
 		t.Fatalf("expected sync auth key validation error")
 	}

@@ -1,0 +1,60 @@
+nodeName: clustera-node1
+host:
+  ipv4: 172.30.0.11
+containerd:
+  socket: /run/containerd/containerd.sock
+  namespace: default
+  projectLabel: mesh.project_id
+  ipv4Label: mesh.ipv4
+  publicServiceLabel: mesh.public_service
+  identitySeeds:
+    - ipv4: 10.200.1.11
+      hostIPv4: 172.30.0.11
+      projectID: 100
+    - ipv4: 10.200.1.12
+      hostIPv4: 172.30.0.11
+      projectID: 100
+    - ipv4: 10.200.2.20
+      hostIPv4: 172.30.0.12
+      projectID: 100
+      publicService: true
+    - ipv4: 10.201.1.20
+      hostIPv4: 172.30.0.13
+      projectID: 100
+      publicService: true
+    - ipv4: 10.201.2.30
+      hostIPv4: 172.30.0.14
+      projectID: 100
+    - ipv4: 10.201.2.40
+      hostIPv4: 172.30.0.14
+      projectID: 200
+      publicService: true
+wireguard:
+  interfaceName: wg0
+  privateKey: "2ANtxEre716rL2brM5hopEZj+Xia6Nq5lYDej7HeGWU="
+  listenPort: 51820
+  addresses:
+    - 10.44.0.11/24
+  peers:
+    - name: clustera-node2
+      publicKey: "FuNPAp2X/nVYHxIMwKbQLFyvHMk432GZPThteiaC6w0="
+      endpoint: "172.30.0.12:51820"
+      allowedIPs:
+        - 10.200.2.0/24
+      persistentKeepaliveSeconds: 5
+    - name: clusterb-node1
+      publicKey: "OZMXG0fTdeNra/Fl7RFApsyKlyF/EcMR4JGu5Aq0twY="
+      endpoint: "172.30.0.13:51820"
+      allowedIPs:
+        - 10.201.1.0/24
+      persistentKeepaliveSeconds: 5
+    - name: clusterb-node2
+      publicKey: "0MpKPWmKZw57ABzvxIvNnASDUFWlf808UFtrxAisI08="
+      endpoint: "172.30.0.14:51820"
+      allowedIPs:
+        - 10.201.2.0/24
+      persistentKeepaliveSeconds: 5
+firewall:
+  conntrackInnerEntries: 8192
+  maxContainers: 256
+  clusterIdentityEntries: 8192

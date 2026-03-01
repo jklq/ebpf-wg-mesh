@@ -1,93 +1,128 @@
 services:
-  node1:
+  clustera-node1:
     build:
       context: ..
       dockerfile: testbed/Dockerfile
-    image: networking-rig-node:latest
-    container_name: rig-node1
+    image: ebof-wg-mesh-node:latest
+    container_name: mesh-clustera-node1
     privileged: true
-    command: ["-config", "/config/node1.yaml"]
-    volumes:
-      - ./config/node1.yaml:/config/node1.yaml:ro
-    networks:
-      transport:
-        ipv4_address: 172.30.0.11
-    healthcheck:
-      test: ["CMD-SHELL", "ip link show wg0 | grep -q UP"]
-      interval: 3s
-      timeout: 2s
-      retries: 30
-
-  node2:
-    image: networking-rig-node:latest
-    container_name: rig-node2
-    privileged: true
-    command: ["-config", "/config/node2.yaml"]
-    volumes:
-      - ./config/node2.yaml:/config/node2.yaml:ro
+    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
+    command: ["/config/clustera-node1.yaml"]
+    environment:
+      NODE_NAME: clustera-node1
+      CNI_NETWORK_NAME: mesh-cni
+      CNI_SUBNET: 10.200.1.0/24
+      CNI_GATEWAY: 10.200.1.1
+      MESH_ROUTE_CIDR: 10.201.0.0/16
     sysctls:
       net.ipv4.ip_forward: "1"
       net.ipv4.conf.all.rp_filter: "0"
       net.ipv4.conf.default.rp_filter: "0"
-    networks:
-      transport:
-        ipv4_address: 172.30.0.12
-      external:
-        ipv4_address: 172.31.0.2
-    healthcheck:
-      test: ["CMD-SHELL", "ip link show wg0 | grep -q UP"]
-      interval: 3s
-      timeout: 2s
-      retries: 30
-    depends_on:
-      - node1
-
-  node3:
-    image: networking-rig-node:latest
-    container_name: rig-node3
-    privileged: true
-    command: ["-config", "/config/node3.yaml"]
     volumes:
-      - ./config/node3.yaml:/config/node3.yaml:ro
+      - ./config/clustera-node1.yaml:/config/clustera-node1.yaml:ro
+      - ./scripts:/testbed/scripts:ro
     networks:
-      transport:
+      underlay:
+        ipv4_address: 172.30.0.11
+    healthcheck:
+      test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  clustera-node2:
+    image: ebof-wg-mesh-node:latest
+    container_name: mesh-clustera-node2
+    privileged: true
+    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
+    command: ["/config/clustera-node2.yaml"]
+    environment:
+      NODE_NAME: clustera-node2
+      CNI_NETWORK_NAME: mesh-cni
+      CNI_SUBNET: 10.200.2.0/24
+      CNI_GATEWAY: 10.200.2.1
+      MESH_ROUTE_CIDR: 10.201.0.0/16
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+    volumes:
+      - ./config/clustera-node2.yaml:/config/clustera-node2.yaml:ro
+      - ./scripts:/testbed/scripts:ro
+    networks:
+      underlay:
+        ipv4_address: 172.30.0.12
+    healthcheck:
+      test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+    depends_on:
+      - clustera-node1
+
+  clusterb-node1:
+    image: ebof-wg-mesh-node:latest
+    container_name: mesh-clusterb-node1
+    privileged: true
+    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
+    command: ["/config/clusterb-node1.yaml"]
+    environment:
+      NODE_NAME: clusterb-node1
+      CNI_NETWORK_NAME: mesh-cni
+      CNI_SUBNET: 10.201.1.0/24
+      CNI_GATEWAY: 10.201.1.1
+      MESH_ROUTE_CIDR: 10.200.0.0/16
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+    volumes:
+      - ./config/clusterb-node1.yaml:/config/clusterb-node1.yaml:ro
+      - ./scripts:/testbed/scripts:ro
+    networks:
+      underlay:
         ipv4_address: 172.30.0.13
     healthcheck:
-      test: ["CMD-SHELL", "ip link show wg0 | grep -q UP"]
-      interval: 3s
-      timeout: 2s
-      retries: 30
+      test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
     depends_on:
-      - node1
+      - clustera-node1
 
-  ext:
-    image: networking-rig-node:latest
-    container_name: rig-ext
+  clusterb-node2:
+    image: ebof-wg-mesh-node:latest
+    container_name: mesh-clusterb-node2
     privileged: true
-    entrypoint: ["/bin/bash", "-lc"]
-    command:
-      [
-        "ip route replace 10.44.0.0/24 via 172.31.0.2 && python3 -m http.server 8080 --bind 172.31.0.10",
-      ]
+    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
+    command: ["/config/clusterb-node2.yaml"]
+    environment:
+      NODE_NAME: clusterb-node2
+      CNI_NETWORK_NAME: mesh-cni
+      CNI_SUBNET: 10.201.2.0/24
+      CNI_GATEWAY: 10.201.2.1
+      MESH_ROUTE_CIDR: 10.200.0.0/16
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+    volumes:
+      - ./config/clusterb-node2.yaml:/config/clusterb-node2.yaml:ro
+      - ./scripts:/testbed/scripts:ro
     networks:
-      external:
-        ipv4_address: 172.31.0.10
+      underlay:
+        ipv4_address: 172.30.0.14
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://172.31.0.10:8080 >/dev/null"]
-      interval: 3s
-      timeout: 2s
-      retries: 30
+      test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
     depends_on:
-      - node2
+      - clustera-node1
 
 networks:
-  transport:
+  underlay:
     driver: bridge
     ipam:
       config:
         - subnet: 172.30.0.0/24
-  external:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.31.0.0/24

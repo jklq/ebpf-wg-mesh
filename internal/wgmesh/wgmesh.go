@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"networking-rig/internal/config"
+	"ebof-wg-mesh/internal/config"
 
 	"github.com/vishvananda/netlink"
 	"golang.zx2c4.com/wireguard/wgctrl"
@@ -51,7 +51,6 @@ func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
 			return nil, fmt.Errorf("parse address %q: %w", cidr, err)
 		}
 		if err := netlink.AddrAdd(link, addr); err != nil {
-			// Address may already exist in fast restart paths.
 			if !isAddressExists(err) {
 				return nil, fmt.Errorf("addr add %q to %s: %w", cidr, cfg.InterfaceName, err)
 			}
@@ -77,6 +76,7 @@ func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
 	}
 
 	peerCfgs := make([]wgtypes.PeerConfig, 0, len(cfg.Peers))
+	routeCIDRs := make([]net.IPNet, 0, len(cfg.Peers))
 	for _, p := range cfg.Peers {
 		pk, err := wgtypes.ParseKey(p.PublicKey)
 		if err != nil {
@@ -86,20 +86,18 @@ func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
 		if err != nil {
 			return nil, fmt.Errorf("peer %q parse endpoint: %w", p.Name, err)
 		}
-
-		allowed := make([]net.IPNet, 0, len(p.AllowedIPs))
-		for _, cidr := range p.AllowedIPs {
-			_, ipNet, err := net.ParseCIDR(cidr)
-			if err != nil {
-				return nil, fmt.Errorf("peer %q parse allowed IP %q: %w", p.Name, cidr, err)
-			}
-			allowed = append(allowed, *ipNet)
+		allowedIPs, err := buildAllowedIPs(p, ep)
+		if err != nil {
+			return nil, fmt.Errorf("peer %q allowedIPs: %w", p.Name, err)
 		}
 
 		peer := wgtypes.PeerConfig{
 			PublicKey:  pk,
 			Endpoint:   ep,
-			AllowedIPs: allowed,
+			AllowedIPs: allowedIPs,
+		}
+		for _, cidr := range allowedIPs {
+			routeCIDRs = append(routeCIDRs, cidr)
 		}
 		if p.PersistentKeepaliveS > 0 {
 			keep := time.Duration(p.PersistentKeepaliveS) * time.Second
@@ -118,22 +116,84 @@ func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
 	if err := client.ConfigureDevice(cfg.InterfaceName, deviceCfg); err != nil {
 		return nil, fmt.Errorf("configure wireguard device %s: %w", cfg.InterfaceName, err)
 	}
-
-	for _, p := range cfg.Peers {
-		for _, cidr := range p.AllowedIPs {
-			_, ipNet, err := net.ParseCIDR(cidr)
-			if err != nil {
-				return nil, fmt.Errorf("parse route cidr %q: %w", cidr, err)
-			}
-			route := netlink.Route{LinkIndex: link.Attrs().Index, Dst: ipNet}
-			if err := netlink.RouteReplace(&route); err != nil {
-				return nil, fmt.Errorf("route replace %q via %s: %w", cidr, cfg.InterfaceName, err)
-			}
-		}
+	if err := installPeerRoutes(link.Attrs().Index, routeCIDRs); err != nil {
+		return nil, fmt.Errorf("configure wireguard routes %s: %w", cfg.InterfaceName, err)
 	}
 
 	cleanupOnFail = false
 	return &Runtime{ifName: cfg.InterfaceName, client: client}, nil
+}
+
+func mustParseCIDR(cidr string) net.IPNet {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(err)
+	}
+	return *ipNet
+}
+
+func buildAllowedIPs(p config.PeerConfig, ep *net.UDPAddr) ([]net.IPNet, error) {
+	if len(p.AllowedIPs) > 0 {
+		allowed := make([]net.IPNet, 0, len(p.AllowedIPs))
+		for _, cidr := range p.AllowedIPs {
+			_, parsed, err := net.ParseCIDR(cidr)
+			if err != nil {
+				return nil, fmt.Errorf("parse %q: %w", cidr, err)
+			}
+			allowed = append(allowed, *parsed)
+		}
+		return allowed, nil
+	}
+
+	if ep == nil || ep.IP == nil {
+		return nil, errors.New("endpoint ip is required when allowedIPs are omitted")
+	}
+	if v4 := ep.IP.To4(); v4 != nil {
+		return []net.IPNet{{
+			IP:   v4,
+			Mask: net.CIDRMask(32, 32),
+		}}, nil
+	}
+	if v6 := ep.IP.To16(); v6 != nil {
+		return []net.IPNet{{
+			IP:   v6,
+			Mask: net.CIDRMask(128, 128),
+		}}, nil
+	}
+	return nil, fmt.Errorf("unsupported endpoint ip %q", ep.IP.String())
+}
+
+func installPeerRoutes(linkIndex int, cidrs []net.IPNet) error {
+	seen := make(map[string]struct{}, len(cidrs))
+	for _, cidr := range cidrs {
+		normalized := net.IPNet{
+			IP:   cidr.IP.Mask(cidr.Mask),
+			Mask: cidr.Mask,
+		}
+		if normalized.IP == nil || normalized.Mask == nil {
+			continue
+		}
+		ones, bits := normalized.Mask.Size()
+		if ones == 0 && (bits == 32 || bits == 128) {
+			// Avoid replacing default routes; peer-specific prefixes must be used.
+			continue
+		}
+		key := normalized.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		dst := normalized
+		route := netlink.Route{
+			LinkIndex: linkIndex,
+			Dst:       &dst,
+		}
+		if err := netlink.RouteReplace(&route); err != nil {
+			return fmt.Errorf("replace route %s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) Close() error {
@@ -170,7 +230,6 @@ func teardownLink(name string) error {
 }
 
 func isAddressExists(err error) bool {
-	// Netlink errors are inconsistently typed between kernels/netlink versions.
 	errText := err.Error()
 	return strings.Contains(errText, "file exists") || strings.Contains(errText, "exists")
 }

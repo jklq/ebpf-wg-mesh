@@ -1,52 +1,104 @@
+//go:build linux
+
 package firewall
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
+	"runtime"
+	"strconv"
+	"sync"
 	"time"
-
-	"networking-rig/internal/config"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/ringbuf"
+	containerd "github.com/containerd/containerd"
+	eventsapi "github.com/containerd/containerd/api/events"
+	cderrdefs "github.com/containerd/errdefs"
+	"github.com/containerd/typeurl/v2"
+	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netns"
+
+	"ebof-wg-mesh/internal/config"
 )
 
-type Manager struct {
-	objs        firewallObjects
-	ingressLink link.Link
-	egressLink  link.Link
-	events      *ringbuf.Reader
-	syncRuntime *SyncRuntime
+const (
+	roleWireGuard uint8 = 1
+	roleContainer uint8 = 2
+)
+
+type containerRuntime struct {
+	containerID   string
+	ifindex       uint32
+	ipv4          netip.Addr
+	projectID     uint32
+	publicService bool
+	innerMap      *ebpf.Map
+	ingressLink   link.Link
+	egressLink    link.Link
 }
 
-func Attach(ifaceName string, fwCfg config.FirewallConfig, trustCIDRs []netip.Prefix) (_ *Manager, retErr error) {
-	iface, err := net.InterfaceByName(ifaceName)
+type Manager struct {
+	cfg           config.Config
+	objs          firewallObjects
+	wgIfindex     uint32
+	wgIngressLink link.Link
+	wgEgressLink  link.Link
+	containerd    *containerd.Client
+	cancel        context.CancelFunc
+	done          chan struct{}
+	mu            sync.Mutex
+	containers    map[string]*containerRuntime
+	staticByID    map[string]config.ContainerAssignment
+	seedByIP      map[uint32]firewallIdentityValue
+	localHostU32  uint32
+}
+
+func Start(ctx context.Context, cfg config.Config) (_ *Manager, retErr error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	localHost, err := netip.ParseAddr(cfg.Host.IPv4)
+	if err != nil || !localHost.Is4() {
+		return nil, fmt.Errorf("parse host.ipv4 %q: %w", cfg.Host.IPv4, err)
+	}
+	localHostU32 := nativeU32(localHost.AsSlice())
+
+	wgIface, err := net.InterfaceByName(cfg.WireGuard.InterfaceName)
 	if err != nil {
-		return nil, fmt.Errorf("lookup interface %s: %w", ifaceName, err)
+		return nil, fmt.Errorf("lookup interface %s: %w", cfg.WireGuard.InterfaceName, err)
 	}
 
 	spec, err := loadFirewall()
 	if err != nil {
 		return nil, fmt.Errorf("load bpf spec: %w", err)
 	}
-
-	if ms, ok := spec.Maps["conntrack_map"]; ok && fwCfg.ConntrackEntries > 0 {
-		ms.MaxEntries = uint32(fwCfg.ConntrackEntries)
+	if ms, ok := spec.Maps["conntrack_matrix"]; ok {
+		if cfg.Firewall.MaxContainers > 0 {
+			ms.MaxEntries = uint32(cfg.Firewall.MaxContainers)
+		}
+		if ms.InnerMap != nil && cfg.Firewall.ConntrackInnerEntries > 0 {
+			ms.InnerMap.MaxEntries = uint32(cfg.Firewall.ConntrackInnerEntries)
+		}
 	}
-	if ms, ok := spec.Maps["mesh_trust_map"]; ok && fwCfg.TrustEntries > 0 {
-		ms.MaxEntries = uint32(fwCfg.TrustEntries)
+	if ms, ok := spec.Maps["cluster_identity_trie"]; ok && cfg.Firewall.ClusterIdentityEntries > 0 {
+		ms.MaxEntries = uint32(cfg.Firewall.ClusterIdentityEntries)
+	}
+	if ms, ok := spec.Maps["container_policy_map"]; ok && cfg.Firewall.MaxContainers > 0 {
+		ms.MaxEntries = uint32(cfg.Firewall.MaxContainers)
+	}
+	if ms, ok := spec.Maps["interface_role_map"]; ok && cfg.Firewall.MaxContainers > 0 {
+		ms.MaxEntries = uint32(cfg.Firewall.MaxContainers + 16)
 	}
 
 	objs := firewallObjects{}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		var ve *ebpf.VerifierError
-		if errors.As(err, &ve) {
-			return nil, fmt.Errorf("load and assign eBPF objects: %w", ve)
-		}
 		return nil, fmt.Errorf("load and assign eBPF objects: %w", err)
 	}
 	cleanupObjs := true
@@ -56,118 +108,612 @@ func Attach(ifaceName string, fwCfg config.FirewallConfig, trustCIDRs []netip.Pr
 		}
 	}()
 
-	ingress, err := link.AttachTCX(link.TCXOptions{
-		Interface: iface.Index,
+	zero := uint32(0)
+	if err := objs.LocalNodeMap.Put(zero, localHostU32); err != nil {
+		return nil, fmt.Errorf("set local host map: %w", err)
+	}
+	seedByIP := make(map[uint32]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
+	for _, seed := range cfg.Containerd.IdentitySeeds {
+		seedIP, err := netip.ParseAddr(seed.IPv4)
+		if err != nil || !seedIP.Is4() {
+			return nil, fmt.Errorf("parse containerd identity seed ip %q: %w", seed.IPv4, err)
+		}
+		hostIP, err := netip.ParseAddr(seed.HostIPv4)
+		if err != nil || !hostIP.Is4() {
+			return nil, fmt.Errorf("parse containerd identity seed host ip %q: %w", seed.HostIPv4, err)
+		}
+
+		seedIPU32 := nativeU32(seedIP.AsSlice())
+		value := firewallIdentityValue{
+			ProjectId:     seed.ProjectID,
+			HostIp:        nativeU32(hostIP.AsSlice()),
+			VethIfindex:   0,
+			PublicService: boolToUint8(seed.PublicService),
+		}
+		key := firewallIdentityKey{
+			Prefixlen: uint32(32),
+			IpAddress: seedIPU32,
+		}
+		if err := objs.ClusterIdentityTrie.Put(key, value); err != nil {
+			return nil, fmt.Errorf("seed identity trie for ip %s: %w", seedIP.String(), err)
+		}
+		seedByIP[seedIPU32] = value
+	}
+	wgIfindex := uint32(wgIface.Index)
+	if err := objs.InterfaceRoleMap.Put(wgIfindex, roleWireGuard); err != nil {
+		return nil, fmt.Errorf("set wg interface role: %w", err)
+	}
+
+	wgIngress, err := link.AttachTCX(link.TCXOptions{
+		Interface: wgIface.Index,
 		Attach:    ebpf.AttachTCXIngress,
 		Program:   objs.TcxIngress,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attach tcx ingress on %s: %w", ifaceName, err)
+		return nil, fmt.Errorf("attach wg ingress tcx: %w", err)
 	}
-	cleanupIngress := true
+	cleanupWgIngress := true
 	defer func() {
-		if cleanupIngress {
-			ingress.Close()
+		if cleanupWgIngress {
+			wgIngress.Close()
 		}
 	}()
 
-	egress, err := link.AttachTCX(link.TCXOptions{
-		Interface: iface.Index,
+	wgEgress, err := link.AttachTCX(link.TCXOptions{
+		Interface: wgIface.Index,
 		Attach:    ebpf.AttachTCXEgress,
 		Program:   objs.TcxEgress,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attach tcx egress on %s: %w", ifaceName, err)
+		return nil, fmt.Errorf("attach wg egress tcx: %w", err)
 	}
-	cleanupEgress := true
+	cleanupWgEgress := true
 	defer func() {
-		if cleanupEgress {
-			egress.Close()
+		if cleanupWgEgress {
+			wgEgress.Close()
 		}
 	}()
 
-	for _, prefix := range trustCIDRs {
-		if !prefix.Addr().Is4() {
-			continue
-		}
-		addr := prefix.Addr().As4()
-		key := firewallLpmKey{
-			Prefixlen: uint32(prefix.Bits()),
-			Addr:      nativeU32(addr[:]),
-		}
-		val := uint8(1)
-		if err := objs.MeshTrustMap.Put(key, val); err != nil {
-			return nil, fmt.Errorf("insert trust cidr %s: %w", prefix, err)
+	staticByID := make(map[string]config.ContainerAssignment, len(cfg.Containerd.StaticAssignments))
+	for _, assignment := range cfg.Containerd.StaticAssignments {
+		if assignment.ContainerID != "" {
+			staticByID[assignment.ContainerID] = assignment
 		}
 	}
 
-	events, err := ringbuf.NewReader(objs.ConnEvents)
+	client, err := containerd.New(
+		cfg.Containerd.Socket,
+		containerd.WithDefaultNamespace(cfg.Containerd.Namespace),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("open ringbuf reader: %w", err)
+		return nil, fmt.Errorf("connect containerd %s: %w", cfg.Containerd.Socket, err)
+	}
+	cleanupClient := true
+	defer func() {
+		if cleanupClient {
+			client.Close()
+		}
+	}()
+
+	eventsCtx, cancel := context.WithCancel(ctx)
+	m := &Manager{
+		cfg:           cfg,
+		objs:          objs,
+		wgIfindex:     wgIfindex,
+		wgIngressLink: wgIngress,
+		wgEgressLink:  wgEgress,
+		containerd:    client,
+		cancel:        cancel,
+		done:          make(chan struct{}),
+		containers:    make(map[string]*containerRuntime),
+		staticByID:    staticByID,
+		seedByIP:      seedByIP,
+		localHostU32:  localHostU32,
 	}
 
 	cleanupObjs = false
-	cleanupIngress = false
-	cleanupEgress = false
+	cleanupWgIngress = false
+	cleanupWgEgress = false
+	cleanupClient = false
 
-	return &Manager{
-		objs:        objs,
-		ingressLink: ingress,
-		egressLink:  egress,
-		events:      events,
-	}, nil
+	go m.eventLoop(eventsCtx)
+	return m, nil
 }
 
-func (m *Manager) StartSync(nodeName, listen, authKey string, replayWindow time.Duration, peers []string) error {
-	if m == nil {
-		return errors.New("nil firewall manager")
+func (m *Manager) eventLoop(ctx context.Context) {
+	defer close(m.done)
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		eventsCh, errCh := m.containerd.EventService().Subscribe(ctx)
+		m.reconcileExistingTasks(ctx)
+
+		resubscribe := false
+		for !resubscribe {
+			select {
+			case <-ctx.Done():
+				return
+			case err, ok := <-errCh:
+				if !ok {
+					resubscribe = true
+					continue
+				}
+				if err == nil {
+					continue
+				}
+				slog.Warn("containerd event subscription dropped", "error", err)
+				resubscribe = true
+			case envelope, ok := <-eventsCh:
+				if !ok {
+					resubscribe = true
+					continue
+				}
+				if envelope == nil || envelope.Event == nil {
+					continue
+				}
+				evt, err := typeurl.UnmarshalAny(envelope.Event)
+				if err != nil {
+					slog.Warn("unmarshal containerd event", "error", err, "topic", envelope.Topic)
+					continue
+				}
+				switch e := evt.(type) {
+				case *eventsapi.TaskStart:
+					if err := m.handleTaskStart(ctx, e); err != nil {
+						slog.Warn("task start handling failed", "container", e.ContainerID, "pid", e.Pid, "error", err)
+					}
+				case *eventsapi.TaskExit:
+					if err := m.handleTaskExit(e.ContainerID, e.ID); err != nil {
+						slog.Warn("task exit handling failed", "container", e.ContainerID, "id", e.ID, "error", err)
+					}
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	if m.syncRuntime != nil {
-		return nil
+}
+
+func (m *Manager) reconcileExistingTasks(ctx context.Context) {
+	containers, err := m.containerd.Containers(ctx)
+	if err != nil {
+		slog.Warn("list containers for initial firewall reconciliation failed", "error", err)
+		return
 	}
-	runtime, err := startSync(nodeName, listen, authKey, replayWindow, peers, m.events, m.objs.ConntrackMap)
+
+	for _, ctr := range containers {
+		if ctr == nil {
+			continue
+		}
+		task, err := ctr.Task(ctx, nil)
+		if err != nil {
+			if cderrdefs.IsNotFound(err) {
+				continue
+			}
+			slog.Debug("skip container without active task", "container", ctr.ID(), "error", err)
+			continue
+		}
+		pid := task.Pid()
+		if pid == 0 {
+			continue
+		}
+		evt := &eventsapi.TaskStart{
+			ContainerID: ctr.ID(),
+			Pid:         pid,
+		}
+		if err := m.handleTaskStart(ctx, evt); err != nil {
+			slog.Warn("initial firewall reconciliation failed",
+				"container", ctr.ID(),
+				"pid", pid,
+				"error", err,
+			)
+		}
+	}
+}
+
+func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart) error {
+	if evt == nil {
+		return errors.New("nil task start event")
+	}
+	if evt.ContainerID == "" {
+		return errors.New("empty container id")
+	}
+	if evt.Pid == 0 {
+		return fmt.Errorf("task start for %q has zero pid", evt.ContainerID)
+	}
+
+	meta, err := m.resolveContainerMetadata(ctx, evt.ContainerID)
 	if err != nil {
 		return err
 	}
-	m.syncRuntime = runtime
+
+	ifindex, err := resolveHostVethIfindexWithRetry(ctx, evt.Pid, 20, 150*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("resolve host veth for pid %d: %w", evt.Pid, err)
+	}
+	if ifindex <= 0 {
+		return fmt.Errorf("invalid ifindex %d for pid %d", ifindex, evt.Pid)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if existing := m.containers[evt.ContainerID]; existing != nil {
+		_ = m.removeContainerLocked(existing)
+	}
+
+	innerSpec := &ebpf.MapSpec{
+		Type:       ebpf.LRUHash,
+		KeySize:    uint32(binary.Size(firewallConnectionKey{})),
+		ValueSize:  8,
+		MaxEntries: uint32(m.cfg.Firewall.ConntrackInnerEntries),
+	}
+	innerMap, err := ebpf.NewMap(innerSpec)
+	if err != nil {
+		return fmt.Errorf("create conntrack inner map for %s: %w", evt.ContainerID, err)
+	}
+	ifKey := uint32(ifindex)
+	if err := m.objs.ConntrackMatrix.Put(ifKey, innerMap); err != nil {
+		innerMap.Close()
+		return fmt.Errorf("insert inner map into conntrack_matrix: %w", err)
+	}
+
+	policy := firewallContainerPolicy{
+		ProjectId:     meta.projectID,
+		Ipv4:          nativeU32(meta.ipv4.AsSlice()),
+		PublicService: boolToUint8(meta.publicService),
+	}
+	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
+		_ = m.objs.ConntrackMatrix.Delete(ifKey)
+		innerMap.Close()
+		return fmt.Errorf("write container policy: %w", err)
+	}
+	if err := m.objs.InterfaceRoleMap.Put(ifKey, roleContainer); err != nil {
+		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
+		_ = m.objs.ConntrackMatrix.Delete(ifKey)
+		innerMap.Close()
+		return fmt.Errorf("write interface role: %w", err)
+	}
+
+	identityKey := firewallIdentityKey{
+		Prefixlen: uint32(32),
+		IpAddress: nativeU32(meta.ipv4.AsSlice()),
+	}
+	identityValue := firewallIdentityValue{
+		ProjectId:     meta.projectID,
+		HostIp:        m.localHostU32,
+		VethIfindex:   ifKey,
+		PublicService: boolToUint8(meta.publicService),
+	}
+	if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
+		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
+		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
+		_ = m.objs.ConntrackMatrix.Delete(ifKey)
+		innerMap.Close()
+		return fmt.Errorf("write identity trie entry: %w", err)
+	}
+
+	ingress, err := link.AttachTCX(link.TCXOptions{
+		Interface: ifindex,
+		Attach:    ebpf.AttachTCXIngress,
+		Program:   m.objs.TcxIngress,
+	})
+	if err != nil {
+		_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
+		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
+		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
+		_ = m.objs.ConntrackMatrix.Delete(ifKey)
+		innerMap.Close()
+		return fmt.Errorf("attach veth ingress tcx: %w", err)
+	}
+
+	egress, err := link.AttachTCX(link.TCXOptions{
+		Interface: ifindex,
+		Attach:    ebpf.AttachTCXEgress,
+		Program:   m.objs.TcxEgress,
+	})
+	if err != nil {
+		_ = ingress.Close()
+		_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
+		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
+		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
+		_ = m.objs.ConntrackMatrix.Delete(ifKey)
+		innerMap.Close()
+		return fmt.Errorf("attach veth egress tcx: %w", err)
+	}
+
+	runtime := &containerRuntime{
+		containerID:   evt.ContainerID,
+		ifindex:       ifKey,
+		ipv4:          meta.ipv4,
+		projectID:     meta.projectID,
+		publicService: meta.publicService,
+		innerMap:      innerMap,
+		ingressLink:   ingress,
+		egressLink:    egress,
+	}
+	m.containers[evt.ContainerID] = runtime
+	slog.Info("container firewall attached",
+		"container", evt.ContainerID,
+		"pid", evt.Pid,
+		"ifindex", ifindex,
+		"projectID", meta.projectID,
+		"ipv4", meta.ipv4.String(),
+	)
+
 	return nil
 }
 
-func (m *Manager) Close() error {
-	if m == nil {
+func (m *Manager) handleTaskExit(containerID, taskID string) error {
+	if containerID == "" {
+		return errors.New("empty container id")
+	}
+	// containerd emits TaskExit for `nerdctl exec` processes with non-empty IDs.
+	// Those events must not tear down networking for the still-running container task.
+	if taskID != "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	runtime := m.containers[containerID]
+	if runtime == nil {
+		return nil
+	}
+	if err := m.removeContainerLocked(runtime); err != nil {
+		return err
+	}
+	delete(m.containers, containerID)
+	slog.Info("container firewall detached", "container", containerID)
+	return nil
+}
+
+func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
+	if runtime == nil {
 		return nil
 	}
 	var errs []error
-	if m.syncRuntime != nil {
-		if err := m.syncRuntime.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if m.events != nil {
-		if err := m.events.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close ringbuf reader: %w", err))
-		}
-	}
-	if m.ingressLink != nil {
-		if err := m.ingressLink.Close(); err != nil {
+	if runtime.ingressLink != nil {
+		if err := runtime.ingressLink.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close ingress link: %w", err))
 		}
 	}
-	if m.egressLink != nil {
-		if err := m.egressLink.Close(); err != nil {
+	if runtime.egressLink != nil {
+		if err := runtime.egressLink.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close egress link: %w", err))
 		}
 	}
-	if err := m.objs.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("close eBPF objects: %w", err))
+	if runtime.ifindex != 0 {
+		ifkey := runtime.ifindex
+		if err := m.objs.InterfaceRoleMap.Delete(ifkey); err != nil {
+			errs = append(errs, fmt.Errorf("delete interface role: %w", err))
+		}
+		if err := m.objs.ContainerPolicyMap.Delete(ifkey); err != nil {
+			errs = append(errs, fmt.Errorf("delete container policy: %w", err))
+		}
+		if err := m.objs.ConntrackMatrix.Delete(ifkey); err != nil {
+			errs = append(errs, fmt.Errorf("delete conntrack matrix entry: %w", err))
+		}
+	}
+	if runtime.ipv4.IsValid() && runtime.ipv4.Is4() {
+		ipU32 := nativeU32(runtime.ipv4.AsSlice())
+		identityKey := firewallIdentityKey{Prefixlen: uint32(32), IpAddress: ipU32}
+		if seedValue, ok := m.seedByIP[ipU32]; ok {
+			if err := m.objs.ClusterIdentityTrie.Put(identityKey, seedValue); err != nil {
+				errs = append(errs, fmt.Errorf("restore seeded identity trie entry: %w", err))
+			}
+		} else {
+			if err := m.objs.ClusterIdentityTrie.Delete(identityKey); err != nil {
+				errs = append(errs, fmt.Errorf("delete identity trie entry: %w", err))
+			}
+		}
+	}
+	if runtime.innerMap != nil {
+		if err := runtime.innerMap.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close inner map: %w", err))
+		}
 	}
 	return errors.Join(errs...)
+}
+
+type containerMeta struct {
+	projectID     uint32
+	ipv4          netip.Addr
+	publicService bool
+}
+
+func (m *Manager) resolveContainerMetadata(ctx context.Context, containerID string) (containerMeta, error) {
+	if assignment, ok := m.staticByID[containerID]; ok {
+		ip, err := netip.ParseAddr(assignment.IPv4)
+		if err != nil || !ip.Is4() {
+			return containerMeta{}, fmt.Errorf("static assignment invalid ipv4 for %s: %w", containerID, err)
+		}
+		return containerMeta{
+			projectID:     assignment.ProjectID,
+			ipv4:          ip,
+			publicService: assignment.PublicService,
+		}, nil
+	}
+
+	container, err := m.containerd.LoadContainer(ctx, containerID)
+	if err != nil {
+		return containerMeta{}, fmt.Errorf("load container %s: %w", containerID, err)
+	}
+	info, err := container.Info(ctx)
+	if err != nil {
+		return containerMeta{}, fmt.Errorf("container info %s: %w", containerID, err)
+	}
+	labels := info.Labels
+	if labels == nil {
+		return containerMeta{}, fmt.Errorf("container %s has no labels", containerID)
+	}
+
+	rawProject := labels[m.cfg.Containerd.ProjectLabel]
+	if rawProject == "" {
+		return containerMeta{}, fmt.Errorf("container %s missing label %q", containerID, m.cfg.Containerd.ProjectLabel)
+	}
+	projectParsed, err := strconv.ParseUint(rawProject, 10, 32)
+	if err != nil || projectParsed == 0 {
+		return containerMeta{}, fmt.Errorf("container %s invalid project label %q", containerID, rawProject)
+	}
+
+	rawIP := labels[m.cfg.Containerd.IPv4Label]
+	if rawIP == "" {
+		return containerMeta{}, fmt.Errorf("container %s missing label %q", containerID, m.cfg.Containerd.IPv4Label)
+	}
+	ip, err := netip.ParseAddr(rawIP)
+	if err != nil || !ip.Is4() {
+		return containerMeta{}, fmt.Errorf("container %s invalid ipv4 label %q", containerID, rawIP)
+	}
+
+	publicService := false
+	if raw := labels[m.cfg.Containerd.PublicServiceLabel]; raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return containerMeta{}, fmt.Errorf("container %s invalid public label %q", containerID, raw)
+		}
+		publicService = v
+	}
+
+	return containerMeta{
+		projectID:     uint32(projectParsed),
+		ipv4:          ip,
+		publicService: publicService,
+	}, nil
+}
+
+func resolveHostVethIfindex(pid uint32) (int, error) {
+	nsPath := fmt.Sprintf("/proc/%d/ns/net", pid)
+	targetNS, err := netns.GetFromPath(nsPath)
+	if err != nil {
+		return 0, fmt.Errorf("open netns %s: %w", nsPath, err)
+	}
+	defer targetNS.Close()
+
+	hostNS, err := netns.Get()
+	if err != nil {
+		return 0, fmt.Errorf("get host netns: %w", err)
+	}
+	defer hostNS.Close()
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := netns.Set(targetNS); err != nil {
+		return 0, fmt.Errorf("enter target netns: %w", err)
+	}
+	defer func() {
+		_ = netns.Set(hostNS)
+	}()
+
+	insideLink, err := netlink.LinkByName("eth0")
+	if err != nil {
+		return 0, fmt.Errorf("lookup eth0 in netns: %w", err)
+	}
+	peerIfindex := insideLink.Attrs().ParentIndex
+	if peerIfindex <= 0 {
+		return 0, fmt.Errorf("eth0 parent index missing for pid %d", pid)
+	}
+
+	if err := netns.Set(hostNS); err != nil {
+		return 0, fmt.Errorf("restore host netns: %w", err)
+	}
+
+	hostLink, err := netlink.LinkByIndex(peerIfindex)
+	if err != nil {
+		return 0, fmt.Errorf("lookup host peer link %d: %w", peerIfindex, err)
+	}
+	return hostLink.Attrs().Index, nil
+}
+
+func resolveHostVethIfindexWithRetry(ctx context.Context, pid uint32, attempts int, delay time.Duration) (int, error) {
+	if attempts <= 1 {
+		return resolveHostVethIfindex(pid)
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		ifindex, err := resolveHostVethIfindex(pid)
+		if err == nil {
+			return ifindex, nil
+		}
+		lastErr = err
+
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			case <-time.After(delay):
+			}
+		} else {
+			time.Sleep(delay)
+		}
+	}
+	return 0, lastErr
+}
+
+func boolToUint8(v bool) uint8 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func nativeU32(b []byte) uint32 {
 	if len(b) < 4 {
 		return 0
 	}
-	// Go stores integer fields in native endianness; using native parsing preserves raw bytes.
 	return binary.NativeEndian.Uint32(b[:4])
+}
+
+func (m *Manager) Close() error {
+	if m == nil {
+		return nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+	}
+	if m.done != nil {
+		<-m.done
+	}
+
+	m.mu.Lock()
+	var errs []error
+	for id, runtime := range m.containers {
+		if err := m.removeContainerLocked(runtime); err != nil {
+			errs = append(errs, fmt.Errorf("cleanup %s: %w", id, err))
+		}
+		delete(m.containers, id)
+	}
+	m.mu.Unlock()
+
+	if m.wgIngressLink != nil {
+		if err := m.wgIngressLink.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close wg ingress link: %w", err))
+		}
+	}
+	if m.wgEgressLink != nil {
+		if err := m.wgEgressLink.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close wg egress link: %w", err))
+		}
+	}
+	if m.objs.InterfaceRoleMap != nil && m.wgIfindex != 0 {
+		if err := m.objs.InterfaceRoleMap.Delete(m.wgIfindex); err != nil {
+			errs = append(errs, fmt.Errorf("delete wg role entry: %w", err))
+		}
+	}
+	if err := m.objs.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("close eBPF objects: %w", err))
+	}
+	if m.containerd != nil {
+		if err := m.containerd.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close containerd client: %w", err))
+		}
+	}
+	return errors.Join(errs...)
 }
