@@ -1,4 +1,6 @@
 nodeName: node1
+host:
+  ipv4: 172.30.0.11
 wireguard:
   interfaceName: wg0
   privateKey: "GDkp43RRm3PFDa7Ro1UULiYcnjlF/ucFebkXqS1jVmo="

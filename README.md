@@ -1,40 +1,38 @@
 # ebpf-wg-mesh
 
-Stateful WireGuard mesh daemon written in Go with an eBPF TCX firewall data plane.
+Stateful, multi-tenant WireGuard mesh daemon with an eBPF TCX dataplane and containerd-driven container lifecycle orchestration.
 
-## What it does
+## Architecture (current)
 
-- Creates and configures a WireGuard interface (`wg0` by default) via Netlink + `wgctrl`.
-- Loads TCX eBPF programs on `wg0` ingress + egress.
-- Enforces policy:
-  - trusted mesh CIDRs: allow (both directions)
-  - external egress: allow and record 5-tuple in LRU conntrack map
-  - external ingress: allow only if reverse 5-tuple exists, else drop (default deny)
-- Streams new conntrack entries through a BPF ring buffer to user space and rebroadcasts over UDP for multi-node state sync.
+The project now follows a project-identity model:
+
+- WireGuard (`wg0`) is provisioned as cryptographic transport only.
+- Every peer is configured with `0.0.0.0/0` and `::/0` AllowedIPs.
+- Tenant isolation and stateful policy are enforced in eBPF, not in WireGuard AllowedIPs.
+- Per-container conntrack is isolated using a map-in-map (`HASH_OF_MAPS` -> per-container `LRU_HASH`).
+- Cluster identity is modeled with an `LPM_TRIE` (`IP -> {project_id, host_ip, veth_ifindex, public_service}`).
+- Host-local container traffic is fast-pathed with `bpf_redirect_peer()` when source/destination are in the same project and on the same host.
+- Container lifecycle is driven by containerd `TaskStart` / `TaskExit` events.
 
 ## Project layout
 
 - `cmd/meshd`: daemon entrypoint
 - `internal/config`: YAML / env config parsing
 - `internal/wgmesh`: WireGuard lifecycle via Netlink + wgctrl
-- `internal/firewall`: eBPF C program, generated bindings, TCX attach, sync runtime
-- `testbed`: Docker test lab (3 mesh nodes + external subnet)
+- `internal/firewall`: eBPF C program, generated bindings, TCX attach, containerd event orchestration
+- `testbed`: docker lab assets
 
-## Build and run
+## Build notes
 
-`bpf2go` requires Linux headers/tooling. The recommended path is Docker.
+`bpf2go` generation requires Linux headers + clang + libbpf headers.
 
-1. Build and run the testbed:
-
-```bash
-./testbed/scripts/run-integration.sh
-```
-
-2. Run daemon directly in Linux:
+Generation directive:
 
 ```bash
-meshd -config /path/to/node.yaml
+go generate ./internal/firewall
 ```
+
+If you are on macOS, generate inside a Linux container or Linux host.
 
 ## Configuration
 
@@ -42,6 +40,14 @@ Minimal YAML structure:
 
 ```yaml
 nodeName: node1
+host:
+  ipv4: 172.30.0.11
+containerd:
+  socket: /run/containerd/containerd.sock
+  namespace: default
+  projectLabel: mesh.project_id
+  ipv4Label: mesh.ipv4
+  publicServiceLabel: mesh.public_service
 wireguard:
   interfaceName: wg0
   privateKey: "<base64 private key>"
@@ -51,30 +57,43 @@ wireguard:
     - name: node2
       publicKey: "<peer pubkey>"
       endpoint: "172.30.0.12:51820"
-      allowedIPs: ["10.44.0.2/32"]
-      trustCIDRs: ["10.44.0.2/32"]
       persistentKeepaliveSeconds: 15
 firewall:
-  conntrackEntries: 131072
-  trustEntries: 8192
-sync:
-  enabled: true
-  listen: "0.0.0.0:7001"
-  authKey: "<base64-or-hex-shared-secret>"
-  replayWindowSeconds: 120
-  peers: ["172.30.0.12:7002"]
+  conntrackInnerEntries: 10000
+  maxContainers: 1024
+  clusterIdentityEntries: 65536
 ```
 
-Notes:
+### Container metadata contract
 
-- `allowedIPs` controls WireGuard cryptokey routing.
-- `trustCIDRs` controls firewall mesh trust lookups. Use this to avoid marking routed external subnets as mesh-trusted.
+On `TaskStart`, the daemon resolves container metadata from labels:
 
-## Integration coverage (Docker testbed)
+- `mesh.project_id` (uint32)
+- `mesh.ipv4` (IPv4 string)
+- `mesh.public_service` (bool, optional; default `false`)
 
-The test harness validates:
+(Labels are configurable under `containerd.*Label`.)
 
-1. Trusted mesh traffic is allowed (`node1 -> node3` ping).
-2. External outbound + return traffic is allowed (`node1 -> ext` HTTP).
-3. State sync UDP listeners are up on all nodes.
-4. Unsolicited external ingress is dropped (default deny).
+## Runtime behavior
+
+1. Set up `wg0` with transport-only peers.
+2. Load eBPF maps/programs and attach TCX ingress/egress on `wg0`.
+3. Subscribe to containerd events.
+4. On `TaskStart`:
+   - resolve PID -> host veth ifindex via netns traversal,
+   - create per-container inner conntrack map,
+   - populate container policy + identity trie,
+   - attach TCX ingress/egress to the veth.
+5. On `TaskExit`: detach links and remove container-scoped state.
+
+## Status
+
+Implemented:
+
+- TCX ingress/egress dataplane with project enforcement, anti-spoofing, per-container conntrack, local fast-path redirection.
+- WireGuard pure transport topology.
+- containerd event-driven per-container hook lifecycle.
+
+Not yet implemented in this repo version:
+
+- cluster-wide gRPC identity/state synchronization plane (identity/conntrack replication across nodes).

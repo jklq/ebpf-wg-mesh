@@ -5,15 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"networking-rig/internal/config"
-	"networking-rig/internal/firewall"
-	"networking-rig/internal/wgmesh"
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/firewall"
+	"ebof-wg-mesh/internal/wgmesh"
 
 	"github.com/cilium/ebpf/rlimit"
 )
@@ -23,7 +21,7 @@ func main() {
 	flag.Parse()
 
 	if err := run(*configPath); err != nil {
-		slog.Error("networking rig failed", "error", err)
+		slog.Error("mesh daemon failed", "error", err)
 		os.Exit(1)
 	}
 }
@@ -48,13 +46,12 @@ func run(configPath string) error {
 		}
 	}()
 
-	trustCIDRs, err := collectTrustCIDRs(cfg)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	fw, err := firewall.Start(ctx, cfg)
 	if err != nil {
-		return err
-	}
-	fw, err := firewall.Attach(cfg.WireGuard.InterfaceName, cfg.Firewall, trustCIDRs)
-	if err != nil {
-		return fmt.Errorf("firewall attach failed: %w", err)
+		return fmt.Errorf("firewall bootstrap failed: %w", err)
 	}
 	defer func() {
 		if err := fw.Close(); err != nil {
@@ -62,46 +59,14 @@ func run(configPath string) error {
 		}
 	}()
 
-	if cfg.Sync.Enabled {
-		if err := fw.StartSync(
-			cfg.NodeName,
-			cfg.Sync.Listen,
-			cfg.Sync.AuthKey,
-			time.Duration(cfg.Sync.ReplayWindowSeconds)*time.Second,
-			cfg.Sync.Peers,
-		); err != nil {
-			return fmt.Errorf("start state sync: %w", err)
-		}
-	}
-
 	slog.Info("node online",
 		"node", cfg.NodeName,
 		"iface", cfg.WireGuard.InterfaceName,
 		"peers", len(cfg.WireGuard.Peers),
-		"trustCIDRs", len(trustCIDRs),
+		"containerd", cfg.Containerd.Socket,
 	)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
 	slog.Info("shutdown signal received")
 	return nil
-}
-
-func collectTrustCIDRs(cfg config.Config) ([]netip.Prefix, error) {
-	out := make([]netip.Prefix, 0, len(cfg.WireGuard.Peers)*2)
-	for _, peer := range cfg.WireGuard.Peers {
-		cidrs := peer.TrustCIDRs
-		if len(cidrs) == 0 {
-			cidrs = peer.AllowedIPs
-		}
-		for _, cidr := range cidrs {
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil {
-				return nil, fmt.Errorf("parse trust cidr %q for peer %q: %w", cidr, peer.Name, err)
-			}
-			out = append(out, prefix.Masked())
-		}
-	}
-	return out, nil
 }
