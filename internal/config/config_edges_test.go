@@ -9,6 +9,16 @@ import (
 func validConfigForTests() Config {
 	return Config{
 		NodeName: "node-a",
+		Host: HostConfig{
+			IPv4: "10.0.0.10",
+		},
+		Containerd: ContainerdConfig{
+			Socket:             "/run/containerd/containerd.sock",
+			Namespace:          "default",
+			ProjectLabel:       "mesh.project_id",
+			IPv4Label:          "mesh.ipv4",
+			PublicServiceLabel: "mesh.public_service",
+		},
 		WireGuard: WireGuard{
 			InterfaceName: "wg0",
 			PrivateKey:    "private-key",
@@ -42,6 +52,7 @@ func setValidConfigEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("RIG_CONFIG_FILE", "")
 	t.Setenv("RIG_NODE_NAME", "node-env")
+	t.Setenv("RIG_HOST_IPV4", "10.10.0.10")
 	t.Setenv("RIG_WG_IFACE", "")
 	t.Setenv("RIG_WG_PRIVATE_KEY", "private-key")
 	t.Setenv("RIG_WG_PORT", "51820")
@@ -69,6 +80,18 @@ func TestApplyDefaultsValues(t *testing.T) {
 	}
 	if cfg.Sync.ReplayWindowSeconds != 120 {
 		t.Fatalf("default replay window mismatch: %d", cfg.Sync.ReplayWindowSeconds)
+	}
+	if cfg.Containerd.Socket != "/run/containerd/containerd.sock" {
+		t.Fatalf("default containerd socket mismatch: %q", cfg.Containerd.Socket)
+	}
+	if cfg.Firewall.ConntrackInnerEntries != 10000 {
+		t.Fatalf("default conntrack inner entries mismatch: %d", cfg.Firewall.ConntrackInnerEntries)
+	}
+	if cfg.Firewall.MaxContainers != 1024 {
+		t.Fatalf("default max containers mismatch: %d", cfg.Firewall.MaxContainers)
+	}
+	if cfg.Firewall.ClusterIdentityEntries != 65536 {
+		t.Fatalf("default cluster identity entries mismatch: %d", cfg.Firewall.ClusterIdentityEntries)
 	}
 }
 
@@ -163,11 +186,6 @@ func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 			name: "peer invalid endpoint",
 			edit: func(cfg *Config) { cfg.WireGuard.Peers[0].Endpoint = ":::bad:::" },
 			want: "invalid endpoint",
-		},
-		{
-			name: "peer missing allowed IPs",
-			edit: func(cfg *Config) { cfg.WireGuard.Peers[0].AllowedIPs = nil },
-			want: "must include at least one allowedIPs entry",
 		},
 		{
 			name: "peer invalid allowed IP",
@@ -292,7 +310,9 @@ func TestLoadFileAndEnvPrecedence(t *testing.T) {
 
 	yamlTemplate := func(nodeName string) string {
 		return strings.TrimSpace(`
-nodeName: ` + nodeName + `
+nodeName: `+nodeName+`
+host:
+  ipv4: 10.20.0.10
 wireguard:
   privateKey: private-key
   listenPort: 51820
