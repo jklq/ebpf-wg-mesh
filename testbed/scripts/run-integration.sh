@@ -123,17 +123,16 @@ retry_until_fail() {
 create_workload() {
   local node="$1"
   local name="$2"
-  local ip="$3"
+  local ip6="$3"
   local project="$4"
-  local public="$5"
-  local mode="$6"
+  local mode="$5"
 
   node_exec "$node" "nerdctl -n default rm -f ${name} >/dev/null 2>&1 || true"
 
   if [[ "$mode" == "service" ]]; then
-    node_exec "$node" "nerdctl -n default --snapshotter native run -d --name ${name} --net mesh-cni --ip ${ip} --label mesh.project_id=${project} --label mesh.ipv4=${ip} --label mesh.public_service=${public} ${WORKLOAD_IMAGE} sh -lc 'mkdir -p /www && echo ${name} > /www/index.html && httpd -f -p 8080 -h /www'"
+    node_exec "$node" "nerdctl -n default --snapshotter native run -d --name ${name} --net mesh-cni --ip6 ${ip6} --label mesh.project_id=${project} --label mesh.ipv6=${ip6} ${WORKLOAD_IMAGE} sh -lc 'mkdir -p /www && echo ${name} > /www/index.html && httpd -f -p 8080 -h /www'"
   else
-    node_exec "$node" "nerdctl -n default --snapshotter native run -d --name ${name} --net mesh-cni --ip ${ip} --label mesh.project_id=${project} --label mesh.ipv4=${ip} --label mesh.public_service=${public} ${WORKLOAD_IMAGE} sh -lc 'trap : TERM INT; while true; do sleep 3600; done'"
+    node_exec "$node" "nerdctl -n default --snapshotter native run -d --name ${name} --net mesh-cni --ip6 ${ip6} --label mesh.project_id=${project} --label mesh.ipv6=${ip6} ${WORKLOAD_IMAGE} sh -lc 'trap : TERM INT; while true; do sleep 3600; done'"
   fi
 
   wait_container_running "$node" "$name"
@@ -157,18 +156,18 @@ for svc in "${NODE_SERVICES[@]}"; do
 done
 
 echo "[setup] create labeled workloads across two clusters"
-create_workload clustera-node1 a1-client 10.200.1.11 100 false worker
-create_workload clustera-node1 a1-local 10.200.1.12 100 false service
-create_workload clustera-node2 a2-service 10.200.2.20 100 true service
-create_workload clusterb-node1 b1-service 10.201.1.20 100 true service
-create_workload clusterb-node2 b2-client 10.201.2.30 100 false worker
-create_workload clusterb-node2 b2-tenant2 10.201.2.40 200 true worker
+create_workload clustera-node1 a1-client fd00:200:1::11 100 worker
+create_workload clustera-node1 a1-local fd00:200:1::12 100 service
+create_workload clustera-node2 a2-service fd00:200:2::20 100 service
+create_workload clusterb-node1 b1-service fd00:201:1::20 100 service
+create_workload clusterb-node2 b2-client fd00:201:2::30 100 worker
+create_workload clusterb-node2 b2-tenant2 fd00:201:2::40 200 worker
 
 sleep 6
 
 echo "[1/6] host-local same-project service path bypasses WireGuard"
 before_tx=$(node_exec clustera-node1 "cat /sys/class/net/wg0/statistics/tx_packets")
-retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://10.200.1.12:8080 | grep -q a1-local'"
+retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://[fd00:200:1::12]:8080 | grep -q a1-local'"
 after_tx=$(node_exec clustera-node1 "cat /sys/class/net/wg0/statistics/tx_packets")
 delta_tx=$((after_tx - before_tx))
 if [[ "$delta_tx" -gt 1 ]]; then
@@ -177,13 +176,13 @@ if [[ "$delta_tx" -gt 1 ]]; then
 fi
 
 echo "[2/6] same-project inter-node flow works inside cluster-a"
-retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://10.200.2.20:8080 | grep -q a2-service'"
+retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://[fd00:200:2::20]:8080 | grep -q a2-service'"
 
 echo "[3/6] same-project inter-cluster flow works"
-retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://10.201.1.20:8080 | grep -q b1-service'"
+retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://[fd00:201:1::20]:8080 | grep -q b1-service'"
 
 echo "[4/6] cross-project access is denied"
-if ! retry_until_fail clusterb-node2 8 1 "nerdctl -n default exec b2-tenant2 sh -lc 'wget -qO- --timeout=4 http://10.201.1.20:8080 >/dev/null'"; then
+if ! retry_until_fail clusterb-node2 8 1 "nerdctl -n default exec b2-tenant2 sh -lc 'wget -qO- --timeout=4 http://[fd00:201:1::20]:8080 >/dev/null'"; then
   echo "expected cross-project request to fail, but it succeeded" >&2
   exit 1
 fi
@@ -192,13 +191,13 @@ echo "[5/6] TaskExit removes remote reachability"
 node_exec clustera-node2 "nerdctl -n default kill -s KILL a2-service >/dev/null 2>&1 || true"
 wait_container_stopped clustera-node2 a2-service
 node_exec clustera-node2 "nerdctl -n default rm a2-service >/dev/null 2>&1 || true"
-if ! retry_until_fail clustera-node1 10 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://10.200.2.20:8080 >/dev/null'"; then
+if ! retry_until_fail clustera-node1 10 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://[fd00:200:2::20]:8080 >/dev/null'"; then
   echo "expected request to stopped service to fail" >&2
   exit 1
 fi
 
 echo "[6/6] TaskStart restores policy and connectivity"
-create_workload clustera-node2 a2-service 10.200.2.20 100 true service
-retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://10.200.2.20:8080 | grep -q a2-service'"
+create_workload clustera-node2 a2-service fd00:200:2::20 100 service
+retry_node_exec clustera-node1 12 1 "nerdctl -n default exec a1-client sh -lc 'wget -qO- --timeout=4 http://[fd00:200:2::20]:8080 | grep -q a2-service'"
 
 echo "integration testbed passed"

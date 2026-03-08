@@ -33,14 +33,13 @@ const (
 )
 
 type containerRuntime struct {
-	containerID   string
-	ifindex       uint32
-	ipv4          netip.Addr
-	projectID     uint32
-	publicService bool
-	innerMap      *ebpf.Map
-	ingressLink   link.Link
-	egressLink    link.Link
+	containerID string
+	ifindex     uint32
+	ipv6        netip.Addr
+	projectID   uint32
+	innerMap    *ebpf.Map
+	ingressLink link.Link
+	egressLink  link.Link
 }
 
 type Manager struct {
@@ -55,7 +54,7 @@ type Manager struct {
 	mu            sync.Mutex
 	containers    map[string]*containerRuntime
 	staticByID    map[string]config.ContainerAssignment
-	seedByIP      map[uint32]firewallIdentityValue
+	seedByIP      map[[16]byte]firewallIdentityValue
 	localHostU32  uint32
 }
 
@@ -112,32 +111,31 @@ func Start(ctx context.Context, cfg config.Config) (_ *Manager, retErr error) {
 	if err := objs.LocalNodeMap.Put(zero, localHostU32); err != nil {
 		return nil, fmt.Errorf("set local host map: %w", err)
 	}
-	seedByIP := make(map[uint32]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
+	seedByIP := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
 	for _, seed := range cfg.Containerd.IdentitySeeds {
-		seedIP, err := netip.ParseAddr(seed.IPv4)
-		if err != nil || !seedIP.Is4() {
-			return nil, fmt.Errorf("parse containerd identity seed ip %q: %w", seed.IPv4, err)
+		seedIP, err := netip.ParseAddr(seed.IPv6)
+		if err != nil || !seedIP.Is6() {
+			return nil, fmt.Errorf("parse containerd identity seed ip %q: %w", seed.IPv6, err)
 		}
 		hostIP, err := netip.ParseAddr(seed.HostIPv4)
 		if err != nil || !hostIP.Is4() {
 			return nil, fmt.Errorf("parse containerd identity seed host ip %q: %w", seed.HostIPv4, err)
 		}
 
-		seedIPU32 := nativeU32(seedIP.AsSlice())
+		seedIP16 := addrAs16(seedIP)
 		value := firewallIdentityValue{
-			ProjectId:     seed.ProjectID,
-			HostIp:        nativeU32(hostIP.AsSlice()),
-			VethIfindex:   0,
-			PublicService: boolToUint8(seed.PublicService),
+			ProjectId:   seed.ProjectID,
+			HostIp:      nativeU32(hostIP.AsSlice()),
+			VethIfindex: 0,
 		}
 		key := firewallIdentityKey{
-			Prefixlen: uint32(32),
-			IpAddress: seedIPU32,
+			Prefixlen: uint32(128),
+			IpAddress: seedIP16,
 		}
 		if err := objs.ClusterIdentityTrie.Put(key, value); err != nil {
 			return nil, fmt.Errorf("seed identity trie for ip %s: %w", seedIP.String(), err)
 		}
-		seedByIP[seedIPU32] = value
+		seedByIP[seedIP16] = value
 	}
 	wgIfindex := uint32(wgIface.Index)
 	if err := objs.InterfaceRoleMap.Put(wgIfindex, roleWireGuard); err != nil {
@@ -365,9 +363,8 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	policy := firewallContainerPolicy{
-		ProjectId:     meta.projectID,
-		Ipv4:          nativeU32(meta.ipv4.AsSlice()),
-		PublicService: boolToUint8(meta.publicService),
+		ProjectId: meta.projectID,
+		Ipv6:      addrAs16(meta.ipv6),
 	}
 	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
@@ -382,14 +379,13 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	identityKey := firewallIdentityKey{
-		Prefixlen: uint32(32),
-		IpAddress: nativeU32(meta.ipv4.AsSlice()),
+		Prefixlen: uint32(128),
+		IpAddress: addrAs16(meta.ipv6),
 	}
 	identityValue := firewallIdentityValue{
-		ProjectId:     meta.projectID,
-		HostIp:        m.localHostU32,
-		VethIfindex:   ifKey,
-		PublicService: boolToUint8(meta.publicService),
+		ProjectId:   meta.projectID,
+		HostIp:      m.localHostU32,
+		VethIfindex: ifKey,
 	}
 	if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
 		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
@@ -429,14 +425,13 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	runtime := &containerRuntime{
-		containerID:   evt.ContainerID,
-		ifindex:       ifKey,
-		ipv4:          meta.ipv4,
-		projectID:     meta.projectID,
-		publicService: meta.publicService,
-		innerMap:      innerMap,
-		ingressLink:   ingress,
-		egressLink:    egress,
+		containerID: evt.ContainerID,
+		ifindex:     ifKey,
+		ipv6:        meta.ipv6,
+		projectID:   meta.projectID,
+		innerMap:    innerMap,
+		ingressLink: ingress,
+		egressLink:  egress,
 	}
 	m.containers[evt.ContainerID] = runtime
 	slog.Info("container firewall attached",
@@ -444,7 +439,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		"pid", evt.Pid,
 		"ifindex", ifindex,
 		"projectID", meta.projectID,
-		"ipv4", meta.ipv4.String(),
+		"ipv6", meta.ipv6.String(),
 	)
 
 	return nil
@@ -501,10 +496,10 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 			errs = append(errs, fmt.Errorf("delete conntrack matrix entry: %w", err))
 		}
 	}
-	if runtime.ipv4.IsValid() && runtime.ipv4.Is4() {
-		ipU32 := nativeU32(runtime.ipv4.AsSlice())
-		identityKey := firewallIdentityKey{Prefixlen: uint32(32), IpAddress: ipU32}
-		if seedValue, ok := m.seedByIP[ipU32]; ok {
+	if runtime.ipv6.IsValid() && runtime.ipv6.Is6() {
+		ip16 := addrAs16(runtime.ipv6)
+		identityKey := firewallIdentityKey{Prefixlen: uint32(128), IpAddress: ip16}
+		if seedValue, ok := m.seedByIP[ip16]; ok {
 			if err := m.objs.ClusterIdentityTrie.Put(identityKey, seedValue); err != nil {
 				errs = append(errs, fmt.Errorf("restore seeded identity trie entry: %w", err))
 			}
@@ -523,21 +518,19 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 }
 
 type containerMeta struct {
-	projectID     uint32
-	ipv4          netip.Addr
-	publicService bool
+	projectID uint32
+	ipv6      netip.Addr
 }
 
 func (m *Manager) resolveContainerMetadata(ctx context.Context, containerID string) (containerMeta, error) {
 	if assignment, ok := m.staticByID[containerID]; ok {
-		ip, err := netip.ParseAddr(assignment.IPv4)
-		if err != nil || !ip.Is4() {
-			return containerMeta{}, fmt.Errorf("static assignment invalid ipv4 for %s: %w", containerID, err)
+		ip, err := netip.ParseAddr(assignment.IPv6)
+		if err != nil || !ip.Is6() {
+			return containerMeta{}, fmt.Errorf("static assignment invalid ipv6 for %s: %w", containerID, err)
 		}
 		return containerMeta{
-			projectID:     assignment.ProjectID,
-			ipv4:          ip,
-			publicService: assignment.PublicService,
+			projectID: assignment.ProjectID,
+			ipv6:      ip,
 		}, nil
 	}
 
@@ -563,28 +556,18 @@ func (m *Manager) resolveContainerMetadata(ctx context.Context, containerID stri
 		return containerMeta{}, fmt.Errorf("container %s invalid project label %q", containerID, rawProject)
 	}
 
-	rawIP := labels[m.cfg.Containerd.IPv4Label]
+	rawIP := labels[m.cfg.Containerd.IPv6Label]
 	if rawIP == "" {
-		return containerMeta{}, fmt.Errorf("container %s missing label %q", containerID, m.cfg.Containerd.IPv4Label)
+		return containerMeta{}, fmt.Errorf("container %s missing label %q", containerID, m.cfg.Containerd.IPv6Label)
 	}
 	ip, err := netip.ParseAddr(rawIP)
-	if err != nil || !ip.Is4() {
-		return containerMeta{}, fmt.Errorf("container %s invalid ipv4 label %q", containerID, rawIP)
-	}
-
-	publicService := false
-	if raw := labels[m.cfg.Containerd.PublicServiceLabel]; raw != "" {
-		v, err := strconv.ParseBool(raw)
-		if err != nil {
-			return containerMeta{}, fmt.Errorf("container %s invalid public label %q", containerID, raw)
-		}
-		publicService = v
+	if err != nil || !ip.Is6() {
+		return containerMeta{}, fmt.Errorf("container %s invalid ipv6 label %q", containerID, rawIP)
 	}
 
 	return containerMeta{
-		projectID:     uint32(projectParsed),
-		ipv4:          ip,
-		publicService: publicService,
+		projectID: uint32(projectParsed),
+		ipv6:      ip,
 	}, nil
 }
 
@@ -657,18 +640,15 @@ func resolveHostVethIfindexWithRetry(ctx context.Context, pid uint32, attempts i
 	return 0, lastErr
 }
 
-func boolToUint8(v bool) uint8 {
-	if v {
-		return 1
-	}
-	return 0
-}
-
 func nativeU32(b []byte) uint32 {
 	if len(b) < 4 {
 		return 0
 	}
 	return binary.NativeEndian.Uint32(b[:4])
+}
+
+func addrAs16(addr netip.Addr) [16]byte {
+	return addr.As16()
 }
 
 func (m *Manager) Close() error {

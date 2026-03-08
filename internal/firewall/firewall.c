@@ -4,7 +4,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/in.h>
-#include <linux/ip.h>
+#include <linux/ipv6.h>
 #include <linux/pkt_cls.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
@@ -15,13 +15,9 @@
 #define ROLE_WIREGUARD 1
 #define ROLE_CONTAINER 2
 
-#define EVT_CONN_ESTABLISHED 1
-#define IPV4_FLAG_MF 0x2000
-#define IPV4_FRAG_MASK 0x1FFF
-
 struct connection_key {
-    __be32 src_ip;
-    __be32 dst_ip;
+    __u8 src_ip[16];
+    __u8 dst_ip[16];
     __be16 src_port;
     __be16 dst_port;
     __u8 protocol;
@@ -31,32 +27,18 @@ struct connection_key {
 
 struct identity_key {
     __u32 prefixlen;
-    __be32 ip_address;
+    __u8 ip_address[16];
 };
 
 struct identity_value {
     __u32 project_id;
     __be32 host_ip;
     __u32 veth_ifindex;
-    __u8 public_service;
-    __u8 _pad1;
-    __u16 _pad2;
 };
 
 struct container_policy {
     __u32 project_id;
-    __be32 ipv4;
-    __u8 public_service;
-    __u8 _pad1;
-    __u16 _pad2;
-};
-
-struct state_event {
-    __u8 event_type;
-    __u8 _pad1;
-    __u16 _pad2;
-    __u32 source_ifindex;
-    struct connection_key key;
+    __u8 ipv6[16];
 };
 
 struct {
@@ -102,52 +84,52 @@ struct {
     __type(value, __be32);
 } local_node_map SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
-} state_events SEC(".maps");
+static __always_inline int ipv6_equal(const __u8 a[16], const __u8 b[16])
+{
+    int i;
+#pragma unroll
+    for (i = 0; i < 16; i++) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
 
-static __always_inline int load_ipv4(struct __sk_buff *skb, struct iphdr *ip, __u32 *l3_off)
+static __always_inline int load_ipv6(struct __sk_buff *skb, struct ipv6hdr *ip6, __u32 *l3_off)
 {
     __u8 first_byte;
     if (bpf_skb_load_bytes(skb, 0, &first_byte, sizeof(first_byte)) < 0) {
         return -1;
     }
 
-    if ((first_byte >> 4) == 4) {
+    if ((first_byte >> 4) == 6) {
         *l3_off = 0;
     } else {
         struct ethhdr eth;
         if (bpf_skb_load_bytes(skb, 0, &eth, sizeof(eth)) < 0) {
             return -1;
         }
-        if (eth.h_proto != bpf_htons(ETH_P_IP)) {
+        if (eth.h_proto != bpf_htons(ETH_P_IPV6)) {
             return -2;
         }
         *l3_off = sizeof(struct ethhdr);
     }
 
-    if (bpf_skb_load_bytes(skb, *l3_off, ip, sizeof(*ip)) < 0) {
+    if (bpf_skb_load_bytes(skb, *l3_off, ip6, sizeof(*ip6)) < 0) {
         return -1;
     }
-    if (ip->version != 4) {
+    if ((ip6->version >> 4) != 6 && ip6->version != 6) {
         return -2;
-    }
-    if (ip->ihl < 5) {
-        return -1;
     }
     return 0;
 }
 
-static __always_inline int load_ports(struct __sk_buff *skb, const struct iphdr *ip, __u32 l3_off,
+static __always_inline int load_ports(struct __sk_buff *skb, const struct ipv6hdr *ip6, __u32 l3_off,
                                       __be16 *sport, __be16 *dport)
 {
-    if (bpf_ntohs(ip->frag_off) & (IPV4_FLAG_MF | IPV4_FRAG_MASK)) {
-        return -1;
-    }
-
-    __u32 l4_off = l3_off + ((__u32)ip->ihl * 4);
-    if (ip->protocol == IPPROTO_TCP) {
+    __u32 l4_off = l3_off + sizeof(*ip6);
+    if (ip6->nexthdr == IPPROTO_TCP) {
         struct tcphdr tcp;
         if (bpf_skb_load_bytes(skb, l4_off, &tcp, sizeof(tcp)) < 0) {
             return -1;
@@ -157,7 +139,7 @@ static __always_inline int load_ports(struct __sk_buff *skb, const struct iphdr 
         return 0;
     }
 
-    if (ip->protocol == IPPROTO_UDP) {
+    if (ip6->nexthdr == IPPROTO_UDP) {
         struct udphdr udp;
         if (bpf_skb_load_bytes(skb, l4_off, &udp, sizeof(udp)) < 0) {
             return -1;
@@ -170,12 +152,12 @@ static __always_inline int load_ports(struct __sk_buff *skb, const struct iphdr 
     return -1;
 }
 
-static __always_inline struct identity_value *lookup_identity(__be32 ip)
+static __always_inline struct identity_value *lookup_identity(const __u8 ip[16])
 {
     struct identity_key key = {
-        .prefixlen = 32,
-        .ip_address = ip,
+        .prefixlen = 128,
     };
+    __builtin_memcpy(key.ip_address, ip, sizeof(key.ip_address));
     return bpf_map_lookup_elem(&cluster_identity_trie, &key);
 }
 
@@ -200,14 +182,6 @@ static __always_inline int conntrack_record(__u32 ifindex, struct connection_key
         return -1;
     }
 
-    struct state_event *evt = bpf_ringbuf_reserve(&state_events, sizeof(*evt), 0);
-    if (evt) {
-        evt->event_type = EVT_CONN_ESTABLISHED;
-        evt->source_ifindex = ifindex;
-        evt->key = *key;
-        bpf_ringbuf_submit(evt, 0);
-    }
-
     return 0;
 }
 
@@ -219,9 +193,9 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
         return TC_ACT_SHOT;
     }
 
-    struct iphdr ip;
+    struct ipv6hdr ip6;
     __u32 l3_off = 0;
-    int rc = load_ipv4(skb, &ip, &l3_off);
+    int rc = load_ipv6(skb, &ip6, &l3_off);
     if (rc == -2) {
         return TC_ACT_OK;
     }
@@ -229,47 +203,43 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
         return TC_ACT_SHOT;
     }
 
-    if (ip.saddr != policy->ipv4) {
+    if (!ipv6_equal((const __u8 *)&ip6.saddr, policy->ipv6)) {
         return TC_ACT_SHOT;
     }
 
-    struct identity_value *src_identity = lookup_identity(ip.saddr);
-    struct identity_value *dst_identity = lookup_identity(ip.daddr);
-    if (!src_identity || !dst_identity) {
-        return TC_ACT_SHOT;
-    }
+    struct identity_value *dst_identity = lookup_identity((const __u8 *)&ip6.daddr);
+    if (dst_identity) {
+        if (dst_identity->project_id != policy->project_id) {
+            return TC_ACT_SHOT;
+        }
 
-    if (src_identity->project_id != policy->project_id) {
-        return TC_ACT_SHOT;
-    }
-    if (src_identity->project_id != dst_identity->project_id) {
-        return TC_ACT_SHOT;
-    }
+        __u32 zero = 0;
+        __be32 *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
+        if (!local_host) {
+            return TC_ACT_SHOT;
+        }
 
-    __u32 zero = 0;
-    __be32 *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
-    if (!local_host) {
-        return TC_ACT_SHOT;
-    }
+        if (dst_identity->host_ip == *local_host && dst_identity->veth_ifindex != 0) {
+            (void)bpf_skb_change_type(skb, PACKET_HOST);
+            return bpf_redirect_peer(dst_identity->veth_ifindex, 0);
+        }
 
-    if (dst_identity->host_ip == *local_host && dst_identity->veth_ifindex != 0) {
-        (void)bpf_skb_change_type(skb, PACKET_HOST);
-        return bpf_redirect_peer(dst_identity->veth_ifindex, 0);
+        return TC_ACT_OK;
     }
 
     __be16 sport;
     __be16 dport;
-    if (load_ports(skb, &ip, l3_off, &sport, &dport) < 0) {
+    if (load_ports(skb, &ip6, l3_off, &sport, &dport) < 0) {
         return TC_ACT_OK;
     }
 
     struct connection_key key = {
-        .src_ip = ip.saddr,
-        .dst_ip = ip.daddr,
         .src_port = sport,
         .dst_port = dport,
-        .protocol = ip.protocol,
+        .protocol = ip6.nexthdr,
     };
+    __builtin_memcpy(key.src_ip, &ip6.saddr, sizeof(key.src_ip));
+    __builtin_memcpy(key.dst_ip, &ip6.daddr, sizeof(key.dst_ip));
 
     if (conntrack_record(ifindex, &key) < 0) {
         return TC_ACT_SHOT;
@@ -280,15 +250,15 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
 
 static __always_inline int handle_wireguard_ingress(struct __sk_buff *skb)
 {
-    struct iphdr ip;
+    struct ipv6hdr ip6;
     __u32 l3_off = 0;
-    int rc = load_ipv4(skb, &ip, &l3_off);
+    int rc = load_ipv6(skb, &ip6, &l3_off);
     if (rc < 0) {
         return TC_ACT_SHOT;
     }
 
-    struct identity_value *src_identity = lookup_identity(ip.saddr);
-    struct identity_value *dst_identity = lookup_identity(ip.daddr);
+    struct identity_value *src_identity = lookup_identity((const __u8 *)&ip6.saddr);
+    struct identity_value *dst_identity = lookup_identity((const __u8 *)&ip6.daddr);
     if (!src_identity || !dst_identity) {
         return TC_ACT_SHOT;
     }
@@ -305,29 +275,7 @@ static __always_inline int handle_wireguard_ingress(struct __sk_buff *skb)
         return TC_ACT_SHOT;
     }
 
-    if (dst_identity->public_service) {
-        return TC_ACT_OK;
-    }
-
-    __be16 sport;
-    __be16 dport;
-    if (load_ports(skb, &ip, l3_off, &sport, &dport) < 0) {
-        return TC_ACT_SHOT;
-    }
-
-    struct connection_key reverse = {
-        .src_ip = ip.daddr,
-        .dst_ip = ip.saddr,
-        .src_port = dport,
-        .dst_port = sport,
-        .protocol = ip.protocol,
-    };
-
-    if (conntrack_contains(dst_identity->veth_ifindex, &reverse)) {
-        return TC_ACT_OK;
-    }
-
-    return TC_ACT_SHOT;
+    return TC_ACT_OK;
 }
 
 static __always_inline int handle_container_egress(struct __sk_buff *skb)
@@ -338,9 +286,9 @@ static __always_inline int handle_container_egress(struct __sk_buff *skb)
         return TC_ACT_SHOT;
     }
 
-    struct iphdr ip;
+    struct ipv6hdr ip6;
     __u32 l3_off = 0;
-    int rc = load_ipv4(skb, &ip, &l3_off);
+    int rc = load_ipv6(skb, &ip6, &l3_off);
     if (rc == -2) {
         return TC_ACT_OK;
     }
@@ -348,41 +296,38 @@ static __always_inline int handle_container_egress(struct __sk_buff *skb)
         return TC_ACT_SHOT;
     }
 
-    if (ip.daddr != policy->ipv4) {
+    if (!ipv6_equal((const __u8 *)&ip6.daddr, policy->ipv6)) {
         return TC_ACT_SHOT;
     }
 
-    struct identity_value *src_identity = lookup_identity(ip.saddr);
-    struct identity_value *dst_identity = lookup_identity(ip.daddr);
-    if (src_identity && dst_identity &&
-        src_identity->project_id == policy->project_id &&
-        src_identity->project_id == dst_identity->project_id) {
-        __u32 zero = 0;
-        __be32 *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
-        if (local_host &&
-            src_identity->host_ip == *local_host &&
-            dst_identity->host_ip == *local_host) {
-            return TC_ACT_OK;
+    struct identity_value *src_identity = lookup_identity((const __u8 *)&ip6.saddr);
+    struct identity_value *dst_identity = lookup_identity((const __u8 *)&ip6.daddr);
+    if (src_identity) {
+        if (!dst_identity) {
+            return TC_ACT_SHOT;
         }
-    }
-
-    if (policy->public_service) {
+        if (dst_identity->project_id != policy->project_id) {
+            return TC_ACT_SHOT;
+        }
+        if (src_identity->project_id != dst_identity->project_id) {
+            return TC_ACT_SHOT;
+        }
         return TC_ACT_OK;
     }
 
     __be16 sport;
     __be16 dport;
-    if (load_ports(skb, &ip, l3_off, &sport, &dport) < 0) {
+    if (load_ports(skb, &ip6, l3_off, &sport, &dport) < 0) {
         return TC_ACT_SHOT;
     }
 
     struct connection_key reverse = {
-        .src_ip = ip.daddr,
-        .dst_ip = ip.saddr,
         .src_port = dport,
         .dst_port = sport,
-        .protocol = ip.protocol,
+        .protocol = ip6.nexthdr,
     };
+    __builtin_memcpy(reverse.src_ip, &ip6.daddr, sizeof(reverse.src_ip));
+    __builtin_memcpy(reverse.dst_ip, &ip6.saddr, sizeof(reverse.dst_ip));
 
     if (conntrack_contains(ifindex, &reverse)) {
         return TC_ACT_OK;

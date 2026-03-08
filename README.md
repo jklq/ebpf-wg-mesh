@@ -10,7 +10,7 @@ The project now follows a project-identity model:
 - Every peer is configured with `0.0.0.0/0` and `::/0` AllowedIPs.
 - Tenant isolation and stateful policy are enforced in eBPF, not in WireGuard AllowedIPs.
 - Per-container conntrack is isolated using a map-in-map (`HASH_OF_MAPS` -> per-container `LRU_HASH`).
-- Cluster identity is modeled with an `LPM_TRIE` (`IP -> {project_id, host_ip, veth_ifindex, public_service}`).
+- Cluster identity is modeled with an `LPM_TRIE` (`IPv6 -> {project_id, host_ip, veth_ifindex}`).
 - Host-local container traffic is fast-pathed with `bpf_redirect_peer()` when source/destination are in the same project and on the same host.
 - Container lifecycle is driven by containerd `TaskStart` / `TaskExit` events.
 
@@ -46,8 +46,7 @@ containerd:
   socket: /run/containerd/containerd.sock
   namespace: default
   projectLabel: mesh.project_id
-  ipv4Label: mesh.ipv4
-  publicServiceLabel: mesh.public_service
+  ipv6Label: mesh.ipv6
 wireguard:
   interfaceName: wg0
   privateKey: "<base64 private key>"
@@ -69,8 +68,7 @@ firewall:
 On `TaskStart`, the daemon resolves container metadata from labels:
 
 - `mesh.project_id` (uint32)
-- `mesh.ipv4` (IPv4 string)
-- `mesh.public_service` (bool, optional; default `false`)
+- `mesh.ipv6` (IPv6 string)
 
 (Labels are configurable under `containerd.*Label`.)
 
@@ -90,10 +88,10 @@ On `TaskStart`, the daemon resolves container metadata from labels:
 
 Implemented:
 
-- TCX ingress/egress dataplane with project enforcement, anti-spoofing, per-container conntrack, local fast-path redirection.
+- TCX ingress/egress dataplane with IPv6 project enforcement, anti-spoofing, per-container internet conntrack, local fast-path redirection.
 - WireGuard pure transport topology.
 - containerd event-driven per-container hook lifecycle.
 
 Not yet implemented in this repo version:
 
-- cluster-wide gRPC identity/state synchronization plane (identity/conntrack replication across nodes).
+- managed ingress exposure for public internet traffic.
