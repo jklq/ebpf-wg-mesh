@@ -18,7 +18,6 @@ type Config struct {
 	Containerd ContainerdConfig `yaml:"containerd"`
 	WireGuard  WireGuard        `yaml:"wireguard"`
 	Firewall   FirewallConfig   `yaml:"firewall"`
-	Sync       SyncConfig       `yaml:"sync"`
 }
 
 type HostConfig struct {
@@ -26,27 +25,24 @@ type HostConfig struct {
 }
 
 type ContainerdConfig struct {
-	Socket             string                `yaml:"socket"`
-	Namespace          string                `yaml:"namespace"`
-	ProjectLabel       string                `yaml:"projectLabel"`
-	IPv4Label          string                `yaml:"ipv4Label"`
-	PublicServiceLabel string                `yaml:"publicServiceLabel"`
-	IdentitySeeds      []IdentitySeed        `yaml:"identitySeeds"`
-	StaticAssignments  []ContainerAssignment `yaml:"staticAssignments"`
+	Socket            string                `yaml:"socket"`
+	Namespace         string                `yaml:"namespace"`
+	ProjectLabel      string                `yaml:"projectLabel"`
+	IPv6Label         string                `yaml:"ipv6Label"`
+	IdentitySeeds     []IdentitySeed        `yaml:"identitySeeds"`
+	StaticAssignments []ContainerAssignment `yaml:"staticAssignments"`
 }
 
 type IdentitySeed struct {
-	IPv4          string `yaml:"ipv4" json:"ipv4"`
-	HostIPv4      string `yaml:"hostIPv4" json:"hostIPv4"`
-	ProjectID     uint32 `yaml:"projectID" json:"projectID"`
-	PublicService bool   `yaml:"publicService" json:"publicService"`
+	IPv6      string `yaml:"ipv6" json:"ipv6"`
+	HostIPv4  string `yaml:"hostIPv4" json:"hostIPv4"`
+	ProjectID uint32 `yaml:"projectID" json:"projectID"`
 }
 
 type ContainerAssignment struct {
-	ContainerID   string `yaml:"containerID" json:"containerID"`
-	ProjectID     uint32 `yaml:"projectID" json:"projectID"`
-	IPv4          string `yaml:"ipv4" json:"ipv4"`
-	PublicService bool   `yaml:"publicService" json:"publicService"`
+	ContainerID string `yaml:"containerID" json:"containerID"`
+	ProjectID   uint32 `yaml:"projectID" json:"projectID"`
+	IPv6        string `yaml:"ipv6" json:"ipv6"`
 }
 
 type WireGuard struct {
@@ -72,14 +68,6 @@ type FirewallConfig struct {
 	TrustEntries           int `yaml:"trustEntries"`
 	MaxContainers          int `yaml:"maxContainers"`
 	ClusterIdentityEntries int `yaml:"clusterIdentityEntries"`
-}
-
-type SyncConfig struct {
-	Enabled             bool     `yaml:"enabled"`
-	Listen              string   `yaml:"listen"`
-	Peers               []string `yaml:"peers"`
-	AuthKey             string   `yaml:"authKey"`
-	ReplayWindowSeconds int      `yaml:"replayWindowSeconds"`
 }
 
 func Load(path string) (Config, error) {
@@ -115,22 +103,15 @@ func loadEnv() (Config, error) {
 			IPv4: strings.TrimSpace(os.Getenv("RIG_HOST_IPV4")),
 		},
 		Containerd: ContainerdConfig{
-			Socket:             strings.TrimSpace(os.Getenv("RIG_CONTAINERD_SOCKET")),
-			Namespace:          strings.TrimSpace(os.Getenv("RIG_CONTAINERD_NAMESPACE")),
-			ProjectLabel:       strings.TrimSpace(os.Getenv("RIG_CONTAINERD_PROJECT_LABEL")),
-			IPv4Label:          strings.TrimSpace(os.Getenv("RIG_CONTAINERD_IPV4_LABEL")),
-			PublicServiceLabel: strings.TrimSpace(os.Getenv("RIG_CONTAINERD_PUBLIC_LABEL")),
+			Socket:       strings.TrimSpace(os.Getenv("RIG_CONTAINERD_SOCKET")),
+			Namespace:    strings.TrimSpace(os.Getenv("RIG_CONTAINERD_NAMESPACE")),
+			ProjectLabel: strings.TrimSpace(os.Getenv("RIG_CONTAINERD_PROJECT_LABEL")),
+			IPv6Label:    strings.TrimSpace(os.Getenv("RIG_CONTAINERD_IPV6_LABEL")),
 		},
 		WireGuard: WireGuard{
 			InterfaceName: strings.TrimSpace(os.Getenv("RIG_WG_IFACE")),
 			PrivateKey:    strings.TrimSpace(os.Getenv("RIG_WG_PRIVATE_KEY")),
 			Addresses:     splitCSV(os.Getenv("RIG_WG_ADDRESSES")),
-		},
-		Sync: SyncConfig{
-			Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv("RIG_SYNC_ENABLED")), "true"),
-			Listen:  strings.TrimSpace(os.Getenv("RIG_SYNC_LISTEN")),
-			Peers:   splitCSV(os.Getenv("RIG_SYNC_PEERS")),
-			AuthKey: strings.TrimSpace(os.Getenv("RIG_SYNC_AUTH_KEY")),
 		},
 	}
 
@@ -143,13 +124,6 @@ func loadEnv() (Config, error) {
 		if err := json.Unmarshal([]byte(raw), &cfg.Containerd.IdentitySeeds); err != nil {
 			return Config{}, fmt.Errorf("parse RIG_CONTAINERD_IDENTITY_SEEDS_JSON: %w", err)
 		}
-	}
-	if w := strings.TrimSpace(os.Getenv("RIG_SYNC_REPLAY_WINDOW_SECONDS")); w != "" {
-		v, err := strconv.Atoi(w)
-		if err != nil {
-			return Config{}, fmt.Errorf("parse RIG_SYNC_REPLAY_WINDOW_SECONDS: %w", err)
-		}
-		cfg.Sync.ReplayWindowSeconds = v
 	}
 	if p := strings.TrimSpace(os.Getenv("RIG_WG_PORT")); p != "" {
 		v, err := strconv.Atoi(p)
@@ -183,11 +157,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Containerd.ProjectLabel == "" {
 		cfg.Containerd.ProjectLabel = "mesh.project_id"
 	}
-	if cfg.Containerd.IPv4Label == "" {
-		cfg.Containerd.IPv4Label = "mesh.ipv4"
-	}
-	if cfg.Containerd.PublicServiceLabel == "" {
-		cfg.Containerd.PublicServiceLabel = "mesh.public_service"
+	if cfg.Containerd.IPv6Label == "" {
+		cfg.Containerd.IPv6Label = "mesh.ipv6"
 	}
 	if cfg.Firewall.ConntrackEntries <= 0 {
 		cfg.Firewall.ConntrackEntries = 131072
@@ -203,9 +174,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Firewall.ClusterIdentityEntries <= 0 {
 		cfg.Firewall.ClusterIdentityEntries = 65536
-	}
-	if cfg.Sync.ReplayWindowSeconds <= 0 {
-		cfg.Sync.ReplayWindowSeconds = 120
 	}
 }
 
@@ -229,11 +197,8 @@ func validate(cfg Config) error {
 	if cfg.Containerd.ProjectLabel == "" {
 		return errors.New("containerd.projectLabel is required")
 	}
-	if cfg.Containerd.IPv4Label == "" {
-		return errors.New("containerd.ipv4Label is required")
-	}
-	if cfg.Containerd.PublicServiceLabel == "" {
-		return errors.New("containerd.publicServiceLabel is required")
+	if cfg.Containerd.IPv6Label == "" {
+		return errors.New("containerd.ipv6Label is required")
 	}
 	for _, assignment := range cfg.Containerd.StaticAssignments {
 		if assignment.ContainerID == "" {
@@ -242,18 +207,18 @@ func validate(cfg Config) error {
 		if assignment.ProjectID == 0 {
 			return fmt.Errorf("containerd.staticAssignments for %q requires non-zero projectID", assignment.ContainerID)
 		}
-		ip := net.ParseIP(assignment.IPv4)
-		if ip == nil || ip.To4() == nil {
-			return fmt.Errorf("containerd.staticAssignments for %q has invalid ipv4 %q", assignment.ContainerID, assignment.IPv4)
+		ip := net.ParseIP(assignment.IPv6)
+		if ip == nil || ip.To16() == nil || ip.To4() != nil {
+			return fmt.Errorf("containerd.staticAssignments for %q has invalid ipv6 %q", assignment.ContainerID, assignment.IPv6)
 		}
 	}
 	for _, seed := range cfg.Containerd.IdentitySeeds {
 		if seed.ProjectID == 0 {
 			return errors.New("containerd.identitySeeds.projectID must be non-zero")
 		}
-		ip := net.ParseIP(seed.IPv4)
-		if ip == nil || ip.To4() == nil {
-			return fmt.Errorf("containerd.identitySeeds has invalid ipv4 %q", seed.IPv4)
+		ip := net.ParseIP(seed.IPv6)
+		if ip == nil || ip.To16() == nil || ip.To4() != nil {
+			return fmt.Errorf("containerd.identitySeeds has invalid ipv6 %q", seed.IPv6)
 		}
 		hostIP := net.ParseIP(seed.HostIPv4)
 		if hostIP == nil || hostIP.To4() == nil {
@@ -292,22 +257,6 @@ func validate(cfg Config) error {
 		for _, cidr := range p.TrustCIDRs {
 			if _, _, err := net.ParseCIDR(cidr); err != nil {
 				return fmt.Errorf("peer %q invalid trust CIDR %q: %w", p.Name, cidr, err)
-			}
-		}
-	}
-	if cfg.Sync.Enabled {
-		if cfg.Sync.Listen == "" {
-			return errors.New("sync.listen is required when sync is enabled")
-		}
-		if cfg.Sync.AuthKey == "" {
-			return errors.New("sync.authKey is required when sync is enabled")
-		}
-		if _, err := net.ResolveUDPAddr("udp", cfg.Sync.Listen); err != nil {
-			return fmt.Errorf("sync.listen invalid: %w", err)
-		}
-		for _, peer := range cfg.Sync.Peers {
-			if _, err := net.ResolveUDPAddr("udp", peer); err != nil {
-				return fmt.Errorf("sync peer %q invalid: %w", peer, err)
 			}
 		}
 	}

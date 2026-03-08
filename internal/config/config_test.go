@@ -2,19 +2,35 @@ package config
 
 import "testing"
 
-func TestApplyDefaultsSyncWindow(t *testing.T) {
+func TestApplyDefaultsSetsCoreValues(t *testing.T) {
 	cfg := Config{}
 	applyDefaults(&cfg)
-	if cfg.Sync.ReplayWindowSeconds <= 0 {
-		t.Fatalf("expected replay window default > 0")
+
+	if cfg.WireGuard.InterfaceName != "wg0" {
+		t.Fatalf("default interface mismatch: %q", cfg.WireGuard.InterfaceName)
+	}
+	if cfg.Containerd.Socket != "/run/containerd/containerd.sock" {
+		t.Fatalf("default containerd socket mismatch: %q", cfg.Containerd.Socket)
+	}
+	if cfg.Containerd.ProjectLabel != "mesh.project_id" {
+		t.Fatalf("default project label mismatch: %q", cfg.Containerd.ProjectLabel)
+	}
+	if cfg.Containerd.IPv6Label != "mesh.ipv6" {
+		t.Fatalf("default ipv6 label mismatch: %q", cfg.Containerd.IPv6Label)
 	}
 }
 
-func TestValidateSyncRequiresAuthKey(t *testing.T) {
+func TestValidateAcceptsMinimalRuntimeConfig(t *testing.T) {
 	cfg := Config{
 		NodeName: "n1",
 		Host: HostConfig{
 			IPv4: "10.0.0.1",
+		},
+		Containerd: ContainerdConfig{
+			Socket:       "/run/containerd/containerd.sock",
+			Namespace:    "default",
+			ProjectLabel: "mesh.project_id",
+			IPv6Label:    "mesh.ipv6",
 		},
 		WireGuard: WireGuard{
 			PrivateKey: "k",
@@ -29,19 +45,9 @@ func TestValidateSyncRequiresAuthKey(t *testing.T) {
 				},
 			},
 		},
-		Sync: SyncConfig{
-			Enabled: true,
-			Listen:  "0.0.0.0:7001",
-			Peers:   []string{"127.0.0.1:7002"},
-		},
 	}
 	applyDefaults(&cfg)
-	if err := validate(cfg); err == nil {
-		t.Fatalf("expected sync auth key validation error")
-	}
-
-	cfg.Sync.AuthKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 	if err := validate(cfg); err != nil {
-		t.Fatalf("expected config to validate with auth key, got %v", err)
+		t.Fatalf("expected config to validate, got %v", err)
 	}
 }

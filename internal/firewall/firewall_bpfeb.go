@@ -15,8 +15,8 @@ import (
 
 type firewallConnectionKey struct {
 	_        structs.HostLayout
-	SrcIp    uint32
-	DstIp    uint32
+	SrcIp    [16]uint8
+	DstIp    [16]uint8
 	SrcPort  uint16
 	DstPort  uint16
 	Protocol uint8
@@ -25,28 +25,22 @@ type firewallConnectionKey struct {
 }
 
 type firewallContainerPolicy struct {
-	_             structs.HostLayout
-	ProjectId     uint32
-	Ipv4          uint32
-	PublicService uint8
-	Pad1          uint8
-	Pad2          uint16
+	_         structs.HostLayout
+	ProjectId uint32
+	Ipv6      [16]uint8
 }
 
 type firewallIdentityKey struct {
 	_         structs.HostLayout
 	Prefixlen uint32
-	IpAddress uint32
+	IpAddress [16]uint8
 }
 
 type firewallIdentityValue struct {
-	_             structs.HostLayout
-	ProjectId     uint32
-	HostIp        uint32
-	VethIfindex   uint32
-	PublicService uint8
-	Pad1          uint8
-	Pad2          uint16
+	_           structs.HostLayout
+	ProjectId   uint32
+	HostIp      uint32
+	VethIfindex uint32
 }
 
 // loadFirewall returns the embedded CollectionSpec for firewall.
@@ -105,7 +99,6 @@ type firewallMapSpecs struct {
 	ContainerPolicyMap     *ebpf.MapSpec `ebpf:"container_policy_map"`
 	InterfaceRoleMap       *ebpf.MapSpec `ebpf:"interface_role_map"`
 	LocalNodeMap           *ebpf.MapSpec `ebpf:"local_node_map"`
-	StateEvents            *ebpf.MapSpec `ebpf:"state_events"`
 }
 
 // firewallVariableSpecs contains global variables before they are loaded into the kernel.
@@ -140,7 +133,6 @@ type firewallMaps struct {
 	ContainerPolicyMap     *ebpf.Map `ebpf:"container_policy_map"`
 	InterfaceRoleMap       *ebpf.Map `ebpf:"interface_role_map"`
 	LocalNodeMap           *ebpf.Map `ebpf:"local_node_map"`
-	StateEvents            *ebpf.Map `ebpf:"state_events"`
 }
 
 func (m *firewallMaps) Close() error {
@@ -151,7 +143,6 @@ func (m *firewallMaps) Close() error {
 		m.ContainerPolicyMap,
 		m.InterfaceRoleMap,
 		m.LocalNodeMap,
-		m.StateEvents,
 	)
 }
 
