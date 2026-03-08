@@ -13,11 +13,10 @@ func validConfigForTests() Config {
 			IPv4: "10.0.0.10",
 		},
 		Containerd: ContainerdConfig{
-			Socket:             "/run/containerd/containerd.sock",
-			Namespace:          "default",
-			ProjectLabel:       "mesh.project_id",
-			IPv4Label:          "mesh.ipv4",
-			PublicServiceLabel: "mesh.public_service",
+			Socket:       "/run/containerd/containerd.sock",
+			Namespace:    "default",
+			ProjectLabel: "mesh.project_id",
+			IPv6Label:    "mesh.ipv6",
 		},
 		WireGuard: WireGuard{
 			InterfaceName: "wg0",
@@ -38,13 +37,6 @@ func validConfigForTests() Config {
 			ConntrackEntries: 1024,
 			TrustEntries:     128,
 		},
-		Sync: SyncConfig{
-			Enabled:             true,
-			Listen:              "0.0.0.0:7001",
-			Peers:               []string{"127.0.0.1:7002"},
-			AuthKey:             "some-auth-key",
-			ReplayWindowSeconds: 60,
-		},
 	}
 }
 
@@ -53,16 +45,15 @@ func setValidConfigEnv(t *testing.T) {
 	t.Setenv("RIG_CONFIG_FILE", "")
 	t.Setenv("RIG_NODE_NAME", "node-env")
 	t.Setenv("RIG_HOST_IPV4", "10.10.0.10")
+	t.Setenv("RIG_CONTAINERD_SOCKET", "")
+	t.Setenv("RIG_CONTAINERD_NAMESPACE", "")
+	t.Setenv("RIG_CONTAINERD_PROJECT_LABEL", "")
+	t.Setenv("RIG_CONTAINERD_IPV6_LABEL", "")
 	t.Setenv("RIG_WG_IFACE", "")
 	t.Setenv("RIG_WG_PRIVATE_KEY", "private-key")
 	t.Setenv("RIG_WG_PORT", "51820")
 	t.Setenv("RIG_WG_ADDRESSES", "10.10.0.1/24, 10.11.0.1/24")
 	t.Setenv("RIG_WG_PEERS_JSON", `[{"name":"node-b","publicKey":"public-key","endpoint":"127.0.0.1:51820","allowedIPs":["10.10.0.2/32"],"trustCIDRs":["192.168.0.0/16"]}]`)
-	t.Setenv("RIG_SYNC_ENABLED", "true")
-	t.Setenv("RIG_SYNC_LISTEN", "0.0.0.0:7010")
-	t.Setenv("RIG_SYNC_PEERS", "127.0.0.1:7011,127.0.0.1:7012")
-	t.Setenv("RIG_SYNC_AUTH_KEY", "env-auth-key")
-	t.Setenv("RIG_SYNC_REPLAY_WINDOW_SECONDS", "45")
 }
 
 func TestApplyDefaultsValues(t *testing.T) {
@@ -77,9 +68,6 @@ func TestApplyDefaultsValues(t *testing.T) {
 	}
 	if cfg.Firewall.TrustEntries != 8192 {
 		t.Fatalf("default trust entries mismatch: %d", cfg.Firewall.TrustEntries)
-	}
-	if cfg.Sync.ReplayWindowSeconds != 120 {
-		t.Fatalf("default replay window mismatch: %d", cfg.Sync.ReplayWindowSeconds)
 	}
 	if cfg.Containerd.Socket != "/run/containerd/containerd.sock" {
 		t.Fatalf("default containerd socket mismatch: %q", cfg.Containerd.Socket)
@@ -104,9 +92,6 @@ func TestApplyDefaultsPreservesPositiveValues(t *testing.T) {
 			ConntrackEntries: 2048,
 			TrustEntries:     4096,
 		},
-		Sync: SyncConfig{
-			ReplayWindowSeconds: 9,
-		},
 	}
 	applyDefaults(&cfg)
 
@@ -118,9 +103,6 @@ func TestApplyDefaultsPreservesPositiveValues(t *testing.T) {
 	}
 	if cfg.Firewall.TrustEntries != 4096 {
 		t.Fatalf("expected explicit trust entries to be preserved")
-	}
-	if cfg.Sync.ReplayWindowSeconds != 9 {
-		t.Fatalf("expected explicit replay window to be preserved")
 	}
 }
 
@@ -151,6 +133,11 @@ func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 			name: "missing nodeName",
 			edit: func(cfg *Config) { cfg.NodeName = "" },
 			want: "nodeName is required",
+		},
+		{
+			name: "missing containerd project label",
+			edit: func(cfg *Config) { cfg.Containerd.ProjectLabel = "" },
+			want: "containerd.projectLabel is required",
 		},
 		{
 			name: "missing private key",
@@ -197,26 +184,6 @@ func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 			edit: func(cfg *Config) { cfg.WireGuard.Peers[0].TrustCIDRs = []string{"invalid"} },
 			want: "invalid trust CIDR",
 		},
-		{
-			name: "sync enabled requires listen",
-			edit: func(cfg *Config) { cfg.Sync.Listen = "" },
-			want: "sync.listen is required",
-		},
-		{
-			name: "sync enabled requires auth key",
-			edit: func(cfg *Config) { cfg.Sync.AuthKey = "" },
-			want: "sync.authKey is required",
-		},
-		{
-			name: "sync invalid listen",
-			edit: func(cfg *Config) { cfg.Sync.Listen = "invalid-listen-value" },
-			want: "sync.listen invalid",
-		},
-		{
-			name: "sync invalid peer",
-			edit: func(cfg *Config) { cfg.Sync.Peers = []string{"invalid-peer"} },
-			want: "sync peer",
-		},
 	}
 
 	for _, tc := range cases {
@@ -232,18 +199,6 @@ func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 				t.Fatalf("unexpected error: got=%v want substring=%q", err, tc.want)
 			}
 		})
-	}
-}
-
-func TestValidateIgnoresSyncFieldsWhenDisabled(t *testing.T) {
-	cfg := validConfigForTests()
-	cfg.Sync = SyncConfig{
-		Enabled: false,
-		Listen:  "not-an-addr",
-		Peers:   []string{"bad-peer"},
-	}
-	if err := validate(cfg); err != nil {
-		t.Fatalf("validate should ignore sync listen/peers when disabled: %v", err)
 	}
 }
 
@@ -267,8 +222,8 @@ func TestLoadEnvHappyPath(t *testing.T) {
 	if len(cfg.WireGuard.Peers) != 1 {
 		t.Fatalf("unexpected peers len: %d", len(cfg.WireGuard.Peers))
 	}
-	if cfg.Sync.ReplayWindowSeconds != 45 {
-		t.Fatalf("unexpected sync replay window: %d", cfg.Sync.ReplayWindowSeconds)
+	if cfg.Containerd.ProjectLabel != "mesh.project_id" || cfg.Containerd.IPv6Label != "mesh.ipv6" {
+		t.Fatalf("expected container labels defaults to be applied")
 	}
 	if cfg.Firewall.ConntrackEntries != 131072 || cfg.Firewall.TrustEntries != 8192 {
 		t.Fatalf("expected firewall defaults to be applied")
@@ -281,14 +236,6 @@ func TestLoadEnvParsingErrors(t *testing.T) {
 		t.Setenv("RIG_WG_PORT", "not-a-number")
 		if _, err := loadEnv(); err == nil || !strings.Contains(err.Error(), "parse RIG_WG_PORT") {
 			t.Fatalf("expected RIG_WG_PORT parse error, got %v", err)
-		}
-	})
-
-	t.Run("invalid replay window", func(t *testing.T) {
-		setValidConfigEnv(t)
-		t.Setenv("RIG_SYNC_REPLAY_WINDOW_SECONDS", "NaN")
-		if _, err := loadEnv(); err == nil || !strings.Contains(err.Error(), "parse RIG_SYNC_REPLAY_WINDOW_SECONDS") {
-			t.Fatalf("expected replay window parse error, got %v", err)
 		}
 	})
 
@@ -313,6 +260,8 @@ func TestLoadFileAndEnvPrecedence(t *testing.T) {
 nodeName: `+nodeName+`
 host:
   ipv4: 10.20.0.10
+containerd:
+  ipv6Label: mesh.ipv6
 wireguard:
   privateKey: private-key
   listenPort: 51820
@@ -322,8 +271,6 @@ wireguard:
       publicKey: public-key
       endpoint: "127.0.0.1:51820"
       allowedIPs: ["10.20.0.2/32"]
-sync:
-  enabled: false
 `) + "\n"
 	}
 

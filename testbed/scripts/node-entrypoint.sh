@@ -9,10 +9,10 @@ fi
 CONFIG_PATH="$1"
 NODE_NAME="${NODE_NAME:-node}"
 CNI_NETWORK_NAME="${CNI_NETWORK_NAME:-mesh-cni}"
-CNI_SUBNET="${CNI_SUBNET:-10.200.0.0/24}"
-CNI_GATEWAY="${CNI_GATEWAY:-10.200.0.1}"
+CNI_SUBNET="${CNI_SUBNET:-fd00:200::/64}"
+CNI_GATEWAY="${CNI_GATEWAY:-fd00:200::1}"
 CNI_BRIDGE="${CNI_BRIDGE:-cni0}"
-MESH_ROUTE_CIDR="${MESH_ROUTE_CIDR:-10.200.0.0/14}"
+MESH_ROUTE_CIDR="${MESH_ROUTE_CIDR:-fd00:200::/48}"
 
 mkdir -p /run/containerd /var/lib/containerd /etc/containerd /etc/cni/net.d /var/log
 
@@ -40,7 +40,7 @@ cat >/etc/cni/net.d/10-mesh.conflist <<EOC
       "ipam": {
         "type": "host-local",
         "ranges": [[{ "subnet": "${CNI_SUBNET}", "gateway": "${CNI_GATEWAY}" }]],
-        "routes": [{ "dst": "0.0.0.0/0" }]
+        "routes": [{ "dst": "::/0" }]
       }
     },
     {
@@ -75,7 +75,7 @@ fi
 (
   for _ in $(seq 1 120); do
     if ip link show wg0 >/dev/null 2>&1; then
-      ip route replace "${MESH_ROUTE_CIDR}" dev wg0 || true
+      ip -6 route replace "${MESH_ROUTE_CIDR}" dev wg0 || true
       exit 0
     fi
     sleep 1

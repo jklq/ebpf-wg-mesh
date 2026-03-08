@@ -36,8 +36,9 @@ func FuzzValidate_NoPanic(f *testing.F) {
 				ListenPort: listenPort,
 				Addresses:  []string{address},
 			},
-			Sync: SyncConfig{
-				Enabled: false,
+			Containerd: ContainerdConfig{
+				ProjectLabel: "mesh.project_id",
+				IPv6Label:    "mesh.ipv6",
 			},
 		}
 		applyDefaults(&cfg)
