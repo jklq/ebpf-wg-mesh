@@ -30,6 +30,11 @@ type firewallContainerPolicy struct {
 	Ipv6      [16]uint8
 }
 
+type firewallHostIpValue struct {
+	_  structs.HostLayout
+	Ip [16]uint8
+}
+
 type firewallIdentityKey struct {
 	_         structs.HostLayout
 	Prefixlen uint32
@@ -39,7 +44,7 @@ type firewallIdentityKey struct {
 type firewallIdentityValue struct {
 	_           structs.HostLayout
 	ProjectId   uint32
-	HostIp      uint32
+	HostIp      [16]uint8
 	VethIfindex uint32
 }
 

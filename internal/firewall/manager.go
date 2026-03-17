@@ -43,7 +43,7 @@ type containerRuntime struct {
 }
 
 type Manager struct {
-	cfg           config.Config
+	cfg           config.MeshRuntimeConfig
 	objs          firewallObjects
 	wgIfindex     uint32
 	wgIngressLink link.Link
@@ -55,19 +55,19 @@ type Manager struct {
 	containers    map[string]*containerRuntime
 	staticByID    map[string]config.ContainerAssignment
 	seedByIP      map[[16]byte]firewallIdentityValue
-	localHostU32  uint32
+	localHostIP   [16]byte
 }
 
-func Start(ctx context.Context, cfg config.Config) (_ *Manager, retErr error) {
+func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	localHost, err := netip.ParseAddr(cfg.Host.IPv4)
-	if err != nil || !localHost.Is4() {
-		return nil, fmt.Errorf("parse host.ipv4 %q: %w", cfg.Host.IPv4, err)
+	localHost, err := netip.ParseAddr(cfg.Host.IPv6)
+	if err != nil || !localHost.Is6() {
+		return nil, fmt.Errorf("parse host.ipv6 %q: %w", cfg.Host.IPv6, err)
 	}
-	localHostU32 := nativeU32(localHost.AsSlice())
+	localHostIP := addrAs16(localHost)
 
 	wgIface, err := net.InterfaceByName(cfg.WireGuard.InterfaceName)
 	if err != nil {
@@ -108,7 +108,7 @@ func Start(ctx context.Context, cfg config.Config) (_ *Manager, retErr error) {
 	}()
 
 	zero := uint32(0)
-	if err := objs.LocalNodeMap.Put(zero, localHostU32); err != nil {
+	if err := objs.LocalNodeMap.Put(zero, localHostIP); err != nil {
 		return nil, fmt.Errorf("set local host map: %w", err)
 	}
 	seedByIP := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
@@ -117,15 +117,15 @@ func Start(ctx context.Context, cfg config.Config) (_ *Manager, retErr error) {
 		if err != nil || !seedIP.Is6() {
 			return nil, fmt.Errorf("parse containerd identity seed ip %q: %w", seed.IPv6, err)
 		}
-		hostIP, err := netip.ParseAddr(seed.HostIPv4)
-		if err != nil || !hostIP.Is4() {
-			return nil, fmt.Errorf("parse containerd identity seed host ip %q: %w", seed.HostIPv4, err)
+		hostIP, err := netip.ParseAddr(seed.HostIPv6)
+		if err != nil || !hostIP.Is6() {
+			return nil, fmt.Errorf("parse containerd identity seed host ip %q: %w", seed.HostIPv6, err)
 		}
 
 		seedIP16 := addrAs16(seedIP)
 		value := firewallIdentityValue{
 			ProjectId:   seed.ProjectID,
-			HostIp:      nativeU32(hostIP.AsSlice()),
+			HostIp:      addrAs16(hostIP),
 			VethIfindex: 0,
 		}
 		key := firewallIdentityKey{
@@ -206,7 +206,7 @@ func Start(ctx context.Context, cfg config.Config) (_ *Manager, retErr error) {
 		containers:    make(map[string]*containerRuntime),
 		staticByID:    staticByID,
 		seedByIP:      seedByIP,
-		localHostU32:  localHostU32,
+		localHostIP:   localHostIP,
 	}
 
 	cleanupObjs = false
@@ -384,7 +384,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 	identityValue := firewallIdentityValue{
 		ProjectId:   meta.projectID,
-		HostIp:      m.localHostU32,
+		HostIp:      m.localHostIP,
 		VethIfindex: ifKey,
 	}
 	if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
@@ -638,13 +638,6 @@ func resolveHostVethIfindexWithRetry(ctx context.Context, pid uint32, attempts i
 		}
 	}
 	return 0, lastErr
-}
-
-func nativeU32(b []byte) uint32 {
-	if len(b) < 4 {
-		return 0
-	}
-	return binary.NativeEndian.Uint32(b[:4])
 }
 
 func addrAs16(addr netip.Addr) [16]byte {
