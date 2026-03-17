@@ -32,8 +32,12 @@ struct identity_key {
 
 struct identity_value {
     __u32 project_id;
-    __be32 host_ip;
+    __u8 host_ip[16];
     __u32 veth_ifindex;
+};
+
+struct host_ip_value {
+    __u8 ip[16];
 };
 
 struct container_policy {
@@ -81,7 +85,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
     __type(key, __u32);
-    __type(value, __be32);
+    __type(value, struct host_ip_value);
 } local_node_map SEC(".maps");
 
 static __always_inline int ipv6_equal(const __u8 a[16], const __u8 b[16])
@@ -214,12 +218,12 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
         }
 
         __u32 zero = 0;
-        __be32 *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
+        struct host_ip_value *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
         if (!local_host) {
             return TC_ACT_SHOT;
         }
 
-        if (dst_identity->host_ip == *local_host && dst_identity->veth_ifindex != 0) {
+        if (ipv6_equal(dst_identity->host_ip, local_host->ip) && dst_identity->veth_ifindex != 0) {
             (void)bpf_skb_change_type(skb, PACKET_HOST);
             return bpf_redirect_peer(dst_identity->veth_ifindex, 0);
         }
@@ -267,11 +271,11 @@ static __always_inline int handle_wireguard_ingress(struct __sk_buff *skb)
     }
 
     __u32 zero = 0;
-    __be32 *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
+    struct host_ip_value *local_host = bpf_map_lookup_elem(&local_node_map, &zero);
     if (!local_host) {
         return TC_ACT_SHOT;
     }
-    if (dst_identity->host_ip != *local_host || dst_identity->veth_ifindex == 0) {
+    if (!ipv6_equal(dst_identity->host_ip, local_host->ip) || dst_identity->veth_ifindex == 0) {
         return TC_ACT_SHOT;
     }
 

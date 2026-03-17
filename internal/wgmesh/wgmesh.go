@@ -148,12 +148,6 @@ func buildAllowedIPs(p config.PeerConfig, ep *net.UDPAddr) ([]net.IPNet, error) 
 	if ep == nil || ep.IP == nil {
 		return nil, errors.New("endpoint ip is required when allowedIPs are omitted")
 	}
-	if v4 := ep.IP.To4(); v4 != nil {
-		return []net.IPNet{{
-			IP:   v4,
-			Mask: net.CIDRMask(32, 32),
-		}}, nil
-	}
 	if v6 := ep.IP.To16(); v6 != nil {
 		return []net.IPNet{{
 			IP:   v6,
