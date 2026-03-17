@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-if [[ $# -lt 1 ]]; then
-  echo "usage: $0 <config-path>" >&2
-  exit 1
-fi
-
-CONFIG_PATH="$1"
-NODE_NAME="${NODE_NAME:-node}"
 CNI_NETWORK_NAME="${CNI_NETWORK_NAME:-mesh-cni}"
 CNI_SUBNET="${CNI_SUBNET:-fd00:200::/64}"
 CNI_GATEWAY="${CNI_GATEWAY:-fd00:200::1}"
@@ -71,7 +63,6 @@ if ! ctr version >/dev/null 2>&1; then
   exit 1
 fi
 
-# Ensure mesh-bound workload ranges route through WireGuard once wg0 exists.
 (
   for _ in $(seq 1 120); do
     if ip link show wg0 >/dev/null 2>&1; then
@@ -82,4 +73,4 @@ fi
   done
 ) &
 
-exec /usr/local/bin/meshd -config "$CONFIG_PATH"
+exec /usr/local/bin/agent "$@"

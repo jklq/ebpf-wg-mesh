@@ -1,78 +1,83 @@
 services:
-  clustera-node1:
+  cockroach:
+    image: cockroachdb/cockroach:v26.1.0
+    command: ["start-single-node", "--insecure", "--advertise-addr=localhost", "--listen-addr=127.0.0.1:26257", "--sql-addr=0.0.0.0:26258", "--http-addr=0.0.0.0:8081"]
+    volumes:
+      - cockroach-data:/cockroach/cockroach-data
+    networks:
+      underlay:
+        ipv6_address: ${TESTBED_COCKROACH_UNDERLAY_IP:-fd00:30::30}
+    healthcheck:
+      test: ["CMD-SHELL", "cockroach sql --insecure --host=127.0.0.1:26258 --execute='select 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  controlplane:
     build:
       context: ..
       dockerfile: testbed/Dockerfile
-    image: ebof-wg-mesh-node:latest
-    container_name: mesh-clustera-node1
-    privileged: true
-    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
-    command: ["/config/clustera-node1.yaml"]
+    image: ebof-wg-mesh-dev:latest
+    command: ["-lc", "/usr/local/bin/controlplane -bootstrap-user demo-user:demo@example.com:demo"]
     environment:
-      NODE_NAME: clustera-node1
-      CNI_NETWORK_NAME: mesh-cni
-      CNI_SUBNET: fd00:200:1::/64
-      CNI_GATEWAY: fd00:200:1::1
-      MESH_ROUTE_CIDR: fd00:201::/48
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv6.conf.all.forwarding: "1"
-      net.ipv4.conf.all.rp_filter: "0"
-      net.ipv4.conf.default.rp_filter: "0"
+      CONTROLPLANE_PUBLIC_LISTEN: 0.0.0.0:8080
+      CONTROLPLANE_INTERNAL_SERVER_NAMES: controlplane,controlplane-internal,localhost
+      CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS: dev-bootstrap-token
+      CONTROLPLANE_DB_URL: postgresql://root@cockroach:26258/defaultdb?sslmode=disable&application_name=controlplane
+      CONTROLPLANE_STATE_DIR: /var/lib/platform
+      CONTROLPLANE_OIDC_ISSUER: https://platform.local
+      CONTROLPLANE_OIDC_AUDIENCE: platform
+      CONTROLPLANE_OIDC_JWKS_URL: /config/jwks.json
+      CONTROLPLANE_OIDC_ALLOWED_EMAIL_DOMAIN: example.com
+      CONTROLPLANE_INGRESS_ADMIN_URL: http://caddy:2019/load
+      CONTROLPLANE_INGRESS_PUBLIC_ADDR: platform.local
+      CONTROLPLANE_INGRESS_CONTROLPLANE_UPSTREAM: controlplane:8080
     volumes:
-      - ./config/clustera-node1.yaml:/config/clustera-node1.yaml:ro
+      - ${TESTBED_JWKS_PATH:-./config/jwks.json}:/config/jwks.json:ro
       - ./scripts:/testbed/scripts:ro
+      - controlplane-data:/var/lib/platform
     networks:
       underlay:
-        ipv4_address: 172.30.0.11
-    healthcheck:
-      test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
-      interval: 5s
-      timeout: 3s
-      retries: 40
-
-  clustera-node2:
-    image: ebof-wg-mesh-node:latest
-    container_name: mesh-clustera-node2
-    privileged: true
-    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
-    command: ["/config/clustera-node2.yaml"]
-    environment:
-      NODE_NAME: clustera-node2
-      CNI_NETWORK_NAME: mesh-cni
-      CNI_SUBNET: fd00:200:2::/64
-      CNI_GATEWAY: fd00:200:2::1
-      MESH_ROUTE_CIDR: fd00:201::/48
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv6.conf.all.forwarding: "1"
-      net.ipv4.conf.all.rp_filter: "0"
-      net.ipv4.conf.default.rp_filter: "0"
-    volumes:
-      - ./config/clustera-node2.yaml:/config/clustera-node2.yaml:ro
-      - ./scripts:/testbed/scripts:ro
-    networks:
-      underlay:
-        ipv4_address: 172.30.0.12
-    healthcheck:
-      test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
-      interval: 5s
-      timeout: 3s
-      retries: 40
+        ipv6_address: ${TESTBED_CONTROLPLANE_UNDERLAY_IP:-fd00:30::10}
     depends_on:
-      - clustera-node1
+      caddy:
+        condition: service_started
+      cockroach:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 && nc -z 127.0.0.1 9443"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
 
-  clusterb-node1:
-    image: ebof-wg-mesh-node:latest
-    container_name: mesh-clusterb-node1
+  caddy:
+    image: caddy:2.10.2
+    command: ["caddy", "run", "--config", "/etc/caddy/devstack.json"]
+    volumes:
+      - ./config/caddy.json:/etc/caddy/devstack.json:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "127.0.0.1:${TESTBED_CADDY_HTTP_PORT:-8080}:80"
+      - "127.0.0.1:${TESTBED_CADDY_HTTPS_PORT:-8444}:443"
+    networks:
+      underlay:
+        ipv6_address: ${TESTBED_CADDY_UNDERLAY_IP:-fd00:30::20}
+
+  agent-node1:
+    image: ebof-wg-mesh-dev:latest
     privileged: true
-    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
-    command: ["/config/clusterb-node1.yaml"]
+    hostname: agent-node1
+    command: ["-lc", "/testbed/scripts/agent-entrypoint.sh"]
     environment:
-      NODE_NAME: clusterb-node1
+      AGENT_CONTROLPLANE_ADDRESS: controlplane:9443
+      AGENT_CA_FILE: /controlplane-state/pki/ca.crt
+      AGENT_SERVER_NAME: controlplane
+      AGENT_BOOTSTRAP_TOKEN: dev-bootstrap-token
+      AGENT_DATA_DIR: /var/lib/platform-agent
       CNI_NETWORK_NAME: mesh-cni
-      CNI_SUBNET: fd00:201:1::/64
-      CNI_GATEWAY: fd00:201:1::1
+      CNI_SUBNET: fd00:200:0:1::/64
+      CNI_GATEWAY: fd00:200:0:1::1
       MESH_ROUTE_CIDR: fd00:200::/48
     sysctls:
       net.ipv4.ip_forward: "1"
@@ -80,30 +85,35 @@ services:
       net.ipv4.conf.all.rp_filter: "0"
       net.ipv4.conf.default.rp_filter: "0"
     volumes:
-      - ./config/clusterb-node1.yaml:/config/clusterb-node1.yaml:ro
+      - controlplane-data:/controlplane-state:ro
       - ./scripts:/testbed/scripts:ro
+      - agent-node1-data:/var/lib/platform-agent
     networks:
       underlay:
-        ipv4_address: 172.30.0.13
+        ipv6_address: ${TESTBED_AGENT1_UNDERLAY_IP:-fd00:30::11}
     healthcheck:
       test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
       interval: 5s
       timeout: 3s
       retries: 40
     depends_on:
-      - clustera-node1
+      controlplane:
+        condition: service_healthy
 
-  clusterb-node2:
-    image: ebof-wg-mesh-node:latest
-    container_name: mesh-clusterb-node2
+  agent-node2:
+    image: ebof-wg-mesh-dev:latest
     privileged: true
-    entrypoint: ["/testbed/scripts/node-entrypoint.sh"]
-    command: ["/config/clusterb-node2.yaml"]
+    hostname: agent-node2
+    command: ["-lc", "/testbed/scripts/agent-entrypoint.sh"]
     environment:
-      NODE_NAME: clusterb-node2
+      AGENT_CONTROLPLANE_ADDRESS: controlplane:9443
+      AGENT_CA_FILE: /controlplane-state/pki/ca.crt
+      AGENT_SERVER_NAME: controlplane
+      AGENT_BOOTSTRAP_TOKEN: dev-bootstrap-token
+      AGENT_DATA_DIR: /var/lib/platform-agent
       CNI_NETWORK_NAME: mesh-cni
-      CNI_SUBNET: fd00:201:2::/64
-      CNI_GATEWAY: fd00:201:2::1
+      CNI_SUBNET: fd00:200:0:2::/64
+      CNI_GATEWAY: fd00:200:0:2::1
       MESH_ROUTE_CIDR: fd00:200::/48
     sysctls:
       net.ipv4.ip_forward: "1"
@@ -111,22 +121,33 @@ services:
       net.ipv4.conf.all.rp_filter: "0"
       net.ipv4.conf.default.rp_filter: "0"
     volumes:
-      - ./config/clusterb-node2.yaml:/config/clusterb-node2.yaml:ro
+      - controlplane-data:/controlplane-state:ro
       - ./scripts:/testbed/scripts:ro
+      - agent-node2-data:/var/lib/platform-agent
     networks:
       underlay:
-        ipv4_address: 172.30.0.14
+        ipv6_address: ${TESTBED_AGENT2_UNDERLAY_IP:-fd00:30::12}
     healthcheck:
       test: ["CMD-SHELL", "ctr version >/dev/null 2>&1 && ip link show wg0 | grep -q UP"]
       interval: 5s
       timeout: 3s
       retries: 40
     depends_on:
-      - clustera-node1
+      controlplane:
+        condition: service_healthy
 
 networks:
   underlay:
     driver: bridge
+    enable_ipv6: true
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${TESTBED_UNDERLAY_SUBNET:-fd00:30::/64}
+
+volumes:
+  cockroach-data:
+  controlplane-data:
+  agent-node1-data:
+  agent-node2-data:
+  caddy-data:
+  caddy-config:
