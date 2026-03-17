@@ -1,0 +1,194 @@
+syntax = "proto3";
+
+package platform.v1;
+
+option go_package = "ebof-wg-mesh/api/proto/platformv1;platformv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+message Project {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message HealthCheck {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_HTTP = 1;
+    TYPE_TCP = 2;
+  }
+
+  Type type = 1;
+  string path = 2;
+  int32 port = 3;
+  int32 interval_seconds = 4;
+  int32 timeout_seconds = 5;
+}
+
+message ServiceSpec {
+  string image = 1;
+  repeated string command = 2;
+  repeated string args = 3;
+  map<string, string> env = 4;
+  int64 cpu_millis = 5;
+  int64 memory_mebibytes = 6;
+  int32 container_port = 7;
+  HealthCheck health_check = 8;
+  string volume_name = 9;
+}
+
+message Service {
+  string id = 1;
+  string project_id = 2;
+  string name = 3;
+  ServiceSpec spec = 4;
+  int64 current_revision = 5;
+  string allocated_agent_id = 6;
+  repeated string domains = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message Volume {
+  string id = 1;
+  string project_id = 2;
+  string name = 3;
+  int64 size_bytes = 4;
+  string bound_agent_id = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message Agent {
+  string id = 1;
+  string name = 2;
+  string advertise_addr = 3;
+  bool healthy = 4;
+  int64 cpu_millis_capacity = 5;
+  int64 memory_mebibytes_capacity = 6;
+  google.protobuf.Timestamp last_seen_at = 7;
+}
+
+message AllocationStatus {
+  string allocation_id = 1;
+  string service_id = 2;
+  string agent_id = 3;
+  int64 desired_revision = 4;
+  int64 applied_revision = 5;
+  string phase = 6;
+  string message = 7;
+  string endpoint_addr = 8;
+  bool healthy = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message ServiceStatus {
+  Service service = 1;
+  AllocationStatus allocation = 2;
+}
+
+message CreateProjectRequest {
+  string name = 1;
+}
+
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+
+message GetProjectRequest {
+  string project_id = 1;
+}
+
+message CreateServiceRequest {
+  string project_id = 1;
+  string name = 2;
+  ServiceSpec spec = 3;
+  repeated string domains = 4;
+}
+
+message UpdateServiceRequest {
+  string project_id = 1;
+  string service_id = 2;
+  ServiceSpec spec = 3;
+  repeated string domains = 4;
+}
+
+message DeleteServiceRequest {
+  string project_id = 1;
+  string service_id = 2;
+}
+
+message GetServiceRequest {
+  string project_id = 1;
+  string service_id = 2;
+}
+
+message ListServicesRequest {
+  string project_id = 1;
+}
+
+message ListServicesResponse {
+  repeated Service services = 1;
+}
+
+message CreateVolumeRequest {
+  string project_id = 1;
+  string name = 2;
+  int64 size_bytes = 3;
+}
+
+message DeleteVolumeRequest {
+  string project_id = 1;
+  string volume_id = 2;
+}
+
+message ListVolumesRequest {
+  string project_id = 1;
+}
+
+message ListVolumesResponse {
+  repeated Volume volumes = 1;
+}
+
+message UpsertDomainRequest {
+  string project_id = 1;
+  string service_id = 2;
+  string domain = 3;
+}
+
+message DeleteDomainRequest {
+  string project_id = 1;
+  string domain = 2;
+}
+
+message GetServiceStatusRequest {
+  string project_id = 1;
+  string service_id = 2;
+}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+}
+
+service PlatformService {
+  rpc CreateProject(CreateProjectRequest) returns (Project);
+  rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
+  rpc GetProject(GetProjectRequest) returns (Project);
+
+  rpc CreateService(CreateServiceRequest) returns (Service);
+  rpc UpdateService(UpdateServiceRequest) returns (Service);
+  rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
+  rpc GetService(GetServiceRequest) returns (Service);
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+
+  rpc CreateVolume(CreateVolumeRequest) returns (Volume);
+  rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty);
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+
+  rpc UpsertDomain(UpsertDomainRequest) returns (Service);
+  rpc DeleteDomain(DeleteDomainRequest) returns (google.protobuf.Empty);
+
+  rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
+  rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
+}

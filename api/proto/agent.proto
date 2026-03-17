@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package agent.v1;
+
+option go_package = "ebof-wg-mesh/api/proto/agentv1;agentv1";
+
+import "google/protobuf/timestamp.proto";
+import "platform.proto";
+
+message AgentHello {
+  string agent_id = 1;
+  string name = 2;
+  string advertise_addr = 3;
+  int64 cpu_millis_capacity = 4;
+  int64 memory_mebibytes_capacity = 5;
+  string wireguard_public_key = 6;
+  int32 wireguard_listen_port = 7;
+}
+
+message EnrollRequest {
+  string agent_id = 1;
+  string csr_pem = 2;
+  string bootstrap_token = 3;
+}
+
+message EnrollResponse {
+  string cert_pem = 1;
+  string ca_pem = 2;
+  google.protobuf.Timestamp not_after = 3;
+}
+
+message WireGuardPeer {
+  string agent_id = 1;
+  string name = 2;
+  string public_key = 3;
+  string endpoint = 4;
+  repeated string allowed_ips = 5;
+  int32 persistent_keepalive_seconds = 6;
+}
+
+message AssignedNodeConfig {
+  string workload_ipv6_subnet = 1;
+  string wireguard_interface_name = 2;
+  repeated string wireguard_addresses = 3;
+  int32 wireguard_listen_port = 4;
+  repeated WireGuardPeer peers = 5;
+}
+
+message AgentHeartbeat {
+  string agent_id = 1;
+}
+
+message DesiredVolume {
+  string volume_id = 1;
+  string project_id = 2;
+  string name = 3;
+  int64 size_bytes = 4;
+}
+
+message DesiredService {
+  string allocation_id = 1;
+  string service_id = 2;
+  string project_id = 3;
+  string name = 4;
+  int64 desired_revision = 5;
+  platform.v1.ServiceSpec spec = 6;
+  string private_ipv6 = 7;
+  string volume_id = 8;
+}
+
+message DesiredNodeState {
+  string agent_id = 1;
+  int64 revision = 2;
+  repeated DesiredVolume volumes = 3;
+  repeated DesiredService services = 4;
+  google.protobuf.Timestamp generated_at = 5;
+  AssignedNodeConfig node_config = 6;
+}
+
+message VolumeCondition {
+  string volume_id = 1;
+  string phase = 2;
+  string message = 3;
+}
+
+message ServiceCondition {
+  string allocation_id = 1;
+  string service_id = 2;
+  int64 desired_revision = 3;
+  int64 applied_revision = 4;
+  string phase = 5;
+  string message = 6;
+  string endpoint_addr = 7;
+  bool healthy = 8;
+}
+
+message StatusReport {
+  string agent_id = 1;
+  repeated VolumeCondition volumes = 2;
+  repeated ServiceCondition services = 3;
+}
+
+message AgentClientMessage {
+  oneof payload {
+    AgentHello hello = 1;
+    AgentHeartbeat heartbeat = 2;
+    StatusReport status_report = 3;
+  }
+}
+
+message AgentServerMessage {
+  oneof payload {
+    DesiredNodeState desired_state = 1;
+  }
+}
+
+service AgentControl {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc Sync(stream AgentClientMessage) returns (stream AgentServerMessage);
+}

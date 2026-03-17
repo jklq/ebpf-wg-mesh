@@ -11,7 +11,7 @@ import (
 
 type Manager struct{}
 
-func Start(_ context.Context, _ config.Config) (*Manager, error) {
+func Start(_ context.Context, _ config.MeshRuntimeConfig) (*Manager, error) {
 	return nil, errors.New("firewall runtime requires linux")
 }
 

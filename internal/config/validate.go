@@ -1,0 +1,197 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"strings"
+)
+
+func validateControlPlane(cfg ControlPlaneConfig) error {
+	if cfg.PublicHTTP.Listen == "" {
+		return errors.New("controlplane.publicHttp.listen is required")
+	}
+	if cfg.InternalGRPC.Listen == "" {
+		return errors.New("controlplane.internalGrpc.listen is required")
+	}
+	if err := validateServerTLS("controlplane.internalGrpc.tls", cfg.InternalGRPC.TLS); err != nil {
+		return err
+	}
+	if cfg.Database.URL == "" {
+		return errors.New("controlplane.database.url is required")
+	}
+	if cfg.StateDir == "" {
+		return errors.New("controlplane.stateDir is required")
+	}
+	if cfg.OIDC.Issuer == "" {
+		return errors.New("controlplane.oidc.issuer is required")
+	}
+	if cfg.OIDC.Audience == "" {
+		return errors.New("controlplane.oidc.audience is required")
+	}
+	if cfg.OIDC.JWKSURL == "" {
+		return errors.New("controlplane.oidc.jwksUrl is required")
+	}
+	if cfg.Ingress.PublicAddr == "" {
+		return errors.New("controlplane.ingress.publicAddr is required")
+	}
+	if cfg.Ingress.ControlPlaneHTTPUpstream == "" {
+		return errors.New("controlplane.ingress.controlPlaneHttpUpstream is required")
+	}
+	if cfg.Mesh.InterfaceName == "" {
+		return errors.New("controlplane.mesh.interfaceName is required")
+	}
+	if cfg.Mesh.ListenPort <= 0 || cfg.Mesh.ListenPort > 65535 {
+		return errors.New("controlplane.mesh.listenPort must be 1-65535")
+	}
+	if err := validateCIDR("controlplane.mesh.networkCidr", cfg.Mesh.NetworkCIDR, 64); err != nil {
+		return err
+	}
+	if err := validateCIDR("controlplane.mesh.workloadPoolCidr", cfg.Mesh.WorkloadPoolCIDR, 48); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAgent(cfg AgentConfig) error {
+	if cfg.Node.ID == "" {
+		return errors.New("agent.node.id is required")
+	}
+	if cfg.Node.Name == "" {
+		return errors.New("agent.node.name is required")
+	}
+	if cfg.Node.AdvertiseAddr == "" {
+		return errors.New("agent.node.advertiseAddr is required")
+	}
+	if ip := net.ParseIP(cfg.Node.AdvertiseAddr); ip == nil || !isIPv6(ip) {
+		return fmt.Errorf("agent.node.advertiseAddr must be IPv6: %q", cfg.Node.AdvertiseAddr)
+	}
+	if cfg.Node.Resources.CPUMillis <= 0 {
+		return errors.New("agent.node.resources.cpuMillis must be greater than 0")
+	}
+	if cfg.Node.Resources.MemoryMebibytes <= 0 {
+		return errors.New("agent.node.resources.memoryMebibytes must be greater than 0")
+	}
+	if cfg.ControlPlane.Address == "" {
+		return errors.New("agent.controlPlane.address is required")
+	}
+	if err := validateClientTLS("agent.controlPlane.tls", cfg.ControlPlane.TLS); err != nil {
+		return err
+	}
+	if cfg.Mesh.Host.IPv6 == "" {
+		return errors.New("agent.mesh.host.ipv6 is required")
+	}
+	ip := net.ParseIP(cfg.Mesh.Host.IPv6)
+	if !isIPv6(ip) {
+		return fmt.Errorf("agent.mesh.host.ipv6 must be IPv6: %q", cfg.Mesh.Host.IPv6)
+	}
+	for _, seed := range cfg.Containerd.IdentitySeeds {
+		if ip := net.ParseIP(seed.IPv6); !isIPv6(ip) {
+			return fmt.Errorf("agent.containerd.identitySeeds ipv6 must be IPv6: %q", seed.IPv6)
+		}
+		if ip := net.ParseIP(seed.HostIPv6); !isIPv6(ip) {
+			return fmt.Errorf("agent.containerd.identitySeeds hostIpv6 must be IPv6: %q", seed.HostIPv6)
+		}
+	}
+	for _, assignment := range cfg.Containerd.StaticAssignments {
+		if ip := net.ParseIP(assignment.IPv6); !isIPv6(ip) {
+			return fmt.Errorf("agent.containerd.staticAssignments ipv6 must be IPv6: %q", assignment.IPv6)
+		}
+	}
+	if cfg.Mesh.WireGuard.ListenPort <= 0 || cfg.Mesh.WireGuard.ListenPort > 65535 {
+		return errors.New("agent.mesh.wireguard.listenPort must be 1-65535")
+	}
+	for _, cidr := range cfg.Mesh.WireGuard.Addresses {
+		if ip, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("invalid agent.mesh.wireguard address %q: %w", cidr, err)
+		} else if !isIPv6(ip) {
+			return fmt.Errorf("agent.mesh.wireguard.addresses must be IPv6 CIDRs: %q", cidr)
+		}
+	}
+	for _, peer := range cfg.Mesh.WireGuard.Peers {
+		if strings.TrimSpace(peer.PublicKey) == "" {
+			return fmt.Errorf("agent.mesh.wireguard peer %q missing publicKey", peer.Name)
+		}
+		if strings.TrimSpace(peer.Endpoint) == "" {
+			return fmt.Errorf("agent.mesh.wireguard peer %q missing endpoint", peer.Name)
+		}
+		if err := validateIPv6Endpoint(peer.Endpoint); err != nil {
+			return fmt.Errorf("agent.mesh.wireguard peer %q invalid endpoint: %w", peer.Name, err)
+		}
+		for _, cidr := range peer.AllowedIPs {
+			if ip, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("agent.mesh.wireguard peer %q invalid allowed IP %q: %w", peer.Name, cidr, err)
+			} else if !isIPv6(ip) {
+				return fmt.Errorf("agent.mesh.wireguard peer %q allowedIPs must be IPv6 CIDRs: %q", peer.Name, cidr)
+			}
+		}
+	}
+	return nil
+}
+
+func validateCIDR(field string, raw string, prefixBits int) error {
+	ip, network, err := net.ParseCIDR(raw)
+	if err != nil || network == nil {
+		return fmt.Errorf("%s must be a valid IPv6 CIDR: %q", field, raw)
+	}
+	if !isIPv6(ip) {
+		return fmt.Errorf("%s must be IPv6: %q", field, raw)
+	}
+	ones, bits := network.Mask.Size()
+	if bits != 128 || ones != prefixBits {
+		return fmt.Errorf("%s must be an IPv6 /%d CIDR: %q", field, prefixBits, raw)
+	}
+	return nil
+}
+
+func isIPv6(ip net.IP) bool {
+	return ip != nil && ip.To4() == nil && ip.To16() != nil
+}
+
+func validateIPv6Endpoint(raw string) error {
+	host, _, err := net.SplitHostPort(raw)
+	if err != nil {
+		return err
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return err
+	}
+	if !addr.Is6() {
+		return fmt.Errorf("host must be IPv6: %q", host)
+	}
+	return nil
+}
+
+func validateServerTLS(prefix string, cfg ServerTLSConfig) error {
+	if len(cfg.ServerNames) == 0 {
+		return fmt.Errorf("%s.serverNames must include at least one name", prefix)
+	}
+	if len(cfg.BootstrapTokens) == 0 {
+		return fmt.Errorf("%s.bootstrapTokens must include at least one token", prefix)
+	}
+	if cfg.ServerCertValidityHours <= 0 {
+		return fmt.Errorf("%s.serverCertValidityHours must be greater than 0", prefix)
+	}
+	if cfg.ClientCertValidityHours <= 0 {
+		return fmt.Errorf("%s.clientCertValidityHours must be greater than 0", prefix)
+	}
+	return nil
+}
+
+func validateClientTLS(prefix string, cfg ClientTLSConfig) error {
+	if cfg.CAFile == "" {
+		return fmt.Errorf("%s.caFile is required", prefix)
+	}
+	if cfg.ServerName == "" {
+		return fmt.Errorf("%s.serverName is required", prefix)
+	}
+	if cfg.BootstrapToken == "" {
+		return fmt.Errorf("%s.bootstrapToken is required", prefix)
+	}
+	if cfg.RenewBeforeMinutes <= 0 {
+		return fmt.Errorf("%s.renewBeforeMinutes must be greater than 0", prefix)
+	}
+	return nil
+}
