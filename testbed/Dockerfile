@@ -12,7 +12,8 @@ RUN go mod download
 
 COPY . .
 RUN go generate ./internal/firewall
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/meshd ./cmd/meshd
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/controlplane ./cmd/controlplane
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agent ./cmd/agent
 RUN CGO_ENABLED=0 GOOS=linux go install github.com/containerd/nerdctl/cmd/nerdctl@v1.7.7
 
 FROM debian:bookworm-slim
@@ -28,13 +29,15 @@ RUN apt-get update \
     iputils-ping \
     netcat-openbsd \
     procps \
+    openssl \
     python3 \
     runc \
     tcpdump \
     wireguard-tools \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /out/meshd /usr/local/bin/meshd
+COPY --from=build /out/controlplane /usr/local/bin/controlplane
+COPY --from=build /out/agent /usr/local/bin/agent
 COPY --from=build /go/bin/nerdctl /usr/local/bin/nerdctl
 WORKDIR /app
-ENTRYPOINT ["/usr/local/bin/meshd"]
+ENTRYPOINT ["/bin/sh"]
