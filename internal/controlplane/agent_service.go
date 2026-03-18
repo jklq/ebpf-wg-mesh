@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 
@@ -17,20 +18,21 @@ type AgentService struct {
 	notifier  *Notifier
 	ingress   *IngressSyncer
 	authority *TLSAuthority
+	dashboard *ManagedDashboardReconciler
 }
 
-func NewAgentService(store *Store, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority) *AgentService {
-	return &AgentService{store: store, notifier: notifier, ingress: ingress, authority: authority}
+func NewAgentService(store *Store, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority, dashboard *ManagedDashboardReconciler) *AgentService {
+	return &AgentService{store: store, notifier: notifier, ingress: ingress, authority: authority, dashboard: dashboard}
 }
 
 func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
-	peerAgentID, authenticated, err := authenticatedAgentIDFromContext(ctx)
+	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
 	}
 	allowBootstrap := true
 	if authenticated {
-		if peerAgentID != req.GetAgentId() {
+		if caller.ID != req.GetAgentId() {
 			return nil, status.Error(codes.PermissionDenied, "client certificate does not match agent_id")
 		}
 		allowBootstrap = false
@@ -53,14 +55,14 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if hello == nil {
 		return status.Error(codes.InvalidArgument, "first message must be hello")
 	}
-	peerAgentID, authenticated, err := authenticatedAgentIDFromContext(ctx)
+	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
 	if err != nil {
 		return status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
 	}
 	if !authenticated {
 		return status.Error(codes.Unauthenticated, "client certificate is required")
 	}
-	if peerAgentID != hello.GetAgentId() {
+	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
 	}
 	changed, err := s.store.upsertAgent(ctx, hello)
@@ -70,6 +72,11 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if changed {
 		if _, err := s.store.nextDesiredRevision(ctx); err != nil {
 			return status.Errorf(codes.Internal, "advance desired revision: %v", err)
+		}
+		if s.dashboard != nil {
+			if err := s.dashboard.Reconcile(ctx); err != nil && !errors.Is(err, errNoPlacementAvailable) {
+				slog.Warn("dashboard reconcile failed after agent change", "agent_id", hello.AgentId, "error", err)
+			}
 		}
 	}
 	slog.Info("agent connected", "agent_id", hello.AgentId, "name", hello.Name)

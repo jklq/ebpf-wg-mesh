@@ -6,14 +6,24 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
+type projectKind string
+
+const (
+	projectKindUser    projectKind = "user"
+	projectKindManaged projectKind = "managed"
+)
+
 type userRecord struct {
-	Subject string
-	Email   string
+	Subject   string
+	Email     string
+	CreatedAt time.Time
 }
 
 type projectRecord struct {
 	ID        string
 	Name      string
+	Kind      projectKind
+	SystemKey string
 	CreatedAt time.Time
 }
 

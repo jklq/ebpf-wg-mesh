@@ -11,6 +11,25 @@ func toProtoProject(rec projectRecord) *platformv1.Project {
 		Id:        rec.ID,
 		Name:      rec.Name,
 		CreatedAt: ts(rec.CreatedAt),
+		Kind:      toProtoProjectKind(rec.Kind),
+		SystemKey: rec.SystemKey,
+	}
+}
+
+func toProtoPrincipal(rec userRecord) *platformv1.Principal {
+	return &platformv1.Principal{
+		Subject:   rec.Subject,
+		Email:     rec.Email,
+		CreatedAt: ts(rec.CreatedAt),
+	}
+}
+
+func toProtoProjectKind(kind projectKind) platformv1.ProjectKind {
+	switch kind {
+	case projectKindManaged:
+		return platformv1.ProjectKind_PROJECT_KIND_MANAGED
+	default:
+		return platformv1.ProjectKind_PROJECT_KIND_USER
 	}
 }
 

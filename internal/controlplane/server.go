@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 
 	"google.golang.org/grpc"
@@ -21,6 +23,7 @@ type Server struct {
 	publicHTTP   *http.Server
 	internalGRPC *grpc.Server
 	ingress      *IngressSyncer
+	dashboard    *ManagedDashboardReconciler
 	publicLn     net.Listener
 	internalLn   net.Listener
 }
@@ -34,12 +37,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	notifier := NewNotifier()
-	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, cfg.Ingress.PublicAddr, cfg.Ingress.ControlPlaneHTTPUpstream, store)
+	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store)
 	scheduler := NewScheduler(store)
-	validator, err := NewValidator(cfg.OIDC)
-	if err != nil {
-		return nil, err
-	}
 	authority, err := NewTLSAuthority(cfg)
 	if err != nil {
 		return nil, err
@@ -50,9 +49,16 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 
 	platformService := NewPlatformService(store, scheduler, notifier, ingress)
-	publicHTTP := &http.Server{Handler: NewHTTPAPIHandler(validator, platformService)}
-	internal := grpc.NewServer(grpc.Creds(internalCreds))
-	agentv1.RegisterAgentControlServer(internal, NewAgentService(store, notifier, ingress, authority))
+	authz := NewInternalAuth()
+	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Database, store, authority, ingress)
+	publicHTTP := &http.Server{Handler: NewOpsHandler()}
+	internal := grpc.NewServer(
+		grpc.Creds(internalCreds),
+		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
+	)
+	agentv1.RegisterAgentControlServer(internal, NewAgentService(store, notifier, ingress, authority, dashboard))
+	platformv1.RegisterPlatformServiceServer(internal, platformService)
 
 	publicLn, err := net.Listen("tcp", cfg.PublicHTTP.Listen)
 	if err != nil {
@@ -71,12 +77,18 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		publicHTTP:   publicHTTP,
 		internalGRPC: internal,
 		ingress:      ingress,
+		dashboard:    dashboard,
 		publicLn:     publicLn,
 		internalLn:   internalLn,
 	}, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if s.dashboard != nil {
+		if err := s.dashboard.Reconcile(ctx); err != nil && !errors.Is(err, errNoPlacementAvailable) {
+			slog.Warn("initial managed dashboard reconcile failed", "error", err)
+		}
+	}
 	errCh := make(chan error, 2)
 	go func() {
 		errCh <- serveHTTP(s.publicHTTP, s.publicLn)
