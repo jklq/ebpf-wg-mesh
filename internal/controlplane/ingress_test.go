@@ -33,8 +33,11 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1", []string{"demo.example.com"})
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "demo.example.com", service.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10:8080"); err != nil {
@@ -78,8 +81,11 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	serviceA, err := store.createService(ctx, "user-1", projects[0].ID, "web-a", serviceSpec(), "node-1", []string{"a.example.com"})
+	serviceA, err := store.createService(ctx, "user-1", projects[0].ID, "web-a", serviceSpec(), "node-1")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "a.example.com", serviceA.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10:8080"); err != nil {
@@ -100,8 +106,11 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 
 	<-transport.firstStarted
 
-	serviceB, err := store.createService(ctx, "user-1", projects[0].ID, "web-b", serviceSpec(), "node-1", []string{"b.example.com"})
+	serviceB, err := store.createService(ctx, "user-1", projects[0].ID, "web-b", serviceSpec(), "node-1")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "b.example.com", serviceB.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11:8080"); err != nil {

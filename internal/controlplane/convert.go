@@ -35,15 +35,25 @@ func toProtoProjectKind(kind projectKind) platformv1.ProjectKind {
 
 func toProtoService(rec serviceRecord) *platformv1.Service {
 	return &platformv1.Service{
-		Id:               rec.ID,
-		ProjectId:        rec.ProjectID,
-		Name:             rec.Name,
-		Spec:             rec.Spec,
-		CurrentRevision:  rec.CurrentRevision,
-		AllocatedAgentId: rec.AllocatedAgentID,
-		Domains:          rec.Domains,
-		CreatedAt:        ts(rec.CreatedAt),
-		UpdatedAt:        ts(rec.UpdatedAt),
+		Id:                rec.ID,
+		ProjectId:         rec.ProjectID,
+		Name:              rec.Name,
+		Spec:              rec.Spec,
+		SpecRevision:      rec.SpecRevision,
+		AllocatedAgentId:  rec.AllocatedAgentID,
+		CreatedAt:         ts(rec.CreatedAt),
+		UpdatedAt:         ts(rec.UpdatedAt),
+		RolloutGeneration: rec.RolloutGeneration,
+	}
+}
+
+func toProtoDomainBinding(rec domainBindingRecord) *platformv1.DomainBinding {
+	return &platformv1.DomainBinding{
+		Hostname:  rec.Hostname,
+		ProjectId: rec.ProjectID,
+		ServiceId: rec.ServiceID,
+		CreatedAt: ts(rec.CreatedAt),
+		UpdatedAt: ts(rec.UpdatedAt),
 	}
 }
 
@@ -72,15 +82,17 @@ func toProtoAgent(rec agentRecord) *platformv1.Agent {
 
 func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 	return &platformv1.AllocationStatus{
-		AllocationId:    rec.ID,
-		ServiceId:       rec.ServiceID,
-		AgentId:         rec.AgentID,
-		DesiredRevision: rec.DesiredRevision,
-		AppliedRevision: rec.AppliedRevision,
-		Phase:           rec.Phase,
-		Message:         rec.Message,
-		EndpointAddr:    rec.EndpointAddr,
-		Healthy:         rec.Healthy,
-		UpdatedAt:       ts(rec.UpdatedAt),
+		AllocationId:             rec.ID,
+		ServiceId:                rec.ServiceID,
+		AgentId:                  rec.AgentID,
+		DesiredSpecRevision:      rec.DesiredSpecRevision,
+		AppliedSpecRevision:      rec.AppliedSpecRevision,
+		Phase:                    rec.Phase,
+		Message:                  rec.Message,
+		EndpointAddr:             rec.EndpointAddr,
+		Healthy:                  rec.Healthy,
+		UpdatedAt:                ts(rec.UpdatedAt),
+		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
+		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
 	}
 }

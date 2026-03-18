@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -20,6 +19,7 @@ var (
 	errVolumeNotFound      = errors.New("volume not found")
 	errVolumeAgentMismatch = errors.New("volume bound to different agent")
 	errConcurrentUpdate    = errors.New("concurrent service update")
+	errDomainAlreadyExists = errors.New("domain binding already exists")
 )
 
 type serviceQueryer interface {
@@ -28,22 +28,59 @@ type serviceQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func sortedDomains(domains []string) []string {
-	out := append([]string(nil), domains...)
-	sort.Strings(out)
+func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec {
+	if spec == nil {
+		return nil
+	}
+	out := proto.Clone(spec).(*platformv1.ServiceSpec)
+	if len(out.Command) == 0 {
+		out.Command = nil
+	}
+	if len(out.Args) == 0 {
+		out.Args = nil
+	}
+	if len(out.Env) == 0 {
+		out.Env = nil
+	}
+	if hc := out.GetHealthCheck(); hc != nil &&
+		hc.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED &&
+		hc.GetPath() == "" &&
+		hc.GetPort() == 0 &&
+		hc.GetIntervalSeconds() == 0 &&
+		hc.GetTimeoutSeconds() == 0 {
+		out.HealthCheck = nil
+	}
 	return out
 }
 
-func sameDomains(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+func sameServiceSpec(a, b *platformv1.ServiceSpec) bool {
+	return proto.Equal(canonicalServiceSpec(a), canonicalServiceSpec(b))
+}
+
+func loadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
+	spec := &platformv1.ServiceSpec{}
+	if err := protojson.Unmarshal(raw, spec); err != nil {
+		return nil, err
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return canonicalServiceSpec(spec), nil
+}
+
+func (s *Store) insertServiceRolloutTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	serviceID string,
+	rolloutGeneration int64,
+	specRevision int64,
+	reason, requestedBySubject, requestedByEmail string,
+	now time.Time,
+) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO service_rollouts(
+			service_id, rollout_generation, spec_revision, reason, requested_by_subject, requested_by_email, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		serviceID, rolloutGeneration, specRevision, reason, requestedBySubject, requestedByEmail, now,
+	)
+	return err
 }
 
 func (s *Store) createVolume(ctx context.Context, subject, projectID, name string, sizeBytes int64, agentID string) (volumeRecord, error) {
@@ -116,7 +153,7 @@ func (s *Store) deleteVolume(ctx context.Context, subject, projectID, volumeID s
 		rows, err := tx.QueryContext(ctx,
 			`SELECT s.id, r.spec_json
 			   FROM services s
-			   JOIN service_revisions r ON r.service_id = s.id AND r.revision = s.current_revision
+			   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
 			  WHERE s.project_id = $1`,
 			projectID,
 		)
@@ -131,8 +168,8 @@ func (s *Store) deleteVolume(ctx context.Context, subject, projectID, volumeID s
 			if err := rows.Scan(&serviceID, &rawSpec); err != nil {
 				return err
 			}
-			spec := &platformv1.ServiceSpec{}
-			if err := protojson.Unmarshal(rawSpec, spec); err != nil {
+			spec, err := loadServiceSpec(rawSpec)
+			if err != nil {
 				return err
 			}
 			if spec.GetVolumeName() == volumeName {
@@ -159,11 +196,11 @@ func (s *Store) deleteVolume(ctx context.Context, subject, projectID, volumeID s
 	})
 }
 
-func (s *Store) createService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec, agentID string, domains []string) (serviceRecord, error) {
+func (s *Store) createService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
 	var rec serviceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		rec, err = s.createServiceTx(ctx, tx, subject, projectID, name, spec, agentID, domains)
+		rec, err = s.createServiceTx(ctx, tx, subject, projectID, name, spec, agentID)
 		return err
 	})
 	if err != nil {
@@ -172,14 +209,14 @@ func (s *Store) createService(ctx context.Context, subject, projectID, name stri
 	return rec, nil
 }
 
-func (s *Store) createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error) {
+func (s *Store) createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
 	var rec serviceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		agentID, err := s.chooseAgentForServiceTx(ctx, tx, projectID, spec)
 		if err != nil {
 			return err
 		}
-		rec, err = s.createServiceTx(ctx, tx, subject, projectID, name, spec, agentID, domains)
+		rec, err = s.createServiceTx(ctx, tx, subject, projectID, name, spec, agentID)
 		return err
 	})
 	if err != nil {
@@ -188,8 +225,9 @@ func (s *Store) createScheduledService(ctx context.Context, subject, projectID, 
 	return rec, nil
 }
 
-func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error) {
+func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 	var current serviceRecord
+	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		current, err = s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
@@ -205,16 +243,27 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 				return fmt.Errorf("%w: volume %q is bound to %s, service is allocated to %s", errVolumeAgentMismatch, spec.GetVolumeName(), volumeAgentID, current.AllocatedAgentID)
 			}
 		}
+		spec = canonicalServiceSpec(spec)
+		if sameServiceSpec(current.Spec, spec) {
+			return nil
+		}
 
 		now := time.Now().UTC()
-		nextRevision := current.CurrentRevision + 1
+		nextSpecRevision := current.SpecRevision + 1
+		nextRolloutGeneration := current.RolloutGeneration + 1
 		specJSON, err := protojson.Marshal(spec)
 		if err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx,
-			`UPDATE services SET current_revision = $1, updated_at = $2 WHERE id = $3 AND current_revision = $4`,
-			nextRevision, now, serviceID, current.CurrentRevision,
+			`UPDATE services
+			    SET current_spec_revision = $1,
+			        current_rollout_generation = $2,
+			        updated_at = $3
+			  WHERE id = $4
+			    AND current_spec_revision = $5
+			    AND current_rollout_generation = $6`,
+			nextSpecRevision, nextRolloutGeneration, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 		)
 		if err != nil {
 			return err
@@ -227,41 +276,94 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 			return errConcurrentUpdate
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO service_revisions(service_id, revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-			serviceID, nextRevision, specJSON, now,
+			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
+			serviceID, nextSpecRevision, specJSON, now,
 		); err != nil {
+			return err
+		}
+		if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, nextSpecRevision, "spec-update", subject, "", now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE allocations
-			    SET desired_revision = $1,
-			        phase = $2,
-			        message = $3,
-			        healthy = $4,
-			        updated_at = $5
-			  WHERE service_id = $6`,
-			nextRevision, "Pending", "", false, now, serviceID,
+			    SET desired_spec_revision = $1,
+			        desired_rollout_generation = $2,
+			        phase = $3,
+			        message = $4,
+			        healthy = $5,
+			        updated_at = $6
+			  WHERE service_id = $7`,
+			nextSpecRevision, nextRolloutGeneration, "Pending", "", false, now, serviceID,
 		); err != nil {
 			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM service_domains WHERE service_id = $1`, serviceID); err != nil {
-			return err
-		}
-		for _, domain := range domains {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO service_domains(domain, project_id, service_id, created_at) VALUES ($1, $2, $3, $4)`,
-				domain, projectID, serviceID, now,
-			); err != nil {
-				return err
-			}
 		}
 		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
 			return err
 		}
 
-		current.Spec = spec
-		current.CurrentRevision = nextRevision
-		current.Domains = sortedDomains(domains)
+		current.Spec = canonicalServiceSpec(spec)
+		current.SpecRevision = nextSpecRevision
+		current.RolloutGeneration = nextRolloutGeneration
+		current.UpdatedAt = now
+		changed = true
+		return nil
+	})
+	if err != nil {
+		return serviceRecord{}, false, err
+	}
+	return current, changed, nil
+}
+
+func (s *Store) redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error) {
+	var current serviceRecord
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		current, err = s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
+		if err != nil {
+			return err
+		}
+
+		now := time.Now().UTC()
+		nextRolloutGeneration := current.RolloutGeneration + 1
+		result, err := tx.ExecContext(ctx,
+			`UPDATE services
+			    SET current_rollout_generation = $1,
+			        updated_at = $2
+			  WHERE id = $3
+			    AND current_spec_revision = $4
+			    AND current_rollout_generation = $5`,
+			nextRolloutGeneration, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return errConcurrentUpdate
+		}
+		if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", subject, "", now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE allocations
+			    SET desired_rollout_generation = $1,
+			        phase = $2,
+			        message = $3,
+			        healthy = $4,
+			        updated_at = $5
+			  WHERE service_id = $6`,
+			nextRolloutGeneration, "Pending", "", false, now, serviceID,
+		); err != nil {
+			return err
+		}
+		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+			return err
+		}
+
+		current.RolloutGeneration = nextRolloutGeneration
 		current.UpdatedAt = now
 		return nil
 	})
@@ -297,7 +399,7 @@ func (s *Store) listServices(ctx context.Context, subject, projectID string) ([]
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, name, current_revision, allocated_agent_id, created_at, updated_at
+		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at
 		   FROM services
 		  WHERE project_id = $1
 		  ORDER BY created_at ASC`,
@@ -320,12 +422,11 @@ func (s *Store) listServices(ctx context.Context, subject, projectID string) ([]
 		return nil, err
 	}
 	for i := range out {
-		spec, domains, err := s.loadServiceDetails(ctx, out[i].ID, out[i].CurrentRevision)
+		spec, err := s.loadServiceDetails(ctx, out[i].ID, out[i].SpecRevision)
 		if err != nil {
 			return nil, err
 		}
 		out[i].Spec = spec
-		out[i].Domains = domains
 	}
 	return out, nil
 }
@@ -339,7 +440,7 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, subjec
 		return serviceRecord{}, err
 	}
 	row := q.QueryRowContext(ctx,
-		`SELECT id, project_id, name, current_revision, allocated_agent_id, created_at, updated_at
+		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at
 		   FROM services
 		  WHERE id = $1 AND project_id = $2`,
 		serviceID, projectID,
@@ -348,14 +449,14 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, subjec
 	if err != nil {
 		return serviceRecord{}, err
 	}
-	rec.Spec, rec.Domains, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.CurrentRevision)
+	rec.Spec, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.SpecRevision)
 	return rec, err
 }
 
 func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, projectID, name string) (serviceRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, project_id, name, current_revision, allocated_agent_id, created_at, updated_at
+		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at
 		   FROM services
 		  WHERE project_id = $1 AND name = $2`,
 		projectID,
@@ -364,7 +465,7 @@ func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, proj
 	rec, err := scanServiceRow(row)
 	switch {
 	case err == nil:
-		rec.Spec, rec.Domains, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.CurrentRevision)
+		rec.Spec, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.SpecRevision)
 		if err != nil {
 			return serviceRecord{}, false, err
 		}
@@ -378,74 +479,155 @@ func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, proj
 
 func scanServiceRow(scanner interface{ Scan(...any) error }) (serviceRecord, error) {
 	var rec serviceRecord
-	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &rec.CurrentRevision, &rec.AllocatedAgentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &rec.SpecRevision, &rec.RolloutGeneration, &rec.AllocatedAgentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 		return serviceRecord{}, err
 	}
 	return rec, nil
 }
 
-func (s *Store) loadServiceDetails(ctx context.Context, serviceID string, revision int64) (*platformv1.ServiceSpec, []string, error) {
-	return s.loadServiceDetailsQuerier(ctx, s.db, serviceID, revision)
+func (s *Store) loadServiceDetails(ctx context.Context, serviceID string, specRevision int64) (*platformv1.ServiceSpec, error) {
+	return s.loadServiceDetailsQuerier(ctx, s.db, serviceID, specRevision)
 }
 
-func (s *Store) loadServiceDetailsQuerier(ctx context.Context, q serviceQueryer, serviceID string, revision int64) (*platformv1.ServiceSpec, []string, error) {
+func (s *Store) loadServiceDetailsQuerier(ctx context.Context, q serviceQueryer, serviceID string, specRevision int64) (*platformv1.ServiceSpec, error) {
 	var rawSpec []byte
-	if err := q.QueryRowContext(ctx, `SELECT spec_json FROM service_revisions WHERE service_id = $1 AND revision = $2`, serviceID, revision).Scan(&rawSpec); err != nil {
-		return nil, nil, err
+	if err := q.QueryRowContext(ctx, `SELECT spec_json FROM service_revisions WHERE service_id = $1 AND spec_revision = $2`, serviceID, specRevision).Scan(&rawSpec); err != nil {
+		return nil, err
 	}
-	spec := &platformv1.ServiceSpec{}
-	if err := protojson.Unmarshal(rawSpec, spec); err != nil {
-		return nil, nil, err
-	}
-	rows, err := q.QueryContext(ctx, `SELECT domain FROM service_domains WHERE service_id = $1 ORDER BY domain ASC`, serviceID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-	var domains []string
-	for rows.Next() {
-		var domain string
-		if err := rows.Scan(&domain); err != nil {
-			return nil, nil, err
-		}
-		domains = append(domains, domain)
-	}
-	return spec, domains, rows.Err()
+	return loadServiceSpec(rawSpec)
 }
 
-func (s *Store) upsertDomain(ctx context.Context, subject, projectID, serviceID, domain string) (serviceRecord, error) {
-	var service serviceRecord
+func (s *Store) createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
+	return s.putDomainBinding(ctx, subject, projectID, hostname, serviceID, true)
+}
+
+func (s *Store) updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
+	return s.putDomainBinding(ctx, subject, projectID, hostname, serviceID, false)
+}
+
+func (s *Store) putDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, createOnly bool) (domainBindingRecord, bool, error) {
+	var binding domainBindingRecord
+	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID); err != nil {
 			return err
 		}
+		now := time.Now().UTC()
+		var existing domainBindingRecord
+		err := tx.QueryRowContext(ctx,
+			`SELECT hostname, project_id, service_id, created_at, updated_at
+			   FROM domain_bindings
+			  WHERE hostname = $1`,
+			hostname,
+		).Scan(&existing.Hostname, &existing.ProjectID, &existing.ServiceID, &existing.CreatedAt, &existing.UpdatedAt)
+		switch {
+		case err == nil:
+			if existing.ProjectID != projectID {
+				return sql.ErrNoRows
+			}
+			if createOnly {
+				return errDomainAlreadyExists
+			}
+			binding = existing
+			if existing.ServiceID == serviceID {
+				return nil
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE domain_bindings
+				    SET service_id = $1,
+				        updated_at = $2
+				  WHERE hostname = $3 AND project_id = $4`,
+				serviceID, now, hostname, projectID,
+			); err != nil {
+				return err
+			}
+			binding.ServiceID = serviceID
+			binding.UpdatedAt = now
+			changed = true
+			return nil
+		case err != sql.ErrNoRows:
+			return err
+		}
+		if !createOnly && err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO service_domains(domain, project_id, service_id, created_at)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT(domain) DO UPDATE SET service_id = excluded.service_id, project_id = excluded.project_id`,
-			domain, projectID, serviceID, time.Now().UTC(),
+			`INSERT INTO domain_bindings(hostname, project_id, service_id, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			hostname, projectID, serviceID, now, now,
 		); err != nil {
 			return err
 		}
-		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
-			return err
+		binding = domainBindingRecord{
+			Hostname:  hostname,
+			ProjectID: projectID,
+			ServiceID: serviceID,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
-		var err error
-		service, err = s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
-		return err
+		changed = true
+		return nil
 	})
 	if err != nil {
-		return serviceRecord{}, err
+		return domainBindingRecord{}, false, err
 	}
-	return service, nil
+	return binding, changed, nil
 }
 
-func (s *Store) deleteDomain(ctx context.Context, subject, projectID, domain string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+func (s *Store) domainBindingByHostname(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error) {
+	if _, err := s.projectByID(ctx, subject, projectID); err != nil {
+		return domainBindingRecord{}, err
+	}
+	var binding domainBindingRecord
+	err := s.db.QueryRowContext(ctx,
+		`SELECT hostname, project_id, service_id, created_at, updated_at
+		   FROM domain_bindings
+		  WHERE hostname = $1 AND project_id = $2`,
+		hostname, projectID,
+	).Scan(&binding.Hostname, &binding.ProjectID, &binding.ServiceID, &binding.CreatedAt, &binding.UpdatedAt)
+	if err != nil {
+		return domainBindingRecord{}, err
+	}
+	return binding, nil
+}
+
+func (s *Store) listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
+	if _, err := s.projectByID(ctx, subject, projectID); err != nil {
+		return nil, err
+	}
+	query := `SELECT hostname, project_id, service_id, created_at, updated_at
+	            FROM domain_bindings
+	           WHERE project_id = $1`
+	args := []any{projectID}
+	if serviceID != "" {
+		query += ` AND service_id = $2`
+		args = append(args, serviceID)
+	}
+	query += ` ORDER BY hostname ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domainBindingRecord
+	for rows.Next() {
+		var binding domainBindingRecord
+		if err := rows.Scan(&binding.Hostname, &binding.ProjectID, &binding.ServiceID, &binding.CreatedAt, &binding.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, binding)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) deleteDomainBinding(ctx context.Context, subject, projectID, hostname string) (bool, error) {
+	var changed bool
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := s.projectByIDQuerier(ctx, tx, subject, projectID); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM service_domains WHERE domain = $1 AND project_id = $2`, domain, projectID)
+		result, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE hostname = $1 AND project_id = $2`, hostname, projectID)
 		if err != nil {
 			return err
 		}
@@ -456,9 +638,13 @@ func (s *Store) deleteDomain(ctx context.Context, subject, projectID, domain str
 		if rows == 0 {
 			return sql.ErrNoRows
 		}
-		_, err = s.nextDesiredRevisionTx(ctx, tx)
-		return err
+		changed = true
+		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
 }
 
 func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
@@ -468,7 +654,7 @@ func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID
 	}
 	var alloc allocationRecord
 	err = s.db.QueryRowContext(ctx,
-		`SELECT id, service_id, project_id, agent_id, desired_revision, applied_revision, phase, message, endpoint_addr, healthy, updated_at
+		`SELECT id, service_id, project_id, agent_id, desired_spec_revision, applied_spec_revision, phase, message, endpoint_addr, healthy, updated_at, desired_rollout_generation, applied_rollout_generation
 		   FROM allocations
 		  WHERE service_id = $1`,
 		serviceID,
@@ -477,13 +663,15 @@ func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID
 		&alloc.ServiceID,
 		&alloc.ProjectID,
 		&alloc.AgentID,
-		&alloc.DesiredRevision,
-		&alloc.AppliedRevision,
+		&alloc.DesiredSpecRevision,
+		&alloc.AppliedSpecRevision,
 		&alloc.Phase,
 		&alloc.Message,
 		&alloc.EndpointAddr,
 		&alloc.Healthy,
 		&alloc.UpdatedAt,
+		&alloc.DesiredRolloutGeneration,
+		&alloc.AppliedRolloutGeneration,
 	)
 	if err != nil {
 		return serviceRecord{}, allocationRecord{}, err
@@ -515,14 +703,14 @@ func (s *Store) createVolumeTx(ctx context.Context, tx *sql.Tx, subject, project
 	return rec, nil
 }
 
-func (s *Store) createServiceTx(ctx context.Context, tx *sql.Tx, subject, projectID, name string, spec *platformv1.ServiceSpec, agentID string, domains []string) (serviceRecord, error) {
+func (s *Store) createServiceTx(ctx context.Context, tx *sql.Tx, subject, projectID, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
 	if _, err := s.projectByIDQuerier(ctx, tx, subject, projectID); err != nil {
 		return serviceRecord{}, err
 	}
-	return s.createServiceTxInternal(ctx, tx, projectID, name, spec, agentID, domains)
+	return s.createServiceTxInternal(ctx, tx, projectID, name, spec, agentID)
 }
 
-func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string, domains []string) (serviceRecord, error) {
+func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
 	if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 		return serviceRecord{}, err
 	}
@@ -540,16 +728,17 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	}
 
 	now := time.Now().UTC()
+	spec = canonicalServiceSpec(spec)
 	rec := serviceRecord{
-		ID:               mustID(),
-		ProjectID:        projectID,
-		Name:             name,
-		Spec:             spec,
-		CurrentRevision:  1,
-		AllocatedAgentID: agentID,
-		Domains:          sortedDomains(domains),
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		ID:                mustID(),
+		ProjectID:         projectID,
+		Name:              name,
+		Spec:              spec,
+		SpecRevision:      1,
+		RolloutGeneration: 1,
+		AllocatedAgentID:  agentID,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	specJSON, err := protojson.Marshal(spec)
 	if err != nil {
@@ -557,32 +746,31 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	}
 	allocationID := mustID()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO services(id, project_id, name, current_revision, allocated_agent_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		rec.ID, rec.ProjectID, rec.Name, rec.CurrentRevision, rec.AllocatedAgentID, now, now,
+		`INSERT INTO services(id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		rec.ID, rec.ProjectID, rec.Name, rec.SpecRevision, rec.RolloutGeneration, rec.AllocatedAgentID, now, now,
 	); err != nil {
 		return serviceRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO service_revisions(service_id, revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-		rec.ID, rec.CurrentRevision, specJSON, now,
+		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
+		rec.ID, rec.SpecRevision, specJSON, now,
 	); err != nil {
+		return serviceRecord{}, err
+	}
+	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, rec.RolloutGeneration, rec.SpecRevision, "create", "", "", now); err != nil {
 		return serviceRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO allocations(id, service_id, project_id, agent_id, desired_revision, applied_revision, phase, message, endpoint_addr, healthy, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		allocationID, rec.ID, rec.ProjectID, rec.AllocatedAgentID, rec.CurrentRevision, 0, "Pending", "", "", false, now,
+		`INSERT INTO allocations(
+			id, service_id, project_id, agent_id,
+			desired_spec_revision, applied_spec_revision,
+			desired_rollout_generation, applied_rollout_generation,
+			phase, message, endpoint_addr, healthy, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		allocationID, rec.ID, rec.ProjectID, rec.AllocatedAgentID, rec.SpecRevision, 0, rec.RolloutGeneration, 0, "Pending", "", "", false, now,
 	); err != nil {
 		return serviceRecord{}, err
-	}
-	for _, domain := range rec.Domains {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO service_domains(domain, project_id, service_id, created_at) VALUES ($1, $2, $3, $4)`,
-			domain, projectID, rec.ID, now,
-		); err != nil {
-			return serviceRecord{}, err
-		}
 	}
 	if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
 		return serviceRecord{}, err
@@ -590,7 +778,7 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	return rec, nil
 }
 
-func (s *Store) ensureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error) {
+func (s *Store) ensureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
 	var rec serviceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		current, found, err := s.serviceByNameQuerier(ctx, tx, projectID, name)
@@ -602,24 +790,30 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 			if err != nil {
 				return err
 			}
-			rec, err = s.createServiceTxInternal(ctx, tx, projectID, name, spec, agentID, domains)
+			rec, err = s.createServiceTxInternal(ctx, tx, projectID, name, spec, agentID)
 			return err
 		}
-		sorted := sortedDomains(domains)
-		if proto.Equal(current.Spec, spec) && sameDomains(current.Domains, sorted) {
+		spec = canonicalServiceSpec(spec)
+		if sameServiceSpec(current.Spec, spec) {
 			rec = current
 			return nil
 		}
 		now := time.Now().UTC()
-		nextRevision := current.CurrentRevision + 1
+		nextSpecRevision := current.SpecRevision + 1
+		nextRolloutGeneration := current.RolloutGeneration + 1
 		specJSON, err := protojson.Marshal(spec)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(
 			ctx,
-			`UPDATE services SET current_revision = $1, updated_at = $2 WHERE id = $3`,
-			nextRevision,
+			`UPDATE services
+			    SET current_spec_revision = $1,
+			        current_rollout_generation = $2,
+			        updated_at = $3
+			  WHERE id = $4`,
+			nextSpecRevision,
+			nextRolloutGeneration,
 			now,
 			current.ID,
 		); err != nil {
@@ -627,24 +821,29 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		}
 		if _, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO service_revisions(service_id, revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
+			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 			current.ID,
-			nextRevision,
+			nextSpecRevision,
 			specJSON,
 			now,
 		); err != nil {
 			return err
 		}
+		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(
 			ctx,
 			`UPDATE allocations
-			    SET desired_revision = $1,
-			        phase = $2,
-			        message = $3,
-			        healthy = $4,
-			        updated_at = $5
-			  WHERE service_id = $6`,
-			nextRevision,
+			    SET desired_spec_revision = $1,
+			        desired_rollout_generation = $2,
+			        phase = $3,
+			        message = $4,
+			        healthy = $5,
+			        updated_at = $6
+			  WHERE service_id = $7`,
+			nextSpecRevision,
+			nextRolloutGeneration,
 			"Pending",
 			"",
 			false,
@@ -653,28 +852,13 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM service_domains WHERE service_id = $1`, current.ID); err != nil {
-			return err
-		}
-		for _, domain := range sorted {
-			if _, err := tx.ExecContext(
-				ctx,
-				`INSERT INTO service_domains(domain, project_id, service_id, created_at) VALUES ($1, $2, $3, $4)`,
-				domain,
-				projectID,
-				current.ID,
-				now,
-			); err != nil {
-				return err
-			}
-		}
 		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
 			return err
 		}
 		rec = current
 		rec.Spec = spec
-		rec.Domains = sorted
-		rec.CurrentRevision = nextRevision
+		rec.SpecRevision = nextSpecRevision
+		rec.RolloutGeneration = nextRolloutGeneration
 		rec.UpdatedAt = now
 		return nil
 	})
@@ -682,6 +866,68 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		return serviceRecord{}, err
 	}
 	return rec, nil
+}
+
+func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostname, serviceID string) (domainBindingRecord, error) {
+	var binding domainBindingRecord
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
+			return err
+		}
+		var existingServiceID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE id = $1 AND project_id = $2`, serviceID, projectID).Scan(&existingServiceID); err != nil {
+			return err
+		}
+
+		now := time.Now().UTC()
+		err := tx.QueryRowContext(ctx,
+			`SELECT hostname, project_id, service_id, created_at, updated_at
+			   FROM domain_bindings
+			  WHERE hostname = $1`,
+			hostname,
+		).Scan(&binding.Hostname, &binding.ProjectID, &binding.ServiceID, &binding.CreatedAt, &binding.UpdatedAt)
+		switch {
+		case err == sql.ErrNoRows:
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO domain_bindings(hostname, project_id, service_id, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				hostname, projectID, serviceID, now, now,
+			); err != nil {
+				return err
+			}
+			binding = domainBindingRecord{
+				Hostname:  hostname,
+				ProjectID: projectID,
+				ServiceID: serviceID,
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			return nil
+		case err != nil:
+			return err
+		case binding.ProjectID != projectID:
+			return errDomainAlreadyExists
+		case binding.ServiceID == serviceID:
+			return nil
+		default:
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE domain_bindings
+				    SET service_id = $1,
+				        updated_at = $2
+				  WHERE hostname = $3 AND project_id = $4`,
+				serviceID, now, hostname, projectID,
+			); err != nil {
+				return err
+			}
+			binding.ServiceID = serviceID
+			binding.UpdatedAt = now
+			return nil
+		}
+	})
+	if err != nil {
+		return domainBindingRecord{}, err
+	}
+	return binding, nil
 }
 
 func (s *Store) chooseAgentForVolumeTx(ctx context.Context, tx *sql.Tx) (string, error) {
@@ -758,10 +1004,10 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.id, s.id, s.project_id, s.name, s.current_revision, s.current_revision, r.spec_json
+		`SELECT a.id, s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, r.spec_json
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
-		   JOIN service_revisions r ON r.service_id = s.id AND r.revision = s.current_revision
+		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
 		  WHERE a.agent_id = $1
 		  ORDER BY s.created_at ASC`,
 		agentID,
@@ -775,13 +1021,14 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	for rows.Next() {
 		svc := &agentv1.DesiredService{}
 		var rawSpec []byte
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.ProjectId, &svc.Name, &svc.DesiredRevision, &svc.DesiredRevision, &rawSpec); err != nil {
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.ProjectId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &rawSpec); err != nil {
 			return nil, err
 		}
-		svc.Spec = &platformv1.ServiceSpec{}
-		if err := protojson.Unmarshal(rawSpec, svc.Spec); err != nil {
+		spec, err := loadServiceSpec(rawSpec)
+		if err != nil {
 			return nil, err
 		}
+		svc.Spec = spec
 		if svc.Spec.VolumeName != "" {
 			svc.VolumeId = volumeIDs[svc.ProjectId+"\x00"+svc.Spec.VolumeName]
 		}
@@ -796,11 +1043,11 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 
 func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT d.domain, a.endpoint_addr
-		   FROM service_domains d
+		`SELECT d.hostname, a.endpoint_addr
+		   FROM domain_bindings d
 		   JOIN allocations a ON a.service_id = d.service_id
 		  WHERE a.healthy = TRUE AND a.endpoint_addr <> ''
-		  ORDER BY d.domain ASC`,
+		  ORDER BY d.hostname ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -832,6 +1079,14 @@ func (s *Store) countServiceRevisionsForTest(ctx context.Context, serviceID stri
 		return 0, err
 	}
 	return revisions, nil
+}
+
+func (s *Store) countServiceRolloutsForTest(ctx context.Context, serviceID string) (int, error) {
+	var rollouts int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM service_rollouts WHERE service_id = $1`, serviceID).Scan(&rollouts); err != nil {
+		return 0, err
+	}
+	return rollouts, nil
 }
 
 type ingressBackend struct {
