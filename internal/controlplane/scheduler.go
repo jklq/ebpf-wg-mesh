@@ -20,22 +20,11 @@ func NewScheduler(store *Store) *Scheduler {
 }
 
 func (s *Scheduler) ChooseAgentForVolume(ctx context.Context) (string, error) {
-	agents, services, err := s.store.schedulerSnapshot(ctx)
-	if err != nil {
-		return "", err
-	}
-	return chooseAgent(agents, services, nil)
+	return s.store.chooseAgentForVolume(ctx)
 }
 
 func (s *Scheduler) ChooseAgentForService(ctx context.Context, projectID string, spec *platformv1.ServiceSpec) (string, error) {
-	if spec != nil && spec.VolumeName != "" {
-		return s.store.boundAgentForVolume(ctx, projectID, spec.VolumeName)
-	}
-	agents, services, err := s.store.schedulerSnapshot(ctx)
-	if err != nil {
-		return "", err
-	}
-	return chooseAgent(agents, services, spec)
+	return s.store.chooseAgentForService(ctx, projectID, spec)
 }
 
 func chooseAgent(agents []agentRecord, services []serviceRecord, spec *platformv1.ServiceSpec) (string, error) {

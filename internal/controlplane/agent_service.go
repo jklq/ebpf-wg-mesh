@@ -70,9 +70,6 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		return status.Errorf(codes.Internal, "register agent: %v", err)
 	}
 	if changed {
-		if _, err := s.store.nextDesiredRevision(ctx); err != nil {
-			return status.Errorf(codes.Internal, "advance desired revision: %v", err)
-		}
 		if s.dashboard != nil {
 			if err := s.dashboard.Reconcile(ctx); err != nil && !errors.Is(err, errNoPlacementAvailable) {
 				slog.Warn("dashboard reconcile failed after agent change", "agent_id", hello.AgentId, "error", err)
@@ -112,10 +109,13 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			}
 		case *agentv1.AgentClientMessage_StatusReport:
 			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()))
-			if err := s.store.recordStatusReport(ctx, payload.StatusReport); err != nil {
+			ingressChanged, err := s.store.recordStatusReport(ctx, payload.StatusReport)
+			if err != nil {
 				return status.Errorf(codes.Internal, "status report: %v", err)
 			}
-			_ = s.ingress.Sync(ctx)
+			if ingressChanged {
+				s.ingress.RequestSync()
+			}
 		}
 		select {
 		case err := <-sendErr:
