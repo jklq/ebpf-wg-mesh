@@ -47,8 +47,44 @@ go generate ./internal/firewall
 Run tests:
 
 ```bash
-go test ./...
+make test-unit-go
+make test-unit-dashboard
+make test-integration
 ```
+
+Smoke E2E against a local ephemeral stack:
+
+```bash
+make test-e2e-local
+```
+
+Interactive ephemeral local stack for manual exploration:
+
+```bash
+make dev-ephemeral
+```
+
+Production-replica VM smoke on Hetzner:
+
+```bash
+export HCLOUD_TOKEN=...
+make test-e2e-vm
+```
+
+## Testing Pyramid
+
+- `test-unit-go`: pure Go tests only. Cockroach-backed store coverage is excluded from this tier.
+- `test-unit-dashboard`: Vitest unit tests for dashboard session logic, loaders, and React rendering.
+- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag plus dashboard integration slots.
+- `test-e2e-local`: thin Playwright smoke against an ephemeral local Cockroach + control plane + dashboard stack.
+- `test-e2e-vm`: Hetzner-backed smoke that provisions disposable VMs, deploys pinned binaries, runs remote checks, collects artifacts, and destroys the environment.
+
+## VM Harness
+
+- Infrastructure lives under `infra/test-vm/`.
+- `cmd/testvm` builds Linux binaries, provisions the Hetzner topology through OpenTofu, waits for server readiness with `hcloud-go`, deploys the control plane and agents over SSH, runs a thin gRPC smoke scenario, collects host artifacts, and tears everything down.
+- The first cut keeps Cockroach colocated with the control plane and provisions two agent VMs.
+- Artifacts are written under `artifacts/e2e-vm/<run-id>/`.
 
 ## Internal mTLS
 
