@@ -25,10 +25,27 @@ go.work
 go.work.sum
 .cache/
 
+# Node.js / pnpm
+dashboard/pnpm-lock.yaml
+dashboard/.tanstack/
+dashboard/node_modules/
+
+# Dashboard build outputs
+dashboard/dist/
+dashboard/artifacts/
+dashboard/test-results/
+
 # Local environment files
 .env
 .env.*
 !.env.example
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
 
 # Logs and temp files
 *.log
@@ -37,3 +54,16 @@ temp/
 
 # Optional local Docker compose overrides
 docker-compose.override.yml
+
+# Generated protobuf files
+api/proto/**/*.pb.go
+
+# Build/test binaries and artifacts
+integration.test
+testvm
+artifacts/
+testbed.log
+
+# Debug and development artifacts
+.codex-debug/
+.tmp/
