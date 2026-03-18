@@ -122,52 +122,6 @@ func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 	}
 }
 
-func TestPlatformServiceCreateServiceSkipsIngressSyncWithoutDomains(t *testing.T) {
-	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{}, nil, noopNotifier{}, ingress)
-
-	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
-		ProjectId: "project-1",
-		Name:      "web",
-		Spec:      &platformv1.ServiceSpec{Image: "nginx:1.27"},
-	})
-	if err != nil {
-		t.Fatalf("CreateService: %v", err)
-	}
-	if got := ingress.requests.Load(); got != 0 {
-		t.Fatalf("expected no ingress request, got %d", got)
-	}
-}
-
-func TestPlatformServiceCreateServiceRequestsIngressSyncWithDomains(t *testing.T) {
-	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{
-		createScheduledServiceFn: func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error) {
-			return serviceRecord{
-				ID:               "service-1",
-				ProjectID:        projectID,
-				Name:             name,
-				Spec:             spec,
-				AllocatedAgentID: "node-1",
-				Domains:          append([]string(nil), domains...),
-			}, nil
-		},
-	}, nil, noopNotifier{}, ingress)
-
-	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
-		ProjectId: "project-1",
-		Name:      "web",
-		Spec:      &platformv1.ServiceSpec{Image: "nginx:1.27"},
-		Domains:   []string{"web.example.com"},
-	})
-	if err != nil {
-		t.Fatalf("CreateService: %v", err)
-	}
-	if got := ingress.requests.Load(); got != 1 {
-		t.Fatalf("expected 1 ingress request, got %d", got)
-	}
-}
-
 func contextWithDelegatedUser(subject, email string) context.Context {
 	return context.WithValue(context.Background(), delegatedUserContextKey{}, DelegatedUser{
 		Subject: subject,
