@@ -122,6 +122,110 @@ func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 	}
 }
 
+func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
+	ingress := &countingIngress{}
+	service := NewPlatformService(&fakePlatformStore{
+		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+			return serviceRecord{ID: serviceID, ProjectID: projectID, AllocatedAgentID: "node-1"}, true, nil
+		},
+	}, nil, noopNotifier{}, ingress)
+
+	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
+		ProjectId: "project-1",
+		ServiceId: "service-1",
+		Service: &platformv1.ServiceUpdate{
+			Spec: &platformv1.ServiceSpec{Image: "nginx:1.27"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateService: %v", err)
+	}
+	if got := ingress.requests.Load(); got != 0 {
+		t.Fatalf("expected no ingress requests, got %d", got)
+	}
+}
+
+func TestPlatformServiceDeleteServiceRequestsIngressWhenServiceHasDomains(t *testing.T) {
+	ingress := &countingIngress{}
+	service := NewPlatformService(&fakePlatformStore{
+		listDomainBindingsFn: func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
+			return []domainBindingRecord{{Hostname: "web.example.com", ProjectID: projectID, ServiceID: serviceID}}, nil
+		},
+	}, nil, noopNotifier{}, ingress)
+
+	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
+		ProjectId: "project-1",
+		ServiceId: "service-1",
+	})
+	if err != nil {
+		t.Fatalf("DeleteService: %v", err)
+	}
+	if got := ingress.requests.Load(); got != 1 {
+		t.Fatalf("expected 1 ingress request, got %d", got)
+	}
+}
+
+func TestPlatformServiceDeleteServiceSkipsIngressWhenServiceHasNoDomains(t *testing.T) {
+	ingress := &countingIngress{}
+	service := NewPlatformService(&fakePlatformStore{
+		listDomainBindingsFn: func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
+			return nil, nil
+		},
+	}, nil, noopNotifier{}, ingress)
+
+	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
+		ProjectId: "project-1",
+		ServiceId: "service-1",
+	})
+	if err != nil {
+		t.Fatalf("DeleteService: %v", err)
+	}
+	if got := ingress.requests.Load(); got != 0 {
+		t.Fatalf("expected no ingress requests, got %d", got)
+	}
+}
+
+func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
+	ingress := &countingIngress{}
+	service := NewPlatformService(&fakePlatformStore{
+		updateDomainBindingFn: func(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
+			return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID}, true, nil
+		},
+	}, nil, noopNotifier{}, ingress)
+
+	_, err := service.UpdateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateDomainBindingRequest{
+		ProjectId: "project-1",
+		Hostname:  "web.example.com",
+		Binding:   &platformv1.DomainBindingTarget{ServiceId: "service-1"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateDomainBinding: %v", err)
+	}
+	if got := ingress.requests.Load(); got != 1 {
+		t.Fatalf("expected 1 ingress request, got %d", got)
+	}
+}
+
+func TestPlatformServiceDeleteDomainBindingRequestsIngress(t *testing.T) {
+	ingress := &countingIngress{}
+	service := NewPlatformService(&fakePlatformStore{
+		deleteDomainBindingFn: func(ctx context.Context, subject, projectID, hostname string) (bool, error) {
+			return true, nil
+		},
+	}, nil, noopNotifier{}, ingress)
+
+	_, err := service.DeleteDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteDomainBindingRequest{
+		ProjectId: "project-1",
+		Hostname:  "web.example.com",
+	})
+	if err != nil {
+		t.Fatalf("DeleteDomainBinding: %v", err)
+	}
+	if got := ingress.requests.Load(); got != 1 {
+		t.Fatalf("expected 1 ingress request, got %d", got)
+	}
+}
+
 func contextWithDelegatedUser(subject, email string) context.Context {
 	return context.WithValue(context.Background(), delegatedUserContextKey{}, DelegatedUser{
 		Subject: subject,
