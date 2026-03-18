@@ -20,7 +20,9 @@ type ListenerConfig struct {
 }
 
 type DatabaseConfig struct {
-	URL string
+	URL          string
+	MaxOpenConns int
+	MaxIdleConns int
 }
 
 type OIDCConfig struct {
