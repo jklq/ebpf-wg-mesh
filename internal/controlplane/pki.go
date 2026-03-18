@@ -217,6 +217,10 @@ func (a *TLSAuthority) EnsureClientIdentity(class serviceCallerClass, id string)
 	}, nil
 }
 
+func (a *TLSAuthority) EnsureDashboardClientIdentity(id string) (ClientIdentityMaterial, error) {
+	return a.EnsureClientIdentity(serviceCallerDashboard, id)
+}
+
 func loadOrCreateCA(dir string) (*x509.Certificate, crypto.Signer, []byte, error) {
 	certPath := filepath.Join(dir, caCertFileName)
 	keyPath := filepath.Join(dir, caKeyFileName)
