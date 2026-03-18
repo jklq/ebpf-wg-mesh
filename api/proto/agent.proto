@@ -62,10 +62,11 @@ message DesiredService {
   string service_id = 2;
   string project_id = 3;
   string name = 4;
-  int64 desired_revision = 5;
+  int64 desired_spec_revision = 5;
   platform.v1.ServiceSpec spec = 6;
   string private_ipv6 = 7;
   string volume_id = 8;
+  int64 desired_rollout_generation = 9;
 }
 
 message DesiredNodeState {
@@ -86,12 +87,14 @@ message VolumeCondition {
 message ServiceCondition {
   string allocation_id = 1;
   string service_id = 2;
-  int64 desired_revision = 3;
-  int64 applied_revision = 4;
+  int64 desired_spec_revision = 3;
+  int64 applied_spec_revision = 4;
   string phase = 5;
   string message = 6;
   string endpoint_addr = 7;
   bool healthy = 8;
+  int64 desired_rollout_generation = 9;
+  int64 applied_rollout_generation = 10;
 }
 
 message StatusReport {

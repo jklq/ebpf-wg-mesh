@@ -4,6 +4,7 @@ package platform.v1;
 
 option go_package = "ebof-wg-mesh/api/proto/platformv1;platformv1";
 
+import "google/api/annotations.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -58,11 +59,19 @@ message Service {
   string project_id = 2;
   string name = 3;
   ServiceSpec spec = 4;
-  int64 current_revision = 5;
+  int64 spec_revision = 5;
   string allocated_agent_id = 6;
-  repeated string domains = 7;
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
+  int64 rollout_generation = 10;
+}
+
+message DomainBinding {
+  string hostname = 1;
+  string project_id = 2;
+  string service_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
 }
 
 message Volume {
@@ -88,13 +97,15 @@ message AllocationStatus {
   string allocation_id = 1;
   string service_id = 2;
   string agent_id = 3;
-  int64 desired_revision = 4;
-  int64 applied_revision = 5;
+  int64 desired_spec_revision = 4;
+  int64 applied_spec_revision = 5;
   string phase = 6;
   string message = 7;
   string endpoint_addr = 8;
   bool healthy = 9;
   google.protobuf.Timestamp updated_at = 10;
+  int64 desired_rollout_generation = 11;
+  int64 applied_rollout_generation = 12;
 }
 
 message ServiceStatus {
@@ -121,16 +132,18 @@ message GetProjectRequest {
 
 message CreateServiceRequest {
   string project_id = 1;
-  string name = 2;
-  ServiceSpec spec = 3;
-  repeated string domains = 4;
+  ServiceInput service = 2;
 }
 
 message UpdateServiceRequest {
   string project_id = 1;
   string service_id = 2;
-  ServiceSpec spec = 3;
-  repeated string domains = 4;
+  ServiceUpdate service = 3;
+}
+
+message RedeployServiceRequest {
+  string project_id = 1;
+  string service_id = 2;
 }
 
 message DeleteServiceRequest {
@@ -170,15 +183,52 @@ message ListVolumesResponse {
   repeated Volume volumes = 1;
 }
 
-message UpsertDomainRequest {
-  string project_id = 1;
-  string service_id = 2;
-  string domain = 3;
+message ServiceInput {
+  string name = 1;
+  ServiceSpec spec = 2;
 }
 
-message DeleteDomainRequest {
+message ServiceUpdate {
+  ServiceSpec spec = 1;
+}
+
+message DomainBindingInput {
+  string hostname = 1;
+  string service_id = 2;
+}
+
+message DomainBindingTarget {
+  string service_id = 1;
+}
+
+message CreateDomainBindingRequest {
   string project_id = 1;
-  string domain = 2;
+  DomainBindingInput binding = 2;
+}
+
+message GetDomainBindingRequest {
+  string project_id = 1;
+  string hostname = 2;
+}
+
+message ListDomainBindingsRequest {
+  string project_id = 1;
+  string service_id = 2;
+}
+
+message ListDomainBindingsResponse {
+  repeated DomainBinding bindings = 1;
+}
+
+message UpdateDomainBindingRequest {
+  string project_id = 1;
+  string hostname = 2;
+  DomainBindingTarget binding = 3;
+}
+
+message DeleteDomainBindingRequest {
+  string project_id = 1;
+  string hostname = 2;
 }
 
 message GetServiceStatusRequest {
@@ -191,25 +241,93 @@ message ListAgentsResponse {
 }
 
 service PlatformService {
-  rpc EnsurePrincipal(EnsurePrincipalRequest) returns (Principal);
+  rpc EnsurePrincipal(EnsurePrincipalRequest) returns (Principal) {
+    option (google.api.http) = {
+      post: "/v1/principal:ensure"
+      body: "*"
+    };
+  }
 
-  rpc CreateProject(CreateProjectRequest) returns (Project);
-  rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
-  rpc GetProject(GetProjectRequest) returns (Project);
+  rpc CreateProject(CreateProjectRequest) returns (Project) {
+    option (google.api.http) = {
+      post: "/v1/projects"
+      body: "*"
+    };
+  }
+  rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse) {
+    option (google.api.http) = {get: "/v1/projects"};
+  }
+  rpc GetProject(GetProjectRequest) returns (Project) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}"};
+  }
 
-  rpc CreateService(CreateServiceRequest) returns (Service);
-  rpc UpdateService(UpdateServiceRequest) returns (Service);
-  rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
-  rpc GetService(GetServiceRequest) returns (Service);
-  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  rpc CreateService(CreateServiceRequest) returns (Service) {
+    option (google.api.http) = {
+      post: "/v1/projects/{project_id}/services"
+      body: "service"
+    };
+  }
+  rpc UpdateService(UpdateServiceRequest) returns (Service) {
+    option (google.api.http) = {
+      put: "/v1/projects/{project_id}/services/{service_id}"
+      body: "service"
+    };
+  }
+  rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus) {
+    option (google.api.http) = {
+      post: "/v1/projects/{project_id}/services/{service_id}:redeploy"
+      body: "*"
+    };
+  }
+  rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/projects/{project_id}/services/{service_id}"};
+  }
+  rpc GetService(GetServiceRequest) returns (Service) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}/services/{service_id}"};
+  }
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}/services"};
+  }
 
-  rpc CreateVolume(CreateVolumeRequest) returns (Volume);
-  rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty);
-  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+  rpc CreateVolume(CreateVolumeRequest) returns (Volume) {
+    option (google.api.http) = {
+      post: "/v1/projects/{project_id}/volumes"
+      body: "*"
+    };
+  }
+  rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/projects/{project_id}/volumes/{volume_id}"};
+  }
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}/volumes"};
+  }
 
-  rpc UpsertDomain(UpsertDomainRequest) returns (Service);
-  rpc DeleteDomain(DeleteDomainRequest) returns (google.protobuf.Empty);
+  rpc CreateDomainBinding(CreateDomainBindingRequest) returns (DomainBinding) {
+    option (google.api.http) = {
+      post: "/v1/projects/{project_id}/domains"
+      body: "binding"
+    };
+  }
+  rpc GetDomainBinding(GetDomainBindingRequest) returns (DomainBinding) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}/domains/{hostname}"};
+  }
+  rpc ListDomainBindings(ListDomainBindingsRequest) returns (ListDomainBindingsResponse) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}/domains"};
+  }
+  rpc UpdateDomainBinding(UpdateDomainBindingRequest) returns (DomainBinding) {
+    option (google.api.http) = {
+      put: "/v1/projects/{project_id}/domains/{hostname}"
+      body: "binding"
+    };
+  }
+  rpc DeleteDomainBinding(DeleteDomainBindingRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/projects/{project_id}/domains/{hostname}"};
+  }
 
-  rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
-  rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
+  rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus) {
+    option (google.api.http) = {get: "/v1/projects/{project_id}/services/{service_id}/status"};
+  }
+  rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse) {
+    option (google.api.http) = {get: "/v1/agents"};
+  }
 }
