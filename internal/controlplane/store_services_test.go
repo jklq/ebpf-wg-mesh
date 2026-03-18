@@ -40,7 +40,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 		MemoryMebibytes: 64,
 		ContainerPort:   8080,
 		VolumeName:      "data",
-	}, "node-1", nil)
+	}, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	if _, err := store.createService(ctx, "user-1", projects[0].ID, "web", &platformv1.ServiceSpec{
 		Image:      "busybox:1.36",
 		VolumeName: "data",
-	}, "node-1", nil); err != nil {
+	}, "node-1"); err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				ContainerPort:   8080,
-			}, nil)
+			})
 			results <- result{rec: rec, err: err}
 		}()
 	}
@@ -175,7 +175,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		ContainerPort:   8080,
-	}, "node-1", []string{"web.example.com"})
+	}, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -187,12 +187,12 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		port := port
 		go func() {
 			<-start
-			_, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, &platformv1.ServiceSpec{
+			_, _, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, &platformv1.ServiceSpec{
 				Image:           "busybox:1.36",
 				CpuMillis:       100,
 				MemoryMebibytes: 64 + int64(i),
 				ContainerPort:   port,
-			}, []string{fmt.Sprintf("web-%d.example.com", i)})
+			})
 			errs <- err
 		}()
 	}
@@ -208,8 +208,11 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
-	if current.CurrentRevision != 3 {
-		t.Fatalf("expected current revision 3, got %d", current.CurrentRevision)
+	if current.SpecRevision != 3 {
+		t.Fatalf("expected current spec revision 3, got %d", current.SpecRevision)
+	}
+	if current.RolloutGeneration != 3 {
+		t.Fatalf("expected rollout generation 3, got %d", current.RolloutGeneration)
 	}
 	var revisions int
 	if revisions, err = store.countServiceRevisionsForTest(ctx, service.ID); err != nil {
@@ -217,6 +220,120 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 	}
 	if revisions != 3 {
 		t.Fatalf("expected 3 stored revisions, got %d", revisions)
+	}
+}
+
+func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
+	store := openTestStore(t)
+
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", spec, "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+
+	updated, changed, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, canonicalServiceSpec(spec))
+	if err != nil {
+		t.Fatalf("updateService noop: %v", err)
+	}
+	if changed {
+		t.Fatal("expected noop update to report changed=false")
+	}
+	if updated.SpecRevision != 1 || updated.RolloutGeneration != 1 {
+		t.Fatalf("expected no-op update to preserve revisions, got spec=%d rollout=%d", updated.SpecRevision, updated.RolloutGeneration)
+	}
+	revisions, err := store.countServiceRevisionsForTest(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("countServiceRevisionsForTest: %v", err)
+	}
+	if revisions != 1 {
+		t.Fatalf("expected 1 stored spec revision after noop, got %d", revisions)
+	}
+	rollouts, err := store.countServiceRolloutsForTest(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("countServiceRolloutsForTest: %v", err)
+	}
+	if rollouts != 1 {
+		t.Fatalf("expected 1 stored rollout after noop, got %d", rollouts)
+	}
+}
+
+func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
+	store := openTestStore(t)
+
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	}, "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+
+	redeployed, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID)
+	if err != nil {
+		t.Fatalf("redeployService: %v", err)
+	}
+	if redeployed.SpecRevision != 1 {
+		t.Fatalf("expected spec revision to remain 1, got %d", redeployed.SpecRevision)
+	}
+	if redeployed.RolloutGeneration != 2 {
+		t.Fatalf("expected rollout generation 2, got %d", redeployed.RolloutGeneration)
+	}
+	revisions, err := store.countServiceRevisionsForTest(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("countServiceRevisionsForTest: %v", err)
+	}
+	if revisions != 1 {
+		t.Fatalf("expected 1 stored spec revision after redeploy, got %d", revisions)
+	}
+	rollouts, err := store.countServiceRolloutsForTest(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("countServiceRolloutsForTest: %v", err)
+	}
+	if rollouts != 2 {
+		t.Fatalf("expected 2 stored rollouts after redeploy, got %d", rollouts)
+	}
+	_, allocation, err := store.serviceStatus(ctx, "user-1", projects[0].ID, service.ID)
+	if err != nil {
+		t.Fatalf("serviceStatus: %v", err)
+	}
+	if allocation.DesiredSpecRevision != 1 || allocation.DesiredRolloutGeneration != 2 {
+		t.Fatalf("unexpected desired allocation state: %+v", allocation)
 	}
 }
 
@@ -257,7 +374,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 				MemoryMebibytes: 64,
 				ContainerPort:   8080,
 				VolumeName:      volumeName,
-			}, nil)
+			})
 			createErrCh <- err
 		}()
 		go func() {

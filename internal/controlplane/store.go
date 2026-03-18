@@ -128,6 +128,51 @@ var storeMigrations = []migration{
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_system_key_unique ON projects(system_key) WHERE system_key IS NOT NULL`,
 		},
 	},
+	{
+		version: 3,
+		stmts: []string{
+			`ALTER TABLE services RENAME COLUMN current_revision TO current_spec_revision`,
+			`ALTER TABLE services ADD COLUMN IF NOT EXISTS current_rollout_generation INT8`,
+			`UPDATE services SET current_rollout_generation = current_spec_revision WHERE current_rollout_generation IS NULL`,
+			`ALTER TABLE services ALTER COLUMN current_rollout_generation SET NOT NULL`,
+			`ALTER TABLE service_revisions RENAME COLUMN revision TO spec_revision`,
+			`CREATE TABLE IF NOT EXISTS service_rollouts (
+				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+				rollout_generation INT8 NOT NULL,
+				spec_revision INT8 NOT NULL,
+				reason STRING NOT NULL,
+				requested_by_subject STRING NOT NULL DEFAULT '',
+				requested_by_email STRING NOT NULL DEFAULT '',
+				created_at TIMESTAMPTZ NOT NULL,
+				PRIMARY KEY (service_id, rollout_generation)
+			)`,
+			`INSERT INTO service_rollouts(service_id, rollout_generation, spec_revision, reason, created_at)
+			 SELECT service_id, spec_revision, spec_revision, 'migration', created_at
+			   FROM service_revisions
+			 ON CONFLICT(service_id, rollout_generation) DO NOTHING`,
+			`ALTER TABLE allocations RENAME COLUMN desired_revision TO desired_spec_revision`,
+			`ALTER TABLE allocations RENAME COLUMN applied_revision TO applied_spec_revision`,
+			`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS desired_rollout_generation INT8`,
+			`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS applied_rollout_generation INT8`,
+			`UPDATE allocations
+			    SET desired_rollout_generation = desired_spec_revision,
+			        applied_rollout_generation = applied_spec_revision
+			  WHERE desired_rollout_generation IS NULL OR applied_rollout_generation IS NULL`,
+			`ALTER TABLE allocations ALTER COLUMN desired_rollout_generation SET NOT NULL`,
+			`ALTER TABLE allocations ALTER COLUMN applied_rollout_generation SET NOT NULL`,
+			`ALTER TABLE service_domains RENAME TO domain_bindings`,
+			`ALTER TABLE domain_bindings RENAME COLUMN domain TO hostname`,
+			`ALTER TABLE domain_bindings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`,
+			`UPDATE domain_bindings SET updated_at = created_at WHERE updated_at IS NULL`,
+			`ALTER TABLE domain_bindings ALTER COLUMN updated_at SET NOT NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_domain_bindings_service_id ON domain_bindings(service_id, hostname)`,
+			`INSERT INTO state_revisions(name, value)
+			 SELECT 'agent_desired', value
+			   FROM state_revisions
+			  WHERE name = 'desired'
+			 ON CONFLICT(name) DO NOTHING`,
+		},
+	},
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
@@ -250,11 +295,11 @@ func (s *Store) nextDesiredRevision(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) nextDesiredRevisionTx(ctx context.Context, tx *sql.Tx) (int64, error) {
-	if _, err := tx.ExecContext(ctx, `UPDATE state_revisions SET value = value + 1 WHERE name = 'desired'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE state_revisions SET value = value + 1 WHERE name = 'agent_desired'`); err != nil {
 		return 0, err
 	}
 	var value int64
-	if err := tx.QueryRowContext(ctx, `SELECT value FROM state_revisions WHERE name = 'desired'`).Scan(&value); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM state_revisions WHERE name = 'agent_desired'`).Scan(&value); err != nil {
 		return 0, err
 	}
 	return value, nil
@@ -294,7 +339,7 @@ func (s *Store) desiredStateForAgent(ctx context.Context, agentID string) (*agen
 
 func (s *Store) currentDesiredRevision(ctx context.Context) (int64, error) {
 	var value int64
-	if err := s.db.QueryRowContext(ctx, `SELECT value FROM state_revisions WHERE name = 'desired'`).Scan(&value); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM state_revisions WHERE name = 'agent_desired'`).Scan(&value); err != nil {
 		return 0, err
 	}
 	return value, nil

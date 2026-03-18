@@ -37,15 +37,23 @@ type volumeRecord struct {
 }
 
 type serviceRecord struct {
-	ID               string
-	ProjectID        string
-	Name             string
-	Spec             *platformv1.ServiceSpec
-	CurrentRevision  int64
-	AllocatedAgentID string
-	Domains          []string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                string
+	ProjectID         string
+	Name              string
+	Spec              *platformv1.ServiceSpec
+	SpecRevision      int64
+	RolloutGeneration int64
+	AllocatedAgentID  string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type domainBindingRecord struct {
+	Hostname  string
+	ProjectID string
+	ServiceID string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type agentRecord struct {
@@ -66,15 +74,17 @@ func (a agentRecord) healthy(now time.Time) bool {
 }
 
 type allocationRecord struct {
-	ID              string
-	ServiceID       string
-	ProjectID       string
-	AgentID         string
-	DesiredRevision int64
-	AppliedRevision int64
-	Phase           string
-	Message         string
-	EndpointAddr    string
-	Healthy         bool
-	UpdatedAt       time.Time
+	ID                       string
+	ServiceID                string
+	ProjectID                string
+	AgentID                  string
+	DesiredSpecRevision      int64
+	AppliedSpecRevision      int64
+	DesiredRolloutGeneration int64
+	AppliedRolloutGeneration int64
+	Phase                    string
+	Message                  string
+	EndpointAddr             string
+	Healthy                  bool
+	UpdatedAt                time.Time
 }
