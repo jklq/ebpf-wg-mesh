@@ -5,22 +5,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 )
 
+const defaultIngressMinSyncInterval = 2 * time.Second
+
 type IngressSyncer struct {
-	adminURL string
-	client   *http.Client
-	store    *Store
-	mu       sync.Mutex
+	adminURL        string
+	client          *http.Client
+	store           *Store
+	minSyncInterval time.Duration
+	pushMu          sync.Mutex
+	mu              sync.Mutex
+	timer           *time.Timer
+	dirty           bool
 }
 
 func NewIngressSyncer(adminURL string, store *Store) *IngressSyncer {
 	return &IngressSyncer{
-		adminURL: adminURL,
-		client:   &http.Client{},
-		store:    store,
+		adminURL:        adminURL,
+		client:          &http.Client{},
+		store:           store,
+		minSyncInterval: defaultIngressMinSyncInterval,
 	}
 }
 
@@ -28,9 +37,49 @@ func (i *IngressSyncer) Sync(ctx context.Context) error {
 	if i == nil || i.adminURL == "" {
 		return nil
 	}
-	i.mu.Lock()
-	defer i.mu.Unlock()
+	i.pushMu.Lock()
+	defer i.pushMu.Unlock()
 
+	return i.syncLocked(ctx)
+}
+
+func (i *IngressSyncer) RequestSync() {
+	if i == nil || i.adminURL == "" {
+		return
+	}
+
+	i.mu.Lock()
+	if i.timer == nil {
+		i.timer = time.AfterFunc(i.minSyncInterval, i.onDebounceWindowEnd)
+		i.mu.Unlock()
+		go i.syncAsync()
+		return
+	}
+	i.dirty = true
+	i.mu.Unlock()
+}
+
+func (i *IngressSyncer) onDebounceWindowEnd() {
+	i.mu.Lock()
+	if !i.dirty {
+		i.timer = nil
+		i.mu.Unlock()
+		return
+	}
+	i.dirty = false
+	i.timer = time.AfterFunc(i.minSyncInterval, i.onDebounceWindowEnd)
+	i.mu.Unlock()
+
+	go i.syncAsync()
+}
+
+func (i *IngressSyncer) syncAsync() {
+	if err := i.Sync(context.Background()); err != nil {
+		slog.Warn("ingress sync failed", "error", err)
+	}
+}
+
+func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 	cfg, err := i.render(ctx)
 	if err != nil {
 		return err
