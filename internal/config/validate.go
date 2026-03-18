@@ -21,6 +21,12 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Database.URL == "" {
 		return errors.New("controlplane.database.url is required")
 	}
+	if cfg.Database.MaxOpenConns < 0 {
+		return errors.New("controlplane.database.maxOpenConns must be non-negative")
+	}
+	if cfg.Database.MaxIdleConns < 0 {
+		return errors.New("controlplane.database.maxIdleConns must be non-negative")
+	}
 	if cfg.StateDir == "" {
 		return errors.New("controlplane.stateDir is required")
 	}
