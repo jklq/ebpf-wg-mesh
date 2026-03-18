@@ -33,7 +33,11 @@ func (f *fakeEngine) Close() error { return nil }
 func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing.T) {
 	dir := t.TempDir()
 	engine := &fakeEngine{
-		status:  map[string]serviceStatus{"alloc-1": {AppliedRevision: 2, Endpoint: "fd00::10:8080"}},
+		status: map[string]serviceStatus{"alloc-1": {
+			AppliedSpecRevision:      2,
+			AppliedRolloutGeneration: 2,
+			Endpoint:                 "fd00::10:8080",
+		}},
 		created: map[string]bool{"alloc-1": true},
 	}
 	runtime := &ContainerdRuntime{
@@ -56,11 +60,12 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 		Revision: 2,
 		Volumes:  []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data"}},
 		Services: []*agentv1.DesiredService{{
-			AllocationId:    "alloc-1",
-			ServiceId:       "svc-1",
-			DesiredRevision: 2,
-			PrivateIpv6:     "fd00::10",
-			Spec:            &platformv1.ServiceSpec{ContainerPort: 8080},
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			DesiredSpecRevision:      2,
+			DesiredRolloutGeneration: 2,
+			PrivateIpv6:              "fd00::10",
+			Spec:                     &platformv1.ServiceSpec{ContainerPort: 8080},
 		}},
 	}
 	report, err := runtime.Reconcile(context.Background(), state)
