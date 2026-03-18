@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import { deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
@@ -268,7 +268,10 @@ function getPlatformClient(runtime: RuntimeConfig): PlatformClient {
     enums: String,
     defaults: true,
     oneofs: true,
-    includeDirs: [resolve(process.cwd(), '../api/proto'), googleProtoFiles.getProtoPath()],
+    includeDirs: [
+      resolve(process.cwd(), '../api/proto'),
+      dirname(googleProtoFiles.getProtoPath()),
+    ],
   })
   const loaded = grpc.loadPackageDefinition(definition) as {
     platform: {

@@ -1,11 +1,13 @@
 import { createServer } from 'vite'
 
+const requestedPort = Number.parseInt(process.env.DASHBOARD_DEV_SERVER_PORT ?? '', 10)
+
 const server = await createServer({
   configFile: 'vite.config.ts',
   logLevel: 'silent',
   server: {
     host: '127.0.0.1',
-    port: 0,
+    port: Number.isFinite(requestedPort) ? requestedPort : 0,
   },
 })
 
