@@ -20,6 +20,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	PlatformService_EnsurePrincipal_FullMethodName  = "/platform.v1.PlatformService/EnsurePrincipal"
 	PlatformService_CreateProject_FullMethodName    = "/platform.v1.PlatformService/CreateProject"
 	PlatformService_ListProjects_FullMethodName     = "/platform.v1.PlatformService/ListProjects"
 	PlatformService_GetProject_FullMethodName       = "/platform.v1.PlatformService/GetProject"
@@ -41,6 +42,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PlatformServiceClient interface {
+	EnsurePrincipal(ctx context.Context, in *EnsurePrincipalRequest, opts ...grpc.CallOption) (*Principal, error)
 	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	ListProjects(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListProjectsResponse, error)
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*Project, error)
@@ -64,6 +66,16 @@ type platformServiceClient struct {
 
 func NewPlatformServiceClient(cc grpc.ClientConnInterface) PlatformServiceClient {
 	return &platformServiceClient{cc}
+}
+
+func (c *platformServiceClient) EnsurePrincipal(ctx context.Context, in *EnsurePrincipalRequest, opts ...grpc.CallOption) (*Principal, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Principal)
+	err := c.cc.Invoke(ctx, PlatformService_EnsurePrincipal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *platformServiceClient) CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error) {
@@ -220,6 +232,7 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empt
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
 type PlatformServiceServer interface {
+	EnsurePrincipal(context.Context, *EnsurePrincipalRequest) (*Principal, error)
 	CreateProject(context.Context, *CreateProjectRequest) (*Project, error)
 	ListProjects(context.Context, *emptypb.Empty) (*ListProjectsResponse, error)
 	GetProject(context.Context, *GetProjectRequest) (*Project, error)
@@ -245,6 +258,9 @@ type PlatformServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedPlatformServiceServer struct{}
 
+func (UnimplementedPlatformServiceServer) EnsurePrincipal(context.Context, *EnsurePrincipalRequest) (*Principal, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnsurePrincipal not implemented")
+}
 func (UnimplementedPlatformServiceServer) CreateProject(context.Context, *CreateProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateProject not implemented")
 }
@@ -309,6 +325,24 @@ func RegisterPlatformServiceServer(s grpc.ServiceRegistrar, srv PlatformServiceS
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&PlatformService_ServiceDesc, srv)
+}
+
+func _PlatformService_EnsurePrincipal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsurePrincipalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).EnsurePrincipal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_EnsurePrincipal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).EnsurePrincipal(ctx, req.(*EnsurePrincipalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _PlatformService_CreateProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -588,6 +622,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "platform.v1.PlatformService",
 	HandlerType: (*PlatformServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "EnsurePrincipal",
+			Handler:    _PlatformService_EnsurePrincipal_Handler,
+		},
 		{
 			MethodName: "CreateProject",
 			Handler:    _PlatformService_CreateProject_Handler,
