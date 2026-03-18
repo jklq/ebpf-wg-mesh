@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,6 +136,17 @@ func (noopNotifier) Notify(agentID string) {}
 type noopIngress struct{}
 
 func (noopIngress) Sync(ctx context.Context) error { return nil }
+func (noopIngress) RequestSync()                   {}
+
+type countingIngress struct {
+	requests atomic.Int32
+}
+
+func (c *countingIngress) Sync(ctx context.Context) error { return nil }
+
+func (c *countingIngress) RequestSync() {
+	c.requests.Add(1)
+}
 
 type fakePlatformStore struct {
 	ensurePrincipalFn        func(ctx context.Context, subject, email string) (userRecord, error)

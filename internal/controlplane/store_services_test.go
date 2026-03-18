@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
@@ -411,4 +412,301 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestDesiredRevisionsAreAgentScoped(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-2")); err != nil {
+		t.Fatal(err)
+	}
+
+	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
+	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
+
+	if _, err := store.createVolume(ctx, "user-1", projects[0].ID, "data", 64<<20, "node-2"); err != nil {
+		t.Fatalf("createVolume: %v", err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before {
+		t.Fatalf("expected node-1 revision unchanged after volume create, got %d want %d", got, node1Before)
+	}
+	node2AfterVolume := mustDesiredRevision(t, store, ctx, "node-2")
+	if node2AfterVolume != node2Before+1 {
+		t.Fatalf("expected node-2 revision %d after volume create, got %d", node2Before+1, node2AfterVolume)
+	}
+
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	}, "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	node1AfterService := mustDesiredRevision(t, store, ctx, "node-1")
+	if node1AfterService != node1Before+1 {
+		t.Fatalf("expected node-1 revision %d after service create, got %d", node1Before+1, node1AfterService)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2AfterVolume {
+		t.Fatalf("expected node-2 revision unchanged after service create, got %d want %d", got, node2AfterVolume)
+	}
+
+	service, err = store.upsertDomain(ctx, "user-1", projects[0].ID, service.ID, "web.example.com")
+	if err != nil {
+		t.Fatalf("upsertDomain: %v", err)
+	}
+	node1AfterUpsertDomain := mustDesiredRevision(t, store, ctx, "node-1")
+	if node1AfterUpsertDomain != node1AfterService+1 {
+		t.Fatalf("expected node-1 revision %d after upsertDomain, got %d", node1AfterService+1, node1AfterUpsertDomain)
+	}
+
+	if err := store.deleteDomain(ctx, "user-1", projects[0].ID, "web.example.com"); err != nil {
+		t.Fatalf("deleteDomain: %v", err)
+	}
+	node1AfterDeleteDomain := mustDesiredRevision(t, store, ctx, "node-1")
+	if node1AfterDeleteDomain != node1AfterUpsertDomain+1 {
+		t.Fatalf("expected node-1 revision %d after deleteDomain, got %d", node1AfterUpsertDomain+1, node1AfterDeleteDomain)
+	}
+
+	if err := store.deleteService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
+		t.Fatalf("deleteService: %v", err)
+	}
+	node1AfterDeleteService := mustDesiredRevision(t, store, ctx, "node-1")
+	if node1AfterDeleteService != node1AfterDeleteDomain+1 {
+		t.Fatalf("expected node-1 revision %d after deleteService, got %d", node1AfterDeleteDomain+1, node1AfterDeleteService)
+	}
+
+	state, err := store.desiredStateForAgent(ctx, "node-1")
+	if err != nil {
+		t.Fatalf("desiredStateForAgent: %v", err)
+	}
+	if got := state.GetRevision(); got != node1AfterDeleteService {
+		t.Fatalf("expected desired state revision %d, got %d", node1AfterDeleteService, got)
+	}
+}
+
+func TestAgentTopologyChangesBumpAllDesiredRevisions(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-2")); err != nil {
+		t.Fatal(err)
+	}
+	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
+	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
+
+	hello := agentHello("node-1")
+	hello.Name = "node-1-renamed"
+	changed, err := store.upsertAgent(ctx, hello)
+	if err != nil {
+		t.Fatalf("upsertAgent: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected agent topology change to be detected")
+	}
+
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
+		t.Fatalf("expected node-1 revision %d, got %d", node1Before+1, got)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
+		t.Fatalf("expected node-2 revision %d, got %d", node2Before+1, got)
+	}
+}
+
+func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	routedService, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatalf("createService(routed): %v", err)
+	}
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", routedService.ID); err != nil {
+		t.Fatalf("createDomainBinding: %v", err)
+	}
+	internalService, err := store.createService(ctx, "user-1", projects[0].ID, "worker", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatalf("createService(internal): %v", err)
+	}
+
+	_, routedAlloc, err := store.serviceStatus(ctx, "user-1", projects[0].ID, routedService.ID)
+	if err != nil {
+		t.Fatalf("serviceStatus(routed): %v", err)
+	}
+	_, internalAlloc, err := store.serviceStatus(ctx, "user-1", projects[0].ID, internalService.ID)
+	if err != nil {
+		t.Fatalf("serviceStatus(internal): %v", err)
+	}
+
+	changed, err := store.recordStatusReport(ctx, &agentv1.StatusReport{
+		AgentId: "node-1",
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId:        routedAlloc.ID,
+			AppliedSpecRevision: 1,
+			Phase:               "Running",
+			EndpointAddr:        "10.0.0.10:8080",
+			Healthy:             true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("recordStatusReport(routed changed): %v", err)
+	}
+	if !changed {
+		t.Fatal("expected routed status change to trigger ingress update")
+	}
+
+	changed, err = store.recordStatusReport(ctx, &agentv1.StatusReport{
+		AgentId: "node-1",
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId:        routedAlloc.ID,
+			AppliedSpecRevision: 1,
+			Phase:               "Running",
+			EndpointAddr:        "10.0.0.10:8080",
+			Healthy:             true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("recordStatusReport(routed unchanged): %v", err)
+	}
+	if changed {
+		t.Fatal("expected unchanged routed status to skip ingress update")
+	}
+
+	changed, err = store.recordStatusReport(ctx, &agentv1.StatusReport{
+		AgentId: "node-1",
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId:        internalAlloc.ID,
+			AppliedSpecRevision: 1,
+			Phase:               "Running",
+			EndpointAddr:        "10.0.0.11:8080",
+			Healthy:             true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("recordStatusReport(internal changed): %v", err)
+	}
+	if changed {
+		t.Fatal("expected non-routed status change to skip ingress update")
+	}
+}
+
+func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-b")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.createService(ctx, "user-1", projects[0].ID, "existing", &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	}, "node-b"); err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+
+	agentID, err := store.chooseAgentForService(ctx, projects[0].ID, &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	})
+	if err != nil {
+		t.Fatalf("chooseAgentForService: %v", err)
+	}
+	if agentID != "node-a" {
+		t.Fatalf("expected node-a, got %q", agentID)
+	}
+}
+
+func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	hello := agentHello("node-1")
+	hello.CpuMillisCapacity = 500
+	hello.MemoryMebibytesCapacity = 512
+	if _, err := store.upsertAgent(ctx, hello); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.createService(ctx, "user-1", projects[0].ID, "existing", &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       400,
+		MemoryMebibytes: 256,
+		ContainerPort:   8080,
+	}, "node-1"); err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+
+	_, err = store.chooseAgentForService(ctx, projects[0].ID, &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       200,
+		MemoryMebibytes: 300,
+		ContainerPort:   8080,
+	})
+	if !errors.Is(err, errNoPlacementAvailable) {
+		t.Fatalf("expected errNoPlacementAvailable, got %v", err)
+	}
+}
+
+func mustDesiredRevision(t *testing.T, store *Store, ctx context.Context, agentID string) int64 {
+	t.Helper()
+
+	revision, err := store.currentDesiredRevisionForAgent(ctx, agentID)
+	if err != nil {
+		t.Fatalf("currentDesiredRevisionForAgent(%s): %v", agentID, err)
+	}
+	return revision
 }
