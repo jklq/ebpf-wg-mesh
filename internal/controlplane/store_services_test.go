@@ -453,7 +453,7 @@ func TestDesiredRevisionsAreAgentScoped(t *testing.T) {
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		ContainerPort:   8080,
-	}, "node-1", nil)
+	}, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -547,11 +547,14 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	routedService, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1", []string{"web.example.com"})
+	routedService, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService(routed): %v", err)
 	}
-	internalService, err := store.createService(ctx, "user-1", projects[0].ID, "worker", serviceSpec(), "node-1", nil)
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", routedService.ID); err != nil {
+		t.Fatalf("createDomainBinding: %v", err)
+	}
+	internalService, err := store.createService(ctx, "user-1", projects[0].ID, "worker", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService(internal): %v", err)
 	}
@@ -568,11 +571,11 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	changed, err := store.recordStatusReport(ctx, &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
-			AllocationId:    routedAlloc.ID,
-			AppliedRevision: 1,
-			Phase:           "Running",
-			EndpointAddr:    "10.0.0.10:8080",
-			Healthy:         true,
+			AllocationId:        routedAlloc.ID,
+			AppliedSpecRevision: 1,
+			Phase:               "Running",
+			EndpointAddr:        "10.0.0.10:8080",
+			Healthy:             true,
 		}},
 	})
 	if err != nil {
@@ -585,11 +588,11 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	changed, err = store.recordStatusReport(ctx, &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
-			AllocationId:    routedAlloc.ID,
-			AppliedRevision: 1,
-			Phase:           "Running",
-			EndpointAddr:    "10.0.0.10:8080",
-			Healthy:         true,
+			AllocationId:        routedAlloc.ID,
+			AppliedSpecRevision: 1,
+			Phase:               "Running",
+			EndpointAddr:        "10.0.0.10:8080",
+			Healthy:             true,
 		}},
 	})
 	if err != nil {
@@ -602,11 +605,11 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	changed, err = store.recordStatusReport(ctx, &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
-			AllocationId:    internalAlloc.ID,
-			AppliedRevision: 1,
-			Phase:           "Running",
-			EndpointAddr:    "10.0.0.11:8080",
-			Healthy:         true,
+			AllocationId:        internalAlloc.ID,
+			AppliedSpecRevision: 1,
+			Phase:               "Running",
+			EndpointAddr:        "10.0.0.11:8080",
+			Healthy:             true,
 		}},
 	})
 	if err != nil {
@@ -641,7 +644,7 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		ContainerPort:   8080,
-	}, "node-b", nil); err != nil {
+	}, "node-b"); err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 
@@ -683,7 +686,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 		CpuMillis:       400,
 		MemoryMebibytes: 256,
 		ContainerPort:   8080,
-	}, "node-1", nil); err != nil {
+	}, "node-1"); err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 

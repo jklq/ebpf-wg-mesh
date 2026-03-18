@@ -365,6 +365,15 @@ func (s *Store) bumpAllDesiredRevisionsTx(ctx context.Context, tx *sql.Tx) error
 	return err
 }
 
+func (s *Store) bumpDesiredRevisions(ctx context.Context, agentIDs []string) error {
+	if len(agentIDs) == 0 {
+		return nil
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		return s.bumpDesiredRevisionsTx(ctx, tx, agentIDs)
+	})
+}
+
 func normalizeDatabaseConfig(dbCfg *config.DatabaseConfig) {
 	if dbCfg == nil {
 		return

@@ -158,7 +158,7 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 			err := tx.QueryRowContext(ctx,
 				`SELECT a.healthy,
 				        a.endpoint_addr,
-				        EXISTS(SELECT 1 FROM service_domains d WHERE d.service_id = a.service_id)
+				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id)
 				   FROM allocations a
 				  WHERE a.id = $1`,
 				cond.AllocationId,

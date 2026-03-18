@@ -580,9 +580,6 @@ func (s *Store) putDomainBinding(ctx context.Context, subject, projectID, hostna
 		case err != sql.ErrNoRows:
 			return err
 		}
-		if !createOnly && err == sql.ErrNoRows {
-			return sql.ErrNoRows
-		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO domain_bindings(hostname, project_id, service_id, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5)`,
@@ -677,6 +674,43 @@ func (s *Store) deleteDomainBinding(ctx context.Context, subject, projectID, hos
 		return false, err
 	}
 	return changed, nil
+}
+
+func (s *Store) upsertDomain(ctx context.Context, subject, projectID, serviceID, hostname string) (serviceRecord, error) {
+	_, changed, err := s.putDomainBinding(ctx, subject, projectID, hostname, serviceID, false)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	if changed {
+		service, err := s.serviceByID(ctx, subject, projectID, serviceID)
+		if err != nil {
+			return serviceRecord{}, err
+		}
+		if err := s.bumpDesiredRevisions(ctx, []string{service.AllocatedAgentID}); err != nil {
+			return serviceRecord{}, err
+		}
+		return service, nil
+	}
+	return s.serviceByID(ctx, subject, projectID, serviceID)
+}
+
+func (s *Store) deleteDomain(ctx context.Context, subject, projectID, hostname string) error {
+	binding, err := s.domainBindingByHostname(ctx, subject, projectID, hostname)
+	if err != nil {
+		return err
+	}
+	changed, err := s.deleteDomainBinding(ctx, subject, projectID, hostname)
+	if err != nil {
+		return err
+	}
+	if changed {
+		service, err := s.serviceByID(ctx, subject, projectID, binding.ServiceID)
+		if err != nil {
+			return err
+		}
+		return s.bumpDesiredRevisions(ctx, []string{service.AllocatedAgentID})
+	}
+	return nil
 }
 
 func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
@@ -1009,7 +1043,7 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 		          FROM services s
 		          JOIN service_revisions r
 		            ON r.service_id = s.id
-		           AND r.revision = s.current_revision
+		           AND r.spec_revision = s.current_spec_revision
 		         GROUP BY s.allocated_agent_id
 		   ) AS stats
 		     ON stats.agent_id = a.id

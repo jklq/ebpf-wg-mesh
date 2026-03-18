@@ -164,7 +164,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1", []string{"demo.example.com"})
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
