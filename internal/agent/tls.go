@@ -37,10 +37,12 @@ type clientTLSMaterial struct {
 }
 
 func (a *App) clientCredentials(ctx context.Context) (credentials.TransportCredentials, time.Time, error) {
+	slog.Info("ensuring client tls material", "agent_id", a.cfg.Node.ID)
 	material, err := a.ensureClientTLSMaterial(ctx)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	slog.Info("client tls material ready", "agent_id", a.cfg.Node.ID, "not_after", material.notAfter)
 	return credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{material.certificate},
 		RootCAs:      material.rootCAs,
@@ -73,6 +75,7 @@ func (a *App) ensureClientTLSMaterial(ctx context.Context) (*clientTLSMaterial, 
 }
 
 func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMaterial) (*clientTLSMaterial, error) {
+	slog.Info("enrolling client certificate", "agent_id", a.cfg.Node.ID, "renewal", current != nil)
 	key, keyPEM, err := a.loadOrCreateClientKey()
 	if err != nil {
 		return nil, err
@@ -90,6 +93,7 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 		return nil, fmt.Errorf("dial control plane enroll: %w", err)
 	}
 	defer conn.Close()
+	slog.Info("dialed control plane for enroll", "agent_id", a.cfg.Node.ID, "address", a.cfg.ControlPlane.Address)
 	client := agentv1.NewAgentControlClient(conn)
 	req := &agentv1.EnrollRequest{
 		AgentId: a.cfg.Node.ID,
@@ -102,6 +106,7 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 	if err != nil {
 		return nil, fmt.Errorf("enroll client certificate: %w", err)
 	}
+	slog.Info("client certificate enrolled", "agent_id", a.cfg.Node.ID)
 	if err := a.persistClientTLSMaterial(keyPEM, []byte(resp.GetCertPem()), []byte(resp.GetCaPem())); err != nil {
 		return nil, err
 	}
