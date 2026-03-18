@@ -6,20 +6,21 @@ Minimal PaaS control plane and agent prototype with a retained WireGuard/eBPF pr
 
 - `cmd/controlplane`: authoritative control plane
 - `cmd/agent`: node agent that opens an mTLS gRPC stream to the control plane
-- `internal/controlplane`: CockroachDB store, scheduling, OIDC auth, public HTTP API, agent stream handling, Caddy sync
+- `dashboard`: minimal TanStack Start dashboard app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
+- `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, Caddy sync
 - `internal/agent`: desired-state loop, local reconcile runtime, containerd inspection, status reporting
 - `internal/mesh`: retained mesh bootstrap that wraps the existing WireGuard and eBPF implementation
 - `api/proto`: protobuf definitions and generated gRPC bindings
-- `testbed`: devstack assets for one control plane, one Caddy sidecar, and two agents
 
 ## Architecture
 
 - Single control plane only.
-- CockroachDB stores users, projects, memberships, agents, services, revisions, volumes, domains, allocations, and status projections.
+- CockroachDB stores authz-side users, projects, memberships, agents, services, revisions, volumes, domains, allocations, and status projections.
+- The dashboard app uses its own schema in the same CockroachDB cluster for app users, sessions, accounts, and onboarding metadata.
 - Agents are intentionally dumb: they receive full per-node desired-state snapshots and reconcile local state.
-- Public ingress, including the control-plane API, is centralized through one Caddy instance; the control plane replaces Caddy config through the admin API.
-- User-facing HTTP is protected by OIDC JWT validation.
-- Agent-facing gRPC is protected by mTLS.
+- Public ingress is centralized through one Caddy instance; the control plane replaces Caddy config through the admin API.
+- The dashboard is the only intended product-facing caller of `platform.v1.PlatformService`.
+- Agent-facing and dashboard-facing internal gRPC are protected by mTLS with distinct caller identities.
 - The existing WireGuard/eBPF code remains the private node-to-node transport/policy layer behind `internal/mesh`.
 
 ## Bootstrap
@@ -31,7 +32,7 @@ The binaries no longer require YAML config files.
 
 Common bootstrap inputs:
 
-- control plane: listen addresses, agent bootstrap token(s), DB URL, state dir, OIDC settings, ingress admin URL
+- control plane: listen addresses, agent bootstrap token(s), DB URL, state dir, ingress admin URL, managed dashboard service settings
 - agent: control-plane address, control-plane CA, bootstrap token, data dir
 
 ## Build
@@ -48,21 +49,6 @@ Run tests:
 ```bash
 go test ./...
 ```
-
-## Devstack
-
-Start the stack:
-
-```bash
-docker compose -f testbed/docker-compose.yml up --build
-```
-
-The stack includes:
-
-- `controlplane`
-- `caddy`
-- `agent-node1`
-- `agent-node2`
 
 ## Internal mTLS
 
