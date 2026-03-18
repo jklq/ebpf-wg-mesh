@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
@@ -50,13 +50,20 @@ function HomePage() {
 	const router = useRouter();
 	const [projectName, setProjectName] = useState("");
 	const [submitError, setSubmitError] = useState<string>();
+	const [isHydrated, setIsHydrated] = useState(false);
 	const [isPending, startTransition] = useTransition();
+
+	useEffect(() => {
+		setIsHydrated(true);
+	}, []);
 
 	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		if (!isHydrated) {
+			return;
+		}
 		setSubmitError(undefined);
-		const formData = new FormData(event.currentTarget);
-		const submittedName = String(formData.get("projectName") ?? "");
+		const submittedName = projectName;
 		startTransition(async () => {
 			try {
 				await createProject({ data: { name: submittedName } });
@@ -73,6 +80,7 @@ function HomePage() {
 			state={state}
 			projectName={projectName}
 			submitError={submitError}
+			isHydrated={isHydrated}
 			isPending={isPending}
 			onProjectNameChange={setProjectName}
 			onSubmit={handleSubmit}
@@ -84,6 +92,7 @@ export function HomePageView({
 	state,
 	projectName,
 	submitError,
+	isHydrated,
 	isPending,
 	onProjectNameChange,
 	onSubmit,
@@ -91,6 +100,7 @@ export function HomePageView({
 	state: DashboardHomeState;
 	projectName: string;
 	submitError?: string;
+	isHydrated: boolean;
 	isPending: boolean;
 	onProjectNameChange: (value: string) => void;
 	onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -213,7 +223,11 @@ export function HomePageView({
 						This submits a user action through the dashboard backend and creates
 						the project through the internal control-plane gRPC API.
 					</p>
-					<form className="mt-5 space-y-3" onSubmit={onSubmit}>
+					<form
+						className="mt-5 space-y-3"
+						data-hydrated={isHydrated ? "true" : "false"}
+						onSubmit={onSubmit}
+					>
 						<label className="block space-y-2">
 							<span className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
 								Project name
@@ -231,7 +245,7 @@ export function HomePageView({
 						) : null}
 						<button
 							type="submit"
-							disabled={isPending}
+							disabled={!isHydrated || isPending || projectName.trim() === ""}
 							className="inline-flex h-11 items-center justify-center rounded-full bg-[var(--ink)] px-5 text-sm font-medium text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-wait disabled:opacity-60"
 						>
 							{isPending ? "Creating..." : "Create project"}
