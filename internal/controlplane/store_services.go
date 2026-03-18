@@ -12,6 +12,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -31,6 +32,18 @@ func sortedDomains(domains []string) []string {
 	out := append([]string(nil), domains...)
 	sort.Strings(out)
 	return out
+}
+
+func sameDomains(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) createVolume(ctx context.Context, subject, projectID, name string, sizeBytes int64, agentID string) (volumeRecord, error) {
@@ -339,6 +352,30 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, subjec
 	return rec, err
 }
 
+func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, projectID, name string) (serviceRecord, bool, error) {
+	row := q.QueryRowContext(
+		ctx,
+		`SELECT id, project_id, name, current_revision, allocated_agent_id, created_at, updated_at
+		   FROM services
+		  WHERE project_id = $1 AND name = $2`,
+		projectID,
+		name,
+	)
+	rec, err := scanServiceRow(row)
+	switch {
+	case err == nil:
+		rec.Spec, rec.Domains, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.CurrentRevision)
+		if err != nil {
+			return serviceRecord{}, false, err
+		}
+		return rec, true, nil
+	case err == sql.ErrNoRows:
+		return serviceRecord{}, false, nil
+	default:
+		return serviceRecord{}, false, err
+	}
+}
+
 func scanServiceRow(scanner interface{ Scan(...any) error }) (serviceRecord, error) {
 	var rec serviceRecord
 	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &rec.CurrentRevision, &rec.AllocatedAgentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
@@ -482,6 +519,13 @@ func (s *Store) createServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 	if _, err := s.projectByIDQuerier(ctx, tx, subject, projectID); err != nil {
 		return serviceRecord{}, err
 	}
+	return s.createServiceTxInternal(ctx, tx, projectID, name, spec, agentID, domains)
+}
+
+func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string, domains []string) (serviceRecord, error) {
+	if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
+		return serviceRecord{}, err
+	}
 	if agentID == "" {
 		return serviceRecord{}, errors.New("agent id required")
 	}
@@ -541,6 +585,100 @@ func (s *Store) createServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 		}
 	}
 	if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+		return serviceRecord{}, err
+	}
+	return rec, nil
+}
+
+func (s *Store) ensureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error) {
+	var rec serviceRecord
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		current, found, err := s.serviceByNameQuerier(ctx, tx, projectID, name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			agentID, err := s.chooseAgentForServiceTx(ctx, tx, projectID, spec)
+			if err != nil {
+				return err
+			}
+			rec, err = s.createServiceTxInternal(ctx, tx, projectID, name, spec, agentID, domains)
+			return err
+		}
+		sorted := sortedDomains(domains)
+		if proto.Equal(current.Spec, spec) && sameDomains(current.Domains, sorted) {
+			rec = current
+			return nil
+		}
+		now := time.Now().UTC()
+		nextRevision := current.CurrentRevision + 1
+		specJSON, err := protojson.Marshal(spec)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE services SET current_revision = $1, updated_at = $2 WHERE id = $3`,
+			nextRevision,
+			now,
+			current.ID,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO service_revisions(service_id, revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
+			current.ID,
+			nextRevision,
+			specJSON,
+			now,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE allocations
+			    SET desired_revision = $1,
+			        phase = $2,
+			        message = $3,
+			        healthy = $4,
+			        updated_at = $5
+			  WHERE service_id = $6`,
+			nextRevision,
+			"Pending",
+			"",
+			false,
+			now,
+			current.ID,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM service_domains WHERE service_id = $1`, current.ID); err != nil {
+			return err
+		}
+		for _, domain := range sorted {
+			if _, err := tx.ExecContext(
+				ctx,
+				`INSERT INTO service_domains(domain, project_id, service_id, created_at) VALUES ($1, $2, $3, $4)`,
+				domain,
+				projectID,
+				current.ID,
+				now,
+			); err != nil {
+				return err
+			}
+		}
+		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+			return err
+		}
+		rec = current
+		rec.Spec = spec
+		rec.Domains = sorted
+		rec.CurrentRevision = nextRevision
+		rec.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
 		return serviceRecord{}, err
 	}
 	return rec, nil

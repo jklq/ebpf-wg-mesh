@@ -24,20 +24,25 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.StateDir == "" {
 		return errors.New("controlplane.stateDir is required")
 	}
-	if cfg.OIDC.Issuer == "" {
-		return errors.New("controlplane.oidc.issuer is required")
-	}
-	if cfg.OIDC.Audience == "" {
-		return errors.New("controlplane.oidc.audience is required")
-	}
-	if cfg.OIDC.JWKSURL == "" {
-		return errors.New("controlplane.oidc.jwksUrl is required")
-	}
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
 	}
-	if cfg.Ingress.ControlPlaneHTTPUpstream == "" {
-		return errors.New("controlplane.ingress.controlPlaneHttpUpstream is required")
+	if cfg.Dashboard.Enabled {
+		if cfg.Dashboard.Image == "" {
+			return errors.New("controlplane.dashboard.image is required when dashboard is enabled")
+		}
+		if cfg.Dashboard.ProjectSystemKey == "" {
+			return errors.New("controlplane.dashboard.projectSystemKey is required when dashboard is enabled")
+		}
+		if cfg.Dashboard.ServiceName == "" {
+			return errors.New("controlplane.dashboard.serviceName is required when dashboard is enabled")
+		}
+		if cfg.Dashboard.PublicDomain == "" {
+			return errors.New("controlplane.dashboard.publicDomain is required when dashboard is enabled")
+		}
+		if cfg.Dashboard.ControlPlaneAddr == "" {
+			return errors.New("controlplane.dashboard.controlPlaneAddr is required when dashboard is enabled")
+		}
 	}
 	if cfg.Mesh.InterfaceName == "" {
 		return errors.New("controlplane.mesh.interfaceName is required")

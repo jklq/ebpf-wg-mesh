@@ -11,7 +11,6 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/mesh"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc"
@@ -20,7 +19,8 @@ import (
 type App struct {
 	cfg            config.AgentConfig
 	runtime        Runtime
-	mesh           *mesh.Runtime
+	mesh           MeshHandle
+	meshFactory    MeshFactory
 	meshAssignment config.AgentMeshAssignment
 }
 
@@ -31,12 +31,23 @@ const (
 
 var errRotateSession = errors.New("rotate mTLS session")
 
-func New(cfg config.AgentConfig) (*App, error) {
-	runtime, err := NewContainerdRuntime(cfg)
+func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
+	options := defaultOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+
+	runtime, err := options.runtimeFactory(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &App{cfg: cfg, runtime: runtime}, nil
+	return &App{
+		cfg:         cfg,
+		runtime:     runtime,
+		meshFactory: options.meshFactory,
+	}, nil
 }
 
 func (a *App) Close() error {
@@ -84,6 +95,7 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) runSession(ctx context.Context) error {
+	slog.Info("starting agent session", "agent_id", a.cfg.Node.ID)
 	creds, certNotAfter, err := a.clientCredentials(ctx)
 	if err != nil {
 		return fmt.Errorf("build control plane credentials: %w", err)
@@ -99,12 +111,14 @@ func (a *App) runSession(ctx context.Context) error {
 		return fmt.Errorf("dial control plane: %w", err)
 	}
 	defer conn.Close()
+	slog.Info("dialed control plane", "agent_id", a.cfg.Node.ID, "address", a.cfg.ControlPlane.Address)
 
 	client := agentv1.NewAgentControlClient(conn)
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
 		return fmt.Errorf("open sync stream: %w", err)
 	}
+	slog.Info("opened sync stream", "agent_id", a.cfg.Node.ID)
 	publicKey, err := a.wireGuardPublicKey()
 	if err != nil {
 		return fmt.Errorf("derive wireguard public key: %w", err)
@@ -128,6 +142,7 @@ func (a *App) runSession(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	slog.Info("sent agent hello", "agent_id", a.cfg.Node.ID)
 	go a.heartbeatLoop(sessionCtx, send)
 
 	for {
@@ -231,7 +246,7 @@ func (a *App) applyNodeConfig(ctx context.Context, assigned *agentv1.AssignedNod
 		_ = a.mesh.Close()
 		a.mesh = nil
 	}
-	meshRuntime, err := mesh.Start(ctx, a.cfg.MeshRuntimeConfig(next))
+	meshRuntime, err := a.meshFactory(ctx, a.cfg.MeshRuntimeConfig(next))
 	if err != nil {
 		return err
 	}

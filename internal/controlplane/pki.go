@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -23,7 +22,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -34,9 +32,11 @@ const (
 	caKeyFileName      = "ca.key"
 	serverCertFileName = "server.crt"
 	serverKeyFileName  = "server.key"
+	clientCertsDirName = "clients"
 )
 
 type TLSAuthority struct {
+	pkiDir          string
 	caCert          *x509.Certificate
 	caKey           crypto.Signer
 	caPEM           []byte
@@ -75,6 +75,7 @@ func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
 	}
 
 	return &TLSAuthority{
+		pkiDir:          pkiDir,
 		caCert:          caCert,
 		caKey:           caKey,
 		caPEM:           caPEM,
@@ -126,7 +127,8 @@ func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest, allowBootstrap bool) (
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(now.UnixNano()),
 		Subject: pkix.Name{
-			CommonName: agentID,
+			CommonName:         agentID,
+			OrganizationalUnit: []string{string(serviceCallerAgent)},
 		},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              notAfter,
@@ -145,23 +147,74 @@ func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest, allowBootstrap bool) (
 	}, nil
 }
 
-func authenticatedAgentIDFromContext(ctx context.Context) (string, bool, error) {
-	peerInfo, ok := peer.FromContext(ctx)
-	if !ok || peerInfo.AuthInfo == nil {
-		return "", false, nil
+type ClientIdentityMaterial struct {
+	CertPEM []byte
+	KeyPEM  []byte
+	CAPEM   []byte
+}
+
+func (a *TLSAuthority) EnsureClientIdentity(class serviceCallerClass, id string) (ClientIdentityMaterial, error) {
+	if strings.TrimSpace(id) == "" {
+		return ClientIdentityMaterial{}, errors.New("client identity id is required")
 	}
-	tlsInfo, ok := peerInfo.AuthInfo.(credentials.TLSInfo)
-	if !ok {
-		return "", false, nil
+	dir := filepath.Join(a.pkiDir, clientCertsDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ClientIdentityMaterial{}, err
 	}
-	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.VerifiedChains[0]) == 0 {
-		return "", false, nil
+	base := string(class) + "-" + strings.TrimSpace(id)
+	certPath := filepath.Join(dir, base+".crt")
+	keyPath := filepath.Join(dir, base+".key")
+	if cert, leaf, err := loadKeyPair(certPath, keyPath); err == nil && time.Now().UTC().Before(leaf.NotAfter.Add(-time.Hour)) {
+		certPEM, err := os.ReadFile(certPath)
+		if err != nil {
+			return ClientIdentityMaterial{}, err
+		}
+		keyPEM, err := os.ReadFile(keyPath)
+		if err != nil {
+			return ClientIdentityMaterial{}, err
+		}
+		_ = cert
+		return ClientIdentityMaterial{CertPEM: certPEM, KeyPEM: keyPEM, CAPEM: append([]byte(nil), a.caPEM...)}, nil
 	}
-	cert := tlsInfo.State.VerifiedChains[0][0]
-	if strings.TrimSpace(cert.Subject.CommonName) == "" {
-		return "", false, errors.New("client certificate common name is required")
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return ClientIdentityMaterial{}, fmt.Errorf("generate client key: %w", err)
 	}
-	return strings.TrimSpace(cert.Subject.CommonName), true, nil
+	now := time.Now().UTC()
+	notAfter := now.Add(a.clientCertTTL)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(now.UnixNano()),
+		Subject: pkix.Name{
+			CommonName:         strings.TrimSpace(id),
+			OrganizationalUnit: []string{string(class)},
+		},
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, a.caCert, key.Public(), a.caKey)
+	if err != nil {
+		return ClientIdentityMaterial{}, fmt.Errorf("issue client certificate: %w", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM, err := marshalPrivateKeyPEM(key)
+	if err != nil {
+		return ClientIdentityMaterial{}, err
+	}
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		return ClientIdentityMaterial{}, err
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return ClientIdentityMaterial{}, err
+	}
+	return ClientIdentityMaterial{
+		CertPEM: certPEM,
+		KeyPEM:  keyPEM,
+		CAPEM:   append([]byte(nil), a.caPEM...),
+	}, nil
 }
 
 func loadOrCreateCA(dir string) (*x509.Certificate, crypto.Signer, []byte, error) {

@@ -28,6 +28,45 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Ingress.ControlPlaneHTTPUpstream == "" {
 		cfg.Ingress.ControlPlaneHTTPUpstream = "127.0.0.1:8080"
 	}
+	if cfg.Dashboard.ProjectName == "" {
+		cfg.Dashboard.ProjectName = "Platform Dashboard"
+	}
+	if cfg.Dashboard.ProjectSystemKey == "" {
+		cfg.Dashboard.ProjectSystemKey = "dashboard"
+	}
+	if cfg.Dashboard.ServiceName == "" {
+		cfg.Dashboard.ServiceName = "dashboard"
+	}
+	if cfg.Dashboard.ServiceCallerID == "" {
+		cfg.Dashboard.ServiceCallerID = "dashboard"
+	}
+	if cfg.Dashboard.PublicDomain == "" {
+		cfg.Dashboard.PublicDomain = cfg.Ingress.PublicAddr
+	}
+	if cfg.Dashboard.ControlPlaneAddr == "" {
+		cfg.Dashboard.ControlPlaneAddr = "controlplane:9443"
+	}
+	if cfg.Dashboard.ControlPlaneSNI == "" {
+		cfg.Dashboard.ControlPlaneSNI = "controlplane"
+	}
+	if cfg.Dashboard.ContainerPort <= 0 {
+		cfg.Dashboard.ContainerPort = 3000
+	}
+	if cfg.Dashboard.HealthPath == "" {
+		cfg.Dashboard.HealthPath = "/healthz"
+	}
+	if cfg.Dashboard.CPUMillis <= 0 {
+		cfg.Dashboard.CPUMillis = 250
+	}
+	if cfg.Dashboard.MemoryMebibytes <= 0 {
+		cfg.Dashboard.MemoryMebibytes = 256
+	}
+	if cfg.Dashboard.DatabaseSchema == "" {
+		cfg.Dashboard.DatabaseSchema = "dashboard"
+	}
+	if cfg.Dashboard.SessionCookieName == "" {
+		cfg.Dashboard.SessionCookieName = "dashboard_session"
+	}
 	if cfg.Mesh.InterfaceName == "" {
 		cfg.Mesh.InterfaceName = "wg0"
 	}

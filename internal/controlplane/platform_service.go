@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -25,8 +26,19 @@ func NewPlatformService(store *Store, scheduler *Scheduler, notifier *Notifier, 
 	return &PlatformService{store: store, scheduler: scheduler, notifier: notifier, ingress: ingress}
 }
 
+func (s *PlatformService) EnsurePrincipal(ctx context.Context, req *platformv1.EnsurePrincipalRequest) (*platformv1.Principal, error) {
+	if strings.TrimSpace(req.GetSubject()) == "" || strings.TrimSpace(req.GetEmail()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "subject and email are required")
+	}
+	user, err := s.store.ensurePrincipal(ctx, req.GetSubject(), req.GetEmail())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "ensure principal: %v", err)
+	}
+	return toProtoPrincipal(user), nil
+}
+
 func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.CreateProjectRequest) (*platformv1.Project, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +50,7 @@ func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.Cre
 }
 
 func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListProjectsResponse, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +66,7 @@ func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*
 }
 
 func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetProjectRequest) (*platformv1.Project, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +78,7 @@ func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetPro
 }
 
 func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.CreateServiceRequest) (*platformv1.Service, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +96,7 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 }
 
 func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +119,7 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 }
 
 func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +136,7 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 }
 
 func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetServiceRequest) (*platformv1.Service, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +148,7 @@ func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetSer
 }
 
 func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.ListServicesRequest) (*platformv1.ListServicesResponse, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +164,7 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 }
 
 func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.CreateVolumeRequest) (*platformv1.Volume, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +181,7 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 }
 
 func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.DeleteVolumeRequest) (*emptypb.Empty, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +208,7 @@ func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.Dele
 }
 
 func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListVolumesRequest) (*platformv1.ListVolumesResponse, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +224,7 @@ func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListV
 }
 
 func (s *PlatformService) UpsertDomain(ctx context.Context, req *platformv1.UpsertDomainRequest) (*platformv1.Service, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +241,7 @@ func (s *PlatformService) UpsertDomain(ctx context.Context, req *platformv1.Upse
 }
 
 func (s *PlatformService) DeleteDomain(ctx context.Context, req *platformv1.DeleteDomainRequest) (*emptypb.Empty, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +256,7 @@ func (s *PlatformService) DeleteDomain(ctx context.Context, req *platformv1.Dele
 }
 
 func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.GetServiceStatusRequest) (*platformv1.ServiceStatus, error) {
-	identity, err := IdentityFromContext(ctx)
+	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +268,9 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 }
 
 func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListAgentsResponse, error) {
+	if _, err := DelegatedUserFromContext(ctx); err != nil {
+		return nil, err
+	}
 	items, err := s.store.listAgents(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list agents: %v", err)

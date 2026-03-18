@@ -10,21 +10,17 @@ import (
 )
 
 type IngressSyncer struct {
-	adminURL        string
-	publicAddr      string
-	apiHTTPUpstream string
-	client          *http.Client
-	store           *Store
-	mu              sync.Mutex
+	adminURL string
+	client   *http.Client
+	store    *Store
+	mu       sync.Mutex
 }
 
-func NewIngressSyncer(adminURL, publicAddr, apiHTTPUpstream string, store *Store) *IngressSyncer {
+func NewIngressSyncer(adminURL string, store *Store) *IngressSyncer {
 	return &IngressSyncer{
-		adminURL:        adminURL,
-		publicAddr:      publicAddr,
-		apiHTTPUpstream: apiHTTPUpstream,
-		client:          &http.Client{},
-		store:           store,
+		adminURL: adminURL,
+		client:   &http.Client{},
+		store:    store,
 	}
 }
 
@@ -64,19 +60,7 @@ func (i *IngressSyncer) render(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	routes := make([]map[string]any, 0, 1)
-	if i.publicAddr != "" && i.apiHTTPUpstream != "" {
-		routes = append(routes, map[string]any{
-			"match": []map[string]any{{"host": []string{i.publicAddr}}},
-			"handle": []map[string]any{{
-				"handler": "reverse_proxy",
-				"upstreams": []map[string]string{{
-					"dial": i.apiHTTPUpstream,
-				}},
-			}},
-			"terminal": true,
-		})
-	}
+	routes := make([]map[string]any, 0, len(backends))
 	for _, backend := range backends {
 		routes = append(routes, map[string]any{
 			"match": []map[string]any{{"host": []string{backend.Domain}}},

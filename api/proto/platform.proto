@@ -7,9 +7,23 @@ option go_package = "ebof-wg-mesh/api/proto/platformv1;platformv1";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
+enum ProjectKind {
+  PROJECT_KIND_UNSPECIFIED = 0;
+  PROJECT_KIND_USER = 1;
+  PROJECT_KIND_MANAGED = 2;
+}
+
 message Project {
   string id = 1;
   string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+  ProjectKind kind = 4;
+  string system_key = 5;
+}
+
+message Principal {
+  string subject = 1;
+  string email = 2;
   google.protobuf.Timestamp created_at = 3;
 }
 
@@ -92,6 +106,11 @@ message CreateProjectRequest {
   string name = 1;
 }
 
+message EnsurePrincipalRequest {
+  string subject = 1;
+  string email = 2;
+}
+
 message ListProjectsResponse {
   repeated Project projects = 1;
 }
@@ -172,6 +191,8 @@ message ListAgentsResponse {
 }
 
 service PlatformService {
+  rpc EnsurePrincipal(EnsurePrincipalRequest) returns (Principal);
+
   rpc CreateProject(CreateProjectRequest) returns (Project);
   rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
   rpc GetProject(GetProjectRequest) returns (Project);

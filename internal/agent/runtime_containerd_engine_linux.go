@@ -21,6 +21,7 @@ import (
 
 	containerd "github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
+	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
@@ -263,10 +264,10 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		}}))
 		opts = append(opts, oci.WithEnv([]string{"PLATFORM_VOLUME_DIR=" + defaultVolumeMount}))
 	}
-	if svc.GetSpec().GetMemoryMebibytes() > 0 {
+	if !e.cfg.Runtime.DisableCgroups && svc.GetSpec().GetMemoryMebibytes() > 0 {
 		opts = append(opts, oci.WithMemoryLimit(uint64(svc.GetSpec().GetMemoryMebibytes())*1024*1024))
 	}
-	if svc.GetSpec().GetCpuMillis() > 0 {
+	if !e.cfg.Runtime.DisableCgroups && svc.GetSpec().GetCpuMillis() > 0 {
 		opts = append(opts, oci.WithCPUs(fmt.Sprintf("%.3f", float64(svc.GetSpec().GetCpuMillis())/1000.0)))
 	}
 	if cmd := svc.GetSpec().GetCommand(); len(cmd) > 0 {
@@ -278,7 +279,28 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 	} else {
 		opts = append(opts, oci.WithImageConfig(image))
 	}
+	if e.cfg.Runtime.DisableCgroups {
+		opts = append(opts, withoutCgroups)
+	}
 	return opts
+}
+
+func withoutCgroups(_ context.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
+	if s.Linux == nil {
+		s.Linux = &specs.Linux{}
+	}
+	s.Linux.CgroupsPath = ""
+	if s.Linux.Resources == nil {
+		return nil
+	}
+	s.Linux.Resources.Memory = nil
+	s.Linux.Resources.CPU = nil
+	s.Linux.Resources.Pids = nil
+	s.Linux.Resources.BlockIO = nil
+	s.Linux.Resources.HugepageLimits = nil
+	s.Linux.Resources.Network = nil
+	s.Linux.Resources.Rdma = nil
+	return nil
 }
 
 func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string]string {
