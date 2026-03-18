@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -50,6 +51,21 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		hc.GetTimeoutSeconds() == 0 {
 		out.HealthCheck = nil
 	}
+	return out
+}
+
+type placementCandidate struct {
+	ID                     string
+	CPUMillisCapacity      int64
+	MemoryMebibytesCapcity int64
+	ServiceCount           int64
+	UsedCPUMillis          int64
+	UsedMemoryMebibytes    int64
+}
+
+func sortedDomains(domains []string) []string {
+	out := append([]string(nil), domains...)
+	sort.Strings(out)
 	return out
 }
 
@@ -112,6 +128,17 @@ func (s *Store) createScheduledVolume(ctx context.Context, subject, projectID, n
 	return rec, nil
 }
 
+func (s *Store) chooseAgentForVolume(ctx context.Context) (string, error) {
+	return s.chooseAgentForPlacementQuerier(ctx, s.db, nil)
+}
+
+func (s *Store) chooseAgentForService(ctx context.Context, projectID string, spec *platformv1.ServiceSpec) (string, error) {
+	if spec != nil && spec.GetVolumeName() != "" {
+		return s.boundAgentForVolume(ctx, projectID, spec.GetVolumeName())
+	}
+	return s.chooseAgentForPlacementQuerier(ctx, s.db, spec)
+}
+
 func (s *Store) listVolumes(ctx context.Context, subject, projectID string) ([]volumeRecord, error) {
 	if _, err := s.projectByID(ctx, subject, projectID); err != nil {
 		return nil, err
@@ -144,8 +171,11 @@ func (s *Store) deleteVolume(ctx context.Context, subject, projectID, volumeID s
 		if _, err := s.projectByIDQuerier(ctx, tx, subject, projectID); err != nil {
 			return err
 		}
-		var volumeName string
-		err := tx.QueryRowContext(ctx, `SELECT name FROM volumes WHERE id = $1 AND project_id = $2`, volumeID, projectID).Scan(&volumeName)
+		var (
+			volumeName   string
+			boundAgentID string
+		)
+		err := tx.QueryRowContext(ctx, `SELECT name, bound_agent_id FROM volumes WHERE id = $1 AND project_id = $2`, volumeID, projectID).Scan(&volumeName, &boundAgentID)
 		if err != nil {
 			return err
 		}
@@ -191,8 +221,7 @@ func (s *Store) deleteVolume(ctx context.Context, subject, projectID, volumeID s
 		if affected == 0 {
 			return sql.ErrNoRows
 		}
-		_, err = s.nextDesiredRevisionTx(ctx, tx)
-		return err
+		return s.bumpDesiredRevisionsTx(ctx, tx, []string{boundAgentID})
 	})
 }
 
@@ -297,7 +326,7 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 		); err != nil {
 			return err
 		}
-		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
 			return err
 		}
 
@@ -359,7 +388,7 @@ func (s *Store) redeployService(ctx context.Context, subject, projectID, service
 		); err != nil {
 			return err
 		}
-		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
 			return err
 		}
 
@@ -378,6 +407,10 @@ func (s *Store) deleteService(ctx context.Context, subject, projectID, serviceID
 		if _, err := s.projectByIDQuerier(ctx, tx, subject, projectID); err != nil {
 			return err
 		}
+		var agentID string
+		if err := tx.QueryRowContext(ctx, `SELECT allocated_agent_id FROM services WHERE id = $1 AND project_id = $2`, serviceID, projectID).Scan(&agentID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM services WHERE id = $1 AND project_id = $2`, serviceID, projectID)
 		if err != nil {
 			return err
@@ -389,8 +422,7 @@ func (s *Store) deleteService(ctx context.Context, subject, projectID, serviceID
 		if rows == 0 {
 			return sql.ErrNoRows
 		}
-		_, err = s.nextDesiredRevisionTx(ctx, tx)
-		return err
+		return s.bumpDesiredRevisionsTx(ctx, tx, []string{agentID})
 	})
 }
 
@@ -697,7 +729,7 @@ func (s *Store) createVolumeTx(ctx context.Context, tx *sql.Tx, subject, project
 	); err != nil {
 		return volumeRecord{}, err
 	}
-	if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+	if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{rec.BoundAgentID}); err != nil {
 		return volumeRecord{}, err
 	}
 	return rec, nil
@@ -772,7 +804,7 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	); err != nil {
 		return serviceRecord{}, err
 	}
-	if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+	if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{rec.AllocatedAgentID}); err != nil {
 		return serviceRecord{}, err
 	}
 	return rec, nil
@@ -852,7 +884,7 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		); err != nil {
 			return err
 		}
-		if _, err := s.nextDesiredRevisionTx(ctx, tx); err != nil {
+		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
 			return err
 		}
 		rec = current
@@ -931,22 +963,81 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 }
 
 func (s *Store) chooseAgentForVolumeTx(ctx context.Context, tx *sql.Tx) (string, error) {
-	agents, services, err := s.schedulerSnapshotTx(ctx, tx)
-	if err != nil {
-		return "", err
-	}
-	return chooseAgent(agents, services, nil)
+	return s.chooseAgentForPlacementQuerier(ctx, tx, nil)
 }
 
 func (s *Store) chooseAgentForServiceTx(ctx context.Context, tx *sql.Tx, projectID string, spec *platformv1.ServiceSpec) (string, error) {
 	if spec != nil && spec.GetVolumeName() != "" {
 		return s.boundAgentForVolumeQuerier(ctx, tx, projectID, spec.GetVolumeName())
 	}
-	agents, services, err := s.schedulerSnapshotTx(ctx, tx)
+	return s.chooseAgentForPlacementQuerier(ctx, tx, spec)
+}
+
+func (s *Store) chooseAgentForPlacementQuerier(ctx context.Context, q serviceQueryer, spec *platformv1.ServiceSpec) (string, error) {
+	candidates, err := s.placementCandidatesQuerier(ctx, q)
 	if err != nil {
 		return "", err
 	}
-	return chooseAgent(agents, services, spec)
+	for _, candidate := range candidates {
+		if spec != nil {
+			if candidate.CPUMillisCapacity > 0 && candidate.UsedCPUMillis+spec.GetCpuMillis() > candidate.CPUMillisCapacity {
+				continue
+			}
+			if candidate.MemoryMebibytesCapcity > 0 && candidate.UsedMemoryMebibytes+spec.GetMemoryMebibytes() > candidate.MemoryMebibytesCapcity {
+				continue
+			}
+		}
+		return candidate.ID, nil
+	}
+	return "", errNoPlacementAvailable
+}
+
+func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer) ([]placementCandidate, error) {
+	rows, err := q.QueryContext(ctx,
+		`SELECT a.id,
+		        a.cpu_millis_capacity,
+		        a.memory_mebibytes_capacity,
+		        COALESCE(stats.service_count, 0),
+		        COALESCE(stats.cpu_millis, 0),
+		        COALESCE(stats.memory_mebibytes, 0)
+		   FROM agents a
+		   LEFT JOIN (
+		        SELECT s.allocated_agent_id AS agent_id,
+		               COUNT(*) AS service_count,
+		               COALESCE(SUM(COALESCE((r.spec_json->>'cpuMillis')::INT8, 0)), 0) AS cpu_millis,
+		               COALESCE(SUM(COALESCE((r.spec_json->>'memoryMebibytes')::INT8, 0)), 0) AS memory_mebibytes
+		          FROM services s
+		          JOIN service_revisions r
+		            ON r.service_id = s.id
+		           AND r.revision = s.current_revision
+		         GROUP BY s.allocated_agent_id
+		   ) AS stats
+		     ON stats.agent_id = a.id
+		  WHERE a.last_seen_at > $1
+		  ORDER BY COALESCE(stats.service_count, 0) ASC, a.id ASC`,
+		time.Now().UTC().Add(-30*time.Second),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candidates []placementCandidate
+	for rows.Next() {
+		var candidate placementCandidate
+		if err := rows.Scan(
+			&candidate.ID,
+			&candidate.CPUMillisCapacity,
+			&candidate.MemoryMebibytesCapcity,
+			&candidate.ServiceCount,
+			&candidate.UsedCPUMillis,
+			&candidate.UsedMemoryMebibytes,
+		); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, rows.Err()
 }
 
 func (s *Store) boundAgentForVolume(ctx context.Context, projectID, volumeName string) (string, error) {

@@ -1,5 +1,7 @@
 package config
 
+import "runtime"
+
 func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.PublicHTTP.Listen == "" {
 		cfg.PublicHTTP.Listen = "0.0.0.0:8080"
@@ -18,6 +20,15 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.StateDir == "" {
 		cfg.StateDir = "var/controlplane"
+	}
+	if cfg.Database.MaxOpenConns <= 0 {
+		cfg.Database.MaxOpenConns = maxInt(32, runtime.GOMAXPROCS(0)*8)
+	}
+	if cfg.Database.MaxIdleConns <= 0 {
+		cfg.Database.MaxIdleConns = minInt(cfg.Database.MaxOpenConns, maxInt(16, runtime.GOMAXPROCS(0)*4))
+	}
+	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
+		cfg.Database.MaxIdleConns = cfg.Database.MaxOpenConns
 	}
 	if cfg.Ingress.AdminURL == "" {
 		cfg.Ingress.AdminURL = "http://127.0.0.1:2019/load"
@@ -143,4 +154,18 @@ func FinalizeControlPlane(cfg *ControlPlaneConfig) error {
 func FinalizeAgent(cfg *AgentConfig) error {
 	applyAgentDefaults(cfg)
 	return validateAgent(*cfg)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

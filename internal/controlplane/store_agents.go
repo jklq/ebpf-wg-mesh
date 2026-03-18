@@ -95,7 +95,13 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 			now,
 			now,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if changed {
+			return s.bumpAllDesiredRevisionsTx(ctx, tx)
+		}
+		return nil
 	})
 	if err != nil {
 		return false, err
@@ -139,10 +145,30 @@ func (s *Store) agentByID(ctx context.Context, agentID string) (agentRecord, err
 	return rec, nil
 }
 
-func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusReport) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusReport) (bool, error) {
+	var ingressChanged bool
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		for _, cond := range report.Services {
+			var (
+				prevHealthy  bool
+				prevEndpoint string
+				hasDomain    bool
+			)
+			err := tx.QueryRowContext(ctx,
+				`SELECT a.healthy,
+				        a.endpoint_addr,
+				        EXISTS(SELECT 1 FROM service_domains d WHERE d.service_id = a.service_id)
+				   FROM allocations a
+				  WHERE a.id = $1`,
+				cond.AllocationId,
+			).Scan(&prevHealthy, &prevEndpoint, &hasDomain)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					continue
+				}
+				return fmt.Errorf("load allocation status: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
 				    SET applied_spec_revision = $1,
@@ -157,9 +183,16 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
+			if hasDomain && (prevHealthy != cond.Healthy || prevEndpoint != cond.EndpointAddr) {
+				ingressChanged = true
+			}
 		}
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return ingressChanged, nil
 }
 
 func (s *Store) agentIDs(ctx context.Context) ([]string, error) {

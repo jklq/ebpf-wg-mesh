@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"runtime"
+	"sort"
+	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -166,22 +169,24 @@ var storeMigrations = []migration{
 			`UPDATE domain_bindings SET updated_at = created_at WHERE updated_at IS NULL`,
 			`ALTER TABLE domain_bindings ALTER COLUMN updated_at SET NOT NULL`,
 			`CREATE INDEX IF NOT EXISTS idx_domain_bindings_service_id ON domain_bindings(service_id, hostname)`,
-			`INSERT INTO state_revisions(name, value)
-			 SELECT 'agent_desired', value
-			   FROM state_revisions
-			  WHERE name = 'desired'
-			 ON CONFLICT(name) DO NOTHING`,
+			`ALTER TABLE agents ADD COLUMN IF NOT EXISTS desired_revision INT8 NOT NULL DEFAULT 0`,
+			`UPDATE agents
+			    SET desired_revision = COALESCE((SELECT value FROM state_revisions WHERE name = 'desired'), 0)`,
+			`CREATE INDEX IF NOT EXISTS idx_agents_last_seen_id
+			    ON agents(last_seen_at DESC, id)
+			    STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
 		},
 	},
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
+	normalizeDatabaseConfig(&dbCfg)
 	db, err := sql.Open("pgx", dbCfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(16)
-	db.SetMaxIdleConns(16)
+	db.SetMaxOpenConns(dbCfg.MaxOpenConns)
+	db.SetMaxIdleConns(dbCfg.MaxIdleConns)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
@@ -278,39 +283,12 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 	})
 }
 
-func (s *Store) nextDesiredRevision(ctx context.Context) (int64, error) {
-	var value int64
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		next, err := s.nextDesiredRevisionTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		value = next
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return value, nil
-}
-
-func (s *Store) nextDesiredRevisionTx(ctx context.Context, tx *sql.Tx) (int64, error) {
-	if _, err := tx.ExecContext(ctx, `UPDATE state_revisions SET value = value + 1 WHERE name = 'agent_desired'`); err != nil {
-		return 0, err
-	}
-	var value int64
-	if err := tx.QueryRowContext(ctx, `SELECT value FROM state_revisions WHERE name = 'agent_desired'`).Scan(&value); err != nil {
-		return 0, err
-	}
-	return value, nil
-}
-
 func mustID() string {
 	return uuid.NewString()
 }
 
 func (s *Store) desiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
-	revision, err := s.currentDesiredRevision(ctx)
+	revision, err := s.currentDesiredRevisionForAgent(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -337,10 +315,81 @@ func (s *Store) desiredStateForAgent(ctx context.Context, agentID string) (*agen
 	return state, nil
 }
 
-func (s *Store) currentDesiredRevision(ctx context.Context) (int64, error) {
+func (s *Store) currentDesiredRevisionForAgent(ctx context.Context, agentID string) (int64, error) {
 	var value int64
-	if err := s.db.QueryRowContext(ctx, `SELECT value FROM state_revisions WHERE name = 'agent_desired'`).Scan(&value); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT desired_revision FROM agents WHERE id = $1`, agentID).Scan(&value); err != nil {
 		return 0, err
 	}
 	return value, nil
+}
+
+func (s *Store) bumpDesiredRevisionsTx(ctx context.Context, tx *sql.Tx, agentIDs []string) error {
+	if len(agentIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(agentIDs))
+	uniqueIDs := make([]string, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		agentID = strings.TrimSpace(agentID)
+		if agentID == "" {
+			continue
+		}
+		if _, ok := seen[agentID]; ok {
+			continue
+		}
+		seen[agentID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, agentID)
+	}
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+	sort.Strings(uniqueIDs)
+
+	args := make([]any, 0, len(uniqueIDs))
+	placeholders := make([]string, 0, len(uniqueIDs))
+	for i, agentID := range uniqueIDs {
+		args = append(args, agentID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	query := fmt.Sprintf(
+		`UPDATE agents SET desired_revision = desired_revision + 1 WHERE id IN (%s)`,
+		strings.Join(placeholders, ", "),
+	)
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (s *Store) bumpAllDesiredRevisionsTx(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `UPDATE agents SET desired_revision = desired_revision + 1`)
+	return err
+}
+
+func normalizeDatabaseConfig(dbCfg *config.DatabaseConfig) {
+	if dbCfg == nil {
+		return
+	}
+	if dbCfg.MaxOpenConns <= 0 {
+		dbCfg.MaxOpenConns = maxInt(32, runtime.GOMAXPROCS(0)*8)
+	}
+	if dbCfg.MaxIdleConns <= 0 {
+		dbCfg.MaxIdleConns = minInt(dbCfg.MaxOpenConns, maxInt(16, runtime.GOMAXPROCS(0)*4))
+	}
+	if dbCfg.MaxIdleConns > dbCfg.MaxOpenConns {
+		dbCfg.MaxIdleConns = dbCfg.MaxOpenConns
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
