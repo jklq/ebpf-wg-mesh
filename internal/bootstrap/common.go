@@ -33,6 +33,15 @@ func envOrInt64(key string, fallback int64) int64 {
 	return fallback
 }
 
+func envOrBool(key string, fallback bool) bool {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 type bootstrapUsersFlag struct {
 	users *[]bootstrapUserSpec
 }
@@ -90,6 +99,10 @@ func int64Flag(fs *flag.FlagSet, target *int64, name, envKey string, fallback in
 	fs.Int64Var(target, name, envOrInt64(envKey, fallback), usage)
 }
 
+func boolFlag(fs *flag.FlagSet, target *bool, name, envKey string, fallback bool, usage string) {
+	fs.BoolVar(target, name, envOrBool(envKey, fallback), usage)
+}
+
 func splitCommaList(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -101,6 +114,36 @@ func splitCommaList(raw string) []string {
 		if value != "" {
 			values = append(values, value)
 		}
+	}
+	return values
+}
+
+func splitWhitespaceList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.Fields(raw)
+}
+
+func parseEnvPairs(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	values := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		item := strings.TrimSpace(pair)
+		if item == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(item, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			continue
+		}
+		values[key] = value
+	}
+	if len(values) == 0 {
+		return nil
 	}
 	return values
 }

@@ -46,6 +46,28 @@ type IngressConfig struct {
 	ControlPlaneHTTPUpstream string
 }
 
+type ManagedDashboardConfig struct {
+	Enabled           bool
+	ProjectName       string
+	ProjectSystemKey  string
+	ServiceName       string
+	ServiceCallerID   string
+	PublicDomain      string
+	ControlPlaneAddr  string
+	ControlPlaneSNI   string
+	Image             string
+	Command           []string
+	Args              []string
+	Env               map[string]string
+	ContainerPort     int32
+	HealthPath        string
+	CPUMillis         int64
+	MemoryMebibytes   int64
+	DatabaseSchema    string
+	SessionCookieName string
+	DevUsers          []BootstrapUser
+}
+
 type ControlPlaneConfig struct {
 	PublicHTTP   ListenerConfig
 	InternalGRPC ListenerConfig
@@ -53,6 +75,7 @@ type ControlPlaneConfig struct {
 	StateDir     string
 	OIDC         OIDCConfig
 	Ingress      IngressConfig
+	Dashboard    ManagedDashboardConfig
 	Bootstrap    BootstrapConfig
 	Mesh         ControlPlaneMeshConfig
 }
@@ -83,9 +106,10 @@ type ControlPlaneClientConfig struct {
 }
 
 type RuntimeConfig struct {
-	DataDir     string
-	VolumesDir  string
-	Snapshotter string
+	DataDir        string
+	VolumesDir     string
+	Snapshotter    string
+	DisableCgroups bool
 }
 
 type MeshConfig struct {

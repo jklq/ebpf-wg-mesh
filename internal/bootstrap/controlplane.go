@@ -10,8 +10,13 @@ import (
 func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var cfg config.ControlPlaneConfig
 	var bootstrapUsers []bootstrapUserSpec
+	var dashboardUsers []bootstrapUserSpec
 	var internalServerNames string
 	var agentBootstrapTokens string
+	var dashboardCommand string
+	var dashboardArgs string
+	var dashboardEnv string
+	var dashboardContainerPort int
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
 	stringFlag(fs, &cfg.PublicHTTP.Listen, "public-listen", "CONTROLPLANE_PUBLIC_LISTEN", "0.0.0.0:8080", "")
@@ -29,23 +34,52 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.Ingress.AdminURL, "ingress-admin-url", "CONTROLPLANE_INGRESS_ADMIN_URL", "http://127.0.0.1:2019/load", "")
 	stringFlag(fs, &cfg.Ingress.PublicAddr, "ingress-public-addr", "CONTROLPLANE_INGRESS_PUBLIC_ADDR", "platform.local", "")
 	stringFlag(fs, &cfg.Ingress.ControlPlaneHTTPUpstream, "ingress-controlplane-upstream", "CONTROLPLANE_INGRESS_CONTROLPLANE_UPSTREAM", "127.0.0.1:8080", "")
+	boolFlag(fs, &cfg.Dashboard.Enabled, "dashboard-enabled", "CONTROLPLANE_DASHBOARD_ENABLED", false, "")
+	stringFlag(fs, &cfg.Dashboard.ProjectName, "dashboard-project-name", "CONTROLPLANE_DASHBOARD_PROJECT_NAME", "Platform Dashboard", "")
+	stringFlag(fs, &cfg.Dashboard.ProjectSystemKey, "dashboard-project-system-key", "CONTROLPLANE_DASHBOARD_PROJECT_SYSTEM_KEY", "dashboard", "")
+	stringFlag(fs, &cfg.Dashboard.ServiceName, "dashboard-service-name", "CONTROLPLANE_DASHBOARD_SERVICE_NAME", "dashboard", "")
+	stringFlag(fs, &cfg.Dashboard.ServiceCallerID, "dashboard-service-caller-id", "CONTROLPLANE_DASHBOARD_SERVICE_CALLER_ID", "dashboard", "")
+	stringFlag(fs, &cfg.Dashboard.PublicDomain, "dashboard-public-domain", "CONTROLPLANE_DASHBOARD_PUBLIC_DOMAIN", "", "")
+	stringFlag(fs, &cfg.Dashboard.ControlPlaneAddr, "dashboard-controlplane-addr", "CONTROLPLANE_DASHBOARD_CONTROLPLANE_ADDR", "controlplane:9443", "")
+	stringFlag(fs, &cfg.Dashboard.ControlPlaneSNI, "dashboard-controlplane-sni", "CONTROLPLANE_DASHBOARD_CONTROLPLANE_SNI", "controlplane", "")
+	stringFlag(fs, &cfg.Dashboard.Image, "dashboard-image", "CONTROLPLANE_DASHBOARD_IMAGE", "", "")
+	stringFlag(fs, &dashboardCommand, "dashboard-command", "CONTROLPLANE_DASHBOARD_COMMAND", "", "")
+	stringFlag(fs, &dashboardArgs, "dashboard-args", "CONTROLPLANE_DASHBOARD_ARGS", "", "")
+	stringFlag(fs, &dashboardEnv, "dashboard-env", "CONTROLPLANE_DASHBOARD_ENV", "", "")
+	intFlag(fs, &dashboardContainerPort, "dashboard-container-port", "CONTROLPLANE_DASHBOARD_CONTAINER_PORT", 3000, "")
+	stringFlag(fs, &cfg.Dashboard.HealthPath, "dashboard-health-path", "CONTROLPLANE_DASHBOARD_HEALTH_PATH", "/healthz", "")
+	int64Flag(fs, &cfg.Dashboard.CPUMillis, "dashboard-cpu-millis", "CONTROLPLANE_DASHBOARD_CPU_MILLIS", 250, "")
+	int64Flag(fs, &cfg.Dashboard.MemoryMebibytes, "dashboard-memory-mebibytes", "CONTROLPLANE_DASHBOARD_MEMORY_MEBIBYTES", 256, "")
+	stringFlag(fs, &cfg.Dashboard.DatabaseSchema, "dashboard-db-schema", "CONTROLPLANE_DASHBOARD_DB_SCHEMA", "dashboard", "")
+	stringFlag(fs, &cfg.Dashboard.SessionCookieName, "dashboard-session-cookie-name", "CONTROLPLANE_DASHBOARD_SESSION_COOKIE_NAME", "dashboard_session", "")
 	stringFlag(fs, &cfg.Mesh.InterfaceName, "mesh-interface-name", "CONTROLPLANE_MESH_INTERFACE_NAME", "wg0", "")
 	intFlag(fs, &cfg.Mesh.ListenPort, "mesh-listen-port", "CONTROLPLANE_MESH_LISTEN_PORT", 51820, "")
 	stringFlag(fs, &cfg.Mesh.NetworkCIDR, "mesh-network-cidr", "CONTROLPLANE_MESH_NETWORK_CIDR", "fd00:44::/64", "")
 	stringFlag(fs, &cfg.Mesh.WorkloadPoolCIDR, "mesh-workload-pool-cidr", "CONTROLPLANE_MESH_WORKLOAD_POOL_CIDR", "fd00:200::/48", "")
 	intFlag(fs, &cfg.Mesh.PersistentKeepaliveSeconds, "mesh-persistent-keepalive-seconds", "CONTROLPLANE_MESH_PERSISTENT_KEEPALIVE_SECONDS", 5, "")
 	fs.Var(bootstrapUsersFlag{users: &bootstrapUsers}, "bootstrap-user", "subject:email[:project1,project2]")
+	fs.Var(bootstrapUsersFlag{users: &dashboardUsers}, "dashboard-dev-user", "subject:email")
 
 	if err := fs.Parse(args); err != nil {
 		return config.ControlPlaneConfig{}, err
 	}
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
 	cfg.InternalGRPC.TLS.BootstrapTokens = splitCommaList(agentBootstrapTokens)
+	cfg.Dashboard.ContainerPort = int32(dashboardContainerPort)
+	cfg.Dashboard.Command = splitWhitespaceList(dashboardCommand)
+	cfg.Dashboard.Args = splitWhitespaceList(dashboardArgs)
+	cfg.Dashboard.Env = parseEnvPairs(dashboardEnv)
 	for _, user := range bootstrapUsers {
 		cfg.Bootstrap.Users = append(cfg.Bootstrap.Users, config.BootstrapUser{
 			Subject:  user.subject,
 			Email:    user.email,
 			Projects: append([]string(nil), user.projects...),
+		})
+	}
+	for _, user := range dashboardUsers {
+		cfg.Dashboard.DevUsers = append(cfg.Dashboard.DevUsers, config.BootstrapUser{
+			Subject: user.subject,
+			Email:   user.email,
 		})
 	}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {

@@ -36,6 +36,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &cfg.Runtime.DataDir, "data-dir", "AGENT_DATA_DIR", "var/agent", "")
 	stringFlag(fs, &cfg.Runtime.VolumesDir, "volumes-dir", "AGENT_VOLUMES_DIR", "", "")
 	stringFlag(fs, &cfg.Runtime.Snapshotter, "snapshotter", "AGENT_SNAPSHOTTER", "native", "")
+	boolFlag(fs, &cfg.Runtime.DisableCgroups, "disable-cgroups", "AGENT_DISABLE_CGROUPS", false, "")
 	stringFlag(fs, &cfg.Containerd.Socket, "containerd-socket", "AGENT_CONTAINERD_SOCKET", "/run/containerd/containerd.sock", "")
 	stringFlag(fs, &cfg.Containerd.Namespace, "containerd-namespace", "AGENT_CONTAINERD_NAMESPACE", "default", "")
 	stringFlag(fs, &cfg.Containerd.ProjectLabel, "containerd-project-label", "AGENT_CONTAINERD_PROJECT_LABEL", "mesh.project_id", "")
