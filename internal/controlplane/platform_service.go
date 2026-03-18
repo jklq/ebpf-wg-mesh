@@ -51,6 +51,7 @@ type platformNotifier interface {
 
 type platformIngress interface {
 	Sync(ctx context.Context) error
+	RequestSync()
 }
 
 func NewPlatformService(store platformStore, scheduler *Scheduler, notifier platformNotifier, ingress platformIngress) *PlatformService {
@@ -125,7 +126,6 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	}
 	slog.Info("service created", "service_id", service.ID, "agent_id", service.AllocatedAgentID, "project_id", req.GetProjectId(), "spec_revision", service.SpecRevision, "rollout_generation", service.RolloutGeneration)
 	s.notifier.Notify(service.AllocatedAgentID)
-	_ = s.ingress.Sync(ctx)
 	return toProtoService(service), nil
 }
 
@@ -173,8 +173,6 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 		return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
 	}
 	s.notifier.Notify(service.AllocatedAgentID)
-	_ = s.ingress.Sync(ctx)
-
 	currentService, allocation, err := s.store.serviceStatus(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "redeploy service status: %v", err)
@@ -195,7 +193,6 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 		return nil, status.Errorf(codes.Internal, "delete service: %v", err)
 	}
 	s.notifier.Notify(service.AllocatedAgentID)
-	_ = s.ingress.Sync(ctx)
 	return &emptypb.Empty{}, nil
 }
 
@@ -306,7 +303,7 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 		return nil, status.Errorf(codes.Internal, "create domain binding: %v", err)
 	}
 	if changed {
-		_ = s.ingress.Sync(ctx)
+		s.ingress.RequestSync()
 	}
 	return toProtoDomainBinding(binding), nil
 }
