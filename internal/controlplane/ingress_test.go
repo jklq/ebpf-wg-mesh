@@ -39,7 +39,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", "platform.local", "controlplane:8080", store)
+	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store)
 	cfg, err := syncer.render(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -49,13 +49,13 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	servers := httpApp["servers"].(map[string]any)
 	srv0 := servers["srv0"].(map[string]any)
 	routes := srv0["routes"].([]map[string]any)
-	if len(routes) != 2 {
-		t.Fatalf("expected 2 routes, got %d", len(routes))
+	if len(routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(routes))
 	}
 	matchers := routes[0]["match"].([]map[string]any)
 	hosts := matchers[0]["host"].([]string)
-	if len(hosts) != 1 || hosts[0] != "platform.local" {
-		t.Fatalf("unexpected API host match %+v", hosts)
+	if len(hosts) != 1 || hosts[0] != "demo.example.com" {
+		t.Fatalf("unexpected ingress host match %+v", hosts)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", "platform.local", "controlplane:8080", store)
+	syncer := NewIngressSyncer("http://caddy.invalid/load", store)
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
@@ -127,11 +127,11 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	}
 	firstRoutes := ingressRouteCount(t, transport.bodies[0])
 	secondRoutes := ingressRouteCount(t, transport.bodies[1])
-	if firstRoutes != 2 {
-		t.Fatalf("expected first push to contain 2 routes, got %d", firstRoutes)
+	if firstRoutes != 1 {
+		t.Fatalf("expected first push to contain 1 route, got %d", firstRoutes)
 	}
-	if secondRoutes != 3 {
-		t.Fatalf("expected second push to contain 3 routes, got %d", secondRoutes)
+	if secondRoutes != 2 {
+		t.Fatalf("expected second push to contain 2 routes, got %d", secondRoutes)
 	}
 }
 

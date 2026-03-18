@@ -119,6 +119,15 @@ var storeMigrations = []migration{
 			`INSERT INTO state_revisions(name, value) VALUES ('desired', 0) ON CONFLICT(name) DO NOTHING`,
 		},
 	},
+	{
+		version: 2,
+		stmts: []string{
+			`ALTER TABLE projects ADD COLUMN IF NOT EXISTS kind STRING NOT NULL DEFAULT 'user'`,
+			`ALTER TABLE projects ADD COLUMN IF NOT EXISTS system_key STRING NULL`,
+			`UPDATE projects SET kind = 'user' WHERE kind = ''`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_system_key_unique ON projects(system_key) WHERE system_key IS NOT NULL`,
+		},
+	},
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
@@ -208,7 +217,7 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 				return fmt.Errorf("upsert bootstrap user %s: %w", user.Subject, err)
 			}
 			for _, projectName := range user.Projects {
-				projectID, err := s.ensureProjectNamedQuerier(ctx, tx, projectName)
+				projectID, err := s.ensureProjectNamedQuerier(ctx, tx, projectName, projectKindUser, "")
 				if err != nil {
 					return err
 				}
