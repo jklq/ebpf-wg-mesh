@@ -26,8 +26,9 @@ type serviceEngine interface {
 }
 
 type serviceStatus struct {
-	AppliedRevision int64
-	Endpoint        string
+	AppliedSpecRevision      int64
+	AppliedRolloutGeneration int64
+	Endpoint                 string
 }
 
 type ContainerdRuntime struct {
@@ -87,10 +88,11 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 
 	for _, svc := range state.GetServices() {
 		cond := &agentv1.ServiceCondition{
-			AllocationId:    svc.GetAllocationId(),
-			ServiceId:       svc.GetServiceId(),
-			DesiredRevision: svc.GetDesiredRevision(),
-			Phase:           "Pending",
+			AllocationId:             svc.GetAllocationId(),
+			ServiceId:                svc.GetServiceId(),
+			DesiredSpecRevision:      svc.GetDesiredSpecRevision(),
+			DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+			Phase:                    "Pending",
 		}
 		if err := r.persistDesiredService(svc); err != nil {
 			cond.Phase = "Error"
@@ -105,7 +107,8 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 			report.Services = append(report.Services, cond)
 			continue
 		}
-		cond.AppliedRevision = status.AppliedRevision
+		cond.AppliedSpecRevision = status.AppliedSpecRevision
+		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
 		cond.EndpointAddr = status.Endpoint
 		cond.Healthy = probeHealth(status.Endpoint, svc)
 		switch {

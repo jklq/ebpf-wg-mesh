@@ -83,8 +83,12 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	if rec, exists, err := e.inspect(ctx, containerID); err != nil {
 		return serviceStatus{}, false, err
 	} else if exists {
-		if rec.revision == svc.GetDesiredRevision() && rec.running {
-			return serviceStatus{AppliedRevision: rec.revision, Endpoint: endpointForService(svc)}, false, nil
+		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() && rec.running {
+			return serviceStatus{
+				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
+				AppliedRolloutGeneration: rec.rolloutGeneration,
+				Endpoint:                 endpointForService(svc),
+			}, false, nil
 		}
 		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			return serviceStatus{}, false, err
@@ -133,7 +137,11 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		_ = e.deleteTask(ctx, task, containerID)
 		return cleanup(fmt.Errorf("start task %s: %w", containerID, err))
 	}
-	return serviceStatus{AppliedRevision: svc.GetDesiredRevision(), Endpoint: endpointForService(svc)}, true, nil
+	return serviceStatus{
+		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
+		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		Endpoint:                 endpointForService(svc),
+	}, true, nil
 }
 
 func (e *containerdEngine) RemoveService(ctx context.Context, allocationID string) error {
@@ -191,8 +199,8 @@ func (e *containerdEngine) deleteTask(ctx context.Context, task containerd.Task,
 }
 
 type inspectRecord struct {
-	revision int64
-	running  bool
+	rolloutGeneration int64
+	running           bool
 }
 
 func (e *containerdEngine) inspect(ctx context.Context, containerID string) (inspectRecord, bool, error) {
@@ -207,11 +215,11 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 	if err != nil {
 		return inspectRecord{}, false, err
 	}
-	revision, _ := strconv.ParseInt(info.Labels["platform.desired_revision"], 10, 64)
+	rolloutGeneration, _ := strconv.ParseInt(info.Labels["platform.desired_rollout_generation"], 10, 64)
 	task, err := container.Task(ctx, nil)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
-			return inspectRecord{revision: revision}, true, nil
+			return inspectRecord{rolloutGeneration: rolloutGeneration}, true, nil
 		}
 		return inspectRecord{}, false, err
 	}
@@ -219,7 +227,7 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 	if err != nil {
 		return inspectRecord{}, false, err
 	}
-	return inspectRecord{revision: revision, running: status.Status == containerd.Running}, true, nil
+	return inspectRecord{rolloutGeneration: rolloutGeneration, running: status.Status == containerd.Running}, true, nil
 }
 
 func (e *containerdEngine) ensureImage(ctx context.Context, ref string) (containerd.Image, error) {
@@ -305,12 +313,13 @@ func withoutCgroups(_ context.Context, _ oci.Client, _ *containers.Container, s 
 
 func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string]string {
 	return map[string]string{
-		"platform.managed":            "true",
-		"platform.allocation_id":      svc.GetAllocationId(),
-		"platform.service_id":         svc.GetServiceId(),
-		"platform.desired_revision":   strconv.FormatInt(svc.GetDesiredRevision(), 10),
-		e.cfg.Containerd.ProjectLabel: strconv.FormatUint(uint64(projectLabelValue(svc.GetProjectId())), 10),
-		e.cfg.Containerd.IPv6Label:    svc.GetPrivateIpv6(),
+		"platform.managed":                    "true",
+		"platform.allocation_id":              svc.GetAllocationId(),
+		"platform.service_id":                 svc.GetServiceId(),
+		"platform.desired_spec_revision":      strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
+		"platform.desired_rollout_generation": strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
+		e.cfg.Containerd.ProjectLabel:         strconv.FormatUint(uint64(projectLabelValue(svc.GetProjectId())), 10),
+		e.cfg.Containerd.IPv6Label:            svc.GetPrivateIpv6(),
 	}
 }
 
