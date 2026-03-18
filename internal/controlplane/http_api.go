@@ -16,13 +16,35 @@ import (
 )
 
 type httpAPI struct {
-	validator *Validator
-	platform  *PlatformService
+	validator httpIdentityValidator
+	platform  httpPlatform
 	marshal   protojson.MarshalOptions
 	unmarshal protojson.UnmarshalOptions
 }
 
-func NewHTTPAPIHandler(validator *Validator, platform *PlatformService) http.Handler {
+type httpIdentityValidator interface {
+	identityFromHTTPRequest(r *http.Request) (Identity, error)
+}
+
+type httpPlatform interface {
+	ListProjects(ctx context.Context, req *emptypb.Empty) (*platformv1.ListProjectsResponse, error)
+	CreateProject(ctx context.Context, req *platformv1.CreateProjectRequest) (*platformv1.Project, error)
+	GetProject(ctx context.Context, req *platformv1.GetProjectRequest) (*platformv1.Project, error)
+	ListServices(ctx context.Context, req *platformv1.ListServicesRequest) (*platformv1.ListServicesResponse, error)
+	CreateService(ctx context.Context, req *platformv1.CreateServiceRequest) (*platformv1.Service, error)
+	GetService(ctx context.Context, req *platformv1.GetServiceRequest) (*platformv1.Service, error)
+	UpdateService(ctx context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error)
+	DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error)
+	GetServiceStatus(ctx context.Context, req *platformv1.GetServiceStatusRequest) (*platformv1.ServiceStatus, error)
+	UpsertDomain(ctx context.Context, req *platformv1.UpsertDomainRequest) (*platformv1.Service, error)
+	ListVolumes(ctx context.Context, req *platformv1.ListVolumesRequest) (*platformv1.ListVolumesResponse, error)
+	CreateVolume(ctx context.Context, req *platformv1.CreateVolumeRequest) (*platformv1.Volume, error)
+	DeleteVolume(ctx context.Context, req *platformv1.DeleteVolumeRequest) (*emptypb.Empty, error)
+	DeleteDomain(ctx context.Context, req *platformv1.DeleteDomainRequest) (*emptypb.Empty, error)
+	ListAgents(ctx context.Context, req *emptypb.Empty) (*platformv1.ListAgentsResponse, error)
+}
+
+func NewHTTPAPIHandler(validator httpIdentityValidator, platform httpPlatform) http.Handler {
 	api := &httpAPI{
 		validator: validator,
 		platform:  platform,

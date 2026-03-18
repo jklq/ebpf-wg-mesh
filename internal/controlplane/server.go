@@ -123,6 +123,27 @@ func (s *Server) Close() error {
 	return nil
 }
 
+func (s *Server) PublicAddr() string {
+	if s == nil || s.publicLn == nil {
+		return ""
+	}
+	return s.publicLn.Addr().String()
+}
+
+func (s *Server) InternalAddr() string {
+	if s == nil || s.internalLn == nil {
+		return ""
+	}
+	return s.internalLn.Addr().String()
+}
+
+func (s *Server) EnsureDashboardClientIdentity(id string) (ClientIdentityMaterial, error) {
+	if s == nil || s.authority == nil {
+		return ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
+	}
+	return s.authority.EnsureDashboardClientIdentity(id)
+}
+
 func serveGRPC(server *grpc.Server, ln net.Listener) error {
 	if err := server.Serve(ln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return err

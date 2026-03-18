@@ -16,13 +16,40 @@ import (
 
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
-	store     *Store
+	store     platformStore
 	scheduler *Scheduler
-	notifier  *Notifier
-	ingress   *IngressSyncer
+	notifier  platformNotifier
+	ingress   platformIngress
 }
 
-func NewPlatformService(store *Store, scheduler *Scheduler, notifier *Notifier, ingress *IngressSyncer) *PlatformService {
+type platformStore interface {
+	ensurePrincipal(ctx context.Context, subject, email string) (userRecord, error)
+	createProject(ctx context.Context, subject, name string) (projectRecord, error)
+	listProjects(ctx context.Context, subject string) ([]projectRecord, error)
+	projectByID(ctx context.Context, subject, projectID string) (projectRecord, error)
+	createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error)
+	updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error)
+	deleteService(ctx context.Context, subject, projectID, serviceID string) error
+	serviceByID(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	listServices(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
+	createScheduledVolume(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
+	listVolumes(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
+	deleteVolume(ctx context.Context, subject, projectID, volumeID string) error
+	upsertDomain(ctx context.Context, subject, projectID, serviceID, domain string) (serviceRecord, error)
+	deleteDomain(ctx context.Context, subject, projectID, domain string) error
+	serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	listAgents(ctx context.Context) ([]agentRecord, error)
+}
+
+type platformNotifier interface {
+	Notify(agentID string)
+}
+
+type platformIngress interface {
+	Sync(ctx context.Context) error
+}
+
+func NewPlatformService(store platformStore, scheduler *Scheduler, notifier platformNotifier, ingress platformIngress) *PlatformService {
 	return &PlatformService{store: store, scheduler: scheduler, notifier: notifier, ingress: ingress}
 }
 
