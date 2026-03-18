@@ -66,9 +66,12 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 			TimeoutSeconds: 2,
 		}
 	}
-	service, err := r.store.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec, []string{r.cfg.PublicDomain})
+	service, err := r.store.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec)
 	if err != nil {
 		return fmt.Errorf("ensure dashboard managed service: %w", err)
+	}
+	if _, err := r.store.ensureManagedDomainBinding(ctx, project.ID, r.cfg.PublicDomain, service.ID); err != nil {
+		return fmt.Errorf("ensure dashboard domain binding: %w", err)
 	}
 	slog.Info("managed dashboard reconciled", "project_id", project.ID, "service_id", service.ID, "domain", r.cfg.PublicDomain)
 	return r.ingress.Sync(ctx)
