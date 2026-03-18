@@ -414,7 +414,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	}
 }
 
-func TestDesiredRevisionsAreAgentScoped(t *testing.T) {
+func TestDesiredRevisionsIgnoreDomainBindingChanges(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -430,24 +430,6 @@ func TestDesiredRevisionsAreAgentScoped(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-2")); err != nil {
-		t.Fatal(err)
-	}
-
-	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
-	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
-
-	if _, err := store.createVolume(ctx, "user-1", projects[0].ID, "data", 64<<20, "node-2"); err != nil {
-		t.Fatalf("createVolume: %v", err)
-	}
-	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before {
-		t.Fatalf("expected node-1 revision unchanged after volume create, got %d want %d", got, node1Before)
-	}
-	node2AfterVolume := mustDesiredRevision(t, store, ctx, "node-2")
-	if node2AfterVolume != node2Before+1 {
-		t.Fatalf("expected node-2 revision %d after volume create, got %d", node2Before+1, node2AfterVolume)
-	}
-
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", &platformv1.ServiceSpec{
 		Image:           "busybox:1.36",
 		CpuMillis:       100,
@@ -458,36 +440,13 @@ func TestDesiredRevisionsAreAgentScoped(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 	node1AfterService := mustDesiredRevision(t, store, ctx, "node-1")
-	if node1AfterService != node1Before+1 {
-		t.Fatalf("expected node-1 revision %d after service create, got %d", node1Before+1, node1AfterService)
-	}
-	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2AfterVolume {
-		t.Fatalf("expected node-2 revision unchanged after service create, got %d want %d", got, node2AfterVolume)
-	}
-
-	service, err = store.upsertDomain(ctx, "user-1", projects[0].ID, service.ID, "web.example.com")
-	if err != nil {
-		t.Fatalf("upsertDomain: %v", err)
-	}
-	node1AfterUpsertDomain := mustDesiredRevision(t, store, ctx, "node-1")
-	if node1AfterUpsertDomain != node1AfterService+1 {
-		t.Fatalf("expected node-1 revision %d after upsertDomain, got %d", node1AfterService+1, node1AfterUpsertDomain)
-	}
-
-	if err := store.deleteDomain(ctx, "user-1", projects[0].ID, "web.example.com"); err != nil {
-		t.Fatalf("deleteDomain: %v", err)
-	}
-	node1AfterDeleteDomain := mustDesiredRevision(t, store, ctx, "node-1")
-	if node1AfterDeleteDomain != node1AfterUpsertDomain+1 {
-		t.Fatalf("expected node-1 revision %d after deleteDomain, got %d", node1AfterUpsertDomain+1, node1AfterDeleteDomain)
-	}
 
 	if err := store.deleteService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	node1AfterDeleteService := mustDesiredRevision(t, store, ctx, "node-1")
-	if node1AfterDeleteService != node1AfterDeleteDomain+1 {
-		t.Fatalf("expected node-1 revision %d after deleteService, got %d", node1AfterDeleteDomain+1, node1AfterDeleteService)
+	if node1AfterDeleteService != node1AfterService+1 {
+		t.Fatalf("expected node-1 revision %d after deleteService, got %d", node1AfterService+1, node1AfterDeleteService)
 	}
 
 	state, err := store.desiredStateForAgent(ctx, "node-1")
@@ -496,6 +455,53 @@ func TestDesiredRevisionsAreAgentScoped(t *testing.T) {
 	}
 	if got := state.GetRevision(); got != node1AfterDeleteService {
 		t.Fatalf("expected desired state revision %d, got %d", node1AfterDeleteService, got)
+	}
+
+	// Domain bindings are control-plane ingress state, not part of agent desired state.
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID); err == nil {
+		t.Fatal("expected createDomainBinding for deleted service to fail")
+	}
+
+	service, err = store.createService(ctx, "user-1", projects[0].ID, "web-2", &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	}, "node-1")
+	if err != nil {
+		t.Fatalf("createService(second): %v", err)
+	}
+	node1BeforeDomains := mustDesiredRevision(t, store, ctx, "node-1")
+
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID); err != nil {
+		t.Fatalf("createDomainBinding: %v", err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDomains {
+		t.Fatalf("expected revision unchanged after createDomainBinding, got %d want %d", got, node1BeforeDomains)
+	}
+
+	otherService, err := store.createService(ctx, "user-1", projects[0].ID, "web-3", &platformv1.ServiceSpec{
+		Image:           "busybox:1.36",
+		CpuMillis:       100,
+		MemoryMebibytes: 64,
+		ContainerPort:   8080,
+	}, "node-1")
+	if err != nil {
+		t.Fatalf("createService(third): %v", err)
+	}
+	if _, _, err := store.updateDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", otherService.ID); err != nil {
+		t.Fatalf("updateDomainBinding: %v", err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDomains+1 {
+		t.Fatalf("expected revision %d after creating second service only, got %d", node1BeforeDomains+1, got)
+	}
+
+	node1BeforeDeleteDomain := mustDesiredRevision(t, store, ctx, "node-1")
+	if _, err := store.deleteDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com"); err != nil {
+		t.Fatalf("deleteDomainBinding: %v", err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDeleteDomain {
+		t.Fatalf("expected revision unchanged after deleteDomainBinding, got %d want %d", got, node1BeforeDeleteDomain)
 	}
 }
 

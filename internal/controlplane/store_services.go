@@ -676,43 +676,6 @@ func (s *Store) deleteDomainBinding(ctx context.Context, subject, projectID, hos
 	return changed, nil
 }
 
-func (s *Store) upsertDomain(ctx context.Context, subject, projectID, serviceID, hostname string) (serviceRecord, error) {
-	_, changed, err := s.putDomainBinding(ctx, subject, projectID, hostname, serviceID, false)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	if changed {
-		service, err := s.serviceByID(ctx, subject, projectID, serviceID)
-		if err != nil {
-			return serviceRecord{}, err
-		}
-		if err := s.bumpDesiredRevisions(ctx, []string{service.AllocatedAgentID}); err != nil {
-			return serviceRecord{}, err
-		}
-		return service, nil
-	}
-	return s.serviceByID(ctx, subject, projectID, serviceID)
-}
-
-func (s *Store) deleteDomain(ctx context.Context, subject, projectID, hostname string) error {
-	binding, err := s.domainBindingByHostname(ctx, subject, projectID, hostname)
-	if err != nil {
-		return err
-	}
-	changed, err := s.deleteDomainBinding(ctx, subject, projectID, hostname)
-	if err != nil {
-		return err
-	}
-	if changed {
-		service, err := s.serviceByID(ctx, subject, projectID, binding.ServiceID)
-		if err != nil {
-			return err
-		}
-		return s.bumpDesiredRevisions(ctx, []string{service.AllocatedAgentID})
-	}
-	return nil
-}
-
 func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
 	service, err := s.serviceByID(ctx, subject, projectID, serviceID)
 	if err != nil {
