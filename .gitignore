@@ -4,6 +4,7 @@
 # Editors and IDEs
 .idea/
 .vscode/
+node_modules/
 *.swp
 *.swo
 *~
