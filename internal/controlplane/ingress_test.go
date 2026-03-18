@@ -11,10 +11,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/testutil"
 )
 
 func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
@@ -143,6 +145,56 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	}
 	if secondRoutes != 2 {
 		t.Fatalf("expected second push to contain 2 routes, got %d", secondRoutes)
+	}
+}
+
+func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
+	store := openTestStore(t)
+
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	syncer := NewIngressSyncer("http://caddy.invalid/load", store)
+	syncer.minSyncInterval = 20 * time.Millisecond
+	transport := &blockingIngressTransport{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	syncer.client = &http.Client{Transport: transport}
+
+	syncer.RequestSync()
+	<-transport.firstStarted
+	syncer.RequestSync()
+	syncer.RequestSync()
+	syncer.RequestSync()
+	close(transport.releaseFirst)
+
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: time.Second}, func(ctx context.Context) (bool, error) {
+		return transport.calls.Load() == 2, nil
+	}); err != nil {
+		t.Fatalf("wait for coalesced ingress pushes: %v", err)
+	}
+	time.Sleep(2 * syncer.minSyncInterval)
+	if got := transport.calls.Load(); got != 2 {
+		t.Fatalf("expected exactly 2 ingress pushes, got %d", got)
 	}
 }
 
