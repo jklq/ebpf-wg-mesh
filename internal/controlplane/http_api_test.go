@@ -41,10 +41,10 @@ func TestHTTPAPIListProjectsReturnsJSON(t *testing.T) {
 		}),
 		&fakeHTTPPlatform{
 			listProjects: func(ctx context.Context, req *emptypb.Empty) (*platformv1.ListProjectsResponse, error) {
-				if identity, err := IdentityFromContext(ctx); err != nil {
-					t.Fatalf("IdentityFromContext: %v", err)
-				} else if identity.Subject != "user-1" {
-					t.Fatalf("unexpected identity %+v", identity)
+				if user, err := DelegatedUserFromContext(ctx); err != nil {
+					t.Fatalf("DelegatedUserFromContext: %v", err)
+				} else if user.Subject != "user-1" {
+					t.Fatalf("unexpected delegated user %+v", user)
 				}
 				return &platformv1.ListProjectsResponse{
 					Projects: []*platformv1.Project{{
@@ -110,6 +110,7 @@ func (f httpValidatorFunc) identityFromHTTPRequest(r *http.Request) (Identity, e
 }
 
 type fakeHTTPPlatform struct {
+	platformv1.UnimplementedPlatformServiceServer
 	listProjects func(ctx context.Context, req *emptypb.Empty) (*platformv1.ListProjectsResponse, error)
 }
 
@@ -144,6 +145,10 @@ func (f *fakeHTTPPlatform) UpdateService(ctx context.Context, req *platformv1.Up
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
 
+func (f *fakeHTTPPlatform) RedeployService(ctx context.Context, req *platformv1.RedeployServiceRequest) (*platformv1.ServiceStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "not implemented")
+}
+
 func (f *fakeHTTPPlatform) DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
@@ -152,7 +157,19 @@ func (f *fakeHTTPPlatform) GetServiceStatus(ctx context.Context, req *platformv1
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
 
-func (f *fakeHTTPPlatform) UpsertDomain(ctx context.Context, req *platformv1.UpsertDomainRequest) (*platformv1.Service, error) {
+func (f *fakeHTTPPlatform) CreateDomainBinding(ctx context.Context, req *platformv1.CreateDomainBindingRequest) (*platformv1.DomainBinding, error) {
+	return nil, status.Error(codes.Unimplemented, "not implemented")
+}
+
+func (f *fakeHTTPPlatform) GetDomainBinding(ctx context.Context, req *platformv1.GetDomainBindingRequest) (*platformv1.DomainBinding, error) {
+	return nil, status.Error(codes.Unimplemented, "not implemented")
+}
+
+func (f *fakeHTTPPlatform) ListDomainBindings(ctx context.Context, req *platformv1.ListDomainBindingsRequest) (*platformv1.ListDomainBindingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not implemented")
+}
+
+func (f *fakeHTTPPlatform) UpdateDomainBinding(ctx context.Context, req *platformv1.UpdateDomainBindingRequest) (*platformv1.DomainBinding, error) {
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
 
@@ -168,7 +185,7 @@ func (f *fakeHTTPPlatform) DeleteVolume(ctx context.Context, req *platformv1.Del
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
 
-func (f *fakeHTTPPlatform) DeleteDomain(ctx context.Context, req *platformv1.DeleteDomainRequest) (*emptypb.Empty, error) {
+func (f *fakeHTTPPlatform) DeleteDomainBinding(ctx context.Context, req *platformv1.DeleteDomainBindingRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
 
