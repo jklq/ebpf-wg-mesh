@@ -1,0 +1,10 @@
+#cloud-config
+hostname: ${hostname}
+package_update: true
+packages:
+  - containerd
+  - wireguard-tools
+  - jq
+  - curl
+runcmd:
+  - systemctl enable --now containerd
