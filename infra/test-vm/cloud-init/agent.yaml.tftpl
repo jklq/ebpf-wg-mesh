@@ -1,0 +1,13 @@
+#cloud-config
+hostname: ${hostname}
+package_update: true
+packages:
+  - containerd
+  - containernetworking-plugins
+  - iproute2
+  - iptables
+  - wireguard-tools
+  - jq
+  - curl
+runcmd:
+  - systemctl enable --now containerd
