@@ -152,7 +152,6 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	}
 	if changed {
 		s.notifier.Notify(service.AllocatedAgentID)
-		_ = s.ingress.Sync(ctx)
 	}
 	return toProtoService(service), nil
 }
@@ -189,10 +188,17 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
+	bindings, err := s.store.listDomainBindings(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list domain bindings: %v", err)
+	}
 	if err := s.store.deleteService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete service: %v", err)
 	}
 	s.notifier.Notify(service.AllocatedAgentID)
+	if len(bindings) > 0 {
+		s.ingress.RequestSync()
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -355,7 +361,7 @@ func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platform
 		return nil, status.Errorf(codes.Internal, "update domain binding: %v", err)
 	}
 	if changed {
-		_ = s.ingress.Sync(ctx)
+		s.ingress.RequestSync()
 	}
 	return toProtoDomainBinding(binding), nil
 }
@@ -373,7 +379,7 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 		return nil, status.Errorf(codes.Internal, "delete domain binding: %v", err)
 	}
 	if changed {
-		_ = s.ingress.Sync(ctx)
+		s.ingress.RequestSync()
 	}
 	return &emptypb.Empty{}, nil
 }
