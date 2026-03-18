@@ -27,16 +27,20 @@ type platformStore interface {
 	createProject(ctx context.Context, subject, name string) (projectRecord, error)
 	listProjects(ctx context.Context, subject string) ([]projectRecord, error)
 	projectByID(ctx context.Context, subject, projectID string) (projectRecord, error)
-	createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error)
-	updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec, domains []string) (serviceRecord, error)
+	createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
+	updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
 	deleteService(ctx context.Context, subject, projectID, serviceID string) error
 	serviceByID(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
 	listServices(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
 	createScheduledVolume(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
 	listVolumes(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
 	deleteVolume(ctx context.Context, subject, projectID, volumeID string) error
-	upsertDomain(ctx context.Context, subject, projectID, serviceID, domain string) (serviceRecord, error)
-	deleteDomain(ctx context.Context, subject, projectID, domain string) error
+	createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error)
+	updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error)
+	domainBindingByHostname(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
+	listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
+	deleteDomainBinding(ctx context.Context, subject, projectID, hostname string) (bool, error)
 	serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
 	listAgents(ctx context.Context) ([]agentRecord, error)
 }
@@ -109,14 +113,17 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.createScheduledService(ctx, identity.Subject, req.GetProjectId(), req.GetName(), req.GetSpec(), req.GetDomains())
+	if req.GetService() == nil {
+		return nil, status.Error(codes.InvalidArgument, "service is required")
+	}
+	service, err := s.store.createScheduledService(ctx, identity.Subject, req.GetProjectId(), req.GetService().GetName(), req.GetService().GetSpec())
 	if err != nil {
 		if errors.Is(err, errNoPlacementAvailable) || errors.Is(err, errVolumeNotFound) || errors.Is(err, errVolumeAgentMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "create service: %v", err)
 	}
-	slog.Info("service created", "service_id", service.ID, "agent_id", service.AllocatedAgentID, "project_id", req.GetProjectId(), "revision", service.CurrentRevision)
+	slog.Info("service created", "service_id", service.ID, "agent_id", service.AllocatedAgentID, "project_id", req.GetProjectId(), "spec_revision", service.SpecRevision, "rollout_generation", service.RolloutGeneration)
 	s.notifier.Notify(service.AllocatedAgentID)
 	_ = s.ingress.Sync(ctx)
 	return toProtoService(service), nil
@@ -127,7 +134,10 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.updateService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetSpec(), req.GetDomains())
+	if req.GetService() == nil {
+		return nil, status.Error(codes.InvalidArgument, "service is required")
+	}
+	service, changed, err := s.store.updateService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetService().GetSpec())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -140,9 +150,36 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		}
 		return nil, status.Errorf(codes.Internal, "update service: %v", err)
 	}
+	if changed {
+		s.notifier.Notify(service.AllocatedAgentID)
+		_ = s.ingress.Sync(ctx)
+	}
+	return toProtoService(service), nil
+}
+
+func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.RedeployServiceRequest) (*platformv1.ServiceStatus, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	service, err := s.store.redeployService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		if errors.Is(err, errConcurrentUpdate) {
+			return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
+	}
 	s.notifier.Notify(service.AllocatedAgentID)
 	_ = s.ingress.Sync(ctx)
-	return toProtoService(service), nil
+
+	currentService, allocation, err := s.store.serviceStatus(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "redeploy service status: %v", err)
+	}
+	return &platformv1.ServiceStatus{Service: toProtoService(currentService), Allocation: toProtoAllocation(allocation)}, nil
 }
 
 func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error) {
@@ -250,35 +287,97 @@ func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListV
 	return resp, nil
 }
 
-func (s *PlatformService) UpsertDomain(ctx context.Context, req *platformv1.UpsertDomainRequest) (*platformv1.Service, error) {
+func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platformv1.CreateDomainBindingRequest) (*platformv1.DomainBinding, error) {
 	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.upsertDomain(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetDomain())
+	if req.GetBinding() == nil {
+		return nil, status.Error(codes.InvalidArgument, "binding is required")
+	}
+	binding, changed, err := s.store.createDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetBinding().GetHostname(), req.GetBinding().GetServiceId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "upsert domain: %v", err)
+		if errors.Is(err, errDomainAlreadyExists) {
+			return nil, status.Errorf(codes.AlreadyExists, "create domain binding: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "create domain binding: %v", err)
 	}
-	s.notifier.Notify(service.AllocatedAgentID)
-	_ = s.ingress.Sync(ctx)
-	return toProtoService(service), nil
+	if changed {
+		_ = s.ingress.Sync(ctx)
+	}
+	return toProtoDomainBinding(binding), nil
 }
 
-func (s *PlatformService) DeleteDomain(ctx context.Context, req *platformv1.DeleteDomainRequest) (*emptypb.Empty, error) {
+func (s *PlatformService) GetDomainBinding(ctx context.Context, req *platformv1.GetDomainBindingRequest) (*platformv1.DomainBinding, error) {
 	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.deleteDomain(ctx, identity.Subject, req.GetProjectId(), req.GetDomain()); err != nil {
+	binding, err := s.store.domainBindingByHostname(ctx, identity.Subject, req.GetProjectId(), req.GetHostname())
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Errorf(codes.NotFound, "domain: %v", err)
+			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "delete domain: %v", err)
+		return nil, status.Errorf(codes.Internal, "get domain binding: %v", err)
 	}
-	_ = s.ingress.Sync(ctx)
+	return toProtoDomainBinding(binding), nil
+}
+
+func (s *PlatformService) ListDomainBindings(ctx context.Context, req *platformv1.ListDomainBindingsRequest) (*platformv1.ListDomainBindingsResponse, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.store.listDomainBindings(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list domain bindings: %v", err)
+	}
+	resp := &platformv1.ListDomainBindingsResponse{Bindings: make([]*platformv1.DomainBinding, 0, len(items))}
+	for _, item := range items {
+		resp.Bindings = append(resp.Bindings, toProtoDomainBinding(item))
+	}
+	return resp, nil
+}
+
+func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platformv1.UpdateDomainBindingRequest) (*platformv1.DomainBinding, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetBinding() == nil {
+		return nil, status.Error(codes.InvalidArgument, "binding is required")
+	}
+	binding, changed, err := s.store.updateDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetHostname(), req.GetBinding().GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "update domain binding: %v", err)
+	}
+	if changed {
+		_ = s.ingress.Sync(ctx)
+	}
+	return toProtoDomainBinding(binding), nil
+}
+
+func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platformv1.DeleteDomainBindingRequest) (*emptypb.Empty, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := s.store.deleteDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetHostname())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "delete domain binding: %v", err)
+	}
+	if changed {
+		_ = s.ingress.Sync(ctx)
+	}
 	return &emptypb.Empty{}, nil
 }
 

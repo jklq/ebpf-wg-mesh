@@ -145,14 +145,15 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 		for _, cond := range report.Services {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
-				    SET applied_revision = $1,
-				        phase = $2,
-				        message = $3,
-				        endpoint_addr = $4,
-				        healthy = $5,
-				        updated_at = $6
-				  WHERE id = $7`,
-				cond.AppliedRevision, cond.Phase, cond.Message, cond.EndpointAddr, cond.Healthy, now, cond.AllocationId,
+				    SET applied_spec_revision = $1,
+				        applied_rollout_generation = $2,
+				        phase = $3,
+				        message = $4,
+				        endpoint_addr = $5,
+				        healthy = $6,
+				        updated_at = $7
+				  WHERE id = $8`,
+				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, cond.Phase, cond.Message, cond.EndpointAddr, cond.Healthy, now, cond.AllocationId,
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
@@ -267,7 +268,7 @@ func (s *Store) schedulerSnapshotTx(ctx context.Context, q serviceQueryer) ([]ag
 		return nil, nil, err
 	}
 	rows, err := q.QueryContext(ctx,
-		`SELECT s.id, s.project_id, s.name, s.current_revision, s.allocated_agent_id, s.created_at, s.updated_at
+		`SELECT s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, s.allocated_agent_id, s.created_at, s.updated_at
 		   FROM services s
 		  ORDER BY s.created_at ASC`,
 	)
@@ -288,12 +289,11 @@ func (s *Store) schedulerSnapshotTx(ctx context.Context, q serviceQueryer) ([]ag
 		return nil, nil, err
 	}
 	for i := range services {
-		spec, domains, err := s.loadServiceDetailsQuerier(ctx, q, services[i].ID, services[i].CurrentRevision)
+		spec, err := s.loadServiceDetailsQuerier(ctx, q, services[i].ID, services[i].SpecRevision)
 		if err != nil && err != sql.ErrNoRows {
 			return nil, nil, err
 		}
 		services[i].Spec = spec
-		services[i].Domains = domains
 	}
 	return agents, services, nil
 }
