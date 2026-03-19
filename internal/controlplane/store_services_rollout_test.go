@@ -13,6 +13,8 @@ import (
 )
 
 func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -70,6 +72,8 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 }
 
 func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -140,6 +144,8 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 }
 
 func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -194,6 +200,8 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 }
 
 func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -254,6 +262,8 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 }
 
 func TestDesiredRevisionsIgnoreDomainBindingChanges(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -345,6 +355,8 @@ func TestDesiredRevisionsIgnoreDomainBindingChanges(t *testing.T) {
 }
 
 func TestAgentTopologyChangesBumpAllDesiredRevisions(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -376,6 +388,8 @@ func TestAgentTopologyChangesBumpAllDesiredRevisions(t *testing.T) {
 }
 
 func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -466,6 +480,8 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 }
 
 func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -508,6 +524,8 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 }
 
 func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 

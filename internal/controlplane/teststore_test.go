@@ -37,7 +37,11 @@ func openTestStore(t *testing.T) *Store {
 	t.Helper()
 
 	dbURL := createTestDatabase(t)
-	store, err := OpenStore(config.DatabaseConfig{URL: dbURL}, testMeshConfig())
+	store, err := OpenStore(config.DatabaseConfig{
+		URL:          dbURL,
+		MaxOpenConns: 4,
+		MaxIdleConns: 4,
+	}, testMeshConfig())
 	if err != nil {
 		t.Fatal(err)
 	}

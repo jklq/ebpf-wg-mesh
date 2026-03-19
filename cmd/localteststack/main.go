@@ -25,7 +25,7 @@ import (
 
 type stackSummary struct {
 	ControlPlaneURL string `json:"control_plane_url"`
-	DashboardURL    string `json:"dashboard_url"`
+	ConsoleURL      string `json:"console_url"`
 	DatabaseURL     string `json:"database_url"`
 	ArtifactsDir    string `json:"artifacts_dir"`
 }
@@ -38,8 +38,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("getwd: %v", err)
 	}
-	dashboardDir := filepath.Join(repoRoot, "dashboard")
-	artifactsDir := filepath.Join(dashboardDir, "artifacts", "e2e-local")
+	consoleDir := filepath.Join(repoRoot, "console")
+	artifactsDir := filepath.Join(consoleDir, "artifacts", "e2e-local")
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
 		log.Fatalf("mkdir artifacts: %v", err)
 	}
@@ -129,7 +129,7 @@ func main() {
 		log.Fatalf("mint dashboard client identity: %v", err)
 	}
 
-	dashboardURL, dashboardCmd, err := startDashboard(ctx, dashboardDir, map[string]string{
+	consoleURL, consoleCmd, err := startConsole(ctx, consoleDir, map[string]string{
 		"DASHBOARD_DATABASE_URL":              dbURL,
 		"DASHBOARD_DATABASE_SCHEMA":           "dashboard_local_e2e",
 		"DASHBOARD_SESSION_COOKIE_NAME":       "dashboard_local_e2e_session",
@@ -142,13 +142,13 @@ func main() {
 		"DASHBOARD_DEV_USERS":                 "dev-user:dev@example.com",
 	})
 	if err != nil {
-		log.Fatalf("start dashboard: %v", err)
+		log.Fatalf("start console: %v", err)
 	}
-	defer stopProcess(dashboardCmd)
+	defer stopProcess(consoleCmd)
 
 	summary := stackSummary{
 		ControlPlaneURL: controlPlaneURL,
-		DashboardURL:    dashboardURL,
+		ConsoleURL:      consoleURL,
 		DatabaseURL:     dbURL,
 		ArtifactsDir:    artifactsDir,
 	}
@@ -159,18 +159,18 @@ func main() {
 	runPlaywright := os.Getenv("LOCALTESTSTACK_RUN_PLAYWRIGHT") != "0"
 	if runPlaywright {
 		playwright := exec.CommandContext(ctx, "bun", "run", "test:e2e:local")
-		playwright.Dir = dashboardDir
+		playwright.Dir = consoleDir
 		playwright.Stdout = os.Stdout
 		playwright.Stderr = os.Stderr
 		playwright.Env = append(os.Environ(),
-			"DASHBOARD_E2E_BASE_URL="+dashboardURL,
+			"DASHBOARD_E2E_BASE_URL="+consoleURL,
 		)
 		if err := playwright.Run(); err != nil {
 			log.Fatalf("run playwright: %v", err)
 		}
 	} else {
 		log.Printf("ephemeral stack ready")
-		log.Printf("dashboard: %s", dashboardURL)
+		log.Printf("console: %s", consoleURL)
 		log.Printf("controlplane: %s", controlPlaneURL)
 		log.Printf("database: %s", dbURL)
 		log.Printf("artifacts: %s", artifactsDir)
@@ -186,11 +186,11 @@ func main() {
 	}
 }
 
-func startDashboard(ctx context.Context, dashboardDir string, env map[string]string) (string, *exec.Cmd, error) {
-	dashboardURL := "http://127.0.0.1:3000/"
+func startConsole(ctx context.Context, consoleDir string, env map[string]string) (string, *exec.Cmd, error) {
+	consoleURL := "http://127.0.0.1:3000/"
 
 	cmd := exec.CommandContext(ctx, "bun", "run", "dev")
-	cmd.Dir = dashboardDir
+	cmd.Dir = consoleDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
@@ -198,10 +198,10 @@ func startDashboard(ctx context.Context, dashboardDir string, env map[string]str
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", nil, fmt.Errorf("start dashboard process: %w", err)
+		return "", nil, fmt.Errorf("start console process: %w", err)
 	}
 
-	healthURL := dashboardURL + "healthz"
+	healthURL := consoleURL + "healthz"
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second}, func(ctx context.Context) (bool, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 		if err != nil {
@@ -215,10 +215,10 @@ func startDashboard(ctx context.Context, dashboardDir string, env map[string]str
 		return resp.StatusCode == http.StatusOK, nil
 	}); err != nil {
 		stopProcess(cmd)
-		return "", nil, fmt.Errorf("wait for dashboard health at %s: %w", healthURL, err)
+		return "", nil, fmt.Errorf("wait for console health at %s: %w", healthURL, err)
 	}
 
-	return dashboardURL, cmd, nil
+	return consoleURL, cmd, nil
 }
 
 func writeSummary(path string, summary stackSummary) error {
