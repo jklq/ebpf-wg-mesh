@@ -7,19 +7,16 @@ import (
 	"time"
 )
 
-func (s *Store) ensureProjectNamed(ctx context.Context, name string) (string, error) {
-	return s.ensureProjectNamedQuerier(ctx, s.db, name, projectKindUser, "")
+func (s *Store) ensureUserProjectNamed(ctx context.Context, subject, name string) (string, error) {
+	return s.ensureUserProjectNamedQuerier(ctx, s.db, subject, name)
 }
 
-func (s *Store) ensureProjectNamedQuerier(ctx context.Context, q serviceQueryer, name string, kind projectKind, systemKey string) (string, error) {
-	project, found, err := s.projectByNameQuerier(ctx, q, name)
+func (s *Store) ensureUserProjectNamedQuerier(ctx context.Context, q serviceQueryer, subject, name string) (string, error) {
+	project, found, err := s.projectByOwnedNameQuerier(ctx, q, subject, name)
 	if err != nil {
 		return "", err
 	}
 	if found {
-		if project.Kind != kind {
-			return "", fmt.Errorf("project %q already exists with kind %s", name, project.Kind)
-		}
 		return project.ID, nil
 	}
 
@@ -27,16 +24,29 @@ func (s *Store) ensureProjectNamedQuerier(ctx context.Context, q serviceQueryer,
 	now := time.Now().UTC()
 	if _, err := q.ExecContext(
 		ctx,
-		`INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5)`,
+		`INSERT INTO projects(id, owner_subject, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		id,
+		subject,
 		name,
-		string(kind),
-		nullIfEmpty(systemKey),
+		string(projectKindUser),
+		nil,
 		now,
 	); err != nil {
 		return "", fmt.Errorf("insert project: %w", err)
 	}
 	return id, nil
+}
+
+func (s *Store) ensureProjectOwnerMembershipQuerier(ctx context.Context, q serviceQueryer, subject, projectID string) error {
+	_, err := q.ExecContext(
+		ctx,
+		`INSERT INTO project_memberships(subject, project_id, role) VALUES ($1, $2, $3)
+		 ON CONFLICT(subject, project_id) DO UPDATE SET role = excluded.role`,
+		subject,
+		projectID,
+		"owner",
+	)
+	return err
 }
 
 func (s *Store) ensureManagedProject(ctx context.Context, name, systemKey string) (projectRecord, error) {
@@ -91,17 +101,11 @@ func (s *Store) ensureManagedProject(ctx context.Context, name, systemKey string
 func (s *Store) createProject(ctx context.Context, subject, name string) (projectRecord, error) {
 	var project projectRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		id, err := s.ensureProjectNamedQuerier(ctx, tx, name, projectKindUser, "")
+		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, subject, name)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO project_memberships(subject, project_id, role) VALUES ($1, $2, $3) ON CONFLICT(subject, project_id) DO NOTHING`,
-			subject,
-			id,
-			"owner",
-		); err != nil {
+		if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, subject, id); err != nil {
 			return err
 		}
 		project, err = s.projectByIDQuerier(ctx, tx, subject, id)
@@ -192,13 +196,15 @@ func (s *Store) projectBySystemKeyQuerier(ctx context.Context, q serviceQueryer,
 	}
 }
 
-func (s *Store) projectByNameQuerier(ctx context.Context, q serviceQueryer, name string) (projectRecord, bool, error) {
+func (s *Store) projectByOwnedNameQuerier(ctx context.Context, q serviceQueryer, subject, name string) (projectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
 		   FROM projects
-		  WHERE name = $1`,
+		  WHERE owner_subject = $1 AND name = $2 AND kind = $3`,
+		subject,
 		name,
+		string(projectKindUser),
 	)
 	rec, err := scanProjectRow(row)
 	switch {

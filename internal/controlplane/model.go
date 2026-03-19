@@ -13,7 +13,7 @@ const (
 	projectKindManaged projectKind = "managed"
 )
 
-type userRecord struct {
+type principalRecord struct {
 	Subject   string
 	Email     string
 	CreatedAt time.Time

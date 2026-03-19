@@ -16,7 +16,7 @@ func toProtoProject(rec projectRecord) *platformv1.Project {
 	}
 }
 
-func toProtoPrincipal(rec userRecord) *platformv1.Principal {
+func toProtoPrincipal(rec principalRecord) *platformv1.Principal {
 	return &platformv1.Principal{
 		Subject:   rec.Subject,
 		Email:     rec.Email,

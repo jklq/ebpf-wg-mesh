@@ -7,7 +7,6 @@
 package platformv1
 
 import (
-	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -2330,7 +2329,7 @@ var File_platform_proto protoreflect.FileDescriptor
 
 const file_platform_proto_rawDesc = "" +
 	"\n" +
-	"\x0eplatform.proto\x12\vplatform.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x01\n" +
+	"\x0eplatform.proto\x12\vplatform.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x01\n" +
 	"\aProject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x129\n" +
@@ -2534,32 +2533,31 @@ const file_platform_proto_rawDesc = "" +
 	"\vProjectKind\x12\x1c\n" +
 	"\x18PROJECT_KIND_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11PROJECT_KIND_USER\x10\x01\x12\x18\n" +
-	"\x14PROJECT_KIND_MANAGED\x10\x022\x98\x14\n" +
-	"\x0fPlatformService\x12o\n" +
-	"\x0fEnsurePrincipal\x12#.platform.v1.EnsurePrincipalRequest\x1a\x16.platform.v1.Principal\"\x1f\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/v1/principal:ensure\x12a\n" +
-	"\rCreateProject\x12!.platform.v1.CreateProjectRequest\x1a\x14.platform.v1.Project\"\x17\x82\xd3\xe4\x93\x02\x11:\x01*\"\f/v1/projects\x12_\n" +
-	"\fListProjects\x12\x16.google.protobuf.Empty\x1a!.platform.v1.ListProjectsResponse\"\x14\x82\xd3\xe4\x93\x02\x0e\x12\f/v1/projects\x12e\n" +
+	"\x14PROJECT_KIND_MANAGED\x10\x022\xd4\f\n" +
+	"\x0fPlatformService\x12N\n" +
+	"\x0fEnsurePrincipal\x12#.platform.v1.EnsurePrincipalRequest\x1a\x16.platform.v1.Principal\x12H\n" +
+	"\rCreateProject\x12!.platform.v1.CreateProjectRequest\x1a\x14.platform.v1.Project\x12I\n" +
+	"\fListProjects\x12\x16.google.protobuf.Empty\x1a!.platform.v1.ListProjectsResponse\x12B\n" +
 	"\n" +
-	"GetProject\x12\x1e.platform.v1.GetProjectRequest\x1a\x14.platform.v1.Project\"!\x82\xd3\xe4\x93\x02\x1b\x12\x19/v1/projects/{project_id}\x12}\n" +
-	"\rCreateService\x12!.platform.v1.CreateServiceRequest\x1a\x14.platform.v1.Service\"3\x82\xd3\xe4\x93\x02-:\aservice\"\"/v1/projects/{project_id}/services\x12\x8a\x01\n" +
-	"\rUpdateService\x12!.platform.v1.UpdateServiceRequest\x1a\x14.platform.v1.Service\"@\x82\xd3\xe4\x93\x02::\aservice\x1a//v1/projects/{project_id}/services/{service_id}\x12\x97\x01\n" +
-	"\x0fRedeployService\x12#.platform.v1.RedeployServiceRequest\x1a\x1a.platform.v1.ServiceStatus\"C\x82\xd3\xe4\x93\x02=:\x01*\"8/v1/projects/{project_id}/services/{service_id}:redeploy\x12\x83\x01\n" +
-	"\rDeleteService\x12!.platform.v1.DeleteServiceRequest\x1a\x16.google.protobuf.Empty\"7\x82\xd3\xe4\x93\x021*//v1/projects/{project_id}/services/{service_id}\x12{\n" +
+	"GetProject\x12\x1e.platform.v1.GetProjectRequest\x1a\x14.platform.v1.Project\x12H\n" +
+	"\rCreateService\x12!.platform.v1.CreateServiceRequest\x1a\x14.platform.v1.Service\x12H\n" +
+	"\rUpdateService\x12!.platform.v1.UpdateServiceRequest\x1a\x14.platform.v1.Service\x12R\n" +
+	"\x0fRedeployService\x12#.platform.v1.RedeployServiceRequest\x1a\x1a.platform.v1.ServiceStatus\x12J\n" +
+	"\rDeleteService\x12!.platform.v1.DeleteServiceRequest\x1a\x16.google.protobuf.Empty\x12B\n" +
 	"\n" +
-	"GetService\x12\x1e.platform.v1.GetServiceRequest\x1a\x14.platform.v1.Service\"7\x82\xd3\xe4\x93\x021\x12//v1/projects/{project_id}/services/{service_id}\x12\x7f\n" +
-	"\fListServices\x12 .platform.v1.ListServicesRequest\x1a!.platform.v1.ListServicesResponse\"*\x82\xd3\xe4\x93\x02$\x12\"/v1/projects/{project_id}/services\x12s\n" +
-	"\fCreateVolume\x12 .platform.v1.CreateVolumeRequest\x1a\x13.platform.v1.Volume\",\x82\xd3\xe4\x93\x02&:\x01*\"!/v1/projects/{project_id}/volumes\x12\x7f\n" +
-	"\fDeleteVolume\x12 .platform.v1.DeleteVolumeRequest\x1a\x16.google.protobuf.Empty\"5\x82\xd3\xe4\x93\x02/*-/v1/projects/{project_id}/volumes/{volume_id}\x12{\n" +
-	"\vListVolumes\x12\x1f.platform.v1.ListVolumesRequest\x1a .platform.v1.ListVolumesResponse\")\x82\xd3\xe4\x93\x02#\x12!/v1/projects/{project_id}/volumes\x12\x8e\x01\n" +
-	"\x13CreateDomainBinding\x12'.platform.v1.CreateDomainBindingRequest\x1a\x1a.platform.v1.DomainBinding\"2\x82\xd3\xe4\x93\x02,:\abinding\"!/v1/projects/{project_id}/domains\x12\x8a\x01\n" +
-	"\x10GetDomainBinding\x12$.platform.v1.GetDomainBindingRequest\x1a\x1a.platform.v1.DomainBinding\"4\x82\xd3\xe4\x93\x02.\x12,/v1/projects/{project_id}/domains/{hostname}\x12\x90\x01\n" +
-	"\x12ListDomainBindings\x12&.platform.v1.ListDomainBindingsRequest\x1a'.platform.v1.ListDomainBindingsResponse\")\x82\xd3\xe4\x93\x02#\x12!/v1/projects/{project_id}/domains\x12\x99\x01\n" +
-	"\x13UpdateDomainBinding\x12'.platform.v1.UpdateDomainBindingRequest\x1a\x1a.platform.v1.DomainBinding\"=\x82\xd3\xe4\x93\x027:\abinding\x1a,/v1/projects/{project_id}/domains/{hostname}\x12\x8c\x01\n" +
-	"\x13DeleteDomainBinding\x12'.platform.v1.DeleteDomainBindingRequest\x1a\x16.google.protobuf.Empty\"4\x82\xd3\xe4\x93\x02.*,/v1/projects/{project_id}/domains/{hostname}\x12\x94\x01\n" +
-	"\x10GetServiceStatus\x12$.platform.v1.GetServiceStatusRequest\x1a\x1a.platform.v1.ServiceStatus\">\x82\xd3\xe4\x93\x028\x126/v1/projects/{project_id}/services/{service_id}/status\x12Y\n" +
+	"GetService\x12\x1e.platform.v1.GetServiceRequest\x1a\x14.platform.v1.Service\x12S\n" +
+	"\fListServices\x12 .platform.v1.ListServicesRequest\x1a!.platform.v1.ListServicesResponse\x12E\n" +
+	"\fCreateVolume\x12 .platform.v1.CreateVolumeRequest\x1a\x13.platform.v1.Volume\x12H\n" +
+	"\fDeleteVolume\x12 .platform.v1.DeleteVolumeRequest\x1a\x16.google.protobuf.Empty\x12P\n" +
+	"\vListVolumes\x12\x1f.platform.v1.ListVolumesRequest\x1a .platform.v1.ListVolumesResponse\x12Z\n" +
+	"\x13CreateDomainBinding\x12'.platform.v1.CreateDomainBindingRequest\x1a\x1a.platform.v1.DomainBinding\x12T\n" +
+	"\x10GetDomainBinding\x12$.platform.v1.GetDomainBindingRequest\x1a\x1a.platform.v1.DomainBinding\x12e\n" +
+	"\x12ListDomainBindings\x12&.platform.v1.ListDomainBindingsRequest\x1a'.platform.v1.ListDomainBindingsResponse\x12Z\n" +
+	"\x13UpdateDomainBinding\x12'.platform.v1.UpdateDomainBindingRequest\x1a\x1a.platform.v1.DomainBinding\x12V\n" +
+	"\x13DeleteDomainBinding\x12'.platform.v1.DeleteDomainBindingRequest\x1a\x16.google.protobuf.Empty\x12T\n" +
+	"\x10GetServiceStatus\x12$.platform.v1.GetServiceStatusRequest\x1a\x1a.platform.v1.ServiceStatus\x12E\n" +
 	"\n" +
-	"ListAgents\x12\x16.google.protobuf.Empty\x1a\x1f.platform.v1.ListAgentsResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
-	"/v1/agentsB.Z,ebof-wg-mesh/api/proto/platformv1;platformv1b\x06proto3"
+	"ListAgents\x12\x16.google.protobuf.Empty\x1a\x1f.platform.v1.ListAgentsResponseB.Z,ebof-wg-mesh/api/proto/platformv1;platformv1b\x06proto3"
 
 var (
 	file_platform_proto_rawDescOnce sync.Once
