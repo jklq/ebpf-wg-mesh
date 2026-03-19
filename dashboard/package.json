@@ -13,7 +13,7 @@
     "start": "bun run .output/server/index.mjs",
     "test": "bun run test:unit",
     "test:unit": "bunx vitest run --config vitest.unit.config.ts",
-    "test:integration": "bunx vitest run --config vitest.integration.config.ts",
+    "test:integration": "bun run test:e2e:local",
     "test:e2e:local": "bunx playwright test -c playwright.local.config.ts",
     "format": "bunx biome format",
     "lint": "bunx biome lint",
