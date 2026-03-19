@@ -6,7 +6,7 @@ Minimal PaaS control plane and agent prototype with a retained WireGuard/eBPF pr
 
 - `cmd/controlplane`: authoritative control plane
 - `cmd/agent`: node agent that opens an mTLS gRPC stream to the control plane
-- `dashboard`: minimal TanStack Start dashboard app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
+- `console`: minimal TanStack Start app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
 - `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, Caddy sync
 - `internal/agent`: desired-state loop, local reconcile runtime, containerd inspection, status reporting
 - `internal/mesh`: retained mesh bootstrap that wraps the existing WireGuard and eBPF implementation
@@ -16,11 +16,11 @@ Minimal PaaS control plane and agent prototype with a retained WireGuard/eBPF pr
 
 - Single control plane only.
 - CockroachDB stores authz-side users, projects, memberships, agents, services, revisions, volumes, domains, allocations, and status projections.
-- The dashboard app uses its own schema in the same CockroachDB cluster for app users, sessions, accounts, and onboarding metadata.
+- The console app uses its own schema in the same CockroachDB cluster for app users, sessions, accounts, and onboarding metadata.
 - Agents are intentionally dumb: they receive full per-node desired-state snapshots and reconcile local state.
 - Public ingress is centralized through one Caddy instance; the control plane replaces Caddy config through the admin API.
-- The dashboard is the only intended product-facing caller of `platform.v1.PlatformService`.
-- Agent-facing and dashboard-facing internal gRPC are protected by mTLS with distinct caller identities.
+- The console is the only intended product-facing caller of `platform.v1.PlatformService`.
+- Agent-facing and console-facing internal gRPC are protected by mTLS with distinct caller identities.
 - The existing WireGuard/eBPF code remains the private node-to-node transport/policy layer behind `internal/mesh`.
 
 ## Bootstrap
@@ -32,7 +32,7 @@ The binaries no longer require YAML config files.
 
 Common bootstrap inputs:
 
-- control plane: listen addresses, agent bootstrap token(s), DB URL, state dir, ingress admin URL, managed dashboard service settings
+- control plane: listen addresses, agent bootstrap token(s), DB URL, state dir, ingress admin URL, managed console service settings
 - agent: control-plane address, control-plane CA, bootstrap token, data dir
 
 ## Build
@@ -48,19 +48,19 @@ Run tests:
 
 ```bash
 make test-unit-go
-make test-unit-dashboard
+make test-unit-console
 make test-integration
 ```
 
 Dashboard-local Bun commands:
 
 ```bash
-bun --cwd=dashboard install
-bun --cwd=dashboard run test:unit
-bun --cwd=dashboard run test:integration
-bun --cwd=dashboard run test:e2e:local
-bun --cwd=dashboard run build
-bun --cwd=dashboard run start
+bun --cwd=console install
+bun --cwd=console run test:unit
+bun --cwd=console run test:integration
+bun --cwd=console run test:e2e:local
+bun --cwd=console run build
+bun --cwd=console run start
 ```
 
 Smoke E2E against a local ephemeral stack:
@@ -85,9 +85,9 @@ make test-e2e-vm
 ## Testing Pyramid
 
 - `test-unit-go`: pure Go tests only. Cockroach-backed store coverage is excluded from this tier.
-- `test-unit-dashboard`: Vitest unit tests for dashboard session logic, loaders, and React rendering.
-- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag plus the dashboard local-stack smoke.
-- `test-e2e-local`: thin Playwright smoke against an ephemeral local Cockroach + control plane + dashboard stack.
+- `test-unit-console`: Vitest unit tests for console session logic, loaders, and React rendering.
+- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag plus the console local-stack smoke.
+- `test-e2e-local`: thin Playwright smoke against an ephemeral local Cockroach + control plane + console stack.
 - `test-e2e-vm`: Hetzner-backed smoke that provisions disposable VMs, deploys pinned binaries, runs remote checks, collects artifacts, and destroys the environment.
 
 ## VM Harness
