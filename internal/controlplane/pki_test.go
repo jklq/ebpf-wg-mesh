@@ -19,6 +19,8 @@ import (
 )
 
 func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
+	t.Parallel()
+
 	cfg := config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{

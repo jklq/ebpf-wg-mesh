@@ -22,6 +22,8 @@ import (
 )
 
 func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -39,7 +41,9 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 			},
 		},
 		Database: config.DatabaseConfig{
-			URL: createTestDatabase(t),
+			URL:          createTestDatabase(t),
+			MaxOpenConns: 4,
+			MaxIdleConns: 4,
 		},
 		StateDir: t.TempDir(),
 		Ingress: config.IngressConfig{

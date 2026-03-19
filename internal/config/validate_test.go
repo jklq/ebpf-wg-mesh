@@ -3,6 +3,8 @@ package config
 import "testing"
 
 func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
+	t.Parallel()
+
 	cfg := ControlPlaneConfig{
 		Database: DatabaseConfig{
 			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
@@ -38,6 +40,8 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 }
 
 func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
+	t.Parallel()
+
 	cfg := ControlPlaneConfig{
 		PublicHTTP: ListenerConfig{Listen: "127.0.0.1:8080"},
 		InternalGRPC: ListenerConfig{
@@ -77,6 +81,8 @@ func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
 }
 
 func TestFinalizeAgentRejectsInvalidWireGuardPeerEndpoint(t *testing.T) {
+	t.Parallel()
+
 	cfg := AgentConfig{
 		Node: NodeConfig{
 			ID:            "node-1",

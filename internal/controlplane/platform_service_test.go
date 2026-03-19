@@ -15,6 +15,8 @@ import (
 )
 
 func TestPlatformServiceEnsurePrincipalValidatesInput(t *testing.T) {
+	t.Parallel()
+
 	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{})
 
 	_, err := service.EnsurePrincipal(context.Background(), &platformv1.EnsurePrincipalRequest{
@@ -27,6 +29,8 @@ func TestPlatformServiceEnsurePrincipalValidatesInput(t *testing.T) {
 }
 
 func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
+	t.Parallel()
+
 	store := &fakePlatformStore{
 		listProjectsFn: func(ctx context.Context, subject string) ([]projectRecord, error) {
 			if subject != "user-1" {
@@ -52,6 +56,8 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 }
 
 func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
+	t.Parallel()
+
 	store := &fakePlatformStore{
 		createScheduledServiceFn: func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
 			return serviceRecord{}, errNoPlacementAvailable
@@ -72,6 +78,8 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 }
 
 func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
+	t.Parallel()
+
 	store := &fakePlatformStore{
 		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{}, false, errConcurrentUpdate
@@ -92,6 +100,8 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 }
 
 func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
 	service := NewPlatformService(&fakePlatformStore{
 		listVolumesFn: func(ctx context.Context, subject, projectID string) ([]volumeRecord, error) {
 			return []volumeRecord{}, nil
@@ -108,6 +118,8 @@ func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 }
 
 func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
+	t.Parallel()
+
 	service := NewPlatformService(&fakePlatformStore{
 		projectByIDFn: func(ctx context.Context, subject, projectID string) (projectRecord, error) {
 			return projectRecord{}, sql.ErrNoRows
@@ -123,6 +135,8 @@ func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 }
 
 func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
+	t.Parallel()
+
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
 		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
@@ -146,6 +160,8 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 }
 
 func TestPlatformServiceDeleteServiceRequestsIngressWhenServiceHasDomains(t *testing.T) {
+	t.Parallel()
+
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
 		listDomainBindingsFn: func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
@@ -166,6 +182,8 @@ func TestPlatformServiceDeleteServiceRequestsIngressWhenServiceHasDomains(t *tes
 }
 
 func TestPlatformServiceDeleteServiceSkipsIngressWhenServiceHasNoDomains(t *testing.T) {
+	t.Parallel()
+
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
 		listDomainBindingsFn: func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
@@ -186,6 +204,8 @@ func TestPlatformServiceDeleteServiceSkipsIngressWhenServiceHasNoDomains(t *test
 }
 
 func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
+	t.Parallel()
+
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
 		updateDomainBindingFn: func(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
@@ -207,6 +227,8 @@ func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
 }
 
 func TestPlatformServiceDeleteDomainBindingRequestsIngress(t *testing.T) {
+	t.Parallel()
+
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
 		deleteDomainBindingFn: func(ctx context.Context, subject, projectID, hostname string) (bool, error) {

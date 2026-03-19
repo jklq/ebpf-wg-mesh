@@ -20,6 +20,8 @@ import (
 )
 
 func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -67,6 +69,8 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 }
 
 func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -149,6 +153,8 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 }
 
 func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
