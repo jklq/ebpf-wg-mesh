@@ -15,6 +15,8 @@ import (
 )
 
 func TestInternalAuthAllowsDashboardPlatformCallsWithDelegatedUser(t *testing.T) {
+	t.Parallel()
+
 	authz := NewInternalAuth()
 	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
@@ -36,6 +38,8 @@ func TestInternalAuthAllowsDashboardPlatformCallsWithDelegatedUser(t *testing.T)
 }
 
 func TestInternalAuthRejectsMissingDelegatedUserOnPlatformCall(t *testing.T) {
+	t.Parallel()
+
 	authz := NewInternalAuth()
 	_, err := authz.authorize(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.PlatformService/ListProjects", false)
 	if status.Code(err) != codes.Unauthenticated {
@@ -44,6 +48,8 @@ func TestInternalAuthRejectsMissingDelegatedUserOnPlatformCall(t *testing.T) {
 }
 
 func TestInternalAuthRejectsAgentCallingPlatformService(t *testing.T) {
+	t.Parallel()
+
 	authz := NewInternalAuth()
 	ctx := contextWithClientIdentity(serviceCallerAgent, "agent-1")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
@@ -58,6 +64,8 @@ func TestInternalAuthRejectsAgentCallingPlatformService(t *testing.T) {
 }
 
 func TestInternalAuthRejectsDashboardCallingAgentSync(t *testing.T) {
+	t.Parallel()
+
 	authz := NewInternalAuth()
 	_, err := authz.authorize(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/agent.v1.AgentControl/Sync", true)
 	if status.Code(err) != codes.PermissionDenied {

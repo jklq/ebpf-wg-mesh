@@ -10,6 +10,8 @@ import (
 )
 
 func TestListProjectsExcludesManagedProjects(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -41,6 +43,8 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 }
 
 func TestProjectNamesAreScopedBySubject(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -86,6 +90,8 @@ func TestProjectNamesAreScopedBySubject(t *testing.T) {
 }
 
 func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 
@@ -129,6 +135,8 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 }
 
 func TestEnsurePrincipalIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 	ctx := context.Background()
 

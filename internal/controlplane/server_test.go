@@ -12,6 +12,8 @@ import (
 )
 
 func TestServeHTTPReturnsNilOnClose(t *testing.T) {
+	t.Parallel()
+
 	server := &http.Server{Handler: NewOpsHandler()}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -43,6 +45,8 @@ func TestServeHTTPReturnsNilOnClose(t *testing.T) {
 }
 
 func TestServeGRPCReturnsNilOnGracefulStop(t *testing.T) {
+	t.Parallel()
+
 	server := grpc.NewServer()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

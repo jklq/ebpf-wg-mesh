@@ -18,6 +18,8 @@ import (
 )
 
 func TestValidatorIdentityFromContext(t *testing.T) {
+	t.Parallel()
+
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +60,8 @@ func TestValidatorIdentityFromContext(t *testing.T) {
 }
 
 func TestValidatorRefreshesJWKSOnUnknownKID(t *testing.T) {
+	t.Parallel()
+
 	key1, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)

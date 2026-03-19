@@ -31,6 +31,8 @@ func (f *fakeEngine) RemoveService(_ context.Context, allocationID string) error
 func (f *fakeEngine) Close() error { return nil }
 
 func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	engine := &fakeEngine{
 		status: map[string]serviceStatus{"alloc-1": {
@@ -84,6 +86,8 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 }
 
 func TestContainerdRuntimeReconcileRemovesStaleService(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	engine := &fakeEngine{status: map[string]serviceStatus{}, created: map[string]bool{}}
 	runtime := &ContainerdRuntime{

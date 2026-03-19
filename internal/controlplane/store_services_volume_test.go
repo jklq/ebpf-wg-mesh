@@ -14,6 +14,8 @@ import (
 )
 
 func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -63,6 +65,8 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 }
 
 func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
@@ -97,6 +101,8 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 }
 
 func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
+	t.Parallel()
+
 	store := openTestStore(t)
 
 	ctx := context.Background()
