@@ -177,6 +177,44 @@ var storeMigrations = []migration{
 			    STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
 		},
 	},
+	{
+		version: 4,
+		stmts: []string{
+			`ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_subject STRING NOT NULL DEFAULT ''`,
+			`UPDATE projects
+			    SET owner_subject = COALESCE((
+			        SELECT subject
+			          FROM project_memberships m
+			         WHERE m.project_id = projects.id AND m.role = 'owner'
+			         ORDER BY subject ASC
+			         LIMIT 1
+			    ), '')
+			  WHERE kind = 'user' AND owner_subject = ''`,
+			`DROP INDEX IF EXISTS projects@projects_name_key CASCADE`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_owner_subject_name_unique
+			    ON projects(owner_subject, name)
+			  WHERE kind = 'user'`,
+		},
+	},
+	{
+		version: 5,
+		stmts: []string{
+			`UPDATE projects
+			    SET owner_subject = COALESCE((
+			        SELECT subject
+			          FROM project_memberships m
+			         WHERE m.project_id = projects.id AND m.role = 'owner'
+			         ORDER BY subject ASC
+			         LIMIT 1
+			    ), '')
+			  WHERE kind = 'user' AND owner_subject = ''`,
+			`INSERT INTO project_memberships(subject, project_id, role)
+			    SELECT owner_subject, id, 'owner'
+			      FROM projects
+			     WHERE kind = 'user' AND owner_subject <> ''
+			  ON CONFLICT(subject, project_id) DO UPDATE SET role = excluded.role`,
+		},
+	},
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
@@ -267,14 +305,11 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 				return fmt.Errorf("upsert bootstrap user %s: %w", user.Subject, err)
 			}
 			for _, projectName := range user.Projects {
-				projectID, err := s.ensureProjectNamedQuerier(ctx, tx, projectName, projectKindUser, "")
+				projectID, err := s.ensureUserProjectNamedQuerier(ctx, tx, user.Subject, projectName)
 				if err != nil {
 					return err
 				}
-				if _, err := tx.ExecContext(ctx,
-					`INSERT INTO project_memberships(subject, project_id, role) VALUES ($1, $2, $3) ON CONFLICT(subject, project_id) DO NOTHING`,
-					user.Subject, projectID, "owner",
-				); err != nil {
+				if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, user.Subject, projectID); err != nil {
 					return fmt.Errorf("insert project membership: %w", err)
 				}
 			}

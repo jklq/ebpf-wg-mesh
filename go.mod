@@ -12,7 +12,6 @@ require (
 	github.com/containerd/typeurl/v2 v2.2.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3
 	github.com/hetznercloud/hcloud-go/v2 v2.36.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/opencontainers/runtime-spec v1.1.0
