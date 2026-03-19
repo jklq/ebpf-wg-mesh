@@ -25,13 +25,16 @@ go.work
 go.work.sum
 .cache/
 
-# Node.js / pnpm
-dashboard/pnpm-lock.yaml
+# Node.js / JS tooling
 dashboard/.tanstack/
 dashboard/node_modules/
 
 # Dashboard build outputs
 dashboard/dist/
+dashboard/.vite/
+dashboard/.vite-temp/
+dashboard/.nitro/
+dashboard/.output/
 dashboard/artifacts/
 dashboard/test-results/
 
