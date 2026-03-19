@@ -1,0 +1,12 @@
+.git
+.gitignore
+.DS_Store
+node_modules
+dashboard/node_modules
+dashboard/.output
+dashboard/dist
+dashboard/artifacts
+dashboard/test-results
+artifacts
+.codex-debug
+.tmp
