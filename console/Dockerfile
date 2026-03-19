@@ -1,11 +1,11 @@
 FROM oven/bun:1.3.11-slim AS build
 
-WORKDIR /app/dashboard
+WORKDIR /app/console
 
-COPY dashboard/package.json dashboard/bun.lock ./
+COPY console/package.json console/bun.lock ./
 RUN bun install --frozen-lockfile
 
-COPY dashboard ./
+COPY console ./
 COPY api/proto /app/api/proto
 
 RUN bun run build
@@ -15,10 +15,10 @@ FROM oven/bun:1.3.11-slim
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 
-WORKDIR /app/dashboard
+WORKDIR /app/console
 
-COPY --from=build /app/dashboard/package.json /app/dashboard/bun.lock ./
-COPY --from=build /app/dashboard/.output ./.output
+COPY --from=build /app/console/package.json /app/console/bun.lock ./
+COPY --from=build /app/console/.output ./.output
 COPY --from=build /app/api /app/api
 
 EXPOSE 3000
