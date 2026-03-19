@@ -52,6 +52,17 @@ make test-unit-dashboard
 make test-integration
 ```
 
+Dashboard-local Bun commands:
+
+```bash
+bun --cwd=dashboard install
+bun --cwd=dashboard run test:unit
+bun --cwd=dashboard run test:integration
+bun --cwd=dashboard run test:e2e:local
+bun --cwd=dashboard run build
+bun --cwd=dashboard run start
+```
+
 Smoke E2E against a local ephemeral stack:
 
 ```bash
