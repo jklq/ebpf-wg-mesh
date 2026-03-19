@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -23,10 +22,6 @@ import (
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
-
-type serverInfo struct {
-	URL string `json:"url"`
-}
 
 type stackSummary struct {
 	ControlPlaneURL string `json:"control_plane_url"`
@@ -163,7 +158,7 @@ func main() {
 
 	runPlaywright := os.Getenv("LOCALTESTSTACK_RUN_PLAYWRIGHT") != "0"
 	if runPlaywright {
-		playwright := exec.CommandContext(ctx, "pnpm", "exec", "playwright", "test", "-c", "playwright.local.config.ts")
+		playwright := exec.CommandContext(ctx, "bun", "run", "test:e2e:local")
 		playwright.Dir = dashboardDir
 		playwright.Stdout = os.Stdout
 		playwright.Stderr = os.Stderr
@@ -192,40 +187,38 @@ func main() {
 }
 
 func startDashboard(ctx context.Context, dashboardDir string, env map[string]string) (string, *exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, "node", "scripts/dev-server.mjs")
+	dashboardURL := "http://127.0.0.1:3000/"
+
+	cmd := exec.CommandContext(ctx, "bun", "run", "dev")
 	cmd.Dir = dashboardDir
+	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
 	for key, value := range env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", nil, fmt.Errorf("stdout pipe: %w", err)
-	}
 	if err := cmd.Start(); err != nil {
 		return "", nil, fmt.Errorf("start dashboard process: %w", err)
 	}
 
-	var info serverInfo
-	reader := bufio.NewReader(stdout)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		stopProcess(cmd)
-		return "", nil, fmt.Errorf("read dashboard startup info: %w", err)
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &info); err != nil {
-		stopProcess(cmd)
-		return "", nil, fmt.Errorf("decode dashboard startup info: %w", err)
-	}
-	go func() {
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			log.Printf("[dashboard] %s", scanner.Text())
+	healthURL := dashboardURL + "healthz"
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second}, func(ctx context.Context) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+		if err != nil {
+			return false, err
 		}
-	}()
-	return info.URL, cmd, nil
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false, nil
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK, nil
+	}); err != nil {
+		stopProcess(cmd)
+		return "", nil, fmt.Errorf("wait for dashboard health at %s: %w", healthURL, err)
+	}
+
+	return dashboardURL, cmd, nil
 }
 
 func writeSummary(path string, summary stackSummary) error {

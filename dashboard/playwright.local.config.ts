@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const dashboardBaseURL = process.env.DASHBOARD_E2E_BASE_URL ?? 'http://127.0.0.1:3000'
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -8,14 +10,17 @@ export default defineConfig({
   webServer: process.env.DASHBOARD_E2E_BASE_URL
     ? undefined
     : {
-        command:
-          'cd .. && LOCALTESTSTACK_RUN_PLAYWRIGHT=0 DASHBOARD_DEV_SERVER_PORT=3000 go run ./cmd/localteststack',
-        url: 'http://127.0.0.1:3000',
+        command: 'go run ./cmd/localteststack',
+        cwd: '..',
+        env: {
+          LOCALTESTSTACK_RUN_PLAYWRIGHT: '0',
+        },
+        url: dashboardBaseURL,
         reuseExistingServer: true,
         timeout: 120_000,
       },
   use: {
-    baseURL: process.env.DASHBOARD_E2E_BASE_URL ?? 'http://127.0.0.1:3000',
+    baseURL: dashboardBaseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
