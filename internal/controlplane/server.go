@@ -38,7 +38,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	notifier := NewNotifier()
 	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store)
-	scheduler := NewScheduler(store)
 	authority, err := NewTLSAuthority(cfg)
 	if err != nil {
 		return nil, err
@@ -48,7 +47,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 
-	platformService := NewPlatformService(store, scheduler, notifier, ingress)
+	platformService := NewPlatformService(store, notifier, ingress)
 	authz := NewInternalAuth()
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Database, store, authority, ingress)
 	publicHTTP := &http.Server{Handler: NewOpsHandler()}

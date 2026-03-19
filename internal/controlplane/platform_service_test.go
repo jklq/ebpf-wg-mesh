@@ -15,7 +15,7 @@ import (
 )
 
 func TestPlatformServiceEnsurePrincipalValidatesInput(t *testing.T) {
-	service := NewPlatformService(&fakePlatformStore{}, nil, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{})
 
 	_, err := service.EnsurePrincipal(context.Background(), &platformv1.EnsurePrincipalRequest{
 		Subject: "",
@@ -40,7 +40,7 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 			}}, nil
 		},
 	}
-	service := NewPlatformService(store, nil, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
 
 	resp, err := service.ListProjects(contextWithDelegatedUser("user-1", "user@example.com"), &emptypb.Empty{})
 	if err != nil {
@@ -57,7 +57,7 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 			return serviceRecord{}, errNoPlacementAvailable
 		},
 	}
-	service := NewPlatformService(store, nil, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
 
 	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 		ProjectId: "project-1",
@@ -77,7 +77,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 			return serviceRecord{}, false, errConcurrentUpdate
 		},
 	}
-	service := NewPlatformService(store, nil, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
 		ProjectId: "project-1",
@@ -96,7 +96,7 @@ func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 		listVolumesFn: func(ctx context.Context, subject, projectID string) ([]volumeRecord, error) {
 			return []volumeRecord{}, nil
 		},
-	}, nil, noopNotifier{}, noopIngress{})
+	}, noopNotifier{}, noopIngress{})
 
 	_, err := service.DeleteVolume(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteVolumeRequest{
 		ProjectId: "project-1",
@@ -112,7 +112,7 @@ func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 		projectByIDFn: func(ctx context.Context, subject, projectID string) (projectRecord, error) {
 			return projectRecord{}, sql.ErrNoRows
 		},
-	}, nil, noopNotifier{}, noopIngress{})
+	}, noopNotifier{}, noopIngress{})
 
 	_, err := service.GetProject(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GetProjectRequest{
 		ProjectId: "missing",
@@ -128,7 +128,7 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{ID: serviceID, ProjectID: projectID, AllocatedAgentID: "node-1"}, true, nil
 		},
-	}, nil, noopNotifier{}, ingress)
+	}, noopNotifier{}, ingress)
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
 		ProjectId: "project-1",
@@ -151,7 +151,7 @@ func TestPlatformServiceDeleteServiceRequestsIngressWhenServiceHasDomains(t *tes
 		listDomainBindingsFn: func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
 			return []domainBindingRecord{{Hostname: "web.example.com", ProjectID: projectID, ServiceID: serviceID}}, nil
 		},
-	}, nil, noopNotifier{}, ingress)
+	}, noopNotifier{}, ingress)
 
 	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
 		ProjectId: "project-1",
@@ -171,7 +171,7 @@ func TestPlatformServiceDeleteServiceSkipsIngressWhenServiceHasNoDomains(t *test
 		listDomainBindingsFn: func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
 			return nil, nil
 		},
-	}, nil, noopNotifier{}, ingress)
+	}, noopNotifier{}, ingress)
 
 	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
 		ProjectId: "project-1",
@@ -191,7 +191,7 @@ func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
 		updateDomainBindingFn: func(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
 			return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID}, true, nil
 		},
-	}, nil, noopNotifier{}, ingress)
+	}, noopNotifier{}, ingress)
 
 	_, err := service.UpdateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateDomainBindingRequest{
 		ProjectId: "project-1",
@@ -212,7 +212,7 @@ func TestPlatformServiceDeleteDomainBindingRequestsIngress(t *testing.T) {
 		deleteDomainBindingFn: func(ctx context.Context, subject, projectID, hostname string) (bool, error) {
 			return true, nil
 		},
-	}, nil, noopNotifier{}, ingress)
+	}, noopNotifier{}, ingress)
 
 	_, err := service.DeleteDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteDomainBindingRequest{
 		ProjectId: "project-1",
