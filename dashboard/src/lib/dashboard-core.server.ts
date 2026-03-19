@@ -4,10 +4,12 @@ export interface DashboardUser {
 	email: string;
 }
 
+export type DashboardProjectKind = "user" | "managed";
+
 export interface DashboardProject {
 	id: string;
 	name: string;
-	kind: string;
+	kind: DashboardProjectKind;
 	systemKey?: string;
 }
 
