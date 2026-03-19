@@ -32,5 +32,6 @@ for file in $integration_files; do
 done
 
 for package_dir in ${(ok)package_patterns}; do
-	go test -tags=integration "./${package_dir}" -run "^(${package_patterns[$package_dir]})$"
+	print "==> go test -count=1 -v -tags=integration ./$package_dir"
+	go test -count=1 -v -tags=integration "./${package_dir}" -run "^(${package_patterns[$package_dir]})$"
 done

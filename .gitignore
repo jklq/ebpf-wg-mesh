@@ -26,17 +26,17 @@ go.work.sum
 .cache/
 
 # Node.js / JS tooling
-dashboard/.tanstack/
-dashboard/node_modules/
+console/.tanstack/
+console/node_modules/
 
-# Dashboard build outputs
-dashboard/dist/
-dashboard/.vite/
-dashboard/.vite-temp/
-dashboard/.nitro/
-dashboard/.output/
-dashboard/artifacts/
-dashboard/test-results/
+# Console build outputs
+console/dist/
+console/.vite/
+console/.vite-temp/
+console/.nitro/
+console/.output/
+console/artifacts/
+console/test-results/
 
 # Local environment files
 .env
