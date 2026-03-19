@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func (s *Store) ensurePrincipal(ctx context.Context, subject, email string) (userRecord, error) {
-	var user userRecord
+func (s *Store) ensurePrincipal(ctx context.Context, subject, email string) (principalRecord, error) {
+	var principal principalRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(
@@ -22,24 +22,24 @@ func (s *Store) ensurePrincipal(ctx context.Context, subject, email string) (use
 			return err
 		}
 		var err error
-		user, err = s.userBySubjectQuerier(ctx, tx, subject)
+		principal, err = s.principalBySubjectQuerier(ctx, tx, subject)
 		return err
 	})
 	if err != nil {
-		return userRecord{}, err
+		return principalRecord{}, err
 	}
-	return user, nil
+	return principal, nil
 }
 
-func (s *Store) userBySubjectQuerier(ctx context.Context, q serviceQueryer, subject string) (userRecord, error) {
-	var rec userRecord
+func (s *Store) principalBySubjectQuerier(ctx context.Context, q serviceQueryer, subject string) (principalRecord, error) {
+	var rec principalRecord
 	err := q.QueryRowContext(
 		ctx,
 		`SELECT subject, email, created_at FROM users WHERE subject = $1`,
 		subject,
 	).Scan(&rec.Subject, &rec.Email, &rec.CreatedAt)
 	if err != nil {
-		return userRecord{}, err
+		return principalRecord{}, err
 	}
 	return rec, nil
 }

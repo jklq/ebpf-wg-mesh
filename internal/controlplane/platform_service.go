@@ -23,7 +23,7 @@ type PlatformService struct {
 }
 
 type platformStore interface {
-	ensurePrincipal(ctx context.Context, subject, email string) (userRecord, error)
+	ensurePrincipal(ctx context.Context, subject, email string) (principalRecord, error)
 	createProject(ctx context.Context, subject, name string) (projectRecord, error)
 	listProjects(ctx context.Context, subject string) ([]projectRecord, error)
 	projectByID(ctx context.Context, subject, projectID string) (projectRecord, error)
@@ -62,11 +62,11 @@ func (s *PlatformService) EnsurePrincipal(ctx context.Context, req *platformv1.E
 	if strings.TrimSpace(req.GetSubject()) == "" || strings.TrimSpace(req.GetEmail()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "subject and email are required")
 	}
-	user, err := s.store.ensurePrincipal(ctx, req.GetSubject(), req.GetEmail())
+	principal, err := s.store.ensurePrincipal(ctx, req.GetSubject(), req.GetEmail())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "ensure principal: %v", err)
 	}
-	return toProtoPrincipal(user), nil
+	return toProtoPrincipal(principal), nil
 }
 
 func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.CreateProjectRequest) (*platformv1.Project, error) {

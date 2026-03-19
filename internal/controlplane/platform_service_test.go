@@ -253,7 +253,7 @@ func (c *countingIngress) RequestSync() {
 }
 
 type fakePlatformStore struct {
-	ensurePrincipalFn        func(ctx context.Context, subject, email string) (userRecord, error)
+	ensurePrincipalFn        func(ctx context.Context, subject, email string) (principalRecord, error)
 	createProjectFn          func(ctx context.Context, subject, name string) (projectRecord, error)
 	listProjectsFn           func(ctx context.Context, subject string) ([]projectRecord, error)
 	projectByIDFn            func(ctx context.Context, subject, projectID string) (projectRecord, error)
@@ -275,11 +275,11 @@ type fakePlatformStore struct {
 	listAgentsFn             func(ctx context.Context) ([]agentRecord, error)
 }
 
-func (f *fakePlatformStore) ensurePrincipal(ctx context.Context, subject, email string) (userRecord, error) {
+func (f *fakePlatformStore) ensurePrincipal(ctx context.Context, subject, email string) (principalRecord, error) {
 	if f.ensurePrincipalFn != nil {
 		return f.ensurePrincipalFn(ctx, subject, email)
 	}
-	return userRecord{Subject: subject, Email: email, CreatedAt: time.Now().UTC()}, nil
+	return principalRecord{Subject: subject, Email: email, CreatedAt: time.Now().UTC()}, nil
 }
 
 func (f *fakePlatformStore) createProject(ctx context.Context, subject, name string) (projectRecord, error) {
