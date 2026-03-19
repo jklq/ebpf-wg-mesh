@@ -21,6 +21,7 @@ var (
 	errVolumeAgentMismatch = errors.New("volume bound to different agent")
 	errConcurrentUpdate    = errors.New("concurrent service update")
 	errDomainAlreadyExists = errors.New("domain binding already exists")
+	errNoPlacementAvailable = errors.New("no healthy agent satisfies placement")
 )
 
 type serviceQueryer interface {

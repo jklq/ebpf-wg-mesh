@@ -17,7 +17,6 @@ import (
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store     platformStore
-	scheduler *Scheduler
 	notifier  platformNotifier
 	ingress   platformIngress
 }
@@ -54,8 +53,8 @@ type platformIngress interface {
 	RequestSync()
 }
 
-func NewPlatformService(store platformStore, scheduler *Scheduler, notifier platformNotifier, ingress platformIngress) *PlatformService {
-	return &PlatformService{store: store, scheduler: scheduler, notifier: notifier, ingress: ingress}
+func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress) *PlatformService {
+	return &PlatformService{store: store, notifier: notifier, ingress: ingress}
 }
 
 func (s *PlatformService) EnsurePrincipal(ctx context.Context, req *platformv1.EnsurePrincipalRequest) (*platformv1.Principal, error) {
