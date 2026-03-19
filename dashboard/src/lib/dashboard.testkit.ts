@@ -124,7 +124,7 @@ export function createDashboardTestHarness(
 			if (platform.errors.createProject) {
 				throw platform.errors.createProject;
 			}
-			const project = {
+			const project: DashboardProject = {
 				id: `project-${platform.createProjectCalls.length}`,
 				name,
 				kind: "user",
