@@ -508,16 +508,16 @@ func (x *DesiredVolume) GetSizeBytes() int64 {
 }
 
 type DesiredService struct {
-	state                    protoimpl.MessageState  `protogen:"open.v1"`
-	AllocationId             string                  `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
-	ServiceId                string                  `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	ProjectId                string                  `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	Name                     string                  `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
-	DesiredSpecRevision      int64                   `protobuf:"varint,5,opt,name=desired_spec_revision,json=desiredSpecRevision,proto3" json:"desired_spec_revision,omitempty"`
-	Spec                     *platformv1.ServiceSpec `protobuf:"bytes,6,opt,name=spec,proto3" json:"spec,omitempty"`
-	PrivateIpv6              string                  `protobuf:"bytes,7,opt,name=private_ipv6,json=privateIpv6,proto3" json:"private_ipv6,omitempty"`
-	VolumeId                 string                  `protobuf:"bytes,8,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	DesiredRolloutGeneration int64                   `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
+	state                    protoimpl.MessageState          `protogen:"open.v1"`
+	AllocationId             string                          `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	ServiceId                string                          `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	ProjectId                string                          `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	Name                     string                          `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	DesiredSpecRevision      int64                           `protobuf:"varint,5,opt,name=desired_spec_revision,json=desiredSpecRevision,proto3" json:"desired_spec_revision,omitempty"`
+	Spec                     *platformv1.ResolvedServiceSpec `protobuf:"bytes,6,opt,name=spec,proto3" json:"spec,omitempty"`
+	PrivateIpv6              string                          `protobuf:"bytes,7,opt,name=private_ipv6,json=privateIpv6,proto3" json:"private_ipv6,omitempty"`
+	VolumeId                 string                          `protobuf:"bytes,8,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	DesiredRolloutGeneration int64                           `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -587,7 +587,7 @@ func (x *DesiredService) GetDesiredSpecRevision() int64 {
 	return 0
 }
 
-func (x *DesiredService) GetSpec() *platformv1.ServiceSpec {
+func (x *DesiredService) GetSpec() *platformv1.ResolvedServiceSpec {
 	if x != nil {
 		return x.Spec
 	}
@@ -1144,7 +1144,7 @@ const file_agent_proto_rawDesc = "" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xe7\x02\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xef\x02\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1152,8 +1152,8 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x03 \x01(\tR\tprojectId\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x122\n" +
-	"\x15desired_spec_revision\x18\x05 \x01(\x03R\x13desiredSpecRevision\x12,\n" +
-	"\x04spec\x18\x06 \x01(\v2\x18.platform.v1.ServiceSpecR\x04spec\x12!\n" +
+	"\x15desired_spec_revision\x18\x05 \x01(\x03R\x13desiredSpecRevision\x124\n" +
+	"\x04spec\x18\x06 \x01(\v2 .platform.v1.ResolvedServiceSpecR\x04spec\x12!\n" +
 	"\fprivate_ipv6\x18\a \x01(\tR\vprivateIpv6\x12\x1b\n" +
 	"\tvolume_id\x18\b \x01(\tR\bvolumeId\x12<\n" +
 	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\"\xb0\x02\n" +
@@ -1212,27 +1212,27 @@ func file_agent_proto_rawDescGZIP() []byte {
 
 var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_agent_proto_goTypes = []any{
-	(*AgentHello)(nil),             // 0: agent.v1.AgentHello
-	(*EnrollRequest)(nil),          // 1: agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),         // 2: agent.v1.EnrollResponse
-	(*WireGuardPeer)(nil),          // 3: agent.v1.WireGuardPeer
-	(*AssignedNodeConfig)(nil),     // 4: agent.v1.AssignedNodeConfig
-	(*AgentHeartbeat)(nil),         // 5: agent.v1.AgentHeartbeat
-	(*DesiredVolume)(nil),          // 6: agent.v1.DesiredVolume
-	(*DesiredService)(nil),         // 7: agent.v1.DesiredService
-	(*DesiredNodeState)(nil),       // 8: agent.v1.DesiredNodeState
-	(*VolumeCondition)(nil),        // 9: agent.v1.VolumeCondition
-	(*ServiceCondition)(nil),       // 10: agent.v1.ServiceCondition
-	(*StatusReport)(nil),           // 11: agent.v1.StatusReport
-	(*AgentClientMessage)(nil),     // 12: agent.v1.AgentClientMessage
-	(*AgentServerMessage)(nil),     // 13: agent.v1.AgentServerMessage
-	(*timestamppb.Timestamp)(nil),  // 14: google.protobuf.Timestamp
-	(*platformv1.ServiceSpec)(nil), // 15: platform.v1.ServiceSpec
+	(*AgentHello)(nil),                     // 0: agent.v1.AgentHello
+	(*EnrollRequest)(nil),                  // 1: agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),                 // 2: agent.v1.EnrollResponse
+	(*WireGuardPeer)(nil),                  // 3: agent.v1.WireGuardPeer
+	(*AssignedNodeConfig)(nil),             // 4: agent.v1.AssignedNodeConfig
+	(*AgentHeartbeat)(nil),                 // 5: agent.v1.AgentHeartbeat
+	(*DesiredVolume)(nil),                  // 6: agent.v1.DesiredVolume
+	(*DesiredService)(nil),                 // 7: agent.v1.DesiredService
+	(*DesiredNodeState)(nil),               // 8: agent.v1.DesiredNodeState
+	(*VolumeCondition)(nil),                // 9: agent.v1.VolumeCondition
+	(*ServiceCondition)(nil),               // 10: agent.v1.ServiceCondition
+	(*StatusReport)(nil),                   // 11: agent.v1.StatusReport
+	(*AgentClientMessage)(nil),             // 12: agent.v1.AgentClientMessage
+	(*AgentServerMessage)(nil),             // 13: agent.v1.AgentServerMessage
+	(*timestamppb.Timestamp)(nil),          // 14: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil), // 15: platform.v1.ResolvedServiceSpec
 }
 var file_agent_proto_depIdxs = []int32{
 	14, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
 	3,  // 1: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
-	15, // 2: agent.v1.DesiredService.spec:type_name -> platform.v1.ServiceSpec
+	15, // 2: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
 	6,  // 3: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
 	7,  // 4: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
 	14, // 5: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp

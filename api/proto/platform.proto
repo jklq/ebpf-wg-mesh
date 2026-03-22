@@ -13,6 +13,23 @@ enum ProjectKind {
   PROJECT_KIND_MANAGED = 2;
 }
 
+enum BuildState {
+  BUILD_STATE_UNSPECIFIED = 0;
+  BUILD_STATE_QUEUED = 1;
+  BUILD_STATE_RUNNING = 2;
+  BUILD_STATE_SUCCEEDED = 3;
+  BUILD_STATE_FAILED = 4;
+  BUILD_STATE_SUPERSEDED = 5;
+}
+
+enum SourceAccessState {
+  SOURCE_ACCESS_STATE_UNSPECIFIED = 0;
+  SOURCE_ACCESS_STATE_AVAILABLE = 1;
+  SOURCE_ACCESS_STATE_INSTALLATION_REQUIRED = 2;
+  SOURCE_ACCESS_STATE_ACCESS_REVOKED = 3;
+  SOURCE_ACCESS_STATE_REPOSITORY_DELETED = 4;
+}
+
 message Project {
   string id = 1;
   string name = 2;
@@ -41,16 +58,113 @@ message HealthCheck {
   int32 timeout_seconds = 5;
 }
 
-message ServiceSpec {
+message ServiceRuntime {
+  repeated string command = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+  int64 cpu_millis = 4;
+  int64 memory_mebibytes = 5;
+  int32 container_port = 6;
+  HealthCheck health_check = 7;
+  string volume_name = 8;
+}
+
+message DirectImageSource {
   string image = 1;
-  repeated string command = 2;
-  repeated string args = 3;
-  map<string, string> env = 4;
-  int64 cpu_millis = 5;
-  int64 memory_mebibytes = 6;
-  int32 container_port = 7;
-  HealthCheck health_check = 8;
-  string volume_name = 9;
+}
+
+message BuildRecipe {
+  string dockerfile_path = 1;
+  string context_dir = 2;
+}
+
+message ServiceSourceSpec {
+  string provider = 1;
+  string repository_selector = 2;
+  string tracked_ref = 3;
+  BuildRecipe build_recipe = 4;
+}
+
+message ResolvedSourceBinding {
+  string id = 1;
+  string service_id = 2;
+  string provider = 3;
+  string repository_selector = 4;
+  string tracked_ref = 5;
+  string provider_repository_external_id = 6;
+  string provider_scope_external_id = 7;
+  SourceAccessState access_state = 8;
+  google.protobuf.Timestamp resolved_at = 9;
+  google.protobuf.Timestamp fresh_until = 10;
+  BuildRecipe build_recipe = 11;
+}
+
+message SourceRevision {
+  string id = 1;
+  string source_binding_id = 2;
+  string provider_repository_external_id = 3;
+  string tracked_ref = 4;
+  string commit_sha = 5;
+  google.protobuf.Timestamp observed_at = 6;
+}
+
+message SourceSnapshot {
+  string id = 1;
+  string source_revision_id = 2;
+  string provider_repository_external_id = 3;
+  string commit_sha = 4;
+  string digest = 5;
+  bool ready = 6;
+  google.protobuf.Timestamp fetched_at = 7;
+}
+
+message BuildJobSource {
+  string source_revision_id = 1;
+  string source_snapshot_id = 2;
+  string source_snapshot_digest = 3;
+  BuildRecipe build_recipe = 4;
+}
+
+message ServiceSource {
+  oneof source {
+    DirectImageSource image = 1;
+    ServiceSourceSpec source_spec = 2;
+  }
+}
+
+message ServiceSpec {
+  ServiceRuntime runtime = 1;
+  ServiceSource source = 2;
+}
+
+message ResolvedServiceSpec {
+  string image = 1;
+  ServiceRuntime runtime = 2;
+}
+
+message SourceStateSummary {
+  ServiceSourceSpec desired_spec = 1;
+  ResolvedSourceBinding resolved_binding = 2;
+  SourceRevision latest_revision = 3;
+  SourceSnapshot latest_snapshot = 4;
+}
+
+message ServiceSourceSummary {
+  oneof source {
+    DirectImageSource image = 1;
+    SourceStateSummary source_state = 2;
+  }
+}
+
+message BuildStatus {
+  string build_id = 1;
+  BuildState state = 2;
+  string commit_sha = 3;
+  string image_digest = 4;
+  google.protobuf.Timestamp queued_at = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  string failure_reason = 8;
 }
 
 message Service {
@@ -63,6 +177,10 @@ message Service {
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
   int64 rollout_generation = 10;
+  ServiceSourceSummary source_summary = 11;
+  string last_successful_commit_sha = 12;
+  string resolved_image = 13;
+  BuildStatus latest_build = 14;
 }
 
 message DomainBinding {
@@ -127,6 +245,18 @@ message ListProjectsResponse {
 
 message GetProjectRequest {
   string project_id = 1;
+}
+
+message InspectSourceRequest {
+  string provider = 1;
+  string repository_selector = 2;
+}
+
+message InspectSourceResponse {
+  SourceAccessState access_state = 1;
+  string default_branch = 2;
+  repeated string dockerfile_candidates = 3;
+  BuildRecipe recommended_build_recipe = 4;
 }
 
 message CreateServiceRequest {
@@ -239,12 +369,61 @@ message ListAgentsResponse {
   repeated Agent agents = 1;
 }
 
+message ClaimBuildRequest {
+  string builder_id = 1;
+  string builder_name = 2;
+}
+
+message BuildJob {
+  string build_id = 1;
+  string service_id = 2;
+  string project_id = 3;
+  string service_name = 4;
+  string commit_sha = 5;
+  BuildJobSource source = 6;
+  string registry_push_reference = 7;
+  string registry_username = 8;
+  string registry_password = 9;
+}
+
+message DownloadSourceSnapshotRequest {
+  string snapshot_id = 1;
+}
+
+message SourceSnapshotArtifact {
+  string snapshot_id = 1;
+  string digest = 2;
+  bytes archive_tgz = 3;
+}
+
+message BuilderHeartbeatRequest {
+  string builder_id = 1;
+  string build_id = 2;
+}
+
+message CompleteBuildRequest {
+  string builder_id = 1;
+  string build_id = 2;
+  BuildState state = 3;
+  string commit_sha = 4;
+  string image_digest = 5;
+  string failure_reason = 6;
+}
+
+message IngestGitHubWebhookRequest {
+  string delivery_id = 1;
+  string event_type = 2;
+  string signature_256 = 3;
+  bytes payload = 4;
+}
+
 service PlatformService {
   rpc EnsurePrincipal(EnsurePrincipalRequest) returns (Principal);
 
   rpc CreateProject(CreateProjectRequest) returns (Project);
   rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
   rpc GetProject(GetProjectRequest) returns (Project);
+  rpc InspectSource(InspectSourceRequest) returns (InspectSourceResponse);
 
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
@@ -265,4 +444,15 @@ service PlatformService {
 
   rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
+}
+
+service BuilderService {
+  rpc ClaimBuild(ClaimBuildRequest) returns (BuildJob);
+  rpc DownloadSourceSnapshot(DownloadSourceSnapshotRequest) returns (SourceSnapshotArtifact);
+  rpc ReportBuildHeartbeat(BuilderHeartbeatRequest) returns (google.protobuf.Empty);
+  rpc CompleteBuild(CompleteBuildRequest) returns (google.protobuf.Empty);
+}
+
+service OpsService {
+  rpc IngestGitHubWebhook(IngestGitHubWebhookRequest) returns (google.protobuf.Empty);
 }

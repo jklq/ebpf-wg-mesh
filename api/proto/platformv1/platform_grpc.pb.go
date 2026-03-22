@@ -24,6 +24,7 @@ const (
 	PlatformService_CreateProject_FullMethodName       = "/platform.v1.PlatformService/CreateProject"
 	PlatformService_ListProjects_FullMethodName        = "/platform.v1.PlatformService/ListProjects"
 	PlatformService_GetProject_FullMethodName          = "/platform.v1.PlatformService/GetProject"
+	PlatformService_InspectSource_FullMethodName       = "/platform.v1.PlatformService/InspectSource"
 	PlatformService_CreateService_FullMethodName       = "/platform.v1.PlatformService/CreateService"
 	PlatformService_UpdateService_FullMethodName       = "/platform.v1.PlatformService/UpdateService"
 	PlatformService_RedeployService_FullMethodName     = "/platform.v1.PlatformService/RedeployService"
@@ -50,6 +51,7 @@ type PlatformServiceClient interface {
 	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	ListProjects(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListProjectsResponse, error)
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*Project, error)
+	InspectSource(ctx context.Context, in *InspectSourceRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	UpdateService(ctx context.Context, in *UpdateServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	RedeployService(ctx context.Context, in *RedeployServiceRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
@@ -110,6 +112,16 @@ func (c *platformServiceClient) GetProject(ctx context.Context, in *GetProjectRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Project)
 	err := c.cc.Invoke(ctx, PlatformService_GetProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) InspectSource(ctx context.Context, in *InspectSourceRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectSourceResponse)
+	err := c.cc.Invoke(ctx, PlatformService_InspectSource_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +296,7 @@ type PlatformServiceServer interface {
 	CreateProject(context.Context, *CreateProjectRequest) (*Project, error)
 	ListProjects(context.Context, *emptypb.Empty) (*ListProjectsResponse, error)
 	GetProject(context.Context, *GetProjectRequest) (*Project, error)
+	InspectSource(context.Context, *InspectSourceRequest) (*InspectSourceResponse, error)
 	CreateService(context.Context, *CreateServiceRequest) (*Service, error)
 	UpdateService(context.Context, *UpdateServiceRequest) (*Service, error)
 	RedeployService(context.Context, *RedeployServiceRequest) (*ServiceStatus, error)
@@ -321,6 +334,9 @@ func (UnimplementedPlatformServiceServer) ListProjects(context.Context, *emptypb
 }
 func (UnimplementedPlatformServiceServer) GetProject(context.Context, *GetProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProject not implemented")
+}
+func (UnimplementedPlatformServiceServer) InspectSource(context.Context, *InspectSourceRequest) (*InspectSourceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InspectSource not implemented")
 }
 func (UnimplementedPlatformServiceServer) CreateService(context.Context, *CreateServiceRequest) (*Service, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateService not implemented")
@@ -459,6 +475,24 @@ func _PlatformService_GetProject_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetProject(ctx, req.(*GetProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_InspectSource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InspectSourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).InspectSource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_InspectSource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).InspectSource(ctx, req.(*InspectSourceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -775,6 +809,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PlatformService_GetProject_Handler,
 		},
 		{
+			MethodName: "InspectSource",
+			Handler:    _PlatformService_InspectSource_Handler,
+		},
+		{
 			MethodName: "CreateService",
 			Handler:    _PlatformService_CreateService_Handler,
 		},
@@ -837,6 +875,324 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAgents",
 			Handler:    _PlatformService_ListAgents_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "platform.proto",
+}
+
+const (
+	BuilderService_ClaimBuild_FullMethodName             = "/platform.v1.BuilderService/ClaimBuild"
+	BuilderService_DownloadSourceSnapshot_FullMethodName = "/platform.v1.BuilderService/DownloadSourceSnapshot"
+	BuilderService_ReportBuildHeartbeat_FullMethodName   = "/platform.v1.BuilderService/ReportBuildHeartbeat"
+	BuilderService_CompleteBuild_FullMethodName          = "/platform.v1.BuilderService/CompleteBuild"
+)
+
+// BuilderServiceClient is the client API for BuilderService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type BuilderServiceClient interface {
+	ClaimBuild(ctx context.Context, in *ClaimBuildRequest, opts ...grpc.CallOption) (*BuildJob, error)
+	DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (*SourceSnapshotArtifact, error)
+	ReportBuildHeartbeat(ctx context.Context, in *BuilderHeartbeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	CompleteBuild(ctx context.Context, in *CompleteBuildRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type builderServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewBuilderServiceClient(cc grpc.ClientConnInterface) BuilderServiceClient {
+	return &builderServiceClient{cc}
+}
+
+func (c *builderServiceClient) ClaimBuild(ctx context.Context, in *ClaimBuildRequest, opts ...grpc.CallOption) (*BuildJob, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BuildJob)
+	err := c.cc.Invoke(ctx, BuilderService_ClaimBuild_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *builderServiceClient) DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (*SourceSnapshotArtifact, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SourceSnapshotArtifact)
+	err := c.cc.Invoke(ctx, BuilderService_DownloadSourceSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *builderServiceClient) ReportBuildHeartbeat(ctx context.Context, in *BuilderHeartbeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BuilderService_ReportBuildHeartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *builderServiceClient) CompleteBuild(ctx context.Context, in *CompleteBuildRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BuilderService_CompleteBuild_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// BuilderServiceServer is the server API for BuilderService service.
+// All implementations must embed UnimplementedBuilderServiceServer
+// for forward compatibility.
+type BuilderServiceServer interface {
+	ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error)
+	DownloadSourceSnapshot(context.Context, *DownloadSourceSnapshotRequest) (*SourceSnapshotArtifact, error)
+	ReportBuildHeartbeat(context.Context, *BuilderHeartbeatRequest) (*emptypb.Empty, error)
+	CompleteBuild(context.Context, *CompleteBuildRequest) (*emptypb.Empty, error)
+	mustEmbedUnimplementedBuilderServiceServer()
+}
+
+// UnimplementedBuilderServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedBuilderServiceServer struct{}
+
+func (UnimplementedBuilderServiceServer) ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClaimBuild not implemented")
+}
+func (UnimplementedBuilderServiceServer) DownloadSourceSnapshot(context.Context, *DownloadSourceSnapshotRequest) (*SourceSnapshotArtifact, error) {
+	return nil, status.Error(codes.Unimplemented, "method DownloadSourceSnapshot not implemented")
+}
+func (UnimplementedBuilderServiceServer) ReportBuildHeartbeat(context.Context, *BuilderHeartbeatRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportBuildHeartbeat not implemented")
+}
+func (UnimplementedBuilderServiceServer) CompleteBuild(context.Context, *CompleteBuildRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteBuild not implemented")
+}
+func (UnimplementedBuilderServiceServer) mustEmbedUnimplementedBuilderServiceServer() {}
+func (UnimplementedBuilderServiceServer) testEmbeddedByValue()                        {}
+
+// UnsafeBuilderServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to BuilderServiceServer will
+// result in compilation errors.
+type UnsafeBuilderServiceServer interface {
+	mustEmbedUnimplementedBuilderServiceServer()
+}
+
+func RegisterBuilderServiceServer(s grpc.ServiceRegistrar, srv BuilderServiceServer) {
+	// If the following call panics, it indicates UnimplementedBuilderServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&BuilderService_ServiceDesc, srv)
+}
+
+func _BuilderService_ClaimBuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimBuildRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuilderServiceServer).ClaimBuild(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuilderService_ClaimBuild_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuilderServiceServer).ClaimBuild(ctx, req.(*ClaimBuildRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuilderService_DownloadSourceSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadSourceSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuilderServiceServer).DownloadSourceSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuilderService_DownloadSourceSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuilderServiceServer).DownloadSourceSnapshot(ctx, req.(*DownloadSourceSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuilderService_ReportBuildHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BuilderHeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuilderServiceServer).ReportBuildHeartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuilderService_ReportBuildHeartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuilderServiceServer).ReportBuildHeartbeat(ctx, req.(*BuilderHeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuilderService_CompleteBuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteBuildRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuilderServiceServer).CompleteBuild(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuilderService_CompleteBuild_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuilderServiceServer).CompleteBuild(ctx, req.(*CompleteBuildRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// BuilderService_ServiceDesc is the grpc.ServiceDesc for BuilderService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var BuilderService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "platform.v1.BuilderService",
+	HandlerType: (*BuilderServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ClaimBuild",
+			Handler:    _BuilderService_ClaimBuild_Handler,
+		},
+		{
+			MethodName: "DownloadSourceSnapshot",
+			Handler:    _BuilderService_DownloadSourceSnapshot_Handler,
+		},
+		{
+			MethodName: "ReportBuildHeartbeat",
+			Handler:    _BuilderService_ReportBuildHeartbeat_Handler,
+		},
+		{
+			MethodName: "CompleteBuild",
+			Handler:    _BuilderService_CompleteBuild_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "platform.proto",
+}
+
+const (
+	OpsService_IngestGitHubWebhook_FullMethodName = "/platform.v1.OpsService/IngestGitHubWebhook"
+)
+
+// OpsServiceClient is the client API for OpsService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type OpsServiceClient interface {
+	IngestGitHubWebhook(ctx context.Context, in *IngestGitHubWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type opsServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewOpsServiceClient(cc grpc.ClientConnInterface) OpsServiceClient {
+	return &opsServiceClient{cc}
+}
+
+func (c *opsServiceClient) IngestGitHubWebhook(ctx context.Context, in *IngestGitHubWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, OpsService_IngestGitHubWebhook_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// OpsServiceServer is the server API for OpsService service.
+// All implementations must embed UnimplementedOpsServiceServer
+// for forward compatibility.
+type OpsServiceServer interface {
+	IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error)
+	mustEmbedUnimplementedOpsServiceServer()
+}
+
+// UnimplementedOpsServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedOpsServiceServer struct{}
+
+func (UnimplementedOpsServiceServer) IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method IngestGitHubWebhook not implemented")
+}
+func (UnimplementedOpsServiceServer) mustEmbedUnimplementedOpsServiceServer() {}
+func (UnimplementedOpsServiceServer) testEmbeddedByValue()                    {}
+
+// UnsafeOpsServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to OpsServiceServer will
+// result in compilation errors.
+type UnsafeOpsServiceServer interface {
+	mustEmbedUnimplementedOpsServiceServer()
+}
+
+func RegisterOpsServiceServer(s grpc.ServiceRegistrar, srv OpsServiceServer) {
+	// If the following call panics, it indicates UnimplementedOpsServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&OpsService_ServiceDesc, srv)
+}
+
+func _OpsService_IngestGitHubWebhook_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestGitHubWebhookRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).IngestGitHubWebhook(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_IngestGitHubWebhook_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).IngestGitHubWebhook(ctx, req.(*IngestGitHubWebhookRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// OpsService_ServiceDesc is the grpc.ServiceDesc for OpsService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var OpsService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "platform.v1.OpsService",
+	HandlerType: (*OpsServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "IngestGitHubWebhook",
+			Handler:    _OpsService_IngestGitHubWebhook_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
