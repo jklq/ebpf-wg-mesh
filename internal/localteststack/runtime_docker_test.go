@@ -1,0 +1,365 @@
+package localteststack
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+)
+
+func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	host, port := splitHostPort(t, server.Listener.Addr().String())
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runner.imageExists = true
+	runner.onRun = func(args []string) {
+		if len(args) >= 2 && args[0] == "run" && args[1] == "--detach" {
+			runner.containers["localteststack-svc-alloc-1"] = dockerContainerInspect{
+				State: struct {
+					Running bool `json:"Running"`
+				}{Running: true},
+				Config: struct {
+					Image  string            `json:"Image"`
+					Labels map[string]string `json:"Labels"`
+				}{
+					Image: "ghcr.io/demo/echo:latest",
+					Labels: map[string]string{
+						"platform.runtime":                    localRuntimeManagedBy,
+						"platform.allocation_id":              "alloc-1",
+						"platform.service_id":                 "svc-1",
+						"platform.desired_spec_revision":      "2",
+						"platform.desired_rollout_generation": "3",
+					},
+				},
+				NetworkSettings: fakeNetworkSettings(host, port, 8080),
+			}
+		}
+	}
+
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+
+	state := &agentv1.DesiredNodeState{
+		AgentId: "node-1",
+		Volumes: []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data"}},
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			Name:                     "echo",
+			DesiredSpecRevision:      2,
+			DesiredRolloutGeneration: 3,
+			VolumeId:                 "vol-1",
+			Spec: &platformv1.ResolvedServiceSpec{
+				Image: "ghcr.io/demo/echo:latest",
+				Runtime: &platformv1.ServiceRuntime{
+					ContainerPort: 8080,
+					HealthCheck: &platformv1.HealthCheck{
+						Type: platformv1.HealthCheck_TYPE_HTTP,
+						Path: "/",
+					},
+				},
+			},
+		}},
+	}
+
+	report, err := runtime.Reconcile(context.Background(), state)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(report.Volumes) != 1 || report.Volumes[0].Phase != "Ready" {
+		t.Fatalf("unexpected volume report %+v", report.Volumes)
+	}
+	if len(report.Services) != 1 {
+		t.Fatalf("unexpected service report %+v", report.Services)
+	}
+	service := report.Services[0]
+	if !service.Healthy || service.Phase != "Healthy" {
+		t.Fatalf("expected healthy service, got %+v", service)
+	}
+	if service.EndpointAddr != net.JoinHostPort("localteststack-svc-alloc-1", "8080") {
+		t.Fatalf("unexpected endpoint %q", service.EndpointAddr)
+	}
+	runArgs := runner.firstCommand("run")
+	assertArgContains(t, runArgs, "--network", "mesh-local")
+	assertArgContains(t, runArgs, "--mount", "type=bind,src="+filepath.Join(dir, "volumes", "vol-1")+",dst="+localRuntimeVolumeMount)
+	assertArgContains(t, runArgs, "--publish", "127.0.0.1::8080")
+}
+
+func TestDockerRuntimeReconcileKeepsServiceStartingUntilHealthPasses(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runner.imageExists = true
+	runner.onRun = func(args []string) {
+		if len(args) >= 2 && args[0] == "run" && args[1] == "--detach" {
+			runner.containers["localteststack-svc-alloc-1"] = dockerContainerInspect{
+				State: struct {
+					Running bool `json:"Running"`
+				}{Running: true},
+				Config: struct {
+					Image  string            `json:"Image"`
+					Labels map[string]string `json:"Labels"`
+				}{
+					Image: "ghcr.io/demo/echo:latest",
+					Labels: map[string]string{
+						"platform.runtime":                    localRuntimeManagedBy,
+						"platform.allocation_id":              "alloc-1",
+						"platform.service_id":                 "svc-1",
+						"platform.desired_spec_revision":      "2",
+						"platform.desired_rollout_generation": "3",
+					},
+				},
+				NetworkSettings: fakeNetworkSettings("127.0.0.1", "65530", 8080),
+			}
+		}
+	}
+
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{
+		AgentId: "node-1",
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			Name:                     "echo",
+			DesiredSpecRevision:      2,
+			DesiredRolloutGeneration: 3,
+			Spec: &platformv1.ResolvedServiceSpec{
+				Image: "ghcr.io/demo/echo:latest",
+				Runtime: &platformv1.ServiceRuntime{
+					ContainerPort: 8080,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := report.Services[0].Phase; got != "Starting" {
+		t.Fatalf("expected Starting phase, got %q", got)
+	}
+	if report.Services[0].Healthy {
+		t.Fatalf("expected service to remain unhealthy %+v", report.Services[0])
+	}
+}
+
+func TestDockerRuntimeReconcileRemovesStaleContainerAndVolume(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "desired", "stale.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "volumes", "stale-vol"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !runner.hasCommand("rm", "--force", "localteststack-svc-stale") {
+		t.Fatalf("expected stale container removal, got commands %+v", runner.commands)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "volumes", "stale-vol")); !os.IsNotExist(err) {
+		t.Fatalf("expected stale volume removal, stat err=%v", err)
+	}
+}
+
+func TestDockerRuntimeInspectContainerTreatsLowercaseNoSuchObjectAsMissing(t *testing.T) {
+	t.Parallel()
+
+	runtime := &DockerRuntime{
+		runner: fakeMissingInspectRunner{},
+	}
+	_, exists, err := runtime.inspectContainer(context.Background(), "localteststack-svc-missing")
+	if err != nil {
+		t.Fatalf("inspectContainer: %v", err)
+	}
+	if exists {
+		t.Fatal("expected missing container to report exists=false")
+	}
+}
+
+type fakeDockerRunner struct {
+	t           *testing.T
+	imageExists bool
+	commands    [][]string
+	containers  map[string]dockerContainerInspect
+	onRun       func(args []string)
+}
+
+type fakeMissingInspectRunner struct{}
+
+func (fakeMissingInspectRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	if len(args) >= 2 && args[0] == "inspect" {
+		return nil, fmt.Errorf("docker inspect %s: error: no such object: %s", args[1], args[1])
+	}
+	return nil, fmt.Errorf("unexpected docker command: %v", args)
+}
+
+func newFakeDockerRunner(t *testing.T) *fakeDockerRunner {
+	t.Helper()
+	return &fakeDockerRunner{
+		t:          t,
+		containers: make(map[string]dockerContainerInspect),
+	}
+}
+
+func (f *fakeDockerRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	f.commands = append(f.commands, append([]string(nil), args...))
+	if f.onRun != nil {
+		f.onRun(args)
+	}
+	switch {
+	case len(args) >= 3 && args[0] == "network" && args[1] == "inspect":
+		return nil, fmt.Errorf("not found")
+	case len(args) >= 3 && args[0] == "network" && args[1] == "create":
+		return []byte("mesh-local"), nil
+	case len(args) >= 3 && args[0] == "image" && args[1] == "inspect":
+		if f.imageExists {
+			return []byte("{}"), nil
+		}
+		return nil, fmt.Errorf("not found")
+	case len(args) >= 2 && args[0] == "pull":
+		f.imageExists = true
+		return []byte("pulled"), nil
+	case len(args) >= 2 && args[0] == "inspect":
+		container, ok := f.containers[args[1]]
+		if !ok {
+			return nil, fmt.Errorf("No such object: %s", args[1])
+		}
+		return json.Marshal([]dockerContainerInspect{container})
+	case len(args) >= 2 && args[0] == "rm":
+		delete(f.containers, args[len(args)-1])
+		return []byte("removed"), nil
+	case len(args) >= 2 && args[0] == "run":
+		return []byte("started"), nil
+	default:
+		f.t.Fatalf("unexpected docker command: %v", args)
+		return nil, nil
+	}
+}
+
+func (f *fakeDockerRunner) firstCommand(name string) []string {
+	for _, command := range f.commands {
+		if len(command) > 0 && command[0] == name {
+			return command
+		}
+	}
+	return nil
+}
+
+func (f *fakeDockerRunner) hasCommand(items ...string) bool {
+	for _, command := range f.commands {
+		if len(command) != len(items) {
+			continue
+		}
+		match := true
+		for i := range items {
+			if command[i] != items[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+func fakeNetworkSettings(hostIP, hostPort string, containerPort int32) struct {
+	Networks map[string]struct {
+		IPAddress string `json:"IPAddress"`
+	} `json:"Networks"`
+	Ports map[string][]struct {
+		HostIP   string `json:"HostIp"`
+		HostPort string `json:"HostPort"`
+	} `json:"Ports"`
+} {
+	return struct {
+		Networks map[string]struct {
+			IPAddress string `json:"IPAddress"`
+		} `json:"Networks"`
+		Ports map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"Ports"`
+	}{
+		Networks: map[string]struct {
+			IPAddress string `json:"IPAddress"`
+		}{
+			"mesh-local": {IPAddress: "172.18.0.10"},
+		},
+		Ports: map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		}{
+			fmt.Sprintf("%d/tcp", containerPort): {{HostIP: hostIP, HostPort: hostPort}},
+		},
+	}
+}
+
+func splitHostPort(t *testing.T, addr string) (string, string) {
+	t.Helper()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", addr, err)
+	}
+	return host, port
+}
+
+func assertArgContains(t *testing.T, args []string, key string, want string) {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == key && strings.Contains(args[i+1], want) {
+			return
+		}
+	}
+	t.Fatalf("expected args %v to contain %s %q", args, key, want)
+}
