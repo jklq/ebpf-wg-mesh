@@ -1,35 +1,50 @@
 import { describe, expect, it } from "vitest";
 
+import type { DashboardSourceSpec } from "#/lib/dashboard-core.server";
 import {
-	decodeProjectKind,
-	decodeProjectMessage,
+	encodeCreateServiceRequest,
+	encodeUpdateServiceRequest,
 } from "#/lib/platform-grpc.server";
 
-describe("platform grpc adapter", () => {
-	it("normalizes proto enum labels into dashboard project kinds", () => {
-		expect(decodeProjectKind("PROJECT_KIND_USER")).toBe("user");
-		expect(decodeProjectKind("PROJECT_KIND_MANAGED")).toBe("managed");
-	});
+describe("platform grpc gateway", () => {
+	it("injects a default runtime port when creating a source-backed service", () => {
+		const source: DashboardSourceSpec = {
+			provider: "github",
+			repositorySelector: "octocat/hello",
+			trackedRef: "main",
+			buildRecipe: {
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			},
+		};
 
-	it("decodes project responses into the dashboard shape", () => {
-		expect(
-			decodeProjectMessage({
-				id: "project-1",
-				name: "demo",
-				kind: "PROJECT_KIND_MANAGED",
-				systemKey: "managed/dashboard",
-			}),
-		).toEqual({
-			id: "project-1",
-			name: "demo",
-			kind: "managed",
-			systemKey: "managed/dashboard",
+		const request = encodeCreateServiceRequest({
+			projectId: "project-1",
+			name: "hello",
+			source,
+		});
+
+		expect(request.service.spec.runtime).toEqual({ containerPort: 8080 });
+		expect(request.service.spec.source.sourceSpec.buildRecipe).toEqual({
+			dockerfilePath: "Dockerfile",
+			contextDir: ".",
 		});
 	});
 
-	it("rejects unknown enum values instead of silently widening the type", () => {
-		expect(() => decodeProjectKind("PROJECT_KIND_UNSPECIFIED")).toThrow(
-			"invalid project kind",
-		);
+	it("preserves an explicit runtime port when updating a source-backed service", () => {
+		const source: DashboardSourceSpec = {
+			provider: "github",
+			repositorySelector: "octocat/hello",
+			trackedRef: "main",
+			containerPort: 3001,
+		};
+
+		const request = encodeUpdateServiceRequest({
+			projectId: "project-1",
+			serviceId: "service-1",
+			source,
+		});
+
+		expect(request.service.spec.runtime).toEqual({ containerPort: 3001 });
 	});
 });

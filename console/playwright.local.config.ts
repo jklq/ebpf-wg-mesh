@@ -1,34 +1,39 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig, devices } from "@playwright/test";
 
-const dashboardBaseURL = process.env.DASHBOARD_E2E_BASE_URL ?? 'http://127.0.0.1:3000'
+const dashboardBaseURL =
+  process.env.DASHBOARD_E2E_BASE_URL ?? "http://platform.localtest.me:8080";
+const dashboardReadyURL = new URL("/healthz", dashboardBaseURL).toString();
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: "./tests/e2e",
   timeout: 30_000,
   retries: 0,
-  reporter: [['list'], ['json', { outputFile: 'artifacts/e2e-local/results.json' }]],
+  reporter: [
+    ["list"],
+    ["json", { outputFile: "artifacts/e2e-local/results.json" }],
+  ],
   webServer: process.env.DASHBOARD_E2E_BASE_URL
     ? undefined
     : {
-        command: 'go run ./cmd/localteststack',
-        cwd: '..',
+        command: "go run ./cmd/localteststack",
+        cwd: "..",
         env: {
-          LOCALTESTSTACK_RUN_PLAYWRIGHT: '0',
+          LOCALTESTSTACK_RUN_PLAYWRIGHT: "0",
         },
-        url: dashboardBaseURL,
-        reuseExistingServer: true,
+        url: dashboardReadyURL,
+        reuseExistingServer: false,
         timeout: 120_000,
       },
   use: {
     baseURL: dashboardBaseURL,
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
   },
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
     },
   ],
-})
+});

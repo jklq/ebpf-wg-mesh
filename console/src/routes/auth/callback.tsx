@@ -1,10 +1,13 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { Schema } from "effect";
 
 export interface AuthCallbackService {
-	completeDevLogin(input: {
-		subject: string;
-		email: string;
+	completeAuthCallback(input: {
+		code?: string;
+		state?: string;
+		subject?: string;
+		email?: string;
 		redirectTo?: string;
 	}): Promise<string>;
 }
@@ -12,38 +15,87 @@ export interface AuthCallbackService {
 export async function completeLoginRoute(
 	service: AuthCallbackService,
 	data: {
-		subject: string;
-		email: string;
+		code?: string;
+		state?: string;
+		subject?: string;
+		email?: string;
 		redirectTo?: string;
 	},
 ): Promise<string> {
-	return service.completeDevLogin(data);
+	return service.completeAuthCallback(data);
 }
+
+const AuthCallbackSchema = Schema.Struct({
+	code: Schema.optionalKey(Schema.String),
+	state: Schema.optionalKey(Schema.String),
+	subject: Schema.optionalKey(Schema.String),
+	email: Schema.optionalKey(Schema.String),
+	redirectTo: Schema.optionalKey(Schema.String),
+});
+const AuthCallbackSearchSchema = Schema.Struct({
+	code: Schema.optionalKey(Schema.String),
+	state: Schema.optionalKey(Schema.String),
+	subject: Schema.optionalKey(Schema.String),
+	email: Schema.optionalKey(Schema.String),
+	redirect: Schema.optionalKey(Schema.String),
+});
+const decodeAuthCallbackInput = Schema.decodeUnknownSync(AuthCallbackSchema);
+const decodeAuthCallbackSearch = Schema.decodeUnknownSync(AuthCallbackSearchSchema);
 
 const completeLogin = createServerFn({ method: "GET" })
 	.inputValidator((input: unknown) => {
-		const data = (input ?? {}) as Record<string, unknown>;
+		const data = decodeAuthCallbackInput(input ?? {});
 		return {
-			subject: typeof data.subject === "string" ? data.subject : "",
-			email: typeof data.email === "string" ? data.email : "",
-			redirectTo: typeof data.redirectTo === "string" ? data.redirectTo : "/",
+			code: data.code ?? "",
+			state: data.state ?? "",
+			subject: data.subject ?? "",
+			email: data.email ?? "",
+			redirectTo: data.redirectTo ?? "/",
 		};
 	})
 	.handler(async ({ data }) => {
 		const service = await import("#/lib/dashboard.server");
-		return completeLoginRoute(service, data);
+		try {
+			return await completeLoginRoute(service, data);
+		} catch (error) {
+			if (
+				error &&
+				typeof error === "object" &&
+				"code" in error &&
+				typeof (error as { code?: unknown }).code === "string"
+			) {
+				return `/login?error=${encodeURIComponent((error as { code: string }).code)}`;
+			}
+			if (
+				error &&
+				typeof error === "object" &&
+				"_tag" in error &&
+				(error as { _tag?: unknown })._tag === "GitHubApiError"
+			) {
+				const detail = githubCallbackErrorDetail(error);
+				return `/login?error=github_api_error&detail=${encodeURIComponent(detail)}`;
+			}
+			throw error;
+		}
 	});
 
 export const Route = createFileRoute("/auth/callback")({
-	validateSearch: (search: Record<string, unknown>) => ({
-		subject: typeof search.subject === "string" ? search.subject : "",
-		email: typeof search.email === "string" ? search.email : "",
-		redirectTo: typeof search.redirect === "string" ? search.redirect : "/",
-	}),
+	validateSearch: (search: Record<string, unknown>) => {
+		const data = decodeAuthCallbackSearch(search);
+		return {
+			code: data.code ?? "",
+			state: data.state ?? "",
+			subject: data.subject ?? "",
+			email: data.email ?? "",
+			redirectTo: data.redirect ?? "/",
+		};
+	},
 	loader: async ({ location }) => {
 		const query = new URLSearchParams(location.search);
 		const destination = await completeLogin({
 			data: {
+				code: query.get("code") ?? "",
+				state: query.get("state") ?? "",
 				subject: query.get("subject") ?? "",
 				email: query.get("email") ?? "",
 				redirectTo: query.get("redirect") ?? "/",
@@ -62,4 +114,26 @@ function CallbackPage() {
 			</div>
 		</main>
 	);
+}
+
+function githubCallbackErrorDetail(error: unknown): string {
+	const status =
+		error && typeof error === "object" && "status" in error
+			? (error as { status?: unknown }).status
+			: undefined;
+	const operation =
+		error && typeof error === "object" && "operation" in error
+			? (error as { operation?: unknown }).operation
+			: undefined;
+
+	if (status === 403) {
+		if (operation === "githubGET:/user/emails" || operation === "fetchIdentity") {
+			return "GitHub denied access to the user's email addresses. Add Account permissions -> Email addresses -> Read-only, then save the app and re-authorize it.";
+		}
+		return "GitHub denied the app's user-auth request. Recheck the GitHub App permissions and re-authorize the app.";
+	}
+	if (status === 401) {
+		return "GitHub rejected the user-auth token exchange. Recheck the Client ID, Client Secret, and callback URL.";
+	}
+	return "GitHub sign-in failed. Recheck the GitHub App callback URL, user permissions, and client credentials.";
 }
