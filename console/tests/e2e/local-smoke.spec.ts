@@ -1,26 +1,34 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from "@playwright/test";
 
-test('login, create project, session persistence, and logout', async ({ page }) => {
-  await page.goto('/login')
-  await expect(page.getByText('Minimal dashboard entrypoint')).toBeVisible()
+test("dev login opens the onboarding flow and preserves the session", async ({
+	page,
+}) => {
+	await page.goto("/login");
+	await expect(
+		page.getByRole("heading", { name: "Continue with GitHub" }),
+	).toBeVisible();
+	await expect(page.getByText("Development logins")).toBeVisible();
 
-  await page.getByRole('link', { name: /continue/i }).click()
-  await expect(page.getByText('Authenticated shell')).toBeVisible()
-  await expect(page.getByText('Internal PlatformService reachable')).toBeVisible()
+	await page.getByRole("link", { name: /dev@example\.com/i }).click();
 
-  await expect(page.locator('form[data-hydrated="true"]')).toBeVisible()
-  const projectInput = page.getByLabel('Project name')
-  const createProjectButton = page.getByRole('button', { name: 'Create project' })
-  await projectInput.fill('playwright-demo')
-  await expect(projectInput).toHaveValue('playwright-demo')
-  await expect(createProjectButton).toBeEnabled()
-  await createProjectButton.click()
-  await expect(projectInput).toHaveValue('')
+	await expect(
+		page.getByRole("heading", { name: "Console onboarding" }),
+	).toBeVisible();
+	await expect(page.getByText("1. Account")).toBeVisible();
+	await expect(page.getByText("2. Repository")).toBeVisible();
+	await expect(page.getByText("3. Build")).toBeVisible();
+	await expect(page.getByText("4. Domain")).toBeVisible();
 
-  await page.reload()
-  await expect(page.getByText('Authenticated shell')).toBeVisible()
-  await expect(page.getByText('playwright-demo')).toBeVisible()
+	const repositoryInput = page.getByPlaceholder("owner/repo");
+	await repositoryInput.fill("octocat/hello");
+	await expect(repositoryInput).toHaveValue("octocat/hello");
 
-  await page.getByRole('link', { name: 'Sign out' }).click()
-  await expect(page).toHaveURL(/\/login$/)
-})
+	await page.reload();
+	await expect(
+		page.getByRole("heading", { name: "Console onboarding" }),
+	).toBeVisible();
+	await expect(page.getByRole("link", { name: "Sign out" })).toBeVisible();
+
+	await page.getByRole("link", { name: "Sign out" }).click();
+	await expect(page).toHaveURL(/\/login$/);
+});

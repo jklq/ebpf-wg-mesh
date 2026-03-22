@@ -36,13 +36,12 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
-	_, err = store.createService(ctx, "user-1", projects[0].ID, "web", &platformv1.ServiceSpec{
-		Image:           "busybox:1.36",
+	_, err = store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		ContainerPort:   8080,
 		VolumeName:      "data",
-	}, "node-1")
+	}), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -87,10 +86,9 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
-	if _, err := store.createService(ctx, "user-1", projects[0].ID, "web", &platformv1.ServiceSpec{
-		Image:      "busybox:1.36",
+	if _, err := store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		VolumeName: "data",
-	}, "node-1"); err != nil {
+	}), "node-1"); err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 
@@ -133,13 +131,12 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 
 		go func() {
 			<-start
-			_, err := store.createScheduledService(ctx, "user-1", projects[0].ID, serviceName, &platformv1.ServiceSpec{
-				Image:           "busybox:1.36",
+			_, err := store.createScheduledService(ctx, "user-1", projects[0].ID, serviceName, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				ContainerPort:   8080,
 				VolumeName:      volumeName,
-			})
+			}))
 			createErrCh <- err
 		}()
 		go func() {
@@ -162,7 +159,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			if service.Name != serviceName {
 				continue
 			}
-			if service.Spec == nil || service.Spec.GetVolumeName() != volumeName {
+			if service.Spec == nil || serviceVolumeName(service.Spec) != volumeName {
 				t.Fatalf("iteration %d: service %q lost its volume reference", i, serviceName)
 			}
 			state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)

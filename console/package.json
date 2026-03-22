@@ -20,15 +20,16 @@
     "check": "bunx biome check"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.18",
     "@grpc/grpc-js": "^1.14.0",
     "@grpc/proto-loader": "^0.8.0",
+    "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
     "@tanstack/react-router-devtools": "latest",
     "@tanstack/react-router-ssr-query": "latest",
     "@tanstack/react-start": "latest",
     "@tanstack/router-plugin": "^1.132.0",
+    "effect": "^4.0.0-beta.35",
     "google-proto-files": "^5.0.1",
     "lucide-react": "^0.545.0",
     "pg": "^8.16.3",

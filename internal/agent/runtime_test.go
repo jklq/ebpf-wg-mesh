@@ -67,7 +67,12 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 			DesiredSpecRevision:      2,
 			DesiredRolloutGeneration: 2,
 			PrivateIpv6:              "fd00::10",
-			Spec:                     &platformv1.ServiceSpec{ContainerPort: 8080},
+			Spec: &platformv1.ResolvedServiceSpec{
+				Image: "example.com/test@sha256:abc",
+				Runtime: &platformv1.ServiceRuntime{
+					ContainerPort: 8080,
+				},
+			},
 		}},
 	}
 	report, err := runtime.Reconcile(context.Background(), state)

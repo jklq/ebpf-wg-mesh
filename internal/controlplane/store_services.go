@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -16,13 +17,22 @@ import (
 )
 
 var (
-	errVolumeInUse         = errors.New("volume still referenced by service")
-	errVolumeNotFound      = errors.New("volume not found")
-	errVolumeAgentMismatch = errors.New("volume bound to different agent")
-	errConcurrentUpdate    = errors.New("concurrent service update")
-	errDomainAlreadyExists = errors.New("domain binding already exists")
+	errVolumeInUse          = errors.New("volume still referenced by service")
+	errVolumeNotFound       = errors.New("volume not found")
+	errVolumeAgentMismatch  = errors.New("volume bound to different agent")
+	errConcurrentUpdate     = errors.New("concurrent service update")
+	errDomainAlreadyExists  = errors.New("domain binding already exists")
 	errNoPlacementAvailable = errors.New("no healthy agent satisfies placement")
 )
+
+func volumeKey(projectID, name string) string {
+	var b strings.Builder
+	b.Grow(len(projectID) + 1 + len(name))
+	b.WriteString(projectID)
+	b.WriteByte(0)
+	b.WriteString(name)
+	return b.String()
+}
 
 type serviceQueryer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -35,24 +45,145 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		return nil
 	}
 	out := proto.Clone(spec).(*platformv1.ServiceSpec)
-	if len(out.Command) == 0 {
-		out.Command = nil
+	runtime := out.GetRuntime()
+	if runtime != nil {
+		if len(runtime.Command) == 0 {
+			runtime.Command = nil
+		}
+		if len(runtime.Args) == 0 {
+			runtime.Args = nil
+		}
+		if len(runtime.Env) == 0 {
+			runtime.Env = nil
+		}
+		if hc := runtime.GetHealthCheck(); hc != nil &&
+			hc.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED &&
+			hc.GetPath() == "" &&
+			hc.GetPort() == 0 &&
+			hc.GetIntervalSeconds() == 0 &&
+			hc.GetTimeoutSeconds() == 0 {
+			runtime.HealthCheck = nil
+		}
 	}
-	if len(out.Args) == 0 {
-		out.Args = nil
-	}
-	if len(out.Env) == 0 {
-		out.Env = nil
-	}
-	if hc := out.GetHealthCheck(); hc != nil &&
-		hc.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED &&
-		hc.GetPath() == "" &&
-		hc.GetPort() == 0 &&
-		hc.GetIntervalSeconds() == 0 &&
-		hc.GetTimeoutSeconds() == 0 {
-		out.HealthCheck = nil
+	if source := out.GetSource(); source != nil {
+		if spec := source.GetSourceSpec(); spec != nil {
+			spec.Provider = strings.TrimSpace(strings.ToLower(spec.GetProvider()))
+			spec.RepositorySelector = strings.TrimSpace(strings.ToLower(spec.GetRepositorySelector()))
+			spec.TrackedRef = strings.TrimSpace(spec.GetTrackedRef())
+			if spec.TrackedRef == "" {
+				spec.TrackedRef = "main"
+			}
+			if spec.BuildRecipe == nil {
+				spec.BuildRecipe = &platformv1.BuildRecipe{}
+			}
+			if spec.BuildRecipe.DockerfilePath == "" {
+				spec.BuildRecipe.DockerfilePath = "Dockerfile"
+			}
+			if spec.BuildRecipe.ContextDir == "" {
+				spec.BuildRecipe.ContextDir = "."
+			}
+		}
 	}
 	return out
+}
+
+func serviceRuntime(spec *platformv1.ServiceSpec) *platformv1.ServiceRuntime {
+	if spec == nil {
+		return nil
+	}
+	return spec.GetRuntime()
+}
+
+func serviceVolumeName(spec *platformv1.ServiceSpec) string {
+	return serviceRuntime(spec).GetVolumeName()
+}
+
+func directImageRef(spec *platformv1.ServiceSpec) string {
+	if spec == nil || spec.GetSource() == nil {
+		return ""
+	}
+	return spec.GetSource().GetImage().GetImage()
+}
+
+func desiredSourceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceSpec {
+	if spec == nil || spec.GetSource() == nil {
+		return nil
+	}
+	return spec.GetSource().GetSourceSpec()
+}
+
+func sameDesiredSourceSpec(a, b *platformv1.ServiceSpec) bool {
+	as := desiredSourceSpec(a)
+	bs := desiredSourceSpec(b)
+	if (as == nil) != (bs == nil) {
+		return false
+	}
+	if as == nil {
+		return true
+	}
+	if strings.TrimSpace(strings.ToLower(as.GetProvider())) != strings.TrimSpace(strings.ToLower(bs.GetProvider())) {
+		return false
+	}
+	if strings.TrimSpace(strings.ToLower(as.GetRepositorySelector())) != strings.TrimSpace(strings.ToLower(bs.GetRepositorySelector())) {
+		return false
+	}
+	at := as.GetTrackedRef()
+	bt := bs.GetTrackedRef()
+	if at != bt && !(at == "" && bt == "main") && !(at == "main" && bt == "") {
+		return false
+	}
+	ab := as.GetBuildRecipe()
+	bb := bs.GetBuildRecipe()
+	if (ab == nil) != (bb == nil) {
+		return false
+	}
+	if ab == nil {
+		return true
+	}
+	adp := ab.GetDockerfilePath()
+	bdp := bb.GetDockerfilePath()
+	if adp != bdp && !(adp == "" && bdp == "Dockerfile") && !(adp == "Dockerfile" && bdp == "") {
+		return false
+	}
+	acd := ab.GetContextDir()
+	bcd := bb.GetContextDir()
+	if acd != bcd && !(acd == "" && bcd == ".") && !(acd == "." && bcd == "") {
+		return false
+	}
+	return true
+}
+
+func resolvedServiceSpec(spec *platformv1.ServiceSpec, resolvedImage string) *platformv1.ResolvedServiceSpec {
+	if spec == nil {
+		return nil
+	}
+	image := resolvedImage
+	if image == "" {
+		image = directImageRef(spec)
+	}
+	var runtime *platformv1.ServiceRuntime
+	if spec.GetRuntime() != nil {
+		runtime = proto.Clone(spec.GetRuntime()).(*platformv1.ServiceRuntime)
+	}
+	return &platformv1.ResolvedServiceSpec{
+		Image:   image,
+		Runtime: runtime,
+	}
+}
+
+func buildSourceSummary(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceSummary {
+	if spec == nil || spec.GetSource() == nil {
+		return nil
+	}
+	switch src := spec.GetSource().Source.(type) {
+	case *platformv1.ServiceSource_Image:
+		return &platformv1.ServiceSourceSummary{
+			Source: &platformv1.ServiceSourceSummary_Image{
+				Image: proto.Clone(src.Image).(*platformv1.DirectImageSource),
+			},
+		}
+	}
+	return nil
 }
 
 type placementCandidate struct {
@@ -71,7 +202,164 @@ func sortedDomains(domains []string) []string {
 }
 
 func sameServiceSpec(a, b *platformv1.ServiceSpec) bool {
-	return proto.Equal(canonicalServiceSpec(a), canonicalServiceSpec(b))
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if !proto.Equal(a, b) {
+		return false
+	}
+	return equalServiceSpecAfterCanonicalization(a, b)
+}
+
+func equalServiceSpecAfterCanonicalization(a, b *platformv1.ServiceSpec) bool {
+	ar := a.GetRuntime()
+	br := b.GetRuntime()
+	if (ar == nil) != (br == nil) {
+		return false
+	}
+	if ar != nil {
+		if !equalRuntimeAfterCanonicalization(ar, br) {
+			return false
+		}
+	}
+	as := a.GetSource()
+	bs := b.GetSource()
+	if (as == nil) != (bs == nil) {
+		return false
+	}
+	if as != nil && bs != nil {
+		ag := as.GetSourceSpec()
+		bg := bs.GetSourceSpec()
+		if (ag == nil) != (bg == nil) {
+			return false
+		}
+		if ag != nil && bg != nil {
+			if strings.TrimSpace(strings.ToLower(ag.GetProvider())) != strings.TrimSpace(strings.ToLower(bg.GetProvider())) {
+				return false
+			}
+			if strings.TrimSpace(strings.ToLower(ag.GetRepositorySelector())) != strings.TrimSpace(strings.ToLower(bg.GetRepositorySelector())) {
+				return false
+			}
+			ab := ag.GetTrackedRef()
+			bb := bg.GetTrackedRef()
+			if ab != bb && !(ab == "" && bb == "main") && !(ab == "main" && bb == "") {
+				return false
+			}
+			adp := ag.GetBuildRecipe().GetDockerfilePath()
+			bdp := bg.GetBuildRecipe().GetDockerfilePath()
+			if adp != bdp && !(adp == "" && bdp == "Dockerfile") && !(adp == "Dockerfile" && bdp == "") {
+				return false
+			}
+			acd := ag.GetBuildRecipe().GetContextDir()
+			bcd := bg.GetBuildRecipe().GetContextDir()
+			if acd != bcd && !(acd == "" && bcd == ".") && !(acd == "." && bcd == "") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func equalRuntimeAfterCanonicalization(a, b *platformv1.ServiceRuntime) bool {
+	ac := a.GetCommand()
+	bc := b.GetCommand()
+	switch {
+	case len(ac) == 0 && len(bc) == 0:
+	case len(ac) == 0 && len(bc) > 0:
+		return false
+	case len(ac) > 0 && len(bc) == 0:
+		return false
+	case len(ac) > 0 && len(bc) > 0:
+		if len(ac) != len(bc) {
+			return false
+		}
+		for i := range ac {
+			if ac[i] != bc[i] {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+
+	aa := a.GetArgs()
+	ba := b.GetArgs()
+	switch {
+	case len(aa) == 0 && len(ba) == 0:
+	case len(aa) == 0 && len(ba) > 0:
+		return false
+	case len(aa) > 0 && len(ba) == 0:
+		return false
+	case len(aa) > 0 && len(ba) > 0:
+		if len(aa) != len(ba) {
+			return false
+		}
+		for i := range aa {
+			if aa[i] != ba[i] {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+
+	ae := a.GetEnv()
+	be := b.GetEnv()
+	switch {
+	case len(ae) == 0 && len(be) == 0:
+	case len(ae) == 0 && len(be) > 0:
+		return false
+	case len(ae) > 0 && len(be) == 0:
+		return false
+	case len(ae) > 0 && len(be) > 0:
+		if len(ae) != len(be) {
+			return false
+		}
+		for i := range ae {
+			if ae[i] != be[i] {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+
+	ahc := a.GetHealthCheck()
+	bhc := b.GetHealthCheck()
+	if (ahc == nil) != (bhc == nil) {
+		return false
+	}
+	if ahc != nil {
+		ahct := ahc.GetType()
+		bhct := bhc.GetType()
+		normalizedAHC := ahct == platformv1.HealthCheck_TYPE_UNSPECIFIED
+		normalizedBHC := bhct == platformv1.HealthCheck_TYPE_UNSPECIFIED
+		ahcp := ahc.GetPath()
+		bhcp := bhc.GetPath()
+		ahcpo := ahc.GetPort()
+		bhcpo := bhc.GetPort()
+		ahcis := ahc.GetIntervalSeconds()
+		bhcis := bhc.GetIntervalSeconds()
+		ahcts := ahc.GetTimeoutSeconds()
+		bhcts := bhc.GetTimeoutSeconds()
+		if normalizedAHC && ahcp == "" && ahcpo == 0 && ahcis == 0 && ahcts == 0 {
+			normalizedAHC = true
+		} else {
+			normalizedAHC = false
+		}
+		if normalizedBHC && bhcp == "" && bhcpo == 0 && bhcis == 0 && bhcts == 0 {
+			normalizedBHC = true
+		} else {
+			normalizedBHC = false
+		}
+		if normalizedAHC != normalizedBHC {
+			return false
+		}
+	}
+	return true
 }
 
 func loadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
@@ -120,13 +408,13 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	if agentID == "" {
 		return serviceRecord{}, errors.New("agent id required")
 	}
-	if spec != nil && spec.GetVolumeName() != "" {
-		volumeAgentID, err := s.boundAgentForVolumeQuerier(ctx, tx, projectID, spec.GetVolumeName())
+	if volumeName := serviceVolumeName(spec); volumeName != "" {
+		volumeAgentID, err := s.boundAgentForVolumeQuerier(ctx, tx, projectID, volumeName)
 		if err != nil {
 			return serviceRecord{}, err
 		}
 		if volumeAgentID != agentID {
-			return serviceRecord{}, fmt.Errorf("%w: volume %q is bound to %s, service is scheduled to %s", errVolumeAgentMismatch, spec.GetVolumeName(), volumeAgentID, agentID)
+			return serviceRecord{}, fmt.Errorf("%w: volume %q is bound to %s, service is scheduled to %s", errVolumeAgentMismatch, volumeName, volumeAgentID, agentID)
 		}
 	}
 
@@ -140,8 +428,14 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 		SpecRevision:      1,
 		RolloutGeneration: 1,
 		AllocatedAgentID:  agentID,
+		ResolvedImage:     directImageRef(spec),
 		CreatedAt:         now,
 		UpdatedAt:         now,
+	}
+	if source := desiredSourceSpec(spec); source != nil {
+		rec.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
+	} else {
+		rec.SourceSummary = buildSourceSummary(spec)
 	}
 	specJSON, err := protojson.Marshal(spec)
 	if err != nil {
@@ -149,9 +443,11 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	}
 	allocationID := mustID()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO services(id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		rec.ID, rec.ProjectID, rec.Name, rec.SpecRevision, rec.RolloutGeneration, rec.AllocatedAgentID, now, now,
+		`INSERT INTO services(
+			id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id,
+			current_resolved_image, last_successful_commit_sha, latest_build_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		rec.ID, rec.ProjectID, rec.Name, rec.SpecRevision, rec.RolloutGeneration, rec.AllocatedAgentID, rec.ResolvedImage, rec.LastSuccessfulCommitSHA, rec.LatestBuildID, now, now,
 	); err != nil {
 		return serviceRecord{}, err
 	}
@@ -174,6 +470,11 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 		allocationID, rec.ID, rec.ProjectID, rec.AllocatedAgentID, rec.SpecRevision, 0, rec.RolloutGeneration, 0, "Pending", "", "", false, now,
 	); err != nil {
 		return serviceRecord{}, err
+	}
+	if desiredSourceSpec(spec) != nil {
+		if err := s.enqueueSourceSpecChangedTx(ctx, tx, rec.ID, rec.SpecRevision, false); err != nil {
+			return serviceRecord{}, err
+		}
 	}
 	if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{rec.AllocatedAgentID}); err != nil {
 		return serviceRecord{}, err
@@ -255,12 +556,19 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		); err != nil {
 			return err
 		}
-		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
-			return err
-		}
 		rec = current
 		rec.Spec = spec
 		rec.SpecRevision = nextSpecRevision
+		rec.RolloutGeneration = nextRolloutGeneration
+		rec.UpdatedAt = now
+		if desiredSourceSpec(spec) != nil {
+			if err := s.enqueueSourceSpecChangedTx(ctx, tx, rec.ID, rec.SpecRevision, false); err != nil {
+				return err
+			}
+		}
+		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
+			return err
+		}
 		rec.RolloutGeneration = nextRolloutGeneration
 		rec.UpdatedAt = now
 		return nil
@@ -338,8 +646,8 @@ func (s *Store) chooseAgentForVolumeTx(ctx context.Context, tx *sql.Tx) (string,
 }
 
 func (s *Store) chooseAgentForServiceTx(ctx context.Context, tx *sql.Tx, projectID string, spec *platformv1.ServiceSpec) (string, error) {
-	if spec != nil && spec.GetVolumeName() != "" {
-		return s.boundAgentForVolumeQuerier(ctx, tx, projectID, spec.GetVolumeName())
+	if volumeName := serviceVolumeName(spec); volumeName != "" {
+		return s.boundAgentForVolumeQuerier(ctx, tx, projectID, volumeName)
 	}
 	return s.chooseAgentForPlacementQuerier(ctx, tx, spec)
 }
@@ -351,10 +659,11 @@ func (s *Store) chooseAgentForPlacementQuerier(ctx context.Context, q serviceQue
 	}
 	for _, candidate := range candidates {
 		if spec != nil {
-			if candidate.CPUMillisCapacity > 0 && candidate.UsedCPUMillis+spec.GetCpuMillis() > candidate.CPUMillisCapacity {
+			runtime := serviceRuntime(spec)
+			if candidate.CPUMillisCapacity > 0 && candidate.UsedCPUMillis+runtime.GetCpuMillis() > candidate.CPUMillisCapacity {
 				continue
 			}
-			if candidate.MemoryMebibytesCapcity > 0 && candidate.UsedMemoryMebibytes+spec.GetMemoryMebibytes() > candidate.MemoryMebibytesCapcity {
+			if candidate.MemoryMebibytesCapcity > 0 && candidate.UsedMemoryMebibytes+runtime.GetMemoryMebibytes() > candidate.MemoryMebibytesCapcity {
 				continue
 			}
 		}
@@ -375,8 +684,8 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 		   LEFT JOIN (
 		        SELECT s.allocated_agent_id AS agent_id,
 		               COUNT(*) AS service_count,
-		               COALESCE(SUM(COALESCE((r.spec_json->>'cpuMillis')::INT8, 0)), 0) AS cpu_millis,
-		               COALESCE(SUM(COALESCE((r.spec_json->>'memoryMebibytes')::INT8, 0)), 0) AS memory_mebibytes
+		               COALESCE(SUM(COALESCE((r.spec_json->'runtime'->>'cpuMillis')::INT8, 0)), 0) AS cpu_millis,
+		               COALESCE(SUM(COALESCE((r.spec_json->'runtime'->>'memoryMebibytes')::INT8, 0)), 0) AS memory_mebibytes
 		          FROM services s
 		          JOIN service_revisions r
 		            ON r.service_id = s.id
@@ -462,15 +771,16 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	}
 	volumeIDs := make(map[string]string, len(volumes))
 	for _, vol := range volumes {
-		volumeIDs[vol.GetProjectId()+"\x00"+vol.GetName()] = vol.GetVolumeId()
+		volumeIDs[volumeKey(vol.GetProjectId(), vol.GetName())] = vol.GetVolumeId()
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.id, s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, r.spec_json
+		`SELECT a.id, s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, s.current_resolved_image, r.spec_json
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
 		  WHERE a.agent_id = $1
+		    AND s.current_resolved_image <> ''
 		  ORDER BY s.created_at ASC`,
 		agentID,
 	)
@@ -482,17 +792,18 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	var out []*agentv1.DesiredService
 	for rows.Next() {
 		svc := &agentv1.DesiredService{}
+		var resolvedImage string
 		var rawSpec []byte
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.ProjectId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &rawSpec); err != nil {
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.ProjectId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec); err != nil {
 			return nil, err
 		}
 		spec, err := loadServiceSpec(rawSpec)
 		if err != nil {
 			return nil, err
 		}
-		svc.Spec = spec
-		if svc.Spec.VolumeName != "" {
-			svc.VolumeId = volumeIDs[svc.ProjectId+"\x00"+svc.Spec.VolumeName]
+		svc.Spec = resolvedServiceSpec(spec, resolvedImage)
+		if volumeName := serviceVolumeName(spec); volumeName != "" {
+			svc.VolumeId = volumeIDs[volumeKey(svc.ProjectId, volumeName)]
 		}
 		svc.PrivateIpv6, err = privateIPv6(agent.WorkloadIPv6Subnet, svc.ProjectId, svc.ServiceId)
 		if err != nil {

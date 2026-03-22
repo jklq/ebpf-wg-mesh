@@ -14,6 +14,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 type App struct {
@@ -27,6 +28,7 @@ type App struct {
 const (
 	initialReconnectDelay = time.Second
 	maxReconnectDelay     = 30 * time.Second
+	reconcilePollInterval = 2 * time.Second
 )
 
 var errRotateSession = errors.New("rotate mTLS session")
@@ -143,7 +145,45 @@ func (a *App) runSession(ctx context.Context) error {
 		return err
 	}
 	slog.Info("sent agent hello", "agent_id", a.cfg.Node.ID)
+	var (
+		desiredStateMu   sync.RWMutex
+		latestDesired    *agentv1.DesiredNodeState
+		reconcileStateMu sync.Mutex
+	)
+	reconcileAndReport := func(state *agentv1.DesiredNodeState) error {
+		reconcileStateMu.Lock()
+		defer reconcileStateMu.Unlock()
+		report, err := a.runtime.Reconcile(sessionCtx, state)
+		if err != nil {
+			slog.Error("reconcile failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", err)
+			report = &agentv1.StatusReport{
+				AgentId: a.cfg.Node.ID,
+				Services: []*agentv1.ServiceCondition{{
+					Phase:   "Error",
+					Message: err.Error(),
+				}},
+			}
+		}
+		if err := send(&agentv1.AgentClientMessage{
+			Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: report},
+		}); err != nil {
+			return err
+		}
+		return nil
+	}
 	go a.heartbeatLoop(sessionCtx, send)
+	go periodicReconcileLoop(sessionCtx, reconcilePollInterval, func() *agentv1.DesiredNodeState {
+		desiredStateMu.RLock()
+		defer desiredStateMu.RUnlock()
+		if latestDesired == nil {
+			return nil
+		}
+		return proto.Clone(latestDesired).(*agentv1.DesiredNodeState)
+	}, func(state *agentv1.DesiredNodeState) {
+		if err := reconcileAndReport(state); err != nil && sessionCtx.Err() == nil {
+			slog.Warn("periodic status report failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", err)
+		}
+	})
 
 	for {
 		msg, err := stream.Recv()
@@ -163,23 +203,37 @@ func (a *App) runSession(ctx context.Context) error {
 		if err := a.applyNodeConfig(sessionCtx, state.GetNodeConfig()); err != nil {
 			return fmt.Errorf("apply assigned node config: %w", err)
 		}
+		desiredStateMu.Lock()
+		latestDesired = proto.Clone(state).(*agentv1.DesiredNodeState)
+		desiredStateMu.Unlock()
 		slog.Info("received desired state", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-		report, err := a.runtime.Reconcile(ctx, state)
-		if err != nil {
-			slog.Error("reconcile failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", err)
-			report = &agentv1.StatusReport{
-				AgentId: a.cfg.Node.ID,
-				Services: []*agentv1.ServiceCondition{{
-					Phase:   "Error",
-					Message: err.Error(),
-				}},
-			}
-		}
-		slog.Info("sending status report", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "services", len(report.GetServices()), "volumes", len(report.GetVolumes()))
-		if err := send(&agentv1.AgentClientMessage{
-			Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: report},
-		}); err != nil {
+		if err := reconcileAndReport(state); err != nil {
 			return err
+		}
+	}
+}
+
+func periodicReconcileLoop(
+	ctx context.Context,
+	interval time.Duration,
+	desiredState func() *agentv1.DesiredNodeState,
+	reconcile func(*agentv1.DesiredNodeState),
+) {
+	if interval <= 0 || desiredState == nil || reconcile == nil {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			state := desiredState()
+			if state == nil {
+				continue
+			}
+			reconcile(state)
 		}
 	}
 }

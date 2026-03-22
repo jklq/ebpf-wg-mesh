@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -18,6 +20,12 @@ import (
 )
 
 const defaultVolumeMount = "/data"
+
+var jsonEncoderPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
 
 type serviceEngine interface {
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
@@ -168,18 +176,23 @@ func (r *ContainerdRuntime) pruneStaleVolumes(desired map[string]*agentv1.Desire
 
 func (r *ContainerdRuntime) persistDesiredService(svc *agentv1.DesiredService) error {
 	path := filepath.Join(r.cfg.Runtime.DataDir, "desired", svc.GetAllocationId()+".json")
-	b, err := json.MarshalIndent(svc, "", "  ")
-	if err != nil {
+	buf := jsonEncoderPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer jsonEncoderPool.Put(buf)
+	enc := json.NewEncoder(buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(svc); err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 func probeHealth(endpoint string, svc *agentv1.DesiredService) bool {
-	if endpoint == "" || svc.GetSpec().GetContainerPort() == 0 {
+	runtime := svc.GetSpec().GetRuntime()
+	if endpoint == "" || runtime.GetContainerPort() == 0 {
 		return false
 	}
-	check := svc.GetSpec().GetHealthCheck()
+	check := runtime.GetHealthCheck()
 	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
 		conn, err := net.DialTimeout("tcp", endpoint, 2*time.Second)
 		if err == nil {

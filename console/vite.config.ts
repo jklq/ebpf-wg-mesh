@@ -7,16 +7,30 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 
 import viteReact from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { buildAllowedDevHosts } from "./src/lib/vite-dev-hosts";
 
 const config = defineConfig({
-	plugins: [
-		devtools(),
-		tsconfigPaths({ projects: ["./tsconfig.json"] }),
-		tailwindcss(),
-		tanstackStart(),
-		nitro({ preset: process.env.NITRO_PRESET === "bun" ? "bun" : undefined }),
-		viteReact(),
-	],
+  plugins: [
+    devtools(),
+    tsconfigPaths({ projects: ["./tsconfig.json"] }),
+    tailwindcss(),
+    tanstackStart(),
+    nitro(
+      process.env.NITRO_PRESET === "bun"
+        ? ({ preset: "bun" } as never)
+        : ({} as never),
+    ),
+    viteReact(),
+  ],
+  server: {
+    host: "127.0.0.1",
+    port: 3000,
+    strictPort: true,
+    allowedHosts: buildAllowedDevHosts(
+      process.env.DASHBOARD_PUBLIC_BASE_URL,
+      process.env.DASHBOARD_INGRESS_TARGET_HOST,
+    ),
+  },
 });
 
 export default config;
