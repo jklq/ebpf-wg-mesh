@@ -3,9 +3,6 @@ package config
 import "runtime"
 
 func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
-	if cfg.PublicHTTP.Listen == "" {
-		cfg.PublicHTTP.Listen = "0.0.0.0:8080"
-	}
 	if cfg.InternalGRPC.Listen == "" {
 		cfg.InternalGRPC.Listen = "0.0.0.0:9443"
 	}
@@ -33,6 +30,12 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Ingress.AdminURL == "" {
 		cfg.Ingress.AdminURL = "http://127.0.0.1:2019/load"
 	}
+	if cfg.Ingress.AdminListen == "" {
+		cfg.Ingress.AdminListen = ":2019"
+	}
+	if len(cfg.Ingress.ListenAddrs) == 0 {
+		cfg.Ingress.ListenAddrs = []string{":80", ":443"}
+	}
 	if cfg.Ingress.PublicAddr == "" {
 		cfg.Ingress.PublicAddr = "platform.local"
 	}
@@ -53,6 +56,9 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.Dashboard.PublicDomain == "" {
 		cfg.Dashboard.PublicDomain = cfg.Ingress.PublicAddr
+	}
+	if cfg.Dashboard.IngressTargetHost == "" {
+		cfg.Dashboard.IngressTargetHost = cfg.Ingress.PublicAddr
 	}
 	if cfg.Dashboard.ControlPlaneAddr == "" {
 		cfg.Dashboard.ControlPlaneAddr = "controlplane:9443"
@@ -77,6 +83,18 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.Dashboard.SessionCookieName == "" {
 		cfg.Dashboard.SessionCookieName = "dashboard_session"
+	}
+	if cfg.GitHub.APIBaseURL == "" {
+		cfg.GitHub.APIBaseURL = "https://api.github.com"
+	}
+	if cfg.GitHub.WebBaseURL == "" {
+		cfg.GitHub.WebBaseURL = "https://github.com"
+	}
+	if cfg.GitHub.WebhookPath == "" {
+		cfg.GitHub.WebhookPath = "/webhooks/github"
+	}
+	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
+		cfg.Builder.HeartbeatTimeoutSeconds = 120
 	}
 	if cfg.Mesh.InterfaceName == "" {
 		cfg.Mesh.InterfaceName = "wg0"
@@ -146,6 +164,33 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	}
 }
 
+func applyBuilderDefaults(cfg *BuilderConfig) {
+	if cfg.Name == "" {
+		cfg.Name = cfg.ID
+	}
+	if cfg.ControlPlane.TLS.ServerName == "" {
+		cfg.ControlPlane.TLS.ServerName = "controlplane"
+	}
+	if cfg.WorkDir == "" {
+		cfg.WorkDir = "var/builder"
+	}
+	if cfg.PollIntervalSeconds <= 0 {
+		cfg.PollIntervalSeconds = 5
+	}
+	if cfg.HeartbeatIntervalSeconds <= 0 {
+		cfg.HeartbeatIntervalSeconds = 10
+	}
+	if cfg.GitBinary == "" {
+		cfg.GitBinary = "git"
+	}
+	if cfg.BuildctlBinary == "" {
+		cfg.BuildctlBinary = "buildctl"
+	}
+	if cfg.BuildkitAddress == "" {
+		cfg.BuildkitAddress = "unix:///run/buildkit/buildkitd.sock"
+	}
+}
+
 func FinalizeControlPlane(cfg *ControlPlaneConfig) error {
 	applyControlPlaneDefaults(cfg)
 	return validateControlPlane(*cfg)
@@ -154,6 +199,11 @@ func FinalizeControlPlane(cfg *ControlPlaneConfig) error {
 func FinalizeAgent(cfg *AgentConfig) error {
 	applyAgentDefaults(cfg)
 	return validateAgent(*cfg)
+}
+
+func FinalizeBuilder(cfg *BuilderConfig) error {
+	applyBuilderDefaults(cfg)
+	return validateBuilder(*cfg)
 }
 
 func maxInt(a, b int) int {
