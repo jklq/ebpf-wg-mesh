@@ -73,6 +73,36 @@ func TestInternalAuthRejectsDashboardCallingAgentSync(t *testing.T) {
 	}
 }
 
+func TestInternalAuthAllowsDashboardOpsCalls(t *testing.T) {
+	t.Parallel()
+
+	authz := NewInternalAuth()
+	_, err := authz.authorize(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.OpsService/IngestGitHubWebhook", false)
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+}
+
+func TestInternalAuthRejectsUnauthenticatedOpsCalls(t *testing.T) {
+	t.Parallel()
+
+	authz := NewInternalAuth()
+	_, err := authz.authorize(context.Background(), "/platform.v1.OpsService/IngestGitHubWebhook", false)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied, got %v", err)
+	}
+}
+
+func TestInternalAuthRejectsWrongClassOpsCalls(t *testing.T) {
+	t.Parallel()
+
+	authz := NewInternalAuth()
+	_, err := authz.authorize(contextWithClientIdentity(serviceCallerBuilder, "builder-1"), "/platform.v1.OpsService/IngestGitHubWebhook", false)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied, got %v", err)
+	}
+}
+
 func contextWithClientIdentity(class serviceCallerClass, id string) context.Context {
 	cert := &x509.Certificate{
 		Subject: pkix.Name{

@@ -8,10 +8,14 @@ import (
 type Notifier struct {
 	mu       sync.Mutex
 	watchers map[string][]chan struct{}
+	indexMap map[chan struct{}]int
 }
 
 func NewNotifier() *Notifier {
-	return &Notifier{watchers: make(map[string][]chan struct{})}
+	return &Notifier{
+		watchers: make(map[string][]chan struct{}),
+		indexMap: make(map[chan struct{}]int),
+	}
 }
 
 func (n *Notifier) Watch(agentID string) (<-chan struct{}, func()) {
@@ -19,19 +23,25 @@ func (n *Notifier) Watch(agentID string) (<-chan struct{}, func()) {
 	defer n.mu.Unlock()
 	ch := make(chan struct{}, 1)
 	n.watchers[agentID] = append(n.watchers[agentID], ch)
+	n.indexMap[ch] = len(n.watchers[agentID]) - 1
 	slog.Info("watch registered", "agent_id", agentID, "watchers", len(n.watchers[agentID]))
 	return ch, func() {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		w := n.watchers[agentID]
-		for i := range w {
-			if w[i] == ch {
-				n.watchers[agentID] = append(w[:i], w[i+1:]...)
-				slog.Info("watch removed", "agent_id", agentID, "watchers", len(n.watchers[agentID]))
-				close(ch)
-				break
-			}
+		idx, ok := n.indexMap[ch]
+		if !ok || idx >= len(w) || w[idx] != ch {
+			return
 		}
+		last := len(w) - 1
+		if idx != last {
+			w[idx] = w[last]
+			n.indexMap[w[idx]] = idx
+		}
+		n.watchers[agentID] = w[:last]
+		delete(n.indexMap, ch)
+		slog.Info("watch removed", "agent_id", agentID, "watchers", len(n.watchers[agentID]))
+		close(ch)
 	}
 }
 

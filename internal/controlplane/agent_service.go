@@ -136,22 +136,43 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 				return nil
 			}
 			slog.Info("notify received", "agent_id", agentID)
-			state, err := s.store.desiredStateForAgent(ctx, agentID)
+			nextRevision, err := sendLatestDesiredState(ctx, agentID, lastRevision, func() (*agentv1.DesiredNodeState, error) {
+				return s.store.desiredStateForAgent(ctx, agentID)
+			}, func(state *agentv1.DesiredNodeState) error {
+				return stream.Send(&agentv1.AgentServerMessage{
+					Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
+				})
+			})
 			if err != nil {
 				return status.Errorf(codes.Internal, "desired state: %v", err)
 			}
-			if state.Revision == lastRevision {
-				slog.Info("desired state unchanged", "agent_id", agentID, "revision", state.Revision)
-				continue
-			}
-			slog.Info("sending desired state", "agent_id", agentID, "revision", state.Revision, "services", len(state.Services), "volumes", len(state.Volumes))
-			if err := stream.Send(&agentv1.AgentServerMessage{
-				Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
-			}); err != nil {
-				return err
-			}
-			slog.Info("desired state sent", "agent_id", agentID, "revision", state.Revision)
-			lastRevision = state.Revision
+			lastRevision = nextRevision
 		}
+	}
+}
+
+func sendLatestDesiredState(
+	ctx context.Context,
+	agentID string,
+	lastRevision int64,
+	load func() (*agentv1.DesiredNodeState, error),
+	send func(*agentv1.DesiredNodeState) error,
+) (int64, error) {
+	_ = ctx
+	for {
+		state, err := load()
+		if err != nil {
+			return lastRevision, err
+		}
+		if state.Revision == lastRevision {
+			slog.Info("desired state unchanged", "agent_id", agentID, "revision", state.Revision)
+			return lastRevision, nil
+		}
+		slog.Info("sending desired state", "agent_id", agentID, "revision", state.Revision, "services", len(state.Services), "volumes", len(state.Volumes))
+		if err := send(state); err != nil {
+			return lastRevision, err
+		}
+		slog.Info("desired state sent", "agent_id", agentID, "revision", state.Revision)
+		lastRevision = state.Revision
 	}
 }

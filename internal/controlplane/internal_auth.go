@@ -21,6 +21,7 @@ type serviceCallerClass string
 
 const (
 	serviceCallerAgent     serviceCallerClass = "agent"
+	serviceCallerBuilder   serviceCallerClass = "builder"
 	serviceCallerDashboard serviceCallerClass = "dashboard"
 )
 
@@ -94,6 +95,14 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStrea
 		if !strings.HasSuffix(fullMethod, "/EnsurePrincipal") && !delegated {
 			return nil, status.Error(codes.Unauthenticated, "delegated user metadata is required")
 		}
+	case strings.HasPrefix(fullMethod, "/platform.v1.OpsService/"):
+		if !authenticated || caller.Class != serviceCallerDashboard {
+			return nil, status.Error(codes.PermissionDenied, "dashboard client certificate required")
+		}
+	case strings.HasPrefix(fullMethod, "/platform.v1.BuilderService/"):
+		if !authenticated || caller.Class != serviceCallerBuilder {
+			return nil, status.Error(codes.PermissionDenied, "builder client certificate required")
+		}
 	case fullMethod == "/agent.v1.AgentControl/Enroll":
 		if authenticated && caller.Class != serviceCallerAgent {
 			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
@@ -157,7 +166,7 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	}
 	class := serviceCallerClass(strings.TrimSpace(cert.Subject.OrganizationalUnit[0]))
 	switch class {
-	case serviceCallerAgent, serviceCallerDashboard:
+	case serviceCallerAgent, serviceCallerBuilder, serviceCallerDashboard:
 		return ServiceCaller{Class: class, ID: id}, true, nil
 	default:
 		return ServiceCaller{}, false, errors.New("unknown client certificate caller class")

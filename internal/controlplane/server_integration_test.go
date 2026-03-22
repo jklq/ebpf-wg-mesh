@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
-	"net/http"
 	"testing"
 	"time"
 
@@ -28,9 +27,6 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	defer cancel()
 
 	cfg := config.ControlPlaneConfig{
-		PublicHTTP: config.ListenerConfig{
-			Listen: "127.0.0.1:0",
-		},
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
@@ -84,7 +80,6 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 		}
 	})
 
-	waitForHTTPHealthz(t, "http://"+server.PublicAddr())
 	waitForListener(t, server.InternalAddr())
 
 	identity, err := server.EnsureDashboardClientIdentity("dashboard-test")
@@ -138,25 +133,6 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 		t.Fatalf("expected one project after create, got %d", len(got))
 	} else if got[0].GetId() != created.GetId() || got[0].GetName() != "demo-app" {
 		t.Fatalf("unexpected listed project %+v", got[0])
-	}
-}
-
-func waitForHTTPHealthz(t *testing.T, baseURL string) {
-	t.Helper()
-
-	if err := testutil.Poll(context.Background(), testutil.PollConfig{Timeout: 10 * time.Second}, func(ctx context.Context) (bool, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/healthz", nil)
-		if err != nil {
-			return false, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return false, nil
-		}
-		defer resp.Body.Close()
-		return resp.StatusCode == http.StatusOK, nil
-	}); err != nil {
-		t.Fatalf("wait for public HTTP healthz: %v", err)
 	}
 }
 

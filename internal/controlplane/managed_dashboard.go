@@ -50,17 +50,16 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure dashboard client identity: %w", err)
 	}
-	spec := &platformv1.ServiceSpec{
-		Image:           r.cfg.Image,
+	spec := directImageServiceSpec(r.cfg.Image, &platformv1.ServiceRuntime{
 		Command:         append([]string(nil), r.cfg.Command...),
 		Args:            append([]string(nil), r.cfg.Args...),
 		Env:             r.dashboardEnv(identity),
 		CpuMillis:       r.cfg.CPUMillis,
 		MemoryMebibytes: r.cfg.MemoryMebibytes,
 		ContainerPort:   r.cfg.ContainerPort,
-	}
+	})
 	if r.cfg.HealthPath != "" {
-		spec.HealthCheck = &platformv1.HealthCheck{
+		spec.Runtime.HealthCheck = &platformv1.HealthCheck{
 			Type:           platformv1.HealthCheck_TYPE_HTTP,
 			Path:           r.cfg.HealthPath,
 			TimeoutSeconds: 2,
@@ -85,9 +84,14 @@ func (r *ManagedDashboardReconciler) dashboardEnv(identity ClientIdentityMateria
 	env["DASHBOARD_DATABASE_URL"] = r.database.URL
 	env["DASHBOARD_DATABASE_SCHEMA"] = r.cfg.DatabaseSchema
 	env["DASHBOARD_SESSION_COOKIE_NAME"] = r.cfg.SessionCookieName
+	env["DASHBOARD_JWT_SECRET"] = r.cfg.JWTSecret
 	if _, ok := env["DASHBOARD_PUBLIC_BASE_URL"]; !ok {
 		env["DASHBOARD_PUBLIC_BASE_URL"] = publicBaseURL(r.cfg.PublicDomain)
 	}
+	if r.cfg.GitHubInstallURL != "" {
+		env["DASHBOARD_GITHUB_INSTALL_URL"] = r.cfg.GitHubInstallURL
+	}
+	env["DASHBOARD_INGRESS_TARGET_HOST"] = r.cfg.IngressTargetHost
 	env["DASHBOARD_CONTROLPLANE_ADDRESS"] = r.cfg.ControlPlaneAddr
 	env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.cfg.ControlPlaneSNI
 	env["DASHBOARD_CONTROLPLANE_CA_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CAPEM)

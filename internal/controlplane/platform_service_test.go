@@ -69,7 +69,7 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 		ProjectId: "project-1",
 		Service: &platformv1.ServiceInput{
 			Name: "web",
-			Spec: &platformv1.ServiceSpec{Image: "nginx:1.27"},
+			Spec: directImageServiceSpec("nginx:1.27", nil),
 		},
 	})
 	if status.Code(err) != codes.FailedPrecondition {
@@ -91,7 +91,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 		ProjectId: "project-1",
 		ServiceId: "service-1",
 		Service: &platformv1.ServiceUpdate{
-			Spec: &platformv1.ServiceSpec{Image: "nginx:1.27"},
+			Spec: directImageServiceSpec("nginx:1.27", nil),
 		},
 	})
 	if status.Code(err) != codes.Aborted {
@@ -148,7 +148,7 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 		ProjectId: "project-1",
 		ServiceId: "service-1",
 		Service: &platformv1.ServiceUpdate{
-			Spec: &platformv1.ServiceSpec{Image: "nginx:1.27"},
+			Spec: directImageServiceSpec("nginx:1.27", nil),
 		},
 	})
 	if err != nil {
@@ -282,6 +282,8 @@ type fakePlatformStore struct {
 	createScheduledServiceFn func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
 	updateServiceFn          func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployServiceFn        func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	requestServiceSourceSyncFn func(ctx context.Context, subject, projectID, serviceID string) error
+	enqueueBuildForServiceFn func(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
 	deleteServiceFn          func(ctx context.Context, subject, projectID, serviceID string) error
 	serviceByIDFn            func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
 	listServicesFn           func(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
@@ -344,6 +346,20 @@ func (f *fakePlatformStore) redeployService(ctx context.Context, subject, projec
 		return f.redeployServiceFn(ctx, subject, projectID, serviceID)
 	}
 	return serviceRecord{ID: serviceID, ProjectID: projectID, AllocatedAgentID: "node-1"}, nil
+}
+
+func (f *fakePlatformStore) requestServiceSourceSync(ctx context.Context, subject, projectID, serviceID string) error {
+	if f.requestServiceSourceSyncFn != nil {
+		return f.requestServiceSourceSyncFn(ctx, subject, projectID, serviceID)
+	}
+	return nil
+}
+
+func (f *fakePlatformStore) enqueueBuildForService(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error) {
+	if f.enqueueBuildForServiceFn != nil {
+		return f.enqueueBuildForServiceFn(ctx, subject, projectID, serviceID, commitSHA)
+	}
+	return buildRunRecord{ID: "build-1", ServiceID: serviceID, ProjectID: projectID, CommitSHA: commitSHA, State: buildStateQueued}, nil
 }
 
 func (f *fakePlatformStore) deleteService(ctx context.Context, subject, projectID, serviceID string) error {
