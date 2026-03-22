@@ -13,6 +13,8 @@ import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
+import { Route as AuthStartRouteImport } from './routes/auth/start'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 
 const LogoutRoute = LogoutRouteImport.update({
@@ -35,6 +37,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WebhooksGithubRoute = WebhooksGithubRouteImport.update({
+  id: '/webhooks/github',
+  path: '/webhooks/github',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthStartRoute = AuthStartRouteImport.update({
+  id: '/auth/start',
+  path: '/auth/start',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/auth/callback',
   path: '/auth/callback',
@@ -47,6 +59,8 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/auth/start': typeof AuthStartRoute
+  '/webhooks/github': typeof WebhooksGithubRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +68,8 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/auth/start': typeof AuthStartRoute
+  '/webhooks/github': typeof WebhooksGithubRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +78,37 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/auth/start': typeof AuthStartRoute
+  '/webhooks/github': typeof WebhooksGithubRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/healthz' | '/login' | '/logout' | '/auth/callback'
+  fullPaths:
+    | '/'
+    | '/healthz'
+    | '/login'
+    | '/logout'
+    | '/auth/callback'
+    | '/auth/start'
+    | '/webhooks/github'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/healthz' | '/login' | '/logout' | '/auth/callback'
-  id: '__root__' | '/' | '/healthz' | '/login' | '/logout' | '/auth/callback'
+  to:
+    | '/'
+    | '/healthz'
+    | '/login'
+    | '/logout'
+    | '/auth/callback'
+    | '/auth/start'
+    | '/webhooks/github'
+  id:
+    | '__root__'
+    | '/'
+    | '/healthz'
+    | '/login'
+    | '/logout'
+    | '/auth/callback'
+    | '/auth/start'
+    | '/webhooks/github'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +117,8 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   LogoutRoute: typeof LogoutRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
+  AuthStartRoute: typeof AuthStartRoute
+  WebhooksGithubRoute: typeof WebhooksGithubRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -109,6 +151,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/webhooks/github': {
+      id: '/webhooks/github'
+      path: '/webhooks/github'
+      fullPath: '/webhooks/github'
+      preLoaderRoute: typeof WebhooksGithubRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/start': {
+      id: '/auth/start'
+      path: '/auth/start'
+      fullPath: '/auth/start'
+      preLoaderRoute: typeof AuthStartRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth/callback': {
       id: '/auth/callback'
       path: '/auth/callback'
@@ -125,6 +181,8 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   LogoutRoute: LogoutRoute,
   AuthCallbackRoute: AuthCallbackRoute,
+  AuthStartRoute: AuthStartRoute,
+  WebhooksGithubRoute: WebhooksGithubRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

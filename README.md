@@ -23,6 +23,10 @@ Minimal PaaS control plane and agent prototype with a retained WireGuard/eBPF pr
 - Agent-facing and console-facing internal gRPC are protected by mTLS with distinct caller identities.
 - The existing WireGuard/eBPF code remains the private node-to-node transport/policy layer behind `internal/mesh`.
 
+Architecture decisions:
+
+- Source integration target shape: [docs/adr/0002-source-integration.md](docs/adr/0002-source-integration.md)
+
 ## Bootstrap
 
 The binaries no longer require YAML config files.
@@ -74,6 +78,39 @@ Interactive ephemeral local stack for manual exploration:
 ```bash
 make dev-ephemeral
 ```
+
+GitHub-enabled interactive devstack via 1Password Environments:
+
+```bash
+export OP_ENVIRONMENT_ID=envs/...
+export OP_SERVICE_ACCOUNT_TOKEN=ops_... # preferred
+# or: export OP_ACCOUNT=my.1password.account
+make dev-ephemeral
+```
+
+- When `OP_ENVIRONMENT_ID` is unset, `make dev-ephemeral` keeps the existing local-only behavior.
+- When the 1Password Environment is readable but incomplete, the stack still starts and logs the missing key names while leaving GitHub disabled.
+- Service-account auth takes precedence over desktop-app auth when both `OP_SERVICE_ACCOUNT_TOKEN` and `OP_ACCOUNT` are set.
+
+Required 1Password Environment keys for GitHub-enabled `make dev-ephemeral`:
+
+- Tunnel and hostname: `NGROK_AUTHTOKEN`, `NGROK_DOMAIN`.
+- Control plane GitHub and registry: `CONTROLPLANE_GITHUB_APP_ID`, `CONTROLPLANE_GITHUB_WEBHOOK_SECRET`, `CONTROLPLANE_GITHUB_PRIVATE_KEY_PEM` (base64-encoded PEM is recommended if your secret store strips newlines), `CONTROLPLANE_REGISTRY_HOST`, `CONTROLPLANE_REGISTRY_USERNAME`, `CONTROLPLANE_REGISTRY_PASSWORD`.
+- Optional control plane overrides: `CONTROLPLANE_GITHUB_API_BASE_URL`, `CONTROLPLANE_GITHUB_WEB_BASE_URL`, `CONTROLPLANE_GITHUB_WEBHOOK_PATH`, `CONTROLPLANE_REGISTRY_NAMESPACE_PREFIX`.
+- Optional dashboard install link: `CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL`.
+- Console GitHub auth: `DASHBOARD_GITHUB_APP_ID`, `DASHBOARD_GITHUB_CLIENT_ID`, `DASHBOARD_GITHUB_CLIENT_SECRET`.
+- Optional console overrides: `DASHBOARD_GITHUB_AUTH_BASE_URL`, `DASHBOARD_GITHUB_API_BASE_URL`.
+
+Derived GitHub URLs:
+
+- Callback URL: `{publicBaseURL}/auth/callback`
+- Webhook URL: `{publicBaseURL}/webhooks/github` by default, or `{publicBaseURL}{CONTROLPLANE_GITHUB_WEBHOOK_PATH}` when that override is set.
+
+Hostname strategy:
+
+- Default: use the reserved ngrok hostname set in `NGROK_DOMAIN`.
+- The stack starts ngrok automatically from `NGROK_AUTHTOKEN` and binds that exact hostname.
+- There is no separate `LOCALTESTSTACK_PUBLIC_URL` override path.
 
 Production-replica VM smoke on Hetzner:
 
