@@ -53,18 +53,83 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apps := cfg["apps"].(map[string]any)
-	httpApp := apps["http"].(map[string]any)
-	servers := httpApp["servers"].(map[string]any)
-	srv0 := servers["srv0"].(map[string]any)
-	routes := srv0["routes"].([]map[string]any)
+	routes := cfg.Apps.HTTP.Servers["srv0"].Routes
 	if len(routes) != 1 {
 		t.Fatalf("expected 1 route, got %d", len(routes))
 	}
-	matchers := routes[0]["match"].([]map[string]any)
-	hosts := matchers[0]["host"].([]string)
+	hosts := routes[0].Match[0].Host
 	if len(hosts) != 1 || hosts[0] != "demo.example.com" {
 		t.Fatalf("unexpected ingress host match %+v", hosts)
+	}
+}
+
+func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "echo.localtest.me", service.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "svc-echo:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	syncer := NewIngressSyncer(
+		"http://127.0.0.1:2019/load",
+		store,
+		WithIngressStaticRoutes([]IngressStaticRoute{{
+			Hosts:    []string{"platform.localtest.me", "mesh.ngrok.app"},
+			Upstream: "host.docker.internal:41235",
+		}}),
+		WithIngressListenAddrs([]string{":8080"}),
+		WithIngressAdminListen(":2019"),
+		WithIngressAutomaticHTTPSDisabled(true),
+	)
+	cfg, err := syncer.render(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Admin == nil || cfg.Admin.Listen != ":2019" {
+		t.Fatalf("unexpected admin config %+v", cfg.Admin)
+	}
+	server := cfg.Apps.HTTP.Servers["srv0"]
+	if len(server.Listen) != 1 || server.Listen[0] != ":8080" {
+		t.Fatalf("unexpected listen addrs %+v", server.Listen)
+	}
+	if server.AutomaticHTTPS == nil || !server.AutomaticHTTPS.Disable {
+		t.Fatalf("expected automatic https disabled, got %+v", server.AutomaticHTTPS)
+	}
+	if len(server.Routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(server.Routes))
+	}
+	staticHosts := server.Routes[0].Match[0].Host
+	if strings.Join(staticHosts, ",") != "mesh.ngrok.app,platform.localtest.me" {
+		t.Fatalf("unexpected static route hosts %+v", staticHosts)
+	}
+	if got := server.Routes[0].Handle[0].Upstreams[0].Dial; got != "host.docker.internal:41235" {
+		t.Fatalf("unexpected static upstream %q", got)
+	}
+	dynamicHosts := server.Routes[1].Match[0].Host
+	if len(dynamicHosts) != 1 || dynamicHosts[0] != "echo.localtest.me" {
+		t.Fatalf("unexpected dynamic route hosts %+v", dynamicHosts)
 	}
 }
 
@@ -243,16 +308,15 @@ func (t *blockingIngressTransport) RoundTrip(req *http.Request) (*http.Response,
 func ingressRouteCount(t *testing.T, body []byte) int {
 	t.Helper()
 
-	var cfg map[string]any
+	var cfg caddyConfig
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		t.Fatalf("json.Unmarshal ingress body: %v", err)
 	}
-	apps := cfg["apps"].(map[string]any)
-	httpApp := apps["http"].(map[string]any)
-	servers := httpApp["servers"].(map[string]any)
-	srv0 := servers["srv0"].(map[string]any)
-	routes := srv0["routes"].([]any)
-	return len(routes)
+	server, ok := cfg.Apps.HTTP.Servers["srv0"]
+	if !ok {
+		t.Fatal("expected srv0 server in ingress body")
+	}
+	return len(server.Routes)
 }
 
 func agentHello(id string) *agentv1.AgentHello {
@@ -278,10 +342,9 @@ func testMeshConfig() config.ControlPlaneMeshConfig {
 }
 
 func serviceSpec() *platformv1.ServiceSpec {
-	return &platformv1.ServiceSpec{
-		Image:           "nginx:latest",
+	return directImageServiceSpec("nginx:latest", &platformv1.ServiceRuntime{
 		ContainerPort:   8080,
 		CpuMillis:       250,
 		MemoryMebibytes: 128,
-	}
+	})
 }

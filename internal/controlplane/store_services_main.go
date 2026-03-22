@@ -63,8 +63,8 @@ func (s *Store) chooseAgentForVolume(ctx context.Context) (string, error) {
 }
 
 func (s *Store) chooseAgentForService(ctx context.Context, projectID string, spec *platformv1.ServiceSpec) (string, error) {
-	if spec != nil && spec.GetVolumeName() != "" {
-		return s.boundAgentForVolume(ctx, projectID, spec.GetVolumeName())
+	if volumeName := serviceVolumeName(spec); volumeName != "" {
+		return s.boundAgentForVolume(ctx, projectID, volumeName)
 	}
 	return s.chooseAgentForPlacementQuerier(ctx, s.db, spec)
 }
@@ -132,7 +132,7 @@ func (s *Store) deleteVolume(ctx context.Context, subject, projectID, volumeID s
 			if err != nil {
 				return err
 			}
-			if spec.GetVolumeName() == volumeName {
+			if serviceVolumeName(spec) == volumeName {
 				return fmt.Errorf("%w: service %s references volume %s", errVolumeInUse, serviceID, volumeID)
 			}
 		}
@@ -188,84 +188,11 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 	var current serviceRecord
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var sourceChanged bool
 		var err error
-		current, err = s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-		if spec != nil && spec.GetVolumeName() != "" {
-			volumeAgentID, err := s.boundAgentForVolumeQuerier(ctx, tx, projectID, spec.GetVolumeName())
-			if err != nil {
-				return err
-			}
-			if volumeAgentID != current.AllocatedAgentID {
-				return fmt.Errorf("%w: volume %q is bound to %s, service is allocated to %s", errVolumeAgentMismatch, spec.GetVolumeName(), volumeAgentID, current.AllocatedAgentID)
-			}
-		}
-		spec = canonicalServiceSpec(spec)
-		if sameServiceSpec(current.Spec, spec) {
-			return nil
-		}
-
-		now := time.Now().UTC()
-		nextSpecRevision := current.SpecRevision + 1
-		nextRolloutGeneration := current.RolloutGeneration + 1
-		specJSON, err := protojson.Marshal(spec)
-		if err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx,
-			`UPDATE services
-			    SET current_spec_revision = $1,
-			        current_rollout_generation = $2,
-			        updated_at = $3
-			  WHERE id = $4
-			    AND current_spec_revision = $5
-			    AND current_rollout_generation = $6`,
-			nextSpecRevision, nextRolloutGeneration, now, serviceID, current.SpecRevision, current.RolloutGeneration,
-		)
-		if err != nil {
-			return err
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected == 0 {
-			return errConcurrentUpdate
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-			serviceID, nextSpecRevision, specJSON, now,
-		); err != nil {
-			return err
-		}
-		if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, nextSpecRevision, "spec-update", subject, "", now); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations
-			    SET desired_spec_revision = $1,
-			        desired_rollout_generation = $2,
-			        phase = $3,
-			        message = $4,
-			        healthy = $5,
-			        updated_at = $6
-			  WHERE service_id = $7`,
-			nextSpecRevision, nextRolloutGeneration, "Pending", "", false, now, serviceID,
-		); err != nil {
-			return err
-		}
-		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
-			return err
-		}
-
-		current.Spec = canonicalServiceSpec(spec)
-		current.SpecRevision = nextSpecRevision
-		current.RolloutGeneration = nextRolloutGeneration
-		current.UpdatedAt = now
-		changed = true
-		return nil
+		current, changed, sourceChanged, err = s.updateServiceTx(ctx, tx, subject, projectID, serviceID, spec)
+		_ = sourceChanged
+		return err
 	})
 	if err != nil {
 		return serviceRecord{}, false, err
@@ -273,62 +200,187 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 	return current, changed, nil
 }
 
+func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, bool, error) {
+	current, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
+	if err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	if volumeName := serviceVolumeName(spec); volumeName != "" {
+		volumeAgentID, err := s.boundAgentForVolumeQuerier(ctx, tx, projectID, volumeName)
+		if err != nil {
+			return serviceRecord{}, false, false, err
+		}
+		if volumeAgentID != current.AllocatedAgentID {
+			return serviceRecord{}, false, false, fmt.Errorf("%w: volume %q is bound to %s, service is allocated to %s", errVolumeAgentMismatch, volumeName, volumeAgentID, current.AllocatedAgentID)
+		}
+	}
+	spec = canonicalServiceSpec(spec)
+	if sameServiceSpec(current.Spec, spec) {
+		return current, false, false, nil
+	}
+
+	now := time.Now().UTC()
+	nextSpecRevision := current.SpecRevision + 1
+	nextRolloutGeneration := current.RolloutGeneration + 1
+	nextResolvedImage := directImageRef(spec)
+	nextLastSuccessfulCommit := ""
+	nextLatestBuildID := ""
+	sourceChanged := desiredSourceSpec(spec) != nil && !sameDesiredSourceSpec(current.Spec, spec)
+	if desiredSourceSpec(spec) != nil && !sourceChanged {
+		nextResolvedImage = current.ResolvedImage
+		nextLastSuccessfulCommit = current.LastSuccessfulCommitSHA
+		nextLatestBuildID = current.LatestBuildID
+	}
+	specJSON, err := protojson.Marshal(spec)
+	if err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE services
+		    SET current_spec_revision = $1,
+		        current_rollout_generation = $2,
+		        current_resolved_image = $3,
+		        last_successful_commit_sha = $4,
+		        latest_build_id = $5,
+		        updated_at = $6
+		  WHERE id = $7
+		    AND current_spec_revision = $8
+		    AND current_rollout_generation = $9`,
+		nextSpecRevision, nextRolloutGeneration, nextResolvedImage, nextLastSuccessfulCommit, nextLatestBuildID, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+	)
+	if err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	if affected == 0 {
+		return serviceRecord{}, false, false, errConcurrentUpdate
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
+		serviceID, nextSpecRevision, specJSON, now,
+	); err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, nextSpecRevision, "spec-update", subject, "", now); err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE allocations
+		    SET desired_spec_revision = $1,
+		        desired_rollout_generation = $2,
+		        phase = $3,
+		        message = $4,
+		        healthy = $5,
+		        updated_at = $6
+		  WHERE service_id = $7`,
+		nextSpecRevision, nextRolloutGeneration, "Pending", "", false, now, serviceID,
+	); err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	nextRecord := current
+	nextRecord.Spec = spec
+	if source := desiredSourceSpec(spec); source != nil {
+		nextRecord.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
+	} else {
+		nextRecord.SourceSummary = buildSourceSummary(spec)
+	}
+	nextRecord.ResolvedImage = nextResolvedImage
+	nextRecord.LastSuccessfulCommitSHA = nextLastSuccessfulCommit
+	nextRecord.LatestBuildID = nextLatestBuildID
+	nextRecord.SpecRevision = nextSpecRevision
+	nextRecord.RolloutGeneration = nextRolloutGeneration
+	nextRecord.UpdatedAt = now
+	if desiredSourceSpec(spec) != nil {
+		if err := s.enqueueSourceSpecChangedTx(ctx, tx, serviceID, nextSpecRevision, false); err != nil {
+			return serviceRecord{}, false, false, err
+		}
+	}
+	if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
+		return serviceRecord{}, false, false, err
+	}
+	if nextLatestBuildID == "" {
+		nextRecord.LatestBuild = nil
+	}
+	return nextRecord, true, sourceChanged, nil
+}
+
 func (s *Store) redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error) {
 	var current serviceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		current, err = s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-
-		now := time.Now().UTC()
-		nextRolloutGeneration := current.RolloutGeneration + 1
-		result, err := tx.ExecContext(ctx,
-			`UPDATE services
-			    SET current_rollout_generation = $1,
-			        updated_at = $2
-			  WHERE id = $3
-			    AND current_spec_revision = $4
-			    AND current_rollout_generation = $5`,
-			nextRolloutGeneration, now, serviceID, current.SpecRevision, current.RolloutGeneration,
-		)
-		if err != nil {
-			return err
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected == 0 {
-			return errConcurrentUpdate
-		}
-		if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", subject, "", now); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations
-			    SET desired_rollout_generation = $1,
-			        phase = $2,
-			        message = $3,
-			        healthy = $4,
-			        updated_at = $5
-			  WHERE service_id = $6`,
-			nextRolloutGeneration, "Pending", "", false, now, serviceID,
-		); err != nil {
-			return err
-		}
-		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
-			return err
-		}
-
-		current.RolloutGeneration = nextRolloutGeneration
-		current.UpdatedAt = now
-		return nil
+		current, err = s.redeployServiceTx(ctx, tx, subject, projectID, serviceID)
+		return err
 	})
 	if err != nil {
 		return serviceRecord{}, err
 	}
+	return current, nil
+}
+
+func (s *Store) requestServiceSourceSync(ctx context.Context, subject, projectID, serviceID string) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		service, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
+		if err != nil {
+			return err
+		}
+		if desiredSourceSpec(service.Spec) == nil {
+			return errServiceNotBuildable
+		}
+		return s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, service.SpecRevision, true)
+	})
+}
+
+func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, subject, projectID, serviceID string) (serviceRecord, error) {
+	current, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+
+	now := time.Now().UTC()
+	nextRolloutGeneration := current.RolloutGeneration + 1
+	result, err := tx.ExecContext(ctx,
+		`UPDATE services
+		    SET current_rollout_generation = $1,
+		        updated_at = $2
+		  WHERE id = $3
+		    AND current_spec_revision = $4
+		    AND current_rollout_generation = $5`,
+		nextRolloutGeneration, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+	)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	if affected == 0 {
+		return serviceRecord{}, errConcurrentUpdate
+	}
+	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", subject, "", now); err != nil {
+		return serviceRecord{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE allocations
+		    SET desired_rollout_generation = $1,
+		        phase = $2,
+		        message = $3,
+		        healthy = $4,
+		        updated_at = $5
+		  WHERE service_id = $6`,
+		nextRolloutGeneration, "Pending", "", false, now, serviceID,
+	); err != nil {
+		return serviceRecord{}, err
+	}
+	if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
+		return serviceRecord{}, err
+	}
+
+	current.RolloutGeneration = nextRolloutGeneration
+	current.UpdatedAt = now
 	return current, nil
 }
 
@@ -361,7 +413,7 @@ func (s *Store) listServices(ctx context.Context, subject, projectID string) ([]
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at
+		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, current_resolved_image, last_successful_commit_sha, latest_build_id, created_at, updated_at
 		   FROM services
 		  WHERE project_id = $1
 		  ORDER BY created_at ASC`,
@@ -389,6 +441,17 @@ func (s *Store) listServices(ctx context.Context, subject, projectID string) ([]
 			return nil, err
 		}
 		out[i].Spec = spec
+		out[i].SourceSummary, err = s.loadServiceSourceSummaryQuerier(ctx, s.db, spec, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		if out[i].ResolvedImage == "" {
+			out[i].ResolvedImage = directImageRef(spec)
+		}
+		out[i].LatestBuild, err = s.latestBuildForServiceQuerier(ctx, s.db, out[i].LatestBuildID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -402,7 +465,7 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, subjec
 		return serviceRecord{}, err
 	}
 	row := q.QueryRowContext(ctx,
-		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at
+		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, current_resolved_image, last_successful_commit_sha, latest_build_id, created_at, updated_at
 		   FROM services
 		  WHERE id = $1 AND project_id = $2`,
 		serviceID, projectID,
@@ -412,13 +475,27 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, subjec
 		return serviceRecord{}, err
 	}
 	rec.Spec, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.SpecRevision)
-	return rec, err
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	rec.SourceSummary, err = s.loadServiceSourceSummaryQuerier(ctx, q, rec.Spec, rec.ID)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	if rec.ResolvedImage == "" {
+		rec.ResolvedImage = directImageRef(rec.Spec)
+	}
+	rec.LatestBuild, err = s.latestBuildForServiceQuerier(ctx, q, rec.LatestBuildID)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	return rec, nil
 }
 
 func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, projectID, name string) (serviceRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, created_at, updated_at
+		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, current_resolved_image, last_successful_commit_sha, latest_build_id, created_at, updated_at
 		   FROM services
 		  WHERE project_id = $1 AND name = $2`,
 		projectID,
@@ -441,9 +518,22 @@ func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, proj
 
 func scanServiceRow(scanner interface{ Scan(...any) error }) (serviceRecord, error) {
 	var rec serviceRecord
-	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &rec.SpecRevision, &rec.RolloutGeneration, &rec.AllocatedAgentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+	if err := scanner.Scan(
+		&rec.ID,
+		&rec.ProjectID,
+		&rec.Name,
+		&rec.SpecRevision,
+		&rec.RolloutGeneration,
+		&rec.AllocatedAgentID,
+		&rec.ResolvedImage,
+		&rec.LastSuccessfulCommitSHA,
+		&rec.LatestBuildID,
+		&rec.CreatedAt,
+		&rec.UpdatedAt,
+	); err != nil {
 		return serviceRecord{}, err
 	}
+	rec.LatestBuild = nil
 	return rec, nil
 }
 

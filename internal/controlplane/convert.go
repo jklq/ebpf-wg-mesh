@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"google.golang.org/protobuf/proto"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -35,15 +36,19 @@ func toProtoProjectKind(kind projectKind) platformv1.ProjectKind {
 
 func toProtoService(rec serviceRecord) *platformv1.Service {
 	return &platformv1.Service{
-		Id:                rec.ID,
-		ProjectId:         rec.ProjectID,
-		Name:              rec.Name,
-		Spec:              rec.Spec,
-		SpecRevision:      rec.SpecRevision,
-		AllocatedAgentId:  rec.AllocatedAgentID,
-		CreatedAt:         ts(rec.CreatedAt),
-		UpdatedAt:         ts(rec.UpdatedAt),
-		RolloutGeneration: rec.RolloutGeneration,
+		Id:                      rec.ID,
+		ProjectId:               rec.ProjectID,
+		Name:                    rec.Name,
+		Spec:                    rec.Spec,
+		SpecRevision:            rec.SpecRevision,
+		AllocatedAgentId:        rec.AllocatedAgentID,
+		CreatedAt:               ts(rec.CreatedAt),
+		UpdatedAt:               ts(rec.UpdatedAt),
+		RolloutGeneration:       rec.RolloutGeneration,
+		SourceSummary:           rec.SourceSummary,
+		LastSuccessfulCommitSha: rec.LastSuccessfulCommitSHA,
+		ResolvedImage:           rec.ResolvedImage,
+		LatestBuild:             rec.LatestBuild,
 	}
 }
 
@@ -94,5 +99,117 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
+	}
+}
+
+func toProtoBuildStatus(rec buildRunRecord) *platformv1.BuildStatus {
+	if rec.ID == "" {
+		return nil
+	}
+	status := &platformv1.BuildStatus{
+		BuildId:       rec.ID,
+		State:         toProtoBuildState(rec.State),
+		CommitSha:     rec.CommitSHA,
+		ImageDigest:   rec.ImageDigest,
+		QueuedAt:      ts(rec.QueuedAt),
+		FailureReason: rec.FailureReason,
+	}
+	if rec.StartedAt.Valid {
+		status.StartedAt = ts(rec.StartedAt.Time)
+	}
+	if rec.FinishedAt.Valid {
+		status.FinishedAt = ts(rec.FinishedAt.Time)
+	}
+	return status
+}
+
+func toProtoBuildState(state string) platformv1.BuildState {
+	switch state {
+	case "queued":
+		return platformv1.BuildState_BUILD_STATE_QUEUED
+	case "running":
+		return platformv1.BuildState_BUILD_STATE_RUNNING
+	case "succeeded":
+		return platformv1.BuildState_BUILD_STATE_SUCCEEDED
+	case "failed":
+		return platformv1.BuildState_BUILD_STATE_FAILED
+	case "superseded":
+		return platformv1.BuildState_BUILD_STATE_SUPERSEDED
+	default:
+		return platformv1.BuildState_BUILD_STATE_UNSPECIFIED
+	}
+}
+
+func toProtoResolvedSourceBinding(rec sourceBindingRecord) *platformv1.ResolvedSourceBinding {
+	if rec.ID == "" {
+		return nil
+	}
+	return &platformv1.ResolvedSourceBinding{
+		Id:                           rec.ID,
+		ServiceId:                    rec.ServiceID,
+		Provider:                     rec.Provider,
+		RepositorySelector:           rec.RepositorySelector,
+		TrackedRef:                   rec.TrackedRef,
+		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
+		ProviderScopeExternalId:      rec.ProviderScopeExternalID,
+		AccessState:                  toProtoSourceAccessState(rec.AccessState),
+		ResolvedAt:                   ts(rec.ResolvedAt),
+		FreshUntil:                   ts(rec.FreshUntil),
+		BuildRecipe:                  cloneBuildRecipe(rec.BuildRecipe),
+	}
+}
+
+func toProtoSourceRevision(rec sourceRevisionRecord) *platformv1.SourceRevision {
+	if rec.ID == "" {
+		return nil
+	}
+	return &platformv1.SourceRevision{
+		Id:                           rec.ID,
+		SourceBindingId:              rec.SourceBindingID,
+		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
+		TrackedRef:                   rec.TrackedRef,
+		CommitSha:                    rec.CommitSHA,
+		ObservedAt:                   ts(rec.ObservedAt),
+	}
+}
+
+func toProtoSourceSnapshot(rec sourceSnapshotRecord) *platformv1.SourceSnapshot {
+	if rec.ID == "" {
+		return nil
+	}
+	snapshot := &platformv1.SourceSnapshot{
+		Id:                           rec.ID,
+		SourceRevisionId:             rec.SourceRevisionID,
+		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
+		CommitSha:                    rec.CommitSHA,
+		Digest:                       rec.Digest,
+		Ready:                        rec.Ready,
+	}
+	if rec.FetchedAt.Valid {
+		snapshot.FetchedAt = ts(rec.FetchedAt.Time)
+	}
+	return snapshot
+}
+
+func toProtoSourceStateSummary(desired *platformv1.ServiceSourceSpec, binding *sourceBindingRecord, revision *sourceRevisionRecord, snapshot *sourceSnapshotRecord) *platformv1.ServiceSourceSummary {
+	if desired == nil {
+		return nil
+	}
+	state := &platformv1.SourceStateSummary{
+		DesiredSpec: proto.Clone(desired).(*platformv1.ServiceSourceSpec),
+	}
+	if binding != nil {
+		state.ResolvedBinding = toProtoResolvedSourceBinding(*binding)
+	}
+	if revision != nil {
+		state.LatestRevision = toProtoSourceRevision(*revision)
+	}
+	if snapshot != nil {
+		state.LatestSnapshot = toProtoSourceSnapshot(*snapshot)
+	}
+	return &platformv1.ServiceSourceSummary{
+		Source: &platformv1.ServiceSourceSummary_SourceState{
+			SourceState: state,
+		},
 	}
 }

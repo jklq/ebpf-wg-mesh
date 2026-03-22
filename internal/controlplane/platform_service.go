@@ -19,6 +19,7 @@ type PlatformService struct {
 	store     platformStore
 	notifier  platformNotifier
 	ingress   platformIngress
+	inspector *gitHubSourceInspector
 }
 
 type platformStore interface {
@@ -29,6 +30,8 @@ type platformStore interface {
 	createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
 	updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	requestServiceSourceSync(ctx context.Context, subject, projectID, serviceID string) error
+	enqueueBuildForService(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
 	deleteService(ctx context.Context, subject, projectID, serviceID string) error
 	serviceByID(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
 	listServices(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
@@ -53,8 +56,22 @@ type platformIngress interface {
 	RequestSync()
 }
 
-func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress) *PlatformService {
-	return &PlatformService{store: store, notifier: notifier, ingress: ingress}
+type PlatformServiceOption func(*PlatformService)
+
+func WithGitHubSourceInspection(catalog *GitHubCatalog, client *GitHubClient) PlatformServiceOption {
+	return func(service *PlatformService) {
+		service.inspector = newGitHubSourceInspector(catalog, client)
+	}
+}
+
+func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, opts ...PlatformServiceOption) *PlatformService {
+	service := &PlatformService{store: store, notifier: notifier, ingress: ingress}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service
 }
 
 func (s *PlatformService) EnsurePrincipal(ctx context.Context, req *platformv1.EnsurePrincipalRequest) (*platformv1.Principal, error) {
@@ -108,6 +125,26 @@ func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetPro
 	return toProtoProject(project), nil
 }
 
+func (s *PlatformService) InspectSource(ctx context.Context, req *platformv1.InspectSourceRequest) (*platformv1.InspectSourceResponse, error) {
+	if _, err := DelegatedUserFromContext(ctx); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(strings.ToLower(req.GetProvider())) != "github" {
+		return nil, status.Error(codes.InvalidArgument, "unsupported source provider")
+	}
+	if strings.TrimSpace(req.GetRepositorySelector()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "repository selector is required")
+	}
+	if s.inspector == nil {
+		return nil, status.Error(codes.FailedPrecondition, "github source inspection is not configured")
+	}
+	resp, err := s.inspector.Inspect(ctx, req.GetRepositorySelector())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "inspect source: %v", err)
+	}
+	return resp, nil
+}
+
 func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.CreateServiceRequest) (*platformv1.Service, error) {
 	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
@@ -116,7 +153,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if req.GetService() == nil {
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
-	service, err := s.store.createScheduledService(ctx, identity.Subject, req.GetProjectId(), req.GetService().GetName(), req.GetService().GetSpec())
+	spec := canonicalServiceSpec(req.GetService().GetSpec())
+	var service serviceRecord
+	service, err = s.store.createScheduledService(ctx, identity.Subject, req.GetProjectId(), req.GetService().GetName(), spec)
 	if err != nil {
 		if errors.Is(err, errNoPlacementAvailable) || errors.Is(err, errVolumeNotFound) || errors.Is(err, errVolumeAgentMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
@@ -125,6 +164,14 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	}
 	slog.Info("service created", "service_id", service.ID, "agent_id", service.AllocatedAgentID, "project_id", req.GetProjectId(), "spec_revision", service.SpecRevision, "rollout_generation", service.RolloutGeneration)
 	s.notifier.Notify(service.AllocatedAgentID)
+	service, err = s.store.serviceByID(ctx, identity.Subject, req.GetProjectId(), service.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "reload service: %v", err)
+	}
+	service, err = s.decorateServiceRecord(ctx, service)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+	}
 	return toProtoService(service), nil
 }
 
@@ -136,7 +183,12 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if req.GetService() == nil {
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
-	service, changed, err := s.store.updateService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetService().GetSpec())
+	spec := canonicalServiceSpec(req.GetService().GetSpec())
+	var (
+		service serviceRecord
+		changed bool
+	)
+	service, changed, err = s.store.updateService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), spec)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -152,6 +204,10 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if changed {
 		s.notifier.Notify(service.AllocatedAgentID)
 	}
+	service, err = s.decorateServiceRecord(ctx, service)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+	}
 	return toProtoService(service), nil
 }
 
@@ -160,20 +216,43 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.redeployService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
+	currentService, err := s.store.serviceByID(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		if errors.Is(err, errConcurrentUpdate) {
-			return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
 	}
-	s.notifier.Notify(service.AllocatedAgentID)
+	if desiredSourceSpec(currentService.Spec) != nil {
+		if err := s.store.requestServiceSourceSync(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId()); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, status.Errorf(codes.NotFound, "service: %v", err)
+			}
+			if errors.Is(err, errConcurrentUpdate) {
+				return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
+			}
+			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
+		}
+	} else {
+		service, err := s.store.redeployService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, status.Errorf(codes.NotFound, "service: %v", err)
+			}
+			if errors.Is(err, errConcurrentUpdate) {
+				return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
+			}
+			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
+		}
+		s.notifier.Notify(service.AllocatedAgentID)
+	}
 	currentService, allocation, err := s.store.serviceStatus(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "redeploy service status: %v", err)
+	}
+	currentService, err = s.decorateServiceRecord(ctx, currentService)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
 	}
 	return &platformv1.ServiceStatus{Service: toProtoService(currentService), Allocation: toProtoAllocation(allocation)}, nil
 }
@@ -210,6 +289,10 @@ func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetSer
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
+	service, err = s.decorateServiceRecord(ctx, service)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+	}
 	return toProtoService(service), nil
 }
 
@@ -224,6 +307,10 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	}
 	resp := &platformv1.ListServicesResponse{Services: make([]*platformv1.Service, 0, len(items))}
 	for _, item := range items {
+		item, err = s.decorateServiceRecord(ctx, item)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+		}
 		resp.Services = append(resp.Services, toProtoService(item))
 	}
 	return resp, nil
@@ -392,6 +479,10 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
+	service, err = s.decorateServiceRecord(ctx, service)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
+	}
 	return &platformv1.ServiceStatus{Service: toProtoService(service), Allocation: toProtoAllocation(allocation)}, nil
 }
 
@@ -408,4 +499,11 @@ func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*pl
 		resp.Agents = append(resp.Agents, toProtoAgent(item))
 	}
 	return resp, nil
+}
+
+func (s *PlatformService) decorateServiceRecord(ctx context.Context, service serviceRecord) (serviceRecord, error) {
+	if service.SourceSummary == nil {
+		service.SourceSummary = buildSourceSummary(service.Spec)
+	}
+	return service, nil
 }
