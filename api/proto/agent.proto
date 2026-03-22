@@ -63,7 +63,7 @@ message DesiredService {
   string project_id = 3;
   string name = 4;
   int64 desired_spec_revision = 5;
-  platform.v1.ServiceSpec spec = 6;
+  platform.v1.ResolvedServiceSpec spec = 6;
   string private_ipv6 = 7;
   string volume_id = 8;
   int64 desired_rollout_generation = 9;
