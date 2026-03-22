@@ -20,6 +20,7 @@ type output struct {
 func main() {
 	stateDir := flag.String("state-dir", "", "controlplane state dir")
 	callerID := flag.String("caller-id", "dashboard", "client caller id")
+	callerClass := flag.String("caller-class", "dashboard", "client caller class (dashboard or builder)")
 	flag.Parse()
 
 	if *stateDir == "" {
@@ -41,7 +42,15 @@ func main() {
 		log.Fatalf("load controlplane authority: %v", err)
 	}
 
-	identity, err := authority.EnsureDashboardClientIdentity(*callerID)
+	var identity controlplane.ClientIdentityMaterial
+	switch *callerClass {
+	case "dashboard":
+		identity, err = authority.EnsureDashboardClientIdentity(*callerID)
+	case "builder":
+		identity, err = authority.EnsureBuilderClientIdentity(*callerID)
+	default:
+		log.Fatalf("unsupported caller class %q", *callerClass)
+	}
 	if err != nil {
 		log.Fatalf("ensure client identity: %v", err)
 	}

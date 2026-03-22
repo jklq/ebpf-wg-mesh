@@ -242,6 +242,7 @@ func (e *containerdEngine) ensureImage(ctx context.Context, ref string) (contain
 }
 
 func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image containerd.Image, netnsPath string) []oci.SpecOpts {
+	runtime := svc.GetSpec().GetRuntime()
 	opts := []oci.SpecOpts{
 		oci.WithDefaultSpec(),
 		oci.WithDefaultPathEnv,
@@ -251,15 +252,20 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		oci.WithHostname(svc.GetName()),
 		oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace, Path: netnsPath}),
 	}
-	if len(svc.GetSpec().GetEnv()) > 0 {
-		envs := make([]string, 0, len(svc.GetSpec().GetEnv()))
-		keys := make([]string, 0, len(svc.GetSpec().GetEnv()))
-		for key := range svc.GetSpec().GetEnv() {
+	if len(runtime.GetEnv()) > 0 {
+		envs := make([]string, 0, len(runtime.GetEnv()))
+		keys := make([]string, 0, len(runtime.GetEnv()))
+		for key := range runtime.GetEnv() {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			envs = append(envs, key+"="+svc.GetSpec().GetEnv()[key])
+			var b strings.Builder
+			b.Grow(len(key) + 1 + len(runtime.GetEnv()[key]))
+			b.WriteString(key)
+			b.WriteByte('=')
+			b.WriteString(runtime.GetEnv()[key])
+			envs = append(envs, b.String())
 		}
 		opts = append(opts, oci.WithEnv(envs))
 	}
@@ -272,18 +278,18 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		}}))
 		opts = append(opts, oci.WithEnv([]string{"PLATFORM_VOLUME_DIR=" + defaultVolumeMount}))
 	}
-	if !e.cfg.Runtime.DisableCgroups && svc.GetSpec().GetMemoryMebibytes() > 0 {
-		opts = append(opts, oci.WithMemoryLimit(uint64(svc.GetSpec().GetMemoryMebibytes())*1024*1024))
+	if !e.cfg.Runtime.DisableCgroups && runtime.GetMemoryMebibytes() > 0 {
+		opts = append(opts, oci.WithMemoryLimit(uint64(runtime.GetMemoryMebibytes())*1024*1024))
 	}
-	if !e.cfg.Runtime.DisableCgroups && svc.GetSpec().GetCpuMillis() > 0 {
-		opts = append(opts, oci.WithCPUs(fmt.Sprintf("%.3f", float64(svc.GetSpec().GetCpuMillis())/1000.0)))
+	if !e.cfg.Runtime.DisableCgroups && runtime.GetCpuMillis() > 0 {
+		opts = append(opts, oci.WithCPUs(fmt.Sprintf("%.3f", float64(runtime.GetCpuMillis())/1000.0)))
 	}
-	if cmd := svc.GetSpec().GetCommand(); len(cmd) > 0 {
+	if cmd := runtime.GetCommand(); len(cmd) > 0 {
 		args := append([]string{}, cmd...)
-		args = append(args, svc.GetSpec().GetArgs()...)
+		args = append(args, runtime.GetArgs()...)
 		opts = append(opts, oci.WithImageConfig(image), oci.WithProcessArgs(args...))
-	} else if len(svc.GetSpec().GetArgs()) > 0 {
-		opts = append(opts, oci.WithImageConfigArgs(image, svc.GetSpec().GetArgs()))
+	} else if len(runtime.GetArgs()) > 0 {
+		opts = append(opts, oci.WithImageConfigArgs(image, runtime.GetArgs()))
 	} else {
 		opts = append(opts, oci.WithImageConfig(image))
 	}
@@ -324,10 +330,11 @@ func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string
 }
 
 func endpointForService(svc *agentv1.DesiredService) string {
-	if svc.GetSpec().GetContainerPort() == 0 || svc.GetPrivateIpv6() == "" {
+	runtime := svc.GetSpec().GetRuntime()
+	if runtime.GetContainerPort() == 0 || svc.GetPrivateIpv6() == "" {
 		return ""
 	}
-	return net.JoinHostPort(svc.GetPrivateIpv6(), fmt.Sprintf("%d", svc.GetSpec().GetContainerPort()))
+	return net.JoinHostPort(svc.GetPrivateIpv6(), fmt.Sprintf("%d", runtime.GetContainerPort()))
 }
 
 func projectLabelValue(projectID string) uint32 {

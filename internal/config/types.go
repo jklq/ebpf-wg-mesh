@@ -44,8 +44,17 @@ type BootstrapUser struct {
 
 type IngressConfig struct {
 	AdminURL                 string
+	AdminListen              string
+	ListenAddrs              []string
+	DisableAutomaticHTTPS    bool
+	StaticRoutes             []StaticIngressRouteConfig
 	PublicAddr               string
 	ControlPlaneHTTPUpstream string
+}
+
+type StaticIngressRouteConfig struct {
+	Hosts    []string
+	Upstream string
 }
 
 type ManagedDashboardConfig struct {
@@ -55,6 +64,8 @@ type ManagedDashboardConfig struct {
 	ServiceName       string
 	ServiceCallerID   string
 	PublicDomain      string
+	GitHubInstallURL  string
+	IngressTargetHost string
 	ControlPlaneAddr  string
 	ControlPlaneSNI   string
 	Image             string
@@ -67,11 +78,32 @@ type ManagedDashboardConfig struct {
 	MemoryMebibytes   int64
 	DatabaseSchema    string
 	SessionCookieName string
+	JWTSecret         string
 	DevUsers          []BootstrapUser
 }
 
+type GitHubAppConfig struct {
+	Enabled       bool
+	AppID         int64
+	WebhookSecret string
+	PrivateKeyPEM string
+	APIBaseURL    string
+	WebBaseURL    string
+	WebhookPath   string
+}
+
+type RegistryConfig struct {
+	Host            string
+	NamespacePrefix string
+	Username        string
+	Password        string
+}
+
+type ControlPlaneBuilderConfig struct {
+	HeartbeatTimeoutSeconds int
+}
+
 type ControlPlaneConfig struct {
-	PublicHTTP   ListenerConfig
 	InternalGRPC ListenerConfig
 	Database     DatabaseConfig
 	StateDir     string
@@ -79,6 +111,9 @@ type ControlPlaneConfig struct {
 	Ingress      IngressConfig
 	Dashboard    ManagedDashboardConfig
 	Bootstrap    BootstrapConfig
+	GitHub       GitHubAppConfig
+	Registry     RegistryConfig
+	Builder      ControlPlaneBuilderConfig
 	Mesh         ControlPlaneMeshConfig
 }
 
@@ -107,6 +142,13 @@ type ControlPlaneClientConfig struct {
 	TLS     ClientTLSConfig
 }
 
+type InternalClientTLSConfig struct {
+	CAFile     string
+	CertFile   string
+	KeyFile    string
+	ServerName string
+}
+
 type RuntimeConfig struct {
 	DataDir        string
 	VolumesDir     string
@@ -126,6 +168,24 @@ type AgentConfig struct {
 	Runtime      RuntimeConfig
 	Containerd   ContainerdConfig
 	Mesh         MeshConfig
+}
+
+type BuilderControlPlaneConfig struct {
+	Address string
+	TLS     InternalClientTLSConfig
+}
+
+type BuilderConfig struct {
+	ID                       string
+	Name                     string
+	ControlPlane             BuilderControlPlaneConfig
+	WorkDir                  string
+	PollIntervalSeconds      int
+	HeartbeatIntervalSeconds int
+	GitBinary                string
+	BuildctlBinary           string
+	BuildkitAddress          string
+	CleanupWorkDir           bool
 }
 
 type AgentMeshAssignment struct {

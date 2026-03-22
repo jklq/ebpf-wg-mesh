@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strings"
 )
 
 func validateControlPlane(cfg ControlPlaneConfig) error {
-	if cfg.PublicHTTP.Listen == "" {
-		return errors.New("controlplane.publicHttp.listen is required")
-	}
 	if cfg.InternalGRPC.Listen == "" {
 		return errors.New("controlplane.internalGrpc.listen is required")
 	}
@@ -33,6 +31,19 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
 	}
+	for _, addr := range cfg.Ingress.ListenAddrs {
+		if strings.TrimSpace(addr) == "" {
+			return errors.New("controlplane.ingress.listenAddrs must not contain blanks")
+		}
+	}
+	for _, route := range cfg.Ingress.StaticRoutes {
+		if strings.TrimSpace(route.Upstream) == "" {
+			return errors.New("controlplane.ingress.staticRoutes upstream is required")
+		}
+		if len(route.Hosts) == 0 {
+			return errors.New("controlplane.ingress.staticRoutes hosts are required")
+		}
+	}
 	if cfg.Dashboard.Enabled {
 		if cfg.Dashboard.Image == "" {
 			return errors.New("controlplane.dashboard.image is required when dashboard is enabled")
@@ -49,6 +60,44 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 		if cfg.Dashboard.ControlPlaneAddr == "" {
 			return errors.New("controlplane.dashboard.controlPlaneAddr is required when dashboard is enabled")
 		}
+		if strings.TrimSpace(cfg.Dashboard.JWTSecret) == "" {
+			return errors.New("controlplane.dashboard.jwtSecret is required when dashboard is enabled")
+		}
+	}
+	if cfg.GitHub.Enabled {
+		if cfg.GitHub.AppID <= 0 {
+			return errors.New("controlplane.github.appId is required when GitHub is enabled")
+		}
+		if strings.TrimSpace(cfg.GitHub.WebhookSecret) == "" {
+			return errors.New("controlplane.github.webhookSecret is required when GitHub is enabled")
+		}
+		if strings.TrimSpace(cfg.GitHub.PrivateKeyPEM) == "" {
+			return errors.New("controlplane.github.privateKeyPem is required when GitHub is enabled")
+		}
+		if err := validateAbsoluteURL("controlplane.github.apiBaseUrl", cfg.GitHub.APIBaseURL); err != nil {
+			return err
+		}
+		if err := validateAbsoluteURL("controlplane.github.webBaseUrl", cfg.GitHub.WebBaseURL); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(cfg.GitHub.WebhookPath, "/") {
+			return errors.New("controlplane.github.webhookPath must start with /")
+		}
+		if strings.Contains(cfg.GitHub.WebhookPath, " ") {
+			return errors.New("controlplane.github.webhookPath must not contain spaces")
+		}
+		if cfg.Registry.Host == "" {
+			return errors.New("controlplane.registry.host is required when GitHub is enabled")
+		}
+		if cfg.Registry.Username == "" {
+			return errors.New("controlplane.registry.username is required when GitHub is enabled")
+		}
+		if cfg.Registry.Password == "" {
+			return errors.New("controlplane.registry.password is required when GitHub is enabled")
+		}
+	}
+	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
+		return errors.New("controlplane.builder.heartbeatTimeoutSeconds must be greater than 0")
 	}
 	if cfg.Mesh.InterfaceName == "" {
 		return errors.New("controlplane.mesh.interfaceName is required")
@@ -141,6 +190,49 @@ func validateAgent(cfg AgentConfig) error {
 	return nil
 }
 
+func validateBuilder(cfg BuilderConfig) error {
+	if cfg.ID == "" {
+		return errors.New("builder.id is required")
+	}
+	if cfg.Name == "" {
+		return errors.New("builder.name is required")
+	}
+	if cfg.ControlPlane.Address == "" {
+		return errors.New("builder.controlPlane.address is required")
+	}
+	if cfg.ControlPlane.TLS.CAFile == "" {
+		return errors.New("builder.controlPlane.tls.caFile is required")
+	}
+	if cfg.ControlPlane.TLS.CertFile == "" {
+		return errors.New("builder.controlPlane.tls.certFile is required")
+	}
+	if cfg.ControlPlane.TLS.KeyFile == "" {
+		return errors.New("builder.controlPlane.tls.keyFile is required")
+	}
+	if cfg.ControlPlane.TLS.ServerName == "" {
+		return errors.New("builder.controlPlane.tls.serverName is required")
+	}
+	if cfg.WorkDir == "" {
+		return errors.New("builder.workDir is required")
+	}
+	if cfg.PollIntervalSeconds <= 0 {
+		return errors.New("builder.pollIntervalSeconds must be greater than 0")
+	}
+	if cfg.HeartbeatIntervalSeconds <= 0 {
+		return errors.New("builder.heartbeatIntervalSeconds must be greater than 0")
+	}
+	if cfg.GitBinary == "" {
+		return errors.New("builder.gitBinary is required")
+	}
+	if cfg.BuildctlBinary == "" {
+		return errors.New("builder.buildctlBinary is required")
+	}
+	if cfg.BuildkitAddress == "" {
+		return errors.New("builder.buildkitAddress is required")
+	}
+	return nil
+}
+
 func validateCIDR(field string, raw string, prefixBits int) error {
 	ip, network, err := net.ParseCIDR(raw)
 	if err != nil || network == nil {
@@ -203,6 +295,17 @@ func validateClientTLS(prefix string, cfg ClientTLSConfig) error {
 	}
 	if cfg.RenewBeforeMinutes <= 0 {
 		return fmt.Errorf("%s.renewBeforeMinutes must be greater than 0", prefix)
+	}
+	return nil
+}
+
+func validateAbsoluteURL(field string, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid absolute URL: %w", field, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be a valid absolute URL: %q", field, raw)
 	}
 	return nil
 }

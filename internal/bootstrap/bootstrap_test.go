@@ -11,7 +11,6 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := ControlPlane([]string{
-		"-public-listen", "0.0.0.0:8080",
 		"-internal-server-names", "controlplane,controlplane-internal",
 		"-agent-bootstrap-tokens", "token-a,token-b",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",

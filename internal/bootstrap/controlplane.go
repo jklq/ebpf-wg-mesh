@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"flag"
 	"fmt"
+	"os"
 
 	"ebof-wg-mesh/internal/config"
 )
@@ -17,9 +18,9 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var dashboardArgs string
 	var dashboardEnv string
 	var dashboardContainerPort int
+	var githubPrivateKeyFile string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
-	stringFlag(fs, &cfg.PublicHTTP.Listen, "public-listen", "CONTROLPLANE_PUBLIC_LISTEN", "0.0.0.0:8080", "")
 	stringFlag(fs, &cfg.InternalGRPC.Listen, "internal-listen", "CONTROLPLANE_INTERNAL_LISTEN", "0.0.0.0:9443", "")
 	stringFlag(fs, &internalServerNames, "internal-server-names", "CONTROLPLANE_INTERNAL_SERVER_NAMES", "controlplane,controlplane-internal,localhost", "")
 	stringFlag(fs, &agentBootstrapTokens, "agent-bootstrap-tokens", "CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS", "", "")
@@ -40,6 +41,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.Dashboard.ServiceName, "dashboard-service-name", "CONTROLPLANE_DASHBOARD_SERVICE_NAME", "dashboard", "")
 	stringFlag(fs, &cfg.Dashboard.ServiceCallerID, "dashboard-service-caller-id", "CONTROLPLANE_DASHBOARD_SERVICE_CALLER_ID", "dashboard", "")
 	stringFlag(fs, &cfg.Dashboard.PublicDomain, "dashboard-public-domain", "CONTROLPLANE_DASHBOARD_PUBLIC_DOMAIN", "", "")
+	stringFlag(fs, &cfg.Dashboard.GitHubInstallURL, "dashboard-github-install-url", "CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL", "", "")
+	stringFlag(fs, &cfg.Dashboard.IngressTargetHost, "dashboard-ingress-target-host", "CONTROLPLANE_DASHBOARD_INGRESS_TARGET_HOST", "", "")
 	stringFlag(fs, &cfg.Dashboard.ControlPlaneAddr, "dashboard-controlplane-addr", "CONTROLPLANE_DASHBOARD_CONTROLPLANE_ADDR", "controlplane:9443", "")
 	stringFlag(fs, &cfg.Dashboard.ControlPlaneSNI, "dashboard-controlplane-sni", "CONTROLPLANE_DASHBOARD_CONTROLPLANE_SNI", "controlplane", "")
 	stringFlag(fs, &cfg.Dashboard.Image, "dashboard-image", "CONTROLPLANE_DASHBOARD_IMAGE", "", "")
@@ -52,6 +55,19 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	int64Flag(fs, &cfg.Dashboard.MemoryMebibytes, "dashboard-memory-mebibytes", "CONTROLPLANE_DASHBOARD_MEMORY_MEBIBYTES", 256, "")
 	stringFlag(fs, &cfg.Dashboard.DatabaseSchema, "dashboard-db-schema", "CONTROLPLANE_DASHBOARD_DB_SCHEMA", "dashboard", "")
 	stringFlag(fs, &cfg.Dashboard.SessionCookieName, "dashboard-session-cookie-name", "CONTROLPLANE_DASHBOARD_SESSION_COOKIE_NAME", "dashboard_session", "")
+	stringFlag(fs, &cfg.Dashboard.JWTSecret, "dashboard-jwt-secret", "CONTROLPLANE_DASHBOARD_JWT_SECRET", "", "")
+	boolFlag(fs, &cfg.GitHub.Enabled, "github-enabled", "CONTROLPLANE_GITHUB_ENABLED", false, "")
+	int64Flag(fs, &cfg.GitHub.AppID, "github-app-id", "CONTROLPLANE_GITHUB_APP_ID", 0, "")
+	stringFlag(fs, &cfg.GitHub.WebhookSecret, "github-webhook-secret", "CONTROLPLANE_GITHUB_WEBHOOK_SECRET", "", "")
+	stringFlag(fs, &githubPrivateKeyFile, "github-private-key-file", "CONTROLPLANE_GITHUB_PRIVATE_KEY_FILE", "", "")
+	stringFlag(fs, &cfg.GitHub.APIBaseURL, "github-api-base-url", "CONTROLPLANE_GITHUB_API_BASE_URL", "https://api.github.com", "")
+	stringFlag(fs, &cfg.GitHub.WebBaseURL, "github-web-base-url", "CONTROLPLANE_GITHUB_WEB_BASE_URL", "https://github.com", "")
+	stringFlag(fs, &cfg.GitHub.WebhookPath, "github-webhook-path", "CONTROLPLANE_GITHUB_WEBHOOK_PATH", "/webhooks/github", "")
+	stringFlag(fs, &cfg.Registry.Host, "registry-host", "CONTROLPLANE_REGISTRY_HOST", "", "")
+	stringFlag(fs, &cfg.Registry.NamespacePrefix, "registry-namespace-prefix", "CONTROLPLANE_REGISTRY_NAMESPACE_PREFIX", "mesh", "")
+	stringFlag(fs, &cfg.Registry.Username, "registry-username", "CONTROLPLANE_REGISTRY_USERNAME", "", "")
+	stringFlag(fs, &cfg.Registry.Password, "registry-password", "CONTROLPLANE_REGISTRY_PASSWORD", "", "")
+	intFlag(fs, &cfg.Builder.HeartbeatTimeoutSeconds, "builder-heartbeat-timeout-seconds", "CONTROLPLANE_BUILDER_HEARTBEAT_TIMEOUT_SECONDS", 120, "")
 	stringFlag(fs, &cfg.Mesh.InterfaceName, "mesh-interface-name", "CONTROLPLANE_MESH_INTERFACE_NAME", "wg0", "")
 	intFlag(fs, &cfg.Mesh.ListenPort, "mesh-listen-port", "CONTROLPLANE_MESH_LISTEN_PORT", 51820, "")
 	stringFlag(fs, &cfg.Mesh.NetworkCIDR, "mesh-network-cidr", "CONTROLPLANE_MESH_NETWORK_CIDR", "fd00:44::/64", "")
@@ -69,6 +85,13 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	cfg.Dashboard.Command = splitWhitespaceList(dashboardCommand)
 	cfg.Dashboard.Args = splitWhitespaceList(dashboardArgs)
 	cfg.Dashboard.Env = parseEnvPairs(dashboardEnv)
+	if githubPrivateKeyFile != "" {
+		privateKeyPEM, err := os.ReadFile(githubPrivateKeyFile)
+		if err != nil {
+			return config.ControlPlaneConfig{}, fmt.Errorf("read GitHub private key %s: %w", githubPrivateKeyFile, err)
+		}
+		cfg.GitHub.PrivateKeyPEM = string(privateKeyPEM)
+	}
 	for _, user := range bootstrapUsers {
 		cfg.Bootstrap.Users = append(cfg.Bootstrap.Users, config.BootstrapUser{
 			Subject:  user.subject,
