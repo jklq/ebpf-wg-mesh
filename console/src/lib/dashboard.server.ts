@@ -5,37 +5,19 @@ import {
 	getCookie,
 	setCookie,
 } from "@tanstack/react-start/server";
-import { Effect, Layer, ManagedRuntime, Schema, ServiceMap } from "effect";
 import { Pool } from "pg";
 
 import {
-	DashboardClockService,
 	DashboardConfigError,
-	DashboardConfigService,
-	DashboardStoreService,
-	DashboardUUIDService,
-	GitHubAppUserClientService,
-	PlatformGatewayService,
-	createDashboardRequestLayer,
-	type DashboardConfig,
-	type DashboardHomeState,
-	type DashboardProject,
-	type DevLoginIdentity,
-	type SessionCookiesService,
-	beginGitHubLoginEffect,
-	clearSessionEffect,
-	completeAuthCallbackEffect,
-	createProjectFromSessionEffect,
-	confirmRepositoryFromSessionEffect,
-	isGitHubLoginEnabledEffect,
-	inspectRepositoryFromSessionEffect,
-	listDevLoginsEffect,
-	loadDashboardHomeEffect,
+	createDashboardService,
 	parseDevUsers,
 	parseIdentifier,
-	publishDomainFromSessionEffect,
-	refreshSessionEffect,
-	saveHostnameFromSessionEffect,
+	type DashboardConfig,
+	type DashboardDomainBinding,
+	type DashboardHomeState,
+	type DashboardOnboardingDraft,
+	type DashboardProject,
+	type DevLoginIdentity,
 } from "#/lib/dashboard-core.server";
 import { createPostgresDashboardStore } from "#/lib/dashboard-store.server";
 import { createGitHubAppUserClient } from "#/lib/github-auth.server";
@@ -55,36 +37,29 @@ interface RuntimeConfig extends DashboardConfig {
 	controlPlaneKey: Buffer;
 }
 
-class PostgresPoolService extends ServiceMap.Service<
-	PostgresPoolService,
-	Pool
->()("dashboard/PostgresPool") {}
-
-type ServerServices =
-	| DashboardConfigService
-	| DashboardStoreService
-	| PlatformGatewayService
-	| DashboardClockService
-	| DashboardUUIDService
-	| GitHubAppUserClientService
-	| PostgresPoolService;
-
-type RequestServices = ServerServices | SessionCookiesService;
-
-const NonEmptyEnvString = Schema.NonEmptyString;
-const Base64EnvString = Schema.String.check(Schema.isBase64());
-const decodeNonEmptyEnv = Schema.decodeUnknownSync(NonEmptyEnvString);
-const decodeBase64EnvString = Schema.decodeUnknownSync(Base64EnvString);
-
 const config = readConfig();
-const runtime = ManagedRuntime.make(createServerLayer(config));
+const pool = new Pool({
+	connectionString: config.databaseURL,
+});
+const service = createDashboardService(config, {
+	store: createPostgresDashboardStore(config, pool),
+	platform: createPlatformGateway(config),
+	github: config.github ? createGitHubAppUserClient(config.github) : undefined,
+	cookies: {
+		get: (name) => getCookie(name) ?? undefined,
+		set: (name, value, options) => setCookie(name, value, options),
+		delete: (name, options) => deleteCookie(name, options),
+	},
+	now: () => new Date(),
+	randomUUID,
+});
 
 export function listDevLogins(): Array<DevLoginIdentity> {
-	return runtime.runSync(listDevLoginsEffect);
+	return service.listDevLogins();
 }
 
 export function isGitHubLoginEnabled(): boolean {
-	return runtime.runSync(isGitHubLoginEnabledEffect);
+	return service.isGitHubLoginEnabled();
 }
 
 export function getPublicBaseURL(): string {
@@ -94,7 +69,7 @@ export function getPublicBaseURL(): string {
 export function beginGitHubLogin(input: {
 	redirectTo?: string;
 }): Promise<string> {
-	return runRequest("beginGitHubLogin", beginGitHubLoginEffect(input));
+	return service.beginGitHubLogin(input);
 }
 
 export function completeAuthCallback(input: {
@@ -104,29 +79,23 @@ export function completeAuthCallback(input: {
 	email?: string;
 	redirectTo?: string;
 }): Promise<string> {
-	return runRequest("completeAuthCallback", completeAuthCallbackEffect(input));
+	return service.completeAuthCallback(input);
 }
 
 export function loadDashboardHome(): Promise<DashboardHomeState | null> {
-	return runRequest("loadDashboardHome", loadDashboardHomeEffect);
+	return service.loadDashboardHome();
 }
 
 export function createProjectFromSession(
 	name: string,
 ): Promise<DashboardProject> {
-	return runRequest(
-		"createProjectFromSession",
-		createProjectFromSessionEffect(name),
-	);
+	return service.createProjectFromSession(name);
 }
 
 export function inspectRepositoryFromSession(input: {
 	repositorySelector: string;
-}): Promise<import("#/lib/dashboard-core.server").DashboardOnboardingDraft> {
-	return runRequest(
-		"inspectRepositoryFromSession",
-		inspectRepositoryFromSessionEffect(input),
-	);
+}): Promise<DashboardOnboardingDraft> {
+	return service.inspectRepositoryFromSession(input);
 }
 
 export function confirmRepositoryFromSession(input: {
@@ -135,108 +104,32 @@ export function confirmRepositoryFromSession(input: {
 	dockerfilePath?: string;
 	contextDir?: string;
 	containerPort?: string;
-}): Promise<import("#/lib/dashboard-core.server").DashboardOnboardingDraft> {
-	return runRequest(
-		"confirmRepositoryFromSession",
-		confirmRepositoryFromSessionEffect(input),
-	);
+}): Promise<DashboardOnboardingDraft> {
+	return service.confirmRepositoryFromSession(input);
 }
 
 export function saveHostnameFromSession(
 	hostname: string,
-): Promise<import("#/lib/dashboard-core.server").DashboardOnboardingDraft> {
-	return runRequest(
-		"saveHostnameFromSession",
-		saveHostnameFromSessionEffect(hostname),
-	);
+): Promise<DashboardOnboardingDraft> {
+	return service.saveHostnameFromSession(hostname);
 }
 
-export function publishDomainFromSession(): Promise<
-	import("#/lib/dashboard-core.server").DashboardDomainBinding
-> {
-	return runRequest("publishDomainFromSession", publishDomainFromSessionEffect);
+export function publishDomainFromSession(): Promise<DashboardDomainBinding> {
+	return service.publishDomainFromSession();
 }
 
 export function clearSession(): Promise<void> {
-	return runRequest("clearSession", clearSessionEffect);
+	return service.clearSession();
 }
 
 export function refreshSession(): Promise<void> {
-	return runRequest("refreshSession", refreshSessionEffect);
+	return service.refreshSession();
 }
 
 export function forwardGitHubWebhook(
 	input: IngestGitHubWebhookInput,
 ): Promise<void> {
-	return runtime.runPromise(
-		Effect.tryPromise({
-			try: () => ingestGitHubWebhook(config, input),
-			catch: (cause) => cause,
-		}).pipe(Effect.withSpan("dashboard.forwardGitHubWebhook")),
-	);
-}
-
-function createServerLayer(config: RuntimeConfig): Layer.Layer<ServerServices> {
-	const poolLayer = Layer.effect(PostgresPoolService)(
-		Effect.acquireRelease(
-			Effect.sync(
-				() =>
-					new Pool({
-						connectionString: config.databaseURL,
-					}),
-			),
-			(pool) => Effect.promise(() => pool.end()).pipe(Effect.asVoid),
-		),
-	);
-
-	const storeLayer = Layer.effect(DashboardStoreService)(
-		Effect.gen(function* () {
-			const pool = yield* PostgresPoolService;
-			return createPostgresDashboardStore(config, pool);
-		}),
-	).pipe(Layer.provide(poolLayer));
-
-	let layer = Layer.mergeAll(
-		poolLayer,
-		Layer.succeed(DashboardConfigService)(config),
-		storeLayer,
-		Layer.succeed(PlatformGatewayService)(createPlatformGateway(config)),
-		Layer.succeed(DashboardClockService)({
-			now: () => new Date(),
-		}),
-		Layer.succeed(DashboardUUIDService)({
-			randomUUID,
-		}),
-	);
-
-	if (config.github) {
-		layer = Layer.merge(
-			layer,
-			Layer.succeed(GitHubAppUserClientService)(
-				createGitHubAppUserClient(config.github),
-			),
-		);
-	}
-
-	return layer as unknown as Layer.Layer<ServerServices>;
-}
-
-function runRequest<A, E>(
-	operation: string,
-	program: Effect.Effect<A, E, RequestServices>,
-): Promise<A> {
-	void operation;
-	return runtime.runPromise(
-		program.pipe(Effect.provide(requestCookiesLayer())),
-	);
-}
-
-function requestCookiesLayer() {
-	return createDashboardRequestLayer({
-		get: (name) => getCookie(name) ?? undefined,
-		set: (name, value, options) => setCookie(name, value, options),
-		delete: (name, options) => deleteCookie(name, options),
-	});
+	return ingestGitHubWebhook(config, input);
 }
 
 function readConfig(): RuntimeConfig {
@@ -298,24 +191,23 @@ function readConfig(): RuntimeConfig {
 }
 
 function decodeBase64Env(name: string): Buffer {
-	try {
-		return Buffer.from(decodeBase64EnvString(mustEnv(name)), "base64");
-	} catch {
+	const value = mustEnv(name);
+	if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
 		throw new DashboardConfigError({
 			message: `invalid required base64 environment variable ${name}`,
 		});
 	}
+	return Buffer.from(value, "base64");
 }
 
 function mustEnv(name: string): string {
-	const value = process.env[name];
-	try {
-		return decodeNonEmptyEnv(value?.trim());
-	} catch {
+	const value = process.env[name]?.trim();
+	if (!value) {
 		throw new DashboardConfigError({
 			message: `missing required environment variable ${name}`,
 		});
 	}
+	return value;
 }
 
 export type {

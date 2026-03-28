@@ -1,16 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
-import { Effect } from "effect";
 
 import {
 	AuthConflictError,
 	DatabaseError,
-	type DashboardGitHubAccount,
 	type DashboardOnboardingDraft,
 	type DashboardStore,
 	type DashboardUser,
 	type GitHubAccountLoginInput,
-	type GitHubAccountLoginResult,
 } from "#/lib/dashboard-core.server";
 
 interface UserRow {
@@ -67,7 +64,7 @@ export function createPostgresDashboardStore(
 
 	function ensureInitialized(): Promise<void> {
 		if (!initPromise) {
-			initPromise = Effect.runPromise(migrateDashboardStoreEffect(runtime, db));
+			initPromise = migrateDashboardStore(runtime, db);
 		}
 		return initPromise;
 	}
@@ -76,268 +73,309 @@ export function createPostgresDashboardStore(
 		ensureInitialized,
 
 		async upsertDevUser(subject, email) {
-			return Effect.runPromise(
-				upsertDevUserEffect(runtime, db, subject, email),
+			const id = randomUUID();
+			const result = await query<UserRow>(
+				db,
+				"upsertDevUser.user",
+				`INSERT INTO ${tableName(runtime, "users")} (id, subject, email, created_at, updated_at)
+				 VALUES ($1, $2, $3, NOW(), NOW())
+				 ON CONFLICT (subject) DO UPDATE SET email = excluded.email, updated_at = NOW()
+				 RETURNING id, subject, email`,
+				[id, subject, email],
 			);
+			const user = rowAt(result.rows, 0, "upsertDevUser.user");
+			await queryVoid(
+				db,
+				"upsertDevUser.account",
+				`INSERT INTO ${tableName(runtime, "accounts")} (
+					id, user_id, provider, provider_subject, verified_email_snapshot, provider_login, created_at, updated_at, last_login_at
+				) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
+				ON CONFLICT (provider, provider_subject) DO UPDATE
+				   SET verified_email_snapshot = excluded.verified_email_snapshot,
+				       provider_login = excluded.provider_login,
+				       updated_at = NOW(),
+				       last_login_at = NOW()`,
+				[randomUUID(), user.id, "dev", user.subject, user.email, user.subject],
+			);
+			await ensureOnboarding(runtime, db, user.id);
+			return user;
 		},
 
 		async completeGitHubLogin(input) {
-			return Effect.runPromise(completeGitHubLoginEffect(runtime, db, input));
-		},
-
-		async getGitHubAccount(userID) {
-			return Effect.runPromise(getGitHubAccountEffect(runtime, db, userID));
-		},
-
-		async getOnboardingDraft(userID) {
-			return Effect.runPromise(getOnboardingDraftEffect(runtime, db, userID));
-		},
-
-		async saveOnboardingDraft(userID, draft) {
-			return Effect.runPromise(
-				saveOnboardingDraftEffect(runtime, db, userID, draft),
-			);
-		},
-
-		async createRefreshSession(sessionId, userID, expiresAt) {
-			await Effect.runPromise(
-				queryVoidEffect(
-					db,
-					"createRefreshSession",
-					`INSERT INTO ${tableName(runtime, "refresh_sessions")} (id, user_id, created_at, expires_at)
-					 VALUES ($1, $2, NOW(), $3)`,
-					[sessionId, userID, expiresAt],
-				),
-			);
-		},
-
-		async deleteRefreshSession(sessionId) {
-			await Effect.runPromise(
-				queryVoidEffect(
-					db,
-					"deleteRefreshSession",
-					`DELETE FROM ${tableName(runtime, "refresh_sessions")} WHERE id = $1`,
-					[sessionId],
-				),
-			);
-		},
-
-		async rotateRefreshSession(input) {
-			return Effect.runPromise(rotateRefreshSessionEffect(runtime, db, input));
-		},
-	};
-}
-
-const upsertDevUserEffect = (
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-	subject: string,
-	email: string,
-): Effect.Effect<DashboardUser, DatabaseError> =>
-	Effect.gen(function* () {
-		const id = randomUUID();
-		const result = yield* queryEffect<UserRow>(
-			db,
-			"upsertDevUser.user",
-			`INSERT INTO ${tableName(runtime, "users")} (id, subject, email, created_at, updated_at)
-			 VALUES ($1, $2, $3, NOW(), NOW())
-			 ON CONFLICT (subject) DO UPDATE SET email = excluded.email, updated_at = NOW()
-			 RETURNING id, subject, email`,
-			[id, subject, email],
-		);
-		const user = rowAt(result.rows, 0, "upsertDevUser.user");
-		yield* queryVoidEffect(
-			db,
-			"upsertDevUser.account",
-			`INSERT INTO ${tableName(runtime, "accounts")} (
-				id, user_id, provider, provider_subject, verified_email_snapshot, provider_login, created_at, updated_at, last_login_at
-			) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
-			ON CONFLICT (provider, provider_subject) DO UPDATE
-			   SET verified_email_snapshot = excluded.verified_email_snapshot,
-			       provider_login = excluded.provider_login,
-			       updated_at = NOW(),
-			       last_login_at = NOW()`,
-			[randomUUID(), user.id, "dev", user.subject, user.email, user.subject],
-		);
-		yield* ensureOnboardingEffect(runtime, db, user.id);
-		return user;
-	}).pipe(Effect.withSpan("dashboard.store.upsertDevUser"));
-
-const completeGitHubLoginEffect = (
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-	input: GitHubAccountLoginInput,
-): Effect.Effect<GitHubAccountLoginResult, AuthConflictError | DatabaseError> =>
-	withTransactionEffect(db, "completeGitHubLogin", (client) =>
-		Effect.gen(function* () {
-			const existingAccount = yield* queryEffect<{ user_id: string }>(
-				client,
-				"completeGitHubLogin.existingAccount",
-				`SELECT user_id
-				   FROM ${tableName(runtime, "accounts")}
-				  WHERE provider = 'github' AND provider_subject = $1`,
-				[input.providerSubject],
-			);
-			if ((existingAccount.rowCount ?? 0) === 1) {
-				const userID = rowAt(
-					existingAccount.rows,
-					0,
+			return withTransaction(db, "completeGitHubLogin", async (client) => {
+				const existingAccount = await query<{ user_id: string }>(
+					client,
 					"completeGitHubLogin.existingAccount",
-				).user_id;
-				yield* updateGitHubAccountEffect(runtime, client, userID, input);
-				const user = yield* userByIDEffect(runtime, client, userID);
-				return { user, disposition: "login" as const };
-			}
+					`SELECT user_id
+					   FROM ${tableName(runtime, "accounts")}
+					  WHERE provider = 'github' AND provider_subject = $1`,
+					[input.providerSubject],
+				);
+				if ((existingAccount.rowCount ?? 0) === 1) {
+					const userID = rowAt(
+						existingAccount.rows,
+						0,
+						"completeGitHubLogin.existingAccount",
+					).user_id;
+					await updateGitHubAccount(runtime, client, userID, input);
+					const user = await userByID(runtime, client, userID);
+					return { user, disposition: "login" as const };
+				}
 
-			const exactEmailUsers = yield* queryEffect<UserRow>(
-				client,
-				"completeGitHubLogin.exactEmailUsers",
-				`SELECT id, subject, email
-				   FROM ${tableName(runtime, "users")}
-				  WHERE lower(email) = lower($1)
-				  ORDER BY id ASC`,
-				[input.primaryEmail],
-			);
-			if ((exactEmailUsers.rowCount ?? 0) > 1) {
-				return yield* Effect.fail(
-					new AuthConflictError({
+				const exactEmailUsers = await query<UserRow>(
+					client,
+					"completeGitHubLogin.exactEmailUsers",
+					`SELECT id, subject, email
+					   FROM ${tableName(runtime, "users")}
+					  WHERE lower(email) = lower($1)
+					  ORDER BY id ASC`,
+					[input.primaryEmail],
+				);
+				if ((exactEmailUsers.rowCount ?? 0) > 1) {
+					throw new AuthConflictError({
 						code: "ambiguous_existing_user",
 						message: "multiple users match the verified email",
-					}),
-				);
-			}
+					});
+				}
 
-			const conflictingGitHubEmail = yield* queryEffect<{ user_id: string }>(
-				client,
-				"completeGitHubLogin.conflictingGitHubEmail",
-				`SELECT user_id
-				   FROM ${tableName(runtime, "accounts")}
-				  WHERE provider = 'github'
-				    AND lower(COALESCE(verified_email_snapshot, '')) = lower($1)
-				    AND provider_subject <> $2
-				  LIMIT 1`,
-				[input.primaryEmail, input.providerSubject],
-			);
-			if ((conflictingGitHubEmail.rowCount ?? 0) > 0) {
-				return yield* Effect.fail(
-					new AuthConflictError({
+				const conflictingGitHubEmail = await query<{ user_id: string }>(
+					client,
+					"completeGitHubLogin.conflictingGitHubEmail",
+					`SELECT user_id
+					   FROM ${tableName(runtime, "accounts")}
+					  WHERE provider = 'github'
+					    AND lower(COALESCE(verified_email_snapshot, '')) = lower($1)
+					    AND provider_subject <> $2
+					  LIMIT 1`,
+					[input.primaryEmail, input.providerSubject],
+				);
+				if ((conflictingGitHubEmail.rowCount ?? 0) > 0) {
+					throw new AuthConflictError({
 						code: "email_linked_to_other_github",
 						message:
 							"verified email is already linked to another GitHub account",
-					}),
-				);
-			}
+					});
+				}
 
-			if ((exactEmailUsers.rowCount ?? 0) === 1) {
-				const user = rowAt(
-					exactEmailUsers.rows,
-					0,
-					"completeGitHubLogin.exactEmailUsers",
-				);
-				const existingGitHubAccount = yield* queryEffect<{
-					provider_subject: string;
-				}>(
-					client,
-					"completeGitHubLogin.existingGitHubAccount",
-					`SELECT provider_subject
-					   FROM ${tableName(runtime, "accounts")}
-					  WHERE user_id = $1 AND provider = 'github'`,
-					[user.id],
-				);
-				if ((existingGitHubAccount.rowCount ?? 0) > 0) {
-					return yield* Effect.fail(
-						new AuthConflictError({
+				if ((exactEmailUsers.rowCount ?? 0) === 1) {
+					const user = rowAt(
+						exactEmailUsers.rows,
+						0,
+						"completeGitHubLogin.exactEmailUsers",
+					);
+					const existingGitHubAccount = await query<{
+						provider_subject: string;
+					}>(
+						client,
+						"completeGitHubLogin.existingGitHubAccount",
+						`SELECT provider_subject
+						   FROM ${tableName(runtime, "accounts")}
+						  WHERE user_id = $1 AND provider = 'github'`,
+						[user.id],
+					);
+					if ((existingGitHubAccount.rowCount ?? 0) > 0) {
+						throw new AuthConflictError({
 							code: "email_linked_to_other_github",
 							message:
 								"existing user is already linked to another GitHub account",
-						}),
+						});
+					}
+					await queryVoid(
+						client,
+						"completeGitHubLogin.updateUserEmail",
+						`UPDATE ${tableName(runtime, "users")}
+						    SET email = $2, updated_at = NOW()
+						  WHERE id = $1`,
+						[user.id, input.primaryEmail],
 					);
+					await updateGitHubAccount(runtime, client, user.id, input);
+					await ensureOnboarding(runtime, client, user.id);
+					return {
+						user: { ...user, email: input.primaryEmail },
+						disposition: "link" as const,
+					};
 				}
-				yield* queryVoidEffect(
+
+				const userID = randomUUID();
+				const subject = `user_${userID.replace(/-/g, "")}`;
+				const created = await query<UserRow>(
 					client,
-					"completeGitHubLogin.updateUserEmail",
-					`UPDATE ${tableName(runtime, "users")}
-					    SET email = $2, updated_at = NOW()
-					  WHERE id = $1`,
-					[user.id, input.primaryEmail],
+					"completeGitHubLogin.createUser",
+					`INSERT INTO ${tableName(runtime, "users")} (id, subject, email, created_at, updated_at)
+					 VALUES ($1, $2, $3, NOW(), NOW())
+					 RETURNING id, subject, email`,
+					[userID, subject, input.primaryEmail],
 				);
-				yield* updateGitHubAccountEffect(runtime, client, user.id, input);
-				yield* ensureOnboardingEffect(runtime, client, user.id);
-				return {
-					user: { ...user, email: input.primaryEmail },
-					disposition: "link" as const,
-				};
-			}
+				const user = rowAt(created.rows, 0, "completeGitHubLogin.createUser");
+				await updateGitHubAccount(runtime, client, user.id, input);
+				await ensureOnboarding(runtime, client, user.id);
+				return { user, disposition: "signup" as const };
+			});
+		},
 
-			const userID = randomUUID();
-			const subject = `user_${userID.replace(/-/g, "")}`;
-			const created = yield* queryEffect<UserRow>(
-				client,
-				"completeGitHubLogin.createUser",
-				`INSERT INTO ${tableName(runtime, "users")} (id, subject, email, created_at, updated_at)
-				 VALUES ($1, $2, $3, NOW(), NOW())
-				 RETURNING id, subject, email`,
-				[userID, subject, input.primaryEmail],
-			);
-			const user = rowAt(created.rows, 0, "completeGitHubLogin.createUser");
-			yield* updateGitHubAccountEffect(runtime, client, user.id, input);
-			yield* ensureOnboardingEffect(runtime, client, user.id);
-			return { user, disposition: "signup" as const };
-		}),
-	).pipe(Effect.withSpan("dashboard.store.completeGitHubLogin"));
-
-const rotateRefreshSessionEffect = (
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-	input: {
-		sessionId: string;
-		userID: string;
-		now: Date;
-		nextSessionId: string;
-		expiresAt: Date;
-	},
-): Effect.Effect<DashboardUser | null, DatabaseError> =>
-	withTransactionEffect(db, "rotateRefreshSession", (client) =>
-		Effect.gen(function* () {
-			const result = yield* queryEffect<UserRow>(
-				client,
-				"rotateRefreshSession.select",
-				`SELECT u.id, u.subject, u.email
-				   FROM ${tableName(runtime, "refresh_sessions")} rs
-				   JOIN ${tableName(runtime, "users")} u ON u.id = rs.user_id
-				  WHERE rs.id = $1
-				    AND rs.user_id = $2
-				    AND rs.expires_at > $3`,
-				[input.sessionId, input.userID, input.now],
+		async getGitHubAccount(userID) {
+			const result = await query<GitHubAccountRow>(
+				db,
+				"getGitHubAccount",
+				`SELECT provider_subject,
+				        verified_email_snapshot,
+				        provider_login,
+				        access_token,
+				        access_token_expires_at,
+				        refresh_token,
+				        refresh_token_expires_at,
+				        token_type,
+				        scope
+				   FROM ${tableName(runtime, "accounts")}
+				  WHERE user_id = $1 AND provider = 'github'`,
+				[userID],
 			);
 			if (result.rowCount !== 1) {
 				return null;
 			}
-			const user = rowAt(result.rows, 0, "rotateRefreshSession.select");
-			yield* queryVoidEffect(
-				client,
-				"rotateRefreshSession.deleteCurrent",
-				`DELETE FROM ${tableName(runtime, "refresh_sessions")} WHERE id = $1`,
-				[input.sessionId],
+			const row = rowAt(result.rows, 0, "getGitHubAccount");
+			return {
+				providerSubject: row.provider_subject,
+				login: row.provider_login,
+				primaryEmail: row.verified_email_snapshot,
+				accessToken: row.access_token,
+				tokenType: row.token_type,
+				scope: row.scope,
+				accessTokenExpiresAt: row.access_token_expires_at ?? undefined,
+				refreshToken: row.refresh_token || undefined,
+				refreshTokenExpiresAt: row.refresh_token_expires_at ?? undefined,
+			};
+		},
+
+		async getOnboardingDraft(userID) {
+			await ensureOnboarding(runtime, db, userID);
+			const result = await query<OnboardingRow>(
+				db,
+				"getOnboardingDraft",
+				`SELECT current_step,
+				        project_id,
+				        service_id,
+				        repository_selector,
+				        tracked_ref,
+				        dockerfile_path,
+				        context_dir,
+				        container_port,
+				        hostname
+				   FROM ${tableName(runtime, "onboarding")}
+				  WHERE user_id = $1`,
+				[userID],
 			);
-			yield* queryVoidEffect(
-				client,
-				"rotateRefreshSession.insertNext",
+			return onboardingDraftFromRow(
+				rowAt(result.rows, 0, "getOnboardingDraft"),
+			);
+		},
+
+		async saveOnboardingDraft(userID, draft) {
+			await ensureOnboarding(runtime, db, userID);
+			const result = await query<OnboardingRow>(
+				db,
+				"saveOnboardingDraft",
+				`UPDATE ${tableName(runtime, "onboarding")}
+				    SET current_step = $2,
+				        project_id = $3,
+				        service_id = $4,
+				        repository_selector = $5,
+				        tracked_ref = $6,
+				        dockerfile_path = $7,
+				        context_dir = $8,
+				        container_port = $9,
+				        hostname = $10,
+				        updated_at = NOW()
+				  WHERE user_id = $1
+				RETURNING current_step,
+				          project_id,
+				          service_id,
+				          repository_selector,
+				          tracked_ref,
+				          dockerfile_path,
+				          context_dir,
+				          container_port,
+				          hostname`,
+				[
+					userID,
+					draft.currentStep,
+					draft.projectId,
+					draft.serviceId,
+					draft.repositorySelector,
+					draft.trackedRef,
+					draft.dockerfilePath,
+					draft.contextDir,
+					draft.containerPort,
+					draft.hostname,
+				],
+			);
+			return onboardingDraftFromRow(
+				rowAt(result.rows, 0, "saveOnboardingDraft"),
+			);
+		},
+
+		async createRefreshSession(sessionId, userID, expiresAt) {
+			await queryVoid(
+				db,
+				"createRefreshSession",
 				`INSERT INTO ${tableName(runtime, "refresh_sessions")} (id, user_id, created_at, expires_at)
 				 VALUES ($1, $2, NOW(), $3)`,
-				[input.nextSessionId, input.userID, input.expiresAt],
+				[sessionId, userID, expiresAt],
 			);
-			return user;
-		}),
-	).pipe(Effect.withSpan("dashboard.store.rotateRefreshSession"));
+		},
 
-const updateGitHubAccountEffect = (
+		async deleteRefreshSession(sessionId) {
+			await queryVoid(
+				db,
+				"deleteRefreshSession",
+				`DELETE FROM ${tableName(runtime, "refresh_sessions")} WHERE id = $1`,
+				[sessionId],
+			);
+		},
+
+		async rotateRefreshSession(input) {
+			return withTransaction(db, "rotateRefreshSession", async (client) => {
+				const result = await query<UserRow>(
+					client,
+					"rotateRefreshSession.select",
+					`SELECT u.id, u.subject, u.email
+					   FROM ${tableName(runtime, "refresh_sessions")} rs
+					   JOIN ${tableName(runtime, "users")} u ON u.id = rs.user_id
+					  WHERE rs.id = $1
+					    AND rs.user_id = $2
+					    AND rs.expires_at > $3`,
+					[input.sessionId, input.userID, input.now],
+				);
+				if (result.rowCount !== 1) {
+					return null;
+				}
+				const user = rowAt(result.rows, 0, "rotateRefreshSession.select");
+				await queryVoid(
+					client,
+					"rotateRefreshSession.deleteCurrent",
+					`DELETE FROM ${tableName(runtime, "refresh_sessions")} WHERE id = $1`,
+					[input.sessionId],
+				);
+				await queryVoid(
+					client,
+					"rotateRefreshSession.insertNext",
+					`INSERT INTO ${tableName(runtime, "refresh_sessions")} (id, user_id, created_at, expires_at)
+					 VALUES ($1, $2, NOW(), $3)`,
+					[input.nextSessionId, input.userID, input.expiresAt],
+				);
+				return user;
+			});
+		},
+	};
+}
+
+async function updateGitHubAccount(
 	runtime: DashboardStoreRuntimeConfig,
 	client: PoolClient,
 	userID: string,
 	input: GitHubAccountLoginInput,
-): Effect.Effect<void, DatabaseError> =>
-	queryVoidEffect(
+): Promise<void> {
+	await queryVoid(
 		client,
 		"updateGitHubAccount",
 		`INSERT INTO ${tableName(runtime, "accounts")} (
@@ -385,78 +423,37 @@ const updateGitHubAccountEffect = (
 			input.scope,
 		],
 	);
+}
 
-const getGitHubAccountEffect = (
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-	userID: string,
-): Effect.Effect<DashboardGitHubAccount | null, DatabaseError> =>
-	Effect.gen(function* () {
-		const result = yield* queryEffect<GitHubAccountRow>(
-			db,
-			"getGitHubAccount",
-			`SELECT provider_subject,
-			        verified_email_snapshot,
-			        provider_login,
-			        access_token,
-			        access_token_expires_at,
-			        refresh_token,
-			        refresh_token_expires_at,
-			        token_type,
-			        scope
-			   FROM ${tableName(runtime, "accounts")}
-			  WHERE user_id = $1 AND provider = 'github'`,
-			[userID],
-		);
-		if (result.rowCount !== 1) {
-			return null;
-		}
-		const row = rowAt(result.rows, 0, "getGitHubAccount");
-		return {
-			providerSubject: row.provider_subject,
-			login: row.provider_login,
-			primaryEmail: row.verified_email_snapshot,
-			accessToken: row.access_token,
-			tokenType: row.token_type,
-			scope: row.scope,
-			accessTokenExpiresAt: row.access_token_expires_at ?? undefined,
-			refreshToken: row.refresh_token || undefined,
-			refreshTokenExpiresAt: row.refresh_token_expires_at ?? undefined,
-		};
-	}).pipe(Effect.withSpan("dashboard.store.getGitHubAccount"));
-
-const userByIDEffect = (
+async function userByID(
 	runtime: DashboardStoreRuntimeConfig,
 	client: PoolClient,
 	userID: string,
-): Effect.Effect<DashboardUser, DatabaseError> =>
-	Effect.gen(function* () {
-		const result = yield* queryEffect<UserRow>(
-			client,
-			"userByID",
-			`SELECT id, subject, email
-			   FROM ${tableName(runtime, "users")}
-			  WHERE id = $1`,
-			[userID],
-		);
-		if (result.rowCount !== 1) {
-			return yield* Effect.fail(
-				new DatabaseError({
-					operation: "userByID",
-					message: `user not found: ${userID}`,
-					cause: userID,
-				}),
-			);
-		}
-		return rowAt(result.rows, 0, "userByID");
-	});
+): Promise<DashboardUser> {
+	const result = await query<UserRow>(
+		client,
+		"userByID",
+		`SELECT id, subject, email
+		   FROM ${tableName(runtime, "users")}
+		  WHERE id = $1`,
+		[userID],
+	);
+	if (result.rowCount !== 1) {
+		throw new DatabaseError({
+			operation: "userByID",
+			message: `user not found: ${userID}`,
+			cause: userID,
+		});
+	}
+	return rowAt(result.rows, 0, "userByID");
+}
 
-const ensureOnboardingEffect = (
+async function ensureOnboarding(
 	runtime: DashboardStoreRuntimeConfig,
 	db: Pool | PoolClient,
 	userID: string,
-): Effect.Effect<void, DatabaseError> =>
-	queryVoidEffect(
+): Promise<void> {
+	await queryVoid(
 		db,
 		"ensureOnboarding",
 		`INSERT INTO ${tableName(runtime, "onboarding")} (user_id, created_at, updated_at)
@@ -464,193 +461,117 @@ const ensureOnboardingEffect = (
 		 ON CONFLICT (user_id) DO NOTHING`,
 		[userID],
 	);
+}
 
-const getOnboardingDraftEffect = (
+async function migrateDashboardStore(
 	runtime: DashboardStoreRuntimeConfig,
 	db: Pool,
-	userID: string,
-): Effect.Effect<DashboardOnboardingDraft, DatabaseError> =>
-	Effect.gen(function* () {
-		yield* ensureOnboardingEffect(runtime, db, userID);
-		const result = yield* queryEffect<OnboardingRow>(
-			db,
-			"getOnboardingDraft",
-			`SELECT current_step,
-			        project_id,
-			        service_id,
-			        repository_selector,
-			        tracked_ref,
-			        dockerfile_path,
-			        context_dir,
-			        container_port,
-			        hostname
-			   FROM ${tableName(runtime, "onboarding")}
-			  WHERE user_id = $1`,
-			[userID],
-		);
-		const row = rowAt(result.rows, 0, "getOnboardingDraft");
-		return onboardingDraftFromRow(row);
-	}).pipe(Effect.withSpan("dashboard.store.getOnboardingDraft"));
+): Promise<void> {
+	await queryVoid(
+		db,
+		"migrate.createSchema",
+		`CREATE SCHEMA IF NOT EXISTS ${runtime.databaseSchema}`,
+	);
 
-const saveOnboardingDraftEffect = (
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-	userID: string,
-	draft: DashboardOnboardingDraft,
-): Effect.Effect<DashboardOnboardingDraft, DatabaseError> =>
-	Effect.gen(function* () {
-		yield* ensureOnboardingEffect(runtime, db, userID);
-		const result = yield* queryEffect<OnboardingRow>(
-			db,
-			"saveOnboardingDraft",
-			`UPDATE ${tableName(runtime, "onboarding")}
-			    SET current_step = $2,
-			        project_id = $3,
-			        service_id = $4,
-			        repository_selector = $5,
-			        tracked_ref = $6,
-			        dockerfile_path = $7,
-			        context_dir = $8,
-			        container_port = $9,
-			        hostname = $10,
-			        updated_at = NOW()
-			  WHERE user_id = $1
-			RETURNING current_step,
-			          project_id,
-			          service_id,
-			          repository_selector,
-			          tracked_ref,
-			          dockerfile_path,
-			          context_dir,
-			          container_port,
-			          hostname`,
-			[
-				userID,
-				draft.currentStep,
-				draft.projectId,
-				draft.serviceId,
-				draft.repositorySelector,
-				draft.trackedRef,
-				draft.dockerfilePath,
-				draft.contextDir,
-				draft.containerPort,
-				draft.hostname,
-			],
+	await withTransaction(db, "migrateDashboardStore", async (client) => {
+		await queryVoid(
+			client,
+			"migrate.createSchemaMigrations",
+			`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "schema_migrations")} (
+				version INT8 PRIMARY KEY,
+				applied_at TIMESTAMPTZ NOT NULL
+			)`,
 		);
-		return onboardingDraftFromRow(rowAt(result.rows, 0, "saveOnboardingDraft"));
-	}).pipe(Effect.withSpan("dashboard.store.saveOnboardingDraft"));
-
-const migrateDashboardStoreEffect = (
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-): Effect.Effect<void, DatabaseError> =>
-	Effect.gen(function* () {
-		yield* queryVoidEffect(
-			db,
-			"migrate.createSchema",
-			`CREATE SCHEMA IF NOT EXISTS ${runtime.databaseSchema}`,
+		const result = await query<{ version: string }>(
+			client,
+			"migrate.selectAppliedVersions",
+			`SELECT version FROM ${tableName(runtime, "schema_migrations")}`,
+		);
+		const appliedVersions = new Set(
+			result.rows.map((row) => Number.parseInt(row.version, 10)),
 		);
 
-		yield* withTransactionEffect(db, "migrateDashboardStore", (client) =>
-			Effect.gen(function* () {
-				yield* queryVoidEffect(
+		for (const migration of dashboardStoreMigrations(runtime)) {
+			if (appliedVersions.has(migration.version)) {
+				continue;
+			}
+			for (const statement of migration.statements) {
+				await queryVoid(
 					client,
-					"migrate.createSchemaMigrations",
-					`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "schema_migrations")} (
-						version INT8 PRIMARY KEY,
-						applied_at TIMESTAMPTZ NOT NULL
-					)`,
+					`migrate.statement.${migration.version}`,
+					statement,
 				);
-				const result = yield* queryEffect<{ version: string }>(
-					client,
-					"migrate.selectAppliedVersions",
-					`SELECT version FROM ${tableName(runtime, "schema_migrations")}`,
-				);
-				const appliedVersions = new Set(
-					result.rows.map((row) => Number.parseInt(row.version, 10)),
-				);
-				for (const migration of dashboardStoreMigrations(runtime)) {
-					if (appliedVersions.has(migration.version)) {
-						continue;
-					}
-					for (const statement of migration.statements) {
-						yield* queryVoidEffect(
-							client,
-							`migrate.statement.${migration.version}`,
-							statement,
-						);
-					}
-					yield* queryVoidEffect(
-						client,
-						`migrate.recordVersion.${migration.version}`,
-						`INSERT INTO ${tableName(runtime, "schema_migrations")} (version, applied_at)
-						 VALUES ($1, NOW())`,
-						[migration.version],
-					);
-				}
-			}),
-		);
-	}).pipe(Effect.withSpan("dashboard.store.migrate"));
-
-function withTransactionEffect<A, E>(
-	db: Pool,
-	operation: string,
-	program: (client: PoolClient) => Effect.Effect<A, E>,
-): Effect.Effect<A, E | DatabaseError> {
-	return Effect.gen(function* () {
-		const client = yield* connectClientEffect(db, `${operation}.connect`);
-		yield* queryVoidEffect(client, `${operation}.begin`, "BEGIN");
-		const exit = yield* Effect.exit(program(client));
-
-		if (exit._tag === "Success") {
-			yield* queryVoidEffect(client, `${operation}.commit`, "COMMIT");
-			return exit.value;
+			}
+			await queryVoid(
+				client,
+				`migrate.recordVersion.${migration.version}`,
+				`INSERT INTO ${tableName(runtime, "schema_migrations")} (version, applied_at)
+				 VALUES ($1, NOW())`,
+				[migration.version],
+			);
 		}
-
-		yield* queryVoidEffect(client, `${operation}.rollback`, "ROLLBACK").pipe(
-			Effect.ignore,
-		);
-		return yield* Effect.failCause(exit.cause);
-	}).pipe(
-		Effect.scoped,
-		Effect.withSpan(`dashboard.store.transaction.${operation}`),
-	);
+	});
 }
 
-function connectClientEffect(db: Pool, operation: string) {
-	return Effect.acquireRelease(
-		Effect.tryPromise({
-			try: () => db.connect(),
-			catch: (cause) => toDatabaseError(operation, cause),
-		}),
-		(client) => Effect.sync(() => client.release()),
-	);
+async function withTransaction<A>(
+	db: Pool,
+	operation: string,
+	program: (client: PoolClient) => Promise<A>,
+): Promise<A> {
+	const client = await connectClient(db, `${operation}.connect`);
+	try {
+		await queryVoid(client, `${operation}.begin`, "BEGIN");
+		const result = await program(client);
+		await queryVoid(client, `${operation}.commit`, "COMMIT");
+		return result;
+	} catch (cause) {
+		try {
+			await queryVoid(client, `${operation}.rollback`, "ROLLBACK");
+		} catch {
+			// Keep the original failure.
+		}
+		throw cause;
+	} finally {
+		client.release();
+	}
 }
 
-function queryEffect<Row extends QueryResultRow>(
+async function connectClient(db: Pool, operation: string): Promise<PoolClient> {
+	try {
+		return await db.connect();
+	} catch (cause) {
+		throw toDatabaseError(operation, cause);
+	}
+}
+
+async function query<Row extends QueryResultRow>(
 	db: Queryable,
 	operation: string,
 	text: string,
 	values: ReadonlyArray<unknown> = [],
-): Effect.Effect<QueryResult<Row>, DatabaseError> {
-	return Effect.tryPromise({
-		try: () => db.query<Row>(text, values),
-		catch: (cause) => toDatabaseError(operation, cause),
-	}).pipe(Effect.withSpan(`dashboard.store.${operation}`));
+): Promise<QueryResult<Row>> {
+	try {
+		return await db.query<Row>(text, values);
+	} catch (cause) {
+		throw toDatabaseError(operation, cause);
+	}
 }
 
-function queryVoidEffect(
+async function queryVoid(
 	db: Queryable,
 	operation: string,
 	text: string,
 	values: ReadonlyArray<unknown> = [],
-): Effect.Effect<void, DatabaseError> {
-	return queryEffect(db, operation, text, values).pipe(Effect.asVoid);
+): Promise<void> {
+	await query(db, operation, text, values);
 }
 
 function toDatabaseError(operation: string, cause: unknown): DatabaseError {
 	if (cause instanceof DatabaseError) {
 		return cause;
+	}
+	if (cause instanceof AuthConflictError) {
+		throw cause;
 	}
 	return new DatabaseError({
 		operation,

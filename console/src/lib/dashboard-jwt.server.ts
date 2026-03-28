@@ -178,8 +178,8 @@ function verifyToken(
 	if (
 		!header ||
 		typeof header !== "object" ||
-		header.alg !== DashboardJWTAlgorithm ||
-		header.typ !== "JWT"
+		(header as { alg?: unknown }).alg !== DashboardJWTAlgorithm ||
+		(header as { typ?: unknown }).typ !== "JWT"
 	) {
 		throw new Error("invalid token header");
 	}
