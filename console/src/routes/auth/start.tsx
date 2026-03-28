@@ -1,15 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Schema } from "effect";
-
-const AuthStartInputSchema = Schema.Struct({
-	redirect: Schema.optionalKey(Schema.String),
-});
-const decodeAuthStartInput = Schema.decodeUnknownSync(AuthStartInputSchema);
 
 const beginLogin = createServerFn({ method: "GET" })
 	.inputValidator((input: unknown) => {
-		const data = decodeAuthStartInput(input ?? {});
+		const data = parseAuthStartInput(input);
 		return {
 			redirect: data.redirect ?? "/",
 		};
@@ -23,7 +17,7 @@ const beginLogin = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/auth/start")({
 	validateSearch: (search: Record<string, unknown>) => {
-		const data = decodeAuthStartInput(search);
+		const data = parseAuthStartInput(search);
 		return {
 			redirect: data.redirect ?? "/",
 		};
@@ -40,4 +34,14 @@ export const Route = createFileRoute("/auth/start")({
 
 function AuthStartPage() {
 	return null;
+}
+
+function parseAuthStartInput(input: unknown): { redirect?: string } {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return {};
+	}
+	const { redirect } = input as { redirect?: unknown };
+	return {
+		redirect: typeof redirect === "string" ? redirect : undefined,
+	};
 }

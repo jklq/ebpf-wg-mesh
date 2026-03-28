@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { useEffect, useState, useTransition } from "react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Schema } from "effect";
 
 import type {
 	DashboardHomeState,
@@ -26,28 +25,6 @@ export interface HomeRouteService {
 	publishDomainFromSession(): Promise<void>;
 }
 
-const RepositorySelectionSchema = Schema.Struct({
-	repositorySelector: Schema.String,
-});
-const ConfirmRepositorySchema = Schema.Struct({
-	repositorySelector: Schema.String,
-	trackedRef: Schema.optionalKey(Schema.String),
-	dockerfilePath: Schema.optionalKey(Schema.String),
-	contextDir: Schema.optionalKey(Schema.String),
-	containerPort: Schema.optionalKey(Schema.String),
-});
-const HostnameSchema = Schema.Struct({
-	hostname: Schema.String,
-});
-
-const decodeRepositorySelection = Schema.decodeUnknownSync(
-	RepositorySelectionSchema,
-);
-const decodeConfirmRepository = Schema.decodeUnknownSync(
-	ConfirmRepositorySchema,
-);
-const decodeHostname = Schema.decodeUnknownSync(HostnameSchema);
-
 export async function loadHomeRouteState(
 	service: Pick<HomeRouteService, "loadDashboardHome">,
 ): Promise<DashboardHomeState> {
@@ -67,7 +44,7 @@ const loadHome = createServerFn({ method: "GET" }).handler(async () => {
 });
 
 const inspectRepository = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => decodeRepositorySelection(input ?? {}))
+	.inputValidator((input: unknown) => parseRepositorySelection(input))
 	.handler(async ({ data }) => {
 		const service = await import("#/lib/dashboard.server");
 		return service.inspectRepositoryFromSession({
@@ -76,14 +53,14 @@ const inspectRepository = createServerFn({ method: "POST" })
 	});
 
 const confirmRepository = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => decodeConfirmRepository(input ?? {}))
+	.inputValidator((input: unknown) => parseConfirmRepository(input))
 	.handler(async ({ data }) => {
 		const service = await import("#/lib/dashboard.server");
 		return service.confirmRepositoryFromSession(data);
 	});
 
 const saveHostname = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => decodeHostname(input ?? {}))
+	.inputValidator((input: unknown) => parseHostnameInput(input))
 	.handler(async ({ data }) => {
 		const service = await import("#/lib/dashboard.server");
 		return service.saveHostnameFromSession(data.hostname);
@@ -835,6 +812,58 @@ function shouldAutoRefresh(state: DashboardHomeState): boolean {
 		return true;
 	}
 	return Boolean(state.serviceStatus && !buildReady(state.serviceStatus));
+}
+
+function parseRepositorySelection(input: unknown): {
+	repositorySelector: string;
+} {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return { repositorySelector: "" };
+	}
+	const data = input as Record<string, unknown>;
+	return {
+		repositorySelector:
+			typeof data.repositorySelector === "string"
+				? data.repositorySelector
+				: "",
+	};
+}
+
+function parseConfirmRepository(input: unknown): {
+	repositorySelector: string;
+	trackedRef?: string;
+	dockerfilePath?: string;
+	contextDir?: string;
+	containerPort?: string;
+} {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return { repositorySelector: "" };
+	}
+	const data = input as Record<string, unknown>;
+	return {
+		repositorySelector:
+			typeof data.repositorySelector === "string"
+				? data.repositorySelector
+				: "",
+		trackedRef: readOptionalString(data.trackedRef),
+		dockerfilePath: readOptionalString(data.dockerfilePath),
+		contextDir: readOptionalString(data.contextDir),
+		containerPort: readOptionalString(data.containerPort),
+	};
+}
+
+function parseHostnameInput(input: unknown): { hostname: string } {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return { hostname: "" };
+	}
+	const data = input as Record<string, unknown>;
+	return {
+		hostname: typeof data.hostname === "string" ? data.hostname : "",
+	};
+}
+
+function readOptionalString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
 }
 
 function domainVerificationLabel(

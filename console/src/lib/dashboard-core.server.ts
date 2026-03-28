@@ -1,13 +1,3 @@
-import {
-	Data,
-	Effect,
-	Layer,
-	ManagedRuntime,
-	Option,
-	Schema,
-	ServiceMap,
-} from "effect";
-
 import type { DomainVerificationResult } from "#/lib/domain-dns.server";
 import { normalizeHostname, verifyHostnameDNS } from "#/lib/domain-dns.server";
 import {
@@ -221,50 +211,94 @@ export type AuthConflictCode =
 	| "dev_auth_unavailable"
 	| "invalid_dev_login";
 
-export class AuthConflictError extends Data.TaggedError("AuthConflictError")<{
+class DashboardTaggedError extends Error {
+	readonly _tag: string;
+
+	constructor(tag: string, message: string) {
+		super(message);
+		this.name = tag;
+		this._tag = tag;
+		Object.setPrototypeOf(this, new.target.prototype);
+	}
+}
+
+export class AuthConflictError extends DashboardTaggedError {
 	readonly code: AuthConflictCode;
-	readonly message: string;
-}> {}
 
-export class AuthenticationRequiredError extends Data.TaggedError(
-	"AuthenticationRequiredError",
-)<{
-	readonly message: string;
-}> {}
+	constructor(input: { code: AuthConflictCode; message: string }) {
+		super("AuthConflictError", input.message);
+		this.code = input.code;
+	}
+}
 
-export class DashboardValidationError extends Data.TaggedError(
-	"DashboardValidationError",
-)<{
-	readonly message: string;
-}> {}
+export class AuthenticationRequiredError extends DashboardTaggedError {
+	constructor(input: { message: string }) {
+		super("AuthenticationRequiredError", input.message);
+	}
+}
 
-export class DashboardConfigError extends Data.TaggedError(
-	"DashboardConfigError",
-)<{
-	readonly message: string;
-}> {}
+export class DashboardValidationError extends DashboardTaggedError {
+	constructor(input: { message: string }) {
+		super("DashboardValidationError", input.message);
+	}
+}
 
-export class DatabaseError extends Data.TaggedError("DatabaseError")<{
+export class DashboardConfigError extends DashboardTaggedError {
+	constructor(input: { message: string }) {
+		super("DashboardConfigError", input.message);
+	}
+}
+
+export class DatabaseError extends DashboardTaggedError {
 	readonly operation: string;
-	readonly message: string;
 	readonly cause: unknown;
-}> {}
 
-export class GitHubApiError extends Data.TaggedError("GitHubApiError")<{
+	constructor(input: {
+		operation: string;
+		message: string;
+		cause: unknown;
+	}) {
+		super("DatabaseError", input.message);
+		this.operation = input.operation;
+		this.cause = input.cause;
+	}
+}
+
+export class GitHubApiError extends DashboardTaggedError {
 	readonly operation: string;
-	readonly message: string;
 	readonly cause: unknown;
 	readonly status?: number;
-}> {}
 
-export class PlatformGatewayError extends Data.TaggedError(
-	"PlatformGatewayError",
-)<{
+	constructor(input: {
+		operation: string;
+		message: string;
+		cause: unknown;
+		status?: number;
+	}) {
+		super("GitHubApiError", input.message);
+		this.operation = input.operation;
+		this.cause = input.cause;
+		this.status = input.status;
+	}
+}
+
+export class PlatformGatewayError extends DashboardTaggedError {
 	readonly operation: string;
-	readonly message: string;
 	readonly cause: unknown;
 	readonly grpcCode?: number;
-}> {}
+
+	constructor(input: {
+		operation: string;
+		message: string;
+		cause: unknown;
+		grpcCode?: number;
+	}) {
+		super("PlatformGatewayError", input.message);
+		this.operation = input.operation;
+		this.cause = input.cause;
+		this.grpcCode = input.grpcCode;
+	}
+}
 
 export interface GitHubAccountLoginInput {
 	providerSubject: string;
@@ -439,120 +473,37 @@ interface AuthStateCookie {
 	redirectTo: string;
 }
 
-const IdentifierSchema = Schema.String.check(
-	Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
-);
-const decodeIdentifier = Schema.decodeUnknownSync(IdentifierSchema);
-
-const DevLoginIdentitySchema = Schema.Struct({
-	subject: Schema.NonEmptyString,
-	email: Schema.NonEmptyString,
-});
-const decodeDevLoginIdentity = Schema.decodeUnknownSync(DevLoginIdentitySchema);
-
-const AuthStateCookieSchema = Schema.Struct({
-	state: Schema.NonEmptyString,
-	redirectTo: Schema.String,
-});
-const decodeAuthStateCookie = Schema.decodeUnknownSync(AuthStateCookieSchema);
-
-export class DashboardConfigService extends ServiceMap.Service<
-	DashboardConfigService,
-	DashboardConfig
->()("dashboard/DashboardConfig") {}
-
-export class DashboardStoreService extends ServiceMap.Service<
-	DashboardStoreService,
-	DashboardStore
->()("dashboard/DashboardStore") {}
-
-export class PlatformGatewayService extends ServiceMap.Service<
-	PlatformGatewayService,
-	PlatformGateway
->()("dashboard/PlatformGateway") {}
-
-export class GitHubAppUserClientService extends ServiceMap.Service<
-	GitHubAppUserClientService,
-	GitHubAppUserClient
->()("dashboard/GitHubAppUserClient") {}
-
-export class SessionCookiesService extends ServiceMap.Service<
-	SessionCookiesService,
-	SessionCookies
->()("dashboard/SessionCookies") {}
-
-export class DashboardClockService extends ServiceMap.Service<
-	DashboardClockService,
-	{ now: () => Date }
->()("dashboard/Clock") {}
-
-export class DashboardUUIDService extends ServiceMap.Service<
-	DashboardUUIDService,
-	{ randomUUID: () => string }
->()("dashboard/UUID") {}
-
-type DashboardStableLayer = Layer.Layer<
-	| DashboardConfigService
-	| DashboardStoreService
-	| PlatformGatewayService
-	| DashboardClockService
-	| DashboardUUIDService
-	| GitHubAppUserClientService,
-	never,
-	never
->;
-
-type DashboardRequestServices =
-	| DashboardConfigService
-	| DashboardStoreService
-	| PlatformGatewayService
-	| DashboardClockService
-	| DashboardUUIDService
-	| GitHubAppUserClientService
-	| SessionCookiesService;
+interface DashboardRuntime {
+	config: DashboardConfig;
+	store: DashboardStore;
+	platform: PlatformGateway;
+	cookies: SessionCookies;
+	github?: GitHubAppUserClient;
+	now: () => Date;
+	randomUUID: () => string;
+}
 
 export function createDashboardService(
 	config: DashboardConfig,
 	deps: DashboardDependencies,
 ): DashboardService {
-	const requestLayer = createDashboardRequestLayer(deps.cookies);
-	const runtime = ManagedRuntime.make(
-		createDashboardStableLayer(config, {
-			store: deps.store,
-			platform: deps.platform,
-			github: deps.github,
-			now: deps.now,
-			randomUUID: deps.randomUUID,
-		}),
-	);
-
-	function withRequest<A, E>(
-		program: Effect.Effect<A, E, DashboardRequestServices>,
-	) {
-		return program.pipe(Effect.provide(requestLayer));
-	}
-
-	function runPromise<A, E>(
-		operation: string,
-		program: Effect.Effect<A, E, DashboardRequestServices>,
-	): Promise<A> {
-		void operation;
-		return runtime.runPromise(withRequest(program));
-	}
-
-	function runSync<A, E>(
-		program: Effect.Effect<A, E, DashboardRequestServices>,
-	): A {
-		return runtime.runSync(withRequest(program));
-	}
+	const runtime: DashboardRuntime = {
+		config,
+		store: deps.store,
+		platform: deps.platform,
+		cookies: deps.cookies,
+		github: deps.github,
+		now: deps.now ?? (() => new Date()),
+		randomUUID: deps.randomUUID ?? (() => crypto.randomUUID()),
+	};
 
 	return {
 		listDevLogins() {
-			return runSync(listDevLoginsEffect);
+			return config.devUsers;
 		},
 
 		isGitHubLoginEnabled() {
-			return runSync(isGitHubLoginEnabledEffect);
+			return Boolean(config.github && runtime.github);
 		},
 
 		getPublicBaseURL() {
@@ -560,268 +511,184 @@ export function createDashboardService(
 		},
 
 		beginGitHubLogin(input) {
-			return runPromise("beginGitHubLogin", beginGitHubLoginEffect(input));
+			return beginGitHubLogin(runtime, input);
 		},
 
 		completeAuthCallback(input) {
-			return runPromise(
-				"completeAuthCallback",
-				completeAuthCallbackEffect(input),
-			);
+			return completeAuthCallback(runtime, input);
 		},
 
 		loadDashboardHome() {
-			return runPromise("loadDashboardHome", loadDashboardHomeEffect);
+			return loadDashboardHome(runtime);
 		},
 
 		createProjectFromSession(name) {
-			return runPromise(
-				"createProjectFromSession",
-				createProjectFromSessionEffect(name),
-			);
+			return createProjectFromSession(runtime, name);
 		},
 
 		inspectRepositoryFromSession(input) {
-			return runPromise(
-				"inspectRepositoryFromSession",
-				inspectRepositoryFromSessionEffect(input),
-			);
+			return inspectRepositoryFromSession(runtime, input);
 		},
 
 		confirmRepositoryFromSession(input) {
-			return runPromise(
-				"confirmRepositoryFromSession",
-				confirmRepositoryFromSessionEffect(input),
-			);
+			return confirmRepositoryFromSession(runtime, input);
 		},
 
 		saveHostnameFromSession(hostname) {
-			return runPromise(
-				"saveHostnameFromSession",
-				saveHostnameFromSessionEffect(hostname),
-			);
+			return saveHostnameFromSession(runtime, hostname);
 		},
 
 		publishDomainFromSession() {
-			return runPromise(
-				"publishDomainFromSession",
-				publishDomainFromSessionEffect,
-			);
+			return publishDomainFromSession(runtime);
 		},
 
 		clearSession() {
-			return runPromise("clearSession", clearSessionEffect);
+			return clearSession(runtime);
 		},
 
 		refreshSession() {
-			return runPromise("refreshSession", refreshSessionEffect);
+			return refreshSession(runtime);
 		},
 	};
 }
 
-export function createDashboardStableLayer(
-	config: DashboardConfig,
-	deps: Omit<DashboardDependencies, "cookies">,
-): DashboardStableLayer {
-	let layer = Layer.mergeAll(
-		Layer.succeed(DashboardConfigService)(config),
-		Layer.succeed(DashboardStoreService)(deps.store),
-		Layer.succeed(PlatformGatewayService)(deps.platform),
-		Layer.succeed(DashboardClockService)({
-			now: deps.now ?? (() => new Date()),
-		}),
-		Layer.succeed(DashboardUUIDService)({
-			randomUUID: deps.randomUUID ?? (() => crypto.randomUUID()),
-		}),
-	) as DashboardStableLayer;
-
-	if (deps.github) {
-		layer = Layer.merge(
-			layer,
-			Layer.succeed(GitHubAppUserClientService)(deps.github),
-		) as DashboardStableLayer;
+async function beginGitHubLogin(
+	runtime: DashboardRuntime,
+	input: { redirectTo?: string },
+): Promise<string> {
+	const { config, cookies, github } = runtime;
+	if (!config.github || !github) {
+		throw new AuthConflictError({
+			code: "github_auth_unavailable",
+			message: "GitHub sign-in is not configured",
+		});
 	}
 
-	return layer;
+	const state = runtime.randomUUID();
+	const redirectTo = sanitizeRedirect(input.redirectTo);
+	cookies.set(
+		config.authStateCookieName,
+		JSON.stringify({ state, redirectTo } satisfies AuthStateCookie),
+		authStateCookieOptions(config, runtime.now()),
+	);
+	return github.buildAuthorizationURL({
+		redirectURI: authCallbackURL(config),
+		state,
+	});
 }
 
-export function createDashboardRequestLayer(
-	cookies: SessionCookies,
-): Layer.Layer<SessionCookiesService> {
-	return Layer.succeed(SessionCookiesService)(cookies);
-}
+async function completeAuthCallback(
+	runtime: DashboardRuntime,
+	input: {
+		code?: string;
+		state?: string;
+		subject?: string;
+		email?: string;
+		redirectTo?: string;
+	},
+): Promise<string> {
+	const { config, cookies, github } = runtime;
+	await storeCall(runtime, "ensureInitialized", (store) =>
+		store.ensureInitialized(),
+	);
 
-export const listDevLoginsEffect = Effect.gen(function* () {
-	const config = yield* DashboardConfigService;
-	return config.devUsers;
-}).pipe(Effect.withSpan("dashboard.listDevLogins"));
-
-export const isGitHubLoginEnabledEffect = Effect.gen(function* () {
-	const config = yield* DashboardConfigService;
-	const github = yield* Effect.serviceOption(GitHubAppUserClientService);
-	return Boolean(config.github && Option.isSome(github));
-}).pipe(Effect.withSpan("dashboard.isGitHubLoginEnabled"));
-
-export const beginGitHubLoginEffect = (input: { redirectTo?: string }) =>
-	Effect.gen(function* () {
-		const config = yield* DashboardConfigService;
-		const cookies = yield* SessionCookiesService;
-		const ids = yield* DashboardUUIDService;
-		const github = yield* GitHubAppUserClientService;
-
-		if (!config.github) {
-			return yield* Effect.fail(
-				new AuthConflictError({
-					code: "github_auth_unavailable",
-					message: "GitHub sign-in is not configured",
-				}),
-			);
+	if (input.code) {
+		if (!config.github || !github) {
+			throw new AuthConflictError({
+				code: "github_auth_unavailable",
+				message: "GitHub sign-in is not configured",
+			});
 		}
 
-		const state = ids.randomUUID();
-		const redirectTo = sanitizeRedirect(input.redirectTo);
-		cookies.set(
-			config.authStateCookieName,
-			JSON.stringify({ state, redirectTo } satisfies AuthStateCookie),
-			authStateCookieOptions(config, new Date()),
+		const rawState = cookies.get(config.authStateCookieName);
+		cookies.delete(config.authStateCookieName, { path: "/auth" });
+		if (!rawState) {
+			throw new AuthConflictError({
+				code: "invalid_signin_state",
+				message: "missing sign-in state cookie",
+			});
+		}
+
+		const cookieState = parseAuthStateCookie(rawState);
+		if (cookieState.state !== input.state) {
+			throw new AuthConflictError({
+				code: "invalid_signin_state",
+				message: "sign-in state mismatch",
+			});
+		}
+
+		const token = await githubCall(runtime, "exchangeCode", () =>
+			github.exchangeCode({
+				code: input.code ?? "",
+				redirectURI: authCallbackURL(config),
+			}),
 		);
-		return github.buildAuthorizationURL({
-			redirectURI: authCallbackURL(config),
-			state,
+		const identity = await githubCall(runtime, "fetchIdentity", () =>
+			github.fetchIdentity(token.accessToken),
+		);
+		const result = await storeAuthCall(runtime, "completeGitHubLogin", (store) =>
+			store.completeGitHubLogin({
+				providerSubject: identity.providerSubject,
+				login: identity.login,
+				primaryEmail: identity.primaryEmail,
+				accessToken: token.accessToken,
+				tokenType: token.tokenType,
+				scope: token.scope,
+				accessTokenExpiresAt: token.accessTokenExpiresAt,
+				refreshToken: token.refreshToken,
+				refreshTokenExpiresAt: token.refreshTokenExpiresAt,
+			}),
+		);
+		return signIn(runtime, result.user, "/");
+	}
+
+	const subject = input.subject?.trim() ?? "";
+	const email = input.email?.trim() ?? "";
+	if (subject === "" || email === "") {
+		throw new DashboardValidationError({
+			message:
+				"auth callback requires GitHub code or dev login subject/email",
 		});
-	}).pipe(Effect.withSpan("dashboard.beginGitHubLogin"));
+	}
+	if (config.devUsers.length === 0) {
+		throw new AuthConflictError({
+			code: "dev_auth_unavailable",
+			message: "dev login is not configured",
+		});
+	}
+	const allowed = config.devUsers.some(
+		(entry) => entry.subject === subject && entry.email === email,
+	);
+	if (!allowed) {
+		throw new AuthConflictError({
+			code: "invalid_dev_login",
+			message: "dev login is not allowed",
+		});
+	}
 
-export const completeAuthCallbackEffect = (input: {
-	code?: string;
-	state?: string;
-	subject?: string;
-	email?: string;
-	redirectTo?: string;
-}) =>
-	Effect.gen(function* () {
-		const config = yield* DashboardConfigService;
-		const cookies = yield* SessionCookiesService;
+	const user = await storeCall(runtime, "upsertDevUser", (store) =>
+		store.upsertDevUser(subject, email),
+	);
+	return signIn(runtime, user, input.redirectTo);
+}
 
-		if (input.code) {
-			if (!config.github) {
-				return yield* Effect.fail(
-					new AuthConflictError({
-						code: "github_auth_unavailable",
-						message: "GitHub sign-in is not configured",
-					}),
-				);
-			}
-
-			const rawState = cookies.get(config.authStateCookieName);
-			cookies.delete(config.authStateCookieName, { path: "/auth" });
-			if (!rawState) {
-				return yield* Effect.fail(
-					new AuthConflictError({
-						code: "invalid_signin_state",
-						message: "missing sign-in state cookie",
-					}),
-				);
-			}
-
-			let cookieState: AuthStateCookie;
-			try {
-				cookieState = decodeAuthStateCookie(JSON.parse(rawState));
-			} catch {
-				return yield* Effect.fail(
-					new AuthConflictError({
-						code: "invalid_signin_state",
-						message: "invalid sign-in state cookie",
-					}),
-				);
-			}
-
-			if (cookieState.state !== input.state) {
-				return yield* Effect.fail(
-					new AuthConflictError({
-						code: "invalid_signin_state",
-						message: "sign-in state mismatch",
-					}),
-				);
-			}
-
-			const github = yield* GitHubAppUserClientService;
-			const githubCode = input.code;
-			const token = yield* githubEffect("exchangeCode", () =>
-				github.exchangeCode({
-					code: githubCode,
-					redirectURI: authCallbackURL(config),
-				}),
-			);
-			const identity = yield* githubEffect("fetchIdentity", () =>
-				github.fetchIdentity(token.accessToken),
-			);
-			const result = yield* storeAuthEffect("completeGitHubLogin", (store) =>
-				store.completeGitHubLogin({
-					providerSubject: identity.providerSubject,
-					login: identity.login,
-					primaryEmail: identity.primaryEmail,
-					accessToken: token.accessToken,
-					tokenType: token.tokenType,
-					scope: token.scope,
-					accessTokenExpiresAt: token.accessTokenExpiresAt,
-					refreshToken: token.refreshToken,
-					refreshTokenExpiresAt: token.refreshTokenExpiresAt,
-				}),
-			);
-			return yield* signInEffect(result.user, "/");
-		}
-
-		const subject = input.subject?.trim() ?? "";
-		const email = input.email?.trim() ?? "";
-		if (subject === "" || email === "") {
-			return yield* Effect.fail(
-				new DashboardValidationError({
-					message:
-						"auth callback requires GitHub code or dev login subject/email",
-				}),
-			);
-		}
-		if (config.devUsers.length === 0) {
-			return yield* Effect.fail(
-				new AuthConflictError({
-					code: "dev_auth_unavailable",
-					message: "dev login is not configured",
-				}),
-			);
-		}
-		const allowed = config.devUsers.some(
-			(entry) => entry.subject === subject && entry.email === email,
-		);
-		if (!allowed) {
-			return yield* Effect.fail(
-				new AuthConflictError({
-					code: "invalid_dev_login",
-					message: "dev login is not allowed",
-				}),
-			);
-		}
-		const user = yield* storeEffect("upsertDevUser", (store) =>
-			store.upsertDevUser(subject, email),
-		);
-		return yield* signInEffect(user, input.redirectTo);
-	}).pipe(Effect.withSpan("dashboard.completeAuthCallback"));
-
-export const loadDashboardHomeEffect = Effect.gen(function* () {
-	const session = yield* currentSessionEffect;
+async function loadDashboardHome(
+	runtime: DashboardRuntime,
+): Promise<DashboardHomeState | null> {
+	const session = await currentSession(runtime);
 	if (!session) {
 		return null;
 	}
-	const config = yield* DashboardConfigService;
-	const onboarding = yield* storeEffect("getOnboardingDraft", (store) =>
+
+	const { config } = runtime;
+	const onboarding = await storeCall(runtime, "getOnboardingDraft", (store) =>
 		store.getOnboardingDraft(session.user.id),
 	);
-	const githubAccount = yield* storeEffect("getGitHubAccount", (store) =>
+	const githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
 		store.getGitHubAccount(session.user.id),
 	);
 	const repositories = githubAccount?.accessToken
-		? yield* listGitHubRepositoriesEffect(githubAccount.accessToken).pipe(
-				Effect.catchTag("GitHubApiError", () => Effect.succeed([])),
-			)
+		? await listGitHubRepositories(runtime, githubAccount.accessToken)
 		: [];
 
 	const baseState = {
@@ -838,11 +705,11 @@ export const loadDashboardHomeEffect = Effect.gen(function* () {
 		controlPlaneReachable: true,
 	} satisfies DashboardHomeState;
 
-	return yield* Effect.gen(function* () {
-		yield* platformEffect("ensurePrincipal", (platform) =>
+	try {
+		await platformCall(runtime, "ensurePrincipal", (platform) =>
 			platform.ensurePrincipal(session.user),
 		);
-		const projects = yield* platformEffect("listProjects", (platform) =>
+		const projects = await platformCall(runtime, "listProjects", (platform) =>
 			platform.listProjects(session.user),
 		);
 		let project = onboarding.projectId
@@ -854,7 +721,7 @@ export const loadDashboardHomeEffect = Effect.gen(function* () {
 			);
 		}
 		const repositoryInspection = onboarding.repositorySelector
-			? yield* platformEffect("inspectRepositorySource", (platform) =>
+			? await platformCall(runtime, "inspectRepositorySource", (platform) =>
 					platform.inspectRepositorySource(session.user, {
 						provider: "github",
 						repositorySelector: onboarding.repositorySelector,
@@ -866,44 +733,44 @@ export const loadDashboardHomeEffect = Effect.gen(function* () {
 		let service: DashboardServiceRecord | undefined;
 		let serviceStatus: DashboardServiceStatus | undefined;
 		let domainBindings: Array<DashboardDomainBinding> = [];
+
 		if (project && onboarding.serviceId) {
-			service = yield* platformEffect("getService", (platform) =>
+			service = await safePlatformCall(runtime, "getService", (platform) =>
 				platform.getService(session.user, {
 					projectId: project.id,
 					serviceId: onboarding.serviceId,
 				}),
-			).pipe(
-				Effect.catchTag("PlatformGatewayError", () =>
-					Effect.succeed(undefined),
-				),
 			);
 		}
+
 		if (!service && project && onboarding.repositorySelector) {
-			const services = yield* platformEffect("listServices", (platform) =>
-				platform.listServices(session.user, project.id),
-			).pipe(Effect.catchTag("PlatformGatewayError", () => Effect.succeed([])));
+			const services =
+				(await safePlatformCall(runtime, "listServices", (platform) =>
+					platform.listServices(session.user, project.id),
+				)) ?? [];
 			service = services.find(
 				(entry) =>
 					entry.spec?.repositorySelector === onboarding.repositorySelector,
 			);
 		}
+
 		if (project && service) {
-			serviceStatus = yield* platformEffect("getServiceStatus", (platform) =>
-				platform.getServiceStatus(session.user, {
-					projectId: project.id,
-					serviceId: service.id,
-				}),
-			).pipe(
-				Effect.catchTag("PlatformGatewayError", () =>
-					Effect.succeed(undefined),
-				),
+			serviceStatus = await safePlatformCall(
+				runtime,
+				"getServiceStatus",
+				(platform) =>
+					platform.getServiceStatus(session.user, {
+						projectId: project.id,
+						serviceId: service.id,
+					}),
 			);
-			domainBindings = yield* platformEffect("listDomainBindings", (platform) =>
-				platform.listDomainBindings(session.user, {
-					projectId: project.id,
-					serviceId: service.id,
-				}),
-			).pipe(Effect.catchTag("PlatformGatewayError", () => Effect.succeed([])));
+			domainBindings =
+				(await safePlatformCall(runtime, "listDomainBindings", (platform) =>
+					platform.listDomainBindings(session.user, {
+						projectId: project.id,
+						serviceId: service.id,
+					}),
+				)) ?? [];
 			reconciledDraft = reconcileOnboardingDraft(
 				onboarding,
 				repositoryInspection,
@@ -922,31 +789,17 @@ export const loadDashboardHomeEffect = Effect.gen(function* () {
 				[],
 			);
 		}
+
 		if (!onboardingDraftEquals(onboarding, reconciledDraft)) {
-			reconciledDraft = yield* saveOnboardingDraftEffect(
+			reconciledDraft = await saveOnboardingDraft(
+				runtime,
 				session.user.id,
 				reconciledDraft,
 			);
 		}
 
 		const domainVerification = reconciledDraft.hostname
-			? yield* Effect.tryPromise({
-					try: () =>
-						verifyHostnameDNS(
-							reconciledDraft.hostname,
-							config.ingressTargetHost,
-							undefined,
-							config.localDomainSuffix,
-						),
-					catch: (cause) =>
-						new DashboardValidationError({
-							message: formatError(cause),
-						}),
-				}).pipe(
-					Effect.catchTag("DashboardValidationError", () =>
-						Effect.succeed(undefined),
-					),
-				)
+			? await safeVerifyHostname(runtime, reconciledDraft.hostname)
 			: undefined;
 
 		return {
@@ -959,331 +812,301 @@ export const loadDashboardHomeEffect = Effect.gen(function* () {
 			domainVerification,
 			domainBindings,
 		} satisfies DashboardHomeState;
-	}).pipe(
-		Effect.catchTag("PlatformGatewayError", (error) =>
-			Effect.succeed({
+	} catch (error) {
+		if (error instanceof PlatformGatewayError) {
+			return {
 				...baseState,
 				controlPlaneReachable: false,
 				controlPlaneError: error.message,
-			} satisfies DashboardHomeState),
-		),
+			} satisfies DashboardHomeState;
+		}
+		throw error;
+	}
+}
+
+async function createProjectFromSession(
+	runtime: DashboardRuntime,
+	name: string,
+): Promise<DashboardProject> {
+	const session = await requireSession(runtime);
+	const projectName = name.trim();
+	if (projectName === "") {
+		throw new DashboardValidationError({
+			message: "project name is required",
+		});
+	}
+	await platformCall(runtime, "ensurePrincipal", (platform) =>
+		platform.ensurePrincipal(session.user),
 	);
-}).pipe(Effect.withSpan("dashboard.loadDashboardHome"));
+	return platformCall(runtime, "createProject", (platform) =>
+		platform.createProject(session.user, projectName),
+	);
+}
 
-export const createProjectFromSessionEffect = (name: string) =>
-	Effect.gen(function* () {
-		const session = yield* requireSessionEffect;
-		const projectName = name.trim();
-		if (projectName === "") {
-			return yield* Effect.fail(
-				new DashboardValidationError({
-					message: "project name is required",
-				}),
-			);
-		}
-		yield* platformEffect("ensurePrincipal", (platform) =>
-			platform.ensurePrincipal(session.user),
-		);
-		return yield* platformEffect("createProject", (platform) =>
+async function inspectRepositoryFromSession(
+	runtime: DashboardRuntime,
+	input: { repositorySelector: string },
+): Promise<DashboardOnboardingDraft> {
+	const session = await requireSession(runtime);
+	const selector = normalizeRepositorySelector(input.repositorySelector);
+	await platformCall(runtime, "ensurePrincipal", (platform) =>
+		platform.ensurePrincipal(session.user),
+	);
+	const inspection = await platformCall(
+		runtime,
+		"inspectRepositorySource",
+		(platform) =>
+			platform.inspectRepositorySource(session.user, {
+				provider: "github",
+				repositorySelector: selector,
+			}),
+	);
+	const draft = await loadOnboardingDraft(runtime, session.user.id);
+	const recommended = inspection.recommendedBuildRecipe;
+	const selectorChanged = draft.repositorySelector !== selector;
+	const nextDraft: DashboardOnboardingDraft = {
+		...draft,
+		currentStep: "repository",
+		projectId: selectorChanged ? "" : draft.projectId,
+		serviceId: selectorChanged ? "" : draft.serviceId,
+		repositorySelector: selector,
+		trackedRef:
+			selectorChanged || draft.trackedRef === ""
+				? inspection.defaultBranch
+				: draft.trackedRef,
+		dockerfilePath:
+			selectorChanged || draft.dockerfilePath === ""
+				? (recommended?.dockerfilePath ?? "")
+				: draft.dockerfilePath,
+		contextDir:
+			selectorChanged || draft.contextDir === ""
+				? (recommended?.contextDir ?? "")
+				: draft.contextDir,
+		containerPort: selectorChanged ? "" : draft.containerPort,
+		hostname: selectorChanged ? "" : draft.hostname,
+	};
+	return saveOnboardingDraft(runtime, session.user.id, nextDraft);
+}
+
+async function confirmRepositoryFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		repositorySelector: string;
+		trackedRef?: string;
+		dockerfilePath?: string;
+		contextDir?: string;
+		containerPort?: string;
+	},
+): Promise<DashboardOnboardingDraft> {
+	const session = await requireSession(runtime);
+	const selector = normalizeRepositorySelector(input.repositorySelector);
+	await platformCall(runtime, "ensurePrincipal", (platform) =>
+		platform.ensurePrincipal(session.user),
+	);
+	const inspection = await platformCall(
+		runtime,
+		"inspectRepositorySource",
+		(platform) =>
+			platform.inspectRepositorySource(session.user, {
+				provider: "github",
+				repositorySelector: selector,
+			}),
+	);
+	if (inspection.accessState !== "available") {
+		throw new DashboardValidationError({
+			message: "Repository access is not available yet.",
+		});
+	}
+
+	const dockerfilePath =
+		input.dockerfilePath?.trim() ||
+		inspection.recommendedBuildRecipe?.dockerfilePath ||
+		"";
+	if (dockerfilePath === "") {
+		throw new DashboardValidationError({
+			message:
+				"No Dockerfile was detected for this repository. Pick a repo with a Dockerfile or add one first.",
+		});
+	}
+	const contextDir =
+		input.contextDir?.trim() ||
+		inspection.recommendedBuildRecipe?.contextDir ||
+		".";
+	const containerPort = parseContainerPort(input.containerPort);
+	const trackedRef = input.trackedRef?.trim() || inspection.defaultBranch || "main";
+	const projects = await platformCall(runtime, "listProjects", (platform) =>
+		platform.listProjects(session.user),
+	);
+	const projectName = selector;
+	const project =
+		projects.find((entry) => entry.name === projectName) ??
+		(await platformCall(runtime, "createProject", (platform) =>
 			platform.createProject(session.user, projectName),
-		);
-	}).pipe(Effect.withSpan("dashboard.createProjectFromSession"));
-
-export const inspectRepositoryFromSessionEffect = (input: {
-	repositorySelector: string;
-}) =>
-	Effect.gen(function* () {
-		const session = yield* requireSessionEffect;
-		const selector = normalizeRepositorySelector(input.repositorySelector);
-		yield* platformEffect("ensurePrincipal", (platform) =>
-			platform.ensurePrincipal(session.user),
-		);
-		const inspection = yield* platformEffect(
-			"inspectRepositorySource",
-			(platform) =>
-				platform.inspectRepositorySource(session.user, {
-					provider: "github",
-					repositorySelector: selector,
-				}),
-		);
-		const draft = yield* loadOnboardingDraftEffect(session.user.id);
-		const recommended = inspection.recommendedBuildRecipe;
-		const selectorChanged = draft.repositorySelector !== selector;
-		const nextDraft: DashboardOnboardingDraft = {
-			...draft,
-			currentStep: "repository",
-			projectId: selectorChanged ? "" : draft.projectId,
-			serviceId: selectorChanged ? "" : draft.serviceId,
-			repositorySelector: selector,
-			trackedRef:
-				selectorChanged || draft.trackedRef === ""
-					? inspection.defaultBranch
-					: draft.trackedRef,
-			dockerfilePath:
-				selectorChanged || draft.dockerfilePath === ""
-					? (recommended?.dockerfilePath ?? "")
-					: draft.dockerfilePath,
-			contextDir:
-				selectorChanged || draft.contextDir === ""
-					? (recommended?.contextDir ?? "")
-					: draft.contextDir,
-			containerPort: selectorChanged ? "" : draft.containerPort,
-			hostname: selectorChanged ? "" : draft.hostname,
-		};
-		return yield* saveOnboardingDraftEffect(session.user.id, nextDraft);
-	}).pipe(Effect.withSpan("dashboard.inspectRepositoryFromSession"));
-
-export const confirmRepositoryFromSessionEffect = (input: {
-	repositorySelector: string;
-	trackedRef?: string;
-	dockerfilePath?: string;
-	contextDir?: string;
-	containerPort?: string;
-}) =>
-	Effect.gen(function* () {
-		const session = yield* requireSessionEffect;
-		const selector = normalizeRepositorySelector(input.repositorySelector);
-		yield* platformEffect("ensurePrincipal", (platform) =>
-			platform.ensurePrincipal(session.user),
-		);
-		const inspection = yield* platformEffect(
-			"inspectRepositorySource",
-			(platform) =>
-				platform.inspectRepositorySource(session.user, {
-					provider: "github",
-					repositorySelector: selector,
-				}),
-		);
-		if (inspection.accessState !== "available") {
-			return yield* Effect.fail(
-				new DashboardValidationError({
-					message: "Repository access is not available yet.",
-				}),
-			);
-		}
-		const dockerfilePath =
-			input.dockerfilePath?.trim() ||
-			inspection.recommendedBuildRecipe?.dockerfilePath ||
-			"";
-		if (dockerfilePath === "") {
-			return yield* Effect.fail(
-				new DashboardValidationError({
-					message:
-						"No Dockerfile was detected for this repository. Pick a repo with a Dockerfile or add one first.",
-				}),
-			);
-		}
-		const contextDir =
-			input.contextDir?.trim() ||
-			inspection.recommendedBuildRecipe?.contextDir ||
-			".";
-		const containerPort = parseContainerPort(input.containerPort);
-		const trackedRef =
-			input.trackedRef?.trim() || inspection.defaultBranch || "main";
-		const projects = yield* platformEffect("listProjects", (platform) =>
-			platform.listProjects(session.user),
-		);
-		const projectName = selector;
-		const project =
-			projects.find((entry) => entry.name === projectName) ??
-			(yield* platformEffect("createProject", (platform) =>
-				platform.createProject(session.user, projectName),
-			));
-		const services = yield* platformEffect("listServices", (platform) =>
-			platform.listServices(session.user, project.id),
-		);
-		const existingService = services.find(
-			(entry) => entry.spec?.repositorySelector === selector,
-		);
-		const desiredSource: DashboardSourceSpec = {
-			provider: "github",
-			repositorySelector: selector,
-			trackedRef,
-			buildRecipe: {
-				dockerfilePath,
-				contextDir,
-			},
-			containerPort,
-		};
-		const service = existingService
-			? yield* platformEffect("updateService", (platform) =>
-					platform.updateService(session.user, {
-						projectId: project.id,
-						serviceId: existingService.id,
-						source: desiredSource,
-					}),
-				)
-			: yield* platformEffect("createService", (platform) =>
-					platform.createService(session.user, {
-						projectId: project.id,
-						name: nextServiceName(services, selector),
-						source: desiredSource,
-					}),
-				);
-		return yield* saveOnboardingDraftEffect(session.user.id, {
-			currentStep: "build",
-			projectId: project.id,
-			serviceId: service.id,
-			repositorySelector: selector,
-			trackedRef,
+		));
+	const services = await platformCall(runtime, "listServices", (platform) =>
+		platform.listServices(session.user, project.id),
+	);
+	const existingService = services.find(
+		(entry) => entry.spec?.repositorySelector === selector,
+	);
+	const desiredSource: DashboardSourceSpec = {
+		provider: "github",
+		repositorySelector: selector,
+		trackedRef,
+		buildRecipe: {
 			dockerfilePath,
 			contextDir,
-			containerPort: String(containerPort),
-			hostname: "",
-		});
-	}).pipe(Effect.withSpan("dashboard.confirmRepositoryFromSession"));
-
-export const saveHostnameFromSessionEffect = (hostname: string) =>
-	Effect.gen(function* () {
-		const session = yield* requireSessionEffect;
-		const normalizedHostname = normalizeHostname(hostname);
-		const draft = yield* loadOnboardingDraftEffect(session.user.id);
-		if (!draft.projectId || !draft.serviceId) {
-			return yield* Effect.fail(
-				new DashboardValidationError({
-					message: "Create a service before connecting a domain.",
+		},
+		containerPort,
+	};
+	const service = existingService
+		? await platformCall(runtime, "updateService", (platform) =>
+				platform.updateService(session.user, {
+					projectId: project.id,
+					serviceId: existingService.id,
+					source: desiredSource,
+				}),
+			)
+		: await platformCall(runtime, "createService", (platform) =>
+				platform.createService(session.user, {
+					projectId: project.id,
+					name: nextServiceName(services, selector),
+					source: desiredSource,
 				}),
 			);
-		}
-		return yield* saveOnboardingDraftEffect(session.user.id, {
-			...draft,
-			currentStep: "domain",
-			hostname: normalizedHostname,
-		});
-	}).pipe(Effect.withSpan("dashboard.saveHostnameFromSession"));
+	return saveOnboardingDraft(runtime, session.user.id, {
+		currentStep: "build",
+		projectId: project.id,
+		serviceId: service.id,
+		repositorySelector: selector,
+		trackedRef,
+		dockerfilePath,
+		contextDir,
+		containerPort: String(containerPort),
+		hostname: "",
+	});
+}
 
-export const publishDomainFromSessionEffect = Effect.gen(function* () {
-	const session = yield* requireSessionEffect;
-	const config = yield* DashboardConfigService;
-	const draft = yield* loadOnboardingDraftEffect(session.user.id);
+async function saveHostnameFromSession(
+	runtime: DashboardRuntime,
+	hostname: string,
+): Promise<DashboardOnboardingDraft> {
+	const session = await requireSession(runtime);
+	const normalizedHostname = normalizeHostname(hostname);
+	const draft = await loadOnboardingDraft(runtime, session.user.id);
 	if (!draft.projectId || !draft.serviceId) {
-		return yield* Effect.fail(
-			new DashboardValidationError({
-				message: "Create a service before publishing a domain.",
-			}),
-		);
+		throw new DashboardValidationError({
+			message: "Create a service before connecting a domain.",
+		});
+	}
+	return saveOnboardingDraft(runtime, session.user.id, {
+		...draft,
+		currentStep: "domain",
+		hostname: normalizedHostname,
+	});
+}
+
+async function publishDomainFromSession(
+	runtime: DashboardRuntime,
+): Promise<DashboardDomainBinding> {
+	const session = await requireSession(runtime);
+	const draft = await loadOnboardingDraft(runtime, session.user.id);
+	if (!draft.projectId || !draft.serviceId) {
+		throw new DashboardValidationError({
+			message: "Create a service before publishing a domain.",
+		});
 	}
 	if (!draft.hostname) {
-		return yield* Effect.fail(
-			new DashboardValidationError({
-				message: "Enter a hostname first.",
-			}),
-		);
+		throw new DashboardValidationError({
+			message: "Enter a hostname first.",
+		});
 	}
-	const serviceStatus = yield* platformEffect("getServiceStatus", (platform) =>
+	const serviceStatus = await platformCall(runtime, "getServiceStatus", (platform) =>
 		platform.getServiceStatus(session.user, {
 			projectId: draft.projectId,
 			serviceId: draft.serviceId,
 		}),
 	);
 	if (!buildHealthyAndReady(serviceStatus)) {
-		return yield* Effect.fail(
-			new DashboardValidationError({
-				message:
-					"Wait for the latest build to succeed and the deployment to become healthy before publishing a domain.",
-			}),
-		);
+		throw new DashboardValidationError({
+			message:
+				"Wait for the latest build to succeed and the deployment to become healthy before publishing a domain.",
+		});
 	}
-	const verification = yield* Effect.tryPromise({
-		try: () =>
-			verifyHostnameDNS(
-				draft.hostname,
-				config.ingressTargetHost,
-				undefined,
-				config.localDomainSuffix,
-			),
-		catch: (cause) =>
-			new DashboardValidationError({
-				message: formatError(cause),
-			}),
-	});
+	const verification = await verifyHostnameOrThrow(runtime, draft.hostname);
 	if (verification.state !== "verified") {
-		return yield* Effect.fail(
-			new DashboardValidationError({
-				message: "DNS has not verified yet for this hostname.",
-			}),
-		);
+		throw new DashboardValidationError({
+			message: "DNS has not verified yet for this hostname.",
+		});
 	}
-	const binding = yield* platformEffect("createDomainBinding", (platform) =>
+	const binding = await platformCall(runtime, "createDomainBinding", (platform) =>
 		platform.createDomainBinding(session.user, {
 			projectId: draft.projectId,
 			serviceId: draft.serviceId,
 			hostname: draft.hostname,
 		}),
 	);
-	yield* saveOnboardingDraftEffect(session.user.id, {
+	await saveOnboardingDraft(runtime, session.user.id, {
 		...draft,
 		currentStep: "domain",
 	});
 	return binding;
-}).pipe(Effect.withSpan("dashboard.publishDomainFromSession"));
+}
 
-export const clearSessionEffect = Effect.gen(function* () {
-	const config = yield* DashboardConfigService;
-	const cookies = yield* SessionCookiesService;
+async function clearSession(runtime: DashboardRuntime): Promise<void> {
+	const { config, cookies } = runtime;
 	const refreshToken = cookies.get(config.refreshCookieName);
 	if (refreshToken) {
 		const refresh = readRefreshToken(config, refreshToken);
 		if (refresh) {
-			yield* storeEffect("ensureInitialized", (store) =>
+			await storeCall(runtime, "ensureInitialized", (store) =>
 				store.ensureInitialized(),
 			);
-			yield* storeEffect("deleteRefreshSession", (store) =>
+			await storeCall(runtime, "deleteRefreshSession", (store) =>
 				store.deleteRefreshSession(refresh.sessionId),
 			);
 		}
 	}
 	clearAuthCookies(cookies, config);
-}).pipe(Effect.withSpan("dashboard.clearSession"));
-
-function authCallbackURL(config: DashboardConfig): string {
-	return `${config.publicBaseURL.replace(/\/$/, "")}/auth/callback`;
 }
 
-const signInEffect = (user: DashboardUser, redirectTo?: string) =>
-	Effect.gen(function* () {
-		const config = yield* DashboardConfigService;
-		const clock = yield* DashboardClockService;
-		const ids = yield* DashboardUUIDService;
-		const cookies = yield* SessionCookiesService;
+async function signIn(
+	runtime: DashboardRuntime,
+	user: DashboardUser,
+	redirectTo?: string,
+): Promise<string> {
+	const { config, cookies } = runtime;
+	const now = runtime.now();
+	const refreshSessionId = runtime.randomUUID();
+	const tokens = createSessionTokenPair(config, user, refreshSessionId, now);
+	await storeCall(runtime, "createRefreshSession", (store) =>
+		store.createRefreshSession(
+			tokens.refreshSessionId,
+			user.id,
+			tokens.refreshTokenExpiresAt,
+		),
+	);
+	cookies.set(
+		config.sessionCookieName,
+		tokens.accessToken,
+		sessionCookieOptions(config, tokens.accessTokenExpiresAt),
+	);
+	cookies.set(
+		config.refreshCookieName,
+		tokens.refreshToken,
+		refreshCookieOptions(config, tokens.refreshTokenExpiresAt),
+	);
+	await safePlatformCall(runtime, "ensurePrincipal", (platform) =>
+		platform.ensurePrincipal(user),
+	);
+	return sanitizeRedirect(redirectTo);
+}
 
-		yield* storeEffect("ensureInitialized", (store) =>
-			store.ensureInitialized(),
-		);
-		const now = clock.now();
-		const refreshSessionId = ids.randomUUID();
-		const tokens = createSessionTokenPair(config, user, refreshSessionId, now);
-		yield* storeEffect("createRefreshSession", (store) =>
-			store.createRefreshSession(
-				tokens.refreshSessionId,
-				user.id,
-				tokens.refreshTokenExpiresAt,
-			),
-		);
-		cookies.set(
-			config.sessionCookieName,
-			tokens.accessToken,
-			sessionCookieOptions(config, tokens.accessTokenExpiresAt),
-		);
-		cookies.set(
-			config.refreshCookieName,
-			tokens.refreshToken,
-			refreshCookieOptions(config, tokens.refreshTokenExpiresAt),
-		);
-		yield* platformEffect("ensurePrincipal", (platform) =>
-			platform.ensurePrincipal(user),
-		).pipe(
-			Effect.catchTag("PlatformGatewayError", () => Effect.succeed(undefined)),
-		);
-		return sanitizeRedirect(redirectTo);
-	}).pipe(Effect.withSpan("dashboard.signIn"));
-
-const currentSessionEffect = Effect.gen(function* () {
-	const config = yield* DashboardConfigService;
-	const cookies = yield* SessionCookiesService;
-	const clock = yield* DashboardClockService;
-	const now = clock.now();
-
+async function currentSession(
+	runtime: DashboardRuntime,
+): Promise<DashboardSession | null> {
+	const { config, cookies } = runtime;
+	const now = runtime.now();
 	const accessToken = cookies.get(config.sessionCookieName);
 	if (accessToken) {
 		const access = readAccessToken(config, accessToken, now);
@@ -1291,53 +1114,66 @@ const currentSessionEffect = Effect.gen(function* () {
 			return { user: access.user };
 		}
 	}
+	return refreshSessionFromCookies(runtime);
+}
 
-	return yield* refreshSessionFromCookiesEffect;
-}).pipe(Effect.withSpan("dashboard.currentSession"));
-
-export const refreshSessionEffect = Effect.gen(function* () {
-	const session = yield* refreshSessionFromCookiesEffect;
+async function refreshSession(runtime: DashboardRuntime): Promise<void> {
+	const session = await refreshSessionFromCookies(runtime);
 	if (!session) {
-		return yield* Effect.fail(
-			new AuthenticationRequiredError({
-				message: "authentication required",
-			}),
-		);
+		throw new AuthenticationRequiredError({
+			message: "authentication required",
+		});
 	}
-}).pipe(Effect.withSpan("dashboard.refreshSession"));
+}
 
-const requireSessionEffect = Effect.gen(function* () {
-	const session = yield* currentSessionEffect;
+async function requireSession(
+	runtime: DashboardRuntime,
+): Promise<DashboardSession> {
+	const session = await currentSession(runtime);
 	if (!session) {
-		return yield* Effect.fail(
-			new AuthenticationRequiredError({
-				message: "authentication required",
-			}),
-		);
+		throw new AuthenticationRequiredError({
+			message: "authentication required",
+		});
 	}
 	return session;
-}).pipe(Effect.withSpan("dashboard.requireSession"));
+}
 
-const loadOnboardingDraftEffect = (userID: string) =>
-	storeEffect("getOnboardingDraft", (store) =>
+async function loadOnboardingDraft(
+	runtime: DashboardRuntime,
+	userID: string,
+): Promise<DashboardOnboardingDraft> {
+	return storeCall(runtime, "getOnboardingDraft", (store) =>
 		store.getOnboardingDraft(userID),
 	);
+}
 
-const saveOnboardingDraftEffect = (
+async function saveOnboardingDraft(
+	runtime: DashboardRuntime,
 	userID: string,
 	draft: DashboardOnboardingDraft,
-) =>
-	storeEffect("saveOnboardingDraft", (store) =>
+): Promise<DashboardOnboardingDraft> {
+	return storeCall(runtime, "saveOnboardingDraft", (store) =>
 		store.saveOnboardingDraft(userID, draft),
 	);
+}
 
-const listGitHubRepositoriesEffect = (accessToken: string) =>
-	GitHubAppUserClientService.use((github) =>
-		Effect.tryPromise({
-			try: () => github.listRepositories(accessToken),
-			catch: (cause) => toGitHubApiError("listRepositories", cause),
-		}),
-	).pipe(Effect.withSpan("dashboard.github.listRepositories"));
+async function listGitHubRepositories(
+	runtime: DashboardRuntime,
+	accessToken: string,
+): Promise<Array<GitHubUserRepository>> {
+	const github = runtime.github;
+	if (!github) {
+		return [];
+	}
+	try {
+		return await github.listRepositories(accessToken);
+	} catch (cause) {
+		if (cause instanceof GitHubApiError) {
+			return [];
+		}
+		throw toGitHubApiError("listRepositories", cause);
+	}
+}
 
 function reconcileOnboardingDraft(
 	draft: DashboardOnboardingDraft,
@@ -1466,50 +1302,68 @@ function buildHealthyAndReady(
 	);
 }
 
-function storeEffect<A>(
+async function storeCall<A>(
+	runtime: DashboardRuntime,
 	operation: string,
 	run: (store: DashboardStore) => Promise<A>,
-): Effect.Effect<A, DatabaseError, DashboardStoreService> {
-	return DashboardStoreService.use((store) =>
-		Effect.tryPromise({
-			try: () => run(store),
-			catch: (cause) => toStrictDatabaseError(operation, cause),
-		}).pipe(Effect.withSpan(`dashboard.store.${operation}`)),
-	);
+): Promise<A> {
+	try {
+		return await run(runtime.store);
+	} catch (cause) {
+		throw toStrictDatabaseError(operation, cause);
+	}
 }
 
-function storeAuthEffect<A>(
+async function storeAuthCall<A>(
+	runtime: DashboardRuntime,
 	operation: string,
 	run: (store: DashboardStore) => Promise<A>,
-) {
-	return DashboardStoreService.use((store) =>
-		Effect.tryPromise({
-			try: () => run(store),
-			catch: (cause) => toDatabaseError(operation, cause),
-		}).pipe(Effect.withSpan(`dashboard.store.${operation}`)),
-	);
+): Promise<A> {
+	try {
+		return await run(runtime.store);
+	} catch (cause) {
+		throw toDatabaseError(operation, cause);
+	}
 }
 
-function githubEffect<A>(
+async function githubCall<A>(
+	runtime: DashboardRuntime,
 	operation: string,
 	run: () => Promise<A>,
-): Effect.Effect<A, AuthConflictError | GitHubApiError> {
-	return Effect.tryPromise({
-		try: () => run(),
-		catch: (cause) => toGitHubApiError(operation, cause),
-	}).pipe(Effect.withSpan(`dashboard.github.${operation}`));
+): Promise<A> {
+	void runtime;
+	try {
+		return await run();
+	} catch (cause) {
+		throw toGitHubApiError(operation, cause);
+	}
 }
 
-function platformEffect<A>(
+async function platformCall<A>(
+	runtime: DashboardRuntime,
 	operation: string,
 	run: (platform: PlatformGateway) => Promise<A>,
-): Effect.Effect<A, PlatformGatewayError, PlatformGatewayService> {
-	return PlatformGatewayService.use((platform) =>
-		Effect.tryPromise({
-			try: () => run(platform),
-			catch: (cause) => toPlatformGatewayError(operation, cause),
-		}).pipe(Effect.withSpan(`dashboard.platform.${operation}`)),
-	);
+): Promise<A> {
+	try {
+		return await run(runtime.platform);
+	} catch (cause) {
+		throw toPlatformGatewayError(operation, cause);
+	}
+}
+
+async function safePlatformCall<A>(
+	runtime: DashboardRuntime,
+	operation: string,
+	run: (platform: PlatformGateway) => Promise<A>,
+): Promise<A | undefined> {
+	try {
+		return await platformCall(runtime, operation, run);
+	} catch (error) {
+		if (error instanceof PlatformGatewayError) {
+			return undefined;
+		}
+		throw error;
+	}
 }
 
 function toDatabaseError(
@@ -1640,12 +1494,11 @@ function shouldUseSecureCookies(config: DashboardConfig): boolean {
 	);
 }
 
-const refreshSessionFromCookiesEffect = Effect.gen(function* () {
-	const config = yield* DashboardConfigService;
-	const cookies = yield* SessionCookiesService;
-	const clock = yield* DashboardClockService;
-	const ids = yield* DashboardUUIDService;
-	const now = clock.now();
+async function refreshSessionFromCookies(
+	runtime: DashboardRuntime,
+): Promise<DashboardSession | null> {
+	const { config, cookies } = runtime;
+	const now = runtime.now();
 	const refreshToken = cookies.get(config.refreshCookieName);
 	if (!refreshToken) {
 		clearAuthCookies(cookies, config);
@@ -1658,12 +1511,14 @@ const refreshSessionFromCookiesEffect = Effect.gen(function* () {
 		return null;
 	}
 
-	yield* storeEffect("ensureInitialized", (store) => store.ensureInitialized());
-	const nextSessionId = ids.randomUUID();
+	await storeCall(runtime, "ensureInitialized", (store) =>
+		store.ensureInitialized(),
+	);
+	const nextSessionId = runtime.randomUUID();
 	const nextRefreshExpiresAt = new Date(
 		now.getTime() + config.sessionMaxAgeSeconds * 1000,
 	);
-	const user = yield* storeEffect("rotateRefreshSession", (store) =>
+	const user = await storeCall(runtime, "rotateRefreshSession", (store) =>
 		store.rotateRefreshSession({
 			sessionId: refresh.sessionId,
 			userID: refresh.user.id,
@@ -1689,7 +1544,7 @@ const refreshSessionFromCookiesEffect = Effect.gen(function* () {
 		refreshCookieOptions(config, tokens.refreshTokenExpiresAt),
 	);
 	return { user };
-}).pipe(Effect.withSpan("dashboard.refreshSessionFromCookies"));
+}
 
 function clearAuthCookies(cookies: SessionCookies, config: DashboardConfig) {
 	cookies.delete(config.sessionCookieName, { path: "/" });
@@ -1714,6 +1569,66 @@ function readRefreshToken(config: DashboardConfig, token: string, now?: Date) {
 	}
 }
 
+function authCallbackURL(config: DashboardConfig): string {
+	return `${config.publicBaseURL.replace(/\/$/, "")}/auth/callback`;
+}
+
+function parseAuthStateCookie(rawState: string): AuthStateCookie {
+	try {
+		const parsed = JSON.parse(rawState);
+		if (
+			parsed &&
+			typeof parsed === "object" &&
+			typeof parsed.state === "string" &&
+			parsed.state.trim() !== "" &&
+			typeof parsed.redirectTo === "string"
+		) {
+			return {
+				state: parsed.state,
+				redirectTo: parsed.redirectTo,
+			};
+		}
+	} catch {
+		// Fall through.
+	}
+	throw new AuthConflictError({
+		code: "invalid_signin_state",
+		message: "invalid sign-in state cookie",
+	});
+}
+
+async function verifyHostnameOrThrow(
+	runtime: DashboardRuntime,
+	hostname: string,
+): Promise<DomainVerificationResult> {
+	try {
+		return await verifyHostnameDNS(
+			hostname,
+			runtime.config.ingressTargetHost,
+			undefined,
+			runtime.config.localDomainSuffix,
+		);
+	} catch (cause) {
+		throw new DashboardValidationError({
+			message: formatError(cause),
+		});
+	}
+}
+
+async function safeVerifyHostname(
+	runtime: DashboardRuntime,
+	hostname: string,
+): Promise<DomainVerificationResult | undefined> {
+	try {
+		return await verifyHostnameOrThrow(runtime, hostname);
+	} catch (error) {
+		if (error instanceof DashboardValidationError) {
+			return undefined;
+		}
+		throw error;
+	}
+}
+
 export function sanitizeRedirect(value?: string): string {
 	if (!value || !value.startsWith("/")) {
 		return "/";
@@ -1729,13 +1644,12 @@ export function formatError(error: unknown): string {
 }
 
 export function parseIdentifier(raw: string): string {
-	try {
-		return decodeIdentifier(raw);
-	} catch {
-		throw new DashboardConfigError({
-			message: `invalid dashboard schema identifier: ${raw}`,
-		});
+	if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw)) {
+		return raw;
 	}
+	throw new DashboardConfigError({
+		message: `invalid dashboard schema identifier: ${raw}`,
+	});
 }
 
 export function parseDevUsers(raw: string): Array<DevLoginIdentity> {
@@ -1748,15 +1662,13 @@ export function parseDevUsers(raw: string): Array<DevLoginIdentity> {
 		.filter((entry) => entry !== "")
 		.flatMap((entry) => {
 			const [subject, email] = entry.split(":", 2);
-			try {
-				return [
-					decodeDevLoginIdentity({
-						subject: (subject ?? "").trim(),
-						email: (email ?? "").trim(),
-					}),
-				];
-			} catch {
+			const parsed = {
+				subject: (subject ?? "").trim(),
+				email: (email ?? "").trim(),
+			};
+			if (parsed.subject === "" || parsed.email === "") {
 				return [];
 			}
+			return [parsed];
 		});
 }

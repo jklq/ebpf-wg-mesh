@@ -1,6 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Schema } from "effect";
 
 import type {
 	DashboardHomeState,
@@ -21,13 +20,6 @@ export interface LoginRouteService {
 	loadDashboardHome(): Promise<DashboardHomeState | null>;
 }
 
-const LoginSearchSchema = Schema.Struct({
-	redirect: Schema.optionalKey(Schema.String),
-	error: Schema.optionalKey(Schema.String),
-	detail: Schema.optionalKey(Schema.String),
-});
-const decodeLoginSearch = Schema.decodeUnknownSync(LoginSearchSchema);
-
 export async function loadLoginRouteState(
 	service: LoginRouteService,
 ): Promise<LoginRouteState> {
@@ -45,7 +37,7 @@ const loadLoginState = createServerFn({ method: "GET" }).handler(async () => {
 });
 
 export const Route = createFileRoute("/login")({
-	validateSearch: (search: Record<string, unknown>) => decodeLoginSearch(search),
+	validateSearch: (search: Record<string, unknown>) => parseLoginSearch(search),
 	loader: async () => {
 		const state = await loadLoginState();
 		if (state.session) {
@@ -189,4 +181,20 @@ function loginErrorMessage(code: string, detail?: string): string {
 		default:
 			return "Sign-in failed.";
 	}
+}
+
+function parseLoginSearch(input: unknown): {
+	redirect?: string;
+	error?: string;
+	detail?: string;
+} {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return {};
+	}
+	const data = input as Record<string, unknown>;
+	return {
+		redirect: typeof data.redirect === "string" ? data.redirect : undefined,
+		error: typeof data.error === "string" ? data.error : undefined,
+		detail: typeof data.detail === "string" ? data.detail : undefined,
+	};
 }
