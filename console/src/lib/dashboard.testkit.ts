@@ -46,6 +46,7 @@ export interface DashboardTestHarness {
 	cookies: FakeSessionCookies;
 	github: FakeGitHubAppUserClient;
 	users: Map<string, DashboardUser>;
+	storeEnsureInitializedCalls: Array<number>;
 }
 
 export interface FakePlatformGateway extends PlatformGateway {
@@ -169,9 +170,12 @@ export function createDashboardTestHarness(
 	let nextUserID = 1;
 	let nextSessionID = 1;
 	const now = new Date("2026-03-18T12:00:00Z");
+	const storeEnsureInitializedCalls: Array<number> = [];
 
 	const store: DashboardStore = {
-		async ensureInitialized(): Promise<void> {},
+		async ensureInitialized(): Promise<void> {
+			storeEnsureInitializedCalls.push(storeEnsureInitializedCalls.length + 1);
+		},
 		async upsertDevUser(subject, email): Promise<DashboardUser> {
 			const existing = users.get(subject);
 			if (existing) {
@@ -627,6 +631,7 @@ export function createDashboardTestHarness(
 		github,
 		cookies,
 		users,
+		storeEnsureInitializedCalls,
 	};
 }
 

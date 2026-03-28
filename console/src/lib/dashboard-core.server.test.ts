@@ -49,6 +49,7 @@ describe("dashboard service", () => {
 				new Date("2026-03-18T12:05:00Z"),
 			).sessionId,
 		).toBe("session-1");
+		expect(harness.storeEnsureInitializedCalls).toHaveLength(1);
 		expect(harness.platform.ensurePrincipalCalls).toHaveLength(1);
 	});
 

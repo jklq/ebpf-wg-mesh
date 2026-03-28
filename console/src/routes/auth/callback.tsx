@@ -1,6 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Schema } from "effect";
 
 export interface AuthCallbackService {
 	completeAuthCallback(input: {
@@ -25,26 +24,9 @@ export async function completeLoginRoute(
 	return service.completeAuthCallback(data);
 }
 
-const AuthCallbackSchema = Schema.Struct({
-	code: Schema.optionalKey(Schema.String),
-	state: Schema.optionalKey(Schema.String),
-	subject: Schema.optionalKey(Schema.String),
-	email: Schema.optionalKey(Schema.String),
-	redirectTo: Schema.optionalKey(Schema.String),
-});
-const AuthCallbackSearchSchema = Schema.Struct({
-	code: Schema.optionalKey(Schema.String),
-	state: Schema.optionalKey(Schema.String),
-	subject: Schema.optionalKey(Schema.String),
-	email: Schema.optionalKey(Schema.String),
-	redirect: Schema.optionalKey(Schema.String),
-});
-const decodeAuthCallbackInput = Schema.decodeUnknownSync(AuthCallbackSchema);
-const decodeAuthCallbackSearch = Schema.decodeUnknownSync(AuthCallbackSearchSchema);
-
 const completeLogin = createServerFn({ method: "GET" })
 	.inputValidator((input: unknown) => {
-		const data = decodeAuthCallbackInput(input ?? {});
+		const data = parseAuthCallbackInput(input);
 		return {
 			code: data.code ?? "",
 			state: data.state ?? "",
@@ -81,7 +63,7 @@ const completeLogin = createServerFn({ method: "GET" })
 
 export const Route = createFileRoute("/auth/callback")({
 	validateSearch: (search: Record<string, unknown>) => {
-		const data = decodeAuthCallbackSearch(search);
+		const data = parseAuthCallbackSearch(search);
 		return {
 			code: data.code ?? "",
 			state: data.state ?? "",
@@ -136,4 +118,48 @@ function githubCallbackErrorDetail(error: unknown): string {
 		return "GitHub rejected the user-auth token exchange. Recheck the Client ID, Client Secret, and callback URL.";
 	}
 	return "GitHub sign-in failed. Recheck the GitHub App callback URL, user permissions, and client credentials.";
+}
+
+function parseAuthCallbackInput(input: unknown): {
+	code?: string;
+	state?: string;
+	subject?: string;
+	email?: string;
+	redirectTo?: string;
+} {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return {};
+	}
+	const data = input as Record<string, unknown>;
+	return {
+		code: readOptionalString(data.code),
+		state: readOptionalString(data.state),
+		subject: readOptionalString(data.subject),
+		email: readOptionalString(data.email),
+		redirectTo: readOptionalString(data.redirectTo),
+	};
+}
+
+function parseAuthCallbackSearch(input: unknown): {
+	code?: string;
+	state?: string;
+	subject?: string;
+	email?: string;
+	redirect?: string;
+} {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return {};
+	}
+	const data = input as Record<string, unknown>;
+	return {
+		code: readOptionalString(data.code),
+		state: readOptionalString(data.state),
+		subject: readOptionalString(data.subject),
+		email: readOptionalString(data.email),
+		redirect: readOptionalString(data.redirect),
+	};
+}
+
+function readOptionalString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
 }

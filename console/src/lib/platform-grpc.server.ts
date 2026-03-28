@@ -1,7 +1,6 @@
 import { dirname, resolve } from "node:path";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
-import { Effect } from "effect";
 import googleProtoFiles from "google-proto-files";
 
 import {
@@ -243,115 +242,125 @@ export function createPlatformGateway(
 	runtime: PlatformRuntimeConfig,
 ): PlatformGateway {
 	return {
-		ensurePrincipal(user) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "EnsurePrincipal", {
-					subject: user.subject,
-					email: user.email,
-				}).pipe(Effect.asVoid),
-			);
+		async ensurePrincipal(user) {
+			await unaryCall(runtime, "EnsurePrincipal", {
+				subject: user.subject,
+				email: user.email,
+			});
 		},
-		listProjects(user) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "ListProjects", {}, user).pipe(
-					Effect.map(
-						(response) => decodeListProjectsResponse(response).projects,
-					),
-				),
-			);
+		async listProjects(user) {
+			const response = await unaryCall(runtime, "ListProjects", {}, user);
+			return decodeListProjectsResponse(response).projects;
 		},
-		createProject(user, name) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "CreateProject", { name }, user).pipe(
-					Effect.map((response) => decodeProjectMessage(response)),
-				),
+		async createProject(user, name) {
+			const response = await unaryCall(
+				runtime,
+				"CreateProject",
+				{ name },
+				user,
 			);
+			return decodeProjectMessage(response);
 		},
-		listServices(user, projectId) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "ListServices", { projectId }, user).pipe(
-					Effect.map((response) => decodeListServicesResponse(response)),
-				),
+		async listServices(user, projectId) {
+			const response = await unaryCall(
+				runtime,
+				"ListServices",
+				{ projectId },
+				user,
 			);
+			return decodeListServicesResponse(response);
 		},
-		inspectRepositorySource(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(
-					runtime,
-					"InspectSource",
-					{
-						provider: input.provider,
-						repositorySelector: input.repositorySelector,
+		async inspectRepositorySource(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"InspectSource",
+				{
+					provider: input.provider,
+					repositorySelector: input.repositorySelector,
+				},
+				user,
+			);
+			return decodeInspectSourceResponse(response);
+		},
+		async createService(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"CreateService",
+				encodeCreateServiceRequest(input),
+				user,
+			);
+			return decodeServiceMessage(response);
+		},
+		async updateService(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"UpdateService",
+				encodeUpdateServiceRequest(input),
+				user,
+			);
+			return decodeServiceMessage(response);
+		},
+		async getService(user, input) {
+			const response = await unaryCall(runtime, "GetService", input, user);
+			return decodeServiceMessage(response);
+		},
+		async getServiceStatus(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"GetServiceStatus",
+				input,
+				user,
+			);
+			return decodeServiceStatusMessage(response);
+		},
+		async listDomainBindings(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"ListDomainBindings",
+				input,
+				user,
+			);
+			return decodeListDomainBindingsResponse(response);
+		},
+		async createDomainBinding(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"CreateDomainBinding",
+				{
+					projectId: input.projectId,
+					binding: {
+						hostname: input.hostname,
+						serviceId: input.serviceId,
 					},
-					user,
-				).pipe(Effect.map((response) => decodeInspectSourceResponse(response))),
+				},
+				user,
 			);
-		},
-		createService(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(
-					runtime,
-					"CreateService",
-					encodeCreateServiceRequest(input),
-					user,
-				).pipe(Effect.map((response) => decodeServiceMessage(response))),
-			);
-		},
-		updateService(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(
-					runtime,
-					"UpdateService",
-					encodeUpdateServiceRequest(input),
-					user,
-				).pipe(Effect.map((response) => decodeServiceMessage(response))),
-			);
-		},
-		getService(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "GetService", input, user).pipe(
-					Effect.map((response) => decodeServiceMessage(response)),
-				),
-			);
-		},
-		getServiceStatus(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "GetServiceStatus", input, user).pipe(
-					Effect.map((response) => decodeServiceStatusMessage(response)),
-				),
-			);
-		},
-		listDomainBindings(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(runtime, "ListDomainBindings", input, user).pipe(
-					Effect.map((response) => decodeListDomainBindingsResponse(response)),
-				),
-			);
-		},
-		createDomainBinding(user, input) {
-			return Effect.runPromise(
-				unaryCallEffect(
-					runtime,
-					"CreateDomainBinding",
-					{
-						projectId: input.projectId,
-						binding: {
-							hostname: input.hostname,
-							serviceId: input.serviceId,
-						},
-					},
-					user,
-				).pipe(Effect.map((response) => decodeDomainBindingMessage(response))),
-			);
+			return decodeDomainBindingMessage(response);
 		},
 	};
 }
 
-export function ingestGitHubWebhook(
+export async function ingestGitHubWebhook(
 	runtime: PlatformRuntimeConfig,
 	input: IngestGitHubWebhookInput,
 ): Promise<void> {
-	return Effect.runPromise(ingestGitHubWebhookEffect(runtime, input));
+	try {
+		await new Promise<void>((resolve, reject) => {
+			getOpsClient(runtime).IngestGitHubWebhook(
+				input,
+				new grpc.Metadata(),
+				(error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				},
+			);
+		});
+	} catch (cause) {
+		throw toPlatformGatewayError("IngestGitHubWebhook", cause);
+	}
 }
 
 export function decodeProjectMessage(raw: unknown): PlatformProjectMessage {
@@ -417,28 +426,6 @@ export function decodeBuildState(raw: unknown): DashboardBuildState {
 			return "unspecified";
 	}
 }
-
-const ingestGitHubWebhookEffect = (
-	runtime: PlatformRuntimeConfig,
-	input: IngestGitHubWebhookInput,
-): Effect.Effect<void, PlatformGatewayError> =>
-	Effect.tryPromise({
-		try: () =>
-			new Promise<void>((resolve, reject) => {
-				getOpsClient(runtime).IngestGitHubWebhook(
-					input,
-					new grpc.Metadata(),
-					(error) => {
-						if (error) {
-							reject(error);
-							return;
-						}
-						resolve();
-					},
-				);
-			}),
-		catch: (cause) => toPlatformGatewayError("IngestGitHubWebhook", cause),
-	}).pipe(Effect.withSpan("platform.grpc.IngestGitHubWebhook"));
 
 function decodeListProjectsResponse(raw: unknown): ListProjectsResponseMessage {
 	const value = readRecord(raw, "list projects response");
@@ -696,12 +683,12 @@ function decodeOptionalBuildRecipe(
 	};
 }
 
-function unaryCallEffect<M extends PlatformMethod>(
+async function unaryCall<M extends PlatformMethod>(
 	runtime: PlatformRuntimeConfig,
 	method: M,
 	request: PlatformRequestMap[M],
 	user?: DashboardUser,
-): Effect.Effect<unknown, PlatformGatewayError> {
+): Promise<unknown> {
 	const client = getPlatformClient(runtime);
 	const metadata = new grpc.Metadata();
 	if (user) {
@@ -709,98 +696,98 @@ function unaryCallEffect<M extends PlatformMethod>(
 		metadata.set("x-platform-user-email", user.email);
 	}
 
-	return Effect.tryPromise({
-		try: () =>
-			new Promise<unknown>((resolve, reject) => {
-				const handleResponse: RawUnaryCallback = (error, response) => {
-					if (error) {
-						reject(error);
-						return;
-					}
-					resolve(response);
-				};
-				switch (method) {
-					case "EnsurePrincipal":
-						client.EnsurePrincipal(
-							request as EnsurePrincipalRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "ListProjects":
-						client.ListProjects(
-							request as Record<string, never>,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "CreateProject":
-						client.CreateProject(
-							request as CreateProjectRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "InspectSource":
-						client.InspectSource(
-							request as InspectSourceRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "ListServices":
-						client.ListServices(
-							request as ListServicesRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "CreateService":
-						client.CreateService(
-							request as CreateServiceRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "UpdateService":
-						client.UpdateService(
-							request as UpdateServiceRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "GetService":
-						client.GetService(
-							request as GetServiceRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "GetServiceStatus":
-						client.GetServiceStatus(
-							request as GetServiceStatusRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "ListDomainBindings":
-						client.ListDomainBindings(
-							request as ListDomainBindingsRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
-					case "CreateDomainBinding":
-						client.CreateDomainBinding(
-							request as CreateDomainBindingRequest,
-							metadata,
-							handleResponse,
-						);
-						return;
+	try {
+		return await new Promise<unknown>((resolve, reject) => {
+			const handleResponse: RawUnaryCallback = (error, response) => {
+				if (error) {
+					reject(error);
+					return;
 				}
-			}),
-		catch: (cause) => toPlatformGatewayError(method, cause),
-	}).pipe(Effect.withSpan(`platform.grpc.${method}`));
+				resolve(response);
+			};
+
+			switch (method) {
+				case "EnsurePrincipal":
+					client.EnsurePrincipal(
+						request as EnsurePrincipalRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "ListProjects":
+					client.ListProjects(
+						request as Record<string, never>,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "CreateProject":
+					client.CreateProject(
+						request as CreateProjectRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "InspectSource":
+					client.InspectSource(
+						request as InspectSourceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "ListServices":
+					client.ListServices(
+						request as ListServicesRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "CreateService":
+					client.CreateService(
+						request as CreateServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "UpdateService":
+					client.UpdateService(
+						request as UpdateServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "GetService":
+					client.GetService(
+						request as GetServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "GetServiceStatus":
+					client.GetServiceStatus(
+						request as GetServiceStatusRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "ListDomainBindings":
+					client.ListDomainBindings(
+						request as ListDomainBindingsRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "CreateDomainBinding":
+					client.CreateDomainBinding(
+						request as CreateDomainBindingRequest,
+						metadata,
+						handleResponse,
+					);
+			}
+		});
+	} catch (cause) {
+		throw toPlatformGatewayError(method, cause);
+	}
 }
 
 function getPlatformClient(runtime: PlatformRuntimeConfig): PlatformClient {
@@ -920,7 +907,9 @@ function readRecord(raw: unknown, context: string): Record<string, unknown> {
 	return raw as Record<string, unknown>;
 }
 
-function readOptionalRecord(raw: unknown): Record<string, unknown> | undefined {
+function readOptionalRecord(
+	raw: unknown,
+): Record<string, unknown> | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
 		return undefined;
 	}
@@ -928,69 +917,59 @@ function readOptionalRecord(raw: unknown): Record<string, unknown> | undefined {
 }
 
 function readArray(
-	record: Record<string, unknown>,
+	value: Record<string, unknown>,
 	key: string,
 ): Array<unknown> {
-	const value = record[key];
-	if (!Array.isArray(value)) {
+	const array = value[key];
+	if (!Array.isArray(array)) {
 		return [];
 	}
-	return value;
+	return array;
 }
 
 function readRequiredString(
-	record: Record<string, unknown>,
+	value: Record<string, unknown>,
 	key: string,
 	context: string,
 ): string {
-	const value = record[key];
-	if (typeof value !== "string" || value === "") {
-		throw new Error(`invalid ${context}: ${key} must be a non-empty string`);
+	const candidate = value[key];
+	if (typeof candidate !== "string" || candidate === "") {
+		throw new Error(`invalid ${context}.${key}`);
 	}
-	return value;
+	return candidate;
 }
 
 function readOptionalString(
-	record: Record<string, unknown>,
+	value: Record<string, unknown> | undefined,
 	key: string,
 ): string | undefined {
-	const value = record[key];
-	if (value === undefined || value === "") {
+	if (!value) {
 		return undefined;
 	}
-	if (typeof value !== "string") {
-		throw new Error(`invalid value: ${key} must be a string`);
-	}
-	return value;
+	const candidate = value[key];
+	return typeof candidate === "string" ? candidate : undefined;
 }
 
 function readOptionalNumber(
-	record: Record<string, unknown> | undefined,
+	value: Record<string, unknown> | undefined,
 	key: string,
 ): number | undefined {
-	if (!record) {
+	if (!value) {
 		return undefined;
 	}
-	const value = record[key];
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		return undefined;
-	}
-	return value;
+	const candidate = value[key];
+	return typeof candidate === "number" ? candidate : undefined;
+}
+
+function readBoolean(value: Record<string, unknown>, key: string): boolean {
+	return value[key] === true;
 }
 
 function readStringArray(
-	record: Record<string, unknown>,
+	value: Record<string, unknown>,
 	key: string,
 ): Array<string> {
-	const value = record[key];
-	if (!Array.isArray(value)) {
-		return [];
-	}
-	return value.flatMap((item) =>
-		typeof item === "string" && item !== "" ? [item] : [],
+	return readArray(value, key).filter(
+		(entry): entry is string => typeof entry === "string",
 	);
-}
-
-function readBoolean(record: Record<string, unknown>, key: string): boolean {
-	return record[key] === true;
 }
