@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -47,12 +48,20 @@ func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, inst
 	if installationID <= 0 {
 		return errors.New("installation id is required")
 	}
-	_, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
+	inserted, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
 		Kind:                    sourceWorkKindProviderAccessChanged,
 		IdempotencyKey:          fmt.Sprintf("%s:github:%d", sourceWorkKindProviderAccessChanged, installationID),
 		Provider:                "github",
 		ProviderScopeExternalID: scopeExternalID(installationID),
 	})
+	if err != nil {
+		return err
+	}
+	if inserted {
+		slog.InfoContext(ctx, "github installation refresh queued", "installation_id", installationID)
+	} else {
+		slog.InfoContext(ctx, "github installation refresh deduplicated", "installation_id", installationID)
+	}
 	return err
 }
 
@@ -66,7 +75,7 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	if repositoryExternalID == "" || trackedRef == "" || commitSHA == "" {
 		return errors.New("repository id, tracked ref, and commit sha are required")
 	}
-	_, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
+	inserted, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
 		Kind:                         sourceWorkKindRevisionObserved,
 		IdempotencyKey:               fmt.Sprintf("%s:github:%s:%s:%s", sourceWorkKindRevisionObserved, repositoryExternalID, trackedRef, commitSHA),
 		Provider:                     "github",
@@ -74,7 +83,15 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 		TrackedRef:                   trackedRef,
 		CommitSHA:                    commitSHA,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if inserted {
+		slog.InfoContext(ctx, "github revision observed", "repository_external_id", repositoryExternalID, "tracked_ref", trackedRef, "commit_sha", commitSHA)
+	} else {
+		slog.InfoContext(ctx, "github revision already observed", "repository_external_id", repositoryExternalID, "tracked_ref", trackedRef, "commit_sha", commitSHA)
+	}
+	return nil
 }
 
 func (c *GitHubCoordinator) processWorkItem(ctx context.Context, rec sourceWorkItemRecord) error {
@@ -208,8 +225,13 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sour
 	if err != nil {
 		return err
 	}
+	if len(bindings) == 0 {
+		slog.InfoContext(ctx, "github revision had no bound services", "repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
+		return nil
+	}
 	for _, binding := range bindings {
 		if time.Now().UTC().After(binding.FreshUntil) {
+			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
 			if _, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
 				Kind:           sourceWorkKindSourceSpecChanged,
 				IdempotencyKey: fmt.Sprintf("%s:%s:%d", sourceWorkKindSourceSpecChanged, binding.ServiceID, time.Now().UTC().UnixNano()),
@@ -220,8 +242,10 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sour
 			continue
 		}
 		if binding.AccessState != sourceAccessStateAvailable {
+			slog.InfoContext(ctx, "github source binding unavailable", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA, "access_state", binding.AccessState)
 			continue
 		}
+		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
 		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA); err != nil {
 			return err
 		}
@@ -276,8 +300,12 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		if err != nil {
 			return err
 		}
-		_, err = c.store.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe)
-		return err
+		build, err := c.store.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe)
+		if err != nil {
+			return err
+		}
+		slog.InfoContext(ctx, "github build queued", "service_id", service.ID, "build_id", build.ID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID, "source_snapshot_id", snapshot.ID)
+		return nil
 	})
 }
 

@@ -67,12 +67,26 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *GitHubWebhookHandler) HandleDelivery(ctx context.Context, signature, deliveryID, eventType string, payload []byte) error {
-	if !h.verifySignature(signature, payload) {
-		return errGitHubWebhookInvalidSignature
-	}
 	deliveryID = strings.TrimSpace(deliveryID)
 	eventType = strings.TrimSpace(eventType)
+	payloadBytes := len(payload)
+	valid, details := h.verifySignature(signature, payload)
+	if !valid {
+		slog.Warn(
+			"github webhook delivery rejected",
+			"delivery_id", deliveryID,
+			"event_type", eventType,
+			"payload_bytes", payloadBytes,
+			"reason", details.reason,
+			"signature_present", details.signaturePresent,
+			"signature_prefix", details.signaturePrefix,
+			"expected_prefix", details.expectedPrefix,
+			"secret_fingerprint", details.secretFingerprint,
+		)
+		return errGitHubWebhookInvalidSignature
+	}
 	if deliveryID == "" || eventType == "" {
+		slog.Warn("github webhook delivery rejected", "delivery_id", deliveryID, "event_type", eventType, "payload_bytes", payloadBytes, "reason", "missing_delivery_headers")
 		return errGitHubWebhookMissingHeaders
 	}
 	inserted, err := h.store.enqueueGitHubWebhookDelivery(ctx, deliveryID, eventType, payload)
@@ -80,24 +94,61 @@ func (h *GitHubWebhookHandler) HandleDelivery(ctx context.Context, signature, de
 		return err
 	}
 	if inserted {
+		slog.Info("github webhook delivery queued", "delivery_id", deliveryID, "event_type", eventType, "payload_bytes", payloadBytes)
 		h.processor.RequestProcess()
+	} else {
+		slog.Info("github webhook delivery deduplicated", "delivery_id", deliveryID, "event_type", eventType, "payload_bytes", payloadBytes)
 	}
 	return nil
 }
 
-func (h *GitHubWebhookHandler) verifySignature(header string, payload []byte) bool {
+type gitHubWebhookSignatureCheck struct {
+	reason            string
+	signaturePresent  bool
+	signaturePrefix   string
+	expectedPrefix    string
+	secretFingerprint string
+}
+
+func (h *GitHubWebhookHandler) verifySignature(header string, payload []byte) (bool, gitHubWebhookSignatureCheck) {
+	secretHash := sha256.Sum256(h.secret)
+	details := gitHubWebhookSignatureCheck{
+		reason:            "invalid_signature",
+		secretFingerprint: hexPrefix(secretHash[:], 12),
+	}
 	signature := strings.TrimPrefix(strings.TrimSpace(header), "sha256=")
 	if signature == "" {
-		return false
+		details.reason = "missing_signature"
+		return false, details
 	}
+	details.signaturePresent = true
+	details.signaturePrefix = textPrefix(signature, 12)
 	mac := hmac.New(sha256.New, h.secret)
 	_, _ = mac.Write(payload)
 	expected := mac.Sum(nil)
+	details.expectedPrefix = hexPrefix(expected, 12)
 	actual, err := hex.DecodeString(signature)
 	if err != nil {
-		return false
+		details.reason = "malformed_signature"
+		return false, details
 	}
-	return hmac.Equal(actual, expected)
+	if !hmac.Equal(actual, expected) {
+		return false, details
+	}
+	return true, details
+}
+
+func hexPrefix(data []byte, chars int) string {
+	value := hex.EncodeToString(data)
+	return textPrefix(value, chars)
+}
+
+func textPrefix(value string, chars int) string {
+	value = strings.TrimSpace(value)
+	if chars <= 0 || len(value) <= chars {
+		return value
+	}
+	return value[:chars]
 }
 
 type GitHubWebhookProcessor struct {
@@ -147,12 +198,15 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 				if rec.ID == "" {
 					break
 				}
+				slog.InfoContext(ctx, "github webhook delivery claimed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "processor_id", rec.ProcessorID)
 				err = p.processDelivery(ctx, rec)
 				if completeErr := p.store.completeGitHubWebhookDelivery(ctx, rec.ID, err); completeErr != nil {
 					return completeErr
 				}
 				if err != nil {
 					slog.Warn("github webhook processing failed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "error", err)
+				} else {
+					slog.Info("github webhook delivery processed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType)
 				}
 			}
 		}
@@ -170,6 +224,7 @@ func (p *GitHubWebhookProcessor) processDelivery(ctx context.Context, rec github
 	case "repository":
 		return p.processRepositoryEvent(ctx, rec.Payload)
 	default:
+		slog.InfoContext(ctx, "github webhook event ignored", "event_type", rec.EventType, "delivery_id", rec.DeliveryID)
 		return nil
 	}
 }
@@ -188,12 +243,15 @@ func (p *GitHubWebhookProcessor) processPushEvent(ctx context.Context, raw []byt
 		return err
 	}
 	if payload.Deleted || strings.TrimSpace(payload.After) == "" {
+		slog.InfoContext(ctx, "github push ignored", "repository_id", payload.Repository.ID, "repository_full_name", payload.Repository.FullName, "ref", payload.Ref, "commit_sha", payload.After, "reason", "deleted_or_empty_commit")
 		return nil
 	}
 	branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
 	if branch == payload.Ref {
+		slog.InfoContext(ctx, "github push ignored", "repository_id", payload.Repository.ID, "repository_full_name", payload.Repository.FullName, "ref", payload.Ref, "commit_sha", payload.After, "reason", "non_branch_ref")
 		return nil
 	}
+	slog.InfoContext(ctx, "github push observed", "repository_id", payload.Repository.ID, "repository_full_name", payload.Repository.FullName, "tracked_ref", branch, "commit_sha", payload.After, "installation_id", payload.Installation.ID)
 	if err := p.coordinator.ObserveRepositoryRevision(
 		ctx,
 		fmt.Sprintf("%d", payload.Repository.ID),
@@ -215,8 +273,10 @@ func (p *GitHubWebhookProcessor) processInstallationEvent(ctx context.Context, r
 	}
 	switch payload.Action {
 	case "deleted":
+		slog.InfoContext(ctx, "github installation deleted", "installation_id", payload.Installation.ID)
 		return p.store.deactivateGitHubInstallation(ctx, payload.Installation.ID)
 	default:
+		slog.InfoContext(ctx, "github installation refreshed", "installation_id", payload.Installation.ID, "action", payload.Action)
 		if err := p.store.upsertGitHubInstallation(ctx, githubInstallationRecord{
 			InstallationID: payload.Installation.ID,
 			AccountLogin:   payload.Installation.Account.Login,
@@ -267,11 +327,13 @@ func (p *GitHubWebhookProcessor) processRepositoryEvent(ctx context.Context, raw
 	}
 	switch payload.Action {
 	case "deleted":
+		slog.InfoContext(ctx, "github repository deleted", "installation_id", payload.Installation.ID, "repository", githubFullName(payload.Repository.Owner.Login, payload.Repository.Name))
 		if err := p.store.markGitHubRepositorySnapshotDeleted(ctx, payload.Repository.Owner.Login, payload.Repository.Name); err != nil {
 			return err
 		}
 		return p.coordinator.RequestInstallationRefresh(ctx, payload.Installation.ID)
 	case "renamed", "transferred", "edited", "publicized", "privatized":
+		slog.InfoContext(ctx, "github repository refreshed", "installation_id", payload.Installation.ID, "repository", githubFullName(payload.Repository.Owner.Login, payload.Repository.Name), "action", payload.Action)
 		return p.coordinator.RequestInstallationRefresh(ctx, payload.Installation.ID)
 	default:
 		_ = payload.Repository

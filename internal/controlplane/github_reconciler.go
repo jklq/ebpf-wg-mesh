@@ -82,6 +82,7 @@ func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
 	if rec.ID == "" {
 		return false, nil
 	}
+	slog.InfoContext(ctx, "github work item claimed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
 	if err := r.coordinator.processWorkItem(ctx, rec); err != nil {
 		if releaseErr := r.store.releaseSourceWorkItem(ctx, rec.ID, err, r.coordinator.retryAfter); releaseErr != nil {
 			return false, releaseErr
@@ -94,5 +95,6 @@ func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
 	if err := r.store.completeSourceWorkItem(ctx, rec.ID); err != nil {
 		return false, err
 	}
+	slog.InfoContext(ctx, "github work item completed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
 	return true, nil
 }

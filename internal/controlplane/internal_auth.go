@@ -123,7 +123,14 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStrea
 func ServiceCallerFromContext(ctx context.Context) (ServiceCaller, error) {
 	value := ctx.Value(serviceCallerContextKey{})
 	caller, ok := value.(ServiceCaller)
-	if !ok || caller.ID == "" {
+	if ok && caller.ID != "" {
+		return caller, nil
+	}
+	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
+	if err != nil {
+		return ServiceCaller{}, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
+	}
+	if !authenticated || caller.ID == "" {
 		return ServiceCaller{}, status.Error(codes.Unauthenticated, "service caller missing from context")
 	}
 	return caller, nil
