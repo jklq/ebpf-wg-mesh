@@ -20,7 +20,7 @@ export const Route = createFileRoute("/logout")({
 	server: {
 		handlers: {
 			GET: async () => {
-				const service = await import("#/lib/dashboard.server");
+				const service = await import("#/lib/dashboard/server");
 				return logoutRouteResponse(service);
 			},
 		},

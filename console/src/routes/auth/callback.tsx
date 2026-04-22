@@ -36,7 +36,7 @@ const completeLogin = createServerFn({ method: "GET" })
 		};
 	})
 	.handler(async ({ data }) => {
-		const service = await import("#/lib/dashboard.server");
+		const service = await import("#/lib/dashboard/server");
 		try {
 			return await completeLoginRoute(service, data);
 		} catch (error) {
@@ -109,7 +109,10 @@ function githubCallbackErrorDetail(error: unknown): string {
 			: undefined;
 
 	if (status === 403) {
-		if (operation === "githubGET:/user/emails" || operation === "fetchIdentity") {
+		if (
+			operation === "githubGET:/user/emails" ||
+			operation === "fetchIdentity"
+		) {
 			return "GitHub denied access to the user's email addresses. Add Account permissions -> Email addresses -> Read-only, then save the app and re-authorize it.";
 		}
 		return "GitHub denied the app's user-auth request. Recheck the GitHub App permissions and re-authorize the app.";

@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { createDashboardTestHarness } from "#/lib/dashboard.testkit";
-import type { DashboardHomeState } from "#/lib/dashboard.server";
-import { GitHubApiError } from "#/lib/dashboard-core.server";
+import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+import { GitHubApiError } from "#/lib/dashboard/core/types.server";
+import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
 import { completeLoginRoute } from "#/routes/auth/callback";
-import { HomePageView, loadHomeRouteState } from "#/routes/index";
+import { loadHomeRouteState, NewServiceModal } from "#/routes/index";
 import { LoginPageView, loadLoginRouteState } from "#/routes/login";
 import { logoutRouteResponse } from "#/routes/logout";
+
+afterEach(() => cleanup());
 
 describe("dashboard routes", () => {
 	it("loads login state from the dashboard service", async () => {
@@ -44,7 +46,7 @@ describe("dashboard routes", () => {
 				.getByRole("link", { name: /continue with github/i })
 				.getAttribute("href"),
 		).toBe("https://dashboard.example.test/auth/start?redirect=%2Fprojects");
-		expect(screen.getByText("Development logins")).toBeTruthy();
+		expect(screen.getAllByText(/dev logins/i).length).toBeGreaterThan(0);
 		expect(
 			screen.getByText("user@example.com").closest("a")?.getAttribute("href"),
 		).toBe(
@@ -56,214 +58,6 @@ describe("dashboard routes", () => {
 		const harness = createDashboardTestHarness();
 
 		await expect(loadHomeRouteState(harness.service)).rejects.toBeTruthy();
-	});
-
-	it("renders onboarding cards with install-required repository state", () => {
-		render(
-			<HomePageView
-				state={homeState({
-					onboarding: {
-						currentStep: "repository",
-						projectId: "",
-						serviceId: "",
-						repositorySelector: "private/secret",
-						trackedRef: "",
-						dockerfilePath: "",
-						contextDir: "",
-						containerPort: "",
-						hostname: "",
-					},
-					repositoryInspection: {
-						accessState: "installation_required",
-						defaultBranch: "main",
-						dockerfileCandidates: [],
-					},
-				})}
-				repositorySelector="private/secret"
-				trackedRef=""
-				dockerfilePath=""
-				contextDir=""
-				containerPort=""
-				hostname=""
-				isPending={false}
-				onRepositorySelectorChange={vi.fn()}
-				onTrackedRefChange={vi.fn()}
-				onDockerfilePathChange={vi.fn()}
-				onContextDirChange={vi.fn()}
-				onContainerPortChange={vi.fn()}
-				onHostnameChange={vi.fn()}
-				onInspectRepository={vi.fn()}
-				onConfirmRepository={vi.fn()}
-				onCheckDNS={vi.fn()}
-				onPublishDomain={vi.fn()}
-				onRefresh={vi.fn()}
-			/>,
-		);
-
-		expect(
-			screen.getByText(
-				"GitHub sign-in succeeded, but the GitHub App is not installed for this repository yet. Open the install flow, grant the repository, then return here. The page will re-check automatically.",
-			),
-		).toBeTruthy();
-		expect(
-			screen.getByRole("link", { name: /install github app/i }),
-		).toBeTruthy();
-	});
-
-	it("renders a configuration hint when install-required state lacks an install url", () => {
-		render(
-			<HomePageView
-				state={homeState({
-					githubInstallURL: "",
-					onboarding: {
-						currentStep: "repository",
-						projectId: "",
-						serviceId: "",
-						repositorySelector: "private/secret",
-						trackedRef: "",
-						dockerfilePath: "",
-						contextDir: "",
-						containerPort: "",
-						hostname: "",
-					},
-					repositoryInspection: {
-						accessState: "installation_required",
-						defaultBranch: "main",
-						dockerfileCandidates: [],
-					},
-				})}
-				repositorySelector="private/secret"
-				trackedRef=""
-				dockerfilePath=""
-				contextDir=""
-				containerPort=""
-				hostname=""
-				isPending={false}
-				onRepositorySelectorChange={vi.fn()}
-				onTrackedRefChange={vi.fn()}
-				onDockerfilePathChange={vi.fn()}
-				onContextDirChange={vi.fn()}
-				onContainerPortChange={vi.fn()}
-				onHostnameChange={vi.fn()}
-				onInspectRepository={vi.fn()}
-				onConfirmRepository={vi.fn()}
-				onCheckDNS={vi.fn()}
-				onPublishDomain={vi.fn()}
-				onRefresh={vi.fn()}
-			/>,
-		);
-
-		expect(
-			screen.getByText(
-				"GitHub sign-in succeeded, but this repository still needs a GitHub App installation or repository grant. Configure DASHBOARD_GITHUB_INSTALL_URL to show the install link here.",
-			),
-		).toBeTruthy();
-	});
-
-	it("renders the ready-for-domain build state", () => {
-		render(
-			<HomePageView
-				state={homeState({
-					serviceStatus: {
-						service: {
-							id: "service-1",
-							projectId: "project-1",
-							name: "hello",
-							latestBuild: {
-								buildId: "build-1",
-								state: "succeeded",
-								commitSha: "abc",
-								imageDigest: "sha256:123",
-								failureReason: "",
-							},
-						},
-						allocation: {
-							phase: "Healthy",
-							message: "container healthy",
-							endpointAddr: "10.0.0.10:8080",
-							healthy: true,
-						},
-					},
-				})}
-				repositorySelector="octocat/hello"
-				trackedRef="main"
-				dockerfilePath="Dockerfile"
-				contextDir="."
-				containerPort="8080"
-				hostname=""
-				isPending={false}
-				onRepositorySelectorChange={vi.fn()}
-				onTrackedRefChange={vi.fn()}
-				onDockerfilePathChange={vi.fn()}
-				onContextDirChange={vi.fn()}
-				onContainerPortChange={vi.fn()}
-				onHostnameChange={vi.fn()}
-				onInspectRepository={vi.fn()}
-				onConfirmRepository={vi.fn()}
-				onCheckDNS={vi.fn()}
-				onPublishDomain={vi.fn()}
-				onRefresh={vi.fn()}
-			/>,
-		);
-
-		expect(screen.getByText("Healthy and ready for domain.")).toBeTruthy();
-		expect(screen.getByText("Enter a hostname and check DNS.")).toBeTruthy();
-	});
-
-	it("renders the published URL from the dashboard public base URL", () => {
-		render(
-			<HomePageView
-				state={homeState({
-					publicBaseURL: "http://platform.localtest.me:8080",
-					localIngressBaseURL: "http://platform.localtest.me:8080",
-					localDomainSuffix: "localtest.me",
-					onboarding: {
-						currentStep: "domain",
-						projectId: "project-1",
-						serviceId: "service-1",
-						repositorySelector: "octocat/hello",
-						trackedRef: "main",
-						dockerfilePath: "Dockerfile",
-						contextDir: ".",
-						containerPort: "80",
-						hostname: "nginx.localtest.me",
-					},
-					domainBindings: [
-						{
-							hostname: "nginx.localtest.me",
-							projectId: "project-1",
-							serviceId: "service-1",
-						},
-					],
-				})}
-				repositorySelector="octocat/hello"
-				trackedRef="main"
-				dockerfilePath="Dockerfile"
-				contextDir="."
-				containerPort="80"
-				hostname="nginx.localtest.me"
-				isPending={false}
-				onRepositorySelectorChange={vi.fn()}
-				onTrackedRefChange={vi.fn()}
-				onDockerfilePathChange={vi.fn()}
-				onContextDirChange={vi.fn()}
-				onContainerPortChange={vi.fn()}
-				onHostnameChange={vi.fn()}
-				onInspectRepository={vi.fn()}
-				onConfirmRepository={vi.fn()}
-				onCheckDNS={vi.fn()}
-				onPublishDomain={vi.fn()}
-				onRefresh={vi.fn()}
-			/>,
-		);
-
-		const link = screen
-			.getAllByRole("link", {
-				name: "http://nginx.localtest.me:8080",
-			})
-			.at(-1);
-		expect(link).toBeTruthy();
-		expect(link?.getAttribute("href")).toBe("http://nginx.localtest.me:8080");
 	});
 
 	it("completes auth callback through the dashboard service", async () => {
@@ -340,6 +134,229 @@ describe("dashboard routes", () => {
 			operation: "githubGET:/user/emails",
 		});
 	});
+
+	it("clears repository check errors when selecting another repository", async () => {
+		const state = homeState({
+			onboarding: {
+				...homeState().onboarding,
+				repositorySelector: "octocat/no-docker",
+			},
+			repositories: [
+				{
+					owner: "octocat",
+					name: "no-docker",
+					fullName: "octocat/no-docker",
+					private: false,
+					defaultBranch: "main",
+				},
+				{
+					owner: "octocat",
+					name: "hello",
+					fullName: "octocat/hello",
+					private: false,
+					defaultBranch: "main",
+				},
+			],
+		});
+
+		render(
+			<NewServiceModal
+				state={state}
+				onClose={() => {}}
+				onCreated={() => {}}
+				inspectRepository={async () =>
+					homeState({
+						...state,
+						repositoryInspection: {
+							accessState: "available",
+							defaultBranch: "main",
+							dockerfileCandidates: [],
+						},
+					})
+				}
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /octocat\/no-docker/i }),
+		);
+
+		expect(
+			await screen.findByText(
+				"No Dockerfile was detected on the default branch.",
+			),
+		).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: /octocat\/hello/i }));
+
+		expect(
+			screen.queryByText("No Dockerfile was detected on the default branch."),
+		).toBeNull();
+	});
+
+	it("shows only the connect action before a GitHub account exists", () => {
+		render(
+			<NewServiceModal
+				state={homeState({
+					githubLoginURL: "/auth/start",
+					githubInstallURL:
+						"https://github.example.test/apps/platform/installations/new",
+					onboarding: {
+						...homeState().onboarding,
+						repositorySelector: "",
+					},
+				})}
+				onClose={() => {}}
+				onCreated={() => {}}
+			/>,
+		);
+
+		const connect = screen.getByRole("link", {
+			name: /connect github to load repositories/i,
+		});
+		expect(connect.getAttribute("style")).toContain(
+			"background: var(--surface-raised)",
+		);
+		expect(
+			screen.queryByRole("link", { name: /configure github app/i }),
+		).toBeNull();
+	});
+
+	it("keeps the GitHub app action on top of the repository picker", () => {
+		const state = homeState({
+			githubAccount: {
+				providerSubject: "github-1",
+				login: "octocat",
+				primaryEmail: "octocat@example.test",
+				accessToken: "token",
+				tokenType: "bearer",
+				scope: "repo",
+			},
+			repositories: [
+				{
+					owner: "octocat",
+					name: "hello",
+					fullName: "octocat/hello",
+					private: false,
+					defaultBranch: "main",
+				},
+			],
+		});
+
+		render(
+			<NewServiceModal state={state} onClose={() => {}} onCreated={() => {}} />,
+		);
+
+		const configure = screen.getByRole("link", {
+			name: /configure github app/i,
+		});
+		expect(configure.getAttribute("style")).toContain(
+			"background: var(--surface-raised)",
+		);
+		expect(configure.getAttribute("style")).toContain("color: var(--text)");
+		expect(configure.getAttribute("style")).toContain(
+			"font-family: var(--font-mono)",
+		);
+		expect(configure.querySelector("svg")?.getAttribute("style")).toContain(
+			"color: var(--text)",
+		);
+
+		fireEvent.keyDown(screen.getByPlaceholderText("Search repositories…"), {
+			key: "ArrowDown",
+		});
+
+		expect(
+			screen
+				.getByRole("button", { name: /octocat\/hello/i })
+				.getAttribute("style"),
+		).toContain("background: var(--surface-raised)");
+		expect(
+			screen
+				.getByRole("button", { name: /octocat\/hello/i })
+				.querySelector("svg")
+				?.getAttribute("style"),
+		).toContain("color: var(--text)");
+	});
+
+	it("does not use a prefilled repository selector as picker search text", () => {
+		const state = homeState({
+			onboarding: {
+				...homeState().onboarding,
+				repositorySelector: "octocat/prefilled",
+			},
+			githubAccount: {
+				providerSubject: "github-1",
+				login: "octocat",
+				primaryEmail: "octocat@example.test",
+				accessToken: "token",
+				tokenType: "bearer",
+				scope: "repo",
+			},
+			repositories: [
+				{
+					owner: "octocat",
+					name: "hello",
+					fullName: "octocat/hello",
+					private: false,
+					defaultBranch: "main",
+				},
+			],
+		});
+
+		render(
+			<NewServiceModal state={state} onClose={() => {}} onCreated={() => {}} />,
+		);
+
+		const search = screen.getByPlaceholderText(
+			"Search repositories…",
+		) as HTMLInputElement;
+		expect(search.value).toBe("");
+		expect(
+			screen.getByRole("button", { name: /octocat\/hello/i }),
+		).toBeTruthy();
+
+		fireEvent.change(search, { target: { value: "missing" } });
+		expect(
+			screen.queryByRole("button", { name: /octocat\/hello/i }),
+		).toBeNull();
+
+		fireEvent.change(search, { target: { value: "" } });
+		expect(
+			screen.getByRole("button", { name: /octocat\/hello/i }),
+		).toBeTruthy();
+	});
+
+	it("does not render manual repository entry when no repositories are loaded", () => {
+		render(
+			<NewServiceModal
+				state={homeState({
+					githubAccount: {
+						providerSubject: "github-1",
+						login: "octocat",
+						primaryEmail: "octocat@example.test",
+						accessToken: "token",
+						tokenType: "bearer",
+						scope: "repo",
+					},
+					onboarding: {
+						...homeState().onboarding,
+						repositorySelector: "octocat/prefilled",
+					},
+					repositories: [],
+				})}
+				onClose={() => {}}
+				onCreated={() => {}}
+			/>,
+		);
+
+		expect(
+			(screen.getByPlaceholderText("Search repositories…") as HTMLInputElement)
+				.value,
+		).toBe("");
+		expect(screen.queryByPlaceholderText("owner/repo")).toBeNull();
+		expect(screen.queryByRole("button", { name: /check/i })).toBeNull();
+		expect(screen.queryByText(/repositories/i)).toBeNull();
+	});
 });
 
 function homeState(
@@ -363,6 +380,7 @@ function homeState(
 			hostname: "",
 		},
 		repositories: [],
+		services: [],
 		githubInstallURL:
 			"https://github.example.test/apps/platform/installations/new",
 		publicBaseURL: "https://dashboard.example.test",
