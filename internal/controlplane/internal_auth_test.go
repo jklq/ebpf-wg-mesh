@@ -103,6 +103,18 @@ func TestInternalAuthRejectsWrongClassOpsCalls(t *testing.T) {
 	}
 }
 
+func TestServiceCallerFromContextFallsBackToAuthenticatedPeerIdentity(t *testing.T) {
+	t.Parallel()
+
+	caller, err := ServiceCallerFromContext(contextWithClientIdentity(serviceCallerBuilder, "builder-1"))
+	if err != nil {
+		t.Fatalf("ServiceCallerFromContext: %v", err)
+	}
+	if caller.Class != serviceCallerBuilder || caller.ID != "builder-1" {
+		t.Fatalf("unexpected caller %+v", caller)
+	}
+}
+
 func contextWithClientIdentity(class serviceCallerClass, id string) context.Context {
 	cert := &x509.Certificate{
 		Subject: pkix.Name{

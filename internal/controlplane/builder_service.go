@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -55,6 +56,7 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 	if build.ID == "" {
 		return &platformv1.BuildJob{}, nil
 	}
+	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
 	if s.store == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
@@ -147,6 +149,7 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 	if err := s.store.completeBuild(ctx, builderID, req.GetBuildId(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason()); err != nil {
 		return nil, status.Errorf(codes.Internal, "complete build: %v", err)
 	}
+	slog.InfoContext(ctx, "build completed", "build_id", req.GetBuildId(), "builder_id", builderID, "state", req.GetState().String(), "commit_sha", req.GetCommitSha(), "image_digest", req.GetImageDigest(), "failure_reason", req.GetFailureReason())
 	if agentID != "" && s.notifier != nil {
 		s.notifier.Notify(agentID)
 	}

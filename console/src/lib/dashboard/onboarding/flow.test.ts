@@ -4,7 +4,7 @@ import {
 	normalizeRepositorySelector,
 	recommendedBuildRecipeFromCandidates,
 	slugifyServiceName,
-} from "#/lib/onboarding-flow";
+} from "#/lib/dashboard/onboarding/flow";
 
 describe("onboarding flow helpers", () => {
 	it("normalizes repository selectors", () => {

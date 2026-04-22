@@ -6,7 +6,7 @@ import {
 	type GitHubAppUserIdentity,
 	type GitHubAppUserToken,
 	type GitHubUserRepository,
-} from "#/lib/dashboard-core.server";
+} from "#/lib/dashboard/core/types.server";
 
 interface GitHubTokenResponse {
 	access_token: string;
@@ -38,6 +38,10 @@ interface GitHubRepositoryResponseEntry {
 	};
 }
 
+interface GitHubInstallationResponseEntry {
+	id: number;
+}
+
 export function createGitHubAppUserClient(
 	config: GitHubAppUserAuthConfig,
 ): GitHubAppUserClient {
@@ -58,6 +62,10 @@ export function createGitHubAppUserClient(
 			return exchangeCode(config, input);
 		},
 
+		refreshToken(refreshToken) {
+			return refreshTokenGrant(config, refreshToken);
+		},
+
 		fetchIdentity(accessToken) {
 			return fetchIdentity(config, accessToken);
 		},
@@ -68,12 +76,10 @@ export function createGitHubAppUserClient(
 	};
 }
 
-async function exchangeCode(
+async function tokenRequest(
 	config: GitHubAppUserAuthConfig,
-	input: {
-		code: string;
-		redirectURI: string;
-	},
+	operation: string,
+	params: Record<string, string>,
 ): Promise<GitHubAppUserToken> {
 	const tokenURL = new URL(
 		"/login/oauth/access_token",
@@ -81,10 +87,11 @@ async function exchangeCode(
 	);
 	tokenURL.searchParams.set("client_id", config.clientId);
 	tokenURL.searchParams.set("client_secret", config.clientSecret);
-	tokenURL.searchParams.set("code", input.code);
-	tokenURL.searchParams.set("redirect_uri", input.redirectURI);
+	for (const [key, value] of Object.entries(params)) {
+		tokenURL.searchParams.set(key, value);
+	}
 
-	const response = await fetchGitHub("exchangeCode", tokenURL, {
+	const response = await fetchGitHub(operation, tokenURL, {
 		method: "POST",
 		headers: {
 			Accept: "application/json",
@@ -92,7 +99,7 @@ async function exchangeCode(
 		},
 	});
 	const payload = decodeGitHubTokenResponse(
-		await readJson("exchangeCode.response", response),
+		await readJson(`${operation}.response`, response),
 		response.status,
 	);
 
@@ -104,6 +111,29 @@ async function exchangeCode(
 		refreshToken: payload.refresh_token,
 		refreshTokenExpiresAt: readOptionalDate(payload.refresh_token_expires_in),
 	};
+}
+
+async function exchangeCode(
+	config: GitHubAppUserAuthConfig,
+	input: {
+		code: string;
+		redirectURI: string;
+	},
+): Promise<GitHubAppUserToken> {
+	return tokenRequest(config, "exchangeCode", {
+		code: input.code,
+		redirect_uri: input.redirectURI,
+	});
+}
+
+async function refreshTokenGrant(
+	config: GitHubAppUserAuthConfig,
+	refreshToken: string,
+): Promise<GitHubAppUserToken> {
+	return tokenRequest(config, "refreshToken", {
+		grant_type: "refresh_token",
+		refresh_token: refreshToken,
+	});
 }
 
 async function fetchIdentity(
@@ -143,31 +173,16 @@ async function listRepositories(
 	config: GitHubAppUserAuthConfig,
 	accessToken: string,
 ): Promise<Array<GitHubUserRepository>> {
-	const repositories: Array<GitHubUserRepository> = [];
+	const repositories = new Map<string, GitHubUserRepository>();
+	const installations = await listInstallations(config, accessToken);
 
-	for (let page = 1; page <= 5; page += 1) {
-		const url = new URL("/user/repos", config.apiBaseURL);
-		url.searchParams.set("affiliation", "owner");
-		url.searchParams.set("sort", "updated");
-		url.searchParams.set("per_page", "100");
-		url.searchParams.set("page", String(page));
-
-		const response = await fetchGitHub(`listRepositories:${page}`, url, {
-			headers: {
-				Accept: "application/vnd.github+json",
-				Authorization: `Bearer ${accessToken}`,
-				"User-Agent": `ebpf-wg-mesh-github-app/${config.appId}`,
-				"X-GitHub-Api-Version": "2022-11-28",
-			},
-		});
-		const payload = decodeGitHubRepositoryResponse(
-			await readJson(`listRepositories.${page}`, response),
-			`listRepositories.${page}`,
-			response.status,
-		);
-
-		for (const repository of payload) {
-			repositories.push({
+	for (const installation of installations) {
+		for (const repository of await listInstallationRepositories(
+			config,
+			accessToken,
+			installation.id,
+		)) {
+			repositories.set(repository.full_name, {
 				owner: repository.owner.login,
 				name: repository.name,
 				fullName: repository.full_name,
@@ -175,6 +190,75 @@ async function listRepositories(
 				defaultBranch: repository.default_branch ?? "",
 			});
 		}
+	}
+
+	return [...repositories.values()].sort((left, right) =>
+		left.fullName.localeCompare(right.fullName),
+	);
+}
+
+async function listInstallations(
+	config: GitHubAppUserAuthConfig,
+	accessToken: string,
+): Promise<Array<GitHubInstallationResponseEntry>> {
+	const installations: Array<GitHubInstallationResponseEntry> = [];
+
+	for (let page = 1; page <= 5; page += 1) {
+		const url = new URL("/user/installations", config.apiBaseURL);
+		url.searchParams.set("per_page", "100");
+		url.searchParams.set("page", String(page));
+
+		const response = await fetchGitHub(`listInstallations:${page}`, url, {
+			headers: gitHubJSONHeaders(config, accessToken),
+		});
+		const payload = decodeGitHubInstallationResponse(
+			await readJson(`listInstallations.${page}`, response),
+			`listInstallations.${page}`,
+			response.status,
+		);
+
+		installations.push(...payload);
+
+		if (payload.length < 100) {
+			break;
+		}
+	}
+
+	return installations;
+}
+
+async function listInstallationRepositories(
+	config: GitHubAppUserAuthConfig,
+	accessToken: string,
+	installationID: number,
+): Promise<Array<GitHubRepositoryResponseEntry>> {
+	const repositories: Array<GitHubRepositoryResponseEntry> = [];
+
+	for (let page = 1; page <= 5; page += 1) {
+		const url = new URL(
+			`/user/installations/${installationID}/repositories`,
+			config.apiBaseURL,
+		);
+		url.searchParams.set("per_page", "100");
+		url.searchParams.set("page", String(page));
+
+		const response = await fetchGitHub(
+			`listInstallationRepositories:${installationID}:${page}`,
+			url,
+			{
+				headers: gitHubJSONHeaders(config, accessToken),
+			},
+		);
+		const payload = decodeGitHubInstallationRepositoryResponse(
+			await readJson(
+				`listInstallationRepositories.${installationID}.${page}`,
+				response,
+			),
+			`listInstallationRepositories.${installationID}.${page}`,
+			response.status,
+		);
+
+		repositories.push(...payload);
 
 		if (payload.length < 100) {
 			break;
@@ -191,13 +275,20 @@ function githubGET(
 ): Promise<Response> {
 	const url = new URL(path, config.apiBaseURL);
 	return fetchGitHub(`githubGET:${path}`, url, {
-		headers: {
-			Accept: "application/vnd.github+json",
-			Authorization: `Bearer ${accessToken}`,
-			"User-Agent": `ebpf-wg-mesh-github-app/${config.appId}`,
-			"X-GitHub-Api-Version": "2022-11-28",
-		},
+		headers: gitHubJSONHeaders(config, accessToken),
 	});
+}
+
+function gitHubJSONHeaders(
+	config: GitHubAppUserAuthConfig,
+	accessToken: string,
+): HeadersInit {
+	return {
+		Accept: "application/vnd.github+json",
+		Authorization: `Bearer ${accessToken}`,
+		"User-Agent": `ebpf-wg-mesh-github-app/${config.appId}`,
+		"X-GitHub-Api-Version": "2022-11-28",
+	};
 }
 
 async function fetchGitHub(
@@ -228,7 +319,10 @@ async function fetchGitHub(
 	return response;
 }
 
-async function readJson(operation: string, response: Response): Promise<unknown> {
+async function readJson(
+	operation: string,
+	response: Response,
+): Promise<unknown> {
 	try {
 		return await response.json();
 	} catch (cause) {
@@ -285,7 +379,12 @@ function decodeGitHubUserResponse(
 
 	return {
 		id,
-		login: readRequiredString(value.login, "login", "fetchIdentity.user", status),
+		login: readRequiredString(
+			value.login,
+			"login",
+			"fetchIdentity.user",
+			status,
+		),
 	};
 }
 
@@ -327,6 +426,46 @@ function decodeGitHubEmailResponse(
 	});
 }
 
+function decodeGitHubInstallationResponse(
+	payload: unknown,
+	operation: string,
+	status: number,
+): Array<GitHubInstallationResponseEntry> {
+	const value = readObject(payload, operation, status);
+	if (!Array.isArray(value.installations)) {
+		throw validationError(
+			operation,
+			"expected installations array",
+			payload,
+			status,
+		);
+	}
+
+	return value.installations.map((entry) => {
+		const installation = readObject(entry, operation, status);
+		return {
+			id: readRequiredNumber(installation.id, "id", operation, status),
+		};
+	});
+}
+
+function decodeGitHubInstallationRepositoryResponse(
+	payload: unknown,
+	operation: string,
+	status: number,
+): Array<GitHubRepositoryResponseEntry> {
+	const value = readObject(payload, operation, status);
+	if (!Array.isArray(value.repositories)) {
+		throw validationError(
+			operation,
+			"expected repositories array",
+			payload,
+			status,
+		);
+	}
+	return decodeGitHubRepositoryResponse(value.repositories, operation, status);
+}
+
 function decodeGitHubRepositoryResponse(
 	payload: unknown,
 	operation: string,
@@ -350,7 +489,12 @@ function decodeGitHubRepositoryResponse(
 			private: readRequiredBoolean(value.private, "private", operation, status),
 			default_branch: readOptionalString(value.default_branch),
 			owner: {
-				login: readRequiredString(owner.login, "owner.login", operation, status),
+				login: readRequiredString(
+					owner.login,
+					"owner.login",
+					operation,
+					status,
+				),
 			},
 		};
 	});
@@ -386,6 +530,18 @@ function readRequiredBoolean(
 	status: number,
 ): boolean {
 	if (typeof value !== "boolean") {
+		throw validationError(operation, `invalid field ${field}`, value, status);
+	}
+	return value;
+}
+
+function readRequiredNumber(
+	value: unknown,
+	field: string,
+	operation: string,
+	status: number,
+): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
 		throw validationError(operation, `invalid field ${field}`, value, status);
 	}
 	return value;

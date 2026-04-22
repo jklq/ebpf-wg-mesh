@@ -7,25 +7,31 @@ import {
 } from "@tanstack/react-start/server";
 import { Pool } from "pg";
 
+import { createDashboardService } from "#/lib/dashboard/core/service.server";
 import {
-	DashboardConfigError,
-	createDashboardService,
-	parseDevUsers,
-	parseIdentifier,
 	type DashboardConfig,
+	DashboardConfigError,
 	type DashboardDomainBinding,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
 	type DashboardProject,
+	type DashboardServiceRecord,
+	type DashboardServiceStatus,
 	type DevLoginIdentity,
-} from "#/lib/dashboard-core.server";
-import { createPostgresDashboardStore } from "#/lib/dashboard-store.server";
-import { createGitHubAppUserClient } from "#/lib/github-auth.server";
+	type UpdateServiceInput,
+} from "#/lib/dashboard/core/types.server";
+import {
+	parseDevUsers,
+	parseIdentifier,
+} from "#/lib/dashboard/core/utils.server";
+import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
+import { createGitHubAppUserClient } from "#/lib/dashboard/github/auth.server";
+import { createPostgresDashboardStore } from "#/lib/dashboard/store/postgres.server";
 import {
 	createPlatformGateway,
 	ingestGitHubWebhook,
-	type IngestGitHubWebhookInput,
-} from "#/lib/platform-grpc.server";
+} from "#/lib/platform-grpc/gateway.server";
+import type { IngestGitHubWebhookInput } from "#/lib/platform-grpc/types.server";
 
 interface RuntimeConfig extends DashboardConfig {
 	databaseURL: string;
@@ -118,6 +124,40 @@ export function publishDomainFromSession(): Promise<DashboardDomainBinding> {
 	return service.publishDomainFromSession();
 }
 
+export function getServiceStatusFromSession(input: {
+	projectId: string;
+	serviceId: string;
+}): Promise<DashboardServiceStatus> {
+	return service.getServiceStatusFromSession(input);
+}
+
+export function updateServiceFromSession(
+	input: UpdateServiceInput,
+): Promise<DashboardServiceRecord> {
+	return service.updateServiceFromSession(input);
+}
+
+export function listDomainBindingsFromSession(input: {
+	projectId: string;
+	serviceId: string;
+}): Promise<Array<DashboardDomainBinding>> {
+	return service.listDomainBindingsFromSession(input);
+}
+
+export function createDomainBindingFromSession(input: {
+	projectId: string;
+	serviceId: string;
+	hostname: string;
+}): Promise<DashboardDomainBinding> {
+	return service.createDomainBindingFromSession(input);
+}
+
+export function checkDomainDNSFromSession(
+	hostname: string,
+): Promise<DomainVerificationResult | undefined> {
+	return service.checkDomainDNSFromSession(hostname);
+}
+
 export function clearSession(): Promise<void> {
 	return service.clearSession();
 }
@@ -192,7 +232,11 @@ function readConfig(): RuntimeConfig {
 
 function decodeBase64Env(name: string): Buffer {
 	const value = mustEnv(name);
-	if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+	if (
+		!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+			value,
+		)
+	) {
 		throw new DashboardConfigError({
 			message: `invalid required base64 environment variable ${name}`,
 		});
@@ -209,14 +253,3 @@ function mustEnv(name: string): string {
 	}
 	return value;
 }
-
-export type {
-	DashboardConfig,
-	DashboardDomainBinding,
-	DashboardHomeState,
-	DashboardOnboardingDraft,
-	DashboardProject,
-	DashboardRepositoryInspection,
-	DashboardServiceStatus,
-	DevLoginIdentity,
-} from "#/lib/dashboard-core.server";
