@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
-
-import { createDashboardTestHarness } from "#/lib/dashboard.testkit";
 import {
-	AuthConflictError,
 	authStateCookieOptions,
 	refreshCookieOptions,
 	sessionCookieOptions,
-} from "#/lib/dashboard-core.server";
+} from "#/lib/dashboard/core/auth.server";
 import {
+	createSessionTokenPair,
 	verifyAccessToken,
 	verifyRefreshToken,
-} from "#/lib/dashboard-jwt.server";
+} from "#/lib/dashboard/core/jwt.server";
+import {
+	AuthConflictError,
+	GitHubApiError,
+	type GitHubAppUserToken,
+} from "#/lib/dashboard/core/types.server";
+import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
 
 describe("dashboard service", () => {
 	it("creates JWT auth cookies and sanitizes redirects on dev login", async () => {
@@ -228,6 +232,72 @@ describe("dashboard service", () => {
 			containerPort: "",
 			hostname: "",
 		});
+	});
+
+	it("refreshes an expired GitHub token before listing repositories", async () => {
+		const harness = createDashboardTestHarness();
+		harness.github.nextToken = {
+			accessToken: "expired-github-token",
+			tokenType: "bearer",
+			scope: "",
+			refreshToken: "github-refresh-token",
+		} as GitHubAppUserToken;
+		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await harness.service.completeAuthCallback({
+			code: "github-code",
+			state: "session-1",
+		});
+
+		harness.github.nextToken = {
+			accessToken: "fresh-github-token",
+			tokenType: "bearer",
+			scope: "",
+			refreshToken: "next-github-refresh-token",
+		} as GitHubAppUserToken;
+		harness.github.listRepositoriesErrors.push(
+			new GitHubApiError({
+				operation: "listRepositories",
+				message: "GitHub request failed: 401",
+				cause: new Response(null, { status: 401 }),
+				status: 401,
+			}),
+		);
+
+		const home = await harness.service.loadDashboardHome();
+
+		expect(home?.repositories).toEqual(harness.github.nextRepositories);
+		expect(harness.github.refreshedTokens).toEqual(["github-refresh-token"]);
+		expect(harness.github.listRepositoriesCalls).toEqual([
+			"expired-github-token",
+			"fresh-github-token",
+		]);
+		const account = await harness.store.getGitHubAccount("user-1");
+		expect(account?.accessToken).toBe("fresh-github-token");
+		expect(account?.refreshToken).toBe("next-github-refresh-token");
+	});
+
+	it("initializes the dashboard schema before reading a home page from an existing access token", async () => {
+		const harness = createDashboardTestHarness();
+		const session = createSessionTokenPair(
+			harness.config,
+			{
+				id: "user-1",
+				subject: "user-1",
+				email: "user@example.com",
+			},
+			"session-1",
+			new Date("2026-03-18T12:00:00Z"),
+		);
+		harness.cookies.values.set(
+			harness.config.sessionCookieName,
+			session.accessToken,
+		);
+
+		const home = await harness.service.loadDashboardHome();
+
+		expect(home).not.toBeNull();
+		expect(harness.storeEnsureInitializedCalls).toHaveLength(1);
+		expect(harness.storeEnsureSessionUserCalls).toHaveLength(1);
 	});
 
 	it("updates an existing repository service to the requested container port", async () => {

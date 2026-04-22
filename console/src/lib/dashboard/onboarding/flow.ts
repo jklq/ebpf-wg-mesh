@@ -3,7 +3,7 @@ import type {
 	DashboardOnboardingDraft,
 	DashboardOnboardingStep,
 	DashboardRepositoryInspection,
-} from "#/lib/dashboard-core.server";
+} from "#/lib/dashboard/core/types.server";
 
 export function defaultOnboardingDraft(): DashboardOnboardingDraft {
 	return {
