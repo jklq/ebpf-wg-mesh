@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import type { DashboardUser } from "#/lib/dashboard-core.server";
+import type { DashboardUser } from "#/lib/dashboard/core/types.server";
 
 export const DashboardAccessTokenMaxAgeSeconds = 60 * 60;
 export const DashboardRefreshTokenMaxAgeSeconds = 30 * 24 * 60 * 60;
