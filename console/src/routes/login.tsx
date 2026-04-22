@@ -1,10 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { Zap } from "lucide-react";
 
 import type {
 	DashboardHomeState,
 	DevLoginIdentity,
-} from "#/lib/dashboard.server";
+} from "#/lib/dashboard/core/types.server";
 
 export interface LoginRouteState {
 	session: DashboardHomeState | null;
@@ -32,7 +33,7 @@ export async function loadLoginRouteState(
 }
 
 const loadLoginState = createServerFn({ method: "GET" }).handler(async () => {
-	const service = await import("#/lib/dashboard.server");
+	const service = await import("#/lib/dashboard/server");
 	return loadLoginRouteState(service);
 });
 
@@ -73,80 +74,258 @@ export function LoginPageView({
 	errorDetail?: string;
 }) {
 	return (
-		<main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6">
-			<section className="w-full border border-[var(--line)] bg-white p-6 sm:p-8">
-				<p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--accent-strong)]">
-					Sign in
-				</p>
-				<h1 className="mt-3 text-3xl font-semibold tracking-tight">
-					Continue with GitHub
-				</h1>
-				<p className="mt-3 max-w-2xl text-sm text-[var(--muted)]">
-					Sign in, choose a repository, wait for the build to turn healthy, and
-					then publish a custom domain.
-				</p>
+		<main
+			style={{
+				minHeight: "100dvh",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				padding: "24px",
+				background: "var(--bg)",
+				overflow: "auto",
+			}}
+		>
+			<div style={{ width: "100%", maxWidth: 400 }}>
+				{/* Brand */}
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						gap: 8,
+						marginBottom: 32,
+					}}
+				>
+					<Zap size={18} color="var(--accent)" />
+					<span
+						style={{
+							fontSize: 15,
+							fontWeight: 800,
+							letterSpacing: "0.06em",
+							color: "var(--text)",
+						}}
+					>
+						mesh
+					</span>
+				</div>
 
-				{error ? (
-					<div className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-						{loginErrorMessage(error, errorDetail)}
-					</div>
-				) : null}
+				<div
+					style={{
+						background: "var(--surface)",
+						border: "1px solid var(--border)",
+						borderRadius: 12,
+						padding: "28px",
+					}}
+				>
+					<h1
+						style={{
+							margin: "0 0 6px",
+							fontSize: 20,
+							fontWeight: 700,
+							color: "var(--text)",
+							letterSpacing: "-0.01em",
+						}}
+					>
+						Sign in
+					</h1>
+					<p
+						style={{
+							margin: "0 0 24px",
+							fontSize: 13,
+							color: "var(--text-muted)",
+							lineHeight: 1.5,
+						}}
+					>
+						Deploy services from GitHub repositories.
+					</p>
 
-				<div className="mt-8 space-y-3">
-					{state.githubLoginEnabled ? (
-						<a
-							href={buildGitHubAuthStartURL(
-								state.publicBaseURL,
-								redirectTo ?? "/",
-							)}
-							className="flex items-center justify-between border border-[var(--line)] px-4 py-4 transition hover:border-[var(--accent-strong)] hover:bg-[var(--surface-soft)]"
-						>
-							<div>
-								<p className="font-medium">Continue with GitHub</p>
-								<p className="mt-1 text-xs text-[var(--muted)]">
-									Use your GitHub identity to unlock the repository picker and
-									private repo access.
-								</p>
-							</div>
-							<span className="text-sm font-medium text-[var(--accent-strong)]">
-								Continue
-							</span>
-						</a>
-					) : null}
-					{state.devUsers.length === 0 && !state.githubLoginEnabled ? (
-						<div className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-soft)] px-4 py-6 text-sm text-[var(--muted)]">
-							No dev login identities are configured. Set
-							<code className="ml-1 rounded bg-white px-1.5 py-0.5 text-[var(--ink)]">
-								DASHBOARD_DEV_USERS
-							</code>
-							in the managed service environment.
+					{error && (
+						<div className="error-msg" style={{ marginBottom: 20 }}>
+							{loginErrorMessage(error, errorDetail)}
 						</div>
-					) : state.devUsers.length > 0 ? (
-						<div className="border border-[var(--line)] px-4 py-4">
-							<p className="text-sm font-medium">Development logins</p>
-							<div className="mt-3 space-y-2">
+					)}
+
+					<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+						{state.githubLoginEnabled && (
+							<a
+								href={buildGitHubAuthStartURL(
+									state.publicBaseURL,
+									redirectTo ?? "/",
+								)}
+								style={{
+									display: "flex",
+									alignItems: "center",
+									justifyContent: "space-between",
+									padding: "14px 16px",
+									background: "var(--surface-raised)",
+									border: "1px solid var(--border)",
+									borderRadius: 8,
+									textDecoration: "none",
+									transition: "border-color 0.12s ease, background 0.12s ease",
+									cursor: "pointer",
+								}}
+								onMouseEnter={(e) => {
+									(e.currentTarget as HTMLElement).style.borderColor =
+										"var(--accent)";
+									(e.currentTarget as HTMLElement).style.background =
+										"var(--surface-hover)";
+								}}
+								onMouseLeave={(e) => {
+									(e.currentTarget as HTMLElement).style.borderColor =
+										"var(--border)";
+									(e.currentTarget as HTMLElement).style.background =
+										"var(--surface-raised)";
+								}}
+							>
+								<div>
+									<p
+										style={{
+											margin: 0,
+											fontSize: 13,
+											fontWeight: 600,
+											color: "var(--text)",
+										}}
+									>
+										Continue with GitHub
+									</p>
+									<p
+										style={{
+											margin: "2px 0 0",
+											fontSize: 11,
+											color: "var(--text-muted)",
+										}}
+									>
+										Access your repos and private images
+									</p>
+								</div>
+								<span
+									style={{
+										fontSize: 12,
+										fontWeight: 600,
+										color: "var(--accent)",
+									}}
+								>
+									→
+								</span>
+							</a>
+						)}
+
+						{state.devUsers.length > 0 && (
+							<div
+								style={{
+									background: "var(--surface-raised)",
+									border: "1px solid var(--border)",
+									borderRadius: 8,
+									overflow: "hidden",
+								}}
+							>
+								<div
+									style={{
+										padding: "8px 16px",
+										borderBottom: "1px solid var(--border)",
+									}}
+								>
+									<span
+										style={{
+											fontSize: 10,
+											fontWeight: 700,
+											letterSpacing: "0.08em",
+											textTransform: "uppercase",
+											color: "var(--text-muted)",
+										}}
+									>
+										Dev logins
+									</span>
+								</div>
 								{state.devUsers.map((user) => (
 									<a
 										key={user.subject}
 										href={`/auth/callback?subject=${encodeURIComponent(user.subject)}&email=${encodeURIComponent(user.email)}&redirect=${encodeURIComponent(redirectTo ?? "/")}`}
-										className="flex items-center justify-between border border-[var(--line)] px-4 py-3 transition hover:border-[var(--accent-strong)] hover:bg-[var(--surface-soft)]"
+										style={{
+											display: "flex",
+											alignItems: "center",
+											justifyContent: "space-between",
+											padding: "12px 16px",
+											borderBottom: "1px solid var(--border)",
+											textDecoration: "none",
+											transition: "background 0.1s ease",
+											cursor: "pointer",
+										}}
+										onMouseEnter={(e) => {
+											(e.currentTarget as HTMLElement).style.background =
+												"var(--surface-hover)";
+										}}
+										onMouseLeave={(e) => {
+											(e.currentTarget as HTMLElement).style.background =
+												"transparent";
+										}}
 									>
 										<div>
-											<p className="font-medium">{user.email}</p>
-											<p className="mt-1 text-xs text-[var(--muted)]">
+											<p
+												style={{
+													margin: 0,
+													fontSize: 13,
+													fontWeight: 600,
+													color: "var(--text)",
+												}}
+											>
+												{user.email}
+											</p>
+											<p
+												style={{
+													margin: "1px 0 0",
+													fontSize: 11,
+													color: "var(--text-muted)",
+													fontFamily: "var(--font-mono)",
+												}}
+											>
 												{user.subject}
 											</p>
 										</div>
-										<span className="text-sm font-medium text-[var(--accent-strong)]">
-											Continue
+										<span
+											style={{
+												fontSize: 12,
+												fontWeight: 600,
+												color: "var(--accent)",
+											}}
+										>
+											→
 										</span>
 									</a>
 								))}
 							</div>
-						</div>
-					) : null}
+						)}
+
+						{state.devUsers.length === 0 && !state.githubLoginEnabled && (
+							<div
+								style={{
+									padding: "16px",
+									background: "var(--surface-raised)",
+									border: "1px solid var(--border)",
+									borderRadius: 8,
+									fontSize: 12,
+									color: "var(--text-muted)",
+									lineHeight: 1.6,
+								}}
+							>
+								No sign-in methods are configured. Set{" "}
+								<code
+									style={{
+										fontFamily: "var(--font-mono)",
+										background: "var(--bg)",
+										padding: "1px 5px",
+										borderRadius: 3,
+										border: "1px solid var(--border)",
+										fontSize: 11,
+									}}
+								>
+									DASHBOARD_DEV_USERS
+								</code>{" "}
+								or GitHub OAuth in the environment.
+							</div>
+						)}
+					</div>
 				</div>
-			</section>
+			</div>
 		</main>
 	);
 }
@@ -167,9 +346,9 @@ function loginErrorMessage(code: string, detail?: string): string {
 		case "email_linked_to_other_github":
 			return "That email is already linked to a different GitHub account.";
 		case "ambiguous_existing_user":
-			return "Multiple existing users match that verified email. Manual intervention is required.";
+			return "Multiple existing users match that verified email.";
 		case "invalid_signin_state":
-			return "The sign-in request expired or was invalid. Start the GitHub flow again.";
+			return "The sign-in request expired or was invalid. Try again.";
 		case "github_auth_unavailable":
 			return "GitHub sign-in is not configured for this environment.";
 		case "dev_auth_unavailable":
@@ -177,7 +356,7 @@ function loginErrorMessage(code: string, detail?: string): string {
 		case "invalid_dev_login":
 			return "That dev login identity is not allowed.";
 		case "github_api_error":
-			return detail || "GitHub sign-in failed.";
+			return detail ?? "GitHub sign-in failed.";
 		default:
 			return "Sign-in failed.";
 	}
