@@ -28,6 +28,8 @@ func (f *fakeEngine) RemoveService(_ context.Context, allocationID string) error
 	return nil
 }
 
+func (f *fakeEngine) SetLogSink(LogSink) {}
+
 func (f *fakeEngine) Close() error { return nil }
 
 func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing.T) {
@@ -38,7 +40,7 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 		status: map[string]serviceStatus{"alloc-1": {
 			AppliedSpecRevision:      2,
 			AppliedRolloutGeneration: 2,
-			Endpoint:                 "fd00::10:8080",
+			AllocationIP:             "fd00::10",
 		}},
 		created: map[string]bool{"alloc-1": true},
 	}
@@ -70,7 +72,7 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 			Spec: &platformv1.ResolvedServiceSpec{
 				Image: "example.com/test@sha256:abc",
 				Runtime: &platformv1.ServiceRuntime{
-					ContainerPort: 8080,
+					Ports: []*platformv1.ServiceRuntimePort{{Port: 8080, Primary: true}},
 				},
 			},
 		}},
@@ -85,8 +87,8 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 	if _, err := os.Stat(filepath.Join(dir, "desired", "alloc-1.json")); err != nil {
 		t.Fatalf("expected desired-state file: %v", err)
 	}
-	if report.Services[0].Phase != "Starting" {
-		t.Fatalf("expected Starting phase, got %q", report.Services[0].Phase)
+	if report.Services[0].Phase != "Healthy" {
+		t.Fatalf("expected Healthy phase, got %q", report.Services[0].Phase)
 	}
 }
 

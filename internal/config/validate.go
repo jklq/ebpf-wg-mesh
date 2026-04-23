@@ -25,6 +25,20 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Database.MaxIdleConns < 0 {
 		return errors.New("controlplane.database.maxIdleConns must be non-negative")
 	}
+	if cfg.Logs.RetentionDays <= 0 {
+		return errors.New("controlplane.logs.retentionDays must be greater than 0")
+	}
+	if cfg.Logs.ClickHouse.URL != "" {
+		if err := validateAbsoluteURL("controlplane.logs.clickhouse.url", cfg.Logs.ClickHouse.URL); err != nil {
+			return err
+		}
+		if cfg.Logs.ClickHouse.MaxOpenConns < 0 {
+			return errors.New("controlplane.logs.clickhouse.maxOpenConns must be non-negative")
+		}
+		if cfg.Logs.ClickHouse.MaxIdleConns < 0 {
+			return errors.New("controlplane.logs.clickhouse.maxIdleConns must be non-negative")
+		}
+	}
 	if cfg.StateDir == "" {
 		return errors.New("controlplane.stateDir is required")
 	}

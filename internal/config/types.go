@@ -25,6 +25,17 @@ type DatabaseConfig struct {
 	MaxIdleConns int
 }
 
+type ClickHouseConfig struct {
+	URL          string
+	MaxOpenConns int
+	MaxIdleConns int
+}
+
+type LogCaptureConfig struct {
+	ClickHouse    ClickHouseConfig
+	RetentionDays int
+}
+
 type OIDCConfig struct {
 	Issuer             string
 	Audience           string
@@ -106,6 +117,7 @@ type ControlPlaneBuilderConfig struct {
 type ControlPlaneConfig struct {
 	InternalGRPC ListenerConfig
 	Database     DatabaseConfig
+	Logs         LogCaptureConfig
 	StateDir     string
 	OIDC         OIDCConfig
 	Ingress      IngressConfig

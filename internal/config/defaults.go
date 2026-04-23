@@ -27,6 +27,20 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
 		cfg.Database.MaxIdleConns = cfg.Database.MaxOpenConns
 	}
+	if cfg.Logs.RetentionDays <= 0 {
+		cfg.Logs.RetentionDays = 14
+	}
+	if cfg.Logs.ClickHouse.URL != "" {
+		if cfg.Logs.ClickHouse.MaxOpenConns <= 0 {
+			cfg.Logs.ClickHouse.MaxOpenConns = maxInt(8, runtime.GOMAXPROCS(0)*2)
+		}
+		if cfg.Logs.ClickHouse.MaxIdleConns <= 0 {
+			cfg.Logs.ClickHouse.MaxIdleConns = minInt(cfg.Logs.ClickHouse.MaxOpenConns, maxInt(4, runtime.GOMAXPROCS(0)))
+		}
+		if cfg.Logs.ClickHouse.MaxIdleConns > cfg.Logs.ClickHouse.MaxOpenConns {
+			cfg.Logs.ClickHouse.MaxIdleConns = cfg.Logs.ClickHouse.MaxOpenConns
+		}
+	}
 	if cfg.Ingress.AdminURL == "" {
 		cfg.Ingress.AdminURL = "http://127.0.0.1:2019/load"
 	}
