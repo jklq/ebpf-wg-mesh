@@ -14,6 +14,8 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 		"-internal-server-names", "controlplane,controlplane-internal",
 		"-agent-bootstrap-tokens", "token-a,token-b",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+		"-logs-clickhouse-url", "clickhouse://127.0.0.1:9000/default",
+		"-logs-retention-days", "30",
 		"-state-dir", "var/controlplane",
 		"-oidc-issuer", "https://issuer.example",
 		"-oidc-audience", "platform",
@@ -40,6 +42,12 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 	if got := cfg.Database.URL; got != "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable" {
 		t.Fatalf("unexpected db url %q", got)
+	}
+	if got := cfg.Logs.ClickHouse.URL; got != "clickhouse://127.0.0.1:9000/default" {
+		t.Fatalf("unexpected clickhouse url %q", got)
+	}
+	if got := cfg.Logs.RetentionDays; got != 30 {
+		t.Fatalf("unexpected log retention days %d", got)
 	}
 	if got := cfg.StateDir; got != "var/controlplane" {
 		t.Fatalf("unexpected state dir %q", got)

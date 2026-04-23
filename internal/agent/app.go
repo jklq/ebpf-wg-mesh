@@ -145,6 +145,14 @@ func (a *App) runSession(ctx context.Context) error {
 		return err
 	}
 	slog.Info("sent agent hello", "agent_id", a.cfg.Node.ID)
+	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
+		logSink := newStreamLogSink(sessionCtx, a.cfg.Node.ID, send)
+		runtimeWithLogs.SetLogSink(logSink)
+		defer func() {
+			runtimeWithLogs.SetLogSink(nil)
+			logSink.Close()
+		}()
+	}
 	var (
 		desiredStateMu   sync.RWMutex
 		latestDesired    *agentv1.DesiredNodeState
