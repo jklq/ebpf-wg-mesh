@@ -15,14 +15,15 @@ import (
 type AgentService struct {
 	agentv1.UnimplementedAgentControlServer
 	store     *Store
+	logStore  *LogStore
 	notifier  *Notifier
 	ingress   *IngressSyncer
 	authority *TLSAuthority
 	dashboard *ManagedDashboardReconciler
 }
 
-func NewAgentService(store *Store, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority, dashboard *ManagedDashboardReconciler) *AgentService {
-	return &AgentService{store: store, notifier: notifier, ingress: ingress, authority: authority, dashboard: dashboard}
+func NewAgentService(store *Store, logStore *LogStore, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority, dashboard *ManagedDashboardReconciler) *AgentService {
+	return &AgentService{store: store, logStore: logStore, notifier: notifier, ingress: ingress, authority: authority, dashboard: dashboard}
 }
 
 func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
@@ -115,6 +116,16 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			}
 			if ingressChanged {
 				s.ingress.RequestSync()
+			}
+		case *agentv1.AgentClientMessage_LogBatch:
+			batch := payload.LogBatch
+			if batch.GetAgentId() != hello.GetAgentId() {
+				return status.Error(codes.PermissionDenied, "log batch agent_id does not match session")
+			}
+			if s.logStore != nil {
+				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
+					return status.Errorf(codes.Internal, "log batch: %v", err)
+				}
 			}
 		}
 		select {

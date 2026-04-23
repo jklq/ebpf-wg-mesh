@@ -19,6 +19,7 @@ import (
 type Server struct {
 	cfg          config.ControlPlaneConfig
 	store        *Store
+	logStore     *LogStore
 	notifier     *Notifier
 	authority    *TLSAuthority
 	internalGRPC *grpc.Server
@@ -38,6 +39,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	if err := store.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
+		return nil, err
+	}
+	logStore, err := OpenLogStore(ctx, cfg.Logs)
+	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 	notifier := NewNotifier()
@@ -89,6 +95,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		store,
 		notifier,
 		ingress,
+		WithServiceLogs(logStore),
 		WithGitHubSourceInspection(githubCatalog, githubClient),
 	)
 	authz := NewInternalAuth()
@@ -98,7 +105,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
 		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
 	)
-	agentv1.RegisterAgentControlServer(internal, NewAgentService(store, notifier, ingress, authority, dashboard))
+	agentv1.RegisterAgentControlServer(internal, NewAgentService(store, logStore, notifier, ingress, authority, dashboard))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second))
 	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler))
@@ -110,6 +117,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	return &Server{
 		cfg:          cfg,
 		store:        store,
+		logStore:     logStore,
 		notifier:     notifier,
 		authority:    authority,
 		internalGRPC: internal,
@@ -163,6 +171,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) Close() error {
+	var errs []error
 	if s.internalGRPC != nil {
 		s.internalGRPC.GracefulStop()
 	}
@@ -170,9 +179,12 @@ func (s *Server) Close() error {
 		_ = s.internalLn.Close()
 	}
 	if s.store != nil {
-		return s.store.Close()
+		errs = append(errs, s.store.Close())
 	}
-	return nil
+	if s.logStore != nil {
+		errs = append(errs, s.logStore.Close())
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Server) InternalAddr() string {

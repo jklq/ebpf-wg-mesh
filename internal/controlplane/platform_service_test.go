@@ -81,7 +81,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 
 	store := &fakePlatformStore{
-		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{}, false, errConcurrentUpdate
 		},
 	}
@@ -139,7 +139,7 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
-		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+		updateServiceFn: func(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{ID: serviceID, ProjectID: projectID, AllocatedAgentID: "node-1"}, true, nil
 		},
 	}, noopNotifier{}, ingress)
@@ -208,15 +208,15 @@ func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
 
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
-		updateDomainBindingFn: func(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
-			return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID}, true, nil
+		updateDomainBindingFn: func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+			return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID, TargetPort: targetPort}, true, nil
 		},
 	}, noopNotifier{}, ingress)
 
 	_, err := service.UpdateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateDomainBindingRequest{
 		ProjectId: "project-1",
 		Hostname:  "web.example.com",
-		Binding:   &platformv1.DomainBindingTarget{ServiceId: "service-1"},
+		Binding:   &platformv1.DomainBindingTarget{ServiceId: "service-1", TargetPort: 8080},
 	})
 	if err != nil {
 		t.Fatalf("UpdateDomainBinding: %v", err)
@@ -275,28 +275,28 @@ func (c *countingIngress) RequestSync() {
 }
 
 type fakePlatformStore struct {
-	ensurePrincipalFn        func(ctx context.Context, subject, email string) (principalRecord, error)
-	createProjectFn          func(ctx context.Context, subject, name string) (projectRecord, error)
-	listProjectsFn           func(ctx context.Context, subject string) ([]projectRecord, error)
-	projectByIDFn            func(ctx context.Context, subject, projectID string) (projectRecord, error)
-	createScheduledServiceFn func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
-	updateServiceFn          func(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
-	redeployServiceFn        func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	ensurePrincipalFn          func(ctx context.Context, subject, email string) (principalRecord, error)
+	createProjectFn            func(ctx context.Context, subject, name string) (projectRecord, error)
+	listProjectsFn             func(ctx context.Context, subject string) ([]projectRecord, error)
+	projectByIDFn              func(ctx context.Context, subject, projectID string) (projectRecord, error)
+	createScheduledServiceFn   func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
+	updateServiceFn            func(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	redeployServiceFn          func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
 	requestServiceSourceSyncFn func(ctx context.Context, subject, projectID, serviceID string) error
-	enqueueBuildForServiceFn func(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
-	deleteServiceFn          func(ctx context.Context, subject, projectID, serviceID string) error
-	serviceByIDFn            func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
-	listServicesFn           func(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
-	createScheduledVolumeFn  func(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
-	listVolumesFn            func(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
-	deleteVolumeFn           func(ctx context.Context, subject, projectID, volumeID string) error
-	createDomainBindingFn    func(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error)
-	updateDomainBindingFn    func(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error)
-	domainBindingByHostFn    func(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
-	listDomainBindingsFn     func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
-	deleteDomainBindingFn    func(ctx context.Context, subject, projectID, hostname string) (bool, error)
-	serviceStatusFn          func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
-	listAgentsFn             func(ctx context.Context) ([]agentRecord, error)
+	enqueueBuildForServiceFn   func(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
+	deleteServiceFn            func(ctx context.Context, subject, projectID, serviceID string) error
+	serviceByIDFn              func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	listServicesFn             func(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
+	createScheduledVolumeFn    func(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
+	listVolumesFn              func(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
+	deleteVolumeFn             func(ctx context.Context, subject, projectID, volumeID string) error
+	createDomainBindingFn      func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
+	updateDomainBindingFn      func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
+	domainBindingByHostFn      func(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
+	listDomainBindingsFn       func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
+	deleteDomainBindingFn      func(ctx context.Context, subject, projectID, hostname string) (bool, error)
+	serviceStatusFn            func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	listAgentsFn               func(ctx context.Context) ([]agentRecord, error)
 }
 
 func (f *fakePlatformStore) ensurePrincipal(ctx context.Context, subject, email string) (principalRecord, error) {
@@ -334,9 +334,9 @@ func (f *fakePlatformStore) createScheduledService(ctx context.Context, subject,
 	return serviceRecord{ID: "service-1", ProjectID: projectID, Name: name, Spec: spec, AllocatedAgentID: "node-1"}, nil
 }
 
-func (f *fakePlatformStore) updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+func (f *fakePlatformStore) updateService(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 	if f.updateServiceFn != nil {
-		return f.updateServiceFn(ctx, subject, projectID, serviceID, spec)
+		return f.updateServiceFn(ctx, subject, projectID, serviceID, name, spec)
 	}
 	return serviceRecord{}, false, nil
 }
@@ -404,18 +404,18 @@ func (f *fakePlatformStore) deleteVolume(ctx context.Context, subject, projectID
 	return nil
 }
 
-func (f *fakePlatformStore) createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
+func (f *fakePlatformStore) createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
 	if f.createDomainBindingFn != nil {
-		return f.createDomainBindingFn(ctx, subject, projectID, hostname, serviceID)
+		return f.createDomainBindingFn(ctx, subject, projectID, hostname, serviceID, targetPort)
 	}
-	return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID}, true, nil
+	return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID, TargetPort: targetPort}, true, nil
 }
 
-func (f *fakePlatformStore) updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
+func (f *fakePlatformStore) updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
 	if f.updateDomainBindingFn != nil {
-		return f.updateDomainBindingFn(ctx, subject, projectID, hostname, serviceID)
+		return f.updateDomainBindingFn(ctx, subject, projectID, hostname, serviceID, targetPort)
 	}
-	return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID}, false, nil
+	return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID, TargetPort: targetPort}, false, nil
 }
 
 func (f *fakePlatformStore) domainBindingByHostname(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error) {

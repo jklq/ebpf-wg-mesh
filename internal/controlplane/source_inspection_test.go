@@ -76,6 +76,58 @@ func TestRecommendBuildRecipePrefersRootDockerfile(t *testing.T) {
 	}
 }
 
+func TestParseDockerfileExposePortsSinglePort(t *testing.T) {
+	t.Parallel()
+
+	got := parseDockerfileExposePorts([]byte("FROM scratch\nEXPOSE 8080\n"))
+
+	if len(got) != 1 || got[0] != 8080 {
+		t.Fatalf("unexpected ports %+v", got)
+	}
+}
+
+func TestParseDockerfileExposePortsMultiplePortsPreservingOrder(t *testing.T) {
+	t.Parallel()
+
+	got := parseDockerfileExposePorts([]byte("EXPOSE 3000 8080\nEXPOSE 9090\n"))
+
+	want := []int32{3000, 8080, 9090}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected ports %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected ports %+v, want %+v", got, want)
+		}
+	}
+}
+
+func TestParseDockerfileExposePortsIgnoresProtocolSuffixAndInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	got := parseDockerfileExposePorts([]byte("EXPOSE 8080/tcp nope 70000 8080/udp 443\n"))
+
+	want := []int32{8080, 443}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected ports %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected ports %+v, want %+v", got, want)
+		}
+	}
+}
+
+func TestParseDockerfileExposePortsReturnsEmptyWithoutExpose(t *testing.T) {
+	t.Parallel()
+
+	got := parseDockerfileExposePorts([]byte("FROM scratch\nCMD [\"/bin/app\"]\n"))
+
+	if len(got) != 0 {
+		t.Fatalf("unexpected ports %+v", got)
+	}
+}
+
 func makeSourceInspectionArchive(t *testing.T, root string, files map[string]string) []byte {
 	t.Helper()
 

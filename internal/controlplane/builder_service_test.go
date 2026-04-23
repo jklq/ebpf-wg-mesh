@@ -38,7 +38,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	}
 
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{ContainerPort: 80},
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
@@ -98,7 +98,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	}
 
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{ContainerPort: 80},
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",

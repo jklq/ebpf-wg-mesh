@@ -221,7 +221,7 @@ func (i *IngressSyncer) render(ctx context.Context) (*caddyConfig, error) {
 		routes = append(routes, route)
 	}
 	for _, backend := range backends {
-		route, ok := ingressRoute([]string{backend.Domain}, backend.EndpointAddr)
+		route, ok := ingressRoute([]string{backend.Domain}, backend.Upstream)
 		if !ok {
 			continue
 		}
