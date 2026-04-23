@@ -17,6 +17,7 @@ import (
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store     platformStore
+	logStore  serviceLogStore
 	notifier  platformNotifier
 	ingress   platformIngress
 	inspector *gitHubSourceInspector
@@ -28,7 +29,7 @@ type platformStore interface {
 	listProjects(ctx context.Context, subject string) ([]projectRecord, error)
 	projectByID(ctx context.Context, subject, projectID string) (projectRecord, error)
 	createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
-	updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	updateService(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
 	requestServiceSourceSync(ctx context.Context, subject, projectID, serviceID string) error
 	enqueueBuildForService(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
@@ -38,8 +39,8 @@ type platformStore interface {
 	createScheduledVolume(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
 	listVolumes(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
 	deleteVolume(ctx context.Context, subject, projectID, volumeID string) error
-	createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error)
-	updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error)
+	createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
+	updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
 	domainBindingByHostname(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
 	listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, subject, projectID, hostname string) (bool, error)
@@ -56,7 +57,17 @@ type platformIngress interface {
 	RequestSync()
 }
 
+type serviceLogStore interface {
+	ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]serviceLogRecord, error)
+}
+
 type PlatformServiceOption func(*PlatformService)
+
+func WithServiceLogs(logStore serviceLogStore) PlatformServiceOption {
+	return func(service *PlatformService) {
+		service.logStore = logStore
+	}
+}
 
 func WithGitHubSourceInspection(catalog *GitHubCatalog, client *GitHubClient) PlatformServiceOption {
 	return func(service *PlatformService) {
@@ -154,6 +165,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
 	spec := canonicalServiceSpec(req.GetService().GetSpec())
+	if err := validateServiceSpecPorts(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service ports: %v", err)
+	}
 	var service serviceRecord
 	service, err = s.store.createScheduledService(ctx, identity.Subject, req.GetProjectId(), req.GetService().GetName(), spec)
 	if err != nil {
@@ -184,11 +198,14 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
 	spec := canonicalServiceSpec(req.GetService().GetSpec())
+	if err := validateServiceSpecPorts(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service ports: %v", err)
+	}
 	var (
 		service serviceRecord
 		changed bool
 	)
-	service, changed, err = s.store.updateService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), spec)
+	service, changed, err = s.store.updateService(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetService().GetName(), spec)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -384,7 +401,11 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 	if req.GetBinding() == nil {
 		return nil, status.Error(codes.InvalidArgument, "binding is required")
 	}
-	binding, changed, err := s.store.createDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetBinding().GetHostname(), req.GetBinding().GetServiceId())
+	targetPort := req.GetBinding().GetTargetPort()
+	if err := validatePort(targetPort); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
+	}
+	binding, changed, err := s.store.createDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetBinding().GetHostname(), req.GetBinding().GetServiceId(), targetPort)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -392,9 +413,13 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 		if errors.Is(err, errDomainAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create domain binding: %v", err)
 		}
+		if errors.Is(err, errInvalidPort) {
+			return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "create domain binding: %v", err)
 	}
 	if changed {
+		s.notifyServices(ctx, identity.Subject, req.GetProjectId(), binding.ServiceID)
 		s.ingress.RequestSync()
 	}
 	return toProtoDomainBinding(binding), nil
@@ -439,14 +464,26 @@ func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platform
 	if req.GetBinding() == nil {
 		return nil, status.Error(codes.InvalidArgument, "binding is required")
 	}
-	binding, changed, err := s.store.updateDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetHostname(), req.GetBinding().GetServiceId())
+	targetPort := req.GetBinding().GetTargetPort()
+	if err := validatePort(targetPort); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
+	}
+	var previousServiceID string
+	if previous, err := s.store.domainBindingByHostname(ctx, identity.Subject, req.GetProjectId(), req.GetHostname()); err == nil {
+		previousServiceID = previous.ServiceID
+	}
+	binding, changed, err := s.store.updateDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetHostname(), req.GetBinding().GetServiceId(), targetPort)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
 		}
+		if errors.Is(err, errInvalidPort) {
+			return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "update domain binding: %v", err)
 	}
 	if changed {
+		s.notifyServices(ctx, identity.Subject, req.GetProjectId(), previousServiceID, binding.ServiceID)
 		s.ingress.RequestSync()
 	}
 	return toProtoDomainBinding(binding), nil
@@ -457,6 +494,10 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 	if err != nil {
 		return nil, err
 	}
+	var previousServiceID string
+	if previous, err := s.store.domainBindingByHostname(ctx, identity.Subject, req.GetProjectId(), req.GetHostname()); err == nil {
+		previousServiceID = previous.ServiceID
+	}
 	changed, err := s.store.deleteDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetHostname())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -465,6 +506,7 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 		return nil, status.Errorf(codes.Internal, "delete domain binding: %v", err)
 	}
 	if changed {
+		s.notifyServices(ctx, identity.Subject, req.GetProjectId(), previousServiceID)
 		s.ingress.RequestSync()
 	}
 	return &emptypb.Empty{}, nil
@@ -484,6 +526,37 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
 	}
 	return &platformv1.ServiceStatus{Service: toProtoService(service), Allocation: toProtoAllocation(allocation)}, nil
+}
+
+func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (*platformv1.ListServiceLogsResponse, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetProjectId()) == "" || strings.TrimSpace(req.GetServiceId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id and service_id are required")
+	}
+	if s.logStore == nil {
+		return nil, status.Error(codes.FailedPrecondition, errLogStoreDisabled.Error())
+	}
+	if _, err := s.store.serviceByID(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId()); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
+	}
+	lines, err := s.logStore.ListServiceLogs(ctx, req)
+	if err != nil {
+		if errors.Is(err, errLogStoreDisabled) {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+		return nil, status.Errorf(codes.Internal, "list service logs: %v", err)
+	}
+	resp := &platformv1.ListServiceLogsResponse{Lines: make([]*platformv1.ServiceLogLine, 0, len(lines))}
+	for _, line := range lines {
+		resp.Lines = append(resp.Lines, toProtoServiceLogLine(line))
+	}
+	return resp, nil
 }
 
 func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListAgentsResponse, error) {
@@ -506,4 +579,38 @@ func (s *PlatformService) decorateServiceRecord(ctx context.Context, service ser
 		service.SourceSummary = buildSourceSummary(service.Spec)
 	}
 	return service, nil
+}
+
+func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {
+	for _, port := range spec.GetRuntime().GetPorts() {
+		if err := validatePort(port.GetPort()); err != nil {
+			return err
+		}
+	}
+	if check := spec.GetRuntime().GetHealthCheck(); check != nil && check.GetPort() > 0 {
+		if err := validatePort(check.GetPort()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *PlatformService) notifyServices(ctx context.Context, subject, projectID string, serviceIDs ...string) {
+	seen := make(map[string]struct{}, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		serviceID = strings.TrimSpace(serviceID)
+		if serviceID == "" {
+			continue
+		}
+		if _, ok := seen[serviceID]; ok {
+			continue
+		}
+		seen[serviceID] = struct{}{}
+		service, err := s.store.serviceByID(ctx, subject, projectID, serviceID)
+		if err != nil {
+			slog.Warn("failed to load service for domain notification", "service_id", serviceID, "error", err)
+			continue
+		}
+		s.notifier.Notify(service.AllocatedAgentID)
+	}
 }

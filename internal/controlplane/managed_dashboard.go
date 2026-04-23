@@ -56,7 +56,7 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 		Env:             r.dashboardEnv(identity),
 		CpuMillis:       r.cfg.CPUMillis,
 		MemoryMebibytes: r.cfg.MemoryMebibytes,
-		ContainerPort:   r.cfg.ContainerPort,
+		Ports:           runtimePortsFromInts([]int32{r.cfg.ContainerPort}),
 	})
 	if r.cfg.HealthPath != "" {
 		spec.Runtime.HealthCheck = &platformv1.HealthCheck{
@@ -69,7 +69,7 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure dashboard managed service: %w", err)
 	}
-	if _, err := r.store.ensureManagedDomainBinding(ctx, project.ID, r.cfg.PublicDomain, service.ID); err != nil {
+	if _, err := r.store.ensureManagedDomainBinding(ctx, project.ID, r.cfg.PublicDomain, service.ID, r.cfg.ContainerPort); err != nil {
 		return fmt.Errorf("ensure dashboard domain binding: %w", err)
 	}
 	slog.Info("managed dashboard reconciled", "project_id", project.ID, "service_id", service.ID, "domain", r.cfg.PublicDomain)

@@ -217,7 +217,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
-	return c.ObserveRepositoryRevision(ctx, binding.ProviderRepositoryExternalID, trackedRef, commitSHA)
+	return c.observeBoundRevision(ctx, binding, commitSHA)
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sourceWorkItemRecord) error {
