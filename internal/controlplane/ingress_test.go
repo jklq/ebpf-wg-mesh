@@ -41,10 +41,10 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "demo.example.com", service.ID); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10:8080"); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,10 +85,10 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "echo.localtest.me", service.ID); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "echo.localtest.me", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "svc-echo:8080"); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "svc-echo", 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,10 +156,10 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "a.example.com", serviceA.ID); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "a.example.com", serviceA.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10:8080"); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,10 +181,10 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "b.example.com", serviceB.ID); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "b.example.com", serviceB.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11:8080"); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11", 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,7 +343,7 @@ func testMeshConfig() config.ControlPlaneMeshConfig {
 
 func serviceSpec() *platformv1.ServiceSpec {
 	return directImageServiceSpec("nginx:latest", &platformv1.ServiceRuntime{
-		ContainerPort:   8080,
+		Ports:           runtimePortsFromInts([]int32{8080}),
 		CpuMillis:       250,
 		MemoryMebibytes: 128,
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -184,13 +185,13 @@ func (s *Store) createScheduledService(ctx context.Context, subject, projectID, 
 	return rec, nil
 }
 
-func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 	var current serviceRecord
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var sourceChanged bool
 		var err error
-		current, changed, sourceChanged, err = s.updateServiceTx(ctx, tx, subject, projectID, serviceID, spec)
+		current, changed, sourceChanged, err = s.updateServiceTx(ctx, tx, subject, projectID, serviceID, name, spec)
 		_ = sourceChanged
 		return err
 	})
@@ -200,10 +201,14 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 	return current, changed, nil
 }
 
-func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projectID, serviceID string, spec *platformv1.ServiceSpec) (serviceRecord, bool, bool, error) {
+func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, bool, error) {
 	current, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
 	if err != nil {
 		return serviceRecord{}, false, false, err
+	}
+	nextName := strings.TrimSpace(name)
+	if nextName == "" {
+		nextName = current.Name
 	}
 	if volumeName := serviceVolumeName(spec); volumeName != "" {
 		volumeAgentID, err := s.boundAgentForVolumeQuerier(ctx, tx, projectID, volumeName)
@@ -215,7 +220,33 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 		}
 	}
 	spec = canonicalServiceSpec(spec)
+	nameChanged := nextName != current.Name
 	if sameServiceSpec(current.Spec, spec) {
+		if !nameChanged {
+			return current, false, false, nil
+		}
+		now := time.Now().UTC()
+		result, err := tx.ExecContext(ctx,
+			`UPDATE services
+			    SET name = $1,
+			        updated_at = $2
+			  WHERE id = $3
+			    AND current_spec_revision = $4
+			    AND current_rollout_generation = $5`,
+			nextName, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		)
+		if err != nil {
+			return serviceRecord{}, false, false, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return serviceRecord{}, false, false, err
+		}
+		if affected == 0 {
+			return serviceRecord{}, false, false, errConcurrentUpdate
+		}
+		current.Name = nextName
+		current.UpdatedAt = now
 		return current, false, false, nil
 	}
 
@@ -237,16 +268,17 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 	}
 	result, err := tx.ExecContext(ctx,
 		`UPDATE services
-		    SET current_spec_revision = $1,
-		        current_rollout_generation = $2,
-		        current_resolved_image = $3,
-		        last_successful_commit_sha = $4,
-		        latest_build_id = $5,
-		        updated_at = $6
-		  WHERE id = $7
-		    AND current_spec_revision = $8
-		    AND current_rollout_generation = $9`,
-		nextSpecRevision, nextRolloutGeneration, nextResolvedImage, nextLastSuccessfulCommit, nextLatestBuildID, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		    SET name = $1,
+		        current_spec_revision = $2,
+		        current_rollout_generation = $3,
+		        current_resolved_image = $4,
+		        last_successful_commit_sha = $5,
+		        latest_build_id = $6,
+		        updated_at = $7
+		  WHERE id = $8
+		    AND current_spec_revision = $9
+		    AND current_rollout_generation = $10`,
+		nextName, nextSpecRevision, nextRolloutGeneration, nextResolvedImage, nextLastSuccessfulCommit, nextLatestBuildID, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 	)
 	if err != nil {
 		return serviceRecord{}, false, false, err
@@ -281,6 +313,7 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 		return serviceRecord{}, false, false, err
 	}
 	nextRecord := current
+	nextRecord.Name = nextName
 	nextRecord.Spec = spec
 	if source := desiredSourceSpec(spec); source != nil {
 		nextRecord.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
@@ -547,183 +580,4 @@ func (s *Store) loadServiceDetailsQuerier(ctx context.Context, q serviceQueryer,
 		return nil, err
 	}
 	return loadServiceSpec(rawSpec)
-}
-
-func (s *Store) createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
-	return s.putDomainBinding(ctx, subject, projectID, hostname, serviceID, true)
-}
-
-func (s *Store) updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string) (domainBindingRecord, bool, error) {
-	return s.putDomainBinding(ctx, subject, projectID, hostname, serviceID, false)
-}
-
-func (s *Store) putDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, createOnly bool) (domainBindingRecord, bool, error) {
-	var binding domainBindingRecord
-	var changed bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID); err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		var existing domainBindingRecord
-		err := tx.QueryRowContext(ctx,
-			`SELECT hostname, project_id, service_id, created_at, updated_at
-			   FROM domain_bindings
-			  WHERE hostname = $1`,
-			hostname,
-		).Scan(&existing.Hostname, &existing.ProjectID, &existing.ServiceID, &existing.CreatedAt, &existing.UpdatedAt)
-		switch {
-		case err == nil:
-			if existing.ProjectID != projectID {
-				return sql.ErrNoRows
-			}
-			if createOnly {
-				return errDomainAlreadyExists
-			}
-			binding = existing
-			if existing.ServiceID == serviceID {
-				return nil
-			}
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE domain_bindings
-				    SET service_id = $1,
-				        updated_at = $2
-				  WHERE hostname = $3 AND project_id = $4`,
-				serviceID, now, hostname, projectID,
-			); err != nil {
-				return err
-			}
-			binding.ServiceID = serviceID
-			binding.UpdatedAt = now
-			changed = true
-			return nil
-		case err != sql.ErrNoRows:
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO domain_bindings(hostname, project_id, service_id, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			hostname, projectID, serviceID, now, now,
-		); err != nil {
-			return err
-		}
-		binding = domainBindingRecord{
-			Hostname:  hostname,
-			ProjectID: projectID,
-			ServiceID: serviceID,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		changed = true
-		return nil
-	})
-	if err != nil {
-		return domainBindingRecord{}, false, err
-	}
-	return binding, changed, nil
-}
-
-func (s *Store) domainBindingByHostname(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error) {
-	if _, err := s.projectByID(ctx, subject, projectID); err != nil {
-		return domainBindingRecord{}, err
-	}
-	var binding domainBindingRecord
-	err := s.db.QueryRowContext(ctx,
-		`SELECT hostname, project_id, service_id, created_at, updated_at
-		   FROM domain_bindings
-		  WHERE hostname = $1 AND project_id = $2`,
-		hostname, projectID,
-	).Scan(&binding.Hostname, &binding.ProjectID, &binding.ServiceID, &binding.CreatedAt, &binding.UpdatedAt)
-	if err != nil {
-		return domainBindingRecord{}, err
-	}
-	return binding, nil
-}
-
-func (s *Store) listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error) {
-	if _, err := s.projectByID(ctx, subject, projectID); err != nil {
-		return nil, err
-	}
-	query := `SELECT hostname, project_id, service_id, created_at, updated_at
-	            FROM domain_bindings
-	           WHERE project_id = $1`
-	args := []any{projectID}
-	if serviceID != "" {
-		query += ` AND service_id = $2`
-		args = append(args, serviceID)
-	}
-	query += ` ORDER BY hostname ASC`
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []domainBindingRecord
-	for rows.Next() {
-		var binding domainBindingRecord
-		if err := rows.Scan(&binding.Hostname, &binding.ProjectID, &binding.ServiceID, &binding.CreatedAt, &binding.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, binding)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) deleteDomainBinding(ctx context.Context, subject, projectID, hostname string) (bool, error) {
-	var changed bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.projectByIDQuerier(ctx, tx, subject, projectID); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE hostname = $1 AND project_id = $2`, hostname, projectID)
-		if err != nil {
-			return err
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			return sql.ErrNoRows
-		}
-		changed = true
-		return nil
-	})
-	if err != nil {
-		return false, err
-	}
-	return changed, nil
-}
-
-func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
-	service, err := s.serviceByID(ctx, subject, projectID, serviceID)
-	if err != nil {
-		return serviceRecord{}, allocationRecord{}, err
-	}
-	var alloc allocationRecord
-	err = s.db.QueryRowContext(ctx,
-		`SELECT id, service_id, project_id, agent_id, desired_spec_revision, applied_spec_revision, phase, message, endpoint_addr, healthy, updated_at, desired_rollout_generation, applied_rollout_generation
-		   FROM allocations
-		  WHERE service_id = $1`,
-		serviceID,
-	).Scan(
-		&alloc.ID,
-		&alloc.ServiceID,
-		&alloc.ProjectID,
-		&alloc.AgentID,
-		&alloc.DesiredSpecRevision,
-		&alloc.AppliedSpecRevision,
-		&alloc.Phase,
-		&alloc.Message,
-		&alloc.EndpointAddr,
-		&alloc.Healthy,
-		&alloc.UpdatedAt,
-		&alloc.DesiredRolloutGeneration,
-		&alloc.AppliedRolloutGeneration,
-	)
-	if err != nil {
-		return serviceRecord{}, allocationRecord{}, err
-	}
-	return service, alloc, nil
 }

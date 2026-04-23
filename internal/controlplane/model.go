@@ -55,11 +55,12 @@ type serviceRecord struct {
 }
 
 type domainBindingRecord struct {
-	Hostname  string
-	ProjectID string
-	ServiceID string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Hostname   string
+	ProjectID  string
+	ServiceID  string
+	TargetPort int32
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type agentRecord struct {
@@ -90,8 +91,9 @@ type allocationRecord struct {
 	AppliedRolloutGeneration int64
 	Phase                    string
 	Message                  string
-	EndpointAddr             string
+	AllocationIP             string
 	Healthy                  bool
+	HealthyPorts             []int32
 	UpdatedAt                time.Time
 }
 

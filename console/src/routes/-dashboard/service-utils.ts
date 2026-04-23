@@ -82,24 +82,3 @@ export function formatError(error: unknown): string {
 	}
 	return "An unexpected error occurred.";
 }
-
-export function repositoryInspectionBlocker(
-	state: DashboardHomeState,
-): string | undefined {
-	const inspection = state.repositoryInspection;
-	if (!inspection) {
-		return "Repository inspection did not return a result.";
-	}
-	if (inspection.accessState === "installation_required") {
-		return state.githubInstallURL
-			? "The GitHub App is not installed for this repository yet. Open the install flow, grant the repository, then check again."
-			: "This repository needs a GitHub App installation or repository grant, but no install URL is configured.";
-	}
-	if (inspection.accessState !== "available") {
-		return "Repository access is still blocked.";
-	}
-	if (inspection.dockerfileCandidates.length === 0) {
-		return "No Dockerfile was detected on the default branch.";
-	}
-	return undefined;
-}

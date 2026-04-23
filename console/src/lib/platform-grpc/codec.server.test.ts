@@ -1,52 +1,125 @@
 import { describe, expect, it } from "vitest";
 
-import type { DashboardSourceSpec } from "#/lib/dashboard/core/types.server";
+import type { DashboardServiceSpec } from "#/lib/dashboard/core/types.server";
 import {
+	decodeDomainBindingMessage,
+	decodeInspectSourceResponse,
+	decodeServiceMessage,
+	decodeServiceStatusMessage,
 	encodeCreateServiceRequest,
 	encodeIngestGitHubWebhookRequest,
 	encodeUpdateServiceRequest,
 } from "#/lib/platform-grpc/codec.server";
 
 describe("platform grpc gateway", () => {
-	it("injects a default runtime port when creating a source-backed service", () => {
-		const source: DashboardSourceSpec = {
-			provider: "github",
-			repositorySelector: "octocat/hello",
-			trackedRef: "main",
-			buildRecipe: {
-				dockerfilePath: "Dockerfile",
-				contextDir: ".",
+	it("encodes runtime ports when creating a source-backed service", () => {
+		const spec: DashboardServiceSpec = {
+			source: {
+				provider: "github",
+				repositorySelector: "octocat/hello",
+				trackedRef: "main",
+				buildRecipe: {
+					dockerfilePath: "Dockerfile",
+					contextDir: ".",
+				},
 			},
+			runtime: { ports: [{ port: 8080, primary: true }] },
 		};
 
 		const request = encodeCreateServiceRequest({
 			projectId: "project-1",
 			name: "hello",
-			source,
+			spec,
 		});
 
-		expect(request.service.spec.runtime).toEqual({ containerPort: 8080 });
+		expect(request.service.spec.runtime).toEqual({
+			ports: [{ port: 8080, primary: true }],
+		});
 		expect(request.service.spec.source.sourceSpec.buildRecipe).toEqual({
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 		});
 	});
 
-	it("preserves an explicit runtime port when updating a source-backed service", () => {
-		const source: DashboardSourceSpec = {
-			provider: "github",
-			repositorySelector: "octocat/hello",
-			trackedRef: "main",
-			containerPort: 3001,
+	it("preserves runtime ports when updating a source-backed service", () => {
+		const spec: DashboardServiceSpec = {
+			source: {
+				provider: "github",
+				repositorySelector: "octocat/hello",
+				trackedRef: "main",
+			},
+			runtime: { ports: [{ port: 3001, primary: true }] },
 		};
 
 		const request = encodeUpdateServiceRequest({
 			projectId: "project-1",
 			serviceId: "service-1",
-			source,
+			name: "talented-harmony",
+			spec,
 		});
 
-		expect(request.service.spec.runtime).toEqual({ containerPort: 3001 });
+		expect(request.service.name).toBe("talented-harmony");
+		expect(request.service.spec.runtime).toEqual({
+			ports: [{ port: 3001, primary: true }],
+		});
+	});
+
+	it("decodes ports, target ports, and allocation routing status", () => {
+		expect(
+			decodeInspectSourceResponse({
+				accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+				defaultBranch: "main",
+				dockerfileCandidates: ["Dockerfile"],
+				recommendedPorts: [8080, 9090],
+			}).recommendedPorts,
+		).toEqual([8080, 9090]);
+
+		expect(
+			decodeServiceMessage({
+				id: "service-1",
+				projectId: "project-1",
+				name: "hello",
+				spec: {
+					runtime: { ports: [{ port: 8080, primary: true }] },
+					source: {
+						sourceSpec: {
+							provider: "github",
+							repositorySelector: "octocat/hello",
+							trackedRef: "main",
+						},
+					},
+				},
+			}).spec?.runtime.ports,
+		).toEqual([{ port: 8080, primary: true }]);
+
+		expect(
+			decodeDomainBindingMessage({
+				hostname: "app.example.test",
+				projectId: "project-1",
+				serviceId: "service-1",
+				targetPort: 3000,
+			}).targetPort,
+		).toBe(3000);
+
+		expect(
+			decodeServiceStatusMessage({
+				service: {
+					id: "service-1",
+					projectId: "project-1",
+					name: "hello",
+				},
+				allocation: {
+					phase: "Healthy",
+					message: "",
+					allocationIp: "fd00::10",
+					healthy: true,
+					healthyPorts: [3000],
+				},
+			}).allocation,
+		).toMatchObject({
+			allocationIp: "fd00::10",
+			healthyPorts: [3000],
+		});
 	});
 
 	it("encodes GitHub webhook signatures using the proto field name", () => {

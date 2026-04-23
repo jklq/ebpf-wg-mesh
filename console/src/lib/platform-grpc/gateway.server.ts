@@ -117,11 +117,36 @@ export function createPlatformGateway(
 					binding: {
 						hostname: input.hostname,
 						serviceId: input.serviceId,
+						targetPort: input.targetPort,
 					},
 				},
 				user,
 			);
 			return decodeDomainBindingMessage(response);
+		},
+		async updateDomainBinding(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"UpdateDomainBinding",
+				{
+					projectId: input.projectId,
+					hostname: input.hostname,
+					binding: {
+						serviceId: input.serviceId,
+						targetPort: input.targetPort,
+					},
+				},
+				user,
+			);
+			return decodeDomainBindingMessage(response);
+		},
+		async deleteDomainBinding(user, input) {
+			await unaryCall(
+				runtime,
+				"DeleteDomainBinding",
+				{ projectId: input.projectId, hostname: input.hostname },
+				user,
+			);
 		},
 	};
 }

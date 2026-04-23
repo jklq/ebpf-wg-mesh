@@ -31,6 +31,7 @@ type stackSummary struct {
 	ControlPlaneURL   string `json:"control_plane_url"`
 	DashboardURL      string `json:"dashboard_url"`
 	DatabaseURL       string `json:"database_url"`
+	ClickHouseURL     string `json:"clickhouse_url"`
 	ArtifactsDir      string `json:"artifacts_dir"`
 	PublicBaseURL     string `json:"public_base_url"`
 	GitHubEnabled     bool   `json:"github_enabled"`
@@ -76,6 +77,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pick ingress admin port: %v", err)
 	}
+	clickHousePort, err := pickLoopbackPort()
+	if err != nil {
+		log.Fatalf("pick clickhouse port: %v", err)
+	}
 	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
 		StateDir:      filepath.Join(stateDir, "local-ingress"),
 		DockerNetwork: stackCfg.DockerNetwork,
@@ -96,6 +101,19 @@ func main() {
 		}
 	}()
 	ingressURL := ingress.BaseURL() + "/"
+	clickHouse, err := localteststack.StartManagedClickHouse(ctx, localteststack.LocalClickHouseConfig{
+		ContainerName: "localteststack-clickhouse",
+		NativePort:    clickHousePort,
+	}, localteststack.ExecDockerRunner{})
+	if err != nil {
+		log.Fatalf("start managed local clickhouse: %v", err)
+	}
+	defer func() {
+		if err := clickHouse.Close(); err != nil {
+			log.Printf("stop managed local clickhouse: %v", err)
+		}
+	}()
+	clickHouseURL := clickHouse.URL()
 
 	cfg := config.ControlPlaneConfig{
 		InternalGRPC: config.ListenerConfig{
@@ -109,6 +127,11 @@ func main() {
 		},
 		Database: config.DatabaseConfig{
 			URL: dbURL,
+		},
+		Logs: config.LogCaptureConfig{
+			ClickHouse: config.ClickHouseConfig{
+				URL: clickHouseURL,
+			},
 		},
 		StateDir: stateDir,
 		Ingress: config.IngressConfig{
@@ -296,6 +319,7 @@ func main() {
 		ControlPlaneURL:   controlPlaneURL,
 		DashboardURL:      ingressURL,
 		DatabaseURL:       dbURL,
+		ClickHouseURL:     clickHouseURL,
 		ArtifactsDir:      artifactsDir,
 		PublicBaseURL:     firstNonEmpty(overlay.PublicBaseURL, ingressURL[:len(ingressURL)-1]),
 		GitHubEnabled:     overlay.GitHubEnabled,
@@ -324,6 +348,7 @@ func main() {
 		log.Printf("example published host: http://%s:%d", stackCfg.examplePublishedHost("echo"), stackCfg.IngressPort)
 		log.Printf("controlplane grpc: %s", controlPlaneURL)
 		log.Printf("database: %s", dbURL)
+		log.Printf("clickhouse: %s", clickHouseURL)
 		log.Printf("artifacts: %s", artifactsDir)
 		if overlay.PublicBaseURL != "" {
 			log.Printf("public base url: %s", overlay.PublicBaseURL)

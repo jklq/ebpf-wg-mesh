@@ -95,12 +95,14 @@ export function LoginPageView({
 						marginBottom: 32,
 					}}
 				>
-					<Zap size={18} color="var(--accent)" />
+					<Zap size={16} color="var(--accent)" />
 					<span
 						style={{
-							fontSize: 15,
-							fontWeight: 800,
-							letterSpacing: "0.06em",
+							fontSize: 18,
+							fontWeight: 700,
+							letterSpacing: "0.14em",
+							textTransform: "uppercase",
+							fontFamily: "'Barlow Condensed', sans-serif",
 							color: "var(--text)",
 						}}
 					>
@@ -111,18 +113,20 @@ export function LoginPageView({
 				<div
 					style={{
 						background: "var(--surface)",
-						border: "1px solid var(--border)",
-						borderRadius: 12,
+						border: "1px solid var(--border-bright)",
+						borderRadius: 2,
 						padding: "28px",
 					}}
 				>
 					<h1
 						style={{
 							margin: "0 0 6px",
-							fontSize: 20,
+							fontSize: 22,
 							fontWeight: 700,
 							color: "var(--text)",
-							letterSpacing: "-0.01em",
+							letterSpacing: "0.04em",
+							textTransform: "uppercase",
+							fontFamily: "'Barlow Condensed', sans-serif",
 						}}
 					>
 						Sign in
@@ -158,9 +162,9 @@ export function LoginPageView({
 									padding: "14px 16px",
 									background: "var(--surface-raised)",
 									border: "1px solid var(--border)",
-									borderRadius: 8,
+									borderRadius: 0,
 									textDecoration: "none",
-									transition: "border-color 0.12s ease, background 0.12s ease",
+									transition: "border-color 0.1s ease, background 0.1s ease",
 									cursor: "pointer",
 								}}
 								onMouseEnter={(e) => {
@@ -180,8 +184,9 @@ export function LoginPageView({
 									<p
 										style={{
 											margin: 0,
-											fontSize: 13,
+											fontSize: 14,
 											fontWeight: 600,
+											letterSpacing: "0.04em",
 											color: "var(--text)",
 										}}
 									>
@@ -214,7 +219,7 @@ export function LoginPageView({
 								style={{
 									background: "var(--surface-raised)",
 									border: "1px solid var(--border)",
-									borderRadius: 8,
+									borderRadius: 0,
 									overflow: "hidden",
 								}}
 							>
@@ -228,8 +233,9 @@ export function LoginPageView({
 										style={{
 											fontSize: 10,
 											fontWeight: 700,
-											letterSpacing: "0.08em",
+											letterSpacing: "0.10em",
 											textTransform: "uppercase",
+											fontFamily: "'Barlow Condensed', sans-serif",
 											color: "var(--text-muted)",
 										}}
 									>
@@ -301,7 +307,7 @@ export function LoginPageView({
 									padding: "16px",
 									background: "var(--surface-raised)",
 									border: "1px solid var(--border)",
-									borderRadius: 8,
+									borderRadius: 0,
 									fontSize: 12,
 									color: "var(--text-muted)",
 									lineHeight: 1.6,
@@ -313,7 +319,7 @@ export function LoginPageView({
 										fontFamily: "var(--font-mono)",
 										background: "var(--bg)",
 										padding: "1px 5px",
-										borderRadius: 3,
+										borderRadius: 0,
 										border: "1px solid var(--border)",
 										fontSize: 11,
 									}}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -73,6 +74,11 @@ func (i *gitHubSourceInspector) Inspect(ctx context.Context, repositorySelector 
 	}
 	if recipe != nil {
 		resp.RecommendedBuildRecipe = recipe
+		dockerfileBody, err := readArchiveFile(archiveTGZ, recipe.GetDockerfilePath())
+		if err != nil {
+			return nil, err
+		}
+		resp.RecommendedPorts = parseDockerfileExposePorts(dockerfileBody)
 	}
 	return resp, nil
 }
@@ -181,6 +187,44 @@ func readArchiveFile(archiveTGZ []byte, target string) ([]byte, error) {
 		}
 		return body, nil
 	}
+}
+
+func parseDockerfileExposePorts(body []byte) []int32 {
+	seen := map[int32]struct{}{}
+	var out []int32
+	for _, rawLine := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if idx := strings.IndexByte(line, '#'); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || strings.ToUpper(fields[0]) != "EXPOSE" {
+			continue
+		}
+		for _, field := range fields[1:] {
+			token := strings.TrimSpace(field)
+			if slash := strings.IndexByte(token, '/'); slash >= 0 {
+				token = token[:slash]
+			}
+			value, err := strconv.ParseInt(token, 10, 32)
+			if err != nil {
+				continue
+			}
+			port := int32(value)
+			if validatePort(port) != nil {
+				continue
+			}
+			if _, ok := seen[port]; ok {
+				continue
+			}
+			seen[port] = struct{}{}
+			out = append(out, port)
+		}
+	}
+	return out
 }
 
 func collectArchivePaths(archiveTGZ []byte) (map[string]struct{}, error) {

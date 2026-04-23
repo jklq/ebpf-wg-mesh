@@ -24,7 +24,8 @@ export function ServiceNode({
 	onSelect: () => void;
 }) {
 	const health = serviceHealth(service);
-	const repo = service.spec?.repositorySelector ?? "";
+	const source = service.spec?.source;
+	const repo = source?.repositorySelector ?? "";
 	const repoShort = repo.split("/").pop() ?? repo;
 
 	return (
@@ -45,8 +46,10 @@ export function ServiceNode({
 				<span className={`status-dot ${health}`} style={{ flexShrink: 0 }} />
 				<span
 					style={{
-						fontSize: 13,
+						fontSize: 14,
 						fontWeight: 700,
+						letterSpacing: "0.03em",
+						fontFamily: "'Barlow Condensed', sans-serif",
 						color: "var(--text)",
 						overflow: "hidden",
 						textOverflow: "ellipsis",
@@ -85,7 +88,7 @@ export function ServiceNode({
 					</div>
 				)}
 
-				{service.spec?.trackedRef && (
+				{source?.trackedRef && (
 					<div
 						style={{
 							display: "flex",
@@ -97,7 +100,7 @@ export function ServiceNode({
 						}}
 					>
 						<Terminal size={10} style={{ flexShrink: 0 }} />
-						{service.spec.trackedRef}
+						{source.trackedRef}
 					</div>
 				)}
 

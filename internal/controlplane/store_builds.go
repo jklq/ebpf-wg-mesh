@@ -128,7 +128,7 @@ func (s *Store) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service serviceR
 }
 
 func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service serviceRecord, revision sourceRevisionRecord, snapshot sourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe) (buildRunRecord, error) {
-	if revision.ID == "" || snapshot.ID == "" || snapshot.SourceRevisionID != revision.ID {
+	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
 		return buildRunRecord{}, errSourceStateNotReady
 	}
 	if err := ensureReadySnapshot(snapshot); err != nil {
@@ -192,6 +192,15 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 		return buildRunRecord{}, err
 	}
 	return rec, nil
+}
+
+func sourceSnapshotMatchesRevision(snapshot sourceSnapshotRecord, revision sourceRevisionRecord) bool {
+	if snapshot.SourceRevisionID == revision.ID {
+		return true
+	}
+	return snapshot.Provider == revision.Provider &&
+		snapshot.ProviderRepositoryExternalID == revision.ProviderRepositoryExternalID &&
+		snapshot.CommitSHA == revision.CommitSHA
 }
 
 func (s *Store) findBuildByServiceAndCommitTx(ctx context.Context, tx *sql.Tx, serviceID, commitSHA string) (buildRunRecord, error) {

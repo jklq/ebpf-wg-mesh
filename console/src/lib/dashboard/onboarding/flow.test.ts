@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	generatedServiceNameFromSeed,
 	normalizeRepositorySelector,
 	recommendedBuildRecipeFromCandidates,
 	slugifyServiceName,
+	uniqueServiceName,
 } from "#/lib/dashboard/onboarding/flow";
 
 describe("onboarding flow helpers", () => {
@@ -50,5 +52,18 @@ describe("onboarding flow helpers", () => {
 
 	it("slugifies service names from repository basenames", () => {
 		expect(slugifyServiceName("Hello World")).toBe("hello-world");
+	});
+
+	it("generates stable friendly service names from a seed", () => {
+		expect(generatedServiceNameFromSeed("seed-1")).toMatch(/^[a-z]+-[a-z]+$/);
+		expect(generatedServiceNameFromSeed("seed-1")).toBe(
+			generatedServiceNameFromSeed("seed-1"),
+		);
+	});
+
+	it("deduplicates service names", () => {
+		expect(uniqueServiceName(["talented-harmony"], "talented-harmony")).toBe(
+			"talented-harmony-2",
+		);
 	});
 });

@@ -246,7 +246,6 @@ export function createPostgresDashboardStore(
 				        tracked_ref,
 				        dockerfile_path,
 				        context_dir,
-				        container_port,
 				        hostname
 				   FROM ${tableName(runtime, "onboarding")}
 				  WHERE user_id = $1`,
@@ -270,8 +269,7 @@ export function createPostgresDashboardStore(
 				        tracked_ref = $6,
 				        dockerfile_path = $7,
 				        context_dir = $8,
-				        container_port = $9,
-				        hostname = $10,
+				        hostname = $9,
 				        updated_at = NOW()
 				  WHERE user_id = $1
 				RETURNING current_step,
@@ -281,7 +279,6 @@ export function createPostgresDashboardStore(
 				          tracked_ref,
 				          dockerfile_path,
 				          context_dir,
-				          container_port,
 				          hostname`,
 				[
 					userID,
@@ -292,7 +289,6 @@ export function createPostgresDashboardStore(
 					draft.trackedRef,
 					draft.dockerfilePath,
 					draft.contextDir,
-					draft.containerPort,
 					draft.hostname,
 				],
 			);

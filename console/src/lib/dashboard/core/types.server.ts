@@ -61,7 +61,6 @@ export interface DashboardOnboardingDraft {
 	trackedRef: string;
 	dockerfilePath: string;
 	contextDir: string;
-	containerPort: string;
 	hostname: string;
 }
 
@@ -78,6 +77,7 @@ export interface DashboardRepositoryInspection {
 	defaultBranch: string;
 	dockerfileCandidates: Array<string>;
 	recommendedBuildRecipe?: DashboardBuildRecipe;
+	recommendedPorts: number[];
 }
 
 export interface DashboardSourceSpec {
@@ -85,7 +85,20 @@ export interface DashboardSourceSpec {
 	repositorySelector: string;
 	trackedRef: string;
 	buildRecipe?: DashboardBuildRecipe;
-	containerPort?: number;
+}
+
+export interface DashboardRuntimePort {
+	port: number;
+	primary: boolean;
+}
+
+export interface DashboardRuntimeSpec {
+	ports: DashboardRuntimePort[];
+}
+
+export interface DashboardServiceSpec {
+	source?: DashboardSourceSpec;
+	runtime: DashboardRuntimeSpec;
 }
 
 export interface DashboardResolvedSourceBinding {
@@ -112,7 +125,7 @@ export interface DashboardServiceRecord {
 	id: string;
 	projectId: string;
 	name: string;
-	spec?: DashboardSourceSpec;
+	spec?: DashboardServiceSpec;
 	sourceSummary?: DashboardServiceSourceSummary;
 	lastSuccessfulCommitSha?: string;
 	resolvedImage?: string;
@@ -122,8 +135,9 @@ export interface DashboardServiceRecord {
 export interface DashboardAllocationStatus {
 	phase: string;
 	message: string;
-	endpointAddr: string;
+	allocationIp: string;
 	healthy: boolean;
+	healthyPorts: number[];
 }
 
 export interface DashboardServiceStatus {
@@ -135,6 +149,7 @@ export interface DashboardDomainBinding {
 	hostname: string;
 	projectId: string;
 	serviceId: string;
+	targetPort: number;
 }
 
 export interface DashboardHomeState {
@@ -351,7 +366,7 @@ export interface PlatformGateway {
 		input: {
 			projectId: string;
 			name: string;
-			source: DashboardSourceSpec;
+			spec: DashboardServiceSpec;
 		},
 	): Promise<DashboardServiceRecord>;
 	updateService(
@@ -359,7 +374,8 @@ export interface PlatformGateway {
 		input: {
 			projectId: string;
 			serviceId: string;
-			source: DashboardSourceSpec;
+			name?: string;
+			spec: DashboardServiceSpec;
 		},
 	): Promise<DashboardServiceRecord>;
 	getService(
@@ -376,8 +392,26 @@ export interface PlatformGateway {
 	): Promise<Array<DashboardDomainBinding>>;
 	createDomainBinding(
 		user: DashboardUser,
-		input: { projectId: string; serviceId: string; hostname: string },
+		input: {
+			projectId: string;
+			serviceId: string;
+			hostname: string;
+			targetPort: number;
+		},
 	): Promise<DashboardDomainBinding>;
+	updateDomainBinding(
+		user: DashboardUser,
+		input: {
+			projectId: string;
+			hostname: string;
+			serviceId: string;
+			targetPort: number;
+		},
+	): Promise<DashboardDomainBinding>;
+	deleteDomainBinding(
+		user: DashboardUser,
+		input: { projectId: string; hostname: string },
+	): Promise<void>;
 }
 
 export interface GitHubAppUserToken {
@@ -432,11 +466,11 @@ export interface DashboardDependencies {
 export interface UpdateServiceInput {
 	projectId: string;
 	serviceId: string;
+	serviceName?: string;
 	repositorySelector: string;
 	trackedRef: string;
 	dockerfilePath: string;
 	contextDir: string;
-	containerPort: string;
 }
 
 export interface DashboardService {
@@ -458,10 +492,10 @@ export interface DashboardService {
 	}): Promise<DashboardOnboardingDraft>;
 	confirmRepositoryFromSession(input: {
 		repositorySelector: string;
+		serviceName?: string;
 		trackedRef?: string;
 		dockerfilePath?: string;
 		contextDir?: string;
-		containerPort?: string;
 	}): Promise<DashboardOnboardingDraft>;
 	saveHostnameFromSession(hostname: string): Promise<DashboardOnboardingDraft>;
 	publishDomainFromSession(): Promise<DashboardDomainBinding>;
@@ -482,7 +516,18 @@ export interface DashboardService {
 		projectId: string;
 		serviceId: string;
 		hostname: string;
+		targetPort: string | number | undefined;
 	}): Promise<DashboardDomainBinding>;
+	updateDomainBindingFromSession(input: {
+		projectId: string;
+		serviceId: string;
+		hostname: string;
+		targetPort: string | number | undefined;
+	}): Promise<DashboardDomainBinding>;
+	deleteDomainBindingFromSession(input: {
+		projectId: string;
+		hostname: string;
+	}): Promise<void>;
 	checkDomainDNSFromSession(
 		hostname: string,
 	): Promise<DomainVerificationResult | undefined>;

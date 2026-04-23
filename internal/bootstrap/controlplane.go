@@ -27,6 +27,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.InternalGRPC.TLS.ServerCertValidityHours, "internal-server-cert-validity-hours", "CONTROLPLANE_INTERNAL_SERVER_CERT_VALIDITY_HOURS", 24*30, "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ClientCertValidityHours, "internal-client-cert-validity-hours", "CONTROLPLANE_INTERNAL_CLIENT_CERT_VALIDITY_HOURS", 24, "")
 	stringFlag(fs, &cfg.Database.URL, "db-url", "CONTROLPLANE_DB_URL", "", "")
+	stringFlag(fs, &cfg.Logs.ClickHouse.URL, "logs-clickhouse-url", "CONTROLPLANE_LOGS_CLICKHOUSE_URL", "", "")
+	intFlag(fs, &cfg.Logs.RetentionDays, "logs-retention-days", "CONTROLPLANE_LOGS_RETENTION_DAYS", 14, "")
 	stringFlag(fs, &cfg.StateDir, "state-dir", "CONTROLPLANE_STATE_DIR", "var/controlplane", "")
 	stringFlag(fs, &cfg.OIDC.Issuer, "oidc-issuer", "CONTROLPLANE_OIDC_ISSUER", "", "")
 	stringFlag(fs, &cfg.OIDC.Audience, "oidc-audience", "CONTROLPLANE_OIDC_AUDIENCE", "", "")

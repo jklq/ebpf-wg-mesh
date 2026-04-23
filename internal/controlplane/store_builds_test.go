@@ -32,7 +32,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	}
 
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{ContainerPort: 8080},
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
@@ -109,7 +109,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	}
 
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{ContainerPort: 8080},
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
@@ -177,7 +177,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	}
 
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{ContainerPort: 8080},
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
@@ -254,7 +254,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	}
 
 	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{ContainerPort: 8080},
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",

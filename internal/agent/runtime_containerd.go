@@ -30,13 +30,14 @@ var jsonEncoderPool = sync.Pool{
 type serviceEngine interface {
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
 	RemoveService(context.Context, string) error
+	SetLogSink(LogSink)
 	Close() error
 }
 
 type serviceStatus struct {
 	AppliedSpecRevision      int64
 	AppliedRolloutGeneration int64
-	Endpoint                 string
+	AllocationIP             string
 }
 
 type ContainerdRuntime struct {
@@ -63,6 +64,13 @@ func (r *ContainerdRuntime) Close() error {
 		return nil
 	}
 	return r.engine.Close()
+}
+
+func (r *ContainerdRuntime) SetLogSink(sink LogSink) {
+	if r == nil || r.engine == nil {
+		return
+	}
+	r.engine.SetLogSink(sink)
 }
 
 func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNodeState) (*agentv1.StatusReport, error) {
@@ -117,8 +125,9 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 		}
 		cond.AppliedSpecRevision = status.AppliedSpecRevision
 		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-		cond.EndpointAddr = status.Endpoint
-		cond.Healthy = probeHealth(status.Endpoint, svc)
+		cond.AllocationIp = status.AllocationIP
+		cond.HealthyPorts = probeHealthyPorts(status.AllocationIP, svc)
+		cond.Healthy = true
 		switch {
 		case cond.Healthy:
 			cond.Phase = "Healthy"
@@ -187,20 +196,39 @@ func (r *ContainerdRuntime) persistDesiredService(svc *agentv1.DesiredService) e
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
-func probeHealth(endpoint string, svc *agentv1.DesiredService) bool {
+func probeHealthyPorts(allocationIP string, svc *agentv1.DesiredService) []int32 {
 	runtime := svc.GetSpec().GetRuntime()
-	if endpoint == "" || runtime.GetContainerPort() == 0 {
-		return false
+	ports := runtimePortNumbers(runtime)
+	if allocationIP == "" || len(ports) == 0 {
+		return nil
 	}
 	check := runtime.GetHealthCheck()
 	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
-		conn, err := net.DialTimeout("tcp", endpoint, 2*time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return true
+		var healthy []int32
+		for _, port := range ports {
+			if probeTCP(net.JoinHostPort(allocationIP, fmt.Sprintf("%d", port)), 2*time.Second) {
+				healthy = append(healthy, port)
+			}
 		}
-		return false
+		return healthy
 	}
+	if check.GetPort() > 0 {
+		if probeHealthCheck(allocationIP, check.GetPort(), check) {
+			return []int32{check.GetPort()}
+		}
+		return nil
+	}
+	var healthy []int32
+	for _, port := range ports {
+		if probeHealthCheck(allocationIP, port, check) {
+			healthy = append(healthy, port)
+		}
+	}
+	return healthy
+}
+
+func probeHealthCheck(allocationIP string, port int32, check *platformv1.HealthCheck) bool {
+	endpoint := net.JoinHostPort(allocationIP, fmt.Sprintf("%d", port))
 	switch check.GetType() {
 	case platformv1.HealthCheck_TYPE_HTTP:
 		client := http.Client{Timeout: time.Duration(maxInt32(check.GetTimeoutSeconds(), 2)) * time.Second}
@@ -213,13 +241,38 @@ func probeHealth(endpoint string, svc *agentv1.DesiredService) bool {
 			resp.Body.Close()
 		}
 	case platformv1.HealthCheck_TYPE_TCP:
-		conn, err := net.DialTimeout("tcp", endpoint, 2*time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
+		return probeTCP(endpoint, time.Duration(maxInt32(check.GetTimeoutSeconds(), 2))*time.Second)
 	}
 	return false
+}
+
+func probeTCP(endpoint string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", endpoint, timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func runtimePortNumbers(runtime *platformv1.ServiceRuntime) []int32 {
+	if runtime == nil {
+		return nil
+	}
+	seen := make(map[int32]struct{}, len(runtime.GetPorts()))
+	var out []int32
+	for _, item := range runtime.GetPorts() {
+		port := item.GetPort()
+		if port < 1 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		out = append(out, port)
+	}
+	return out
 }
 
 func containerName(allocationID string) string {

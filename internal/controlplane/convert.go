@@ -54,11 +54,12 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 
 func toProtoDomainBinding(rec domainBindingRecord) *platformv1.DomainBinding {
 	return &platformv1.DomainBinding{
-		Hostname:  rec.Hostname,
-		ProjectId: rec.ProjectID,
-		ServiceId: rec.ServiceID,
-		CreatedAt: ts(rec.CreatedAt),
-		UpdatedAt: ts(rec.UpdatedAt),
+		Hostname:   rec.Hostname,
+		ProjectId:  rec.ProjectID,
+		ServiceId:  rec.ServiceID,
+		TargetPort: rec.TargetPort,
+		CreatedAt:  ts(rec.CreatedAt),
+		UpdatedAt:  ts(rec.UpdatedAt),
 	}
 }
 
@@ -94,11 +95,26 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		AppliedSpecRevision:      rec.AppliedSpecRevision,
 		Phase:                    rec.Phase,
 		Message:                  rec.Message,
-		EndpointAddr:             rec.EndpointAddr,
+		AllocationIp:             rec.AllocationIP,
 		Healthy:                  rec.Healthy,
+		HealthyPorts:             append([]int32(nil), rec.HealthyPorts...),
 		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
+	}
+}
+
+func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
+	return &platformv1.ServiceLogLine{
+		ObservedAt:        ts(rec.ObservedAt),
+		ProjectId:         rec.ProjectID,
+		ServiceId:         rec.ServiceID,
+		AllocationId:      rec.AllocationID,
+		AgentId:           rec.AgentID,
+		Stream:            rec.Stream,
+		RolloutGeneration: rec.RolloutGeneration,
+		Sequence:          rec.Sequence,
+		Line:              rec.Line,
 	}
 }
 

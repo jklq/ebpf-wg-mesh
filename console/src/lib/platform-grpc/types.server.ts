@@ -34,7 +34,10 @@ export interface CreateServiceRequest {
 		name: string;
 		spec: {
 			runtime: {
-				containerPort: number;
+				ports: Array<{
+					port: number;
+					primary: boolean;
+				}>;
 			};
 			source: {
 				sourceSpec: {
@@ -55,9 +58,13 @@ export interface UpdateServiceRequest {
 	projectId: string;
 	serviceId: string;
 	service: {
+		name?: string;
 		spec: {
 			runtime: {
-				containerPort: number;
+				ports: Array<{
+					port: number;
+					primary: boolean;
+				}>;
 			};
 			source: {
 				sourceSpec: {
@@ -94,7 +101,22 @@ export interface CreateDomainBindingRequest {
 	binding: {
 		hostname: string;
 		serviceId: string;
+		targetPort: number;
 	};
+}
+
+export interface UpdateDomainBindingRequest {
+	projectId: string;
+	hostname: string;
+	binding: {
+		serviceId: string;
+		targetPort: number;
+	};
+}
+
+export interface DeleteDomainBindingRequest {
+	projectId: string;
+	hostname: string;
 }
 
 export interface IngestGitHubWebhookInput {
@@ -122,7 +144,9 @@ export type PlatformMethod =
 	| "GetService"
 	| "GetServiceStatus"
 	| "ListDomainBindings"
-	| "CreateDomainBinding";
+	| "CreateDomainBinding"
+	| "UpdateDomainBinding"
+	| "DeleteDomainBinding";
 
 export type PlatformRequestMap = {
 	EnsurePrincipal: EnsurePrincipalRequest;
@@ -136,6 +160,8 @@ export type PlatformRequestMap = {
 	GetServiceStatus: GetServiceStatusRequest;
 	ListDomainBindings: ListDomainBindingsRequest;
 	CreateDomainBinding: CreateDomainBindingRequest;
+	UpdateDomainBinding: UpdateDomainBindingRequest;
+	DeleteDomainBinding: DeleteDomainBindingRequest;
 };
 
 export type RawUnaryCallback = (
@@ -196,6 +222,16 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	CreateDomainBinding: (
 		request: CreateDomainBindingRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	UpdateDomainBinding: (
+		request: UpdateDomainBindingRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	DeleteDomainBinding: (
+		request: DeleteDomainBindingRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;

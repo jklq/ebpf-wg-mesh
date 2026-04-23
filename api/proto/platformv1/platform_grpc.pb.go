@@ -40,6 +40,7 @@ const (
 	PlatformService_UpdateDomainBinding_FullMethodName = "/platform.v1.PlatformService/UpdateDomainBinding"
 	PlatformService_DeleteDomainBinding_FullMethodName = "/platform.v1.PlatformService/DeleteDomainBinding"
 	PlatformService_GetServiceStatus_FullMethodName    = "/platform.v1.PlatformService/GetServiceStatus"
+	PlatformService_ListServiceLogs_FullMethodName     = "/platform.v1.PlatformService/ListServiceLogs"
 	PlatformService_ListAgents_FullMethodName          = "/platform.v1.PlatformService/ListAgents"
 )
 
@@ -67,6 +68,7 @@ type PlatformServiceClient interface {
 	UpdateDomainBinding(ctx context.Context, in *UpdateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	DeleteDomainBinding(ctx context.Context, in *DeleteDomainBindingRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetServiceStatus(ctx context.Context, in *GetServiceStatusRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
+	ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error)
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
 }
 
@@ -278,6 +280,16 @@ func (c *platformServiceClient) GetServiceStatus(ctx context.Context, in *GetSer
 	return out, nil
 }
 
+func (c *platformServiceClient) ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListServiceLogsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListServiceLogs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAgentsResponse)
@@ -312,6 +324,7 @@ type PlatformServiceServer interface {
 	UpdateDomainBinding(context.Context, *UpdateDomainBindingRequest) (*DomainBinding, error)
 	DeleteDomainBinding(context.Context, *DeleteDomainBindingRequest) (*emptypb.Empty, error)
 	GetServiceStatus(context.Context, *GetServiceStatusRequest) (*ServiceStatus, error)
+	ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error)
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
@@ -382,6 +395,9 @@ func (UnimplementedPlatformServiceServer) DeleteDomainBinding(context.Context, *
 }
 func (UnimplementedPlatformServiceServer) GetServiceStatus(context.Context, *GetServiceStatusRequest) (*ServiceStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetServiceStatus not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListServiceLogs not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
@@ -767,6 +783,24 @@ func _PlatformService_GetServiceStatus_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListServiceLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListServiceLogsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListServiceLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListServiceLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListServiceLogs(ctx, req.(*ListServiceLogsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -871,6 +905,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetServiceStatus",
 			Handler:    _PlatformService_GetServiceStatus_Handler,
+		},
+		{
+			MethodName: "ListServiceLogs",
+			Handler:    _PlatformService_ListServiceLogs_Handler,
 		},
 		{
 			MethodName: "ListAgents",

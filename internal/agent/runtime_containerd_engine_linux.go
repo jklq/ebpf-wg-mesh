@@ -7,12 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -37,9 +38,12 @@ const (
 )
 
 type containerdEngine struct {
-	cfg    config.AgentConfig
-	client *containerd.Client
-	cni    cni.CNI
+	cfg         config.AgentConfig
+	client      *containerd.Client
+	cni         cni.CNI
+	logSinkMu   sync.RWMutex
+	logSink     LogSink
+	logSequence atomic.Uint64
 }
 
 func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
@@ -77,6 +81,15 @@ func (e *containerdEngine) Close() error {
 	return e.client.Close()
 }
 
+func (e *containerdEngine) SetLogSink(sink LogSink) {
+	if e == nil {
+		return
+	}
+	e.logSinkMu.Lock()
+	defer e.logSinkMu.Unlock()
+	e.logSink = sink
+}
+
 func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
 	ctx = e.namespaced(ctx)
 	containerID := containerName(svc.GetAllocationId())
@@ -87,7 +100,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 			return serviceStatus{
 				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 				AppliedRolloutGeneration: rec.rolloutGeneration,
-				Endpoint:                 endpointForService(svc),
+				AllocationIP:             allocationIPForService(svc),
 			}, false, nil
 		}
 		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
@@ -129,7 +142,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	if _, err := e.setupNetwork(ctx, containerID, netnsPath, svc); err != nil {
 		return cleanup(err)
 	}
-	task, err := container.NewTask(ctx, cio.NullIO)
+	task, err := container.NewTask(ctx, e.logIOCreator(svc))
 	if err != nil {
 		return cleanup(fmt.Errorf("create task %s: %w", containerID, err))
 	}
@@ -140,8 +153,43 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	return serviceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-		Endpoint:                 endpointForService(svc),
+		AllocationIP:             allocationIPForService(svc),
 	}, true, nil
+}
+
+func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator {
+	stdout := &containerLogWriter{
+		projectID:         svc.GetProjectId(),
+		serviceID:         svc.GetServiceId(),
+		allocationID:      svc.GetAllocationId(),
+		stream:            "stdout",
+		rolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		nextSequence:      e.nextLogSequence,
+		sink:              e.currentLogSink,
+	}
+	stderr := &containerLogWriter{
+		projectID:         svc.GetProjectId(),
+		serviceID:         svc.GetServiceId(),
+		allocationID:      svc.GetAllocationId(),
+		stream:            "stderr",
+		rolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		nextSequence:      e.nextLogSequence,
+		sink:              e.currentLogSink,
+	}
+	return cio.NewCreator(cio.WithStreams(nil, stdout, stderr))
+}
+
+func (e *containerdEngine) nextLogSequence() uint64 {
+	return e.logSequence.Add(1)
+}
+
+func (e *containerdEngine) currentLogSink() LogSink {
+	if e == nil {
+		return nil
+	}
+	e.logSinkMu.RLock()
+	defer e.logSinkMu.RUnlock()
+	return e.logSink
 }
 
 func (e *containerdEngine) RemoveService(ctx context.Context, allocationID string) error {
@@ -329,12 +377,8 @@ func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string
 	}
 }
 
-func endpointForService(svc *agentv1.DesiredService) string {
-	runtime := svc.GetSpec().GetRuntime()
-	if runtime.GetContainerPort() == 0 || svc.GetPrivateIpv6() == "" {
-		return ""
-	}
-	return net.JoinHostPort(svc.GetPrivateIpv6(), fmt.Sprintf("%d", runtime.GetContainerPort()))
+func allocationIPForService(svc *agentv1.DesiredService) string {
+	return svc.GetPrivateIpv6()
 }
 
 func projectLabelValue(projectID string) uint32 {
