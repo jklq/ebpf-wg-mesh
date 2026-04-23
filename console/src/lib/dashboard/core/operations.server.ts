@@ -3,14 +3,15 @@ import {
 	requireSession,
 } from "#/lib/dashboard/core/auth.server";
 import {
-	buildHealthyAndReady,
 	type DashboardRuntime,
 	listGitHubRepositories,
 	loadOnboardingDraft,
-	nextServiceName,
+	nextGeneratedProjectName,
+	nextGeneratedServiceName,
 	onboardingDraftEquals,
-	parseContainerPort,
+	parseTargetPort,
 	platformCall,
+	recommendedTargetPort,
 	reconcileOnboardingDraft,
 	refreshGitHubAccount,
 	safePlatformCall,
@@ -26,6 +27,7 @@ import {
 	type DashboardOnboardingDraft,
 	type DashboardProject,
 	type DashboardServiceRecord,
+	type DashboardServiceSpec,
 	type DashboardServiceStatus,
 	type DashboardSourceSpec,
 	DashboardValidationError,
@@ -147,10 +149,14 @@ export async function loadDashboardHome(
 		}
 
 		if (!service && project && onboarding.repositorySelector) {
-			service = allServices.find(
+			const matchingServices = allServices.filter(
 				(entry) =>
-					entry.spec?.repositorySelector === onboarding.repositorySelector,
+					entry.spec?.source?.repositorySelector ===
+					onboarding.repositorySelector,
 			);
+			if (matchingServices.length === 1) {
+				service = matchingServices[0];
+			}
 		}
 
 		if (project && service) {
@@ -282,7 +288,6 @@ export async function inspectRepositoryFromSession(
 			selectorChanged || draft.contextDir === ""
 				? (recommended?.contextDir ?? "")
 				: draft.contextDir,
-		containerPort: selectorChanged ? "" : draft.containerPort,
 		hostname: selectorChanged ? "" : draft.hostname,
 	};
 	return saveOnboardingDraft(runtime, session.user.id, nextDraft);
@@ -292,10 +297,10 @@ export async function confirmRepositoryFromSession(
 	runtime: DashboardRuntime,
 	input: {
 		repositorySelector: string;
+		serviceName?: string;
 		trackedRef?: string;
 		dockerfilePath?: string;
 		contextDir?: string;
-		containerPort?: string;
 	},
 ): Promise<DashboardOnboardingDraft> {
 	const session = await requireSession(runtime);
@@ -322,59 +327,52 @@ export async function confirmRepositoryFromSession(
 		input.dockerfilePath?.trim() ||
 		inspection.recommendedBuildRecipe?.dockerfilePath ||
 		"";
-	if (dockerfilePath === "") {
-		throw new DashboardValidationError({
-			message:
-				"No Dockerfile was detected for this repository. Pick a repo with a Dockerfile or add one first.",
-		});
-	}
 	const contextDir =
 		input.contextDir?.trim() ||
 		inspection.recommendedBuildRecipe?.contextDir ||
 		".";
-	const containerPort = parseContainerPort(input.containerPort);
 	const trackedRef =
 		input.trackedRef?.trim() || inspection.defaultBranch || "main";
+	const currentDraft = await loadOnboardingDraft(runtime, session.user.id);
 	const projects = await platformCall(runtime, "listProjects", (platform) =>
 		platform.listProjects(session.user),
 	);
-	const projectName = selector;
 	const project =
-		projects.find((entry) => entry.name === projectName) ??
+		(currentDraft.projectId
+			? projects.find((entry) => entry.id === currentDraft.projectId)
+			: undefined) ??
 		(await platformCall(runtime, "createProject", (platform) =>
-			platform.createProject(session.user, projectName),
+			platform.createProject(
+				session.user,
+				nextGeneratedProjectName(projects, runtime.randomUUID()),
+			),
 		));
 	const services = await platformCall(runtime, "listServices", (platform) =>
 		platform.listServices(session.user, project.id),
 	);
-	const existingService = services.find(
-		(entry) => entry.spec?.repositorySelector === selector,
-	);
-	const desiredSource: DashboardSourceSpec = {
-		provider: "github",
-		repositorySelector: selector,
-		trackedRef,
-		buildRecipe: {
-			dockerfilePath,
-			contextDir,
+	const desiredSpec: DashboardServiceSpec = buildServiceSpec(
+		{
+			provider: "github",
+			repositorySelector: selector,
+			trackedRef,
+			buildRecipe: {
+				dockerfilePath,
+				contextDir,
+			},
 		},
-		containerPort,
-	};
-	const service = existingService
-		? await platformCall(runtime, "updateService", (platform) =>
-				platform.updateService(session.user, {
-					projectId: project.id,
-					serviceId: existingService.id,
-					source: desiredSource,
-				}),
-			)
-		: await platformCall(runtime, "createService", (platform) =>
-				platform.createService(session.user, {
-					projectId: project.id,
-					name: nextServiceName(services, selector),
-					source: desiredSource,
-				}),
-			);
+		inspection.recommendedPorts,
+	);
+	const service = await platformCall(runtime, "createService", (platform) =>
+		platform.createService(session.user, {
+			projectId: project.id,
+			name: nextGeneratedServiceName(
+				services,
+				input.serviceName,
+				runtime.randomUUID(),
+			),
+			spec: desiredSpec,
+		}),
+	);
 	return saveOnboardingDraft(runtime, session.user.id, {
 		currentStep: "build",
 		projectId: project.id,
@@ -383,7 +381,6 @@ export async function confirmRepositoryFromSession(
 		trackedRef,
 		dockerfilePath,
 		contextDir,
-		containerPort: String(containerPort),
 		hostname: "",
 	});
 }
@@ -422,7 +419,13 @@ export async function publishDomainFromSession(
 			message: "Enter a hostname first.",
 		});
 	}
-	const serviceStatus = await platformCall(
+	const service = await platformCall(runtime, "getService", (platform) =>
+		platform.getService(session.user, {
+			projectId: draft.projectId,
+			serviceId: draft.serviceId,
+		}),
+	);
+	const serviceStatus = await safePlatformCall(
 		runtime,
 		"getServiceStatus",
 		(platform) =>
@@ -431,12 +434,6 @@ export async function publishDomainFromSession(
 				serviceId: draft.serviceId,
 			}),
 	);
-	if (!buildHealthyAndReady(serviceStatus)) {
-		throw new DashboardValidationError({
-			message:
-				"Wait for the latest build to succeed and the deployment to become healthy before publishing a domain.",
-		});
-	}
 	const verification = await verifyHostnameOrThrow(runtime, draft.hostname);
 	if (verification.state !== "verified") {
 		throw new DashboardValidationError({
@@ -451,6 +448,7 @@ export async function publishDomainFromSession(
 				projectId: draft.projectId,
 				serviceId: draft.serviceId,
 				hostname: draft.hostname,
+				targetPort: recommendedTargetPort(service, serviceStatus),
 			}),
 	);
 	await saveOnboardingDraft(runtime, session.user.id, {
@@ -475,7 +473,12 @@ export async function updateServiceFromSession(
 	input: UpdateServiceInput,
 ): Promise<DashboardServiceRecord> {
 	const session = await requireSession(runtime);
-	const containerPort = parseContainerPort(input.containerPort);
+	const current = await platformCall(runtime, "getService", (platform) =>
+		platform.getService(session.user, {
+			projectId: input.projectId,
+			serviceId: input.serviceId,
+		}),
+	);
 	const desiredSource: DashboardSourceSpec = {
 		provider: "github",
 		repositorySelector: normalizeRepositorySelector(input.repositorySelector),
@@ -484,13 +487,18 @@ export async function updateServiceFromSession(
 			dockerfilePath: input.dockerfilePath.trim(),
 			contextDir: input.contextDir.trim() || ".",
 		},
-		containerPort,
 	};
 	return platformCall(runtime, "updateService", (platform) =>
 		platform.updateService(session.user, {
 			projectId: input.projectId,
 			serviceId: input.serviceId,
-			source: desiredSource,
+			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
+			spec: {
+				source: desiredSource,
+				runtime: {
+					ports: current.spec?.runtime.ports ?? [],
+				},
+			},
 		}),
 	);
 }
@@ -509,10 +517,16 @@ export async function listDomainBindingsFromSession(
 
 export async function createDomainBindingFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; serviceId: string; hostname: string },
+	input: {
+		projectId: string;
+		serviceId: string;
+		hostname: string;
+		targetPort: string | number | undefined;
+	},
 ): Promise<DashboardDomainBinding> {
 	const session = await requireSession(runtime);
 	const normalizedHostname = normalizeHostname(input.hostname);
+	const targetPort = parseTargetPort(input.targetPort);
 	const verification = await verifyHostnameOrThrow(runtime, normalizedHostname);
 	if (verification.state !== "verified") {
 		throw new DashboardValidationError({
@@ -524,7 +538,40 @@ export async function createDomainBindingFromSession(
 			projectId: input.projectId,
 			serviceId: input.serviceId,
 			hostname: normalizedHostname,
+			targetPort,
 		}),
+	);
+}
+
+export async function updateDomainBindingFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		projectId: string;
+		serviceId: string;
+		hostname: string;
+		targetPort: string | number | undefined;
+	},
+): Promise<DashboardDomainBinding> {
+	const session = await requireSession(runtime);
+	const normalizedHostname = normalizeHostname(input.hostname);
+	const targetPort = parseTargetPort(input.targetPort);
+	return platformCall(runtime, "updateDomainBinding", (platform) =>
+		platform.updateDomainBinding(session.user, {
+			projectId: input.projectId,
+			hostname: normalizedHostname,
+			serviceId: input.serviceId,
+			targetPort,
+		}),
+	);
+}
+
+export async function deleteDomainBindingFromSession(
+	runtime: DashboardRuntime,
+	input: { projectId: string; hostname: string },
+): Promise<void> {
+	const session = await requireSession(runtime);
+	await platformCall(runtime, "deleteDomainBinding", (platform) =>
+		platform.deleteDomainBinding(session.user, input),
 	);
 }
 
@@ -534,4 +581,28 @@ export async function checkDomainDNSFromSession(
 ): Promise<DomainVerificationResult | undefined> {
 	await requireSession(runtime);
 	return safeVerifyHostname(runtime, normalizeHostname(hostname));
+}
+
+function buildServiceSpec(
+	source: DashboardSourceSpec,
+	recommendedPorts: number[],
+): DashboardServiceSpec {
+	const seen = new Set<number>();
+	const ports = recommendedPorts
+		.filter((port) => Number.isInteger(port) && port >= 1 && port <= 65535)
+		.filter((port) => {
+			if (seen.has(port)) {
+				return false;
+			}
+			seen.add(port);
+			return true;
+		})
+		.map((port, index) => ({
+			port,
+			primary: index === 0,
+		}));
+	return {
+		source,
+		runtime: { ports },
+	};
 }

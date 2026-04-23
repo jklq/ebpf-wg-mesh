@@ -7,8 +7,10 @@ import type {
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardResolvedSourceBinding,
+	DashboardRuntimePort,
 	DashboardServiceRecord,
 	DashboardServiceSourceSummary,
+	DashboardServiceSpec,
 	DashboardServiceStatus,
 	DashboardSourceSpec,
 	RepositoryAccessState,
@@ -21,8 +23,6 @@ import type {
 	PlatformProjectMessage,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
-
-const defaultServiceContainerPort = 8080;
 
 export function encodeIngestGitHubWebhookRequest(
 	input: IngestGitHubWebhookInput,
@@ -120,31 +120,22 @@ export function decodeInspectSourceResponse(
 		recommendedBuildRecipe: decodeOptionalBuildRecipe(
 			value.recommendedBuildRecipe,
 		),
+		recommendedPorts: readNumberArray(value, "recommendedPorts"),
 	};
 }
 
 export function encodeCreateServiceRequest(input: {
 	projectId: string;
 	name: string;
-	source: DashboardSourceSpec;
+	spec: DashboardServiceSpec;
 }): CreateServiceRequest {
 	return {
 		projectId: input.projectId,
 		service: {
 			name: input.name,
 			spec: {
-				runtime: {
-					containerPort:
-						input.source.containerPort ?? defaultServiceContainerPort,
-				},
-				source: {
-					sourceSpec: {
-						provider: input.source.provider,
-						repositorySelector: input.source.repositorySelector,
-						trackedRef: input.source.trackedRef,
-						buildRecipe: encodeBuildRecipe(input.source.buildRecipe),
-					},
-				},
+				runtime: encodeRuntimeSpec(input.spec.runtime),
+				source: encodeServiceSource(input.spec.source),
 			},
 		},
 	};
@@ -153,25 +144,17 @@ export function encodeCreateServiceRequest(input: {
 export function encodeUpdateServiceRequest(input: {
 	projectId: string;
 	serviceId: string;
-	source: DashboardSourceSpec;
+	name?: string;
+	spec: DashboardServiceSpec;
 }): UpdateServiceRequest {
 	return {
 		projectId: input.projectId,
 		serviceId: input.serviceId,
 		service: {
+			name: input.name,
 			spec: {
-				runtime: {
-					containerPort:
-						input.source.containerPort ?? defaultServiceContainerPort,
-				},
-				source: {
-					sourceSpec: {
-						provider: input.source.provider,
-						repositorySelector: input.source.repositorySelector,
-						trackedRef: input.source.trackedRef,
-						buildRecipe: encodeBuildRecipe(input.source.buildRecipe),
-					},
-				},
+				runtime: encodeRuntimeSpec(input.spec.runtime),
+				source: encodeServiceSource(input.spec.source),
 			},
 		},
 	};
@@ -201,24 +184,19 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 	};
 }
 
-function decodeServiceSpec(raw: unknown): DashboardSourceSpec | undefined {
+function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 	const value = readOptionalRecord(raw);
 	if (!value) {
 		return undefined;
 	}
-	const runtime = readOptionalRecord(value.runtime);
-	const source = readOptionalRecord(value.source);
-	const sourceSpec = readOptionalRecord(source?.sourceSpec);
-	if (!sourceSpec) {
+	const runtime = decodeRuntimeSpec(value.runtime);
+	const source = decodeServiceSource(value.source);
+	if (!source && runtime.ports.length === 0) {
 		return undefined;
 	}
 	return {
-		provider: readOptionalString(sourceSpec, "provider") ?? "",
-		repositorySelector:
-			readOptionalString(sourceSpec, "repositorySelector") ?? "",
-		trackedRef: readOptionalString(sourceSpec, "trackedRef") ?? "",
-		buildRecipe: decodeOptionalBuildRecipe(sourceSpec.buildRecipe),
-		containerPort: readOptionalNumber(runtime, "containerPort"),
+		source,
+		runtime,
 	};
 }
 
@@ -249,7 +227,6 @@ function decodeSourceSpec(raw: unknown): DashboardSourceSpec | undefined {
 		repositorySelector: readOptionalString(value, "repositorySelector") ?? "",
 		trackedRef: readOptionalString(value, "trackedRef") ?? "",
 		buildRecipe: decodeOptionalBuildRecipe(value.buildRecipe),
-		containerPort: readOptionalNumber(value, "containerPort"),
 	};
 }
 
@@ -306,8 +283,9 @@ function decodeAllocationStatus(
 	return {
 		phase: readOptionalString(value, "phase") ?? "",
 		message: readOptionalString(value, "message") ?? "",
-		endpointAddr: readOptionalString(value, "endpointAddr") ?? "",
+		allocationIp: readOptionalString(value, "allocationIp") ?? "",
 		healthy: readBoolean(value, "healthy"),
+		healthyPorts: readNumberArray(value, "healthyPorts"),
 	};
 }
 
@@ -328,6 +306,7 @@ export function decodeDomainBindingMessage(
 		hostname: readRequiredString(value, "hostname", "domain binding"),
 		projectId: readRequiredString(value, "projectId", "domain binding"),
 		serviceId: readRequiredString(value, "serviceId", "domain binding"),
+		targetPort: readRequiredNumber(value, "targetPort", "domain binding"),
 	};
 }
 
@@ -341,6 +320,62 @@ function encodeBuildRecipe(
 		dockerfilePath: recipe.dockerfilePath,
 		contextDir: recipe.contextDir,
 	};
+}
+
+function encodeRuntimeSpec(
+	runtime: DashboardServiceSpec["runtime"],
+): CreateServiceRequest["service"]["spec"]["runtime"] {
+	return {
+		ports: (runtime.ports ?? []).map((port) => ({
+			port: port.port,
+			primary: port.primary,
+		})),
+	};
+}
+
+function encodeServiceSource(
+	source: DashboardSourceSpec | undefined,
+): CreateServiceRequest["service"]["spec"]["source"] {
+	return {
+		sourceSpec: {
+			provider: source?.provider ?? "",
+			repositorySelector: source?.repositorySelector ?? "",
+			trackedRef: source?.trackedRef ?? "",
+			buildRecipe: encodeBuildRecipe(source?.buildRecipe),
+		},
+	};
+}
+
+function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
+	const value = readOptionalRecord(raw);
+	return {
+		ports: readArray(value ?? {}, "ports")
+			.map((item) => decodeRuntimePort(item))
+			.filter((item): item is DashboardRuntimePort => item !== undefined),
+	};
+}
+
+function decodeRuntimePort(raw: unknown): DashboardRuntimePort | undefined {
+	const value = readOptionalRecord(raw);
+	if (!value) {
+		return undefined;
+	}
+	const port = readOptionalNumber(value, "port");
+	if (!port || !Number.isInteger(port) || port < 1 || port > 65535) {
+		return undefined;
+	}
+	return {
+		port,
+		primary: readBoolean(value, "primary"),
+	};
+}
+
+function decodeServiceSource(raw: unknown): DashboardSourceSpec | undefined {
+	const value = readOptionalRecord(raw);
+	if (!value) {
+		return undefined;
+	}
+	return decodeSourceSpec(value.sourceSpec);
 }
 
 function decodeOptionalBuildRecipe(
@@ -420,6 +455,18 @@ function readOptionalNumber(
 	return typeof candidate === "number" ? candidate : undefined;
 }
 
+function readRequiredNumber(
+	value: Record<string, unknown>,
+	key: string,
+	context: string,
+): number {
+	const candidate = readOptionalNumber(value, key);
+	if (candidate === undefined) {
+		throw new Error(`invalid ${context}.${key}`);
+	}
+	return candidate;
+}
+
 function readBoolean(value: Record<string, unknown>, key: string): boolean {
 	return value[key] === true;
 }
@@ -430,5 +477,15 @@ function readStringArray(
 ): Array<string> {
 	return readArray(value, key).filter(
 		(entry): entry is string => typeof entry === "string",
+	);
+}
+
+function readNumberArray(
+	value: Record<string, unknown>,
+	key: string,
+): Array<number> {
+	return readArray(value, key).filter(
+		(entry): entry is number =>
+			typeof entry === "number" && Number.isFinite(entry),
 	);
 }

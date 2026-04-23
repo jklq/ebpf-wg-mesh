@@ -35,9 +35,9 @@ export function PanelOverview({
 	);
 	const serviceURL = domainBinding
 		? buildServiceURL(state, domainBinding.hostname)
-		: alloc?.endpointAddr
-			? `http://${alloc.endpointAddr}`
-			: null;
+		: null;
+	const runtimePorts = service.spec?.runtime.ports ?? [];
+	const source = service.spec?.source;
 
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -53,7 +53,7 @@ export function PanelOverview({
 						padding: "10px 14px",
 						background: "var(--accent-dim)",
 						border: "1px solid var(--accent)",
-						borderRadius: 8,
+						borderRadius: 1,
 						fontSize: 13,
 						color: "var(--accent)",
 						fontWeight: 600,
@@ -93,9 +93,9 @@ export function PanelOverview({
 							<span>{alloc.phase}</span>
 						</InfoRow>
 					)}
-					{alloc?.endpointAddr && (
-						<InfoRow label="Endpoint">
-							<MonoValue>{alloc.endpointAddr}</MonoValue>
+					{alloc?.allocationIp && (
+						<InfoRow label="Allocation IP">
+							<MonoValue>{alloc.allocationIp}</MonoValue>
 						</InfoRow>
 					)}
 					{alloc?.message && !alloc.healthy && (
@@ -105,9 +105,20 @@ export function PanelOverview({
 							</span>
 						</InfoRow>
 					)}
-					{service.spec?.containerPort && (
-						<InfoRow label="Port">
-							<MonoValue>{service.spec.containerPort}</MonoValue>
+					{runtimePorts.length > 0 && (
+						<InfoRow label="Listen ports">
+							<MonoValue>
+								{runtimePorts
+									.map(
+										(port) => `${port.port}${port.primary ? " primary" : ""}`,
+									)
+									.join(", ")}
+							</MonoValue>
+						</InfoRow>
+					)}
+					{alloc?.healthyPorts && alloc.healthyPorts.length > 0 && (
+						<InfoRow label="Healthy ports">
+							<MonoValue>{alloc.healthyPorts.join(", ")}</MonoValue>
 						</InfoRow>
 					)}
 				</div>
@@ -145,19 +156,19 @@ export function PanelOverview({
 				</div>
 			)}
 
-			{service.spec && (
+			{source && (
 				<div>
 					<p className="section-header">Source</p>
 					<div>
 						<InfoRow label="Repository">
-							<MonoValue>{service.spec.repositorySelector}</MonoValue>
+							<MonoValue>{source.repositorySelector}</MonoValue>
 						</InfoRow>
 						<InfoRow label="Branch">
-							<MonoValue>{service.spec.trackedRef}</MonoValue>
+							<MonoValue>{source.trackedRef}</MonoValue>
 						</InfoRow>
-						{service.spec.buildRecipe?.dockerfilePath && (
+						{source.buildRecipe?.dockerfilePath && (
 							<InfoRow label="Dockerfile">
-								<MonoValue>{service.spec.buildRecipe.dockerfilePath}</MonoValue>
+								<MonoValue>{source.buildRecipe.dockerfilePath}</MonoValue>
 							</InfoRow>
 						)}
 					</div>

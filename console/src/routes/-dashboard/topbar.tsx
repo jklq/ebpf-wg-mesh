@@ -2,12 +2,13 @@ import {
 	AlertCircle,
 	Layers,
 	LogOut,
-	Plus,
 	RefreshCw,
 	Zap,
 } from "lucide-react";
 
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+
+import { DeployButton } from "./deploy-button";
 
 export function Topbar({
 	state,
@@ -28,12 +29,14 @@ export function Topbar({
 					marginRight: 8,
 				}}
 			>
-				<Zap size={16} color="var(--accent)" />
+				<Zap size={15} color="var(--accent)" />
 				<span
 					style={{
-						fontSize: 13,
+						fontSize: 16,
 						fontWeight: 700,
-						letterSpacing: "0.04em",
+						letterSpacing: "0.14em",
+						textTransform: "uppercase",
+						fontFamily: "'Barlow Condensed', sans-serif",
 						color: "var(--text)",
 					}}
 				>
@@ -47,12 +50,15 @@ export function Topbar({
 						display: "flex",
 						alignItems: "center",
 						gap: 6,
-						padding: "3px 10px",
+						padding: "3px 8px",
 						background: "var(--surface-raised)",
 						border: "1px solid var(--border)",
-						borderRadius: 20,
-						fontSize: 12,
+						borderRadius: 1,
+						fontSize: 11,
 						fontWeight: 600,
+						letterSpacing: "0.06em",
+						textTransform: "uppercase",
+						fontFamily: "'Barlow Condensed', sans-serif",
 						color: "var(--text-muted)",
 						cursor: "default",
 					}}
@@ -68,6 +74,7 @@ export function Topbar({
 						fontSize: 11,
 						color: "var(--text-dim)",
 						fontFamily: "var(--font-mono)",
+						letterSpacing: "0.03em",
 					}}
 				>
 					{state.services.length}{" "}
@@ -95,16 +102,7 @@ export function Topbar({
 				<RefreshCw size={13} />
 			</button>
 
-			{!state.githubAccount && state.githubLoginURL && (
-				<a href={state.githubLoginURL} className="btn-secondary">
-					Connect GitHub
-				</a>
-			)}
-
-			<button type="button" className="btn-primary" onClick={onNewService}>
-				<Plus size={13} />
-				New service
-			</button>
+			<DeployButton state={state} onNewService={onNewService} />
 
 			<a
 				href="/logout"

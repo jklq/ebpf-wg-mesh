@@ -3,8 +3,8 @@ import type {
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardServiceRecord,
+	DashboardServiceSpec,
 	DashboardServiceStatus,
-	DashboardSourceSpec,
 	DashboardUser,
 	PlatformGateway,
 } from "#/lib/dashboard/core/types.server";
@@ -23,13 +23,14 @@ export interface FakePlatformGateway extends PlatformGateway {
 		user: DashboardUser;
 		projectId: string;
 		name: string;
-		source: DashboardSourceSpec;
+		spec: DashboardServiceSpec;
 	}>;
 	updateServiceCalls: Array<{
 		user: DashboardUser;
 		projectId: string;
 		serviceId: string;
-		source: DashboardSourceSpec;
+		name?: string;
+		spec: DashboardServiceSpec;
 	}>;
 	getServiceCalls: Array<{
 		user: DashboardUser;
@@ -51,6 +52,7 @@ export interface FakePlatformGateway extends PlatformGateway {
 		projectId: string;
 		serviceId: string;
 		hostname: string;
+		targetPort: number;
 	}>;
 	projects: Array<DashboardProject>;
 	services: Array<DashboardServiceRecord>;
@@ -146,6 +148,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 						dockerfilePath: "Dockerfile",
 						contextDir: ".",
 					},
+					recommendedPorts: [],
 				}
 			);
 		},
@@ -155,17 +158,17 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.createService;
 			}
 			const serviceRecord: DashboardServiceRecord = {
-				id: `service-${platform.createServiceCalls.length}`,
+				id: `service-${platform.services.length + 1}`,
 				projectId: input.projectId,
 				name: input.name,
-				spec: input.source,
+				spec: input.spec,
 				sourceSummary: {
-					desiredSpec: input.source,
+					desiredSpec: input.spec.source,
 					resolvedBinding: {
-						repositorySelector: input.source.repositorySelector,
-						trackedRef: input.source.trackedRef,
+						repositorySelector: input.spec.source?.repositorySelector ?? "",
+						trackedRef: input.spec.source?.trackedRef ?? "",
 						accessState: "available",
-						buildRecipe: input.source.buildRecipe,
+						buildRecipe: input.spec.source?.buildRecipe,
 					},
 				},
 				latestBuild: {
@@ -182,8 +185,9 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				allocation: {
 					phase: "Pending",
 					message: "",
-					endpointAddr: "",
+					allocationIp: "",
 					healthy: false,
+					healthyPorts: [],
 				},
 			});
 			return serviceRecord;
@@ -203,14 +207,15 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			const updated: DashboardServiceRecord = {
 				...current,
-				spec: input.source,
+				name: input.name?.trim() || current.name,
+				spec: input.spec,
 				sourceSummary: {
-					desiredSpec: input.source,
+					desiredSpec: input.spec.source,
 					resolvedBinding: {
-						repositorySelector: input.source.repositorySelector,
-						trackedRef: input.source.trackedRef,
+						repositorySelector: input.spec.source?.repositorySelector ?? "",
+						trackedRef: input.spec.source?.trackedRef ?? "",
 						accessState: "available",
-						buildRecipe: input.source.buildRecipe,
+						buildRecipe: input.spec.source?.buildRecipe,
 					},
 				},
 			};
@@ -274,6 +279,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				hostname: input.hostname,
 				projectId: input.projectId,
 				serviceId: input.serviceId,
+				targetPort: input.targetPort,
 			};
 			platform.domainBindings = [
 				...platform.domainBindings.filter(
@@ -282,6 +288,29 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				binding,
 			];
 			return binding;
+		},
+		async updateDomainBinding(_, input): Promise<DashboardDomainBinding> {
+			const existing = platform.domainBindings.find(
+				(b) => b.hostname === input.hostname && b.projectId === input.projectId,
+			);
+			if (!existing) {
+				throw new Error("domain binding not found");
+			}
+			const updated: DashboardDomainBinding = {
+				...existing,
+				serviceId: input.serviceId,
+				targetPort: input.targetPort,
+			};
+			platform.domainBindings = platform.domainBindings.map((b) =>
+				b.hostname === input.hostname ? updated : b,
+			);
+			return updated;
+		},
+		async deleteDomainBinding(_, input): Promise<void> {
+			platform.domainBindings = platform.domainBindings.filter(
+				(b) =>
+					!(b.hostname === input.hostname && b.projectId === input.projectId),
+			);
 		},
 	};
 	return platform;

@@ -12,7 +12,7 @@ export type DashboardTab = "overview" | "deployments" | "settings" | "domains";
 
 export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
 
-export type NewServiceStep = "repo" | "configure" | "deploying";
+export type NewServiceStep = "repo" | "deploying";
 
 export type InspectRepositoryFn = (input: {
 	data: { repositorySelector: string };
@@ -21,10 +21,10 @@ export type InspectRepositoryFn = (input: {
 export type ConfirmRepositoryFn = (input: {
 	data: {
 		repositorySelector: string;
-		trackedRef: string;
-		dockerfilePath: string;
-		contextDir: string;
-		containerPort: string;
+		serviceName?: string;
+		trackedRef?: string;
+		dockerfilePath?: string;
+		contextDir?: string;
 	};
 }) => Promise<unknown>;
 
@@ -48,7 +48,7 @@ export type RepositoryPickerProps = {
 	loading: boolean;
 	onActivateIndex: (index: number) => void;
 	onClose: () => void;
-	onInspect: (selector: string) => void;
+	onConfirm: (selector: string) => void;
 	onRepositorySelect: (selector: string) => void;
 	onSearchChange: () => void;
 	repoListRef: RefObject<HTMLDivElement | null>;

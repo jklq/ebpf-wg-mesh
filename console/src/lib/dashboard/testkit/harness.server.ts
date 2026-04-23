@@ -314,7 +314,6 @@ function defaultOnboardingDraft(): DashboardOnboardingDraft {
 		trackedRef: "",
 		dockerfilePath: "",
 		contextDir: "",
-		containerPort: "",
 		hostname: "",
 	};
 }
