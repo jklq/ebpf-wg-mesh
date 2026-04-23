@@ -39,7 +39,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	_, err = store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
-		ContainerPort:   8080,
+		Ports:           runtimePortsFromInts([]int32{8080}),
 		VolumeName:      "data",
 	}), "node-1")
 	if err != nil {
@@ -134,7 +134,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			_, err := store.createScheduledService(ctx, "user-1", projects[0].ID, serviceName, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
-				ContainerPort:   8080,
+				Ports:           runtimePortsFromInts([]int32{8080}),
 				VolumeName:      volumeName,
 			}))
 			createErrCh <- err
