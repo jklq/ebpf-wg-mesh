@@ -229,7 +229,6 @@ describe("dashboard service", () => {
 			trackedRef: "",
 			dockerfilePath: "",
 			contextDir: "",
-			containerPort: "",
 			hostname: "",
 		});
 	});
@@ -300,7 +299,7 @@ describe("dashboard service", () => {
 		expect(harness.storeEnsureSessionUserCalls).toHaveLength(1);
 	});
 
-	it("updates an existing repository service to the requested container port", async () => {
+	it("creates another service when deploying the same repository again", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
 			subject: "user-1",
@@ -310,7 +309,7 @@ describe("dashboard service", () => {
 		harness.platform.projects = [
 			{
 				id: "project-1",
-				name: "octocat/hello",
+				name: "brisk-harbor",
 				kind: "user",
 			},
 		];
@@ -320,25 +319,38 @@ describe("dashboard service", () => {
 				projectId: "project-1",
 				name: "hello",
 				spec: {
-					provider: "github",
-					repositorySelector: "octocat/hello",
-					trackedRef: "main",
-					buildRecipe: {
-						dockerfilePath: "Dockerfile",
-						contextDir: ".",
+					source: {
+						provider: "github",
+						repositorySelector: "octocat/hello",
+						trackedRef: "main",
+						buildRecipe: {
+							dockerfilePath: "Dockerfile",
+							contextDir: ".",
+						},
 					},
-					containerPort: 8080,
+					runtime: { ports: [{ port: 8080, primary: true }] },
 				},
 			},
 		];
+		// Pre-link the project in the onboarding draft so it is reused by ID
+		await harness.store.saveOnboardingDraft("user-1", {
+			currentStep: "build",
+			projectId: "project-1",
+			serviceId: "service-1",
+			repositorySelector: "octocat/hello",
+			trackedRef: "main",
+			dockerfilePath: "Dockerfile",
+			contextDir: ".",
+			hostname: "",
+		});
 
 		const draft = await harness.service.confirmRepositoryFromSession({
 			repositorySelector: "octocat/hello",
-			containerPort: "3001",
+			serviceName: "talented-harmony",
 		});
 
-		expect(harness.platform.createServiceCalls).toHaveLength(0);
-		expect(harness.platform.updateServiceCalls).toEqual([
+		expect(harness.platform.updateServiceCalls).toHaveLength(0);
+		expect(harness.platform.createServiceCalls).toEqual([
 			{
 				user: {
 					id: "user-1",
@@ -346,20 +358,96 @@ describe("dashboard service", () => {
 					email: "user@example.com",
 				},
 				projectId: "project-1",
-				serviceId: "service-1",
-				source: {
-					provider: "github",
-					repositorySelector: "octocat/hello",
-					trackedRef: "main",
-					buildRecipe: {
-						dockerfilePath: "Dockerfile",
-						contextDir: ".",
+				name: "talented-harmony",
+				spec: {
+					source: {
+						provider: "github",
+						repositorySelector: "octocat/hello",
+						trackedRef: "main",
+						buildRecipe: {
+							dockerfilePath: "Dockerfile",
+							contextDir: ".",
+						},
 					},
-					containerPort: 3001,
+					runtime: { ports: [] },
 				},
 			},
 		]);
-		expect(draft.containerPort).toBe("3001");
+		expect(draft.serviceId).toBe("service-2");
+	});
+
+	it("seeds service runtime ports from repository inspection", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.nextRepositoryInspection = {
+			accessState: "available",
+			defaultBranch: "main",
+			dockerfileCandidates: ["Dockerfile"],
+			recommendedBuildRecipe: {
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			},
+			recommendedPorts: [3000, 8080],
+		};
+
+		await harness.service.confirmRepositoryFromSession({
+			repositorySelector: "octocat/hello",
+			serviceName: "talented-harmony",
+		});
+
+		expect(harness.platform.createServiceCalls[0].spec.runtime.ports).toEqual([
+			{ port: 3000, primary: true },
+			{ port: 8080, primary: false },
+		]);
+	});
+
+	it("updates a service display name with settings changes", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.services = [
+			{
+				id: "service-1",
+				projectId: "project-1",
+				name: "old-name",
+				spec: {
+					source: {
+						provider: "github",
+						repositorySelector: "octocat/hello",
+						trackedRef: "main",
+						buildRecipe: {
+							dockerfilePath: "Dockerfile",
+							contextDir: ".",
+						},
+					},
+					runtime: { ports: [{ port: 8080, primary: true }] },
+				},
+			},
+		];
+
+		const updated = await harness.service.updateServiceFromSession({
+			projectId: "project-1",
+			serviceId: "service-1",
+			serviceName: "talented-harmony",
+			repositorySelector: "octocat/hello",
+			trackedRef: "main",
+			dockerfilePath: "Dockerfile",
+			contextDir: ".",
+		});
+
+		expect(updated.name).toBe("talented-harmony");
+		expect(harness.platform.updateServiceCalls[0]).toMatchObject({
+			projectId: "project-1",
+			serviceId: "service-1",
+			name: "talented-harmony",
+		});
 	});
 
 	it("auto-links a verified email match when there is exactly one existing user", async () => {

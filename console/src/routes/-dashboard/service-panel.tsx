@@ -15,8 +15,8 @@ import { healthLabel, serviceHealth } from "./service-utils";
 import type { DashboardTab } from "./types";
 
 const tabs = [
-	{ id: "overview", label: "Overview", icon: <Activity size={11} /> },
 	{ id: "deployments", label: "Deployments", icon: <Layers size={11} /> },
+	{ id: "overview", label: "Overview", icon: <Activity size={11} /> },
 	{ id: "settings", label: "Settings", icon: <Settings size={11} /> },
 	{ id: "domains", label: "Domains", icon: <Globe size={11} /> },
 ] as const;
@@ -31,6 +31,7 @@ export function ServicePanel({
 	onTabChange,
 	onClose,
 	onRefresh,
+	onServiceUpdated,
 }: {
 	service: DashboardServiceRecord;
 	status: DashboardServiceStatus | null;
@@ -41,6 +42,7 @@ export function ServicePanel({
 	onTabChange: (tab: DashboardTab) => void;
 	onClose: () => void;
 	onRefresh: () => void;
+	onServiceUpdated: (service: DashboardServiceRecord) => void;
 }) {
 	const health = serviceHealth(service);
 
@@ -58,8 +60,10 @@ export function ServicePanel({
 					<span className={`status-dot ${health}`} style={{ flexShrink: 0 }} />
 					<span
 						style={{
-							fontSize: 15,
+							fontSize: 16,
 							fontWeight: 700,
+							letterSpacing: "0.04em",
+							fontFamily: "'Barlow Condensed', sans-serif",
 							color: "var(--text)",
 							flex: 1,
 							overflow: "hidden",
@@ -121,7 +125,10 @@ export function ServicePanel({
 						service={service}
 						project={project}
 						state={state}
-						onSaved={onRefresh}
+						onSaved={(updated) => {
+							onServiceUpdated(updated);
+							onRefresh();
+						}}
 					/>
 				)}
 				{activeTab === "domains" && project && (

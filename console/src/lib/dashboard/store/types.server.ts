@@ -28,7 +28,6 @@ export interface OnboardingRow {
 	tracked_ref: string;
 	dockerfile_path: string;
 	context_dir: string;
-	container_port: string;
 	hostname: string;
 }
 
@@ -66,7 +65,6 @@ export function onboardingDraftFromRow(
 		trackedRef: row.tracked_ref,
 		dockerfilePath: row.dockerfile_path,
 		contextDir: row.context_dir,
-		containerPort: row.container_port,
 		hostname: row.hostname,
 	};
 }

@@ -9,12 +9,14 @@ import {
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
 	createProjectFromSession,
+	deleteDomainBindingFromSession,
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
 	listDomainBindingsFromSession,
 	loadDashboardHome,
 	publishDomainFromSession,
 	saveHostnameFromSession,
+	updateDomainBindingFromSession,
 	updateServiceFromSession,
 } from "#/lib/dashboard/core/operations.server";
 import { createDashboardRuntime } from "#/lib/dashboard/core/runtime.server";
@@ -81,6 +83,12 @@ export function createDashboardService(
 		},
 		createDomainBindingFromSession(input) {
 			return createDomainBindingFromSession(runtime, input);
+		},
+		updateDomainBindingFromSession(input) {
+			return updateDomainBindingFromSession(runtime, input);
+		},
+		deleteDomainBindingFromSession(input) {
+			return deleteDomainBindingFromSession(runtime, input);
 		},
 		checkDomainDNSFromSession(hostname) {
 			return checkDomainDNSFromSession(runtime, hostname);

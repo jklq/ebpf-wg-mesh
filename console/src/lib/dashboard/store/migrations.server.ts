@@ -78,12 +78,6 @@ export function dashboardStoreMigrations(
 			],
 		},
 		{
-			version: 4,
-			statements: [
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS container_port STRING NOT NULL DEFAULT ''`,
-			],
-		},
-		{
 			version: 5,
 			statements: [
 				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "refresh_sessions")} (

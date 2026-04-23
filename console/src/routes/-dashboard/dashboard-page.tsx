@@ -11,6 +11,7 @@ import {
 
 import type {
 	DashboardHomeState,
+	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
@@ -26,8 +27,10 @@ import type { DashboardTab } from "./types";
 
 export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const router = useRouter();
+	const [localState, setLocalState] = useState(state);
+	const services = localState.services;
 	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
+	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
 	const [liveStatus, setLiveStatus] = useState<DashboardServiceStatus | null>(
 		null,
 	);
@@ -43,10 +46,14 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		oy: number;
 	} | null>(null);
 	const isDragging = useRef(false);
-	const selected = state.services.find((service) => service.id === selectedId);
+	const selected = services.find((service) => service.id === selectedId);
 
 	useEffect(() => {
-		const hasPending = state.services.some((service) => {
+		setLocalState(state);
+	}, [state]);
+
+	useEffect(() => {
+		const hasPending = services.some((service) => {
 			const health = serviceHealth(service);
 			return health === "building";
 		});
@@ -55,21 +62,21 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			void router.invalidate();
 		}, 5000);
 		return () => window.clearInterval(id);
-	}, [router, state.services]);
+	}, [router, services]);
 
 	useEffect(() => {
-		if (!selectedId || !state.project) {
+		if (!selectedId || !localState.project) {
 			setLiveStatus(null);
 			return;
 		}
 		setStatusLoading(true);
 		fetchServiceStatus({
-			data: { projectId: state.project.id, serviceId: selectedId },
+			data: { projectId: localState.project.id, serviceId: selectedId },
 		})
 			.then(setLiveStatus)
 			.catch(() => setLiveStatus(null))
 			.finally(() => setStatusLoading(false));
-	}, [selectedId, state.project]);
+	}, [selectedId, localState.project]);
 
 	const onCanvasMouseDown = useCallback(
 		(event: ReactMouseEvent<HTMLElement>) => {
@@ -129,7 +136,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const selectService = (id: string) => {
 		if (isDragging.current) return;
 		setSelectedId(id);
-		setActiveTab("overview");
+		setActiveTab("deployments");
 		setLiveStatus(null);
 	};
 
@@ -137,15 +144,29 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		startTransition(() => {
 			void router.invalidate();
 		});
-		if (selectedId && state.project) {
+		if (selectedId && localState.project) {
 			setStatusLoading(true);
 			fetchServiceStatus({
-				data: { projectId: state.project.id, serviceId: selectedId },
+				data: { projectId: localState.project.id, serviceId: selectedId },
 			})
 				.then(setLiveStatus)
 				.catch(() => {})
 				.finally(() => setStatusLoading(false));
 		}
+	};
+
+	const mergeService = (service: DashboardServiceRecord) => {
+		setLocalState((current) => ({
+			...current,
+			services: current.services.map((entry) =>
+				entry.id === service.id ? service : entry,
+			),
+			service: current.service?.id === service.id ? service : current.service,
+			serviceStatus:
+				current.serviceStatus?.service.id === service.id
+					? { ...current.serviceStatus, service }
+					: current.serviceStatus,
+		}));
 	};
 
 	return (
@@ -154,11 +175,13 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			style={{ display: "flex", flexDirection: "column" }}
 		>
 			<Topbar
-				state={state}
+				state={localState}
 				onNewService={() => setShowNewService(true)}
 				onRefresh={handleRefresh}
 			/>
 			<div
+				role="application"
+				tabIndex={-1}
 				style={{
 					flex: 1,
 					marginTop: 48,
@@ -169,6 +192,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				className="canvas-grid"
 				onMouseDown={onCanvasMouseDown}
 				onClick={onCanvasClick}
+				onKeyDown={(event) => {
+					if (event.key === "Escape") {
+						setSelectedId(null);
+						setLiveStatus(null);
+					}
+				}}
 			>
 				<div
 					style={{
@@ -178,7 +207,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						transformOrigin: "0 0",
 					}}
 				>
-					{state.services.map((service, index) => (
+					{services.map((service, index) => (
 						<ServiceNode
 							key={service.id}
 							service={service}
@@ -189,8 +218,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					))}
 				</div>
 
-				{state.services.length === 0 && !showNewService && (
-					<EmptyCanvas onAdd={() => setShowNewService(true)} />
+				{services.length === 0 && !showNewService && (
+					<EmptyCanvas
+						state={localState}
+						onAdd={() => setShowNewService(true)}
+					/>
 				)}
 
 				<div className="zoom-controls">
@@ -237,8 +269,8 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						service={selected}
 						status={liveStatus}
 						statusLoading={statusLoading}
-						project={state.project}
-						state={state}
+						project={localState.project}
+						state={localState}
 						activeTab={activeTab}
 						onTabChange={setActiveTab}
 						onClose={() => {
@@ -246,15 +278,24 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							setLiveStatus(null);
 						}}
 						onRefresh={handleRefresh}
+						onServiceUpdated={mergeService}
 					/>
 				)}
 			</div>
 
 			{showNewService && (
 				<NewServiceModal
-					state={state}
+					state={localState}
 					onClose={() => setShowNewService(false)}
-					onCreated={() => {
+					onCreated={(nextState) => {
+						if (nextState) {
+							setLocalState(nextState);
+							const created = nextState.service ?? nextState.services.at(-1);
+							if (created) {
+								setSelectedId(created.id);
+								setActiveTab("deployments");
+							}
+						}
 						setShowNewService(false);
 						startTransition(() => void router.invalidate());
 					}}

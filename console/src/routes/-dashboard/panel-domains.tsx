@@ -1,4 +1,4 @@
-import { Globe, Loader2 } from "lucide-react";
+import { Globe, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type {
@@ -11,6 +11,8 @@ import type {
 import {
 	doCheckDNS,
 	doCreateDomainBinding,
+	doDeleteDomainBinding,
+	doUpdateDomainBinding,
 	fetchDomainBindings,
 } from "./server-fns";
 import { buildServiceURL, formatError } from "./service-utils";
@@ -27,6 +29,9 @@ export function PanelDomains({
 	const [bindings, setBindings] = useState<DashboardDomainBinding[]>([]);
 	const [loadingBindings, setLoadingBindings] = useState(true);
 	const [hostname, setHostname] = useState("");
+	const [targetPort, setTargetPort] = useState(() =>
+		String(recommendedTargetPort(service, state)),
+	);
 	const [dnsResult, setDnsResult] = useState<{
 		state: string;
 		instruction: string;
@@ -35,6 +40,18 @@ export function PanelDomains({
 	const [publishing, setPublishing] = useState(false);
 	const [error, setError] = useState<string>();
 	const [success, setSuccess] = useState<string>();
+
+	const [editingBinding, setEditingBinding] =
+		useState<DashboardDomainBinding | null>(null);
+	const [editPort, setEditPort] = useState("");
+	const [editSaving, setEditSaving] = useState(false);
+	const [editError, setEditError] = useState<string>();
+
+	const [deletingHostname, setDeletingHostname] = useState<string | null>(null);
+	const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+	const hostnameId = `domain-hostname-${service.id}`;
+	const targetPortId = `domain-target-port-${service.id}`;
 
 	useEffect(() => {
 		setLoadingBindings(true);
@@ -45,6 +62,10 @@ export function PanelDomains({
 			.catch(() => setBindings([]))
 			.finally(() => setLoadingBindings(false));
 	}, [project.id, service.id]);
+
+	useEffect(() => {
+		setTargetPort(String(recommendedTargetPort(service, state)));
+	}, [service, state]);
 
 	const handleCheckDNS = async () => {
 		if (!hostname.trim()) return;
@@ -73,6 +94,7 @@ export function PanelDomains({
 					projectId: project.id,
 					serviceId: service.id,
 					hostname: hostname.trim(),
+					targetPort,
 				},
 			});
 			setBindings((prev) => [...prev, binding]);
@@ -86,8 +108,153 @@ export function PanelDomains({
 		}
 	};
 
+	const openEdit = (binding: DashboardDomainBinding) => {
+		setEditingBinding(binding);
+		setEditPort(String(binding.targetPort));
+		setEditError(undefined);
+	};
+
+	const handleEditSave = async () => {
+		if (!editingBinding) return;
+		setEditError(undefined);
+		setEditSaving(true);
+		try {
+			const updated = await doUpdateDomainBinding({
+				data: {
+					projectId: editingBinding.projectId,
+					serviceId: editingBinding.serviceId,
+					hostname: editingBinding.hostname,
+					targetPort: editPort,
+				},
+			});
+			setBindings((prev) =>
+				prev.map((b) => (b.hostname === updated.hostname ? updated : b)),
+			);
+			setEditingBinding(null);
+		} catch (e) {
+			setEditError(formatError(e));
+		} finally {
+			setEditSaving(false);
+		}
+	};
+
+	const handleDelete = async (h: string) => {
+		setDeletingHostname(h);
+		try {
+			await doDeleteDomainBinding({
+				data: { projectId: project.id, hostname: h },
+			});
+			setBindings((prev) => prev.filter((b) => b.hostname !== h));
+		} catch (e) {
+			setError(formatError(e));
+		} finally {
+			setDeletingHostname(null);
+			setDeleteConfirm(null);
+		}
+	};
+
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+			{editingBinding && (
+				<div className="modal-overlay" onClick={() => setEditingBinding(null)}>
+					<div
+						className="modal-card"
+						style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+							<span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+								Edit domain
+							</span>
+							<button
+								type="button"
+								className="btn-ghost"
+								style={{ padding: "4px 6px" }}
+								onClick={() => setEditingBinding(null)}
+							>
+								<X size={14} />
+							</button>
+						</div>
+						<div>
+							<p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>
+								<span style={{ fontFamily: "var(--font-mono)" }}>{editingBinding.hostname}</span>
+							</p>
+							<label className="field-label" htmlFor="edit-port">
+								App port
+							</label>
+							<input
+								id="edit-port"
+								className="field-input"
+								value={editPort}
+								onChange={(e) => { setEditPort(e.target.value); setEditError(undefined); }}
+								placeholder="8080"
+								inputMode="numeric"
+							/>
+						</div>
+						{editError && <p className="error-msg">{editError}</p>}
+						<div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+							<button
+								type="button"
+								className="btn-secondary"
+								onClick={() => setEditingBinding(null)}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="btn-primary"
+								onClick={handleEditSave}
+								disabled={editSaving || editPort.trim() === ""}
+							>
+								{editSaving && (
+									<Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+								)}
+								Save
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{deleteConfirm && (
+				<div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+					<div
+						className="modal-card"
+						style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}
+						onClick={(e) => e.stopPropagation()}
+					>
+						<span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+							Remove domain?
+						</span>
+						<p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
+							<span style={{ fontFamily: "var(--font-mono)" }}>{deleteConfirm}</span>
+							{" "}will stop routing traffic immediately.
+						</p>
+						<div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+							<button
+								type="button"
+								className="btn-secondary"
+								onClick={() => setDeleteConfirm(null)}
+								disabled={deletingHostname === deleteConfirm}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="btn-danger"
+								onClick={() => handleDelete(deleteConfirm)}
+								disabled={deletingHostname === deleteConfirm}
+							>
+								{deletingHostname === deleteConfirm && (
+									<Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+								)}
+								Remove
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			<div>
 				<p className="section-header">Active domains</p>
 				{loadingBindings && (
@@ -133,17 +300,41 @@ export function PanelDomains({
 								}}
 							>
 								{binding.hostname}
+								<span style={{ color: "var(--text-muted)" }}>
+									{" "}
+									-&gt; :{binding.targetPort}
+								</span>
 							</span>
 						</div>
-						<a
-							href={buildServiceURL(state, binding.hostname)}
-							target="_blank"
-							rel="noreferrer"
-							className="btn-ghost"
-							style={{ fontSize: 11, flexShrink: 0 }}
-						>
-							Open ↗
-						</a>
+						<div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+							<a
+								href={buildServiceURL(state, binding.hostname)}
+								target="_blank"
+								rel="noreferrer"
+								className="btn-ghost"
+								style={{ fontSize: 11 }}
+							>
+								Open ↗
+							</a>
+							<button
+								type="button"
+								className="btn-ghost"
+								style={{ padding: "4px 6px" }}
+								onClick={() => openEdit(binding)}
+								title="Edit"
+							>
+								<Pencil size={12} />
+							</button>
+							<button
+								type="button"
+								className="btn-ghost"
+								style={{ padding: "4px 6px", color: "var(--danger, #e05252)" }}
+								onClick={() => setDeleteConfirm(binding.hostname)}
+								title="Remove"
+							>
+								<Trash2 size={12} />
+							</button>
+						</div>
 					</div>
 				))}
 			</div>
@@ -155,8 +346,11 @@ export function PanelDomains({
 
 				<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 					<div>
-						<label className="field-label">Hostname</label>
+						<label className="field-label" htmlFor={hostnameId}>
+							Hostname
+						</label>
 						<input
+							id={hostnameId}
 							className="field-input"
 							value={hostname}
 							onChange={(e) => {
@@ -168,6 +362,23 @@ export function PanelDomains({
 						/>
 					</div>
 
+					<div>
+						<label className="field-label" htmlFor={targetPortId}>
+							App port
+						</label>
+						<input
+							id={targetPortId}
+							className="field-input"
+							value={targetPort}
+							onChange={(e) => {
+								setTargetPort(e.target.value);
+								setError(undefined);
+							}}
+							placeholder="8080"
+							inputMode="numeric"
+						/>
+					</div>
+
 					{state.ingressTargetHost && (
 						<div
 							style={{
@@ -175,7 +386,7 @@ export function PanelDomains({
 								color: "var(--text-muted)",
 								padding: "8px 10px",
 								background: "var(--surface-raised)",
-								borderRadius: 6,
+								borderRadius: 0,
 								fontFamily: "var(--font-mono)",
 								lineHeight: 1.5,
 							}}
@@ -235,4 +446,18 @@ export function PanelDomains({
 			</div>
 		</div>
 	);
+}
+
+function recommendedTargetPort(
+	service: DashboardServiceRecord,
+	state: DashboardHomeState,
+): number {
+	const primary = service.spec?.runtime.ports.find((port) => port.primary);
+	if (primary?.port) {
+		return primary.port;
+	}
+	const healthy = state.serviceStatus?.allocation?.healthyPorts.find(
+		(port) => Number.isInteger(port) && port >= 1 && port <= 65535,
+	);
+	return healthy ?? 8080;
 }

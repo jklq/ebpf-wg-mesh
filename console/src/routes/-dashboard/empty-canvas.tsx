@@ -1,13 +1,23 @@
-import { Layers, Plus } from "lucide-react";
+import { Layers } from "lucide-react";
 
-export function EmptyCanvas({ onAdd }: { onAdd: () => void }) {
+import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+
+import { DeployButton } from "./deploy-button";
+
+export function EmptyCanvas({
+	state,
+	onAdd,
+}: {
+	state: DashboardHomeState;
+	onAdd: () => void;
+}) {
 	return (
 		<div className="empty-canvas">
 			<div
 				style={{
 					width: 56,
 					height: 56,
-					borderRadius: 12,
+					borderRadius: 2,
 					background: "var(--surface-raised)",
 					border: "1px solid var(--border)",
 					display: "flex",
@@ -21,8 +31,11 @@ export function EmptyCanvas({ onAdd }: { onAdd: () => void }) {
 				<p
 					style={{
 						margin: "0 0 4px",
-						fontSize: 14,
-						fontWeight: 600,
+						fontSize: 15,
+						fontWeight: 700,
+						letterSpacing: "0.08em",
+						textTransform: "uppercase",
+						fontFamily: "'Barlow Condensed', sans-serif",
 						color: "var(--text)",
 					}}
 				>
@@ -32,18 +45,7 @@ export function EmptyCanvas({ onAdd }: { onAdd: () => void }) {
 					Deploy your first service from a GitHub repo
 				</p>
 			</div>
-			<button
-				type="button"
-				className="btn-primary"
-				onMouseDown={(event) => event.stopPropagation()}
-				onClick={(event) => {
-					event.stopPropagation();
-					onAdd();
-				}}
-			>
-				<Plus size={14} />
-				Deploy service
-			</button>
+			<DeployButton state={state} onNewService={onAdd} stopPropagation />
 		</div>
 	);
 }

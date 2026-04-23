@@ -12,7 +12,7 @@ export function RepositoryPicker({
 	loading,
 	onActivateIndex,
 	onClose,
-	onInspect,
+	onConfirm,
 	onRepositorySelect,
 	onSearchChange,
 	repoListRef,
@@ -118,7 +118,7 @@ export function RepositoryPicker({
 								highlighted={pickerIndex === activeIndex}
 								loading={loading}
 								onHover={setHoveredIndex}
-								onInspect={onInspect}
+								onConfirm={onConfirm}
 								onRepositorySelect={onRepositorySelect}
 								pickerIndex={pickerIndex}
 								repositoryFullName={repository.fullName}
@@ -218,7 +218,7 @@ function PickerRepositoryRow({
 	highlighted,
 	loading,
 	onHover,
-	onInspect,
+	onConfirm,
 	onRepositorySelect,
 	pickerIndex,
 	repositoryFullName,
@@ -227,7 +227,7 @@ function PickerRepositoryRow({
 	highlighted: boolean;
 	loading: boolean;
 	onHover: RepositoryPickerProps["setHoveredIndex"];
-	onInspect: (selector: string) => void;
+	onConfirm: (selector: string) => void;
 	onRepositorySelect: (selector: string) => void;
 	pickerIndex: number;
 	repositoryFullName: string;
@@ -241,7 +241,7 @@ function PickerRepositoryRow({
 			disabled={loading}
 			onClick={() => {
 				onRepositorySelect(repositoryFullName);
-				onInspect(repositoryFullName);
+				onConfirm(repositoryFullName);
 			}}
 			onMouseEnter={() => onHover(pickerIndex)}
 			onMouseLeave={() => onHover(null)}

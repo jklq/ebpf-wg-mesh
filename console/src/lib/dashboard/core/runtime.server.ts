@@ -8,6 +8,7 @@ import {
 	type DashboardOnboardingStep,
 	type DashboardProject,
 	type DashboardRepositoryInspection,
+	type DashboardRuntimePort,
 	type DashboardServiceRecord,
 	type DashboardServiceStatus,
 	type DashboardStore,
@@ -26,8 +27,8 @@ import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server
 import { verifyHostnameDNS } from "#/lib/dashboard/domain/dns.server";
 import {
 	defaultOnboardingDraft,
-	repositoryBasename,
-	slugifyServiceName,
+	generatedServiceNameFromSeed,
+	uniqueServiceName,
 } from "#/lib/dashboard/onboarding/flow";
 
 export interface DashboardRuntime {
@@ -138,7 +139,7 @@ export function reconcileOnboardingDraft(
 	serviceStatus: DashboardServiceStatus | undefined,
 	domainBindings: Array<DashboardDomainBinding>,
 ): DashboardOnboardingDraft {
-	const source = service?.spec;
+	const source = service?.spec?.source;
 	const hostname = draft.hostname || domainBindings[0]?.hostname || "";
 	const currentStep = deriveCurrentStep({
 		draft,
@@ -168,9 +169,6 @@ export function reconcileOnboardingDraft(
 			source?.buildRecipe?.contextDir ||
 			inspection?.recommendedBuildRecipe?.contextDir ||
 			"",
-		containerPort:
-			draft.containerPort ||
-			(source?.containerPort ? String(source.containerPort) : ""),
 		hostname,
 	};
 }
@@ -211,41 +209,71 @@ export function onboardingDraftEquals(
 		left.trackedRef === right.trackedRef &&
 		left.dockerfilePath === right.dockerfilePath &&
 		left.contextDir === right.contextDir &&
-		left.containerPort === right.containerPort &&
 		left.hostname === right.hostname
 	);
 }
 
-export function parseContainerPort(raw: string | undefined): number {
-	const value = raw?.trim() ?? "";
+export function parseTargetPort(raw: string | number | undefined): number {
+	const value = typeof raw === "number" ? String(raw) : (raw?.trim() ?? "");
 	if (value === "") {
 		return 8080;
 	}
-	const port = Number.parseInt(value, 10);
+	const port = /^\d+$/.test(value) ? Number(value) : Number.NaN;
 	if (!Number.isInteger(port) || port < 1 || port > 65535) {
 		throw new DashboardValidationError({
-			message: "Container port must be an integer between 1 and 65535.",
+			message: "App port must be an integer between 1 and 65535.",
 		});
 	}
 	return port;
 }
 
-export function nextServiceName(
-	services: Array<DashboardServiceRecord>,
-	repositorySelector: string,
-): string {
-	const base = slugifyServiceName(repositoryBasename(repositorySelector));
-	const names = new Set(services.map((service) => service.name));
-	if (!names.has(base)) {
-		return base;
-	}
-	for (let index = 2; index < 1000; index += 1) {
-		const candidate = `${base}-${index}`;
-		if (!names.has(candidate)) {
-			return candidate;
+export function recommendedTargetPort(
+	service: DashboardServiceRecord | undefined,
+	status: DashboardServiceStatus | undefined,
+): number {
+	for (const port of sortedRuntimePorts(service?.spec?.runtime.ports ?? [])) {
+		if (port.primary) {
+			return port.port;
 		}
 	}
-	return `${base}-${Date.now()}`;
+	for (const port of status?.allocation?.healthyPorts ?? []) {
+		if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+			return port;
+		}
+	}
+	return 8080;
+}
+
+function sortedRuntimePorts(
+	ports: DashboardRuntimePort[],
+): DashboardRuntimePort[] {
+	return [...ports].sort((left, right) => {
+		if (left.primary !== right.primary) {
+			return left.primary ? -1 : 1;
+		}
+		return left.port - right.port;
+	});
+}
+
+export function nextGeneratedServiceName(
+	services: Array<DashboardServiceRecord>,
+	preferredName: string | undefined,
+	seed: string,
+): string {
+	return uniqueServiceName(
+		services.map((service) => service.name),
+		preferredName?.trim() || generatedServiceNameFromSeed(seed),
+	);
+}
+
+export function nextGeneratedProjectName(
+	projects: Array<DashboardProject>,
+	seed: string,
+): string {
+	return uniqueServiceName(
+		projects.map((project) => project.name),
+		generatedServiceNameFromSeed(seed),
+	);
 }
 
 export function buildHealthyAndReady(

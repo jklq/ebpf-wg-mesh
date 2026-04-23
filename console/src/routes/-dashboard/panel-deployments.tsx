@@ -15,6 +15,7 @@ export function PanelDeployments({
 	status: DashboardServiceStatus | null;
 }) {
 	const build = status?.service.latestBuild ?? service.latestBuild;
+	const alloc = status?.allocation;
 
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -86,6 +87,20 @@ export function PanelDeployments({
 								</span>
 							</div>
 						)}
+					</div>
+				</div>
+			)}
+
+			{alloc?.message && !alloc.healthy && (
+				<div className="deployment-card">
+					<div className="info-row">
+						<span className="info-row-label">Runtime error</span>
+						<span
+							className="info-row-value"
+							style={{ color: "var(--failed)" }}
+						>
+							{alloc.message}
+						</span>
 					</div>
 				</div>
 			)}

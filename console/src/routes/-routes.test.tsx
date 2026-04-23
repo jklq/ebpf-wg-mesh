@@ -135,24 +135,45 @@ describe("dashboard routes", () => {
 		});
 	});
 
-	it("clears repository check errors when selecting another repository", async () => {
+	it("deploys a repository immediately when selected", async () => {
 		const state = homeState({
-			onboarding: {
-				...homeState().onboarding,
-				repositorySelector: "octocat/no-docker",
-			},
+			repositories: [
+				{
+					owner: "octocat",
+					name: "hello",
+					fullName: "octocat/hello",
+					private: false,
+					defaultBranch: "main",
+				},
+			],
+		});
+		let submitted: unknown;
+
+		render(
+			<NewServiceModal
+				state={state}
+				onClose={() => {}}
+				onCreated={() => {}}
+				confirmRepository={async ({ data }) => {
+					submitted = data;
+					return state;
+				}}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: /octocat\/hello/i }));
+
+		expect(await screen.findByText(/deploying/i)).toBeTruthy();
+		expect(submitted).toEqual({ repositorySelector: "octocat/hello" });
+	});
+
+	it("surfaces deployment errors back on the picker", async () => {
+		const state = homeState({
 			repositories: [
 				{
 					owner: "octocat",
 					name: "no-docker",
 					fullName: "octocat/no-docker",
-					private: false,
-					defaultBranch: "main",
-				},
-				{
-					owner: "octocat",
-					name: "hello",
-					fullName: "octocat/hello",
 					private: false,
 					defaultBranch: "main",
 				},
@@ -164,16 +185,9 @@ describe("dashboard routes", () => {
 				state={state}
 				onClose={() => {}}
 				onCreated={() => {}}
-				inspectRepository={async () =>
-					homeState({
-						...state,
-						repositoryInspection: {
-							accessState: "available",
-							defaultBranch: "main",
-							dockerfileCandidates: [],
-						},
-					})
-				}
+				confirmRepository={async () => {
+					throw new Error("Build failed: no Dockerfile found");
+				}}
 			/>,
 		);
 
@@ -182,19 +196,11 @@ describe("dashboard routes", () => {
 		);
 
 		expect(
-			await screen.findByText(
-				"No Dockerfile was detected on the default branch.",
-			),
+			await screen.findByText("Build failed: no Dockerfile found"),
 		).toBeTruthy();
-
-		fireEvent.click(screen.getByRole("button", { name: /octocat\/hello/i }));
-
-		expect(
-			screen.queryByText("No Dockerfile was detected on the default branch."),
-		).toBeNull();
 	});
 
-	it("shows only the connect action before a GitHub account exists", () => {
+	it("does not show GitHub App configuration before a GitHub account exists", () => {
 		render(
 			<NewServiceModal
 				state={homeState({
@@ -211,12 +217,7 @@ describe("dashboard routes", () => {
 			/>,
 		);
 
-		const connect = screen.getByRole("link", {
-			name: /connect github to load repositories/i,
-		});
-		expect(connect.getAttribute("style")).toContain(
-			"background: var(--surface-raised)",
-		);
+		expect(screen.getByPlaceholderText("Search repositories…")).toBeTruthy();
 		expect(
 			screen.queryByRole("link", { name: /configure github app/i }),
 		).toBeNull();
@@ -376,7 +377,6 @@ function homeState(
 			trackedRef: "main",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
-			containerPort: "8080",
 			hostname: "",
 		},
 		repositories: [],

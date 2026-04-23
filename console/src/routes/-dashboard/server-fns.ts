@@ -43,11 +43,40 @@ export const doUpdateService = createServerFn({ method: "POST" })
 export const doCreateDomainBinding = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
-			input as { projectId: string; serviceId: string; hostname: string },
+			input as {
+				projectId: string;
+				serviceId: string;
+				hostname: string;
+				targetPort: string | number | undefined;
+			},
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.createDomainBindingFromSession(data);
+	});
+
+export const doUpdateDomainBinding = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				hostname: string;
+				targetPort: string | number | undefined;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.updateDomainBindingFromSession(data);
+	});
+
+export const doDeleteDomainBinding = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) => input as { projectId: string; hostname: string },
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.deleteDomainBindingFromSession(data);
 	});
 
 export const doCheckDNS = createServerFn({ method: "POST" })
@@ -77,13 +106,21 @@ export const doConfirmRepository = createServerFn({ method: "POST" })
 		(input: unknown) =>
 			input as {
 				repositorySelector: string;
+				serviceName?: string;
 				trackedRef?: string;
 				dockerfilePath?: string;
 				contextDir?: string;
-				containerPort?: string;
 			},
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
-		return svc.confirmRepositoryFromSession(data);
+		await svc.confirmRepositoryFromSession(data);
+		const state = await svc.loadDashboardHome();
+		if (!state) {
+			throw redirect({
+				to: "/login",
+				search: { redirect: undefined, error: undefined },
+			});
+		}
+		return state;
 	});

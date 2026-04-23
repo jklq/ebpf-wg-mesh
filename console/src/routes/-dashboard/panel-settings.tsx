@@ -19,21 +19,25 @@ export function PanelSettings({
 	service: DashboardServiceRecord;
 	project: DashboardProject;
 	state: DashboardHomeState;
-	onSaved: () => void;
+	onSaved: (service: DashboardServiceRecord) => void;
 }) {
-	const spec = service.spec;
+	const source = service.spec?.source;
+	const serviceNameId = `service-name-${service.id}`;
+	const repoSelectId = `service-repo-select-${service.id}`;
+	const repoInputId = `service-repo-input-${service.id}`;
+	const trackedRefId = `service-tracked-ref-${service.id}`;
+	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
+	const contextDirId = `service-context-dir-${service.id}`;
+	const [serviceName, setServiceName] = useState(service.name);
 	const [repoSelector, setRepoSelector] = useState(
-		spec?.repositorySelector ?? "",
+		source?.repositorySelector ?? "",
 	);
-	const [trackedRef, setTrackedRef] = useState(spec?.trackedRef ?? "");
+	const [trackedRef, setTrackedRef] = useState(source?.trackedRef ?? "");
 	const [dockerfilePath, setDockerfilePath] = useState(
-		spec?.buildRecipe?.dockerfilePath ?? "",
+		source?.buildRecipe?.dockerfilePath ?? "",
 	);
 	const [contextDir, setContextDir] = useState(
-		spec?.buildRecipe?.contextDir ?? ".",
-	);
-	const [containerPort, setContainerPort] = useState(
-		spec?.containerPort ? String(spec.containerPort) : "8080",
+		source?.buildRecipe?.contextDir ?? ".",
 	);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string>();
@@ -44,19 +48,19 @@ export function PanelSettings({
 		setSuccess(false);
 		setSaving(true);
 		try {
-			await doUpdateService({
+			const updated = await doUpdateService({
 				data: {
 					projectId: project.id,
 					serviceId: service.id,
+					serviceName,
 					repositorySelector: repoSelector,
 					trackedRef,
 					dockerfilePath,
 					contextDir,
-					containerPort,
 				},
 			});
 			setSuccess(true);
-			onSaved();
+			onSaved(updated);
 		} catch (e) {
 			setError(formatError(e));
 		} finally {
@@ -67,12 +71,31 @@ export function PanelSettings({
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 			<div>
+				<p className="section-header">Service</p>
+				<div>
+					<label className="field-label" htmlFor={serviceNameId}>
+						Name
+					</label>
+					<input
+						id={serviceNameId}
+						className="field-input"
+						value={serviceName}
+						onChange={(e) => setServiceName(e.target.value)}
+						placeholder="talented-harmony"
+					/>
+				</div>
+			</div>
+
+			<div>
 				<p className="section-header">Source</p>
 				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 					{state.repositories.length > 0 && (
 						<div>
-							<label className="field-label">Repository (from GitHub)</label>
+							<label className="field-label" htmlFor={repoSelectId}>
+								Repository (from GitHub)
+							</label>
 							<select
+								id={repoSelectId}
 								className="field-input"
 								value={
 									state.repositories.some((r) => r.fullName === repoSelector)
@@ -94,8 +117,11 @@ export function PanelSettings({
 					)}
 
 					<div>
-						<label className="field-label">Repository (owner/repo)</label>
+						<label className="field-label" htmlFor={repoInputId}>
+							Repository (owner/repo)
+						</label>
 						<input
+							id={repoInputId}
 							className="field-input"
 							value={repoSelector}
 							onChange={(e) => setRepoSelector(e.target.value)}
@@ -104,8 +130,11 @@ export function PanelSettings({
 					</div>
 
 					<div>
-						<label className="field-label">Branch</label>
+						<label className="field-label" htmlFor={trackedRefId}>
+							Branch
+						</label>
 						<input
+							id={trackedRefId}
 							className="field-input"
 							value={trackedRef}
 							onChange={(e) => setTrackedRef(e.target.value)}
@@ -119,8 +148,11 @@ export function PanelSettings({
 				<p className="section-header">Build</p>
 				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 					<div>
-						<label className="field-label">Dockerfile path</label>
+						<label className="field-label" htmlFor={dockerfilePathId}>
+							Dockerfile path
+						</label>
 						<input
+							id={dockerfilePathId}
 							className="field-input"
 							value={dockerfilePath}
 							onChange={(e) => setDockerfilePath(e.target.value)}
@@ -129,28 +161,17 @@ export function PanelSettings({
 					</div>
 
 					<div>
-						<label className="field-label">Build context directory</label>
+						<label className="field-label" htmlFor={contextDirId}>
+							Build context directory
+						</label>
 						<input
+							id={contextDirId}
 							className="field-input"
 							value={contextDir}
 							onChange={(e) => setContextDir(e.target.value)}
 							placeholder="."
 						/>
 					</div>
-				</div>
-			</div>
-
-			<div>
-				<p className="section-header">Runtime</p>
-				<div>
-					<label className="field-label">Container port</label>
-					<input
-						className="field-input"
-						value={containerPort}
-						onChange={(e) => setContainerPort(e.target.value)}
-						placeholder="8080"
-						inputMode="numeric"
-					/>
 				</div>
 			</div>
 
@@ -165,7 +186,9 @@ export function PanelSettings({
 				type="button"
 				className="btn-primary"
 				onClick={handleSave}
-				disabled={saving || repoSelector.trim() === ""}
+				disabled={
+					saving || repoSelector.trim() === "" || serviceName.trim() === ""
+				}
 				style={{ alignSelf: "flex-start" }}
 			>
 				{saving ? (

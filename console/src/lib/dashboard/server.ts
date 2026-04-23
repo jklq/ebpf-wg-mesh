@@ -106,10 +106,10 @@ export function inspectRepositoryFromSession(input: {
 
 export function confirmRepositoryFromSession(input: {
 	repositorySelector: string;
+	serviceName?: string;
 	trackedRef?: string;
 	dockerfilePath?: string;
 	contextDir?: string;
-	containerPort?: string;
 }): Promise<DashboardOnboardingDraft> {
 	return service.confirmRepositoryFromSession(input);
 }
@@ -148,8 +148,25 @@ export function createDomainBindingFromSession(input: {
 	projectId: string;
 	serviceId: string;
 	hostname: string;
+	targetPort: string | number | undefined;
 }): Promise<DashboardDomainBinding> {
 	return service.createDomainBindingFromSession(input);
+}
+
+export function updateDomainBindingFromSession(input: {
+	projectId: string;
+	serviceId: string;
+	hostname: string;
+	targetPort: string | number | undefined;
+}): Promise<DashboardDomainBinding> {
+	return service.updateDomainBindingFromSession(input);
+}
+
+export function deleteDomainBindingFromSession(input: {
+	projectId: string;
+	hostname: string;
+}): Promise<void> {
+	return service.deleteDomainBindingFromSession(input);
 }
 
 export function checkDomainDNSFromSession(
