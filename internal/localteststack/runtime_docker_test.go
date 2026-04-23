@@ -76,7 +76,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 			Spec: &platformv1.ResolvedServiceSpec{
 				Image: "ghcr.io/demo/echo:latest",
 				Runtime: &platformv1.ServiceRuntime{
-					ContainerPort: 8080,
+					Ports: []*platformv1.ServiceRuntimePort{{Port: 8080, Primary: true}},
 					HealthCheck: &platformv1.HealthCheck{
 						Type: platformv1.HealthCheck_TYPE_HTTP,
 						Path: "/",
@@ -100,8 +100,11 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	if !service.Healthy || service.Phase != "Healthy" {
 		t.Fatalf("expected healthy service, got %+v", service)
 	}
-	if service.EndpointAddr != net.JoinHostPort("localteststack-svc-alloc-1", "8080") {
-		t.Fatalf("unexpected endpoint %q", service.EndpointAddr)
+	if service.AllocationIp != "172.18.0.10" {
+		t.Fatalf("unexpected allocation ip %q", service.AllocationIp)
+	}
+	if len(service.HealthyPorts) != 1 || service.HealthyPorts[0] != 8080 {
+		t.Fatalf("unexpected healthy ports %+v", service.HealthyPorts)
 	}
 	runArgs := runner.firstCommand("run")
 	assertArgContains(t, runArgs, "--network", "mesh-local")
@@ -161,7 +164,7 @@ func TestDockerRuntimeReconcileKeepsServiceStartingUntilHealthPasses(t *testing.
 			Spec: &platformv1.ResolvedServiceSpec{
 				Image: "ghcr.io/demo/echo:latest",
 				Runtime: &platformv1.ServiceRuntime{
-					ContainerPort: 8080,
+					Ports: []*platformv1.ServiceRuntimePort{{Port: 8080, Primary: true}},
 				},
 			},
 		}},
@@ -169,11 +172,14 @@ func TestDockerRuntimeReconcileKeepsServiceStartingUntilHealthPasses(t *testing.
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got := report.Services[0].Phase; got != "Starting" {
-		t.Fatalf("expected Starting phase, got %q", got)
+	if got := report.Services[0].Phase; got != "Healthy" {
+		t.Fatalf("expected Healthy phase, got %q", got)
 	}
-	if report.Services[0].Healthy {
-		t.Fatalf("expected service to remain unhealthy %+v", report.Services[0])
+	if !report.Services[0].Healthy {
+		t.Fatalf("expected workload healthy %+v", report.Services[0])
+	}
+	if len(report.Services[0].HealthyPorts) != 0 {
+		t.Fatalf("expected no healthy ports %+v", report.Services[0])
 	}
 }
 
