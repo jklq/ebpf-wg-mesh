@@ -110,6 +110,7 @@ var storeMigrations = []migration{
 				hostname STRING PRIMARY KEY,
 				project_id STRING NOT NULL REFERENCES projects(id),
 				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+				target_port INT8 NOT NULL DEFAULT 8080,
 				created_at TIMESTAMPTZ NOT NULL,
 				updated_at TIMESTAMPTZ NOT NULL
 			)`,
@@ -125,7 +126,8 @@ var storeMigrations = []migration{
 				applied_rollout_generation INT8 NOT NULL,
 				phase STRING NOT NULL,
 				message STRING NOT NULL,
-				endpoint_addr STRING NOT NULL,
+				allocation_ip STRING NOT NULL DEFAULT '',
+				healthy_ports JSONB NOT NULL DEFAULT '[]',
 				healthy BOOL NOT NULL,
 				updated_at TIMESTAMPTZ NOT NULL
 			)`,

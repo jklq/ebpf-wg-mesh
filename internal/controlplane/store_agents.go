@@ -151,23 +151,29 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 		now := time.Now().UTC()
 		for _, cond := range report.Services {
 			var (
-				prevHealthy  bool
-				prevEndpoint string
-				hasDomain    bool
+				prevHealthy      bool
+				prevAllocationIP string
+				prevHealthyPorts []int32
+				hasDomain        bool
 			)
 			err := tx.QueryRowContext(ctx,
 				`SELECT a.healthy,
-				        a.endpoint_addr,
+				        a.allocation_ip,
+				        a.healthy_ports,
 				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id)
 				   FROM allocations a
 				  WHERE a.id = $1`,
 				cond.AllocationId,
-			).Scan(&prevHealthy, &prevEndpoint, &hasDomain)
+			).Scan(&prevHealthy, &prevAllocationIP, (*jsonInt32Slice)(&prevHealthyPorts), &hasDomain)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					continue
 				}
 				return fmt.Errorf("load allocation status: %w", err)
+			}
+			healthyPorts, err := encodeHealthyPorts(cond.GetHealthyPorts())
+			if err != nil {
+				return fmt.Errorf("encode healthy ports: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
@@ -175,15 +181,16 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 				        applied_rollout_generation = $2,
 				        phase = $3,
 				        message = $4,
-				        endpoint_addr = $5,
-				        healthy = $6,
-				        updated_at = $7
-				  WHERE id = $8`,
-				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, cond.Phase, cond.Message, cond.EndpointAddr, cond.Healthy, now, cond.AllocationId,
+				        allocation_ip = $5,
+				        healthy_ports = $6,
+				        healthy = $7,
+				        updated_at = $8
+				  WHERE id = $9`,
+				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, cond.Phase, cond.Message, cond.GetAllocationIp(), healthyPorts, cond.Healthy, now, cond.AllocationId,
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
-			if hasDomain && (prevHealthy != cond.Healthy || prevEndpoint != cond.EndpointAddr) {
+			if hasDomain && (prevHealthy != cond.Healthy || prevAllocationIP != cond.GetAllocationIp() || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts())) {
 				ingressChanged = true
 			}
 		}
