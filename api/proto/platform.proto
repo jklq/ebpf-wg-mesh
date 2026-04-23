@@ -58,13 +58,18 @@ message HealthCheck {
   int32 timeout_seconds = 5;
 }
 
+message ServiceRuntimePort {
+  int32 port = 1;
+  bool primary = 2;
+}
+
 message ServiceRuntime {
   repeated string command = 1;
   repeated string args = 2;
   map<string, string> env = 3;
   int64 cpu_millis = 4;
   int64 memory_mebibytes = 5;
-  int32 container_port = 6;
+  repeated ServiceRuntimePort ports = 6;
   HealthCheck health_check = 7;
   string volume_name = 8;
 }
@@ -189,6 +194,7 @@ message DomainBinding {
   string service_id = 3;
   google.protobuf.Timestamp created_at = 4;
   google.protobuf.Timestamp updated_at = 5;
+  int32 target_port = 6;
 }
 
 message Volume {
@@ -218,11 +224,12 @@ message AllocationStatus {
   int64 applied_spec_revision = 5;
   string phase = 6;
   string message = 7;
-  string endpoint_addr = 8;
+  string allocation_ip = 8;
   bool healthy = 9;
   google.protobuf.Timestamp updated_at = 10;
   int64 desired_rollout_generation = 11;
   int64 applied_rollout_generation = 12;
+  repeated int32 healthy_ports = 13;
 }
 
 message ServiceStatus {
@@ -257,6 +264,7 @@ message InspectSourceResponse {
   string default_branch = 2;
   repeated string dockerfile_candidates = 3;
   BuildRecipe recommended_build_recipe = 4;
+  repeated int32 recommended_ports = 5;
 }
 
 message CreateServiceRequest {
@@ -319,15 +327,18 @@ message ServiceInput {
 
 message ServiceUpdate {
   ServiceSpec spec = 1;
+  string name = 2;
 }
 
 message DomainBindingInput {
   string hostname = 1;
   string service_id = 2;
+  int32 target_port = 3;
 }
 
 message DomainBindingTarget {
   string service_id = 1;
+  int32 target_port = 2;
 }
 
 message CreateDomainBindingRequest {
@@ -363,6 +374,31 @@ message DeleteDomainBindingRequest {
 message GetServiceStatusRequest {
   string project_id = 1;
   string service_id = 2;
+}
+
+message ListServiceLogsRequest {
+  string project_id = 1;
+  string service_id = 2;
+  string allocation_id = 3;
+  google.protobuf.Timestamp start_time = 4;
+  google.protobuf.Timestamp end_time = 5;
+  int32 limit = 6;
+}
+
+message ServiceLogLine {
+  google.protobuf.Timestamp observed_at = 1;
+  string project_id = 2;
+  string service_id = 3;
+  string allocation_id = 4;
+  string agent_id = 5;
+  string stream = 6;
+  int64 rollout_generation = 7;
+  uint64 sequence = 8;
+  string line = 9;
+}
+
+message ListServiceLogsResponse {
+  repeated ServiceLogLine lines = 1;
 }
 
 message ListAgentsResponse {
@@ -443,6 +479,7 @@ service PlatformService {
   rpc DeleteDomainBinding(DeleteDomainBindingRequest) returns (google.protobuf.Empty);
 
   rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
+  rpc ListServiceLogs(ListServiceLogsRequest) returns (ListServiceLogsResponse);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
 }
 
