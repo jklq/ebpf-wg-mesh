@@ -767,10 +767,11 @@ type ServiceCondition struct {
 	AppliedSpecRevision      int64                  `protobuf:"varint,4,opt,name=applied_spec_revision,json=appliedSpecRevision,proto3" json:"applied_spec_revision,omitempty"`
 	Phase                    string                 `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
 	Message                  string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
-	EndpointAddr             string                 `protobuf:"bytes,7,opt,name=endpoint_addr,json=endpointAddr,proto3" json:"endpoint_addr,omitempty"`
+	AllocationIp             string                 `protobuf:"bytes,7,opt,name=allocation_ip,json=allocationIp,proto3" json:"allocation_ip,omitempty"`
 	Healthy                  bool                   `protobuf:"varint,8,opt,name=healthy,proto3" json:"healthy,omitempty"`
 	DesiredRolloutGeneration int64                  `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
 	AppliedRolloutGeneration int64                  `protobuf:"varint,10,opt,name=applied_rollout_generation,json=appliedRolloutGeneration,proto3" json:"applied_rollout_generation,omitempty"`
+	HealthyPorts             []int32                `protobuf:"varint,11,rep,packed,name=healthy_ports,json=healthyPorts,proto3" json:"healthy_ports,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -847,9 +848,9 @@ func (x *ServiceCondition) GetMessage() string {
 	return ""
 }
 
-func (x *ServiceCondition) GetEndpointAddr() string {
+func (x *ServiceCondition) GetAllocationIp() string {
 	if x != nil {
-		return x.EndpointAddr
+		return x.AllocationIp
 	}
 	return ""
 }
@@ -873,6 +874,13 @@ func (x *ServiceCondition) GetAppliedRolloutGeneration() int64 {
 		return x.AppliedRolloutGeneration
 	}
 	return 0
+}
+
+func (x *ServiceCondition) GetHealthyPorts() []int32 {
+	if x != nil {
+		return x.HealthyPorts
+	}
+	return nil
 }
 
 type StatusReport struct {
@@ -935,6 +943,158 @@ func (x *StatusReport) GetServices() []*ServiceCondition {
 	return nil
 }
 
+type LogEntry struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ObservedAt        *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ProjectId         string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ServiceId         string                 `protobuf:"bytes,3,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	AllocationId      string                 `protobuf:"bytes,4,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	Stream            string                 `protobuf:"bytes,5,opt,name=stream,proto3" json:"stream,omitempty"`
+	RolloutGeneration int64                  `protobuf:"varint,6,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
+	Sequence          uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Line              string                 `protobuf:"bytes,8,opt,name=line,proto3" json:"line,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *LogEntry) Reset() {
+	*x = LogEntry{}
+	mi := &file_agent_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogEntry) ProtoMessage() {}
+
+func (x *LogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
+func (*LogEntry) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *LogEntry) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+func (x *LogEntry) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *LogEntry) GetServiceId() string {
+	if x != nil {
+		return x.ServiceId
+	}
+	return ""
+}
+
+func (x *LogEntry) GetAllocationId() string {
+	if x != nil {
+		return x.AllocationId
+	}
+	return ""
+}
+
+func (x *LogEntry) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *LogEntry) GetRolloutGeneration() int64 {
+	if x != nil {
+		return x.RolloutGeneration
+	}
+	return 0
+}
+
+func (x *LogEntry) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *LogEntry) GetLine() string {
+	if x != nil {
+		return x.Line
+	}
+	return ""
+}
+
+type LogBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Entries       []*LogEntry            `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogBatch) Reset() {
+	*x = LogBatch{}
+	mi := &file_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogBatch) ProtoMessage() {}
+
+func (x *LogBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
+func (*LogBatch) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *LogBatch) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *LogBatch) GetEntries() []*LogEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
 type AgentClientMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -942,6 +1102,7 @@ type AgentClientMessage struct {
 	//	*AgentClientMessage_Hello
 	//	*AgentClientMessage_Heartbeat
 	//	*AgentClientMessage_StatusReport
+	//	*AgentClientMessage_LogBatch
 	Payload       isAgentClientMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -949,7 +1110,7 @@ type AgentClientMessage struct {
 
 func (x *AgentClientMessage) Reset() {
 	*x = AgentClientMessage{}
-	mi := &file_agent_proto_msgTypes[12]
+	mi := &file_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -961,7 +1122,7 @@ func (x *AgentClientMessage) String() string {
 func (*AgentClientMessage) ProtoMessage() {}
 
 func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[12]
+	mi := &file_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -974,7 +1135,7 @@ func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentClientMessage.ProtoReflect.Descriptor instead.
 func (*AgentClientMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{12}
+	return file_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AgentClientMessage) GetPayload() isAgentClientMessage_Payload {
@@ -1011,6 +1172,15 @@ func (x *AgentClientMessage) GetStatusReport() *StatusReport {
 	return nil
 }
 
+func (x *AgentClientMessage) GetLogBatch() *LogBatch {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentClientMessage_LogBatch); ok {
+			return x.LogBatch
+		}
+	}
+	return nil
+}
+
 type isAgentClientMessage_Payload interface {
 	isAgentClientMessage_Payload()
 }
@@ -1027,11 +1197,17 @@ type AgentClientMessage_StatusReport struct {
 	StatusReport *StatusReport `protobuf:"bytes,3,opt,name=status_report,json=statusReport,proto3,oneof"`
 }
 
+type AgentClientMessage_LogBatch struct {
+	LogBatch *LogBatch `protobuf:"bytes,4,opt,name=log_batch,json=logBatch,proto3,oneof"`
+}
+
 func (*AgentClientMessage_Hello) isAgentClientMessage_Payload() {}
 
 func (*AgentClientMessage_Heartbeat) isAgentClientMessage_Payload() {}
 
 func (*AgentClientMessage_StatusReport) isAgentClientMessage_Payload() {}
+
+func (*AgentClientMessage_LogBatch) isAgentClientMessage_Payload() {}
 
 type AgentServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1045,7 +1221,7 @@ type AgentServerMessage struct {
 
 func (x *AgentServerMessage) Reset() {
 	*x = AgentServerMessage{}
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1057,7 +1233,7 @@ func (x *AgentServerMessage) String() string {
 func (*AgentServerMessage) ProtoMessage() {}
 
 func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1070,7 +1246,7 @@ func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentServerMessage.ProtoReflect.Descriptor instead.
 func (*AgentServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{13}
+	return file_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AgentServerMessage) GetPayload() isAgentServerMessage_Payload {
@@ -1168,7 +1344,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0fVolumeCondition\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xa9\x03\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xce\x03\n" +
 	"\x10ServiceCondition\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1177,19 +1353,36 @@ const file_agent_proto_rawDesc = "" +
 	"\x15applied_spec_revision\x18\x04 \x01(\x03R\x13appliedSpecRevision\x12\x14\n" +
 	"\x05phase\x18\x05 \x01(\tR\x05phase\x12\x18\n" +
 	"\amessage\x18\x06 \x01(\tR\amessage\x12#\n" +
-	"\rendpoint_addr\x18\a \x01(\tR\fendpointAddr\x12\x18\n" +
+	"\rallocation_ip\x18\a \x01(\tR\fallocationIp\x12\x18\n" +
 	"\ahealthy\x18\b \x01(\bR\ahealthy\x12<\n" +
 	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\x12<\n" +
 	"\x1aapplied_rollout_generation\x18\n" +
-	" \x01(\x03R\x18appliedRolloutGeneration\"\x96\x01\n" +
+	" \x01(\x03R\x18appliedRolloutGeneration\x12#\n" +
+	"\rhealthy_ports\x18\v \x03(\x05R\fhealthyPorts\"\x96\x01\n" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
-	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\xc6\x01\n" +
+	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\xa1\x02\n" +
+	"\bLogEntry\x12;\n" +
+	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x1d\n" +
+	"\n" +
+	"service_id\x18\x03 \x01(\tR\tserviceId\x12#\n" +
+	"\rallocation_id\x18\x04 \x01(\tR\fallocationId\x12\x16\n" +
+	"\x06stream\x18\x05 \x01(\tR\x06stream\x12-\n" +
+	"\x12rollout_generation\x18\x06 \x01(\x03R\x11rolloutGeneration\x12\x1a\n" +
+	"\bsequence\x18\a \x01(\x04R\bsequence\x12\x12\n" +
+	"\x04line\x18\b \x01(\tR\x04line\"S\n" +
+	"\bLogBatch\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12,\n" +
+	"\aentries\x18\x02 \x03(\v2\x12.agent.v1.LogEntryR\aentries\"\xf9\x01\n" +
 	"\x12AgentClientMessage\x12,\n" +
 	"\x05hello\x18\x01 \x01(\v2\x14.agent.v1.AgentHelloH\x00R\x05hello\x128\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x18.agent.v1.AgentHeartbeatH\x00R\theartbeat\x12=\n" +
-	"\rstatus_report\x18\x03 \x01(\v2\x16.agent.v1.StatusReportH\x00R\fstatusReportB\t\n" +
+	"\rstatus_report\x18\x03 \x01(\v2\x16.agent.v1.StatusReportH\x00R\fstatusReport\x121\n" +
+	"\tlog_batch\x18\x04 \x01(\v2\x12.agent.v1.LogBatchH\x00R\blogBatchB\t\n" +
 	"\apayload\"b\n" +
 	"\x12AgentServerMessage\x12A\n" +
 	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredStateB\t\n" +
@@ -1210,7 +1403,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 	return file_agent_proto_rawDescData
 }
 
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_agent_proto_goTypes = []any{
 	(*AgentHello)(nil),                     // 0: agent.v1.AgentHello
 	(*EnrollRequest)(nil),                  // 1: agent.v1.EnrollRequest
@@ -1224,34 +1417,39 @@ var file_agent_proto_goTypes = []any{
 	(*VolumeCondition)(nil),                // 9: agent.v1.VolumeCondition
 	(*ServiceCondition)(nil),               // 10: agent.v1.ServiceCondition
 	(*StatusReport)(nil),                   // 11: agent.v1.StatusReport
-	(*AgentClientMessage)(nil),             // 12: agent.v1.AgentClientMessage
-	(*AgentServerMessage)(nil),             // 13: agent.v1.AgentServerMessage
-	(*timestamppb.Timestamp)(nil),          // 14: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil), // 15: platform.v1.ResolvedServiceSpec
+	(*LogEntry)(nil),                       // 12: agent.v1.LogEntry
+	(*LogBatch)(nil),                       // 13: agent.v1.LogBatch
+	(*AgentClientMessage)(nil),             // 14: agent.v1.AgentClientMessage
+	(*AgentServerMessage)(nil),             // 15: agent.v1.AgentServerMessage
+	(*timestamppb.Timestamp)(nil),          // 16: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil), // 17: platform.v1.ResolvedServiceSpec
 }
 var file_agent_proto_depIdxs = []int32{
-	14, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	16, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
 	3,  // 1: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
-	15, // 2: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	17, // 2: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
 	6,  // 3: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
 	7,  // 4: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	14, // 5: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	16, // 5: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
 	4,  // 6: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
 	9,  // 7: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
 	10, // 8: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	0,  // 9: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	5,  // 10: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	11, // 11: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	8,  // 12: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	1,  // 13: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	12, // 14: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	2,  // 15: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	13, // 16: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	15, // [15:17] is the sub-list for method output_type
-	13, // [13:15] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	16, // 9: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	12, // 10: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	0,  // 11: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	5,  // 12: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	11, // 13: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	13, // 14: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	8,  // 15: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	1,  // 16: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	14, // 17: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	2,  // 18: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	15, // 19: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	18, // [18:20] is the sub-list for method output_type
+	16, // [16:18] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -1259,12 +1457,13 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
-	file_agent_proto_msgTypes[12].OneofWrappers = []any{
+	file_agent_proto_msgTypes[14].OneofWrappers = []any{
 		(*AgentClientMessage_Hello)(nil),
 		(*AgentClientMessage_Heartbeat)(nil),
 		(*AgentClientMessage_StatusReport)(nil),
+		(*AgentClientMessage_LogBatch)(nil),
 	}
-	file_agent_proto_msgTypes[13].OneofWrappers = []any{
+	file_agent_proto_msgTypes[15].OneofWrappers = []any{
 		(*AgentServerMessage_DesiredState)(nil),
 	}
 	type x struct{}
@@ -1273,7 +1472,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

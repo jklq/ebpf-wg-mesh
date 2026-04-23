@@ -91,10 +91,11 @@ message ServiceCondition {
   int64 applied_spec_revision = 4;
   string phase = 5;
   string message = 6;
-  string endpoint_addr = 7;
+  string allocation_ip = 7;
   bool healthy = 8;
   int64 desired_rollout_generation = 9;
   int64 applied_rollout_generation = 10;
+  repeated int32 healthy_ports = 11;
 }
 
 message StatusReport {
@@ -103,11 +104,28 @@ message StatusReport {
   repeated ServiceCondition services = 3;
 }
 
+message LogEntry {
+  google.protobuf.Timestamp observed_at = 1;
+  string project_id = 2;
+  string service_id = 3;
+  string allocation_id = 4;
+  string stream = 5;
+  int64 rollout_generation = 6;
+  uint64 sequence = 7;
+  string line = 8;
+}
+
+message LogBatch {
+  string agent_id = 1;
+  repeated LogEntry entries = 2;
+}
+
 message AgentClientMessage {
   oneof payload {
     AgentHello hello = 1;
     AgentHeartbeat heartbeat = 2;
     StatusReport status_report = 3;
+    LogBatch log_batch = 4;
   }
 }
 
