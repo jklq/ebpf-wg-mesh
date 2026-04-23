@@ -146,7 +146,7 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 			report.Services = append(report.Services, cond)
 			continue
 		}
-		status, created, healthy, err := r.ensureService(ctx, svc)
+		status, created, err := r.ensureService(ctx, svc)
 		if err != nil {
 			cond.Phase = "Error"
 			cond.Message = err.Error()
@@ -155,10 +155,11 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 		}
 		cond.AppliedSpecRevision = status.AppliedSpecRevision
 		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-		cond.EndpointAddr = status.EndpointAddr
-		cond.Healthy = healthy
+		cond.AllocationIp = status.AllocationIP
+		cond.HealthyPorts = append([]int32(nil), status.HealthyPorts...)
+		cond.Healthy = true
 		switch {
-		case healthy:
+		case cond.Healthy:
 			cond.Phase = "Healthy"
 			cond.Message = "container healthy"
 		case created:
@@ -176,55 +177,56 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 type dockerServiceStatus struct {
 	AppliedSpecRevision      int64
 	AppliedRolloutGeneration int64
-	EndpointAddr             string
+	AllocationIP             string
+	HealthyPorts             []int32
 }
 
-func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredService) (dockerServiceStatus, bool, bool, error) {
+func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredService) (dockerServiceStatus, bool, error) {
 	containerName := r.containerName(svc.GetAllocationId())
 	if inspect, exists, err := r.inspectContainer(ctx, containerName); err != nil {
-		return dockerServiceStatus{}, false, false, err
+		return dockerServiceStatus{}, false, err
 	} else if exists {
 		if labelsMatchDesired(inspect.Config.Labels, svc) && inspect.State.Running {
-			healthy := probeDockerHealth(inspect, svc)
 			return dockerServiceStatus{
 				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 				AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-				EndpointAddr:             dockerRuntimeEndpoint(containerName, svc.GetSpec().GetRuntime()),
-			}, false, healthy, nil
+				AllocationIP:             dockerAllocationIP(inspect, r.cfg.DockerNetwork),
+				HealthyPorts:             probeDockerHealthyPorts(inspect, svc),
+			}, false, nil
 		}
 		if err := r.removeService(ctx, svc.GetAllocationId()); err != nil {
-			return dockerServiceStatus{}, false, false, err
+			return dockerServiceStatus{}, false, err
 		}
 	}
 
 	image := strings.TrimSpace(svc.GetSpec().GetImage())
 	if image == "" {
-		return dockerServiceStatus{}, false, false, fmt.Errorf("service image is required")
+		return dockerServiceStatus{}, false, fmt.Errorf("service image is required")
 	}
 	if err := r.ensureImage(ctx, image); err != nil {
-		return dockerServiceStatus{}, false, false, err
+		return dockerServiceStatus{}, false, err
 	}
 
 	args, err := r.dockerRunArgs(svc)
 	if err != nil {
-		return dockerServiceStatus{}, false, false, err
+		return dockerServiceStatus{}, false, err
 	}
 	if _, err := r.runner.Run(ctx, args...); err != nil {
-		return dockerServiceStatus{}, false, false, err
+		return dockerServiceStatus{}, false, err
 	}
 	inspect, exists, err := r.inspectContainer(ctx, containerName)
 	if err != nil {
-		return dockerServiceStatus{}, false, false, err
+		return dockerServiceStatus{}, false, err
 	}
 	if !exists {
-		return dockerServiceStatus{}, false, false, fmt.Errorf("docker container %s did not start", containerName)
+		return dockerServiceStatus{}, false, fmt.Errorf("docker container %s did not start", containerName)
 	}
-	healthy := probeDockerHealth(inspect, svc)
 	return dockerServiceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-		EndpointAddr:             dockerRuntimeEndpoint(containerName, svc.GetSpec().GetRuntime()),
-	}, true, healthy, nil
+		AllocationIP:             dockerAllocationIP(inspect, r.cfg.DockerNetwork),
+		HealthyPorts:             probeDockerHealthyPorts(inspect, svc),
+	}, true, nil
 }
 
 func (r *DockerRuntime) ensureImage(ctx context.Context, image string) error {
@@ -349,26 +351,55 @@ func (r *DockerRuntime) persistDesiredService(svc *agentv1.DesiredService) error
 	return os.WriteFile(path, []byte(protojson.Format(svc)), 0o644)
 }
 
-func dockerRuntimeEndpoint(containerName string, runtime *platformv1.ServiceRuntime) string {
-	if runtime == nil || runtime.GetContainerPort() == 0 {
+func dockerAllocationIP(inspect dockerContainerInspect, networkName string) string {
+	if inspect.NetworkSettings.Networks == nil {
 		return ""
 	}
-	return net.JoinHostPort(containerName, fmt.Sprintf("%d", runtime.GetContainerPort()))
+	if networkName != "" {
+		if network := inspect.NetworkSettings.Networks[networkName]; strings.TrimSpace(network.IPAddress) != "" {
+			return strings.TrimSpace(network.IPAddress)
+		}
+	}
+	for _, network := range inspect.NetworkSettings.Networks {
+		if ip := strings.TrimSpace(network.IPAddress); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }
 
-func probeDockerHealth(inspect dockerContainerInspect, svc *agentv1.DesiredService) bool {
+func probeDockerHealthyPorts(inspect dockerContainerInspect, svc *agentv1.DesiredService) []int32 {
 	runtime := svc.GetSpec().GetRuntime()
-	if runtime == nil || runtime.GetContainerPort() == 0 {
-		return false
+	ports := runtimePortNumbers(runtime)
+	if len(ports) == 0 {
+		return nil
 	}
 	check := runtime.GetHealthCheck()
 	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
-		return probeTCP(resolvePublishedHostPort(inspect, runtime.GetContainerPort()), 2*time.Second)
+		var healthy []int32
+		for _, port := range ports {
+			if probeTCP(resolvePublishedHostPort(inspect, port), 2*time.Second) {
+				healthy = append(healthy, port)
+			}
+		}
+		return healthy
 	}
-	port := check.GetPort()
-	if port == 0 {
-		port = runtime.GetContainerPort()
+	if check.GetPort() > 0 {
+		if probeDockerHealthCheck(inspect, check.GetPort(), check) {
+			return []int32{check.GetPort()}
+		}
+		return nil
 	}
+	var healthy []int32
+	for _, port := range ports {
+		if probeDockerHealthCheck(inspect, port, check) {
+			healthy = append(healthy, port)
+		}
+	}
+	return healthy
+}
+
+func probeDockerHealthCheck(inspect dockerContainerInspect, port int32, check *platformv1.HealthCheck) bool {
 	timeout := time.Duration(maxInt32(check.GetTimeoutSeconds(), 2)) * time.Second
 	switch check.GetType() {
 	case platformv1.HealthCheck_TYPE_HTTP:
@@ -416,15 +447,42 @@ func resolvePublishedHostPort(inspect dockerContainerInspect, containerPort int3
 	return net.JoinHostPort(hostIP, bindings[0].HostPort)
 }
 
+func runtimePortNumbers(runtime *platformv1.ServiceRuntime) []int32 {
+	if runtime == nil {
+		return nil
+	}
+	seen := map[int32]struct{}{}
+	var ports []int32
+	for _, item := range runtime.GetPorts() {
+		port := item.GetPort()
+		if port < 1 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		ports = append(ports, port)
+	}
+	return ports
+}
+
 func publishedPorts(runtime *platformv1.ServiceRuntime) []int32 {
 	if runtime == nil {
 		return nil
 	}
 	seen := map[int32]struct{}{}
 	var ports []int32
-	if runtime.GetContainerPort() > 0 {
-		seen[runtime.GetContainerPort()] = struct{}{}
-		ports = append(ports, runtime.GetContainerPort())
+	for _, item := range runtime.GetPorts() {
+		port := item.GetPort()
+		if port < 1 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		ports = append(ports, port)
 	}
 	if check := runtime.GetHealthCheck(); check != nil && check.GetPort() > 0 {
 		if _, ok := seen[check.GetPort()]; !ok {
