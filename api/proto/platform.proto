@@ -437,6 +437,29 @@ message ListServiceLogsResponse {
   repeated ServiceLogLine lines = 1;
 }
 
+message ListServiceDeploymentsRequest {
+  string project_id = 1;
+  string service_id = 2;
+  int32 limit = 3;
+}
+
+message DeploymentRecord {
+  string id = 1;
+  string service_id = 2;
+  int64 rollout_generation = 3;
+  int64 spec_revision = 4;
+  string reason = 5;
+  google.protobuf.Timestamp created_at = 6;
+  BuildStatus build = 7;
+  bool is_current = 8;
+  string requested_by_subject = 9;
+  string requested_by_email = 10;
+}
+
+message ListServiceDeploymentsResponse {
+  repeated DeploymentRecord deployments = 1;
+}
+
 message ListAgentsResponse {
   repeated Agent agents = 1;
 }
@@ -529,6 +552,7 @@ service PlatformService {
 
   rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
   rpc ListServiceLogs(ListServiceLogsRequest) returns (ListServiceLogsResponse);
+  rpc ListServiceDeployments(ListServiceDeploymentsRequest) returns (ListServiceDeploymentsResponse);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
 }
 

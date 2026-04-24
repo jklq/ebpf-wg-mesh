@@ -20,28 +20,29 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_EnsurePrincipal_FullMethodName     = "/platform.v1.PlatformService/EnsurePrincipal"
-	PlatformService_CreateProject_FullMethodName       = "/platform.v1.PlatformService/CreateProject"
-	PlatformService_ListProjects_FullMethodName        = "/platform.v1.PlatformService/ListProjects"
-	PlatformService_GetProject_FullMethodName          = "/platform.v1.PlatformService/GetProject"
-	PlatformService_InspectSource_FullMethodName       = "/platform.v1.PlatformService/InspectSource"
-	PlatformService_CreateService_FullMethodName       = "/platform.v1.PlatformService/CreateService"
-	PlatformService_UpdateService_FullMethodName       = "/platform.v1.PlatformService/UpdateService"
-	PlatformService_RedeployService_FullMethodName     = "/platform.v1.PlatformService/RedeployService"
-	PlatformService_DeleteService_FullMethodName       = "/platform.v1.PlatformService/DeleteService"
-	PlatformService_GetService_FullMethodName          = "/platform.v1.PlatformService/GetService"
-	PlatformService_ListServices_FullMethodName        = "/platform.v1.PlatformService/ListServices"
-	PlatformService_CreateVolume_FullMethodName        = "/platform.v1.PlatformService/CreateVolume"
-	PlatformService_DeleteVolume_FullMethodName        = "/platform.v1.PlatformService/DeleteVolume"
-	PlatformService_ListVolumes_FullMethodName         = "/platform.v1.PlatformService/ListVolumes"
-	PlatformService_CreateDomainBinding_FullMethodName = "/platform.v1.PlatformService/CreateDomainBinding"
-	PlatformService_GetDomainBinding_FullMethodName    = "/platform.v1.PlatformService/GetDomainBinding"
-	PlatformService_ListDomainBindings_FullMethodName  = "/platform.v1.PlatformService/ListDomainBindings"
-	PlatformService_UpdateDomainBinding_FullMethodName = "/platform.v1.PlatformService/UpdateDomainBinding"
-	PlatformService_DeleteDomainBinding_FullMethodName = "/platform.v1.PlatformService/DeleteDomainBinding"
-	PlatformService_GetServiceStatus_FullMethodName    = "/platform.v1.PlatformService/GetServiceStatus"
-	PlatformService_ListServiceLogs_FullMethodName     = "/platform.v1.PlatformService/ListServiceLogs"
-	PlatformService_ListAgents_FullMethodName          = "/platform.v1.PlatformService/ListAgents"
+	PlatformService_EnsurePrincipal_FullMethodName        = "/platform.v1.PlatformService/EnsurePrincipal"
+	PlatformService_CreateProject_FullMethodName          = "/platform.v1.PlatformService/CreateProject"
+	PlatformService_ListProjects_FullMethodName           = "/platform.v1.PlatformService/ListProjects"
+	PlatformService_GetProject_FullMethodName             = "/platform.v1.PlatformService/GetProject"
+	PlatformService_InspectSource_FullMethodName          = "/platform.v1.PlatformService/InspectSource"
+	PlatformService_CreateService_FullMethodName          = "/platform.v1.PlatformService/CreateService"
+	PlatformService_UpdateService_FullMethodName          = "/platform.v1.PlatformService/UpdateService"
+	PlatformService_RedeployService_FullMethodName        = "/platform.v1.PlatformService/RedeployService"
+	PlatformService_DeleteService_FullMethodName          = "/platform.v1.PlatformService/DeleteService"
+	PlatformService_GetService_FullMethodName             = "/platform.v1.PlatformService/GetService"
+	PlatformService_ListServices_FullMethodName           = "/platform.v1.PlatformService/ListServices"
+	PlatformService_CreateVolume_FullMethodName           = "/platform.v1.PlatformService/CreateVolume"
+	PlatformService_DeleteVolume_FullMethodName           = "/platform.v1.PlatformService/DeleteVolume"
+	PlatformService_ListVolumes_FullMethodName            = "/platform.v1.PlatformService/ListVolumes"
+	PlatformService_CreateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/CreateDomainBinding"
+	PlatformService_GetDomainBinding_FullMethodName       = "/platform.v1.PlatformService/GetDomainBinding"
+	PlatformService_ListDomainBindings_FullMethodName     = "/platform.v1.PlatformService/ListDomainBindings"
+	PlatformService_UpdateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/UpdateDomainBinding"
+	PlatformService_DeleteDomainBinding_FullMethodName    = "/platform.v1.PlatformService/DeleteDomainBinding"
+	PlatformService_GetServiceStatus_FullMethodName       = "/platform.v1.PlatformService/GetServiceStatus"
+	PlatformService_ListServiceLogs_FullMethodName        = "/platform.v1.PlatformService/ListServiceLogs"
+	PlatformService_ListServiceDeployments_FullMethodName = "/platform.v1.PlatformService/ListServiceDeployments"
+	PlatformService_ListAgents_FullMethodName             = "/platform.v1.PlatformService/ListAgents"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -69,6 +70,7 @@ type PlatformServiceClient interface {
 	DeleteDomainBinding(ctx context.Context, in *DeleteDomainBindingRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetServiceStatus(ctx context.Context, in *GetServiceStatusRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error)
+	ListServiceDeployments(ctx context.Context, in *ListServiceDeploymentsRequest, opts ...grpc.CallOption) (*ListServiceDeploymentsResponse, error)
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
 }
 
@@ -290,6 +292,16 @@ func (c *platformServiceClient) ListServiceLogs(ctx context.Context, in *ListSer
 	return out, nil
 }
 
+func (c *platformServiceClient) ListServiceDeployments(ctx context.Context, in *ListServiceDeploymentsRequest, opts ...grpc.CallOption) (*ListServiceDeploymentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListServiceDeploymentsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListServiceDeployments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAgentsResponse)
@@ -325,6 +337,7 @@ type PlatformServiceServer interface {
 	DeleteDomainBinding(context.Context, *DeleteDomainBindingRequest) (*emptypb.Empty, error)
 	GetServiceStatus(context.Context, *GetServiceStatusRequest) (*ServiceStatus, error)
 	ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error)
+	ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error)
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
@@ -398,6 +411,9 @@ func (UnimplementedPlatformServiceServer) GetServiceStatus(context.Context, *Get
 }
 func (UnimplementedPlatformServiceServer) ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListServiceLogs not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListServiceDeployments not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
@@ -801,6 +817,24 @@ func _PlatformService_ListServiceLogs_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListServiceDeployments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListServiceDeploymentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListServiceDeployments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListServiceDeployments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListServiceDeployments(ctx, req.(*ListServiceDeploymentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -909,6 +943,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListServiceLogs",
 			Handler:    _PlatformService_ListServiceLogs_Handler,
+		},
+		{
+			MethodName: "ListServiceDeployments",
+			Handler:    _PlatformService_ListServiceDeployments_Handler,
 		},
 		{
 			MethodName: "ListAgents",
