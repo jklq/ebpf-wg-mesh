@@ -18,14 +18,14 @@ func (s *Store) insertServiceRolloutTx(
 	serviceID string,
 	rolloutGeneration int64,
 	specRevision int64,
-	reason, requestedBySubject, requestedByEmail string,
+	reason, buildID, requestedBySubject, requestedByEmail string,
 	now time.Time,
 ) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO service_rollouts(
-			service_id, rollout_generation, spec_revision, reason, requested_by_subject, requested_by_email, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		serviceID, rolloutGeneration, specRevision, reason, requestedBySubject, requestedByEmail, now,
+			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_subject, requested_by_email, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		serviceID, rolloutGeneration, specRevision, reason, buildID, requestedBySubject, requestedByEmail, now,
 	)
 	return err
 }
@@ -296,7 +296,7 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 	); err != nil {
 		return serviceRecord{}, false, false, err
 	}
-	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, nextSpecRevision, "spec-update", subject, "", now); err != nil {
+	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, nextSpecRevision, "spec-update", "", subject, "", now); err != nil {
 		return serviceRecord{}, false, false, err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -393,7 +393,7 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, subject, proj
 	if affected == 0 {
 		return serviceRecord{}, errConcurrentUpdate
 	}
-	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", subject, "", now); err != nil {
+	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", "", subject, "", now); err != nil {
 		return serviceRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,

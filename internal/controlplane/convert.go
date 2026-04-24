@@ -132,6 +132,8 @@ func toProtoBuildStatus(rec buildRunRecord) *platformv1.BuildStatus {
 		ImageDigest:   rec.ImageDigest,
 		QueuedAt:      ts(rec.QueuedAt),
 		FailureReason: rec.FailureReason,
+		CommitMessage: rec.CommitMessage,
+		CommitAuthor:  rec.CommitAuthor,
 	}
 	if rec.StartedAt.Valid {
 		status.StartedAt = ts(rec.StartedAt.Time)
@@ -140,6 +142,28 @@ func toProtoBuildStatus(rec buildRunRecord) *platformv1.BuildStatus {
 		status.FinishedAt = ts(rec.FinishedAt.Time)
 	}
 	return status
+}
+
+func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord {
+	return &platformv1.DeploymentRecord{
+		Id:                 rec.ID,
+		ServiceId:          rec.ServiceID,
+		RolloutGeneration:  rec.RolloutGeneration,
+		SpecRevision:       rec.SpecRevision,
+		Reason:             rec.Reason,
+		CreatedAt:          ts(rec.CreatedAt),
+		Build:              toProtoMaybeBuildStatus(rec.Build),
+		IsCurrent:          rec.IsCurrent,
+		RequestedBySubject: rec.RequestedBySubject,
+		RequestedByEmail:   rec.RequestedByEmail,
+	}
+}
+
+func toProtoMaybeBuildStatus(rec *buildRunRecord) *platformv1.BuildStatus {
+	if rec == nil {
+		return nil
+	}
+	return toProtoBuildStatus(*rec)
 }
 
 func toProtoBuildState(state string) platformv1.BuildState {

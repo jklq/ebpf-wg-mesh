@@ -88,7 +88,7 @@ func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, inst
 	return err
 }
 
-func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repositoryExternalID, trackedRef, commitSHA string) error {
+func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repositoryExternalID, trackedRef, commitSHA, commitMessage, commitAuthor string) error {
 	if !c.Enabled() {
 		return errors.New("github integration disabled")
 	}
@@ -105,6 +105,8 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 		ProviderRepositoryExternalID: repositoryExternalID,
 		TrackedRef:                   trackedRef,
 		CommitSHA:                    commitSHA,
+		CommitMessage:                strings.TrimSpace(commitMessage),
+		CommitAuthor:                 strings.TrimSpace(commitAuthor),
 	})
 	if err != nil {
 		return err
@@ -240,7 +242,11 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
-	return c.observeBoundRevision(ctx, binding, commitSHA)
+	metadata, err := c.client.GetCommitMetadata(ctx, view.Owner, view.Repo, commitSHA, providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID))
+	if err != nil {
+		return err
+	}
+	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author)
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sourceWorkItemRecord) error {
@@ -269,14 +275,14 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sour
 			continue
 		}
 		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
-		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA); err != nil {
+		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding sourceBindingRecord, commitSHA string) error {
+func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding sourceBindingRecord, commitSHA, commitMessage, commitAuthor string) error {
 	owner, repo, err := splitGitHubRepositorySelector(binding.RepositorySelector)
 	if err != nil {
 		return err
@@ -299,6 +305,8 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
 			TrackedRef:                   binding.TrackedRef,
 			CommitSHA:                    commitSHA,
+			CommitMessage:                strings.TrimSpace(commitMessage),
+			CommitAuthor:                 strings.TrimSpace(commitAuthor),
 			ObservedAt:                   time.Now().UTC(),
 		})
 		if err != nil {

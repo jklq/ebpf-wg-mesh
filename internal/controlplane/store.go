@@ -141,6 +141,7 @@ var storeMigrations = []migration{
 				rollout_generation INT8 NOT NULL,
 				spec_revision INT8 NOT NULL,
 				reason STRING NOT NULL,
+				build_id STRING NOT NULL DEFAULT '',
 				requested_by_subject STRING NOT NULL DEFAULT '',
 				requested_by_email STRING NOT NULL DEFAULT '',
 				created_at TIMESTAMPTZ NOT NULL,
@@ -159,6 +160,8 @@ var storeMigrations = []migration{
 				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 				project_id STRING NOT NULL REFERENCES projects(id),
 				commit_sha STRING NOT NULL,
+				commit_message STRING NOT NULL DEFAULT '',
+				commit_author STRING NOT NULL DEFAULT '',
 				state STRING NOT NULL,
 				image_digest STRING NOT NULL DEFAULT '',
 				failure_reason STRING NOT NULL DEFAULT '',
@@ -169,13 +172,15 @@ var storeMigrations = []migration{
 				dockerfile_path STRING NOT NULL DEFAULT '',
 				context_dir STRING NOT NULL DEFAULT '',
 				builder_id STRING NOT NULL DEFAULT '',
+				target_rollout_generation INT8 NOT NULL DEFAULT 0,
 				queued_at TIMESTAMPTZ NOT NULL,
 				started_at TIMESTAMPTZ NULL,
-				finished_at TIMESTAMPTZ NULL,
-				UNIQUE (service_id, commit_sha)
+				finished_at TIMESTAMPTZ NULL
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_build_runs_service_queued_at
 			    ON build_runs(service_id, queued_at DESC, id)`,
+			`CREATE INDEX IF NOT EXISTS idx_build_runs_service_commit_queued_at
+			    ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
 			`CREATE INDEX IF NOT EXISTS idx_build_runs_state_queued_at
 			    ON build_runs(state, queued_at ASC, id)`,
 			`CREATE TABLE IF NOT EXISTS github_installations (
@@ -306,6 +311,8 @@ var storeMigrations = []migration{
 				provider_repository_external_id STRING NOT NULL DEFAULT '',
 				tracked_ref STRING NOT NULL DEFAULT '',
 				commit_sha STRING NOT NULL,
+				commit_message STRING NOT NULL DEFAULT '',
+				commit_author STRING NOT NULL DEFAULT '',
 				observed_at TIMESTAMPTZ NOT NULL,
 				created_at TIMESTAMPTZ NOT NULL,
 				UNIQUE (source_binding_id, commit_sha)
@@ -339,6 +346,8 @@ var storeMigrations = []migration{
 				provider_repository_external_id STRING NOT NULL DEFAULT '',
 				tracked_ref STRING NOT NULL DEFAULT '',
 				commit_sha STRING NOT NULL DEFAULT '',
+				commit_message STRING NOT NULL DEFAULT '',
+				commit_author STRING NOT NULL DEFAULT '',
 				installation_id INT8 NOT NULL DEFAULT 0,
 				owner STRING NOT NULL DEFAULT '',
 				repo STRING NOT NULL DEFAULT '',
@@ -384,6 +393,23 @@ var storeMigrations = []migration{
 			`ALTER TABLE source_work_items DROP COLUMN IF EXISTS installation_id`,
 			`ALTER TABLE source_work_items DROP COLUMN IF EXISTS owner`,
 			`ALTER TABLE source_work_items DROP COLUMN IF EXISTS repo`,
+		},
+	},
+	{
+		version: 5,
+		stmts: []string{
+			`ALTER TABLE source_work_items ADD COLUMN IF NOT EXISTS commit_message STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE source_work_items ADD COLUMN IF NOT EXISTS commit_author STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE source_revisions ADD COLUMN IF NOT EXISTS commit_message STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE source_revisions ADD COLUMN IF NOT EXISTS commit_author STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS commit_message STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS commit_author STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS target_rollout_generation INT8 NOT NULL DEFAULT 0`,
+			`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS build_id STRING NOT NULL DEFAULT ''`,
+			`ALTER TABLE build_runs DROP CONSTRAINT IF EXISTS build_runs_service_id_commit_sha_key`,
+			`DROP INDEX IF EXISTS build_runs_service_id_commit_sha_key`,
+			`CREATE INDEX IF NOT EXISTS idx_build_runs_service_commit_queued_at
+			    ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
 		},
 	},
 }
