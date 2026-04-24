@@ -1,6 +1,9 @@
 import type * as grpc from "@grpc/grpc-js";
 
-import type { DashboardProject } from "#/lib/dashboard/core/types.server";
+import type {
+	DashboardProject,
+	DashboardServiceLogType,
+} from "#/lib/dashboard/core/types.server";
 
 export interface PlatformRuntimeConfig {
 	controlPlaneAddress: string;
@@ -91,6 +94,18 @@ export interface GetServiceStatusRequest {
 	serviceId: string;
 }
 
+export interface ListServiceLogsRequest {
+	projectId: string;
+	serviceId: string;
+	allocationId?: string;
+	limit?: number;
+	logType?: DashboardServiceLogType;
+	buildId?: string;
+	search?: string;
+	startTime?: Date;
+	endTime?: Date;
+}
+
 export interface ListDomainBindingsRequest {
 	projectId: string;
 	serviceId: string;
@@ -143,6 +158,7 @@ export type PlatformMethod =
 	| "UpdateService"
 	| "GetService"
 	| "GetServiceStatus"
+	| "ListServiceLogs"
 	| "ListDomainBindings"
 	| "CreateDomainBinding"
 	| "UpdateDomainBinding"
@@ -158,6 +174,7 @@ export type PlatformRequestMap = {
 	UpdateService: UpdateServiceRequest;
 	GetService: GetServiceRequest;
 	GetServiceStatus: GetServiceStatusRequest;
+	ListServiceLogs: ListServiceLogsRequest;
 	ListDomainBindings: ListDomainBindingsRequest;
 	CreateDomainBinding: CreateDomainBindingRequest;
 	UpdateDomainBinding: UpdateDomainBindingRequest;
@@ -215,6 +232,11 @@ export type PlatformClient = grpc.Client & {
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
+	ListServiceLogs: (
+		request: ListServiceLogsRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
 	ListDomainBindings: (
 		request: ListDomainBindingsRequest,
 		metadata: grpc.Metadata,
@@ -254,4 +276,23 @@ export interface PlatformProjectMessage {
 
 export interface ListProjectsResponseMessage {
 	projects: Array<PlatformProjectMessage>;
+}
+
+export interface ServiceLogLineMessage {
+	observedAt?: Date;
+	projectId: string;
+	serviceId: string;
+	allocationId: string;
+	agentId: string;
+	stream: string;
+	rolloutGeneration: number;
+	sequence: number;
+	line: string;
+	logType?: DashboardServiceLogType;
+	buildId?: string;
+	stage?: string;
+}
+
+export interface ListServiceLogsResponseMessage {
+	lines: Array<ServiceLogLineMessage>;
 }

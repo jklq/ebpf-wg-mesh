@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+import type {
+	CreateServiceFastResult,
+	DashboardHomeState,
+} from "#/lib/dashboard/core/types.server";
 import { GitHubApiError } from "#/lib/dashboard/core/types.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
 import { completeLoginRoute } from "#/routes/auth/callback";
@@ -156,15 +165,17 @@ describe("dashboard routes", () => {
 				onCreated={() => {}}
 				confirmRepository={async ({ data }) => {
 					submitted = data;
-					return state;
+					return fastCreateResult(data.repositorySelector);
 				}}
 			/>,
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: /octocat\/hello/i }));
 
-		expect(await screen.findByText(/deploying/i)).toBeTruthy();
-		expect(submitted).toEqual({ repositorySelector: "octocat/hello" });
+		await waitFor(() =>
+			expect(submitted).toEqual({ repositorySelector: "octocat/hello" }),
+		);
+		expect(screen.queryByText(/creating service and queuing build/i)).toBeNull();
 	});
 
 	it("surfaces deployment errors back on the picker", async () => {
@@ -390,5 +401,37 @@ function homeState(
 		domainBindings: [],
 		controlPlaneReachable: true,
 		...overrides,
+	};
+}
+
+function fastCreateResult(
+	repositorySelector: string,
+): CreateServiceFastResult {
+	return {
+		project: { id: "project-1", name: "test-project", kind: "user" },
+		service: {
+			id: "service-1",
+			projectId: "project-1",
+			name: "hello",
+			spec: {
+				source: {
+					provider: "github",
+					repositorySelector,
+					trackedRef: "main",
+				},
+				runtime: { ports: [] },
+			},
+		},
+		serviceStatus: null,
+		onboarding: {
+			currentStep: "build",
+			projectId: "project-1",
+			serviceId: "service-1",
+			repositorySelector,
+			trackedRef: "main",
+			dockerfilePath: "Dockerfile",
+			contextDir: ".",
+			hostname: "",
+		},
 	};
 }

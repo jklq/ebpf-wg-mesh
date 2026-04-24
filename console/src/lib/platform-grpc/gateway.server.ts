@@ -11,12 +11,14 @@ import {
 	decodeInspectSourceResponse,
 	decodeListDomainBindingsResponse,
 	decodeListProjectsResponse,
+	decodeListServiceLogsResponse,
 	decodeListServicesResponse,
 	decodeProjectMessage,
 	decodeServiceMessage,
 	decodeServiceStatusMessage,
 	encodeCreateServiceRequest,
 	encodeIngestGitHubWebhookRequest,
+	encodeListServiceLogsRequest,
 	encodeUpdateServiceRequest,
 } from "#/lib/platform-grpc/codec.server";
 import type {
@@ -98,6 +100,20 @@ export function createPlatformGateway(
 				user,
 			);
 			return decodeServiceStatusMessage(response);
+		},
+		async listServiceLogs(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"ListServiceLogs",
+				encodeListServiceLogsRequest(input),
+				user,
+			);
+			return decodeListServiceLogsResponse(response).lines.map(
+				({ projectId: _projectId, ...line }) => line,
+			);
+		},
+		async listServiceDeployments() {
+			return [];
 		},
 		async listDomainBindings(user, input) {
 			const response = await unaryCall(

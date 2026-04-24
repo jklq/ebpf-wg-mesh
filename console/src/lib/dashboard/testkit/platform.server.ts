@@ -1,7 +1,10 @@
 import type {
 	DashboardDomainBinding,
+	DashboardDeploymentRecord,
 	DashboardProject,
 	DashboardRepositoryInspection,
+	DashboardServiceLogLine,
+	DashboardServiceLogType,
 	DashboardServiceRecord,
 	DashboardServiceSpec,
 	DashboardServiceStatus,
@@ -42,6 +45,24 @@ export interface FakePlatformGateway extends PlatformGateway {
 		projectId: string;
 		serviceId: string;
 	}>;
+	listServiceLogsCalls: Array<{
+		user: DashboardUser;
+		projectId: string;
+		serviceId: string;
+		allocationId?: string;
+		limit?: number;
+		logType?: DashboardServiceLogType;
+		buildId?: string;
+		search?: string;
+		startTime?: Date;
+		endTime?: Date;
+	}>;
+	listServiceDeploymentsCalls: Array<{
+		user: DashboardUser;
+		projectId: string;
+		serviceId: string;
+		limit?: number;
+	}>;
 	listDomainBindingsCalls: Array<{
 		user: DashboardUser;
 		projectId: string;
@@ -57,6 +78,8 @@ export interface FakePlatformGateway extends PlatformGateway {
 	projects: Array<DashboardProject>;
 	services: Array<DashboardServiceRecord>;
 	serviceStatuses: Map<string, DashboardServiceStatus>;
+	serviceLogs: Array<DashboardServiceLogLine>;
+	serviceDeployments: Array<DashboardDeploymentRecord>;
 	domainBindings: Array<DashboardDomainBinding>;
 	nextRepositoryInspection?: DashboardRepositoryInspection;
 	errors: {
@@ -69,6 +92,8 @@ export interface FakePlatformGateway extends PlatformGateway {
 		updateService?: Error;
 		getService?: Error;
 		getServiceStatus?: Error;
+		listServiceLogs?: Error;
+		listServiceDeployments?: Error;
 		listDomainBindings?: Error;
 		createDomainBinding?: Error;
 	};
@@ -85,11 +110,15 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		updateServiceCalls: [],
 		getServiceCalls: [],
 		getServiceStatusCalls: [],
+		listServiceLogsCalls: [],
+		listServiceDeploymentsCalls: [],
 		listDomainBindingsCalls: [],
 		createDomainBindingCalls: [],
 		projects: [],
 		services: [],
 		serviceStatuses: new Map<string, DashboardServiceStatus>(),
+		serviceLogs: [],
+		serviceDeployments: [],
 		domainBindings: [],
 		nextRepositoryInspection: undefined,
 		errors: {},
@@ -183,10 +212,18 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.serviceStatuses.set(serviceRecord.id, {
 				service: serviceRecord,
 				allocation: {
+					allocationId: `allocation-${platform.createServiceCalls.length}`,
+					serviceId: serviceRecord.id,
+					agentId: "agent-1",
+					desiredSpecRevision: 1,
+					appliedSpecRevision: 1,
 					phase: "Pending",
 					message: "",
 					allocationIp: "",
 					healthy: false,
+					updatedAt: undefined,
+					desiredRolloutGeneration: 1,
+					appliedRolloutGeneration: 1,
 					healthyPorts: [],
 				},
 			});
@@ -255,6 +292,32 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw new Error("service status not found");
 			}
 			return status;
+		},
+		async listServiceLogs(user, input): Promise<Array<DashboardServiceLogLine>> {
+			platform.listServiceLogsCalls.push({ user, ...input });
+			if (platform.errors.listServiceLogs) {
+				throw platform.errors.listServiceLogs;
+			}
+			return platform.serviceLogs.filter(
+				(line) =>
+					(line.allocationId === input.allocationId ||
+						input.allocationId === undefined) &&
+					(line.logType === input.logType || input.logType === undefined) &&
+					(line.buildId === input.buildId || input.buildId === undefined) &&
+					(input.search === undefined || line.line.includes(input.search)),
+			);
+		},
+		async listServiceDeployments(
+			user,
+			input,
+		): Promise<Array<DashboardDeploymentRecord>> {
+			platform.listServiceDeploymentsCalls.push({ user, ...input });
+			if (platform.errors.listServiceDeployments) {
+				throw platform.errors.listServiceDeployments;
+			}
+			return platform.serviceDeployments.filter(
+				(entry) => entry.id === input.serviceId || input.serviceId === "",
+			);
 		},
 		async listDomainBindings(
 			user,

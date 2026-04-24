@@ -6,13 +6,14 @@ import type {
 	SetStateAction,
 } from "react";
 
-import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+import type {
+	CreateServiceFastResult,
+	DashboardHomeState,
+} from "#/lib/dashboard/core/types.server";
 
 export type DashboardTab = "overview" | "deployments" | "settings" | "domains";
 
 export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
-
-export type NewServiceStep = "repo" | "deploying";
 
 export type InspectRepositoryFn = (input: {
 	data: { repositorySelector: string };
@@ -26,7 +27,7 @@ export type ConfirmRepositoryFn = (input: {
 		dockerfilePath?: string;
 		contextDir?: string;
 	};
-}) => Promise<unknown>;
+}) => Promise<CreateServiceFastResult>;
 
 export type PickerAction = {
 	href: string;

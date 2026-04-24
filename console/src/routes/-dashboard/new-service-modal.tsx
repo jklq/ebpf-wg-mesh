@@ -1,16 +1,16 @@
-import { Loader2, Settings, X } from "lucide-react";
+import { Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type {
+	CreateServiceFastResult,
 	DashboardHomeState,
 } from "#/lib/dashboard/core/types.server";
 
 import { RepositoryPicker } from "./repository-picker";
-import { doConfirmRepository } from "./server-fns";
+import { doCreateServiceFast } from "./server-fns";
 import { formatError } from "./service-utils";
 import type {
 	ConfirmRepositoryFn,
-	NewServiceStep,
 	PickerAction,
 } from "./types";
 
@@ -18,14 +18,13 @@ export function NewServiceModal({
 	state,
 	onClose,
 	onCreated,
-	confirmRepository = doConfirmRepository,
+	confirmRepository = doCreateServiceFast,
 }: {
 	state: DashboardHomeState;
 	onClose: () => void;
-	onCreated: (state?: DashboardHomeState) => void;
+	onCreated: (result: CreateServiceFastResult) => void;
 	confirmRepository?: ConfirmRepositoryFn;
 }) {
-	const [step, setStep] = useState<NewServiceStep>("repo");
 	const [repoSelector, setRepoSelector] = useState(
 		state.onboarding.repositorySelector,
 	);
@@ -72,21 +71,20 @@ export function NewServiceModal({
 	};
 
 	const handleConfirm = async (selectorOverride?: string) => {
+		if (loading) return;
 		const selector = (selectorOverride ?? repoSelector).trim();
 		if (!selector) return;
 		setError(undefined);
 		setLoading(true);
-		setStep("deploying");
 		try {
-			const nextState = await confirmRepository({
+			const result = await confirmRepository({
 				data: {
 					repositorySelector: selector,
 				},
 			});
-			onCreated(isDashboardHomeState(nextState) ? nextState : undefined);
+			onCreated(result);
 		} catch (e) {
 			setError(formatError(e));
-			setStep("repo");
 			setLoading(false);
 		}
 	};
@@ -131,49 +129,31 @@ export function NewServiceModal({
 			}}
 		>
 			<div className="modal-card">
-				{step !== "repo" && (
-					<NewServiceHeader onClose={onClose} step={step} />
-				)}
-
-				<div style={step !== "repo" ? { padding: "20px" } : {}}>
-					{step === "repo" && (
-						<RepositoryPicker
-							actions={pickerActions}
-							error={error}
-							filteredRepositories={filteredRepositories}
-							highlightedIndex={highlightedIndex}
-							hoveredIndex={hoveredIndex}
-							loading={loading}
-							onActivateIndex={activatePickerSelection}
-							onClose={onClose}
-							onConfirm={handleConfirm}
-							onRepositorySelect={handleRepositorySelect}
-							onSearchChange={clearRepositoryCheckFeedback}
-							repoListRef={repoListRef}
-							repoSearch={repoSearch}
-							repoSelector={repoSelector}
-							setHighlightedIndex={setHighlightedIndex}
-							setHoveredIndex={setHoveredIndex}
-							setRepoSearch={setRepoSearch}
-							showEmptyState={
-								filteredRepositories.length === 0 &&
-								state.repositories.length > 0
-							}
-						/>
-					)}
-
-					{step === "deploying" && <DeployingStep />}
-				</div>
+				<RepositoryPicker
+					actions={pickerActions}
+					error={error}
+					filteredRepositories={filteredRepositories}
+					highlightedIndex={highlightedIndex}
+					hoveredIndex={hoveredIndex}
+					loading={loading}
+					onActivateIndex={activatePickerSelection}
+					onClose={onClose}
+					onConfirm={handleConfirm}
+					onRepositorySelect={handleRepositorySelect}
+					onSearchChange={clearRepositoryCheckFeedback}
+					repoListRef={repoListRef}
+					repoSearch={repoSearch}
+					repoSelector={repoSelector}
+					setHighlightedIndex={setHighlightedIndex}
+					setHoveredIndex={setHoveredIndex}
+					setRepoSearch={setRepoSearch}
+					showEmptyState={
+						filteredRepositories.length === 0 &&
+						state.repositories.length > 0
+					}
+				/>
 			</div>
 		</div>
-	);
-}
-
-function isDashboardHomeState(value: unknown): value is DashboardHomeState {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		Array.isArray((value as Partial<DashboardHomeState>).services)
 	);
 }
 
@@ -188,80 +168,4 @@ function buildPickerActions(state: DashboardHomeState): PickerAction[] {
 		});
 	}
 	return actions;
-}
-
-function NewServiceHeader({
-	onClose,
-	step,
-}: {
-	onClose: () => void;
-	step: NewServiceStep;
-}) {
-	return (
-		<div
-			style={{
-				display: "flex",
-				alignItems: "center",
-				justifyContent: "space-between",
-				padding: "16px 20px 12px",
-				borderBottom: "1px solid var(--border)",
-			}}
-		>
-			<div>
-				<h2
-					style={{
-						margin: 0,
-						fontSize: 16,
-						fontWeight: 700,
-						letterSpacing: "0.06em",
-						textTransform: "uppercase",
-						fontFamily: "'Barlow Condensed', sans-serif",
-						color: "var(--text)",
-					}}
-				>
-					{step === "deploying" ? "Deploying…" : "New service"}
-				</h2>
-				<p
-					style={{
-						margin: "2px 0 0",
-						fontSize: 12,
-						color: "var(--text-muted)",
-					}}
-				>
-					{step === "deploying" && "Build queued, the canvas will update."}
-				</p>
-			</div>
-			<button
-				type="button"
-				className="btn-ghost"
-				onClick={onClose}
-				style={{ padding: "4px 6px" }}
-			>
-				<X size={16} />
-			</button>
-		</div>
-	);
-}
-
-function DeployingStep() {
-	return (
-		<div
-			style={{
-				display: "flex",
-				flexDirection: "column",
-				alignItems: "center",
-				gap: 16,
-				padding: "24px 0",
-			}}
-		>
-			<Loader2
-				size={32}
-				color="var(--accent)"
-				style={{ animation: "spin 1s linear infinite" }}
-			/>
-			<p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
-				Creating service and queuing build…
-			</p>
-		</div>
-	);
 }
