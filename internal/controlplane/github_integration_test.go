@@ -180,10 +180,30 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 			"object": map[string]any{"sha": "commit-public-main"},
 		})
 	})
+	mux.HandleFunc("/repos/public/hello/commits/commit-public-main", func(w http.ResponseWriter, r *http.Request) {
+		server.recordHit(r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"commit": map[string]any{
+				"message":   "Public main commit",
+				"author":    map[string]any{"name": "Octocat"},
+				"committer": map[string]any{"name": "Octocat"},
+			},
+		})
+	})
 	mux.HandleFunc("/repos/public/hello/git/ref/heads/release", func(w http.ResponseWriter, r *http.Request) {
 		server.recordHit(r.URL.Path)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"object": map[string]any{"sha": "commit-public-release"},
+		})
+	})
+	mux.HandleFunc("/repos/public/hello/commits/commit-public-release", func(w http.ResponseWriter, r *http.Request) {
+		server.recordHit(r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"commit": map[string]any{
+				"message":   "Public release commit",
+				"author":    map[string]any{"name": "Octocat Release"},
+				"committer": map[string]any{"name": "Octocat Release"},
+			},
 		})
 	})
 	mux.HandleFunc("/repos/public/hello/tarball/commit-public-main", func(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +262,20 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"object": map[string]any{"sha": "commit-private-main"},
+		})
+	})
+	mux.HandleFunc("/repos/private/secret/commits/commit-private-main", func(w http.ResponseWriter, r *http.Request) {
+		server.recordHit(r.URL.Path)
+		if got := r.Header.Get("Authorization"); got != "Bearer installation-token" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"commit": map[string]any{
+				"message":   "Private main commit",
+				"author":    map[string]any{"name": "Private Octocat"},
+				"committer": map[string]any{"name": "Private Octocat"},
+			},
 		})
 	})
 	mux.HandleFunc("/repos/private/secret/tarball/commit-private-main", func(w http.ResponseWriter, r *http.Request) {

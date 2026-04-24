@@ -38,12 +38,12 @@ func (s *Store) enqueueSourceWorkItemTx(ctx context.Context, tx *sql.Tx, rec sou
 		`INSERT INTO source_work_items(
 			id, kind, state, processor_id, idempotency_key, service_id, spec_revision, provider,
 			provider_repository_external_id, provider_scope_external_id, tracked_ref, commit_sha,
-			last_error, attempt_count, available_at, created_at, updated_at
-		) VALUES ($1, $2, $3, '', $4, $5, $6, $7, $8, $9, $10, $11, '', 0, $12, $13, $13)
+			commit_message, commit_author, last_error, attempt_count, available_at, created_at, updated_at
+		) VALUES ($1, $2, $3, '', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '', 0, $14, $15, $15)
 		ON CONFLICT(idempotency_key) DO NOTHING`,
 		rec.ID, rec.Kind, rec.State, rec.IdempotencyKey, rec.ServiceID, rec.SpecRevision, rec.Provider,
 		rec.ProviderRepositoryExternalID, rec.ProviderScopeExternalID, rec.TrackedRef, rec.CommitSHA,
-		rec.AvailableAt, rec.CreatedAt,
+		rec.CommitMessage, rec.CommitAuthor, rec.AvailableAt, rec.CreatedAt,
 	)
 	if err != nil {
 		return false, err
@@ -75,7 +75,7 @@ func (s *Store) claimNextSourceWorkItem(ctx context.Context, processorID string,
 		row := tx.QueryRowContext(ctx,
 			`SELECT id, kind, state, processor_id, idempotency_key, service_id, spec_revision, provider,
 			        provider_repository_external_id, provider_scope_external_id, tracked_ref, commit_sha,
-			        last_error, attempt_count, available_at, created_at, updated_at
+			        commit_message, commit_author, last_error, attempt_count, available_at, created_at, updated_at
 			   FROM source_work_items
 			  WHERE state = $1
 			    AND available_at <= $2
@@ -96,6 +96,8 @@ func (s *Store) claimNextSourceWorkItem(ctx context.Context, processorID string,
 			&rec.ProviderScopeExternalID,
 			&rec.TrackedRef,
 			&rec.CommitSHA,
+			&rec.CommitMessage,
+			&rec.CommitAuthor,
 			&rec.LastError,
 			&rec.AttemptCount,
 			&rec.AvailableAt,
@@ -267,7 +269,7 @@ func (s *Store) latestSourceRevisionByBindingIDTx(ctx context.Context, q service
 	var rec sourceRevisionRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_binding_id, service_id, provider, provider_repository_external_id,
-		        tracked_ref, commit_sha, observed_at, created_at
+		        tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
 		   FROM source_revisions
 		  WHERE source_binding_id = $1
 		  ORDER BY observed_at DESC, created_at DESC, id DESC
@@ -281,6 +283,8 @@ func (s *Store) latestSourceRevisionByBindingIDTx(ctx context.Context, q service
 		&rec.ProviderRepositoryExternalID,
 		&rec.TrackedRef,
 		&rec.CommitSHA,
+		&rec.CommitMessage,
+		&rec.CommitAuthor,
 		&rec.ObservedAt,
 		&rec.CreatedAt,
 	)

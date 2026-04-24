@@ -271,7 +271,317 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	}
 }
 
+func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice"); err != nil {
+		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
+	}
+
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+	if build.CommitMessage != "Fix deploy history" {
+		t.Fatalf("expected build commit message to persist, got %q", build.CommitMessage)
+	}
+	if build.CommitAuthor != "Alice" {
+		t.Fatalf("expected build commit author to persist, got %q", build.CommitAuthor)
+	}
+	if build.TargetRolloutGeneration != 2 {
+		t.Fatalf("expected target rollout generation 2, got %d", build.TargetRolloutGeneration)
+	}
+}
+
+func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice"); err != nil {
+		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
+	}
+
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+		t.Fatalf("completeBuild: %v", err)
+	}
+
+	var rolloutBuildID string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT build_id
+		   FROM service_rollouts
+		  WHERE service_id = $1
+		    AND rollout_generation = $2`,
+		service.ID, 2,
+	).Scan(&rolloutBuildID); err != nil {
+		t.Fatalf("query rollout build id: %v", err)
+	}
+	if rolloutBuildID != build.ID {
+		t.Fatalf("expected rollout build_id %q, got %q", build.ID, rolloutBuildID)
+	}
+}
+
+func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	repoService, err := store.createService(ctx, "user-1", projects[0].ID, "repo-web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("create repo service: %v", err)
+	}
+	if err := seedReadySourceStateWithMetadata(t, store, repoService, "commit-1", "Fix deploy history", "Alice"); err != nil {
+		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
+	}
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, repoService.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:111", ""); err != nil {
+		t.Fatalf("completeBuild: %v", err)
+	}
+
+	repoDeployments, err := store.listServiceDeployments(ctx, "user-1", projects[0].ID, repoService.ID, 10)
+	if err != nil {
+		t.Fatalf("listServiceDeployments(repo): %v", err)
+	}
+	if len(repoDeployments) < 2 {
+		t.Fatalf("expected at least two repo deployments, got %d", len(repoDeployments))
+	}
+	if repoDeployments[0].Build == nil || repoDeployments[0].Build.CommitMessage != "Fix deploy history" {
+		t.Fatalf("expected latest repo deployment to include persisted commit message, got %+v", repoDeployments[0].Build)
+	}
+
+	imageService, err := store.createService(ctx, "user-1", projects[0].ID, "img-web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
+		Ports: runtimePortsFromInts([]int32{8081}),
+	}), "node-1")
+	if err != nil {
+		t.Fatalf("create direct-image service: %v", err)
+	}
+	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, imageService.ID); err != nil {
+		t.Fatalf("redeployService: %v", err)
+	}
+
+	imageDeployments, err := store.listServiceDeployments(ctx, "user-1", projects[0].ID, imageService.ID, 10)
+	if err != nil {
+		t.Fatalf("listServiceDeployments(image): %v", err)
+	}
+	if len(imageDeployments) < 2 {
+		t.Fatalf("expected at least two direct-image deployments, got %d", len(imageDeployments))
+	}
+	if imageDeployments[0].Build != nil {
+		t.Fatalf("expected direct-image redeploy to have no build row, got %+v", imageDeployments[0].Build)
+	}
+	if imageDeployments[0].Reason != "redeploy" {
+		t.Fatalf("expected latest direct-image deployment reason redeploy, got %q", imageDeployments[0].Reason)
+	}
+}
+
+func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Break deploy history", "Alice"); err != nil {
+		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
+	}
+
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
+		t.Fatalf("completeBuild: %v", err)
+	}
+
+	deployments, err := store.listServiceDeployments(ctx, "user-1", projects[0].ID, service.ID, 10)
+	if err != nil {
+		t.Fatalf("listServiceDeployments: %v", err)
+	}
+	if len(deployments) == 0 {
+		t.Fatal("expected failed build deployment history")
+	}
+	if deployments[0].Build == nil || deployments[0].Build.State != buildStateFailed {
+		t.Fatalf("expected latest history entry to be failed build, got %+v", deployments[0].Build)
+	}
+	if deployments[0].Build.CommitMessage != "Break deploy history" {
+		t.Fatalf("expected failed build commit message to persist, got %+v", deployments[0].Build)
+	}
+}
+
+func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice"); err != nil {
+		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
+	}
+
+	firstBuild, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService(first): %v", err)
+	}
+	secondBuild, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService(second): %v", err)
+	}
+	if firstBuild.ID == secondBuild.ID {
+		t.Fatalf("expected repeated same-commit build to create a new row, got %q", firstBuild.ID)
+	}
+
+	var count int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT count(*)
+		   FROM build_runs
+		  WHERE service_id = $1
+		    AND commit_sha = $2`,
+		service.ID, "commit-1",
+	).Scan(&count); err != nil {
+		t.Fatalf("count repeated same-commit builds: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 persisted build attempts for same commit, got %d", count)
+	}
+}
+
 func seedReadySourceState(t *testing.T, store *Store, service serviceRecord, commitSHA string) error {
+	return seedReadySourceStateWithMetadata(t, store, service, commitSHA, "", "")
+}
+
+func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service serviceRecord, commitSHA, commitMessage, commitAuthor string) error {
 	t.Helper()
 
 	return store.withTx(context.Background(), func(tx *sql.Tx) error {
@@ -298,6 +608,8 @@ func seedReadySourceState(t *testing.T, store *Store, service serviceRecord, com
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
 			TrackedRef:                   binding.TrackedRef,
 			CommitSHA:                    commitSHA,
+			CommitMessage:                commitMessage,
+			CommitAuthor:                 commitAuthor,
 			ObservedAt:                   time.Now().UTC(),
 		})
 		if err != nil {

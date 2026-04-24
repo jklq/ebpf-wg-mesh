@@ -20,6 +20,10 @@ const (
 var errServiceNotBuildable = errors.New("service does not use a build source")
 var errSourceStateNotReady = errors.New("source state is not ready")
 
+const buildRunSelectColumns = `id, service_id, project_id, commit_sha, commit_message, commit_author, state, builder_id, image_digest, failure_reason,
+	        source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
+	        queued_at, started_at, finished_at`
+
 func (s *Store) latestBuildForServiceQuerier(ctx context.Context, q serviceQueryer, buildID string) (*platformv1.BuildStatus, error) {
 	if buildID == "" {
 		return nil, nil
@@ -35,42 +39,12 @@ func (s *Store) latestBuildForServiceQuerier(ctx context.Context, q serviceQuery
 }
 
 func (s *Store) buildRunByIDQuerier(ctx context.Context, q serviceQueryer, buildID string) (buildRunRecord, error) {
-	var (
-		rec        buildRunRecord
-		recipeJSON []byte
-	)
-	err := q.QueryRowContext(ctx,
-		`SELECT id, service_id, project_id, commit_sha, state, builder_id, image_digest, failure_reason,
-		        source_revision_id, source_snapshot_id, source_snapshot_digest, build_recipe_json,
-		        queued_at, started_at, finished_at
+	return scanBuildRunRow(q.QueryRowContext(ctx,
+		`SELECT `+buildRunSelectColumns+`
 		   FROM build_runs
 		  WHERE id = $1`,
 		buildID,
-	).Scan(
-		&rec.ID,
-		&rec.ServiceID,
-		&rec.ProjectID,
-		&rec.CommitSHA,
-		&rec.State,
-		&rec.BuilderID,
-		&rec.ImageDigest,
-		&rec.FailureReason,
-		&rec.SourceRevisionID,
-		&rec.SourceSnapshotID,
-		&rec.SourceSnapshotDigest,
-		&recipeJSON,
-		&rec.QueuedAt,
-		&rec.StartedAt,
-		&rec.FinishedAt,
-	)
-	if err != nil {
-		return buildRunRecord{}, err
-	}
-	rec.BuildRecipe, err = unmarshalBuildRecipe(recipeJSON)
-	if err != nil {
-		return buildRunRecord{}, err
-	}
-	return rec, nil
+	))
 }
 
 func (s *Store) enqueueBuildForService(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error) {
@@ -134,13 +108,6 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 	if err := ensureReadySnapshot(snapshot); err != nil {
 		return buildRunRecord{}, err
 	}
-	existing, err := s.findBuildByServiceAndCommitTx(ctx, tx, service.ID, revision.CommitSHA)
-	switch {
-	case err == nil:
-		return existing, nil
-	case !errors.Is(err, sql.ErrNoRows):
-		return buildRunRecord{}, err
-	}
 
 	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx,
@@ -156,16 +123,19 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 	}
 
 	rec := buildRunRecord{
-		ID:                   mustID(),
-		ServiceID:            service.ID,
-		ProjectID:            service.ProjectID,
-		CommitSHA:            revision.CommitSHA,
-		State:                buildStateQueued,
-		SourceRevisionID:     revision.ID,
-		SourceSnapshotID:     snapshot.ID,
-		SourceSnapshotDigest: snapshot.Digest,
-		BuildRecipe:          cloneBuildRecipe(buildRecipe),
-		QueuedAt:             now,
+		ID:                      mustID(),
+		ServiceID:               service.ID,
+		ProjectID:               service.ProjectID,
+		CommitSHA:               revision.CommitSHA,
+		CommitMessage:           revision.CommitMessage,
+		CommitAuthor:            revision.CommitAuthor,
+		State:                   buildStateQueued,
+		SourceRevisionID:        revision.ID,
+		SourceSnapshotID:        snapshot.ID,
+		SourceSnapshotDigest:    snapshot.Digest,
+		TargetRolloutGeneration: service.RolloutGeneration + 1,
+		BuildRecipe:             cloneBuildRecipe(buildRecipe),
+		QueuedAt:                now,
 	}
 	recipeJSON, err := marshalBuildRecipe(rec.BuildRecipe)
 	if err != nil {
@@ -173,12 +143,12 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO build_runs(
-			id, service_id, project_id, commit_sha, state,
-			source_revision_id, source_snapshot_id, source_snapshot_digest, build_recipe_json,
+			id, service_id, project_id, commit_sha, commit_message, commit_author, state,
+			source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
 			builder_id, queued_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '', $10)`,
-		rec.ID, rec.ServiceID, rec.ProjectID, rec.CommitSHA, rec.State,
-		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, recipeJSON, rec.QueuedAt,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', $13)`,
+		rec.ID, rec.ServiceID, rec.ProjectID, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.State,
+		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, rec.TargetRolloutGeneration, recipeJSON, rec.QueuedAt,
 	); err != nil {
 		return buildRunRecord{}, err
 	}
@@ -203,50 +173,8 @@ func sourceSnapshotMatchesRevision(snapshot sourceSnapshotRecord, revision sourc
 		snapshot.CommitSHA == revision.CommitSHA
 }
 
-func (s *Store) findBuildByServiceAndCommitTx(ctx context.Context, tx *sql.Tx, serviceID, commitSHA string) (buildRunRecord, error) {
-	var (
-		rec        buildRunRecord
-		recipeJSON []byte
-	)
-	err := tx.QueryRowContext(ctx,
-		`SELECT id, service_id, project_id, commit_sha, state, builder_id, image_digest, failure_reason,
-		        source_revision_id, source_snapshot_id, source_snapshot_digest, build_recipe_json,
-		        queued_at, started_at, finished_at
-		   FROM build_runs
-		  WHERE service_id = $1 AND commit_sha = $2`,
-		serviceID, commitSHA,
-	).Scan(
-		&rec.ID,
-		&rec.ServiceID,
-		&rec.ProjectID,
-		&rec.CommitSHA,
-		&rec.State,
-		&rec.BuilderID,
-		&rec.ImageDigest,
-		&rec.FailureReason,
-		&rec.SourceRevisionID,
-		&rec.SourceSnapshotID,
-		&rec.SourceSnapshotDigest,
-		&recipeJSON,
-		&rec.QueuedAt,
-		&rec.StartedAt,
-		&rec.FinishedAt,
-	)
-	if err != nil {
-		return buildRunRecord{}, err
-	}
-	rec.BuildRecipe, err = unmarshalBuildRecipe(recipeJSON)
-	if err != nil {
-		return buildRunRecord{}, err
-	}
-	return rec, nil
-}
-
 func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName string, staleAfter time.Duration) (buildRunRecord, error) {
-	var (
-		rec        buildRunRecord
-		recipeJSON []byte
-	)
+	var rec buildRunRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx,
@@ -266,32 +194,16 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 			}
 		}
 		row := tx.QueryRowContext(ctx,
-			`SELECT id, service_id, project_id, commit_sha, state, builder_id, image_digest, failure_reason,
-			        source_revision_id, source_snapshot_id, source_snapshot_digest, build_recipe_json,
-			        queued_at, started_at, finished_at
+			`SELECT `+buildRunSelectColumns+`
 			   FROM build_runs
 			  WHERE state = $1
 			  ORDER BY queued_at ASC, id ASC
 			  LIMIT 1`,
 			buildStateQueued,
 		)
-		if err := row.Scan(
-			&rec.ID,
-			&rec.ServiceID,
-			&rec.ProjectID,
-			&rec.CommitSHA,
-			&rec.State,
-			&rec.BuilderID,
-			&rec.ImageDigest,
-			&rec.FailureReason,
-			&rec.SourceRevisionID,
-			&rec.SourceSnapshotID,
-			&rec.SourceSnapshotDigest,
-			&recipeJSON,
-			&rec.QueuedAt,
-			&rec.StartedAt,
-			&rec.FinishedAt,
-		); err != nil {
+		var err error
+		rec, err = scanBuildRunRow(row)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -322,10 +234,6 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 		}
 		return nil
 	})
-	if err != nil {
-		return buildRunRecord{}, err
-	}
-	rec.BuildRecipe, err = unmarshalBuildRecipe(recipeJSON)
 	if err != nil {
 		return buildRunRecord{}, err
 	}
@@ -513,7 +421,7 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		); err != nil {
 			return err
 		}
-		if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", "", "", now); err != nil {
+		if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", "", now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -530,6 +438,41 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		}
 		return s.bumpDesiredRevisionsTx(ctx, tx, []string{service.AllocatedAgentID})
 	})
+}
+
+func scanBuildRunRow(scanner interface{ Scan(...any) error }) (buildRunRecord, error) {
+	var (
+		rec        buildRunRecord
+		recipeJSON []byte
+	)
+	if err := scanner.Scan(
+		&rec.ID,
+		&rec.ServiceID,
+		&rec.ProjectID,
+		&rec.CommitSHA,
+		&rec.CommitMessage,
+		&rec.CommitAuthor,
+		&rec.State,
+		&rec.BuilderID,
+		&rec.ImageDigest,
+		&rec.FailureReason,
+		&rec.SourceRevisionID,
+		&rec.SourceSnapshotID,
+		&rec.SourceSnapshotDigest,
+		&rec.TargetRolloutGeneration,
+		&recipeJSON,
+		&rec.QueuedAt,
+		&rec.StartedAt,
+		&rec.FinishedAt,
+	); err != nil {
+		return buildRunRecord{}, err
+	}
+	var err error
+	rec.BuildRecipe, err = unmarshalBuildRecipe(recipeJSON)
+	if err != nil {
+		return buildRunRecord{}, err
+	}
+	return rec, nil
 }
 
 func (s *Store) serviceByIDInternalQuerier(ctx context.Context, q serviceQueryer, serviceID string) (serviceRecord, error) {

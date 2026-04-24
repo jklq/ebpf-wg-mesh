@@ -266,11 +266,11 @@ func (s *Store) upsertSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec sour
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO source_revisions(
 			id, source_binding_id, service_id, provider, provider_repository_external_id,
-			tracked_ref, commit_sha, observed_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT(source_binding_id, commit_sha) DO NOTHING`,
 		rec.ID, rec.SourceBindingID, rec.ServiceID, rec.Provider, rec.ProviderRepositoryExternalID,
-		rec.TrackedRef, rec.CommitSHA, rec.ObservedAt, rec.CreatedAt,
+		rec.TrackedRef, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.ObservedAt, rec.CreatedAt,
 	)
 	if err != nil {
 		return sourceRevisionRecord{}, err
@@ -286,7 +286,7 @@ func (s *Store) sourceRevisionByBindingAndCommitTx(ctx context.Context, q servic
 	var rec sourceRevisionRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_binding_id, service_id, provider, provider_repository_external_id,
-		        tracked_ref, commit_sha, observed_at, created_at
+		        tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
 		   FROM source_revisions
 		  WHERE source_binding_id = $1
 		    AND commit_sha = $2`,
@@ -299,6 +299,8 @@ func (s *Store) sourceRevisionByBindingAndCommitTx(ctx context.Context, q servic
 		&rec.ProviderRepositoryExternalID,
 		&rec.TrackedRef,
 		&rec.CommitSHA,
+		&rec.CommitMessage,
+		&rec.CommitAuthor,
 		&rec.ObservedAt,
 		&rec.CreatedAt,
 	)
@@ -424,7 +426,7 @@ func (s *Store) sourceRevisionByIDTx(ctx context.Context, q serviceQueryer, sour
 	var rec sourceRevisionRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_binding_id, service_id, provider, provider_repository_external_id,
-		        tracked_ref, commit_sha, observed_at, created_at
+		        tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
 		   FROM source_revisions
 		  WHERE id = $1`,
 		sourceRevisionID,
@@ -436,6 +438,8 @@ func (s *Store) sourceRevisionByIDTx(ctx context.Context, q serviceQueryer, sour
 		&rec.ProviderRepositoryExternalID,
 		&rec.TrackedRef,
 		&rec.CommitSHA,
+		&rec.CommitMessage,
+		&rec.CommitAuthor,
 		&rec.ObservedAt,
 		&rec.CreatedAt,
 	)

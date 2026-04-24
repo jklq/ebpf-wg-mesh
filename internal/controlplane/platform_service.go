@@ -46,6 +46,7 @@ type platformStore interface {
 	listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, subject, projectID, hostname string) (bool, error)
 	serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	listServiceDeployments(ctx context.Context, subject, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAgents(ctx context.Context) ([]agentRecord, error)
 }
@@ -298,7 +299,7 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "redeploy service status: %v", err)
 	}
-	currentService, err = s.decorateServiceRecord(ctx, currentService)
+	currentService, err = s.decorateServiceRecordWithAllocation(ctx, currentService, &allocation)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
 	}
@@ -552,7 +553,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
-	service, err = s.decorateServiceRecord(ctx, service)
+	service, err = s.decorateServiceRecordWithAllocation(ctx, service, &allocation)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
 	}
@@ -590,6 +591,30 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 	return resp, nil
 }
 
+func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platformv1.ListServiceDeploymentsRequest) (*platformv1.ListServiceDeploymentsResponse, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetProjectId()) == "" || strings.TrimSpace(req.GetServiceId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id and service_id are required")
+	}
+	items, err := s.store.listServiceDeployments(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetLimit())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service deployments: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "list service deployments: %v", err)
+	}
+	resp := &platformv1.ListServiceDeploymentsResponse{
+		Deployments: make([]*platformv1.DeploymentRecord, 0, len(items)),
+	}
+	for _, item := range items {
+		resp.Deployments = append(resp.Deployments, toProtoDeploymentRecord(item))
+	}
+	return resp, nil
+}
+
 func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListAgentsResponse, error) {
 	if _, err := DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
@@ -606,6 +631,10 @@ func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*pl
 }
 
 func (s *PlatformService) decorateServiceRecord(ctx context.Context, service serviceRecord) (serviceRecord, error) {
+	return s.decorateServiceRecordWithAllocation(ctx, service, nil)
+}
+
+func (s *PlatformService) decorateServiceRecordWithAllocation(ctx context.Context, service serviceRecord, alloc *allocationRecord) (serviceRecord, error) {
 	if service.SourceSummary == nil {
 		service.SourceSummary = buildSourceSummary(service.Spec)
 	}
@@ -613,16 +642,22 @@ func (s *PlatformService) decorateServiceRecord(ctx context.Context, service ser
 	// load the allocation we still return the stages derived from just the
 	// service+build so the UI gets something to render (showing a "waiting"
 	// deploy stage rather than a hard error).
-	alloc, err := s.store.allocationByServiceID(ctx, service.ID)
-	if err != nil {
-		return serviceRecord{}, err
+	allocValue := allocationRecord{}
+	if alloc != nil {
+		allocValue = *alloc
+	} else {
+		var err error
+		allocValue, err = s.store.allocationByServiceID(ctx, service.ID)
+		if err != nil {
+			return serviceRecord{}, err
+		}
 	}
 	var buildRec *buildRunRecord
 	if service.LatestBuild != nil {
 		rec := buildRunRecordFromProto(service.LatestBuild)
 		buildRec = &rec
 	}
-	stages := projectDeploymentStages(service, buildRec, alloc)
+	stages := projectDeploymentStages(service, buildRec, allocValue)
 	if service.LatestBuild == nil && len(stages) > 0 {
 		// We need a vehicle to carry the stages back to the client. The
 		// proto encodes them on BuildStatus today; for services that have
@@ -644,6 +679,8 @@ func buildRunRecordFromProto(status *platformv1.BuildStatus) buildRunRecord {
 	rec := buildRunRecord{
 		ID:            status.GetBuildId(),
 		CommitSHA:     status.GetCommitSha(),
+		CommitMessage: status.GetCommitMessage(),
+		CommitAuthor:  status.GetCommitAuthor(),
 		ImageDigest:   status.GetImageDigest(),
 		FailureReason: status.GetFailureReason(),
 	}

@@ -4,30 +4,37 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// projectDeploymentStages synthesizes the four-stage deployment timeline that
+// projectDeploymentStages synthesizes the deployment timeline that
 // the web console renders in the right-hand panel. We derive it from the
 // build run + allocation records instead of tracking an explicit state
 // machine: the inputs already express the ground truth (build state, phase,
 // rollout-generation parity) and projecting them keeps the read side free of
 // drift that a separate store would otherwise introduce.
 //
-// The stages, in order, are:
+// The canonical stages, in order, are:
 //
 //  1. Initialization — the service row exists and has been scheduled.
 //  2. Build          — the most recent build run, if any.
 //  3. Deploy         — the agent is applying the new rollout generation.
 //  4. Post-deploy    — the applied rollout is healthy and serving traffic.
 //
-// Services that use a direct image source skip the build step (reported as
-// SKIPPED) so the UI can keep a consistent four-stage shape without pretending
-// a build ran.
+// Build-driven source deployments (for example webhook-triggered rebuilds)
+// start at Build because the service has already been initialized in an
+// earlier rollout. Direct-image services still include Build as SKIPPED so the
+// UI can keep a consistent shape without pretending a build ran.
 func projectDeploymentStages(service serviceRecord, build *buildRunRecord, alloc allocationRecord) []*platformv1.DeploymentStage {
 	stages := make([]*platformv1.DeploymentStage, 0, 4)
-	stages = append(stages, initializationStage(service))
+	if includeInitializationStage(service, build) {
+		stages = append(stages, initializationStage(service))
+	}
 	stages = append(stages, buildStage(service, build))
 	stages = append(stages, deployStage(service, build, alloc))
-	stages = append(stages, postDeployStage(service, alloc))
+	stages = append(stages, postDeployStage(service, build, alloc))
 	return stages
+}
+
+func includeInitializationStage(service serviceRecord, build *buildRunRecord) bool {
+	return !(desiredSourceSpec(service.Spec) != nil && build != nil)
 }
 
 func initializationStage(service serviceRecord) *platformv1.DeploymentStage {
@@ -145,11 +152,15 @@ func deployStage(service serviceRecord, build *buildRunRecord, alloc allocationR
 	return stage
 }
 
-func postDeployStage(service serviceRecord, alloc allocationRecord) *platformv1.DeploymentStage {
-	_ = service
+func postDeployStage(service serviceRecord, build *buildRunRecord, alloc allocationRecord) *platformv1.DeploymentStage {
 	stage := &platformv1.DeploymentStage{
 		Key:   StagePostDeploy,
 		Label: "Post-deploy",
+	}
+	if desiredSourceSpec(service.Spec) != nil && build != nil && build.State != buildStateSucceeded {
+		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING
+		stage.Detail = "Waiting for build to finish"
+		return stage
 	}
 	if alloc.ID == "" || alloc.AppliedRolloutGeneration < alloc.DesiredRolloutGeneration {
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING
