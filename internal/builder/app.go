@@ -14,7 +14,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,16 +40,7 @@ type commandRequest struct {
 }
 
 type commandRunner interface {
-	Run(ctx context.Context, req commandRequest) ([]byte, error)
-}
-
-type osCommandRunner struct{}
-
-func (osCommandRunner) Run(ctx context.Context, req commandRequest) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, req.Binary, req.Args...)
-	cmd.Dir = req.Dir
-	cmd.Env = append(os.Environ(), req.Env...)
-	return cmd.CombinedOutput()
+	Run(ctx context.Context, req commandRequest, onLine func(commandOutputLine)) ([]byte, error)
 }
 
 type buildFailureError struct {
@@ -247,9 +237,13 @@ func (a *App) invokeBuildctl(ctx context.Context, job *platformv1.BuildJob, work
 	defer cleanup()
 
 	req := buildCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, contextDir, workspace.repoDir, dockerfilePath, job.GetRegistryPushReference(), workspace.metadataFile, env)
-	output, err := a.runner.Run(ctx, req)
+	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId())
+	defer reporter.Close()
+	output, err := a.runner.Run(ctx, req, func(line commandOutputLine) {
+		reporter.Report(ctx, line)
+	})
 	if err != nil {
-		return "", classifyBuildctlFailure(fmt.Errorf("%s %s: %w: %s", req.Binary, strings.Join(req.Args, " "), err, strings.TrimSpace(string(output))))
+		return "", classifyBuildctlFailure(formatBuildCommandError(req, err, output))
 	}
 	data, err := os.ReadFile(workspace.metadataFile)
 	if err != nil {
@@ -294,6 +288,7 @@ func dockerBuildxCommand(dockerBinary, contextDir, repoDir, dockerfilePath, push
 		Env:    env,
 		Args: []string{
 			"buildx", "build",
+			"--progress=plain",
 			"--file", filepath.Join(repoDir, filepath.FromSlash(dockerfilePath)),
 			"--tag", pushRef,
 			"--push",
@@ -523,6 +518,18 @@ func classifyBuildctlFailure(err error) error {
 		}
 	}
 	return &buildFailureError{kind: kind, err: err}
+}
+
+func formatBuildCommandError(req commandRequest, err error, output []byte) error {
+	message := fmt.Sprintf("%s %s: %v", req.Binary, strings.Join(req.Args, " "), err)
+	tail := strings.TrimSpace(string(output))
+	if tail == "" {
+		return errors.New(message)
+	}
+	if len(tail) > maxBuildFailureTailBytes {
+		tail = tail[len(tail)-maxBuildFailureTailBytes:]
+	}
+	return fmt.Errorf("%s: %s", message, tail)
 }
 
 func dockerConfigEnv(workDir, pushRef, username, password string) ([]string, func(), error) {

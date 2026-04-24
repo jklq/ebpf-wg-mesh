@@ -174,11 +174,13 @@ func main() {
 
 	overlay := localteststack.OverlayResult{}
 	loader := localteststack.NewEnvironmentLoader(localteststack.EnvironmentLoaderConfigFromLookup(os.Getenv))
+	publicBaseURL := ""
+	var overlayEnv map[string]string
 	switch {
 	case !loader.Enabled():
 	case !loader.Ready():
 		log.Printf(
-			"1Password environment loading skipped: %s is set but neither %s nor %s is configured",
+			"1Password environment loading skipped: %s is set but neither %s nor %s is configured; set one of those, or export the required env vars directly for local-only mode",
 			localteststack.OPEnvironmentIDKey,
 			localteststack.OPServiceAccountTokenKey,
 			localteststack.OPAccountKey,
@@ -191,58 +193,67 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s", describeOnePasswordLoadError(err))
 		}
+		overlayEnv = env
 		log.Printf("loaded 1Password environment")
 		missingGitHubKeys := localteststack.MissingGitHubKeys(env)
 		if len(missingGitHubKeys) > 0 {
 			log.Printf(
-				"1Password environment is incomplete for GitHub devstack enablement; missing keys: %s",
+				"1Password environment is incomplete for GitHub devstack enablement; missing keys: %s; GitHub mode stays disabled until these are present",
 				strings.Join(missingGitHubKeys, ", "),
 			)
-		} else {
-			ngrokAuthtoken := strings.TrimSpace(env[localteststack.NgrokAuthtokenKey])
-			if ngrokAuthtoken == "" {
-				ngrokAuthtoken = strings.TrimSpace(os.Getenv(localteststack.NgrokAuthtokenKey))
-			}
-			ngrokDomain := strings.TrimSpace(env[localteststack.NgrokDomainKey])
-			if ngrokDomain == "" {
-				ngrokDomain = strings.TrimSpace(os.Getenv(localteststack.NgrokDomainKey))
-			}
-			if missingRuntimeKeys := missingNgrokRuntimeKeys(ngrokAuthtoken, ngrokDomain); len(missingRuntimeKeys) > 0 {
-				log.Fatalf(
-					"GitHub devstack requested but missing runtime keys: %s",
-					strings.Join(missingRuntimeKeys, ", "),
-				)
-			}
-			log.Printf("starting ngrok tunnel for %s", ngrokDomain)
-			publicURL, err := startNgrokTunnel(ctx, ngrokAuthtoken, ngrokDomain, ingressURL)
-			if err != nil {
-				if startupInterrupted(ctx) {
-					return
-				}
-				log.Fatalf("%s", describeNgrokStartupError(err, ngrokDomain))
-			}
-			log.Printf("ngrok tunnel ready: %s", publicURL.BaseURL)
-			if publicURL.Close != nil {
-				defer func() {
-					if err := publicURL.Close(); err != nil {
-						log.Printf("close ngrok tunnel: %v", err)
-					}
-				}()
-			}
-			overlay, err = localteststack.ApplyEnvironmentOverlay(&cfg, consoleEnv, env, publicURL.BaseURL)
-			if err != nil {
-				log.Fatalf("apply 1Password environment overlay: %v", err)
-			}
-			if host := publicURL.Host; host != "" && len(cfg.Ingress.StaticRoutes) > 0 {
-				cfg.Ingress.StaticRoutes[0].Hosts = appendUniqueStrings(cfg.Ingress.StaticRoutes[0].Hosts, host)
-			}
-			if overlay.PublicBaseURL != "" {
-				log.Printf("public base url: %s", overlay.PublicBaseURL)
-				log.Printf("github enabled: %t", overlay.GitHubEnabled)
-				log.Printf("github callback url: %s", overlay.GitHubCallbackURL)
-				log.Printf("github webhook url: %s", overlay.GitHubWebhookURL)
-			}
 		}
+	}
+	if overlayEnv != nil && len(localteststack.MissingGitHubKeys(overlayEnv)) == 0 {
+		cloudflareTunnelToken := strings.TrimSpace(overlayEnv[localteststack.CloudflareTunnelTokenKey])
+		if cloudflareTunnelToken == "" {
+			cloudflareTunnelToken = strings.TrimSpace(os.Getenv(localteststack.CloudflareTunnelTokenKey))
+		}
+		cloudflareHostname := strings.TrimSpace(overlayEnv[localteststack.CloudflareHostnameKey])
+		if cloudflareHostname == "" {
+			cloudflareHostname = strings.TrimSpace(os.Getenv(localteststack.CloudflareHostnameKey))
+		}
+		if missingRuntimeKeys := missingCloudflareRuntimeKeys(cloudflareTunnelToken, cloudflareHostname); len(missingRuntimeKeys) > 0 {
+			log.Fatalf(
+				"GitHub devstack is enabled, but the Cloudflare tunnel runtime contract is incomplete; set these env vars before starting again: %s. Cloudflare should already route %s to the local ingress origin %s",
+				strings.Join(missingRuntimeKeys, ", "),
+				cloudflareHostname,
+				ingressURL[:len(ingressURL)-1],
+			)
+		}
+		log.Printf(
+			"starting cloudflare tunnel for %s; Cloudflare should already route this hostname to the local ingress origin %s",
+			cloudflareHostname,
+			ingressURL[:len(ingressURL)-1],
+		)
+		publicURL, err := startCloudflareTunnel(ctx, cloudflareTunnelToken, cloudflareHostname)
+		if err != nil {
+			if startupInterrupted(ctx) {
+				return
+			}
+			log.Fatalf("%s", describeCloudflareStartupError(err, cloudflareHostname))
+		}
+		log.Printf("cloudflare tunnel ready: %s", publicURL.BaseURL)
+		publicBaseURL = publicURL.BaseURL
+		if publicURL.Close != nil {
+			defer func() {
+				if err := publicURL.Close(); err != nil {
+					log.Printf("close cloudflare tunnel: %v", err)
+				}
+			}()
+		}
+	}
+	overlay, err = localteststack.ApplyEnvironmentOverlay(&cfg, consoleEnv, overlayEnv, publicBaseURL)
+	if err != nil {
+		log.Fatalf("apply 1Password environment overlay: %v", err)
+	}
+	if parsedPublicURL, err := url.Parse(overlay.PublicBaseURL); err == nil && parsedPublicURL.Host != "" && len(cfg.Ingress.StaticRoutes) > 0 {
+		cfg.Ingress.StaticRoutes[0].Hosts = appendUniqueStrings(cfg.Ingress.StaticRoutes[0].Hosts, parsedPublicURL.Host)
+	}
+	if overlay.PublicBaseURL != "" {
+		log.Printf("public base url: %s", overlay.PublicBaseURL)
+		log.Printf("github enabled: %t", overlay.GitHubEnabled)
+		log.Printf("github callback url: %s", overlay.GitHubCallbackURL)
+		log.Printf("github webhook url: %s", overlay.GitHubWebhookURL)
 	}
 	if startupInterrupted(ctx) {
 		return
@@ -371,7 +382,7 @@ func main() {
 func startConsole(ctx context.Context, consoleDir string, env map[string]string, port int) (string, *exec.Cmd, error) {
 	consoleURL := fmt.Sprintf("http://127.0.0.1:%d/", port)
 
-	cmd := exec.CommandContext(ctx, "bun", "--bun", "vite", "dev", "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--strictPort")
+	cmd := exec.CommandContext(ctx, "bun", "--bun", "vite", "dev", "--host", "0.0.0.0", "--port", strconv.Itoa(port), "--strictPort")
 	cmd.Dir = consoleDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -459,7 +470,7 @@ func writeSummary(path string, summary stackSummary) error {
 	return encoder.Encode(summary)
 }
 
-func startNgrokTunnel(ctx context.Context, authtoken string, domain string, ingressUpstream string) (localteststack.PublicURLResult, error) {
+func startCloudflareTunnel(ctx context.Context, tunnelToken string, hostname string) (localteststack.PublicURLResult, error) {
 	tunnelCtx, cancelTunnel := context.WithCancel(ctx)
 
 	type result struct {
@@ -468,7 +479,7 @@ func startNgrokTunnel(ctx context.Context, authtoken string, domain string, ingr
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		publicURL, err := localteststack.ResolvePublicURLForUpstream(tunnelCtx, authtoken, domain, ingressUpstream, nil)
+		publicURL, err := localteststack.StartCloudflareTunnel(tunnelCtx, tunnelToken, hostname)
 		resultCh <- result{publicURL: publicURL, err: err}
 	}()
 
@@ -499,13 +510,13 @@ func startNgrokTunnel(ctx context.Context, authtoken string, domain string, ingr
 	}
 }
 
-func missingNgrokRuntimeKeys(authtoken string, domain string) []string {
+func missingCloudflareRuntimeKeys(tunnelToken string, hostname string) []string {
 	missing := make([]string, 0, 2)
-	if strings.TrimSpace(authtoken) == "" {
-		missing = append(missing, localteststack.NgrokAuthtokenKey)
+	if strings.TrimSpace(tunnelToken) == "" {
+		missing = append(missing, localteststack.CloudflareTunnelTokenKey)
 	}
-	if strings.TrimSpace(domain) == "" {
-		missing = append(missing, localteststack.NgrokDomainKey)
+	if strings.TrimSpace(hostname) == "" {
+		missing = append(missing, localteststack.CloudflareHostnameKey)
 	}
 	return missing
 }
@@ -530,37 +541,45 @@ func describeOnePasswordLoadError(err error) string {
 	return fmt.Sprintf("load 1Password environment: %v", err)
 }
 
-func describeNgrokStartupError(err error, domain string) string {
+func describeCloudflareStartupError(err error, hostname string) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return fmt.Sprintf("start ngrok tunnel for %s: timed out after 30s; verify %s and that the reserved domain belongs to the same ngrok account", domain, localteststack.NgrokDomainKey)
+		return fmt.Sprintf("start cloudflare tunnel for %s: timed out after 30s; verify `cloudflared` is installed, then confirm %s points at a pre-provisioned Cloudflare Tunnel", hostname, localteststack.CloudflareHostnameKey)
 	case errors.Is(err, context.Canceled):
-		return "start ngrok tunnel: startup interrupted"
+		return "start cloudflare tunnel: startup interrupted"
 	}
 
 	message := err.Error()
 	switch {
-	case strings.Contains(message, "ERR_NGROK_107"):
+	case strings.Contains(message, localteststack.CloudflareTunnelTokenKey+" is required"):
 		return fmt.Sprintf(
-			"start ngrok tunnel for %s: invalid %s; replace the token in 1Password or the shell with the current authtoken from the ngrok account that owns this domain",
-			domain,
-			localteststack.NgrokAuthtokenKey,
+			"start cloudflare tunnel for %s: %s is required; export it from 1Password env or your shell before running `make dev-ephemeral`",
+			hostname,
+			localteststack.CloudflareTunnelTokenKey,
 		)
-	case strings.Contains(strings.ToLower(message), "domain") && strings.Contains(strings.ToLower(message), "not found"):
+	case strings.Contains(message, localteststack.CloudflareHostnameKey+" is required"):
 		return fmt.Sprintf(
-			"start ngrok tunnel for %s: ngrok could not find that reserved domain; verify %s matches the exact domain configured in your ngrok account",
-			domain,
-			localteststack.NgrokDomainKey,
+			"start cloudflare tunnel: %s is required; export it from 1Password env or your shell before running `make dev-ephemeral`",
+			localteststack.CloudflareHostnameKey,
 		)
-	case strings.Contains(strings.ToLower(message), "domain") && strings.Contains(strings.ToLower(message), "reserved"):
+	case strings.Contains(message, "start cloudflared"):
 		return fmt.Sprintf(
-			"start ngrok tunnel for %s: ngrok rejected the reserved domain; verify %s belongs to the same ngrok account as %s",
-			domain,
-			localteststack.NgrokDomainKey,
-			localteststack.NgrokAuthtokenKey,
+			"start cloudflare tunnel for %s: cloudflared not found; install it locally, then rerun `make dev-ephemeral`",
+			hostname,
+		)
+	case strings.Contains(message, "cloudflared exited"):
+		return fmt.Sprintf(
+			"start cloudflare tunnel for %s: cloudflared exited before becoming ready; check the token, hostname, and Cloudflare tunnel routing",
+			hostname,
+		)
+	case strings.Contains(message, "invalid "+localteststack.CloudflareHostnameKey):
+		return fmt.Sprintf(
+			"start cloudflare tunnel for %s: invalid %s; use a bare hostname such as `mesh.example.test`",
+			hostname,
+			localteststack.CloudflareHostnameKey,
 		)
 	default:
-		return fmt.Sprintf("start ngrok tunnel for %s: %v", domain, err)
+		return fmt.Sprintf("start cloudflare tunnel for %s: %v", hostname, err)
 	}
 }
 

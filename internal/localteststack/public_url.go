@@ -4,26 +4,16 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
-
-	ngrok "golang.ngrok.com/ngrok/v2"
+	"time"
 )
 
 const (
-	ngrokClientName    = "ebpf-wg-mesh"
-	ngrokClientVersion = "localteststack"
-	NgrokAuthtokenKey  = "NGROK_AUTHTOKEN"
-	NgrokDomainKey     = "NGROK_DOMAIN"
+	CloudflareTunnelTokenKey = "CLOUDFLARE_TUNNEL_TOKEN"
+	CloudflareHostnameKey    = "CLOUDFLARE_HOSTNAME"
 )
-
-type PublicTunnel interface {
-	URL() *url.URL
-	Close() error
-}
-
-type PublicTunnelStarter interface {
-	Start(ctx context.Context, upstream string, domain string) (PublicTunnel, error)
-}
 
 type PublicURLResult struct {
 	BaseURL string
@@ -31,65 +21,39 @@ type PublicURLResult struct {
 	Close   func() error
 }
 
-type NgrokTunnelStarter struct {
-	Authtoken string
-}
-
-func (s NgrokTunnelStarter) Start(ctx context.Context, upstream string, domain string) (PublicTunnel, error) {
-	token := strings.TrimSpace(s.Authtoken)
+func StartCloudflareTunnel(ctx context.Context, tunnelToken string, hostname string) (PublicURLResult, error) {
+	token := strings.TrimSpace(tunnelToken)
 	if token == "" {
-		return nil, fmt.Errorf("ngrok authtoken is required")
+		return PublicURLResult{}, fmt.Errorf("%s is required", CloudflareTunnelTokenKey)
 	}
-	domain = strings.TrimSpace(domain)
-	if domain == "" {
-		return nil, fmt.Errorf("ngrok domain is required")
-	}
-	agent, err := ngrok.NewAgent(
-		ngrok.WithAuthtoken(token),
-		ngrok.WithClientInfo(ngrokClientName, ngrokClientVersion),
-		ngrok.WithAgentDescription("ebpf-wg-mesh localteststack"),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return agent.Forward(ctx, ngrok.WithUpstream(upstream), ngrok.WithURL(domain))
-}
-
-func ResolvePublicURLForUpstream(ctx context.Context, ngrokAuthtoken string, ngrokDomain string, upstream string, starter PublicTunnelStarter) (PublicURLResult, error) {
-	if strings.TrimSpace(ngrokAuthtoken) == "" {
-		return PublicURLResult{}, fmt.Errorf("NGROK_AUTHTOKEN is required")
-	}
-	if strings.TrimSpace(ngrokDomain) == "" {
-		return PublicURLResult{}, fmt.Errorf("NGROK_DOMAIN is required")
-	}
-	if strings.TrimSpace(upstream) == "" {
-		return PublicURLResult{}, fmt.Errorf("ingress upstream is required")
-	}
-	if starter == nil {
-		starter = NgrokTunnelStarter{Authtoken: ngrokAuthtoken}
-	}
-	tunnel, err := starter.Start(ctx, upstream, ngrokDomain)
-	if err != nil {
-		return PublicURLResult{}, fmt.Errorf("start ngrok tunnel: %w", err)
-	}
-	if tunnel == nil {
-		return PublicURLResult{}, fmt.Errorf("ngrok tunnel starter returned no tunnel")
-	}
-	if tunnel.URL() == nil {
-		_ = tunnel.Close()
-		return PublicURLResult{}, fmt.Errorf("ngrok tunnel did not return a public URL")
+	hostname = strings.Trim(strings.TrimSpace(hostname), ".")
+	if hostname == "" {
+		return PublicURLResult{}, fmt.Errorf("%s is required", CloudflareHostnameKey)
 	}
 
-	baseURL, err := parsePublicBaseURL(tunnel.URL().String())
+	baseURL, err := parsePublicBaseURL("https://" + hostname)
 	if err != nil {
-		_ = tunnel.Close()
+		return PublicURLResult{}, fmt.Errorf("invalid %s %q: %w", CloudflareHostnameKey, hostname, err)
+	}
+
+	cmd := exec.CommandContext(ctx, "cloudflared", "tunnel", "run", "--token", token)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return PublicURLResult{}, fmt.Errorf("start cloudflared: %w", err)
+	}
+
+	if err := waitForCommandStartup(ctx, cmd, 5*time.Second); err != nil {
+		_ = stopCommand(cmd)
 		return PublicURLResult{}, err
 	}
 
 	return PublicURLResult{
 		BaseURL: baseURL.String(),
 		Host:    baseURL.Host,
-		Close:   tunnel.Close,
+		Close: func() error {
+			return stopCommand(cmd)
+		},
 	}, nil
 }
 
@@ -103,4 +67,40 @@ func parsePublicBaseURL(raw string) (*url.URL, error) {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed, nil
+}
+
+func waitForCommandStartup(ctx context.Context, cmd *exec.Cmd, startupDelay time.Duration) error {
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	timer := time.NewTimer(startupDelay)
+	defer timer.Stop()
+
+	select {
+	case err := <-waitCh:
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			return fmt.Errorf("cloudflared exited: %w", err)
+		}
+		return fmt.Errorf("cloudflared exited before becoming ready")
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func stopCommand(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if err := cmd.Process.Kill(); err != nil && !strings.Contains(err.Error(), "process already finished") {
+		return err
+	}
+	_, _ = cmd.Process.Wait()
+	return nil
 }
