@@ -296,6 +296,7 @@ type fakePlatformStore struct {
 	listDomainBindingsFn       func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBindingFn      func(ctx context.Context, subject, projectID, hostname string) (bool, error)
 	serviceStatusFn            func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	allocationByServiceIDFn    func(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAgentsFn               func(ctx context.Context) ([]agentRecord, error)
 }
 
@@ -444,6 +445,13 @@ func (f *fakePlatformStore) serviceStatus(ctx context.Context, subject, projectI
 		return f.serviceStatusFn(ctx, subject, projectID, serviceID)
 	}
 	return serviceRecord{}, allocationRecord{}, nil
+}
+
+func (f *fakePlatformStore) allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error) {
+	if f.allocationByServiceIDFn != nil {
+		return f.allocationByServiceIDFn(ctx, serviceID)
+	}
+	return allocationRecord{}, nil
 }
 
 func (f *fakePlatformStore) listAgents(ctx context.Context) ([]agentRecord, error) {

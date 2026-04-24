@@ -20,6 +20,19 @@ const (
 	maxLogQueryLimit     = 5000
 )
 
+// LogType identifies where a log line was produced. The string values match
+// the low-cardinality column in ClickHouse so we can directly compare without
+// mapping boilerplate.
+type LogType string
+
+const (
+	LogTypeRuntime LogType = "runtime"
+	LogTypeBuild   LogType = "build"
+	LogTypeDeploy  LogType = "deploy"
+	LogTypeHTTP    LogType = "http"
+	LogTypeNetwork LogType = "network"
+)
+
 var errLogStoreDisabled = errors.New("log storage is not configured")
 
 type LogStore struct {
@@ -36,6 +49,78 @@ type serviceLogRecord struct {
 	RolloutGeneration int64
 	Sequence          uint64
 	Line              string
+	LogType           string
+	BuildID           string
+	Stage             string
+}
+
+// LogLineInput is the unit used by internal control-plane callers (builder
+// service, reconciler, etc.) to synthesize log entries. Runtime logs arrive
+// via the agent gRPC stream and skip this path.
+type LogLineInput struct {
+	ObservedAt        time.Time
+	ProjectID         string
+	ServiceID         string
+	AllocationID      string
+	AgentID           string
+	Stream            string
+	LogType           LogType
+	BuildID           string
+	Stage             string
+	RolloutGeneration int64
+	Sequence          uint64
+	Line              string
+}
+
+type logStoreMigration struct {
+	name  string
+	stmts []string
+}
+
+// logStoreMigrations returns the idempotent schema statements we run on every
+// control-plane start. Returning a slice lets us encode ordering constraints
+// (for example, adding new columns after base table creation) without pulling
+// in a migration framework.
+func logStoreMigrations(retentionDays int) []logStoreMigration {
+	if retentionDays <= 0 {
+		retentionDays = 14
+	}
+	return []logStoreMigration{
+		{
+			name: "service_logs_table",
+			stmts: []string{
+				fmt.Sprintf(`CREATE TABLE IF NOT EXISTS service_logs (
+	observed_at DateTime64(9, 'UTC'),
+	ingested_at DateTime64(9, 'UTC'),
+	project_id String,
+	service_id String,
+	allocation_id String,
+	agent_id String,
+	stream LowCardinality(String),
+	rollout_generation Int64,
+	sequence UInt64,
+	line String,
+	log_type LowCardinality(String) DEFAULT 'runtime',
+	build_id String DEFAULT '',
+	stage LowCardinality(String) DEFAULT ''
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(observed_at)
+ORDER BY (project_id, service_id, log_type, observed_at, allocation_id, sequence)
+TTL toDateTime(observed_at) + INTERVAL %d DAY`, retentionDays),
+			},
+		},
+		{
+			name: "service_logs_add_columns",
+			stmts: []string{
+				// These ALTERs are idempotent thanks to IF NOT EXISTS. They
+				// exist so pre-existing databases created before log_type was
+				// introduced pick up the new columns transparently.
+				`ALTER TABLE service_logs ADD COLUMN IF NOT EXISTS log_type LowCardinality(String) DEFAULT 'runtime'`,
+				`ALTER TABLE service_logs ADD COLUMN IF NOT EXISTS build_id String DEFAULT ''`,
+				`ALTER TABLE service_logs ADD COLUMN IF NOT EXISTS stage LowCardinality(String) DEFAULT ''`,
+			},
+		},
+	}
 }
 
 func OpenLogStore(ctx context.Context, cfg config.LogCaptureConfig) (*LogStore, error) {
@@ -77,28 +162,6 @@ func normalizeLogCaptureConfig(cfg *config.LogCaptureConfig) {
 	}
 }
 
-func serviceLogsSchema(retentionDays int) string {
-	if retentionDays <= 0 {
-		retentionDays = 14
-	}
-	return fmt.Sprintf(`
-CREATE TABLE IF NOT EXISTS service_logs (
-	observed_at DateTime64(9, 'UTC'),
-	ingested_at DateTime64(9, 'UTC'),
-	project_id String,
-	service_id String,
-	allocation_id String,
-	agent_id String,
-	stream LowCardinality(String),
-	rollout_generation Int64,
-	sequence UInt64,
-	line String
-) ENGINE = MergeTree
-PARTITION BY toYYYYMM(observed_at)
-ORDER BY (project_id, service_id, observed_at, allocation_id, sequence)
-TTL toDateTime(observed_at) + INTERVAL %d DAY`, retentionDays)
-}
-
 func (s *LogStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
@@ -114,19 +177,23 @@ func (s *LogStore) ensureSchema(ctx context.Context, retentionDays int) error {
 	if !s.Enabled() {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, serviceLogsSchema(retentionDays)); err != nil {
-		return fmt.Errorf("create clickhouse service_logs schema: %w", err)
+	for _, migration := range logStoreMigrations(retentionDays) {
+		for _, stmt := range migration.stmts {
+			if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("apply log migration %s: %w", migration.name, err)
+			}
+		}
 	}
 	return nil
 }
 
+// WriteAgentBatch persists runtime log entries reported by an agent over the
+// long-lived gRPC stream.
 func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	if !s.Enabled() || batch == nil || len(batch.GetEntries()) == 0 {
 		return nil
 	}
-	now := time.Now().UTC()
-	values := make([]string, 0, len(batch.GetEntries()))
-	args := make([]any, 0, len(batch.GetEntries())*10)
+	inputs := make([]LogLineInput, 0, len(batch.GetEntries()))
 	for _, entry := range batch.GetEntries() {
 		if strings.TrimSpace(entry.GetProjectId()) == "" ||
 			strings.TrimSpace(entry.GetServiceId()) == "" ||
@@ -134,28 +201,64 @@ func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *a
 			continue
 		}
 		observedAt := entry.GetObservedAt().AsTime()
+		inputs = append(inputs, LogLineInput{
+			ObservedAt:        observedAt,
+			ProjectID:         entry.GetProjectId(),
+			ServiceID:         entry.GetServiceId(),
+			AllocationID:      entry.GetAllocationId(),
+			AgentID:           agentID,
+			Stream:            entry.GetStream(),
+			LogType:           logTypeFromProto(entry.GetLogType()),
+			BuildID:           entry.GetBuildId(),
+			Stage:             entry.GetStage(),
+			RolloutGeneration: entry.GetRolloutGeneration(),
+			Sequence:          entry.GetSequence(),
+			Line:              entry.GetLine(),
+		})
+	}
+	return s.WriteLogLines(ctx, inputs)
+}
+
+// WriteLogLines persists log entries authored by the control plane itself
+// (build lifecycle, deploy phase transitions, …). Runtime logs produced by
+// agents go through WriteAgentBatch instead.
+func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) error {
+	if !s.Enabled() || len(inputs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	values := make([]string, 0, len(inputs))
+	args := make([]any, 0, len(inputs)*13)
+	for _, in := range inputs {
+		if strings.TrimSpace(in.ProjectID) == "" || strings.TrimSpace(in.ServiceID) == "" {
+			continue
+		}
+		observedAt := in.ObservedAt
 		if observedAt.IsZero() {
 			observedAt = now
 		}
-		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		logType := normalizeLogType(in.LogType)
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		args = append(args,
 			observedAt.UTC(),
 			now,
-			entry.GetProjectId(),
-			entry.GetServiceId(),
-			entry.GetAllocationId(),
-			agentID,
-			normalizeLogStream(entry.GetStream()),
-			entry.GetRolloutGeneration(),
-			entry.GetSequence(),
-			entry.GetLine(),
+			in.ProjectID,
+			in.ServiceID,
+			in.AllocationID,
+			in.AgentID,
+			normalizeLogStream(in.Stream),
+			in.RolloutGeneration,
+			in.Sequence,
+			in.Line,
+			string(logType),
+			in.BuildID,
+			normalizeStageName(in.Stage),
 		)
 	}
 	if len(values) == 0 {
 		return nil
 	}
-	query := `
-INSERT INTO service_logs (
+	query := `INSERT INTO service_logs (
 	observed_at,
 	ingested_at,
 	project_id,
@@ -165,7 +268,10 @@ INSERT INTO service_logs (
 	stream,
 	rollout_generation,
 	sequence,
-	line
+	line,
+	log_type,
+	build_id,
+	stage
 ) VALUES ` + strings.Join(values, ",")
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("insert clickhouse log batch: %w", err)
@@ -190,6 +296,14 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 		filters = append(filters, "allocation_id = ?")
 		args = append(args, allocationID)
 	}
+	if buildID := strings.TrimSpace(req.GetBuildId()); buildID != "" {
+		filters = append(filters, "build_id = ?")
+		args = append(args, buildID)
+	}
+	if logType := logTypeFromProto(req.GetLogType()); logType != "" {
+		filters = append(filters, "log_type = ?")
+		args = append(args, string(logType))
+	}
 	if start := req.GetStartTime(); start != nil {
 		filters = append(filters, "observed_at >= ?")
 		args = append(args, start.AsTime().UTC())
@@ -198,9 +312,15 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 		filters = append(filters, "observed_at <= ?")
 		args = append(args, end.AsTime().UTC())
 	}
+	// Case-insensitive substring match. Using positionCaseInsensitive avoids
+	// building server-side regex and keeps the query cheap on ClickHouse.
+	if search := strings.TrimSpace(req.GetSearch()); search != "" {
+		filters = append(filters, "positionCaseInsensitive(line, ?) > 0")
+		args = append(args, search)
+	}
 	args = append(args, limit)
 	query := `
-SELECT observed_at, project_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line
+SELECT observed_at, project_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line, log_type, build_id, stage
   FROM service_logs
  WHERE ` + strings.Join(filters, " AND ") + `
  ORDER BY observed_at DESC, sequence DESC
@@ -224,6 +344,9 @@ SELECT observed_at, project_id, service_id, allocation_id, agent_id, stream, rol
 			&rec.RolloutGeneration,
 			&rec.Sequence,
 			&rec.Line,
+			&rec.LogType,
+			&rec.BuildID,
+			&rec.Stage,
 		); err != nil {
 			return nil, fmt.Errorf("scan clickhouse service log: %w", err)
 		}
@@ -247,5 +370,67 @@ func normalizeLogStream(stream string) string {
 		return "stderr"
 	default:
 		return "combined"
+	}
+}
+
+func normalizeLogType(t LogType) LogType {
+	switch LogType(strings.TrimSpace(strings.ToLower(string(t)))) {
+	case LogTypeBuild:
+		return LogTypeBuild
+	case LogTypeDeploy:
+		return LogTypeDeploy
+	case LogTypeHTTP:
+		return LogTypeHTTP
+	case LogTypeNetwork:
+		return LogTypeNetwork
+	case LogTypeRuntime:
+		return LogTypeRuntime
+	default:
+		return LogTypeRuntime
+	}
+}
+
+func normalizeStageName(stage string) string {
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return ""
+	}
+	return strings.ToLower(stage)
+}
+
+// logTypeFromProto returns the internal LogType that corresponds to a proto
+// enum. Unspecified maps to the empty string which the query builder treats as
+// "no filter" and the writer treats as runtime.
+func logTypeFromProto(t platformv1.ServiceLogType) LogType {
+	switch t {
+	case platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME:
+		return LogTypeRuntime
+	case platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD:
+		return LogTypeBuild
+	case platformv1.ServiceLogType_SERVICE_LOG_TYPE_DEPLOY:
+		return LogTypeDeploy
+	case platformv1.ServiceLogType_SERVICE_LOG_TYPE_HTTP:
+		return LogTypeHTTP
+	case platformv1.ServiceLogType_SERVICE_LOG_TYPE_NETWORK:
+		return LogTypeNetwork
+	default:
+		return ""
+	}
+}
+
+func logTypeToProto(t string) platformv1.ServiceLogType {
+	switch LogType(t) {
+	case LogTypeRuntime:
+		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME
+	case LogTypeBuild:
+		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD
+	case LogTypeDeploy:
+		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_DEPLOY
+	case LogTypeHTTP:
+		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_HTTP
+	case LogTypeNetwork:
+		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_NETWORK
+	default:
+		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME
 	}
 }

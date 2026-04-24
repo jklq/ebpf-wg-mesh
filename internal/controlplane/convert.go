@@ -115,6 +115,9 @@ func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
 		RolloutGeneration: rec.RolloutGeneration,
 		Sequence:          rec.Sequence,
 		Line:              rec.Line,
+		LogType:           logTypeToProto(rec.LogType),
+		BuildId:           rec.BuildID,
+		Stage:             rec.Stage,
 	}
 }
 

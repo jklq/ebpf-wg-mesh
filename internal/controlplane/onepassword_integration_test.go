@@ -40,25 +40,18 @@ func TestOnePasswordEnvironmentProvidesGitHubDevstackContract(t *testing.T) {
 		t.Fatalf("missing required GitHub devstack keys: %v", missing)
 	}
 
-	ngrokAuthtoken := vars[localteststack.NgrokAuthtokenKey]
-	ngrokDomain := vars[localteststack.NgrokDomainKey]
-	if ngrokAuthtoken == "" || ngrokDomain == "" {
-		t.Skipf(
-			"set %s and %s in the 1Password environment to validate public URL derivation",
-			localteststack.NgrokAuthtokenKey,
-			localteststack.NgrokDomainKey,
+	tunnelToken := vars[localteststack.CloudflareTunnelTokenKey]
+	hostname := vars[localteststack.CloudflareHostnameKey]
+	if tunnelToken == "" || hostname == "" {
+		t.Fatalf(
+			"missing required localteststack tunnel runtime keys: %s=%t %s=%t",
+			localteststack.CloudflareTunnelTokenKey,
+			tunnelToken != "",
+			localteststack.CloudflareHostnameKey,
+			hostname != "",
 		)
 	}
-	publicURL, err := localteststack.ResolvePublicURLForUpstream(ctx, ngrokAuthtoken, ngrokDomain, "http://platform.localtest.me:8080", nil)
-	if err != nil {
-		t.Fatalf("ResolvePublicURL: %v", err)
-	}
-	if publicURL.Host == "" {
-		t.Fatal("expected a host in the resolved public URL")
-	}
-	if publicURL.BaseURL != "https://"+ngrokDomain {
-		t.Fatalf("unexpected public URL %q", publicURL.BaseURL)
-	}
+	publicBaseURL := "https://" + hostname
 
 	cfg := config.ControlPlaneConfig{
 		Ingress: config.IngressConfig{
@@ -69,7 +62,7 @@ func TestOnePasswordEnvironmentProvidesGitHubDevstackContract(t *testing.T) {
 		localteststack.DashboardPublicBaseURLKey:     "http://platform.localtest.me:8080",
 		localteststack.DashboardIngressTargetHostKey: "platform.localtest.me",
 	}
-	result, err := localteststack.ApplyEnvironmentOverlay(&cfg, dashboardEnv, vars, publicURL.BaseURL)
+	result, err := localteststack.ApplyEnvironmentOverlay(&cfg, dashboardEnv, vars, publicBaseURL)
 	if err != nil {
 		t.Fatalf("ApplyEnvironmentOverlay: %v", err)
 	}

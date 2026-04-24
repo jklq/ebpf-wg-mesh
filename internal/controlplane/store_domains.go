@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -192,8 +193,20 @@ func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID
 	if err != nil {
 		return serviceRecord{}, allocationRecord{}, err
 	}
+	alloc, err := s.allocationByServiceID(ctx, serviceID)
+	if err != nil {
+		return serviceRecord{}, allocationRecord{}, err
+	}
+	return service, alloc, nil
+}
+
+// allocationByServiceID returns the single allocation row associated with a
+// service, if any. A missing allocation (sql.ErrNoRows) is treated as a
+// non-error empty record so callers that just want stage projections can keep
+// going without special-casing the not-yet-scheduled path.
+func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error) {
 	var alloc allocationRecord
-	err = s.db.QueryRowContext(ctx,
+	err := s.db.QueryRowContext(ctx,
 		`SELECT id, service_id, project_id, agent_id, desired_spec_revision, applied_spec_revision, phase, message, allocation_ip, healthy, updated_at, desired_rollout_generation, applied_rollout_generation, healthy_ports
 		   FROM allocations
 		  WHERE service_id = $1`,
@@ -214,8 +227,11 @@ func (s *Store) serviceStatus(ctx context.Context, subject, projectID, serviceID
 		&alloc.AppliedRolloutGeneration,
 		(*jsonInt32Slice)(&alloc.HealthyPorts),
 	)
-	if err != nil {
-		return serviceRecord{}, allocationRecord{}, err
+	if errors.Is(err, sql.ErrNoRows) {
+		return allocationRecord{}, nil
 	}
-	return service, alloc, nil
+	if err != nil {
+		return allocationRecord{}, err
+	}
+	return alloc, nil
 }

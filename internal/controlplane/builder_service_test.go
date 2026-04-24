@@ -5,9 +5,12 @@ package controlplane
 import (
 	"context"
 	"testing"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type recordingNotifier struct {
@@ -136,4 +139,222 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	if len(notifier.agentIDs) != 0 {
 		t.Fatalf("expected failed completion not to notify agents, got %v", notifier.agentIDs)
 	}
+}
+
+func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState: %v", err)
+	}
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+
+	writer := &recordingLogWriter{enabled: true}
+	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
+	observedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+
+	_, err = builderService.ReportBuildLogs(
+		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
+		&platformv1.ReportBuildLogsRequest{
+			BuildId: build.ID,
+			Lines: []*platformv1.BuildLogLine{
+				{
+					ObservedAt: timestamppb.New(observedAt),
+					Stream:     "stdout",
+					Sequence:   7,
+					Line:       "step 1/3\r\n",
+				},
+				{
+					Stream:   "mystery",
+					Sequence: 8,
+					Line:     "unknown stream",
+				},
+				{
+					Stream:   "stderr",
+					Sequence: 9,
+					Line:     "\r\n",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("ReportBuildLogs: %v", err)
+	}
+
+	lines := writer.Flatten()
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 persisted lines, got %d", len(lines))
+	}
+	if lines[0].ProjectID != service.ProjectID || lines[0].ServiceID != service.ID {
+		t.Fatalf("unexpected service scoping %+v", lines[0])
+	}
+	if lines[0].AgentID != "builder-1" {
+		t.Fatalf("expected caller builder id to be recorded, got %q", lines[0].AgentID)
+	}
+	if lines[0].LogType != LogTypeBuild || lines[0].BuildID != build.ID || lines[0].Stage != StageBuild {
+		t.Fatalf("unexpected build log metadata %+v", lines[0])
+	}
+	if lines[0].Stream != "stdout" || lines[0].Line != "step 1/3" || !lines[0].ObservedAt.Equal(observedAt) {
+		t.Fatalf("unexpected first line %+v", lines[0])
+	}
+	if lines[1].Stream != "combined" || lines[1].Line != "unknown stream" || lines[1].Sequence != 8 {
+		t.Fatalf("unexpected second line %+v", lines[1])
+	}
+}
+
+func TestBuilderServiceReportBuildLogsReturnsSuccessWhenEmitterDisabled(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState: %v", err)
+	}
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+
+	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: &recordingLogWriter{enabled: false}}))
+	if _, err := builderService.ReportBuildLogs(
+		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
+		&platformv1.ReportBuildLogsRequest{
+			BuildId: build.ID,
+			Lines:   []*platformv1.BuildLogLine{{Line: "ignored"}},
+		},
+	); err != nil {
+		t.Fatalf("ReportBuildLogs with disabled emitter: %v", err)
+	}
+}
+
+func TestBuilderServiceReportBuildLogsEmptyBatchIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState: %v", err)
+	}
+	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+
+	writer := &recordingLogWriter{enabled: true}
+	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
+	if _, err := builderService.ReportBuildLogs(
+		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
+		&platformv1.ReportBuildLogsRequest{BuildId: build.ID},
+	); err != nil {
+		t.Fatalf("ReportBuildLogs: %v", err)
+	}
+	if got := len(writer.Flatten()); got != 0 {
+		t.Fatalf("expected no persisted lines for empty batch, got %d", got)
+	}
+}
+
+type recordingLogWriter struct {
+	enabled bool
+	batches [][]LogLineInput
+}
+
+func (w *recordingLogWriter) Enabled() bool {
+	return w != nil && w.enabled
+}
+
+func (w *recordingLogWriter) WriteLogLines(_ context.Context, inputs []LogLineInput) error {
+	if !w.Enabled() {
+		return nil
+	}
+	clone := append([]LogLineInput(nil), inputs...)
+	w.batches = append(w.batches, clone)
+	return nil
+}
+
+func (w *recordingLogWriter) Flatten() []LogLineInput {
+	var out []LogLineInput
+	for _, batch := range w.batches {
+		out = append(out, batch...)
+	}
+	return out
 }

@@ -96,7 +96,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 		"http://127.0.0.1:2019/load",
 		store,
 		WithIngressStaticRoutes([]IngressStaticRoute{{
-			Hosts:    []string{"platform.localtest.me", "mesh.ngrok.app"},
+			Hosts:    []string{"platform.localtest.me", "mesh.dev.example.test"},
 			Upstream: "host.docker.internal:41235",
 		}}),
 		WithIngressListenAddrs([]string{":8080"}),
@@ -121,7 +121,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 		t.Fatalf("expected 2 routes, got %d", len(server.Routes))
 	}
 	staticHosts := server.Routes[0].Match[0].Host
-	if strings.Join(staticHosts, ",") != "mesh.ngrok.app,platform.localtest.me" {
+	if strings.Join(staticHosts, ",") != "mesh.dev.example.test,platform.localtest.me" {
 		t.Fatalf("unexpected static route hosts %+v", staticHosts)
 	}
 	if got := server.Routes[0].Handle[0].Upstreams[0].Dial; got != "host.docker.internal:41235" {
