@@ -19,22 +19,31 @@ func TestDescribeOnePasswordLoadErrorForDesktopAccountMismatch(t *testing.T) {
 	}
 }
 
-func TestDescribeNgrokStartupErrorForInvalidAuthtoken(t *testing.T) {
+func TestDescribeCloudflareStartupErrorForMissingTunnelToken(t *testing.T) {
 	t.Parallel()
 
-	message := describeNgrokStartupError(errors.New("start ngrok tunnel: failed to connect: ERR_NGROK_107"), "mesh.example.test")
-	if !strings.Contains(message, "invalid NGROK_AUTHTOKEN") {
+	message := describeCloudflareStartupError(errors.New("start cloudflare tunnel: CLOUDFLARE_TUNNEL_TOKEN is required"), "mesh.example.test")
+	if !strings.Contains(message, "CLOUDFLARE_TUNNEL_TOKEN is required") {
 		t.Fatalf("unexpected message %q", message)
 	}
 	if !strings.Contains(message, "mesh.example.test") {
-		t.Fatalf("expected domain in %q", message)
+		t.Fatalf("expected hostname in %q", message)
 	}
 }
 
-func TestDescribeNgrokStartupErrorForTimeout(t *testing.T) {
+func TestDescribeCloudflareStartupErrorForEarlyExit(t *testing.T) {
 	t.Parallel()
 
-	message := describeNgrokStartupError(context.DeadlineExceeded, "mesh.example.test")
+	message := describeCloudflareStartupError(errors.New("start cloudflare tunnel: cloudflared exited: exit status 1"), "mesh.example.test")
+	if !strings.Contains(message, "cloudflared exited before becoming ready") {
+		t.Fatalf("unexpected message %q", message)
+	}
+}
+
+func TestDescribeCloudflareStartupErrorForTimeout(t *testing.T) {
+	t.Parallel()
+
+	message := describeCloudflareStartupError(context.DeadlineExceeded, "mesh.example.test")
 	if !strings.Contains(message, "timed out after 30s") {
 		t.Fatalf("unexpected message %q", message)
 	}

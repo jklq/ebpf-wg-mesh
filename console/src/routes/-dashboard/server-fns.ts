@@ -1,7 +1,10 @@
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
-import type { UpdateServiceInput } from "#/lib/dashboard/core/types.server";
+import type {
+	DashboardServiceLogType,
+	UpdateServiceInput,
+} from "#/lib/dashboard/core/types.server";
 
 export const loadHome = createServerFn({ method: "GET" }).handler(async () => {
 	const svc = await import("#/lib/dashboard/server");
@@ -22,6 +25,26 @@ export const fetchServiceStatus = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.getServiceStatusFromSession(data);
+	});
+
+export const fetchServiceLogs = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				allocationId?: string;
+				limit?: number;
+				logType?: DashboardServiceLogType;
+				buildId?: string;
+				search?: string;
+				startTime?: Date;
+				endTime?: Date;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.listServiceLogsFromSession(data);
 	});
 
 export const fetchDomainBindings = createServerFn({ method: "POST" })
@@ -123,4 +146,20 @@ export const doConfirmRepository = createServerFn({ method: "POST" })
 			});
 		}
 		return state;
+	});
+
+export const doCreateServiceFast = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				repositorySelector: string;
+				serviceName?: string;
+				trackedRef?: string;
+				dockerfilePath?: string;
+				contextDir?: string;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.createServiceFastFromSession(data);
 	});

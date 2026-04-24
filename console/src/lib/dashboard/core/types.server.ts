@@ -36,6 +36,22 @@ export type DashboardBuildState =
 	| "superseded"
 	| "unspecified";
 
+export type DashboardDeploymentStageState =
+	| "pending"
+	| "running"
+	| "succeeded"
+	| "failed"
+	| "skipped"
+	| "unspecified";
+
+export type DashboardServiceLogType =
+	| "runtime"
+	| "build"
+	| "deploy"
+	| "http"
+	| "network"
+	| "unspecified";
+
 export interface DashboardBuildRecipe {
 	dockerfilePath: string;
 	contextDir: string;
@@ -113,7 +129,22 @@ export interface DashboardBuildStatus {
 	state: DashboardBuildState;
 	commitSha: string;
 	imageDigest: string;
+	queuedAt?: Date;
+	startedAt?: Date;
+	finishedAt?: Date;
 	failureReason: string;
+	commitMessage?: string;
+	commitAuthor?: string;
+	stages?: Array<DashboardDeploymentStage>;
+}
+
+export interface DashboardDeploymentStage {
+	key: string;
+	label: string;
+	detail: string;
+	state: DashboardDeploymentStageState;
+	startedAt?: Date;
+	finishedAt?: Date;
 }
 
 export interface DashboardServiceSourceSummary {
@@ -126,6 +157,11 @@ export interface DashboardServiceRecord {
 	projectId: string;
 	name: string;
 	spec?: DashboardServiceSpec;
+	specRevision?: number;
+	allocatedAgentId?: string;
+	createdAt?: Date;
+	updatedAt?: Date;
+	rolloutGeneration?: number;
 	sourceSummary?: DashboardServiceSourceSummary;
 	lastSuccessfulCommitSha?: string;
 	resolvedImage?: string;
@@ -133,16 +169,56 @@ export interface DashboardServiceRecord {
 }
 
 export interface DashboardAllocationStatus {
+	allocationId: string;
+	serviceId: string;
+	agentId: string;
+	desiredSpecRevision: number;
+	appliedSpecRevision: number;
 	phase: string;
 	message: string;
 	allocationIp: string;
 	healthy: boolean;
+	updatedAt?: Date;
+	desiredRolloutGeneration: number;
+	appliedRolloutGeneration: number;
 	healthyPorts: number[];
 }
 
 export interface DashboardServiceStatus {
 	service: DashboardServiceRecord;
 	allocation?: DashboardAllocationStatus;
+}
+
+export interface DashboardServiceLogLine {
+	observedAt?: Date;
+	allocationId: string;
+	agentId: string;
+	stream: string;
+	rolloutGeneration: number;
+	sequence: number;
+	line: string;
+	logType?: DashboardServiceLogType;
+	buildId?: string;
+	stage?: string;
+}
+
+export interface DashboardDeploymentRecord {
+	id: string;
+	rolloutGeneration: number;
+	specRevision?: number;
+	createdAt?: Date;
+	repositorySelector?: string;
+	trackedRef?: string;
+	build?: DashboardBuildStatus;
+	allocation?: DashboardAllocationStatus;
+	isCurrent: boolean;
+}
+
+export interface CreateServiceFastResult {
+	project: DashboardProject;
+	service: DashboardServiceRecord;
+	serviceStatus: DashboardServiceStatus | null;
+	onboarding: DashboardOnboardingDraft;
 }
 
 export interface DashboardDomainBinding {
@@ -386,6 +462,24 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { projectId: string; serviceId: string },
 	): Promise<DashboardServiceStatus>;
+	listServiceLogs(
+		user: DashboardUser,
+		input: {
+			projectId: string;
+			serviceId: string;
+			allocationId?: string;
+			limit?: number;
+			logType?: DashboardServiceLogType;
+			buildId?: string;
+			search?: string;
+			startTime?: Date;
+			endTime?: Date;
+		},
+	): Promise<Array<DashboardServiceLogLine>>;
+	listServiceDeployments(
+		user: DashboardUser,
+		input: { projectId: string; serviceId: string; limit?: number },
+	): Promise<Array<DashboardDeploymentRecord>>;
 	listDomainBindings(
 		user: DashboardUser,
 		input: { projectId: string; serviceId: string },
@@ -497,6 +591,13 @@ export interface DashboardService {
 		dockerfilePath?: string;
 		contextDir?: string;
 	}): Promise<DashboardOnboardingDraft>;
+	createServiceFastFromSession(input: {
+		repositorySelector: string;
+		serviceName?: string;
+		trackedRef?: string;
+		dockerfilePath?: string;
+		contextDir?: string;
+	}): Promise<CreateServiceFastResult>;
 	saveHostnameFromSession(hostname: string): Promise<DashboardOnboardingDraft>;
 	publishDomainFromSession(): Promise<DashboardDomainBinding>;
 	clearSession(): Promise<void>;
@@ -505,6 +606,22 @@ export interface DashboardService {
 		projectId: string;
 		serviceId: string;
 	}): Promise<DashboardServiceStatus>;
+	listServiceLogsFromSession(input: {
+		projectId: string;
+		serviceId: string;
+		allocationId?: string;
+		limit?: number;
+		logType?: DashboardServiceLogType;
+		buildId?: string;
+		search?: string;
+		startTime?: Date;
+		endTime?: Date;
+	}): Promise<Array<DashboardServiceLogLine>>;
+	listServiceDeploymentsFromSession(input: {
+		projectId: string;
+		serviceId: string;
+		limit?: number;
+	}): Promise<Array<DashboardDeploymentRecord>>;
 	updateServiceFromSession(
 		input: UpdateServiceInput,
 	): Promise<DashboardServiceRecord>;

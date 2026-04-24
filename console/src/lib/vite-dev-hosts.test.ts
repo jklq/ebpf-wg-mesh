@@ -8,24 +8,24 @@ describe("buildAllowedDevHosts", () => {
 
 	it("adds the public base URL hostname", () => {
 		expect(
-			buildAllowedDevHosts("https://woozy-unextreme-genny.ngrok-free.dev"),
+			buildAllowedDevHosts("https://mesh.dev.example.test"),
 		).toEqual([
 			"127.0.0.1",
 			"localhost",
-			"woozy-unextreme-genny.ngrok-free.dev",
+			"mesh.dev.example.test",
 		]);
 	});
 
 	it("keeps the ingress target host alongside a public callback host", () => {
 		expect(
 			buildAllowedDevHosts(
-				"https://woozy-unextreme-genny.ngrok-free.dev",
+				"https://mesh.dev.example.test",
 				"platform.localtest.me",
 			),
 		).toEqual([
 			"127.0.0.1",
 			"localhost",
-			"woozy-unextreme-genny.ngrok-free.dev",
+			"mesh.dev.example.test",
 			"platform.localtest.me",
 		]);
 	});

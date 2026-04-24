@@ -22,10 +22,14 @@ import {
 	verifyHostnameOrThrow,
 } from "#/lib/dashboard/core/runtime.server";
 import {
+	type CreateServiceFastResult,
+	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
 	type DashboardProject,
+	type DashboardServiceLogLine,
+	type DashboardServiceLogType,
 	type DashboardServiceRecord,
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
@@ -303,6 +307,20 @@ export async function confirmRepositoryFromSession(
 		contextDir?: string;
 	},
 ): Promise<DashboardOnboardingDraft> {
+	const result = await createServiceFastFromSession(runtime, input);
+	return result.onboarding;
+}
+
+export async function createServiceFastFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		repositorySelector: string;
+		serviceName?: string;
+		trackedRef?: string;
+		dockerfilePath?: string;
+		contextDir?: string;
+	},
+): Promise<CreateServiceFastResult> {
 	const session = await requireSession(runtime);
 	const selector = normalizeRepositorySelector(input.repositorySelector);
 	await platformCall(runtime, "ensurePrincipal", (platform) =>
@@ -373,7 +391,7 @@ export async function confirmRepositoryFromSession(
 			spec: desiredSpec,
 		}),
 	);
-	return saveOnboardingDraft(runtime, session.user.id, {
+	const onboarding = await saveOnboardingDraft(runtime, session.user.id, {
 		currentStep: "build",
 		projectId: project.id,
 		serviceId: service.id,
@@ -383,6 +401,19 @@ export async function confirmRepositoryFromSession(
 		contextDir,
 		hostname: "",
 	});
+	const serviceStatus =
+		(await safePlatformCall(runtime, "getServiceStatus", (platform) =>
+			platform.getServiceStatus(session.user, {
+				projectId: project.id,
+				serviceId: service.id,
+			}),
+		)) ?? null;
+	return {
+		project,
+		service,
+		serviceStatus,
+		onboarding,
+	};
 }
 
 export async function saveHostnameFromSession(
@@ -465,6 +496,36 @@ export async function getServiceStatusFromSession(
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "getServiceStatus", (platform) =>
 		platform.getServiceStatus(session.user, input),
+	);
+}
+
+export async function listServiceLogsFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		projectId: string;
+		serviceId: string;
+		allocationId?: string;
+		limit?: number;
+		logType?: DashboardServiceLogType;
+		buildId?: string;
+		search?: string;
+		startTime?: Date;
+		endTime?: Date;
+	},
+): Promise<Array<DashboardServiceLogLine>> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "listServiceLogs", (platform) =>
+		platform.listServiceLogs(session.user, input),
+	);
+}
+
+export async function listServiceDeploymentsFromSession(
+	runtime: DashboardRuntime,
+	input: { projectId: string; serviceId: string; limit?: number },
+): Promise<Array<DashboardDeploymentRecord>> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "listServiceDeployments", (platform) =>
+		platform.listServiceDeployments(session.user, input),
 	);
 }
 

@@ -18,6 +18,7 @@ type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store     platformStore
 	logStore  serviceLogStore
+	emitter   *LogEmitter
 	notifier  platformNotifier
 	ingress   platformIngress
 	inspector *gitHubSourceInspector
@@ -45,6 +46,7 @@ type platformStore interface {
 	listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, subject, projectID, hostname string) (bool, error)
 	serviceStatus(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAgents(ctx context.Context) ([]agentRecord, error)
 }
 
@@ -66,6 +68,15 @@ type PlatformServiceOption func(*PlatformService)
 func WithServiceLogs(logStore serviceLogStore) PlatformServiceOption {
 	return func(service *PlatformService) {
 		service.logStore = logStore
+	}
+}
+
+// WithServiceLogEmitter wires a LogEmitter so the platform service can write
+// synthetic deploy/initialization log lines (for example, when a service is
+// first scheduled or redeployed). A nil emitter is a valid no-op.
+func WithServiceLogEmitter(emitter *LogEmitter) PlatformServiceOption {
+	return func(service *PlatformService) {
+		service.emitter = emitter
 	}
 }
 
@@ -182,11 +193,31 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "reload service: %v", err)
 	}
+	// Emit an initialization-stage line so the right panel immediately shows
+	// activity. For image-based services this is the only pre-build step; for
+	// source-based services the github/build coordinators will emit follow-up
+	// lines as the pipeline progresses.
+	s.emitInitialization(ctx, service)
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
 	return toProtoService(service), nil
+}
+
+// emitInitialization writes a single synthetic log line describing the initial
+// service scheduling decision. It is a small convenience that keeps the
+// platform service methods concise and the phrasing consistent across create
+// and redeploy paths.
+func (s *PlatformService) emitInitialization(ctx context.Context, service serviceRecord) {
+	if s.emitter == nil || !s.emitter.Enabled() {
+		return
+	}
+	agentID := service.AllocatedAgentID
+	if agentID == "" {
+		agentID = "pending placement"
+	}
+	s.emitter.EmitDeployf(ctx, service, "", "", StageInitialization, "Service scheduled on agent %s (rollout %d)", agentID, service.RolloutGeneration)
 }
 
 func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error) {
@@ -578,7 +609,66 @@ func (s *PlatformService) decorateServiceRecord(ctx context.Context, service ser
 	if service.SourceSummary == nil {
 		service.SourceSummary = buildSourceSummary(service.Spec)
 	}
+	// Stages are projected from the allocation + latest build; if we cannot
+	// load the allocation we still return the stages derived from just the
+	// service+build so the UI gets something to render (showing a "waiting"
+	// deploy stage rather than a hard error).
+	alloc, err := s.store.allocationByServiceID(ctx, service.ID)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	var buildRec *buildRunRecord
+	if service.LatestBuild != nil {
+		rec := buildRunRecordFromProto(service.LatestBuild)
+		buildRec = &rec
+	}
+	stages := projectDeploymentStages(service, buildRec, alloc)
+	if service.LatestBuild == nil && len(stages) > 0 {
+		// We need a vehicle to carry the stages back to the client. The
+		// proto encodes them on BuildStatus today; for services that have
+		// never been built we synthesize a minimal BuildStatus so stages
+		// still round-trip without leaking a new top-level field.
+		service.LatestBuild = &platformv1.BuildStatus{Stages: stages}
+	} else if service.LatestBuild != nil {
+		service.LatestBuild.Stages = stages
+	}
 	return service, nil
+}
+
+// buildRunRecordFromProto rebuilds the (minimal) in-memory buildRunRecord we
+// need for stage projection starting from a proto BuildStatus. We don't
+// round-trip every field — the projector only reads state and timestamps, so
+// we only reconstruct those. Keeping this narrow avoids accidentally widening
+// the implicit contract between decorator and projector.
+func buildRunRecordFromProto(status *platformv1.BuildStatus) buildRunRecord {
+	rec := buildRunRecord{
+		ID:            status.GetBuildId(),
+		CommitSHA:     status.GetCommitSha(),
+		ImageDigest:   status.GetImageDigest(),
+		FailureReason: status.GetFailureReason(),
+	}
+	switch status.GetState() {
+	case platformv1.BuildState_BUILD_STATE_QUEUED:
+		rec.State = buildStateQueued
+	case platformv1.BuildState_BUILD_STATE_RUNNING:
+		rec.State = buildStateRunning
+	case platformv1.BuildState_BUILD_STATE_SUCCEEDED:
+		rec.State = buildStateSucceeded
+	case platformv1.BuildState_BUILD_STATE_FAILED:
+		rec.State = buildStateFailed
+	case platformv1.BuildState_BUILD_STATE_SUPERSEDED:
+		rec.State = buildStateSuperseded
+	}
+	if queued := status.GetQueuedAt(); queued != nil {
+		rec.QueuedAt = queued.AsTime()
+	}
+	if started := status.GetStartedAt(); started != nil {
+		rec.StartedAt = sql.NullTime{Time: started.AsTime(), Valid: true}
+	}
+	if finished := status.GetFinishedAt(); finished != nil {
+		rec.FinishedAt = sql.NullTime{Time: finished.AsTime(), Valid: true}
+	}
+	return rec
 }
 
 func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {

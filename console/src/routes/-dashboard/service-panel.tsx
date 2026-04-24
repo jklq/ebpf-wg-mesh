@@ -118,7 +118,7 @@ export function ServicePanel({
 					/>
 				)}
 				{activeTab === "deployments" && (
-					<PanelDeployments service={service} status={status} />
+					<PanelDeployments service={service} status={status} project={project} />
 				)}
 				{activeTab === "settings" && project && (
 					<PanelSettings

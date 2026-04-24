@@ -8,11 +8,14 @@ import {
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
+	createServiceFastFromSession,
 	createProjectFromSession,
 	deleteDomainBindingFromSession,
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
 	listDomainBindingsFromSession,
+	listServiceDeploymentsFromSession,
+	listServiceLogsFromSession,
 	loadDashboardHome,
 	publishDomainFromSession,
 	saveHostnameFromSession,
@@ -60,6 +63,9 @@ export function createDashboardService(
 		confirmRepositoryFromSession(input) {
 			return confirmRepositoryFromSession(runtime, input);
 		},
+		createServiceFastFromSession(input) {
+			return createServiceFastFromSession(runtime, input);
+		},
 		saveHostnameFromSession(hostname) {
 			return saveHostnameFromSession(runtime, hostname);
 		},
@@ -74,6 +80,12 @@ export function createDashboardService(
 		},
 		getServiceStatusFromSession(input) {
 			return getServiceStatusFromSession(runtime, input);
+		},
+		listServiceLogsFromSession(input) {
+			return listServiceLogsFromSession(runtime, input);
+		},
+		listServiceDeploymentsFromSession(input) {
+			return listServiceDeploymentsFromSession(runtime, input);
 		},
 		updateServiceFromSession(input) {
 			return updateServiceFromSession(runtime, input);

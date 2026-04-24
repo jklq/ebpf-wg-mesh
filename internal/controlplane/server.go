@@ -20,6 +20,7 @@ type Server struct {
 	cfg          config.ControlPlaneConfig
 	store        *Store
 	logStore     *LogStore
+	logEmitter   *LogEmitter
 	notifier     *Notifier
 	authority    *TLSAuthority
 	internalGRPC *grpc.Server
@@ -46,6 +47,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
+	logEmitter := NewLogEmitter(logStore)
 	notifier := NewNotifier()
 	ingressOpts := []IngressSyncerOption{
 		WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
@@ -85,7 +87,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			return nil, err
 		}
 		githubCatalog = NewGitHubCatalog(store, githubClient)
-		githubCoordinator = NewGitHubCoordinator(store, githubCatalog, githubClient, 5*time.Minute)
+		githubCoordinator = NewGitHubCoordinator(store, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter))
 		githubReconciler = NewGitHubReconciler(store, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
 		webhookProcessor = NewGitHubWebhookProcessor(store, githubCoordinator)
 		webhookHandler = NewGitHubWebhookHandler(store, cfg.GitHub.WebhookSecret, webhookProcessor)
@@ -96,6 +98,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		notifier,
 		ingress,
 		WithServiceLogs(logStore),
+		WithServiceLogEmitter(logEmitter),
 		WithGitHubSourceInspection(githubCatalog, githubClient),
 	)
 	authz := NewInternalAuth()
@@ -107,7 +110,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	)
 	agentv1.RegisterAgentControlServer(internal, NewAgentService(store, logStore, notifier, ingress, authority, dashboard))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second))
+	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter)))
 	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler))
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
@@ -118,6 +121,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		cfg:          cfg,
 		store:        store,
 		logStore:     logStore,
+		logEmitter:   logEmitter,
 		notifier:     notifier,
 		authority:    authority,
 		internalGRPC: internal,

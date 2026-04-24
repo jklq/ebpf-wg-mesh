@@ -17,24 +17,47 @@ type GitHubCoordinator struct {
 	store      *Store
 	catalog    *GitHubCatalog
 	client     *GitHubClient
+	emitter    *LogEmitter
 	staleAfter time.Duration
 	retryAfter time.Duration
 }
 
-func NewGitHubCoordinator(store *Store, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration) *GitHubCoordinator {
+// GitHubCoordinatorOption configures optional collaborators on the GitHub
+// coordinator. We use the option pattern so production wiring can opt into
+// behaviors (like synthetic log emission) without changing tests and stub
+// constructions that do not need them.
+type GitHubCoordinatorOption func(*GitHubCoordinator)
+
+// WithGitHubCoordinatorLogEmitter wires a LogEmitter so that the coordinator
+// can emit a build-stage line the moment a new commit is observed — that keeps
+// the service panel showing progress while the builder is still claiming the
+// job.
+func WithGitHubCoordinatorLogEmitter(emitter *LogEmitter) GitHubCoordinatorOption {
+	return func(c *GitHubCoordinator) {
+		c.emitter = emitter
+	}
+}
+
+func NewGitHubCoordinator(store *Store, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
 	if store == nil || catalog == nil || client == nil || !client.Enabled() {
 		return nil
 	}
 	if staleAfter <= 0 {
 		staleAfter = 5 * time.Minute
 	}
-	return &GitHubCoordinator{
+	c := &GitHubCoordinator{
 		store:      store,
 		catalog:    catalog,
 		client:     client,
 		staleAfter: staleAfter,
 		retryAfter: 5 * time.Second,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(c)
+		}
+	}
+	return c
 }
 
 func (c *GitHubCoordinator) Enabled() bool {
@@ -259,7 +282,16 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		return err
 	}
 	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
-	return c.store.withTx(ctx, func(tx *sql.Tx) error {
+	// We capture the service + build so we can emit a synthetic log line
+	// *after* the transaction commits. Emitting inside the tx would risk
+	// posting a line for work that actually rolled back, so we thread the
+	// values out via closure captures.
+	var (
+		committedService serviceRecord
+		committedBuild   buildRunRecord
+		committed        bool
+	)
+	if err := c.store.withTx(ctx, func(tx *sql.Tx) error {
 		revision, err := c.store.upsertSourceRevisionTx(ctx, tx, sourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    binding.ServiceID,
@@ -305,8 +337,19 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 			return err
 		}
 		slog.InfoContext(ctx, "github build queued", "service_id", service.ID, "build_id", build.ID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID, "source_snapshot_id", snapshot.ID)
+		committedService = service
+		committedBuild = build
+		committed = true
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if committed && c.emitter != nil {
+		c.emitter.EmitBuildf(ctx, committedService, committedBuild, StageBuild,
+			"Queued build for commit %s on ref %s", shortSHA(committedBuild.CommitSHA), binding.TrackedRef,
+		)
+	}
+	return nil
 }
 
 func (c *GitHubCoordinator) refreshRepositorySnapshot(ctx context.Context, owner, repo string) error {

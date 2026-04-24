@@ -10,12 +10,15 @@ import { Pool } from "pg";
 import { createDashboardService } from "#/lib/dashboard/core/service.server";
 import {
 	type DashboardConfig,
+	type CreateServiceFastResult,
 	DashboardConfigError,
 	type DashboardDomainBinding,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
 	type DashboardProject,
 	type DashboardServiceRecord,
+	type DashboardServiceLogLine,
+	type DashboardServiceLogType,
 	type DashboardServiceStatus,
 	type DevLoginIdentity,
 	type UpdateServiceInput,
@@ -114,6 +117,16 @@ export function confirmRepositoryFromSession(input: {
 	return service.confirmRepositoryFromSession(input);
 }
 
+export function createServiceFastFromSession(input: {
+	repositorySelector: string;
+	serviceName?: string;
+	trackedRef?: string;
+	dockerfilePath?: string;
+	contextDir?: string;
+}): Promise<CreateServiceFastResult> {
+	return service.createServiceFastFromSession(input);
+}
+
 export function saveHostnameFromSession(
 	hostname: string,
 ): Promise<DashboardOnboardingDraft> {
@@ -129,6 +142,20 @@ export function getServiceStatusFromSession(input: {
 	serviceId: string;
 }): Promise<DashboardServiceStatus> {
 	return service.getServiceStatusFromSession(input);
+}
+
+export function listServiceLogsFromSession(input: {
+	projectId: string;
+	serviceId: string;
+	allocationId?: string;
+	limit?: number;
+	logType?: DashboardServiceLogType;
+	buildId?: string;
+	search?: string;
+	startTime?: Date;
+	endTime?: Date;
+}): Promise<Array<DashboardServiceLogLine>> {
+	return service.listServiceLogsFromSession(input);
 }
 
 export function updateServiceFromSession(
