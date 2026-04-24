@@ -923,6 +923,7 @@ const (
 	BuilderService_ClaimBuild_FullMethodName             = "/platform.v1.BuilderService/ClaimBuild"
 	BuilderService_DownloadSourceSnapshot_FullMethodName = "/platform.v1.BuilderService/DownloadSourceSnapshot"
 	BuilderService_ReportBuildHeartbeat_FullMethodName   = "/platform.v1.BuilderService/ReportBuildHeartbeat"
+	BuilderService_ReportBuildLogs_FullMethodName        = "/platform.v1.BuilderService/ReportBuildLogs"
 	BuilderService_CompleteBuild_FullMethodName          = "/platform.v1.BuilderService/CompleteBuild"
 )
 
@@ -933,6 +934,7 @@ type BuilderServiceClient interface {
 	ClaimBuild(ctx context.Context, in *ClaimBuildRequest, opts ...grpc.CallOption) (*BuildJob, error)
 	DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (*SourceSnapshotArtifact, error)
 	ReportBuildHeartbeat(ctx context.Context, in *BuilderHeartbeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ReportBuildLogs(ctx context.Context, in *ReportBuildLogsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	CompleteBuild(ctx context.Context, in *CompleteBuildRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -974,6 +976,16 @@ func (c *builderServiceClient) ReportBuildHeartbeat(ctx context.Context, in *Bui
 	return out, nil
 }
 
+func (c *builderServiceClient) ReportBuildLogs(ctx context.Context, in *ReportBuildLogsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BuilderService_ReportBuildLogs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *builderServiceClient) CompleteBuild(ctx context.Context, in *CompleteBuildRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -991,6 +1003,7 @@ type BuilderServiceServer interface {
 	ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error)
 	DownloadSourceSnapshot(context.Context, *DownloadSourceSnapshotRequest) (*SourceSnapshotArtifact, error)
 	ReportBuildHeartbeat(context.Context, *BuilderHeartbeatRequest) (*emptypb.Empty, error)
+	ReportBuildLogs(context.Context, *ReportBuildLogsRequest) (*emptypb.Empty, error)
 	CompleteBuild(context.Context, *CompleteBuildRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuilderServiceServer()
 }
@@ -1010,6 +1023,9 @@ func (UnimplementedBuilderServiceServer) DownloadSourceSnapshot(context.Context,
 }
 func (UnimplementedBuilderServiceServer) ReportBuildHeartbeat(context.Context, *BuilderHeartbeatRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportBuildHeartbeat not implemented")
+}
+func (UnimplementedBuilderServiceServer) ReportBuildLogs(context.Context, *ReportBuildLogsRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportBuildLogs not implemented")
 }
 func (UnimplementedBuilderServiceServer) CompleteBuild(context.Context, *CompleteBuildRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompleteBuild not implemented")
@@ -1089,6 +1105,24 @@ func _BuilderService_ReportBuildHeartbeat_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuilderService_ReportBuildLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportBuildLogsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuilderServiceServer).ReportBuildLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuilderService_ReportBuildLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuilderServiceServer).ReportBuildLogs(ctx, req.(*ReportBuildLogsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuilderService_CompleteBuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CompleteBuildRequest)
 	if err := dec(in); err != nil {
@@ -1125,6 +1159,10 @@ var BuilderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportBuildHeartbeat",
 			Handler:    _BuilderService_ReportBuildHeartbeat_Handler,
+		},
+		{
+			MethodName: "ReportBuildLogs",
+			Handler:    _BuilderService_ReportBuildLogs_Handler,
 		},
 		{
 			MethodName: "CompleteBuild",

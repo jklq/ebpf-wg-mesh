@@ -161,6 +161,24 @@ message ServiceSourceSummary {
   }
 }
 
+enum DeploymentStageState {
+  DEPLOYMENT_STAGE_STATE_UNSPECIFIED = 0;
+  DEPLOYMENT_STAGE_STATE_PENDING = 1;
+  DEPLOYMENT_STAGE_STATE_RUNNING = 2;
+  DEPLOYMENT_STAGE_STATE_SUCCEEDED = 3;
+  DEPLOYMENT_STAGE_STATE_FAILED = 4;
+  DEPLOYMENT_STAGE_STATE_SKIPPED = 5;
+}
+
+message DeploymentStage {
+  string key = 1;
+  string label = 2;
+  string detail = 3;
+  DeploymentStageState state = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp finished_at = 6;
+}
+
 message BuildStatus {
   string build_id = 1;
   BuildState state = 2;
@@ -170,6 +188,9 @@ message BuildStatus {
   google.protobuf.Timestamp started_at = 6;
   google.protobuf.Timestamp finished_at = 7;
   string failure_reason = 8;
+  string commit_message = 9;
+  string commit_author = 10;
+  repeated DeploymentStage stages = 11;
 }
 
 message Service {
@@ -376,6 +397,15 @@ message GetServiceStatusRequest {
   string service_id = 2;
 }
 
+enum ServiceLogType {
+  SERVICE_LOG_TYPE_UNSPECIFIED = 0;
+  SERVICE_LOG_TYPE_RUNTIME = 1;
+  SERVICE_LOG_TYPE_BUILD = 2;
+  SERVICE_LOG_TYPE_DEPLOY = 3;
+  SERVICE_LOG_TYPE_HTTP = 4;
+  SERVICE_LOG_TYPE_NETWORK = 5;
+}
+
 message ListServiceLogsRequest {
   string project_id = 1;
   string service_id = 2;
@@ -383,6 +413,9 @@ message ListServiceLogsRequest {
   google.protobuf.Timestamp start_time = 4;
   google.protobuf.Timestamp end_time = 5;
   int32 limit = 6;
+  ServiceLogType log_type = 7;
+  string build_id = 8;
+  string search = 9;
 }
 
 message ServiceLogLine {
@@ -395,6 +428,9 @@ message ServiceLogLine {
   int64 rollout_generation = 7;
   uint64 sequence = 8;
   string line = 9;
+  ServiceLogType log_type = 10;
+  string build_id = 11;
+  string stage = 12;
 }
 
 message ListServiceLogsResponse {
@@ -435,6 +471,19 @@ message SourceSnapshotArtifact {
 message BuilderHeartbeatRequest {
   string builder_id = 1;
   string build_id = 2;
+}
+
+message ReportBuildLogsRequest {
+  string builder_id = 1;
+  string build_id = 2;
+  repeated BuildLogLine lines = 3;
+}
+
+message BuildLogLine {
+  google.protobuf.Timestamp observed_at = 1;
+  string stream = 2;
+  uint64 sequence = 3;
+  string line = 4;
 }
 
 message CompleteBuildRequest {
@@ -487,6 +536,7 @@ service BuilderService {
   rpc ClaimBuild(ClaimBuildRequest) returns (BuildJob);
   rpc DownloadSourceSnapshot(DownloadSourceSnapshotRequest) returns (SourceSnapshotArtifact);
   rpc ReportBuildHeartbeat(BuilderHeartbeatRequest) returns (google.protobuf.Empty);
+  rpc ReportBuildLogs(ReportBuildLogsRequest) returns (google.protobuf.Empty);
   rpc CompleteBuild(CompleteBuildRequest) returns (google.protobuf.Empty);
 }
 

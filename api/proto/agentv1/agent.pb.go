@@ -944,15 +944,18 @@ func (x *StatusReport) GetServices() []*ServiceCondition {
 }
 
 type LogEntry struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	ObservedAt        *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
-	ProjectId         string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	ServiceId         string                 `protobuf:"bytes,3,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	AllocationId      string                 `protobuf:"bytes,4,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
-	Stream            string                 `protobuf:"bytes,5,opt,name=stream,proto3" json:"stream,omitempty"`
-	RolloutGeneration int64                  `protobuf:"varint,6,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
-	Sequence          uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	Line              string                 `protobuf:"bytes,8,opt,name=line,proto3" json:"line,omitempty"`
+	state             protoimpl.MessageState    `protogen:"open.v1"`
+	ObservedAt        *timestamppb.Timestamp    `protobuf:"bytes,1,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ProjectId         string                    `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ServiceId         string                    `protobuf:"bytes,3,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	AllocationId      string                    `protobuf:"bytes,4,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	Stream            string                    `protobuf:"bytes,5,opt,name=stream,proto3" json:"stream,omitempty"`
+	RolloutGeneration int64                     `protobuf:"varint,6,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
+	Sequence          uint64                    `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Line              string                    `protobuf:"bytes,8,opt,name=line,proto3" json:"line,omitempty"`
+	LogType           platformv1.ServiceLogType `protobuf:"varint,9,opt,name=log_type,json=logType,proto3,enum=platform.v1.ServiceLogType" json:"log_type,omitempty"`
+	BuildId           string                    `protobuf:"bytes,10,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	Stage             string                    `protobuf:"bytes,11,opt,name=stage,proto3" json:"stage,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1039,6 +1042,27 @@ func (x *LogEntry) GetSequence() uint64 {
 func (x *LogEntry) GetLine() string {
 	if x != nil {
 		return x.Line
+	}
+	return ""
+}
+
+func (x *LogEntry) GetLogType() platformv1.ServiceLogType {
+	if x != nil {
+		return x.LogType
+	}
+	return platformv1.ServiceLogType(0)
+}
+
+func (x *LogEntry) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *LogEntry) GetStage() string {
+	if x != nil {
+		return x.Stage
 	}
 	return ""
 }
@@ -1362,7 +1386,7 @@ const file_agent_proto_rawDesc = "" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
-	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\xa1\x02\n" +
+	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\x8a\x03\n" +
 	"\bLogEntry\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12\x1d\n" +
@@ -1374,7 +1398,11 @@ const file_agent_proto_rawDesc = "" +
 	"\x06stream\x18\x05 \x01(\tR\x06stream\x12-\n" +
 	"\x12rollout_generation\x18\x06 \x01(\x03R\x11rolloutGeneration\x12\x1a\n" +
 	"\bsequence\x18\a \x01(\x04R\bsequence\x12\x12\n" +
-	"\x04line\x18\b \x01(\tR\x04line\"S\n" +
+	"\x04line\x18\b \x01(\tR\x04line\x126\n" +
+	"\blog_type\x18\t \x01(\x0e2\x1b.platform.v1.ServiceLogTypeR\alogType\x12\x19\n" +
+	"\bbuild_id\x18\n" +
+	" \x01(\tR\abuildId\x12\x14\n" +
+	"\x05stage\x18\v \x01(\tR\x05stage\"S\n" +
 	"\bLogBatch\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12,\n" +
 	"\aentries\x18\x02 \x03(\v2\x12.agent.v1.LogEntryR\aentries\"\xf9\x01\n" +
@@ -1423,6 +1451,7 @@ var file_agent_proto_goTypes = []any{
 	(*AgentServerMessage)(nil),             // 15: agent.v1.AgentServerMessage
 	(*timestamppb.Timestamp)(nil),          // 16: google.protobuf.Timestamp
 	(*platformv1.ResolvedServiceSpec)(nil), // 17: platform.v1.ResolvedServiceSpec
+	(platformv1.ServiceLogType)(0),         // 18: platform.v1.ServiceLogType
 }
 var file_agent_proto_depIdxs = []int32{
 	16, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
@@ -1435,21 +1464,22 @@ var file_agent_proto_depIdxs = []int32{
 	9,  // 7: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
 	10, // 8: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
 	16, // 9: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	12, // 10: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	0,  // 11: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	5,  // 12: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	11, // 13: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	13, // 14: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	8,  // 15: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	1,  // 16: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	14, // 17: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	2,  // 18: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	15, // 19: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	18, // [18:20] is the sub-list for method output_type
-	16, // [16:18] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	18, // 10: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	12, // 11: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	0,  // 12: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	5,  // 13: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	11, // 14: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	13, // 15: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	8,  // 16: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	1,  // 17: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	14, // 18: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	2,  // 19: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	15, // 20: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	19, // [19:21] is the sub-list for method output_type
+	17, // [17:19] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }

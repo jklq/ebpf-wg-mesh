@@ -113,6 +113,9 @@ message LogEntry {
   int64 rollout_generation = 6;
   uint64 sequence = 7;
   string line = 8;
+  platform.v1.ServiceLogType log_type = 9;
+  string build_id = 10;
+  string stage = 11;
 }
 
 message LogBatch {
