@@ -1,4 +1,5 @@
 import {
+	ArrowLeft,
 	CheckCircle2,
 	Circle,
 	Clock3,
@@ -7,10 +8,12 @@ import {
 	Search,
 	XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+	DashboardAllocationStatus,
 	DashboardBuildStatus,
+	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
 	DashboardDeploymentStageState,
 	DashboardProject,
@@ -19,11 +22,20 @@ import type {
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
-import { fetchServiceLogs } from "./server-fns";
-import { buildBadgeClass, shortId, shortSha } from "./service-utils";
+import { fetchServiceDeployments, fetchServiceLogs } from "./server-fns";
+import { shortId, shortSha } from "./service-utils";
 
-type DeploymentSubview = "stages" | "logs";
 type LogTypeFilter = "all" | "deploy" | "build" | "runtime";
+
+type DeploymentLogTarget = {
+	id: string;
+	title: string;
+	subtitle?: string;
+	build: DashboardBuildStatus | undefined;
+	allocation: DashboardAllocationStatus | undefined;
+	rolloutGeneration?: number;
+	active: boolean;
+};
 
 export function PanelDeployments({
 	service,
@@ -34,147 +46,291 @@ export function PanelDeployments({
 	status: DashboardServiceStatus | null;
 	project: DashboardProject | undefined;
 }) {
-	const [view, setView] = useState<DeploymentSubview>("stages");
-	const build = status?.service.latestBuild ?? service.latestBuild;
+	const currentService = status?.service ?? service;
+	const build = currentService.latestBuild ?? service.latestBuild;
 	const allocation = status?.allocation;
-	const stages = build?.stages ?? [];
-	const failedStage = stages.find((stage) => stage.state === "failed");
-	const showRuntimeError =
-		allocation?.message && !allocation.healthy && !failedStage;
+	const rolloutGeneration =
+		allocation?.desiredRolloutGeneration ?? currentService.rolloutGeneration;
+	const activeRollout = hasActiveRollout(build, allocation);
+	const [deployments, setDeployments] = useState<
+		Array<DashboardDeploymentRecord>
+	>([]);
+	const [sessionDeployments, setSessionDeployments] = useState<
+		Array<DashboardDeploymentRecord>
+	>([]);
+	const [deploymentsError, setDeploymentsError] = useState<string>();
+	const [logTarget, setLogTarget] = useState<DeploymentLogTarget | null>(null);
+	const [nowMs, setNowMs] = useState(() => Date.now());
+	const lastObservedDeployment = useRef<DashboardDeploymentRecord | null>(null);
+
+	const loadDeployments = useCallback(async () => {
+		if (!project) {
+			setDeployments([]);
+			setDeploymentsError(undefined);
+			return;
+		}
+		try {
+			const nextDeployments = await fetchServiceDeployments({
+				data: {
+					projectId: project.id,
+					serviceId: service.id,
+					limit: 10,
+				},
+			});
+			setDeployments(
+				Array.isArray(nextDeployments)
+					? nextDeployments
+							.map(hydrateDeploymentRecord)
+							.sort(compareDeploymentsNewestFirst)
+					: [],
+			);
+			setDeploymentsError(undefined);
+		} catch (cause) {
+			setDeployments([]);
+			setDeploymentsError(formatError(cause, "Unable to load deployments."));
+		}
+	}, [project, service.id]);
+
+	useEffect(() => {
+		void loadDeployments();
+	}, [loadDeployments]);
+
+	useEffect(() => {
+		const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
+		return () => window.clearInterval(id);
+	}, []);
+
+	useEffect(() => {
+		if (!activeRollout) return;
+		const id = window.setInterval(() => void loadDeployments(), 5000);
+		return () => window.clearInterval(id);
+	}, [activeRollout, loadDeployments]);
+
+	useEffect(() => {
+		const currentDeployment = createDeploymentRecord({
+			serviceId: service.id,
+			build,
+			allocation,
+			rolloutGeneration,
+			isCurrent: true,
+		});
+		const previousDeployment = lastObservedDeployment.current;
+
+		if (
+			previousDeployment &&
+			!isSameDeploymentRecord(previousDeployment, currentDeployment) &&
+			hasDeploymentIdentity(previousDeployment)
+		) {
+			setSessionDeployments((currentSessionDeployments) =>
+				mergeDeploymentRecords([
+					...currentSessionDeployments,
+					{
+						...previousDeployment,
+						isCurrent: false,
+					},
+				]),
+			);
+		}
+
+		lastObservedDeployment.current = currentDeployment;
+	}, [service.id, build, allocation, rolloutGeneration]);
+
+	const previousDeployments = useMemo(
+		() =>
+			mergeDeploymentRecords([...sessionDeployments, ...deployments]).filter(
+				(entry) =>
+					!isCurrentDeployment(entry, build?.buildId, rolloutGeneration) &&
+					shouldRenderDeploymentHistoryEntry(entry, currentService),
+			),
+		[
+			deployments,
+			sessionDeployments,
+			build?.buildId,
+			rolloutGeneration,
+			currentService,
+		],
+	);
 
 	return (
 		<div className="deployments-panel">
-			<DeploymentSummary
-				build={build}
-				service={status?.service ?? service}
-				failureDetail={failedStage?.detail}
-			/>
-
-			<div className="deployment-switcher" role="tablist">
-				<button
-					type="button"
-					className={view === "stages" ? "active" : ""}
-					onClick={() => setView("stages")}
-				>
-					Stages
-				</button>
-				<button
-					type="button"
-					className={view === "logs" ? "active" : ""}
-					onClick={() => setView("logs")}
-				>
-					Logs
-				</button>
-			</div>
-
-			{view === "stages" && (
-				<DeploymentStagesView
-					stages={stages}
-					runtimeError={showRuntimeError ? allocation.message : undefined}
-				/>
-			)}
-			{view === "logs" && (
-				<DeploymentLogsView
-					service={status?.service ?? service}
-					project={project}
+			<div className="deployments-list">
+				<DeploymentCard
+					isCurrent
 					build={build}
-					active={hasActiveRollout(build, allocation)}
+					allocation={allocation}
+					logsEnabled={Boolean(project)}
+					nowMs={nowMs}
+					onOpenLogs={() =>
+						setLogTarget({
+							id: build?.buildId ?? `${service.id}-current`,
+							title: deploymentTitle(build, true),
+							subtitle: deploymentSubtitle(build, rolloutGeneration, nowMs),
+							build,
+							allocation,
+							rolloutGeneration,
+							active: activeRollout,
+						})
+					}
 				/>
-			)}
-		</div>
-	);
-}
 
-function DeploymentSummary({
-	build,
-	service,
-	failureDetail,
-}: {
-	build: DashboardBuildStatus | undefined;
-	service: DashboardServiceRecord;
-	failureDetail?: string;
-}) {
-	const source = service.sourceSummary?.resolvedBinding ?? service.spec?.source;
-	const timestamp = build?.startedAt ?? build?.queuedAt ?? build?.finishedAt;
-	return (
-		<div className="deployment-summary">
-			<div className="deployment-summary-top">
-				<span className={`badge ${buildBadgeClass(build?.state ?? "")}`}>
-					{build?.state === "running" && (
-						<Loader2
-							size={10}
-							style={{ animation: "spin 1s linear infinite" }}
-						/>
-					)}
-					{build?.state ?? "no build"}
-				</span>
-				<span className="deployment-summary-id">
-					{build?.commitSha
-						? shortSha(build.commitSha)
-						: build?.buildId
-							? shortId(build.buildId)
-							: "pending"}
-				</span>
-				<span className="deployment-summary-time">
-					{timestamp ? formatTimestamp(timestamp) : ""}
-				</span>
-			</div>
-			<div className="deployment-meta">
-				{source?.repositorySelector && <span>{source.repositorySelector}</span>}
-				{source?.trackedRef && <span>{source.trackedRef}</span>}
-				{build?.commitAuthor && <span>{build.commitAuthor}</span>}
-			</div>
-			{build?.commitMessage && (
-				<p className="deployment-commit-message">{build.commitMessage}</p>
-			)}
-			{(build?.failureReason || failureDetail) && (
-				<div className="deployment-error">
-					{build?.failureReason || failureDetail}
-				</div>
-			)}
-		</div>
-	);
-}
+				{previousDeployments.length > 0 && (
+					<section className="deployment-history">
+						<div className="deployment-section-heading">
+							Previous deployments
+						</div>
+						<div className="deployment-history-list">
+							{previousDeployments.map((entry) => (
+								<DeploymentCard
+									key={deploymentRecordKey(entry)}
+									isCurrent={false}
+									build={entry.build}
+									allocation={entry.allocation}
+									logsEnabled={Boolean(project)}
+									nowMs={nowMs}
+									onOpenLogs={() =>
+										setLogTarget({
+											id: deploymentRecordKey(entry),
+											title: deploymentTitle(entry.build, false),
+											subtitle: deploymentSubtitle(
+												entry.build,
+												entry.rolloutGeneration,
+												nowMs,
+											),
+											build: entry.build,
+											allocation: entry.allocation,
+											rolloutGeneration: entry.rolloutGeneration,
+											active: hasActiveRollout(entry.build, entry.allocation),
+										})
+									}
+								/>
+							))}
+						</div>
+					</section>
+				)}
 
-function DeploymentStagesView({
-	stages,
-	runtimeError,
-}: {
-	stages: Array<DashboardDeploymentStage>;
-	runtimeError?: string;
-}) {
-	const failedStage = stages.find((stage) => stage.state === "failed");
-	if (stages.length === 0) {
-		return (
-			<div className="deployment-empty">
-				Deployment stages will appear when the rollout starts.
+				{deploymentsError && (
+					<div className="deployment-error compact">{deploymentsError}</div>
+				)}
 			</div>
-		);
-	}
-	return (
-		<div className="stage-list">
-			{failedStage && (
-				<div className="deployment-error compact">{failedStage.detail}</div>
-			)}
-			{runtimeError && (
-				<div className="deployment-error compact">{runtimeError}</div>
-			)}
-			{stages.map((stage) => (
-				<div
-					key={stage.key || stage.label}
-					className={`stage-row ${stage.state}`}
-				>
-					<span className={`stage-marker ${stage.state}`}>
-						<StageIcon state={stage.state} />
-					</span>
-					<div className="stage-copy">
-						<div className="stage-label">{stage.label || stage.key}</div>
-						<div className="stage-detail">{stage.detail}</div>
+
+			<div className={`deployment-log-drawer ${logTarget ? "open" : ""}`}>
+				<div className="deployment-log-drawer-header">
+					<button
+						type="button"
+						className="deployment-log-back"
+						onClick={() => setLogTarget(null)}
+					>
+						<ArrowLeft size={14} />
+						Back
+					</button>
+					<div className="deployment-log-drawer-copy">
+						<div className="deployment-log-drawer-title">Deployment logs</div>
+						{logTarget?.title && (
+							<div className="deployment-log-drawer-subtitle">
+								{logTarget.title}
+								{logTarget.subtitle ? ` • ${logTarget.subtitle}` : ""}
+							</div>
+						)}
 					</div>
-					<div className="stage-status">{stageStatusText(stage)}</div>
 				</div>
-			))}
+
+				{logTarget && project && (
+					<DeploymentLogsView
+						service={currentService}
+						project={project}
+						build={logTarget.build}
+						allocation={logTarget.allocation}
+						rolloutGeneration={logTarget.rolloutGeneration}
+						active={logTarget.active}
+					/>
+				)}
+			</div>
 		</div>
+	);
+}
+
+function DeploymentCard({
+	isCurrent,
+	build,
+	allocation,
+	logsEnabled,
+	nowMs,
+	onOpenLogs,
+}: {
+	isCurrent: boolean;
+	build: DashboardBuildStatus | undefined;
+	allocation: DashboardAllocationStatus | undefined;
+	logsEnabled: boolean;
+	nowMs: number;
+	onOpenLogs: () => void;
+}) {
+	const stages = build?.stages ?? [];
+	const active = hasActiveRollout(build, allocation);
+	const showStageTrail = active && stages.length > 0;
+	const timestamp =
+		build?.startedAt ??
+		build?.queuedAt ??
+		build?.finishedAt ??
+		allocation?.updatedAt;
+	const tone = getDeploymentCardTone({
+		build,
+		allocation,
+		active,
+		isCurrent,
+	});
+
+	return (
+		<section className={`deployment-shell ${tone ? `tone-${tone}` : ""}`}>
+			<div className="deployment-summary">
+				<div className="deployment-summary-top">
+					<div className="deployment-summary-main">
+						<p className="deployment-commit-message">
+							{deploymentCardHeadline(build)}
+						</p>
+						{timestamp && (
+							<div className="deployment-summary-meta">
+								<div className="deployment-summary-time">
+									{formatRelativeAge(timestamp, nowMs)}
+								</div>
+							</div>
+						)}
+					</div>
+
+					<button
+						type="button"
+						className="deployment-view-logs"
+						onClick={onOpenLogs}
+						disabled={!logsEnabled}
+					>
+						View logs
+					</button>
+				</div>
+			</div>
+
+			<div className="deployment-updates">
+				{showStageTrail && (
+					<div className="stage-list">
+						{stages.map((stage) => (
+							<div
+								key={stage.key || stage.label}
+								className={`stage-row ${stage.state}`}
+							>
+								<span className={`stage-marker ${stage.state}`}>
+									<StageIcon state={stage.state} />
+								</span>
+								<div className="stage-copy">
+									<div className="stage-label">{stage.label || stage.key}</div>
+									{stage.detail && (
+										<div className="stage-detail">{stage.detail}</div>
+									)}
+								</div>
+								<div className="stage-status">{stageStatusText(stage)}</div>
+							</div>
+						))}
+					</div>
+				)}
+			</div>
+		</section>
 	);
 }
 
@@ -182,11 +338,15 @@ function DeploymentLogsView({
 	service,
 	project,
 	build,
+	allocation,
+	rolloutGeneration,
 	active,
 }: {
 	service: DashboardServiceRecord;
 	project: DashboardProject | undefined;
 	build: DashboardBuildStatus | undefined;
+	allocation: DashboardAllocationStatus | undefined;
+	rolloutGeneration?: number;
 	active: boolean;
 }) {
 	const [search, setSearch] = useState("");
@@ -213,6 +373,8 @@ function DeploymentLogsView({
 					serviceId: service.id,
 					limit: 500,
 					logType,
+					allocationId:
+						filter === "runtime" ? allocation?.allocationId : undefined,
 					buildId:
 						build?.buildId && (filter === "deploy" || filter === "build")
 							? build.buildId
@@ -223,14 +385,21 @@ function DeploymentLogsView({
 			if (!Array.isArray(nextLines)) {
 				throw new Error("Log response did not include a line list.");
 			}
-			setLines(nextLines);
+			setLines(nextLines.map(hydrateServiceLogLine));
 		} catch (cause) {
-			setError(formatError(cause));
+			setError(formatError(cause, "Unable to load logs."));
 			setLines([]);
 		} finally {
 			setLoading(false);
 		}
-	}, [project, service.id, filter, build?.buildId, debouncedSearch]);
+	}, [
+		project,
+		service.id,
+		filter,
+		allocation?.allocationId,
+		build?.buildId,
+		debouncedSearch,
+	]);
 
 	useEffect(() => {
 		void loadLogs();
@@ -242,19 +411,32 @@ function DeploymentLogsView({
 		return () => window.clearInterval(id);
 	}, [active, loadLogs]);
 
+	const filteredLines = useMemo(
+		() =>
+			lines.filter((line) =>
+				matchesDeploymentLog(line, {
+					buildId: build?.buildId,
+					allocationId: allocation?.allocationId,
+					rolloutGeneration,
+				}),
+			),
+		[lines, build?.buildId, allocation?.allocationId, rolloutGeneration],
+	);
+
 	const sortedLines = useMemo(
 		() =>
-			[...lines].sort((a, b) => {
+			[...filteredLines].sort((a, b) => {
 				const aTime = a.observedAt?.getTime() ?? 0;
 				const bTime = b.observedAt?.getTime() ?? 0;
 				return aTime - bTime || a.sequence - b.sequence;
 			}),
-		[lines],
+		[filteredLines],
 	);
+
 	const emptyText =
 		search || filter !== "all"
 			? "No logs match this filter."
-			: "Logs will appear here as the rollout progresses.";
+			: "Logs will appear here as this deployment progresses.";
 
 	return (
 		<div className="logs-view">
@@ -278,6 +460,7 @@ function DeploymentLogsView({
 					<RefreshCw size={13} className={loading ? "spinning" : ""} />
 				</button>
 			</div>
+
 			<div className="log-filters">
 				{(["all", "deploy", "build", "runtime"] as const).map((type) => (
 					<button
@@ -290,7 +473,9 @@ function DeploymentLogsView({
 					</button>
 				))}
 			</div>
+
 			{error && <div className="deployment-error compact">{error}</div>}
+
 			<div className="terminal-log">
 				{sortedLines.length === 0 && !loading && (
 					<div className="deployment-empty logs">{emptyText}</div>
@@ -336,6 +521,38 @@ function StageIcon({ state }: { state: DashboardDeploymentStageState }) {
 	}
 }
 
+function getDeploymentCardTone({
+	build,
+	allocation,
+	active,
+	isCurrent,
+}: {
+	build: DashboardBuildStatus | undefined;
+	allocation: DashboardAllocationStatus | undefined;
+	active: boolean;
+	isCurrent: boolean;
+}): "running" | "succeeded" | "failed" | undefined {
+	const failedStage = build?.stages?.find((stage) => stage.state === "failed");
+	const failed =
+		Boolean(failedStage) ||
+		build?.state === "failed" ||
+		Boolean(allocation?.message && !allocation.healthy && !active);
+
+	if (failed) {
+		return "failed";
+	}
+
+	if (active) {
+		return "running";
+	}
+
+	if (!isCurrent && build?.state === "succeeded") {
+		return "succeeded";
+	}
+
+	return undefined;
+}
+
 function stageStatusText(stage: DashboardDeploymentStage): string {
 	if (stage.startedAt && stage.finishedAt) {
 		return formatDuration(
@@ -360,7 +577,7 @@ function stageStatusText(stage: DashboardDeploymentStage): string {
 
 function hasActiveRollout(
 	build: DashboardBuildStatus | undefined,
-	allocation: DashboardServiceStatus["allocation"],
+	allocation: DashboardAllocationStatus | undefined,
 ): boolean {
 	const activeStage = build?.stages?.some(
 		(stage) => stage.state === "running" || stage.state === "pending",
@@ -376,19 +593,171 @@ function hasActiveRollout(
 	);
 }
 
+function deploymentRecordKey(entry: DashboardDeploymentRecord): string {
+	return entry.build?.buildId || `${entry.id}-${entry.rolloutGeneration}`;
+}
+
+function compareDeploymentsNewestFirst(
+	a: DashboardDeploymentRecord,
+	b: DashboardDeploymentRecord,
+): number {
+	return deploymentTime(b) - deploymentTime(a);
+}
+
+function mergeDeploymentRecords(
+	records: Array<DashboardDeploymentRecord>,
+): Array<DashboardDeploymentRecord> {
+	const uniqueRecords = new Map<string, DashboardDeploymentRecord>();
+	for (const record of records) {
+		uniqueRecords.set(deploymentRecordKey(record), record);
+	}
+	return [...uniqueRecords.values()].sort(compareDeploymentsNewestFirst);
+}
+
+function deploymentTime(entry: DashboardDeploymentRecord): number {
+	return (
+		entry.createdAt?.getTime() ??
+		entry.build?.startedAt?.getTime() ??
+		entry.build?.queuedAt?.getTime() ??
+		entry.build?.finishedAt?.getTime() ??
+		entry.allocation?.updatedAt?.getTime() ??
+		0
+	);
+}
+
+function isCurrentDeployment(
+	entry: DashboardDeploymentRecord,
+	currentBuildId?: string,
+	currentRolloutGeneration?: number,
+): boolean {
+	if (entry.isCurrent) return true;
+	if (currentBuildId && entry.build?.buildId === currentBuildId) return true;
+	return (
+		currentRolloutGeneration !== undefined &&
+		entry.rolloutGeneration === currentRolloutGeneration
+	);
+}
+
+function isSameDeploymentRecord(
+	left: DashboardDeploymentRecord,
+	right: DashboardDeploymentRecord,
+): boolean {
+	if (left.build?.buildId && right.build?.buildId) {
+		return left.build.buildId === right.build.buildId;
+	}
+	return (
+		left.rolloutGeneration !== undefined &&
+		right.rolloutGeneration !== undefined &&
+		left.rolloutGeneration === right.rolloutGeneration
+	);
+}
+
+function hasDeploymentIdentity(entry: DashboardDeploymentRecord): boolean {
+	return Boolean(
+		entry.build?.buildId !== undefined || entry.rolloutGeneration !== undefined,
+	);
+}
+
+function createDeploymentRecord({
+	serviceId,
+	build,
+	allocation,
+	rolloutGeneration,
+	isCurrent,
+}: {
+	serviceId: string;
+	build: DashboardBuildStatus | undefined;
+	allocation: DashboardAllocationStatus | undefined;
+	rolloutGeneration?: number;
+	isCurrent: boolean;
+}): DashboardDeploymentRecord {
+	return {
+		id: serviceId,
+		rolloutGeneration: rolloutGeneration ?? 0,
+		createdAt:
+			build?.startedAt ??
+			build?.queuedAt ??
+			build?.finishedAt ??
+			allocation?.updatedAt,
+		build,
+		allocation,
+		isCurrent,
+	};
+}
+
+function shouldRenderDeploymentHistoryEntry(
+	entry: DashboardDeploymentRecord,
+	service: DashboardServiceRecord,
+): boolean {
+	if (!usesRepositorySource(service)) {
+		return true;
+	}
+	return Boolean(entry.build?.buildId);
+}
+
+function usesRepositorySource(service: DashboardServiceRecord): boolean {
+	return Boolean(
+		service.spec?.source?.provider || service.sourceSummary?.desiredSpec,
+	);
+}
+
+function deploymentTitle(
+	build: DashboardBuildStatus | undefined,
+	isCurrent: boolean,
+): string {
+	if (build?.commitMessage?.trim()) return build.commitMessage.trim();
+	if (build?.commitSha) return `Commit ${shortSha(build.commitSha)}`;
+	if (build?.buildId) return `Build ${shortId(build.buildId)}`;
+	return isCurrent ? "Current deployment" : "Previous deployment";
+}
+
+function deploymentCardHeadline(
+	build: DashboardBuildStatus | undefined,
+): string {
+	if (build?.commitMessage?.trim()) return build.commitMessage.trim();
+	return "No commit message";
+}
+
+function deploymentSubtitle(
+	build: DashboardBuildStatus | undefined,
+	rolloutGeneration: number | undefined,
+	nowMs: number,
+): string | undefined {
+	const timestamp =
+		build?.startedAt ?? build?.queuedAt ?? build?.finishedAt ?? undefined;
+	if (timestamp) return formatRelativeAge(timestamp, nowMs);
+	if (rolloutGeneration !== undefined) return `Rollout ${rolloutGeneration}`;
+	return undefined;
+}
+
+function matchesDeploymentLog(
+	line: DashboardServiceLogLine,
+	scope: {
+		buildId?: string;
+		allocationId?: string;
+		rolloutGeneration?: number;
+	},
+): boolean {
+	if (!scope.buildId && !scope.allocationId && !scope.rolloutGeneration) {
+		return true;
+	}
+	if (scope.buildId && line.buildId === scope.buildId) return true;
+	if (scope.allocationId && line.allocationId === scope.allocationId) {
+		return true;
+	}
+	if (
+		scope.rolloutGeneration !== undefined &&
+		line.rolloutGeneration === scope.rolloutGeneration
+	) {
+		return true;
+	}
+	return false;
+}
+
 function formatDuration(ms: number): string {
 	const seconds = Math.max(0, Math.round(ms / 1000));
 	if (seconds < 60) return `${seconds}s`;
 	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-function formatTimestamp(date: Date): string {
-	return new Intl.DateTimeFormat(undefined, {
-		month: "short",
-		day: "numeric",
-		hour: "2-digit",
-		minute: "2-digit",
-	}).format(date);
 }
 
 function formatLogTime(date: Date): string {
@@ -400,9 +769,84 @@ function formatLogTime(date: Date): string {
 	}).format(date);
 }
 
-function formatError(error: unknown): string {
+function formatRelativeAge(date: Date, nowMs: number): string {
+	const diffMs = date.getTime() - nowMs;
+	const absSeconds = Math.round(Math.abs(diffMs) / 1000);
+	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+	if (absSeconds < 60) {
+		return rtf.format(Math.round(diffMs / 1000), "second");
+	}
+
+	const absMinutes = Math.round(absSeconds / 60);
+	if (absMinutes < 60) {
+		return rtf.format(Math.round(diffMs / 60_000), "minute");
+	}
+
+	const absHours = Math.round(absMinutes / 60);
+	if (absHours < 24) {
+		return rtf.format(Math.round(diffMs / 3_600_000), "hour");
+	}
+
+	return rtf.format(Math.round(diffMs / 86_400_000), "day");
+}
+
+function formatError(error: unknown, fallback: string): string {
 	if (error && typeof error === "object" && "message" in error) {
 		return String((error as { message: unknown }).message);
 	}
-	return "Unable to load logs.";
+	return fallback;
+}
+
+function hydrateDeploymentRecord(
+	record: DashboardDeploymentRecord,
+): DashboardDeploymentRecord {
+	return {
+		...record,
+		createdAt: hydrateDate(record.createdAt),
+		build: hydrateBuildStatus(record.build),
+		allocation: hydrateAllocationStatus(record.allocation),
+	};
+}
+
+function hydrateBuildStatus(
+	build: DashboardBuildStatus | undefined,
+): DashboardBuildStatus | undefined {
+	if (!build) return undefined;
+	return {
+		...build,
+		queuedAt: hydrateDate(build.queuedAt),
+		startedAt: hydrateDate(build.startedAt),
+		finishedAt: hydrateDate(build.finishedAt),
+		stages:
+			build.stages?.map((stage) => ({
+				...stage,
+				startedAt: hydrateDate(stage.startedAt),
+				finishedAt: hydrateDate(stage.finishedAt),
+			})) ?? [],
+	};
+}
+
+function hydrateAllocationStatus(
+	allocation: DashboardAllocationStatus | undefined,
+): DashboardAllocationStatus | undefined {
+	if (!allocation) return undefined;
+	return {
+		...allocation,
+		updatedAt: hydrateDate(allocation.updatedAt),
+	};
+}
+
+function hydrateServiceLogLine(
+	line: DashboardServiceLogLine,
+): DashboardServiceLogLine {
+	return {
+		...line,
+		observedAt: hydrateDate(line.observedAt),
+	};
+}
+
+function hydrateDate(value: Date | string | undefined): Date | undefined {
+	if (!value) return undefined;
+	return value instanceof Date ? value : new Date(value);
 }

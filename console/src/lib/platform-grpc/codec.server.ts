@@ -3,6 +3,7 @@ import type {
 	DashboardBuildRecipe,
 	DashboardBuildState,
 	DashboardBuildStatus,
+	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
 	DashboardDeploymentStageState,
 	DashboardDomainBinding,
@@ -23,6 +24,7 @@ import type {
 	IngestGitHubWebhookInput,
 	IngestGitHubWebhookRequest,
 	ListProjectsResponseMessage,
+	ListServiceDeploymentsResponseMessage,
 	ListServiceLogsRequest,
 	ListServiceLogsResponseMessage,
 	PlatformProjectMessage,
@@ -185,6 +187,17 @@ export function decodeListServiceLogsResponse(
 	const value = readRecord(raw, "list service logs response");
 	return {
 		lines: readArray(value, "lines").map((line) => decodeServiceLogLine(line)),
+	};
+}
+
+export function decodeListServiceDeploymentsResponse(
+	raw: unknown,
+): ListServiceDeploymentsResponseMessage {
+	const value = readRecord(raw, "list service deployments response");
+	return {
+		deployments: readArray(value, "deployments").map((deployment) =>
+			decodeDeploymentRecord(deployment),
+		),
 	};
 }
 
@@ -397,6 +410,19 @@ function decodeAllocationStatus(
 		appliedRolloutGeneration:
 			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
+	};
+}
+
+function decodeDeploymentRecord(raw: unknown): DashboardDeploymentRecord {
+	const value = readRecord(raw, "deployment record");
+	const specRevision = readOptionalNumberLike(value, "specRevision") ?? 0;
+	return {
+		id: readRequiredString(value, "id", "deployment record"),
+		rolloutGeneration: readOptionalNumberLike(value, "rolloutGeneration") ?? 0,
+		specRevision: specRevision > 0 ? specRevision : undefined,
+		createdAt: readOptionalDate(value, "createdAt"),
+		build: decodeBuildStatus(value.build),
+		isCurrent: readBoolean(value, "isCurrent"),
 	};
 }
 

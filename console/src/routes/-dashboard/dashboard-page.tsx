@@ -19,7 +19,6 @@ import type {
 import { EmptyCanvas } from "./empty-canvas";
 import { nodePosition } from "./layout";
 import { NewServiceModal } from "./new-service-modal";
-import { fetchServiceStatus } from "./server-fns";
 import { ServiceNode } from "./service-node";
 import { ServicePanel } from "./service-panel";
 import { serviceHealth } from "./service-utils";
@@ -49,8 +48,26 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const isDragging = useRef(false);
 	const selected = services.find((service) => service.id === selectedId);
 
+	const mergeStatusService = useCallback((status: DashboardServiceStatus) => {
+		setLocalState((current) => ({
+			...current,
+			services: current.services.map((entry) =>
+				entry.id === status.service.id ? status.service : entry,
+			),
+			service:
+				current.service?.id === status.service.id
+					? status.service
+					: current.service,
+			serviceStatus:
+				current.serviceStatus?.service.id === status.service.id
+					? { ...current.serviceStatus, ...status }
+					: current.serviceStatus,
+		}));
+	}, []);
+
 	useEffect(() => {
 		setLocalState(state);
+		setStatusLoading(false);
 	}, [state]);
 
 	useEffect(() => {
@@ -69,16 +86,30 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	useEffect(() => {
 		if (!selectedId || !localState.project) {
 			setLiveStatus(null);
+			setStatusLoading(false);
 			return;
 		}
 		setStatusLoading(true);
-		fetchServiceStatus({
-			data: { projectId: localState.project.id, serviceId: selectedId },
-		})
-			.then(setLiveStatus)
-			.catch(() => setLiveStatus(null))
-			.finally(() => setStatusLoading(false));
-	}, [selectedId, localState.project]);
+		const projectId = localState.project.id;
+		const source = new EventSource(
+			`/events/service-status?projectId=${encodeURIComponent(projectId)}&serviceId=${encodeURIComponent(selectedId)}`,
+		);
+		source.addEventListener("status", (event) => {
+			const nextStatus = hydrateServiceStatusSnapshot(
+				JSON.parse((event as MessageEvent<string>).data),
+			);
+			setLiveStatus(nextStatus);
+			mergeStatusService(nextStatus);
+			setStatusLoading(false);
+		});
+		source.addEventListener("status-error", () => {
+			setStatusLoading(false);
+		});
+		source.onerror = () => {
+			setStatusLoading(false);
+		};
+		return () => source.close();
+	}, [selectedId, localState.project, mergeStatusService]);
 
 	const onCanvasMouseDown = useCallback(
 		(event: ReactMouseEvent<HTMLElement>) => {
@@ -146,15 +177,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		startTransition(() => {
 			void router.invalidate();
 		});
-		if (selectedId && localState.project) {
-			setStatusLoading(true);
-			fetchServiceStatus({
-				data: { projectId: localState.project.id, serviceId: selectedId },
-			})
-				.then(setLiveStatus)
-				.catch(() => {})
-				.finally(() => setStatusLoading(false));
-		}
 	};
 
 	const mergeService = (service: DashboardServiceRecord) => {
@@ -343,4 +365,45 @@ function hasAllocationRolloutMismatch(
 			allocation.desiredRolloutGeneration !==
 				allocation.appliedRolloutGeneration,
 	);
+}
+
+function hydrateServiceStatusSnapshot(raw: unknown): DashboardServiceStatus {
+	const snapshot = raw as DashboardServiceStatus & {
+		service: DashboardServiceStatus["service"] & {
+			latestBuild?: DashboardServiceStatus["service"]["latestBuild"];
+		};
+	};
+	return {
+		...snapshot,
+		service: {
+			...snapshot.service,
+			createdAt: hydrateDate(snapshot.service.createdAt),
+			updatedAt: hydrateDate(snapshot.service.updatedAt),
+			latestBuild: snapshot.service.latestBuild
+				? {
+						...snapshot.service.latestBuild,
+						queuedAt: hydrateDate(snapshot.service.latestBuild.queuedAt),
+						startedAt: hydrateDate(snapshot.service.latestBuild.startedAt),
+						finishedAt: hydrateDate(snapshot.service.latestBuild.finishedAt),
+						stages:
+							snapshot.service.latestBuild.stages?.map((stage) => ({
+								...stage,
+								startedAt: hydrateDate(stage.startedAt),
+								finishedAt: hydrateDate(stage.finishedAt),
+							})) ?? [],
+					}
+				: undefined,
+		},
+		allocation: snapshot.allocation
+			? {
+					...snapshot.allocation,
+					updatedAt: hydrateDate(snapshot.allocation.updatedAt),
+				}
+			: undefined,
+	};
+}
+
+function hydrateDate(value: Date | string | undefined): Date | undefined {
+	if (!value) return undefined;
+	return value instanceof Date ? value : new Date(value);
 }

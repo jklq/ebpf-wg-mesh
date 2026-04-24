@@ -13,6 +13,7 @@ const platformClient = {
 	GetService: vi.fn(),
 	GetServiceStatus: vi.fn(),
 	ListServiceLogs: vi.fn(),
+	ListServiceDeployments: vi.fn(),
 	ListDomainBindings: vi.fn(),
 	CreateDomainBinding: vi.fn(),
 	UpdateDomainBinding: vi.fn(),
@@ -102,6 +103,24 @@ describe("platform grpc client", () => {
 
 		expect(platformClient.ListServiceLogs).toHaveBeenCalledOnce();
 		expect(response).toEqual({ lines: [{ line: "hello" }] });
+	});
+
+	it("dispatches ListServiceDeployments unary calls", async () => {
+		platformClient.ListServiceDeployments.mockImplementation(
+			(_request, _metadata, callback) => {
+				callback(null, { deployments: [{ id: "build-1" }] });
+			},
+		);
+
+		const { unaryCall } = await import("#/lib/platform-grpc/client.server");
+		const response = await unaryCall(runtime(), "ListServiceDeployments", {
+			projectId: "project-1",
+			serviceId: "service-1",
+			limit: 10,
+		});
+
+		expect(platformClient.ListServiceDeployments).toHaveBeenCalledOnce();
+		expect(response).toEqual({ deployments: [{ id: "build-1" }] });
 	});
 
 	it("dispatches update and delete domain binding unary calls", async () => {
