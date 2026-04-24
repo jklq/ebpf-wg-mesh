@@ -1,6 +1,6 @@
 import type {
-	DashboardDomainBinding,
 	DashboardDeploymentRecord,
+	DashboardDomainBinding,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardServiceLogLine,
@@ -293,7 +293,10 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			return status;
 		},
-		async listServiceLogs(user, input): Promise<Array<DashboardServiceLogLine>> {
+		async listServiceLogs(
+			user,
+			input,
+		): Promise<Array<DashboardServiceLogLine>> {
 			platform.listServiceLogsCalls.push({ user, ...input });
 			if (platform.errors.listServiceLogs) {
 				throw platform.errors.listServiceLogs;
@@ -315,9 +318,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			if (platform.errors.listServiceDeployments) {
 				throw platform.errors.listServiceDeployments;
 			}
-			return platform.serviceDeployments.filter(
-				(entry) => entry.id === input.serviceId || input.serviceId === "",
-			);
+			return platform.serviceDeployments;
 		},
 		async listDomainBindings(
 			user,

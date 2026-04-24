@@ -11,6 +11,7 @@ import {
 	decodeInspectSourceResponse,
 	decodeListDomainBindingsResponse,
 	decodeListProjectsResponse,
+	decodeListServiceDeploymentsResponse,
 	decodeListServiceLogsResponse,
 	decodeListServicesResponse,
 	decodeProjectMessage,
@@ -112,8 +113,14 @@ export function createPlatformGateway(
 				({ projectId: _projectId, ...line }) => line,
 			);
 		},
-		async listServiceDeployments() {
-			return [];
+		async listServiceDeployments(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"ListServiceDeployments",
+				input,
+				user,
+			);
+			return decodeListServiceDeploymentsResponse(response).deployments;
 		},
 		async listDomainBindings(user, input) {
 			const response = await unaryCall(

@@ -1,6 +1,7 @@
 import type * as grpc from "@grpc/grpc-js";
 
 import type {
+	DashboardDeploymentRecord,
 	DashboardProject,
 	DashboardServiceLogType,
 } from "#/lib/dashboard/core/types.server";
@@ -106,6 +107,12 @@ export interface ListServiceLogsRequest {
 	endTime?: Date;
 }
 
+export interface ListServiceDeploymentsRequest {
+	projectId: string;
+	serviceId: string;
+	limit?: number;
+}
+
 export interface ListDomainBindingsRequest {
 	projectId: string;
 	serviceId: string;
@@ -159,6 +166,7 @@ export type PlatformMethod =
 	| "GetService"
 	| "GetServiceStatus"
 	| "ListServiceLogs"
+	| "ListServiceDeployments"
 	| "ListDomainBindings"
 	| "CreateDomainBinding"
 	| "UpdateDomainBinding"
@@ -175,6 +183,7 @@ export type PlatformRequestMap = {
 	GetService: GetServiceRequest;
 	GetServiceStatus: GetServiceStatusRequest;
 	ListServiceLogs: ListServiceLogsRequest;
+	ListServiceDeployments: ListServiceDeploymentsRequest;
 	ListDomainBindings: ListDomainBindingsRequest;
 	CreateDomainBinding: CreateDomainBindingRequest;
 	UpdateDomainBinding: UpdateDomainBindingRequest;
@@ -237,6 +246,11 @@ export type PlatformClient = grpc.Client & {
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
+	ListServiceDeployments: (
+		request: ListServiceDeploymentsRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
 	ListDomainBindings: (
 		request: ListDomainBindingsRequest,
 		metadata: grpc.Metadata,
@@ -295,4 +309,8 @@ export interface ServiceLogLineMessage {
 
 export interface ListServiceLogsResponseMessage {
 	lines: Array<ServiceLogLineMessage>;
+}
+
+export interface ListServiceDeploymentsResponseMessage {
+	deployments: Array<DashboardDeploymentRecord>;
 }

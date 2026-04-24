@@ -18,6 +18,7 @@ import type {
 	GetServiceStatusRequest,
 	InspectSourceRequest,
 	ListDomainBindingsRequest,
+	ListServiceDeploymentsRequest,
 	ListServiceLogsRequest,
 	ListServicesRequest,
 	OpsClient,
@@ -123,6 +124,13 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "ListServiceLogs":
 					client.ListServiceLogs(
 						request as ListServiceLogsRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "ListServiceDeployments":
+					client.ListServiceDeployments(
+						request as ListServiceDeploymentsRequest,
 						metadata,
 						handleResponse,
 					);

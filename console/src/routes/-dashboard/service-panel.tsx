@@ -108,31 +108,42 @@ export function ServicePanel({
 				))}
 			</div>
 
-			<div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+			<div className="service-panel-content">
 				{activeTab === "overview" && (
-					<PanelOverview
-						service={service}
-						status={status}
-						loading={statusLoading}
-						state={state}
-					/>
+					<div className="service-panel-scroll">
+						<PanelOverview
+							service={service}
+							status={status}
+							loading={statusLoading}
+							state={state}
+						/>
+					</div>
 				)}
 				{activeTab === "deployments" && (
-					<PanelDeployments service={service} status={status} project={project} />
-				)}
-				{activeTab === "settings" && project && (
-					<PanelSettings
+					<PanelDeployments
+						key={service.id}
 						service={service}
+						status={status}
 						project={project}
-						state={state}
-						onSaved={(updated) => {
-							onServiceUpdated(updated);
-							onRefresh();
-						}}
 					/>
 				)}
+				{activeTab === "settings" && project && (
+					<div className="service-panel-scroll">
+						<PanelSettings
+							service={service}
+							project={project}
+							state={state}
+							onSaved={(updated) => {
+								onServiceUpdated(updated);
+								onRefresh();
+							}}
+						/>
+					</div>
+				)}
 				{activeTab === "domains" && project && (
-					<PanelDomains service={service} project={project} state={state} />
+					<div className="service-panel-scroll">
+						<PanelDomains service={service} project={project} state={state} />
+					</div>
 				)}
 			</div>
 		</>

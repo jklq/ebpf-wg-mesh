@@ -2,6 +2,7 @@ import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
 import type {
+	DashboardDeploymentRecord,
 	DashboardServiceLogType,
 	UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
@@ -45,6 +46,20 @@ export const fetchServiceLogs = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.listServiceLogsFromSession(data);
+	});
+
+export const fetchServiceDeployments = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				limit?: number;
+			},
+	)
+	.handler(async ({ data }): Promise<Array<DashboardDeploymentRecord>> => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.listServiceDeploymentsFromSession(data);
 	});
 
 export const fetchDomainBindings = createServerFn({ method: "POST" })

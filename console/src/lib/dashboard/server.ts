@@ -9,16 +9,17 @@ import { Pool } from "pg";
 
 import { createDashboardService } from "#/lib/dashboard/core/service.server";
 import {
-	type DashboardConfig,
 	type CreateServiceFastResult,
+	type DashboardConfig,
 	DashboardConfigError,
+	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
 	type DashboardProject,
-	type DashboardServiceRecord,
 	type DashboardServiceLogLine,
 	type DashboardServiceLogType,
+	type DashboardServiceRecord,
 	type DashboardServiceStatus,
 	type DevLoginIdentity,
 	type UpdateServiceInput,
@@ -156,6 +157,14 @@ export function listServiceLogsFromSession(input: {
 	endTime?: Date;
 }): Promise<Array<DashboardServiceLogLine>> {
 	return service.listServiceLogsFromSession(input);
+}
+
+export function listServiceDeploymentsFromSession(input: {
+	projectId: string;
+	serviceId: string;
+	limit?: number;
+}): Promise<Array<DashboardDeploymentRecord>> {
+	return service.listServiceDeploymentsFromSession(input);
 }
 
 export function updateServiceFromSession(
