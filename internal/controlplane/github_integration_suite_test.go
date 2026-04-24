@@ -383,6 +383,12 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != "commit-public-main" {
 		t.Fatalf("expected queued build for public main, got %+v", status.LatestBuild)
 	}
+	if status.LatestBuild.GetCommitMessage() != "Public main commit" {
+		t.Fatalf("expected synced build commit message to be persisted, got %+v", status.LatestBuild)
+	}
+	if status.LatestBuild.GetCommitAuthor() != "Octocat" {
+		t.Fatalf("expected synced build commit author to be persisted, got %+v", status.LatestBuild)
+	}
 
 	if _, err := store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
 		Kind:           sourceWorkKindSourceSpecChanged,
@@ -405,8 +411,8 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&count); err != nil {
 		t.Fatalf("count build runs: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected exactly 1 build after sync retry, got %d", count)
+	if count != 2 {
+		t.Fatalf("expected exactly 2 builds after sync retry, got %d", count)
 	}
 }
 
@@ -512,6 +518,56 @@ func TestPushAndInstallationWebhooksOnlyQueueCoordinatorWork(t *testing.T) {
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindProviderAccessChanged); got != 1 {
 		t.Fatalf("expected one queued refresh command, got %d", got)
+	}
+}
+
+func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	server := newTestGitHubServer(t, nil)
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store, client)
+	coordinator := NewGitHubCoordinator(store, catalog, client, 5*time.Minute)
+	processor := NewGitHubWebhookProcessor(store, coordinator)
+	ctx := context.Background()
+
+	_, _ = createRepoBackedTestService(t, store, ctx, "private/secret", 7, "main")
+
+	pushPayload := []byte(`{
+		"ref":"refs/heads/main",
+		"after":"commit-123",
+		"head_commit":{
+			"message":"Persist dashboard deployment history",
+			"author":{"name":"Alice"},
+			"committer":{"name":"Bob"}
+		},
+		"repository":{"id":2,"name":"secret","full_name":"private/secret","owner":{"login":"private"}},
+		"installation":{"id":7}
+	}`)
+	if err := processor.processPushEvent(ctx, pushPayload); err != nil {
+		t.Fatalf("processPushEvent: %v", err)
+	}
+
+	var commitMessage, commitAuthor string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT commit_message, commit_author
+		   FROM source_work_items
+		  WHERE kind = $1
+		  ORDER BY created_at DESC
+		  LIMIT 1`,
+		sourceWorkKindRevisionObserved,
+	).Scan(&commitMessage, &commitAuthor); err != nil {
+		t.Fatalf("query queued source work item: %v", err)
+	}
+	if commitMessage != "Persist dashboard deployment history" {
+		t.Fatalf("expected queued work item commit message, got %q", commitMessage)
+	}
+	if commitAuthor != "Alice" {
+		t.Fatalf("expected queued work item commit author, got %q", commitAuthor)
 	}
 }
 

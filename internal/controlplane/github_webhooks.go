@@ -231,9 +231,18 @@ func (p *GitHubWebhookProcessor) processDelivery(ctx context.Context, rec github
 
 func (p *GitHubWebhookProcessor) processPushEvent(ctx context.Context, raw []byte) error {
 	var payload struct {
-		Ref          string                   `json:"ref"`
-		After        string                   `json:"after"`
-		Deleted      bool                     `json:"deleted"`
+		Ref        string `json:"ref"`
+		After      string `json:"after"`
+		Deleted    bool   `json:"deleted"`
+		HeadCommit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name string `json:"name"`
+			} `json:"author"`
+			Committer struct {
+				Name string `json:"name"`
+			} `json:"committer"`
+		} `json:"head_commit"`
 		Repository   webhookRepositoryPayload `json:"repository"`
 		Installation struct {
 			ID int64 `json:"id"`
@@ -252,11 +261,17 @@ func (p *GitHubWebhookProcessor) processPushEvent(ctx context.Context, raw []byt
 		return nil
 	}
 	slog.InfoContext(ctx, "github push observed", "repository_id", payload.Repository.ID, "repository_full_name", payload.Repository.FullName, "tracked_ref", branch, "commit_sha", payload.After, "installation_id", payload.Installation.ID)
+	commitAuthor := strings.TrimSpace(payload.HeadCommit.Author.Name)
+	if commitAuthor == "" {
+		commitAuthor = strings.TrimSpace(payload.HeadCommit.Committer.Name)
+	}
 	if err := p.coordinator.ObserveRepositoryRevision(
 		ctx,
 		fmt.Sprintf("%d", payload.Repository.ID),
 		branch,
 		payload.After,
+		strings.TrimSpace(payload.HeadCommit.Message),
+		commitAuthor,
 	); err != nil {
 		return err
 	}

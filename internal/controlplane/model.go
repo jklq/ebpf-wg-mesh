@@ -98,21 +98,24 @@ type allocationRecord struct {
 }
 
 type buildRunRecord struct {
-	ID                   string
-	ServiceID            string
-	ProjectID            string
-	CommitSHA            string
-	State                string
-	BuilderID            string
-	ImageDigest          string
-	FailureReason        string
-	SourceRevisionID     string
-	SourceSnapshotID     string
-	SourceSnapshotDigest string
-	BuildRecipe          *platformv1.BuildRecipe
-	QueuedAt             time.Time
-	StartedAt            sql.NullTime
-	FinishedAt           sql.NullTime
+	ID                      string
+	ServiceID               string
+	ProjectID               string
+	CommitSHA               string
+	CommitMessage           string
+	CommitAuthor            string
+	State                   string
+	BuilderID               string
+	ImageDigest             string
+	FailureReason           string
+	SourceRevisionID        string
+	SourceSnapshotID        string
+	SourceSnapshotDigest    string
+	TargetRolloutGeneration int64
+	BuildRecipe             *platformv1.BuildRecipe
+	QueuedAt                time.Time
+	StartedAt               sql.NullTime
+	FinishedAt              sql.NullTime
 }
 
 type githubInstallationRecord struct {
@@ -218,6 +221,8 @@ type sourceRevisionRecord struct {
 	ProviderRepositoryExternalID string
 	TrackedRef                   string
 	CommitSHA                    string
+	CommitMessage                string
+	CommitAuthor                 string
 	ObservedAt                   time.Time
 	CreatedAt                    time.Time
 }
@@ -249,9 +254,35 @@ type sourceWorkItemRecord struct {
 	ProviderScopeExternalID      string
 	TrackedRef                   string
 	CommitSHA                    string
+	CommitMessage                string
+	CommitAuthor                 string
 	LastError                    string
 	AttemptCount                 int64
 	AvailableAt                  time.Time
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
+}
+
+type serviceRolloutRecord struct {
+	ServiceID          string
+	RolloutGeneration  int64
+	SpecRevision       int64
+	Reason             string
+	BuildID            string
+	RequestedBySubject string
+	RequestedByEmail   string
+	CreatedAt          time.Time
+}
+
+type deploymentRecord struct {
+	ID                 string
+	ServiceID          string
+	RolloutGeneration  int64
+	SpecRevision       int64
+	Reason             string
+	CreatedAt          time.Time
+	Build              *buildRunRecord
+	IsCurrent          bool
+	RequestedBySubject string
+	RequestedByEmail   string
 }

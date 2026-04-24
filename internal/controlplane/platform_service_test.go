@@ -248,6 +248,67 @@ func TestPlatformServiceDeleteDomainBindingRequestsIngress(t *testing.T) {
 	}
 }
 
+func TestPlatformServiceGetServiceStatusProjectsStagesFromReturnedAllocation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	service := NewPlatformService(&fakePlatformStore{
+		serviceStatusFn: func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
+			return serviceRecord{
+					ID:               serviceID,
+					ProjectID:        projectID,
+					AllocatedAgentID: "node-1",
+					CreatedAt:        now.Add(-10 * time.Minute),
+					Spec:             directImageServiceSpec("nginx:1.27", nil),
+					LatestBuild: &platformv1.BuildStatus{
+						BuildId: "build-1",
+					},
+				}, allocationRecord{
+					ID:                       "alloc-status",
+					ServiceID:                serviceID,
+					AgentID:                  "node-1",
+					DesiredRolloutGeneration: 2,
+					AppliedRolloutGeneration: 1,
+					Healthy:                  false,
+					UpdatedAt:                now,
+				}, nil
+		},
+		allocationByServiceIDFn: func(ctx context.Context, serviceID string) (allocationRecord, error) {
+			return allocationRecord{
+				ID:                       "alloc-newer",
+				ServiceID:                serviceID,
+				AgentID:                  "node-1",
+				DesiredRolloutGeneration: 2,
+				AppliedRolloutGeneration: 2,
+				Healthy:                  true,
+				UpdatedAt:                now,
+			}, nil
+		},
+	}, noopNotifier{}, noopIngress{})
+
+	resp, err := service.GetServiceStatus(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GetServiceStatusRequest{
+		ProjectId: "project-1",
+		ServiceId: "service-1",
+	})
+	if err != nil {
+		t.Fatalf("GetServiceStatus: %v", err)
+	}
+	if got := resp.GetAllocation().GetAppliedRolloutGeneration(); got != 1 {
+		t.Fatalf("expected returned allocation snapshot to stay stale for test, got %d", got)
+	}
+	stages := resp.GetService().GetLatestBuild().GetStages()
+	if len(stages) == 0 {
+		t.Fatalf("expected projected stages")
+	}
+	postDeploy := stages[len(stages)-1]
+	if postDeploy.GetKey() != StagePostDeploy {
+		t.Fatalf("expected last stage post-deploy, got %q", postDeploy.GetKey())
+	}
+	if postDeploy.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING {
+		t.Fatalf("expected post-deploy to use returned allocation snapshot, got %v", postDeploy.GetState())
+	}
+}
+
 func contextWithDelegatedUser(subject, email string) context.Context {
 	return context.WithValue(context.Background(), delegatedUserContextKey{}, DelegatedUser{
 		Subject: subject,
@@ -296,6 +357,7 @@ type fakePlatformStore struct {
 	listDomainBindingsFn       func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBindingFn      func(ctx context.Context, subject, projectID, hostname string) (bool, error)
 	serviceStatusFn            func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	listServiceDeploymentsFn   func(ctx context.Context, subject, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceIDFn    func(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAgentsFn               func(ctx context.Context) ([]agentRecord, error)
 }
@@ -445,6 +507,13 @@ func (f *fakePlatformStore) serviceStatus(ctx context.Context, subject, projectI
 		return f.serviceStatusFn(ctx, subject, projectID, serviceID)
 	}
 	return serviceRecord{}, allocationRecord{}, nil
+}
+
+func (f *fakePlatformStore) listServiceDeployments(ctx context.Context, subject, projectID, serviceID string, limit int32) ([]deploymentRecord, error) {
+	if f.listServiceDeploymentsFn != nil {
+		return f.listServiceDeploymentsFn(ctx, subject, projectID, serviceID, limit)
+	}
+	return nil, nil
 }
 
 func (f *fakePlatformStore) allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error) {

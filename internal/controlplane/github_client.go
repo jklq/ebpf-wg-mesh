@@ -41,6 +41,11 @@ type githubInstallationView struct {
 	TargetType     string
 }
 
+type gitHubCommitMetadata struct {
+	Message string
+	Author  string
+}
+
 var errGitHubNotModified = errors.New("github not modified")
 
 type gitHubAPIError struct {
@@ -132,6 +137,42 @@ func (c *GitHubClient) GetBranchHead(ctx context.Context, owner, repo, branch st
 		return "", errors.New("github branch head response missing sha")
 	}
 	return payload.Object.SHA, nil
+}
+
+func (c *GitHubClient) GetCommitMetadata(ctx context.Context, owner, repo, commitSHA string, installationID int64) (gitHubCommitMetadata, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, c.apiPath("/repos/%s/%s/commits/%s", owner, repo, strings.TrimSpace(commitSHA)), nil)
+	if err != nil {
+		return gitHubCommitMetadata{}, err
+	}
+	if installationID > 0 {
+		token, err := c.InstallationToken(ctx, installationID)
+		if err != nil {
+			return gitHubCommitMetadata{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token.Token)
+	}
+	var payload struct {
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name string `json:"name"`
+			} `json:"author"`
+			Committer struct {
+				Name string `json:"name"`
+			} `json:"committer"`
+		} `json:"commit"`
+	}
+	if err := c.doJSON(req, &payload); err != nil {
+		return gitHubCommitMetadata{}, err
+	}
+	author := strings.TrimSpace(payload.Commit.Author.Name)
+	if author == "" {
+		author = strings.TrimSpace(payload.Commit.Committer.Name)
+	}
+	return gitHubCommitMetadata{
+		Message: strings.TrimSpace(payload.Commit.Message),
+		Author:  author,
+	}, nil
 }
 
 func (c *GitHubClient) GetRepository(ctx context.Context, owner, repo string, installationID int64) (githubRepositoryView, error) {

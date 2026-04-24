@@ -102,7 +102,7 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	); err != nil {
 		return serviceRecord{}, err
 	}
-	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, rec.RolloutGeneration, rec.SpecRevision, "create", "", "", now); err != nil {
+	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, rec.RolloutGeneration, rec.SpecRevision, "create", "", "", "", now); err != nil {
 		return serviceRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -178,7 +178,7 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		); err != nil {
 			return err
 		}
-		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {
+		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", "", now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(
