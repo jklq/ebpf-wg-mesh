@@ -3,11 +3,14 @@ import type {
 	DashboardBuildRecipe,
 	DashboardBuildState,
 	DashboardBuildStatus,
+	DashboardDeploymentStage,
+	DashboardDeploymentStageState,
 	DashboardDomainBinding,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardResolvedSourceBinding,
 	DashboardRuntimePort,
+	DashboardServiceLogType,
 	DashboardServiceRecord,
 	DashboardServiceSourceSummary,
 	DashboardServiceSpec,
@@ -20,7 +23,10 @@ import type {
 	IngestGitHubWebhookInput,
 	IngestGitHubWebhookRequest,
 	ListProjectsResponseMessage,
+	ListServiceLogsRequest,
+	ListServiceLogsResponseMessage,
 	PlatformProjectMessage,
+	ServiceLogLineMessage,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
 
@@ -99,6 +105,70 @@ export function decodeBuildState(raw: unknown): DashboardBuildState {
 	}
 }
 
+export function decodeDeploymentStageState(
+	raw: unknown,
+): DashboardDeploymentStageState {
+	switch (raw) {
+		case "DEPLOYMENT_STAGE_STATE_PENDING":
+		case "pending":
+			return "pending";
+		case "DEPLOYMENT_STAGE_STATE_RUNNING":
+		case "running":
+			return "running";
+		case "DEPLOYMENT_STAGE_STATE_SUCCEEDED":
+		case "succeeded":
+			return "succeeded";
+		case "DEPLOYMENT_STAGE_STATE_FAILED":
+		case "failed":
+			return "failed";
+		case "DEPLOYMENT_STAGE_STATE_SKIPPED":
+		case "skipped":
+			return "skipped";
+		default:
+			return "unspecified";
+	}
+}
+
+export function decodeServiceLogType(raw: unknown): DashboardServiceLogType {
+	switch (raw) {
+		case "SERVICE_LOG_TYPE_RUNTIME":
+		case "runtime":
+			return "runtime";
+		case "SERVICE_LOG_TYPE_BUILD":
+		case "build":
+			return "build";
+		case "SERVICE_LOG_TYPE_DEPLOY":
+		case "deploy":
+			return "deploy";
+		case "SERVICE_LOG_TYPE_HTTP":
+		case "http":
+			return "http";
+		case "SERVICE_LOG_TYPE_NETWORK":
+		case "network":
+			return "network";
+		default:
+			return "unspecified";
+	}
+}
+
+export function encodeListServiceLogsRequest(
+	input: ListServiceLogsRequest,
+): ListServiceLogsRequest {
+	return {
+		projectId: input.projectId,
+		serviceId: input.serviceId,
+		allocationId: input.allocationId,
+		limit: input.limit,
+		logType: encodeServiceLogType(
+			input.logType,
+		) as ListServiceLogsRequest["logType"],
+		buildId: input.buildId,
+		search: input.search,
+		startTime: input.startTime,
+		endTime: input.endTime,
+	};
+}
+
 export function decodeListProjectsResponse(
 	raw: unknown,
 ): ListProjectsResponseMessage {
@@ -106,6 +176,15 @@ export function decodeListProjectsResponse(
 	const projects = readArray(value, "projects");
 	return {
 		projects: projects.map((project) => decodeProjectMessage(project)),
+	};
+}
+
+export function decodeListServiceLogsResponse(
+	raw: unknown,
+): ListServiceLogsResponseMessage {
+	const value = readRecord(raw, "list service logs response");
+	return {
+		lines: readArray(value, "lines").map((line) => decodeServiceLogLine(line)),
 	};
 }
 
@@ -259,7 +338,27 @@ function decodeBuildStatus(raw: unknown): DashboardBuildStatus | undefined {
 		state: decodeBuildState(value.state),
 		commitSha: readOptionalString(value, "commitSha") ?? "",
 		imageDigest: readOptionalString(value, "imageDigest") ?? "",
+		queuedAt: readOptionalDate(value, "queuedAt"),
+		startedAt: readOptionalDate(value, "startedAt"),
+		finishedAt: readOptionalDate(value, "finishedAt"),
 		failureReason: readOptionalString(value, "failureReason") ?? "",
+		commitMessage: readOptionalString(value, "commitMessage") ?? undefined,
+		commitAuthor: readOptionalString(value, "commitAuthor") ?? undefined,
+		stages: readArray(value, "stages").map((stage) =>
+			decodeDeploymentStage(stage),
+		),
+	};
+}
+
+function decodeDeploymentStage(raw: unknown): DashboardDeploymentStage {
+	const value = readRecord(raw, "deployment stage");
+	return {
+		key: readOptionalString(value, "key") ?? "",
+		label: readOptionalString(value, "label") ?? "",
+		detail: readOptionalString(value, "detail") ?? "",
+		state: decodeDeploymentStageState(value.state),
+		startedAt: readOptionalDate(value, "startedAt"),
+		finishedAt: readOptionalDate(value, "finishedAt"),
 	};
 }
 
@@ -281,10 +380,22 @@ function decodeAllocationStatus(
 		return undefined;
 	}
 	return {
+		allocationId: readOptionalString(value, "allocationId") ?? "",
+		serviceId: readOptionalString(value, "serviceId") ?? "",
+		agentId: readOptionalString(value, "agentId") ?? "",
+		desiredSpecRevision:
+			readOptionalNumberLike(value, "desiredSpecRevision") ?? 0,
+		appliedSpecRevision:
+			readOptionalNumberLike(value, "appliedSpecRevision") ?? 0,
 		phase: readOptionalString(value, "phase") ?? "",
 		message: readOptionalString(value, "message") ?? "",
 		allocationIp: readOptionalString(value, "allocationIp") ?? "",
 		healthy: readBoolean(value, "healthy"),
+		updatedAt: readOptionalDate(value, "updatedAt"),
+		desiredRolloutGeneration:
+			readOptionalNumberLike(value, "desiredRolloutGeneration") ?? 0,
+		appliedRolloutGeneration:
+			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
 	};
 }
@@ -308,6 +419,45 @@ export function decodeDomainBindingMessage(
 		serviceId: readRequiredString(value, "serviceId", "domain binding"),
 		targetPort: readRequiredNumber(value, "targetPort", "domain binding"),
 	};
+}
+
+function decodeServiceLogLine(raw: unknown): ServiceLogLineMessage {
+	const value = readRecord(raw, "service log line");
+	return {
+		observedAt: readOptionalDate(value, "observedAt"),
+		projectId: readRequiredString(value, "projectId", "service log line"),
+		serviceId: readRequiredString(value, "serviceId", "service log line"),
+		allocationId: readOptionalString(value, "allocationId") ?? "",
+		agentId: readOptionalString(value, "agentId") ?? "",
+		stream: readOptionalString(value, "stream") ?? "",
+		rolloutGeneration: readOptionalNumberLike(value, "rolloutGeneration") ?? 0,
+		sequence: readOptionalNumberLike(value, "sequence") ?? 0,
+		line: readOptionalString(value, "line") ?? "",
+		logType: decodeServiceLogType(value.logType),
+		buildId: readOptionalString(value, "buildId") ?? undefined,
+		stage: readOptionalString(value, "stage") ?? undefined,
+	};
+}
+
+function encodeServiceLogType(
+	logType: DashboardServiceLogType | undefined,
+): string | undefined {
+	switch (logType) {
+		case "runtime":
+			return "SERVICE_LOG_TYPE_RUNTIME";
+		case "build":
+			return "SERVICE_LOG_TYPE_BUILD";
+		case "deploy":
+			return "SERVICE_LOG_TYPE_DEPLOY";
+		case "http":
+			return "SERVICE_LOG_TYPE_HTTP";
+		case "network":
+			return "SERVICE_LOG_TYPE_NETWORK";
+		case "unspecified":
+			return "SERVICE_LOG_TYPE_UNSPECIFIED";
+		default:
+			return undefined;
+	}
 }
 
 function encodeBuildRecipe(
@@ -455,6 +605,24 @@ function readOptionalNumber(
 	return typeof candidate === "number" ? candidate : undefined;
 }
 
+function readOptionalNumberLike(
+	value: Record<string, unknown> | undefined,
+	key: string,
+): number | undefined {
+	if (!value) {
+		return undefined;
+	}
+	const candidate = value[key];
+	if (typeof candidate === "number") {
+		return Number.isFinite(candidate) ? candidate : undefined;
+	}
+	if (typeof candidate === "string" && candidate.trim() !== "") {
+		const parsed = Number(candidate);
+		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+	return undefined;
+}
+
 function readRequiredNumber(
 	value: Record<string, unknown>,
 	key: string,
@@ -469,6 +637,36 @@ function readRequiredNumber(
 
 function readBoolean(value: Record<string, unknown>, key: string): boolean {
 	return value[key] === true;
+}
+
+function readOptionalDate(
+	value: Record<string, unknown> | undefined,
+	key: string,
+): Date | undefined {
+	if (!value) {
+		return undefined;
+	}
+	const candidate = value[key];
+	if (candidate instanceof Date) {
+		return candidate;
+	}
+	if (typeof candidate === "string" || typeof candidate === "number") {
+		const parsed = new Date(candidate);
+		return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+	}
+	if (candidate && typeof candidate === "object") {
+		const record = candidate as Record<string, unknown>;
+		const seconds = readOptionalNumberLike(record, "seconds");
+		const nanos = readOptionalNumberLike(record, "nanos") ?? 0;
+		if (seconds !== undefined) {
+			return new Date(seconds * 1000 + nanos / 1_000_000);
+		}
+		const toDate = (candidate as { toDate?: () => Date }).toDate;
+		if (typeof toDate === "function") {
+			return toDate.call(candidate);
+		}
+	}
+	return undefined;
 }
 
 function readStringArray(

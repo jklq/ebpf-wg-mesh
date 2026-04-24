@@ -12,11 +12,13 @@ import type {
 	CreateDomainBindingRequest,
 	CreateProjectRequest,
 	CreateServiceRequest,
+	DeleteDomainBindingRequest,
 	EnsurePrincipalRequest,
 	GetServiceRequest,
 	GetServiceStatusRequest,
 	InspectSourceRequest,
 	ListDomainBindingsRequest,
+	ListServiceLogsRequest,
 	ListServicesRequest,
 	OpsClient,
 	PlatformClient,
@@ -24,6 +26,7 @@ import type {
 	PlatformRequestMap,
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
+	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
 
@@ -117,6 +120,13 @@ export async function unaryCall<M extends PlatformMethod>(
 						handleResponse,
 					);
 					return;
+				case "ListServiceLogs":
+					client.ListServiceLogs(
+						request as ListServiceLogsRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
 				case "ListDomainBindings":
 					client.ListDomainBindings(
 						request as ListDomainBindingsRequest,
@@ -130,6 +140,24 @@ export async function unaryCall<M extends PlatformMethod>(
 						metadata,
 						handleResponse,
 					);
+					return;
+				case "UpdateDomainBinding":
+					client.UpdateDomainBinding(
+						request as UpdateDomainBindingRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "DeleteDomainBinding":
+					client.DeleteDomainBinding(
+						request as DeleteDomainBindingRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				default:
+					reject(new Error(`unsupported platform method: ${method}`));
+					return;
 			}
 		});
 	} catch (cause) {

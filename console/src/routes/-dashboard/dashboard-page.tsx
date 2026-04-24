@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import type {
+	CreateServiceFastResult,
 	DashboardHomeState,
 	DashboardServiceRecord,
 	DashboardServiceStatus,
@@ -53,16 +54,17 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	}, [state]);
 
 	useEffect(() => {
-		const hasPending = services.some((service) => {
-			const health = serviceHealth(service);
-			return health === "building";
-		});
+		const hasPending =
+			services.some((service) => {
+				const health = serviceHealth(service);
+				return health === "building" || hasActiveStages(service);
+			}) || hasAllocationRolloutMismatch(liveStatus);
 		if (!hasPending) return;
 		const id = window.setInterval(() => {
 			void router.invalidate();
 		}, 5000);
 		return () => window.clearInterval(id);
-	}, [router, services]);
+	}, [router, services, liveStatus]);
 
 	useEffect(() => {
 		if (!selectedId || !localState.project) {
@@ -167,6 +169,36 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					? { ...current.serviceStatus, service }
 					: current.serviceStatus,
 		}));
+	};
+
+	const handleCreated = (result: CreateServiceFastResult) => {
+		setLocalState((current) => {
+			const services = current.services.some(
+				(service) => service.id === result.service.id,
+			)
+				? current.services.map((service) =>
+						service.id === result.service.id ? result.service : service,
+					)
+				: [...current.services, result.service];
+			return {
+				...current,
+				project:
+					current.project?.id === result.project.id
+						? current.project
+						: result.project,
+				services,
+				service: result.service,
+				serviceStatus: result.serviceStatus ?? current.serviceStatus,
+				onboarding: result.onboarding,
+				controlPlaneReachable: true,
+				controlPlaneError: undefined,
+			};
+		});
+		setSelectedId(result.service.id);
+		setActiveTab("deployments");
+		setLiveStatus(result.serviceStatus);
+		setShowNewService(false);
+		startTransition(() => void router.invalidate());
 	};
 
 	return (
@@ -287,20 +319,28 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				<NewServiceModal
 					state={localState}
 					onClose={() => setShowNewService(false)}
-					onCreated={(nextState) => {
-						if (nextState) {
-							setLocalState(nextState);
-							const created = nextState.service ?? nextState.services.at(-1);
-							if (created) {
-								setSelectedId(created.id);
-								setActiveTab("deployments");
-							}
-						}
-						setShowNewService(false);
-						startTransition(() => void router.invalidate());
-					}}
+					onCreated={handleCreated}
 				/>
 			)}
 		</div>
+	);
+}
+
+function hasActiveStages(service: DashboardServiceRecord): boolean {
+	return (
+		service.latestBuild?.stages?.some(
+			(stage) => stage.state === "running" || stage.state === "pending",
+		) ?? false
+	);
+}
+
+function hasAllocationRolloutMismatch(
+	status: DashboardServiceStatus | null,
+): boolean {
+	const allocation = status?.allocation;
+	return Boolean(
+		allocation &&
+			allocation.desiredRolloutGeneration !==
+				allocation.appliedRolloutGeneration,
 	);
 }

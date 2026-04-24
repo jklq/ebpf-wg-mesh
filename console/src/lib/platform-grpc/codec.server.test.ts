@@ -4,6 +4,7 @@ import type { DashboardServiceSpec } from "#/lib/dashboard/core/types.server";
 import {
 	decodeDomainBindingMessage,
 	decodeInspectSourceResponse,
+	decodeListServiceLogsResponse,
 	decodeServiceMessage,
 	decodeServiceStatusMessage,
 	encodeCreateServiceRequest,
@@ -136,5 +137,77 @@ describe("platform grpc gateway", () => {
 			signature_256: "sha256=abc123",
 			payload: new Uint8Array([1, 2, 3]),
 		});
+	});
+
+	it("decodes build commit metadata and deployment stages", () => {
+		const service = decodeServiceMessage({
+			id: "service-1",
+			projectId: "project-1",
+			name: "hello",
+			latestBuild: {
+				buildId: "build-1",
+				state: "BUILD_STATE_RUNNING",
+				commitSha: "abc1234567",
+				imageDigest: "",
+				failureReason: "",
+				commitMessage: "Ship rollout view",
+				commitAuthor: "Octo Cat",
+				stages: [
+					{
+						key: "build",
+						label: "Build",
+						detail: "Building image",
+						state: "DEPLOYMENT_STAGE_STATE_RUNNING",
+						startedAt: { seconds: 1_700_000_000 },
+					},
+				],
+			},
+		});
+
+		expect(service.latestBuild).toMatchObject({
+			commitMessage: "Ship rollout view",
+			commitAuthor: "Octo Cat",
+			stages: [
+				{
+					key: "build",
+					label: "Build",
+					detail: "Building image",
+					state: "running",
+				},
+			],
+		});
+		expect(service.latestBuild?.stages?.[0]?.startedAt).toBeInstanceOf(Date);
+	});
+
+	it("decodes service log type, build id, and stage", () => {
+		const response = decodeListServiceLogsResponse({
+			lines: [
+				{
+					observedAt: { seconds: 1_700_000_000 },
+					projectId: "project-1",
+					serviceId: "service-1",
+					allocationId: "",
+					agentId: "",
+					stream: "deploy",
+					rolloutGeneration: 1,
+					sequence: "2",
+					line: "initializing service",
+					logType: "SERVICE_LOG_TYPE_DEPLOY",
+					buildId: "build-1",
+					stage: "initialization",
+				},
+			],
+		});
+
+		expect(response.lines[0]).toMatchObject({
+			logType: "deploy",
+			buildId: "build-1",
+			stage: "initialization",
+			sequence: 2,
+		});
+	});
+
+	it("decodes missing service log lines as an empty list", () => {
+		expect(decodeListServiceLogsResponse({}).lines).toEqual([]);
 	});
 });

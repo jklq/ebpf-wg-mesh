@@ -64,7 +64,7 @@ describe("dashboard service", () => {
 		};
 		const localStackConfig = {
 			...createDashboardTestHarness().config,
-			publicBaseURL: "https://woozy-unextreme-genny.ngrok-free.dev",
+			publicBaseURL: "https://mesh.dev.example.test",
 			localDomainSuffix: "localtest.me",
 		};
 
@@ -403,6 +403,75 @@ describe("dashboard service", () => {
 			{ port: 3000, primary: true },
 			{ port: 8080, primary: false },
 		]);
+	});
+
+	it("returns fast-created service details for immediate rendering", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+
+		const result = await harness.service.createServiceFastFromSession({
+			repositorySelector: "octocat/hello",
+			serviceName: "talented-harmony",
+		});
+
+		expect(result.project.id).toBe("project-1");
+		expect(result.service).toMatchObject({
+			id: "service-1",
+			projectId: "project-1",
+			name: "talented-harmony",
+		});
+		expect(result.serviceStatus?.service.id).toBe("service-1");
+		expect(result.onboarding).toMatchObject({
+			currentStep: "build",
+			projectId: "project-1",
+			serviceId: "service-1",
+			repositorySelector: "octocat/hello",
+		});
+	});
+
+	it("forwards rich service log filters to the platform", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.serviceLogs = [
+			{
+				allocationId: "",
+				agentId: "",
+				stream: "deploy",
+				rolloutGeneration: 1,
+				sequence: 1,
+				line: "initializing service",
+				logType: "deploy",
+				buildId: "build-1",
+				stage: "initialization",
+			},
+		];
+
+		const logs = await harness.service.listServiceLogsFromSession({
+			projectId: "project-1",
+			serviceId: "service-1",
+			limit: 500,
+			logType: "deploy",
+			buildId: "build-1",
+			search: "initializing",
+		});
+
+		expect(logs).toHaveLength(1);
+		expect(harness.platform.listServiceLogsCalls[0]).toMatchObject({
+			projectId: "project-1",
+			serviceId: "service-1",
+			limit: 500,
+			logType: "deploy",
+			buildId: "build-1",
+			search: "initializing",
+		});
 	});
 
 	it("updates a service display name with settings changes", async () => {
