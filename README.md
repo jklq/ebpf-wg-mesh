@@ -94,23 +94,32 @@ make dev-ephemeral
 
 Required 1Password Environment keys for GitHub-enabled `make dev-ephemeral`:
 
-- Tunnel and hostname: `NGROK_AUTHTOKEN`, `NGROK_DOMAIN`.
+- Public endpoint: `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_HOSTNAME` for a pre-provisioned Cloudflare Tunnel. `localteststack` starts `cloudflared` locally and uses `https://{CLOUDFLARE_HOSTNAME}` as the public base URL.
 - Control plane GitHub and registry: `CONTROLPLANE_GITHUB_APP_ID`, `CONTROLPLANE_GITHUB_WEBHOOK_SECRET`, `CONTROLPLANE_GITHUB_PRIVATE_KEY_PEM` (base64-encoded PEM is recommended if your secret store strips newlines), `CONTROLPLANE_REGISTRY_HOST`, `CONTROLPLANE_REGISTRY_USERNAME`, `CONTROLPLANE_REGISTRY_PASSWORD`.
 - Optional control plane overrides: `CONTROLPLANE_GITHUB_API_BASE_URL`, `CONTROLPLANE_GITHUB_WEB_BASE_URL`, `CONTROLPLANE_GITHUB_WEBHOOK_PATH`, `CONTROLPLANE_REGISTRY_NAMESPACE_PREFIX`.
 - Optional dashboard install link: `CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL`.
 - Console GitHub auth: `DASHBOARD_GITHUB_APP_ID`, `DASHBOARD_GITHUB_CLIENT_ID`, `DASHBOARD_GITHUB_CLIENT_SECRET`.
 - Optional console overrides: `DASHBOARD_GITHUB_AUTH_BASE_URL`, `DASHBOARD_GITHUB_API_BASE_URL`.
 
-Derived GitHub URLs:
+Cloudflare Tunnel prerequisites:
+
+- `cloudflared` is installed locally.
+- The Cloudflare tunnel is created outside `localteststack`.
+- The public hostname is already assigned/routed to that tunnel in Cloudflare, and the tunnel origin points at the local ingress origin `http://platform.localtest.me:8080` by default, or whatever `LOCALTESTSTACK_INGRESS_HOST` and `LOCALTESTSTACK_INGRESS_PORT` resolve to in your shell.
+- The tunnel token and hostname are stored in the 1Password environment or exported in the shell as `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_HOSTNAME`.
+
+One-time operator setup:
+
+- Create the tunnel in Cloudflare.
+- Assign the hostname to the tunnel.
+- Set the tunnel origin to the local ingress URL exposed by `make dev-ephemeral`.
+- Obtain the tunnel token.
+- Store the token and hostname in 1Password or shell env.
+
+Derived GitHub URLs from `https://{CLOUDFLARE_HOSTNAME}`:
 
 - Callback URL: `{publicBaseURL}/auth/callback`
 - Webhook URL: `{publicBaseURL}/webhooks/github` by default, or `{publicBaseURL}{CONTROLPLANE_GITHUB_WEBHOOK_PATH}` when that override is set.
-
-Hostname strategy:
-
-- Default: use the reserved ngrok hostname set in `NGROK_DOMAIN`.
-- The stack starts ngrok automatically from `NGROK_AUTHTOKEN` and binds that exact hostname.
-- There is no separate `LOCALTESTSTACK_PUBLIC_URL` override path.
 
 Production-replica VM smoke on Hetzner:
 

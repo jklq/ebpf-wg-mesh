@@ -3,8 +3,11 @@ package localteststack
 import (
 	"context"
 	"encoding/base64"
-	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"ebof-wg-mesh/internal/config"
 
@@ -118,6 +121,30 @@ func TestApplyEnvironmentOverlayPrefersLocalteststackPublicURL(t *testing.T) {
 	}
 }
 
+func TestApplyEnvironmentOverlayAppliesExternalPublicURLWithoutGitHub(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	dashboardEnv := baseDashboardEnv()
+
+	result, err := ApplyEnvironmentOverlay(&cfg, dashboardEnv, nil, "https://mesh.example.test")
+	if err != nil {
+		t.Fatalf("ApplyEnvironmentOverlay: %v", err)
+	}
+	if result.GitHubEnabled {
+		t.Fatal("expected GitHub to remain disabled")
+	}
+	if result.PublicBaseURL != "https://mesh.example.test" {
+		t.Fatalf("unexpected public base URL %q", result.PublicBaseURL)
+	}
+	if cfg.Ingress.PublicAddr != "mesh.example.test" {
+		t.Fatalf("unexpected ingress public addr %q", cfg.Ingress.PublicAddr)
+	}
+	if dashboardEnv[DashboardPublicBaseURLKey] != "https://mesh.example.test" {
+		t.Fatalf("unexpected dashboard public base URL %q", dashboardEnv[DashboardPublicBaseURLKey])
+	}
+}
+
 func TestApplyEnvironmentOverlayEnablesGitHubWithoutInstallURL(t *testing.T) {
 	t.Parallel()
 
@@ -146,7 +173,7 @@ func TestApplyEnvironmentOverlayEnablesGitHubWithoutInstallURL(t *testing.T) {
 	}
 }
 
-func TestApplyEnvironmentOverlayReportsNgrokRuntimeRequirementWhenGitHubSecretsAreComplete(t *testing.T) {
+func TestApplyEnvironmentOverlayReportsCloudflareRuntimeRequirementWhenGitHubSecretsAreComplete(t *testing.T) {
 	t.Parallel()
 
 	cfg := baseConfig()
@@ -170,7 +197,7 @@ func TestApplyEnvironmentOverlayReportsNgrokRuntimeRequirementWhenGitHubSecretsA
 	if result.GitHubEnabled {
 		t.Fatal("expected GitHub to remain disabled without a public URL source")
 	}
-	if len(result.MissingRuntimeKeys) != 2 || result.MissingRuntimeKeys[0] != NgrokAuthtokenKey || result.MissingRuntimeKeys[1] != NgrokDomainKey {
+	if len(result.MissingRuntimeKeys) != 2 || result.MissingRuntimeKeys[0] != CloudflareTunnelTokenKey || result.MissingRuntimeKeys[1] != CloudflareHostnameKey {
 		t.Fatalf("unexpected runtime keys %+v", result.MissingRuntimeKeys)
 	}
 	if cfg.GitHub.Enabled {
@@ -178,72 +205,102 @@ func TestApplyEnvironmentOverlayReportsNgrokRuntimeRequirementWhenGitHubSecretsA
 	}
 }
 
-func TestResolvePublicURLRequiresNgrokDomain(t *testing.T) {
+func TestStartCloudflareTunnelRequiresToken(t *testing.T) {
 	t.Parallel()
 
-	_, err := ResolvePublicURLForUpstream(context.Background(), "token", "", "http://platform.localtest.me:8080", nil)
+	_, err := StartCloudflareTunnel(context.Background(), "", "hostname.example.test")
 	if err == nil {
-		t.Fatal("expected ngrok domain error")
+		t.Fatal("expected cloudflare tunnel token error")
 	}
-	if got := err.Error(); got != "NGROK_DOMAIN is required" {
+	if got := err.Error(); got != "CLOUDFLARE_TUNNEL_TOKEN is required" {
 		t.Fatalf("unexpected error %q", got)
 	}
 }
 
-func TestResolvePublicURLRequiresNgrokAuthtoken(t *testing.T) {
+func TestStartCloudflareTunnelRequiresHostname(t *testing.T) {
 	t.Parallel()
 
-	_, err := ResolvePublicURLForUpstream(context.Background(), "", "custom.example.test", "http://platform.localtest.me:8080", nil)
+	_, err := StartCloudflareTunnel(context.Background(), "token", "")
 	if err == nil {
-		t.Fatal("expected ngrok authtoken error")
+		t.Fatal("expected cloudflare hostname error")
 	}
-	if got := err.Error(); got != "NGROK_AUTHTOKEN is required" {
+	if got := err.Error(); got != "CLOUDFLARE_HOSTNAME is required" {
 		t.Fatalf("unexpected error %q", got)
 	}
 }
 
-func TestResolvePublicURLStartsNgrokWhenTokenPresent(t *testing.T) {
-	t.Parallel()
-
-	starter := &fakePublicTunnelStarter{
-		tunnel: fakePublicTunnel{url: mustParseURL("https://example.ngrok.app")},
+func TestStartCloudflareTunnelReturnsHostnameWhenProcessStarts(t *testing.T) {
+	binDir := t.TempDir()
+	cloudflaredPath := filepath.Join(binDir, "cloudflared")
+	if err := os.WriteFile(cloudflaredPath, []byte("#!/bin/sh\nsleep 10\n"), 0o755); err != nil {
+		t.Fatalf("write fake cloudflared: %v", err)
 	}
-	result, err := ResolvePublicURLForUpstream(context.Background(), "token", "custom.example.test", "http://platform.localtest.me:8080", starter)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+
+	result, err := StartCloudflareTunnel(ctx, "token", "mesh.dev.example.test")
 	if err != nil {
-		t.Fatalf("ResolvePublicURL: %v", err)
+		t.Fatalf("StartCloudflareTunnel: %v", err)
 	}
-	if result.BaseURL != "https://example.ngrok.app" {
+	defer result.Close()
+
+	if result.BaseURL != "https://mesh.dev.example.test" {
 		t.Fatalf("unexpected base URL %q", result.BaseURL)
 	}
-	if starter.calls != 1 {
-		t.Fatalf("expected ngrok starter to be called once, got %d calls", starter.calls)
-	}
-	if starter.upstream != "http://platform.localtest.me:8080" {
-		t.Fatalf("unexpected upstream %q", starter.upstream)
-	}
-	if starter.domain != "custom.example.test" {
-		t.Fatalf("unexpected domain %q", starter.domain)
-	}
-	if result.Host != "example.ngrok.app" {
+	if result.Host != "mesh.dev.example.test" {
 		t.Fatalf("unexpected host %q", result.Host)
 	}
 }
 
-func TestResolvePublicURLForUpstreamUsesProvidedIngressURL(t *testing.T) {
+func TestStartCloudflareTunnelSurfacesMissingBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := StartCloudflareTunnel(context.Background(), "token", "mesh.dev.example.test")
+	if err == nil {
+		t.Fatal("expected missing binary error")
+	}
+	if got := err.Error(); got != `start cloudflared: exec: "cloudflared": executable file not found in $PATH` {
+		t.Fatalf("unexpected error %q", got)
+	}
+}
+
+func TestWaitForCommandStartupSucceedsWhileProcessIsStillRunning(t *testing.T) {
 	t.Parallel()
 
-	starter := &fakePublicTunnelStarter{
-		tunnel: fakePublicTunnel{url: mustParseURL("https://example.ngrok.app")},
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", "sleep 1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	result, err := ResolvePublicURLForUpstream(context.Background(), "token", "custom.example.test", "http://platform.localtest.me:41234", starter)
-	if err != nil {
-		t.Fatalf("ResolvePublicURLForUpstream: %v", err)
+	defer func() {
+		_ = stopCommand(cmd)
+	}()
+
+	if err := waitForCommandStartup(ctx, cmd, 100*time.Millisecond); err != nil {
+		t.Fatalf("waitForCommandStartup: %v", err)
 	}
-	if result.BaseURL != "https://example.ngrok.app" {
-		t.Fatalf("unexpected base URL %q", result.BaseURL)
+}
+
+func TestWaitForCommandStartupReturnsEarlyExit(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", "exit 17")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	if starter.upstream != "http://platform.localtest.me:41234" {
-		t.Fatalf("unexpected upstream %q", starter.upstream)
+
+	err := waitForCommandStartup(ctx, cmd, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected startup failure")
+	}
+	if got := err.Error(); got != "cloudflared exited: exit status 17" {
+		t.Fatalf("unexpected error %q", got)
 	}
 }
 
@@ -322,14 +379,14 @@ func TestApplyEnvironmentOverlayEnablesGitHubForCompleteContract(t *testing.T) {
 		DashboardGitHubClientSecretKey:         "client-secret",
 		DashboardGitHubAuthBaseURLKey:          "https://github.example.test",
 		DashboardGitHubAPIBaseURLKey:           "https://api.github.example.test",
-	}, "https://mesh.ngrok.app")
+	}, "https://mesh.dev.example.test")
 	if err != nil {
 		t.Fatalf("ApplyEnvironmentOverlay: %v", err)
 	}
 	if !result.GitHubEnabled {
 		t.Fatal("expected GitHub to be enabled")
 	}
-	if cfg.Ingress.PublicAddr != "mesh.ngrok.app" {
+	if cfg.Ingress.PublicAddr != "mesh.dev.example.test" {
 		t.Fatalf("unexpected ingress public addr %q", cfg.Ingress.PublicAddr)
 	}
 	if !cfg.GitHub.Enabled || cfg.GitHub.AppID != 123 {
@@ -347,42 +404,12 @@ func TestApplyEnvironmentOverlayEnablesGitHubForCompleteContract(t *testing.T) {
 	if dashboardEnv[DashboardGitHubClientIDKey] != "client-id" {
 		t.Fatalf("unexpected dashboard client id %q", dashboardEnv[DashboardGitHubClientIDKey])
 	}
-	if result.GitHubCallbackURL != "https://mesh.ngrok.app/auth/callback" {
+	if result.GitHubCallbackURL != "https://mesh.dev.example.test/auth/callback" {
 		t.Fatalf("unexpected callback URL %q", result.GitHubCallbackURL)
 	}
-	if result.GitHubWebhookURL != "https://mesh.ngrok.app/hooks/github" {
+	if result.GitHubWebhookURL != "https://mesh.dev.example.test/hooks/github" {
 		t.Fatalf("unexpected webhook URL %q", result.GitHubWebhookURL)
 	}
-}
-
-type fakePublicTunnelStarter struct {
-	calls    int
-	upstream string
-	domain   string
-	tunnel   fakePublicTunnel
-}
-
-func (s *fakePublicTunnelStarter) Start(_ context.Context, upstream string, domain string) (PublicTunnel, error) {
-	s.calls++
-	s.upstream = upstream
-	s.domain = domain
-	return s.tunnel, nil
-}
-
-type fakePublicTunnel struct {
-	url *url.URL
-}
-
-func (t fakePublicTunnel) URL() *url.URL { return t.url }
-
-func (t fakePublicTunnel) Close() error { return nil }
-
-func mustParseURL(raw string) *url.URL {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		panic(err)
-	}
-	return parsed
 }
 
 func sampleGitHubPrivateKeyPEM() string {

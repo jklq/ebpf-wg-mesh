@@ -4,15 +4,23 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestBuildctlCommandPlacesGlobalFlagsBeforeSubcommand(t *testing.T) {
@@ -60,6 +68,7 @@ func TestBuildCommandUsesDockerBuildxWhenDockerBinarySelected(t *testing.T) {
 
 	wantArgs := []string{
 		"buildx", "build",
+		"--progress=plain",
 		"--file", "/workspace/repo/deploy/Dockerfile",
 		"--tag", "ghcr.io/example/image:tag",
 		"--push",
@@ -71,6 +80,158 @@ func TestBuildCommandUsesDockerBuildxWhenDockerBinarySelected(t *testing.T) {
 	}
 	if !reflect.DeepEqual(req.Args, wantArgs) {
 		t.Fatalf("unexpected docker buildx args:\n got: %#v\nwant: %#v", req.Args, wantArgs)
+	}
+}
+
+func TestOSCommandRunnerEmitsStdoutAndStderrLinesWithStreamLabels(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu     sync.Mutex
+		got    []commandOutputLine
+		runner osCommandRunner
+	)
+	output, err := runner.Run(context.Background(), helperCommandRequest("streams"), func(line commandOutputLine) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, line)
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 4 {
+		t.Fatalf("expected 4 streamed lines, got %d", len(got))
+	}
+	want := []commandOutputLine{
+		{Stream: "stdout", Line: "out1"},
+		{Stream: "stdout", Line: "out2"},
+		{Stream: "stderr", Line: "err1"},
+		{Stream: "stderr", Line: "err2"},
+	}
+	for _, line := range want {
+		if !slices.ContainsFunc(got, func(candidate commandOutputLine) bool {
+			return candidate.Stream == line.Stream && candidate.Line == line.Line && !candidate.ObservedAt.IsZero()
+		}) {
+			t.Fatalf("missing streamed line %+v in %+v", line, got)
+		}
+	}
+	text := string(output)
+	for _, token := range []string{"out1", "out2", "err1", "err2"} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("combined output %q missing %q", text, token)
+		}
+	}
+}
+
+func TestOSCommandRunnerTruncatesLongLines(t *testing.T) {
+	t.Parallel()
+
+	var lines []commandOutputLine
+	output, err := (osCommandRunner{}).Run(context.Background(), helperCommandRequest("longline"), func(line commandOutputLine) {
+		lines = append(lines, line)
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	if lines[0].Stream != "stdout" {
+		t.Fatalf("unexpected stream %q", lines[0].Stream)
+	}
+	if len(lines[0].Line) != commandScannerMaxLineBytes {
+		t.Fatalf("expected truncated line length %d, got %d", commandScannerMaxLineBytes, len(lines[0].Line))
+	}
+	if len(output) > commandFailureOutputBytes {
+		t.Fatalf("expected output tail <= %d bytes, got %d", commandFailureOutputBytes, len(output))
+	}
+}
+
+func TestOSCommandRunnerPreservesFailureOutputTail(t *testing.T) {
+	t.Parallel()
+
+	output, err := (osCommandRunner{}).Run(context.Background(), helperCommandRequest("failure"), nil)
+	if err == nil {
+		t.Fatal("expected command failure")
+	}
+	text := string(output)
+	for _, token := range []string{"hello", "boom"} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("failure output %q missing %q", text, token)
+		}
+	}
+}
+
+func TestBuildLogReporterBatchesLinesWithIncreasingSequence(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1")
+	now := time.Now().UTC()
+	for i := 0; i < buildLogBatchSize+1; i++ {
+		reporter.Report(context.Background(), commandOutputLine{
+			ObservedAt: now.Add(time.Duration(i) * time.Millisecond),
+			Stream:     "stdout",
+			Line:       "line",
+		})
+	}
+	waitForBuilderReportCall(t, client.calls)
+	reporter.Close()
+
+	requests := client.ReportRequests()
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 report requests, got %d", len(requests))
+	}
+	var sequences []uint64
+	for _, req := range requests {
+		for _, line := range req.GetLines() {
+			sequences = append(sequences, line.GetSequence())
+		}
+	}
+	if len(sequences) != buildLogBatchSize+1 {
+		t.Fatalf("expected %d sequences, got %d", buildLogBatchSize+1, len(sequences))
+	}
+	for i, sequence := range sequences {
+		if want := uint64(i + 1); sequence != want {
+			t.Fatalf("sequence %d = %d, want %d", i, sequence, want)
+		}
+	}
+}
+
+func TestBuildLogReporterFlushesRemainingLinesOnClose(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1")
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stderr", Line: "two"})
+	reporter.Close()
+
+	requests := client.ReportRequests()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 report request, got %d", len(requests))
+	}
+	if got := len(requests[0].GetLines()); got != 2 {
+		t.Fatalf("expected 2 flushed lines, got %d", got)
+	}
+}
+
+func TestBuildLogReporterIgnoresReportErrors(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{
+		calls:     make(chan struct{}, 4),
+		reportErr: errors.New("boom"),
+	}
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1")
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
+	reporter.Close()
+
+	if len(client.ReportRequests()) != 1 {
+		t.Fatal("expected reporter to attempt a flush despite RPC errors")
 	}
 }
 
@@ -297,4 +458,115 @@ func makeSnapshotArchive(t *testing.T, files map[string]string) []byte {
 		t.Fatalf("Close gzip writer: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestCommandRunnerHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	switch os.Getenv("HELPER_MODE") {
+	case "streams":
+		_, _ = os.Stdout.WriteString("out1\nout2\n")
+		_, _ = os.Stderr.WriteString("err1\nerr2\n")
+		os.Exit(0)
+	case "longline":
+		_, _ = os.Stdout.WriteString(strings.Repeat("x", commandScannerMaxLineBytes+1024) + "\n")
+		os.Exit(0)
+	case "failure":
+		_, _ = os.Stdout.WriteString("hello\n")
+		_, _ = os.Stderr.WriteString("boom\n")
+		os.Exit(7)
+	default:
+		os.Exit(2)
+	}
+}
+
+func helperCommandRequest(mode string) commandRequest {
+	return commandRequest{
+		Binary: os.Args[0],
+		Args:   []string{"-test.run=TestCommandRunnerHelperProcess"},
+		Env: []string{
+			"GO_WANT_HELPER_PROCESS=1",
+			"HELPER_MODE=" + mode,
+		},
+	}
+}
+
+type recordingBuilderServiceClient struct {
+	mu        sync.Mutex
+	requests  []*platformv1.ReportBuildLogsRequest
+	calls     chan struct{}
+	reportErr error
+}
+
+func (c *recordingBuilderServiceClient) ClaimBuild(context.Context, *platformv1.ClaimBuildRequest, ...grpc.CallOption) (*platformv1.BuildJob, error) {
+	return nil, nil
+}
+
+func (c *recordingBuilderServiceClient) DownloadSourceSnapshot(context.Context, *platformv1.DownloadSourceSnapshotRequest, ...grpc.CallOption) (*platformv1.SourceSnapshotArtifact, error) {
+	return nil, nil
+}
+
+func (c *recordingBuilderServiceClient) ReportBuildHeartbeat(context.Context, *platformv1.BuilderHeartbeatRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+	return &emptypb.Empty{}, nil
+}
+
+func (c *recordingBuilderServiceClient) ReportBuildLogs(_ context.Context, in *platformv1.ReportBuildLogsRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	c.mu.Lock()
+	c.requests = append(c.requests, cloneBuildLogRequestForTest(in))
+	c.mu.Unlock()
+	select {
+	case c.calls <- struct{}{}:
+	default:
+	}
+	if c.reportErr != nil {
+		return nil, c.reportErr
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (c *recordingBuilderServiceClient) CompleteBuild(context.Context, *platformv1.CompleteBuildRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+	return &emptypb.Empty{}, nil
+}
+
+func (c *recordingBuilderServiceClient) ReportRequests() []*platformv1.ReportBuildLogsRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]*platformv1.ReportBuildLogsRequest, 0, len(c.requests))
+	for _, req := range c.requests {
+		out = append(out, cloneBuildLogRequestForTest(req))
+	}
+	return out
+}
+
+func cloneBuildLogRequestForTest(req *platformv1.ReportBuildLogsRequest) *platformv1.ReportBuildLogsRequest {
+	if req == nil {
+		return nil
+	}
+	clone := &platformv1.ReportBuildLogsRequest{
+		BuilderId: req.GetBuilderId(),
+		BuildId:   req.GetBuildId(),
+		Lines:     make([]*platformv1.BuildLogLine, 0, len(req.GetLines())),
+	}
+	for _, line := range req.GetLines() {
+		if line == nil {
+			continue
+		}
+		clone.Lines = append(clone.Lines, &platformv1.BuildLogLine{
+			ObservedAt: line.GetObservedAt(),
+			Stream:     line.GetStream(),
+			Sequence:   line.GetSequence(),
+			Line:       line.GetLine(),
+		})
+	}
+	return clone
+}
+
+func waitForBuilderReportCall(t *testing.T, calls <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for build log report")
+	}
 }

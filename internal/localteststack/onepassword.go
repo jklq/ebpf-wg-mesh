@@ -240,7 +240,7 @@ func ApplyEnvironmentOverlay(cfg *config.ControlPlaneConfig, dashboardEnv map[st
 	}
 
 	if result.PublicBaseURL == "" {
-		result.MissingRuntimeKeys = []string{NgrokAuthtokenKey, NgrokDomainKey}
+		result.MissingRuntimeKeys = []string{CloudflareTunnelTokenKey, CloudflareHostnameKey}
 		return result, nil
 	}
 
