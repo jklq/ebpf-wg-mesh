@@ -17,6 +17,7 @@ import type {
 	DashboardServiceSpec,
 	DashboardServiceStatus,
 	DashboardSourceSpec,
+	DashboardUnappliedChangeAction,
 	RepositoryAccessState,
 } from "#/lib/dashboard/core/types.server";
 import type {
@@ -273,7 +274,44 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 			readOptionalString(value, "lastSuccessfulCommitSha") ?? undefined,
 		resolvedImage: readOptionalString(value, "resolvedImage") ?? undefined,
 		latestBuild: decodeBuildStatus(value.latestBuild),
+		pendingChanges: readBoolean(value, "pendingChanges"),
+		unappliedChangeCount:
+			readOptionalNumberLike(value, "unappliedChangeCount") ?? 0,
+		unappliedChanges: readArray(value, "unappliedChanges").map(
+			decodeUnappliedChange,
+		),
 	};
+}
+
+function decodeUnappliedChange(raw: unknown) {
+	const value = readRecord(raw, "unapplied change");
+	return {
+		id: readOptionalString(value, "id") ?? "",
+		section: readOptionalString(value, "section") ?? "",
+		field: readOptionalString(value, "field") ?? "",
+		path: readOptionalString(value, "path") ?? "",
+		action: decodeUnappliedChangeAction(value.action),
+		currentValue: readOptionalString(value, "currentValue") ?? "",
+		newValue: readOptionalString(value, "newValue") ?? "",
+	};
+}
+
+function decodeUnappliedChangeAction(
+	raw: unknown,
+): DashboardUnappliedChangeAction {
+	switch (raw) {
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_ADD":
+		case 1:
+			return "add";
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE":
+		case 2:
+			return "update";
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_REMOVE":
+		case 3:
+			return "remove";
+		default:
+			return "unspecified";
+	}
 }
 
 function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
@@ -283,7 +321,11 @@ function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 	}
 	const runtime = decodeRuntimeSpec(value.runtime);
 	const source = decodeServiceSource(value.source);
-	if (!source && runtime.ports.length === 0) {
+	if (
+		!source &&
+		runtime.ports.length === 0 &&
+		Object.keys(runtime.env).length === 0
+	) {
 		return undefined;
 	}
 	return {
@@ -502,6 +544,7 @@ function encodeRuntimeSpec(
 	runtime: DashboardServiceSpec["runtime"],
 ): CreateServiceRequest["service"]["spec"]["runtime"] {
 	return {
+		env: runtime.env ?? {},
 		ports: (runtime.ports ?? []).map((port) => ({
 			port: port.port,
 			primary: port.primary,
@@ -525,6 +568,7 @@ function encodeServiceSource(
 function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
 	const value = readOptionalRecord(raw);
 	return {
+		env: readStringMap(value, "env"),
 		ports: readArray(value ?? {}, "ports")
 			.map((item) => decodeRuntimePort(item))
 			.filter((item): item is DashboardRuntimePort => item !== undefined),
@@ -702,6 +746,23 @@ function readStringArray(
 	return readArray(value, key).filter(
 		(entry): entry is string => typeof entry === "string",
 	);
+}
+
+function readStringMap(
+	value: Record<string, unknown> | undefined,
+	key: string,
+): Record<string, string> {
+	const record = readOptionalRecord(value?.[key]);
+	if (!record) {
+		return {};
+	}
+	const out: Record<string, string> = {};
+	for (const [entryKey, entryValue] of Object.entries(record)) {
+		if (typeof entryValue === "string") {
+			out[entryKey] = entryValue;
+		}
+	}
+	return out;
 }
 
 function readNumberArray(

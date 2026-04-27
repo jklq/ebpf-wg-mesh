@@ -98,6 +98,46 @@ describe("dashboard service", () => {
 		expect(state?.controlPlaneError).toContain("control plane down");
 	});
 
+	it("includes saved service positions in home state", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.projects = [
+			{ id: "project-1", name: "project", kind: "user" },
+		];
+		harness.platform.services = [
+			{
+				id: "service-1",
+				projectId: "project-1",
+				name: "hello",
+				spec: { runtime: { env: {}, ports: [] } },
+			},
+		];
+		await harness.store.saveOnboardingDraft("user-1", {
+			currentStep: "build",
+			projectId: "project-1",
+			serviceId: "service-1",
+			repositorySelector: "",
+			trackedRef: "",
+			dockerfilePath: "",
+			contextDir: ".",
+			hostname: "",
+		});
+
+		await harness.service.saveServicePositionFromSession({
+			projectId: "project-1",
+			serviceId: "service-1",
+			position: { x: 320, y: 256 },
+		});
+		const state = await harness.service.loadDashboardHome();
+
+		expect(state?.services[0]?.layoutPosition).toEqual({ x: 320, y: 256 });
+		expect(state?.service?.layoutPosition).toEqual({ x: 320, y: 256 });
+	});
+
 	it("creates projects from the active session", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
@@ -328,7 +368,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { ports: [{ port: 8080, primary: true }] },
+					runtime: { env: {}, ports: [{ port: 8080, primary: true }] },
 				},
 			},
 		];
@@ -369,7 +409,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { ports: [] },
+					runtime: { env: {}, ports: [] },
 				},
 			},
 		]);
@@ -496,7 +536,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { ports: [{ port: 8080, primary: true }] },
+					runtime: { env: {}, ports: [{ port: 8080, primary: true }] },
 				},
 			},
 		];

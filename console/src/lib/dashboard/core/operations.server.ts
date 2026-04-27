@@ -30,6 +30,7 @@ import {
 	type DashboardProject,
 	type DashboardServiceLogLine,
 	type DashboardServiceLogType,
+	type DashboardServicePosition,
 	type DashboardServiceRecord,
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
@@ -138,6 +139,12 @@ export async function loadDashboardHome(
 				(await safePlatformCall(runtime, "listServices", (platform) =>
 					platform.listServices(session.user, project.id),
 				)) ?? [];
+			const positions = await storeCall(
+				runtime,
+				"listServicePositions",
+				(store) => store.listServicePositions(session.user.id, project.id),
+			);
+			allServices = applyServicePositions(allServices, positions);
 		}
 
 		if (project && onboarding.serviceId) {
@@ -540,26 +547,84 @@ export async function updateServiceFromSession(
 			serviceId: input.serviceId,
 		}),
 	);
-	const desiredSource: DashboardSourceSpec = {
-		provider: "github",
-		repositorySelector: normalizeRepositorySelector(input.repositorySelector),
-		trackedRef: input.trackedRef.trim() || "main",
-		buildRecipe: {
-			dockerfilePath: input.dockerfilePath.trim(),
-			contextDir: input.contextDir.trim() || ".",
-		},
-	};
+	const currentSource = current.spec?.source;
+	const repositorySelector =
+		input.repositorySelector ?? currentSource?.repositorySelector ?? "";
+	const trackedRef = input.trackedRef ?? currentSource?.trackedRef ?? "";
+	const dockerfilePath =
+		input.dockerfilePath ?? currentSource?.buildRecipe?.dockerfilePath ?? "";
+	const contextDir =
+		input.contextDir ?? currentSource?.buildRecipe?.contextDir ?? ".";
+	const desiredSource: DashboardSourceSpec | undefined =
+		repositorySelector.trim()
+			? {
+					provider: currentSource?.provider ?? "github",
+					repositorySelector: normalizeRepositorySelector(repositorySelector),
+					trackedRef: trackedRef.trim() || "main",
+					buildRecipe: {
+						dockerfilePath: dockerfilePath.trim(),
+						contextDir: contextDir.trim() || ".",
+					},
+				}
+			: undefined;
 	return platformCall(runtime, "updateService", (platform) =>
 		platform.updateService(session.user, {
 			projectId: input.projectId,
 			serviceId: input.serviceId,
 			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
 			spec: {
-				source: desiredSource,
+				...(desiredSource ? { source: desiredSource } : {}),
 				runtime: {
+					env: normalizeRuntimeEnv(
+						input.runtimeEnv ?? current.spec?.runtime.env,
+					),
 					ports: current.spec?.runtime.ports ?? [],
 				},
 			},
+		}),
+	);
+}
+
+export async function redeployServiceFromSession(
+	runtime: DashboardRuntime,
+	input: { projectId: string; serviceId: string },
+): Promise<DashboardServiceStatus> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "redeployService", (platform) =>
+		platform.redeployService(session.user, input),
+	);
+}
+
+export async function discardServiceChangesFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		projectId: string;
+		serviceId: string;
+		changeIds?: Array<string>;
+		discardAll?: boolean;
+	},
+): Promise<DashboardServiceRecord> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "discardServiceChanges", (platform) =>
+		platform.discardServiceChanges(session.user, input),
+	);
+}
+
+export async function saveServicePositionFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		projectId: string;
+		serviceId: string;
+		position: DashboardServicePosition;
+	},
+): Promise<DashboardServicePosition> {
+	const session = await requireSession(runtime);
+	const position = normalizeServicePosition(input.position);
+	return storeCall(runtime, "saveServicePosition", (store) =>
+		store.saveServicePosition(session.user.id, {
+			projectId: input.projectId,
+			serviceId: input.serviceId,
+			position,
 		}),
 	);
 }
@@ -664,6 +729,51 @@ function buildServiceSpec(
 		}));
 	return {
 		source,
-		runtime: { ports },
+		runtime: { env: {}, ports },
 	};
+}
+
+function normalizeRuntimeEnv(
+	env: Record<string, string> | undefined,
+): Record<string, string> {
+	if (!env) {
+		return {};
+	}
+	const normalized: Record<string, string> = {};
+	for (const [rawKey, rawValue] of Object.entries(env)) {
+		const key = rawKey.trim();
+		if (key === "") {
+			continue;
+		}
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+			throw new DashboardValidationError({
+				message: `Invalid environment variable name: ${key}`,
+			});
+		}
+		normalized[key] = String(rawValue);
+	}
+	return normalized;
+}
+
+function applyServicePositions(
+	services: Array<DashboardServiceRecord>,
+	positions: Record<string, DashboardServicePosition>,
+): Array<DashboardServiceRecord> {
+	return services.map((service) => {
+		const position = positions[service.id];
+		return position ? { ...service, layoutPosition: position } : service;
+	});
+}
+
+function normalizeServicePosition(
+	position: DashboardServicePosition,
+): DashboardServicePosition {
+	const x = Math.round(position.x);
+	const y = Math.round(position.y);
+	if (!Number.isFinite(x) || !Number.isFinite(y)) {
+		throw new DashboardValidationError({
+			message: "service position must be finite",
+		});
+	}
+	return { x, y };
 }

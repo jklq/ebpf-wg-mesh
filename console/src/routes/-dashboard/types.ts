@@ -11,7 +11,7 @@ import type {
 	DashboardHomeState,
 } from "#/lib/dashboard/core/types.server";
 
-export type DashboardTab = "overview" | "deployments" | "settings" | "domains";
+export type DashboardTab = "deployments" | "variables" | "settings" | "domains";
 
 export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
 

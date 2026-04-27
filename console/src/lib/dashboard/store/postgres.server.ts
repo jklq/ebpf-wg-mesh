@@ -297,6 +297,56 @@ export function createPostgresDashboardStore(
 			);
 		},
 
+		async listServicePositions(userID, projectId) {
+			const result = await query<{
+				service_id: string;
+				x: string | number;
+				y: string | number;
+			}>(
+				db,
+				"listServicePositions",
+				`SELECT service_id, x, y
+				   FROM ${tableName(runtime, "service_positions")}
+				  WHERE user_id = $1 AND project_id = $2`,
+				[userID, projectId],
+			);
+			const positions: Record<string, { x: number; y: number }> = {};
+			for (const row of result.rows) {
+				positions[row.service_id] = {
+					x: Number(row.x),
+					y: Number(row.y),
+				};
+			}
+			return positions;
+		},
+
+		async saveServicePosition(userID, input) {
+			const result = await query<{ x: string | number; y: string | number }>(
+				db,
+				"saveServicePosition",
+				`INSERT INTO ${tableName(runtime, "service_positions")} (
+					user_id, project_id, service_id, x, y, created_at, updated_at
+				) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+				ON CONFLICT (user_id, project_id, service_id) DO UPDATE SET
+					x = excluded.x,
+					y = excluded.y,
+					updated_at = NOW()
+				RETURNING x, y`,
+				[
+					userID,
+					input.projectId,
+					input.serviceId,
+					input.position.x,
+					input.position.y,
+				],
+			);
+			const row = rowAt(result.rows, 0, "saveServicePosition");
+			return {
+				x: Number(row.x),
+				y: Number(row.y),
+			};
+		},
+
 		async createRefreshSession(sessionId, userID, expiresAt) {
 			await queryVoid(
 				db,

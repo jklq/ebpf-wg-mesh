@@ -4,6 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type {
 	DashboardDeploymentRecord,
 	DashboardServiceLogType,
+	DashboardServicePosition,
 	UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 
@@ -76,6 +77,44 @@ export const doUpdateService = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.updateServiceFromSession(data);
+	});
+
+export const doRedeployService = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) => input as { projectId: string; serviceId: string },
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.redeployServiceFromSession(data);
+	});
+
+export const doDiscardServiceChanges = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				changeIds?: Array<string>;
+				discardAll?: boolean;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.discardServiceChangesFromSession(data);
+	});
+
+export const doSaveServicePosition = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				position: DashboardServicePosition;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.saveServicePositionFromSession(data);
 	});
 
 export const doCreateDomainBinding = createServerFn({ method: "POST" })

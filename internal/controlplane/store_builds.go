@@ -426,13 +426,14 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE allocations
-			    SET desired_rollout_generation = $1,
-			        phase = $2,
-			        message = $3,
-			        healthy = $4,
-			        updated_at = $5
-			  WHERE service_id = $6`,
-			nextRolloutGeneration, "Pending", "", false, now, build.ServiceID,
+			    SET desired_spec_revision = $1,
+			        desired_rollout_generation = $2,
+			        phase = $3,
+			        message = $4,
+			        healthy = $5,
+			        updated_at = $6
+			  WHERE service_id = $7`,
+			service.SpecRevision, nextRolloutGeneration, "Pending", "", false, now, build.ServiceID,
 		); err != nil {
 			return err
 		}

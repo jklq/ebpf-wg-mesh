@@ -8,9 +8,10 @@ import {
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
-	createServiceFastFromSession,
 	createProjectFromSession,
+	createServiceFastFromSession,
 	deleteDomainBindingFromSession,
+	discardServiceChangesFromSession,
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
 	listDomainBindingsFromSession,
@@ -18,7 +19,9 @@ import {
 	listServiceLogsFromSession,
 	loadDashboardHome,
 	publishDomainFromSession,
+	redeployServiceFromSession,
 	saveHostnameFromSession,
+	saveServicePositionFromSession,
 	updateDomainBindingFromSession,
 	updateServiceFromSession,
 } from "#/lib/dashboard/core/operations.server";
@@ -89,6 +92,15 @@ export function createDashboardService(
 		},
 		updateServiceFromSession(input) {
 			return updateServiceFromSession(runtime, input);
+		},
+		redeployServiceFromSession(input) {
+			return redeployServiceFromSession(runtime, input);
+		},
+		discardServiceChangesFromSession(input) {
+			return discardServiceChangesFromSession(runtime, input);
+		},
+		saveServicePositionFromSession(input) {
+			return saveServicePositionFromSession(runtime, input);
 		},
 		listDomainBindingsFromSession(input) {
 			return listDomainBindingsFromSession(runtime, input);

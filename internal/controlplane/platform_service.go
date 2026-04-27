@@ -32,6 +32,7 @@ type platformStore interface {
 	createScheduledService(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
 	updateService(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	discardServiceChanges(ctx context.Context, subject, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
 	requestServiceSourceSync(ctx context.Context, subject, projectID, serviceID string) error
 	enqueueBuildForService(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
 	deleteService(ctx context.Context, subject, projectID, serviceID string) error
@@ -304,6 +305,28 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
 	}
 	return &platformv1.ServiceStatus{Service: toProtoService(currentService), Allocation: toProtoAllocation(allocation)}, nil
+}
+
+func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	service, err := s.store.discardServiceChanges(ctx, identity.Subject, req.GetProjectId(), req.GetServiceId(), req.GetChangeIds(), req.GetDiscardAll())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		if errors.Is(err, errConcurrentUpdate) {
+			return nil, status.Errorf(codes.Aborted, "discard service changes: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "discard service changes: %v", err)
+	}
+	service, err = s.decorateServiceRecord(ctx, service)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+	}
+	return toProtoService(service), nil
 }
 
 func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error) {

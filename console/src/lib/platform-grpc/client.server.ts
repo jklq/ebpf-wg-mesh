@@ -13,6 +13,7 @@ import type {
 	CreateProjectRequest,
 	CreateServiceRequest,
 	DeleteDomainBindingRequest,
+	DiscardServiceChangesRequest,
 	EnsurePrincipalRequest,
 	GetServiceRequest,
 	GetServiceStatusRequest,
@@ -27,6 +28,7 @@ import type {
 	PlatformRequestMap,
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
+	RedeployServiceRequest,
 	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
@@ -103,6 +105,20 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "UpdateService":
 					client.UpdateService(
 						request as UpdateServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "RedeployService":
+					client.RedeployService(
+						request as RedeployServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "DiscardServiceChanges":
+					client.DiscardServiceChanges(
+						request as DiscardServiceChangesRequest,
 						metadata,
 						handleResponse,
 					);

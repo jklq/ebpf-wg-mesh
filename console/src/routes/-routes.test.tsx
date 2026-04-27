@@ -419,7 +419,7 @@ function fastCreateResult(
 					repositorySelector,
 					trackedRef: "main",
 				},
-				runtime: { ports: [] },
+				runtime: { env: {}, ports: [] },
 			},
 		},
 		serviceStatus: null,
