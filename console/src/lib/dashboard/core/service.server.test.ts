@@ -98,6 +98,46 @@ describe("dashboard service", () => {
 		expect(state?.controlPlaneError).toContain("control plane down");
 	});
 
+	it("includes saved service positions in home state", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.projects = [
+			{ id: "project-1", name: "project", kind: "user" },
+		];
+		harness.platform.services = [
+			{
+				id: "service-1",
+				projectId: "project-1",
+				name: "hello",
+				spec: { runtime: { env: {}, ports: [] } },
+			},
+		];
+		await harness.store.saveOnboardingDraft("user-1", {
+			currentStep: "build",
+			projectId: "project-1",
+			serviceId: "service-1",
+			repositorySelector: "",
+			trackedRef: "",
+			dockerfilePath: "",
+			contextDir: ".",
+			hostname: "",
+		});
+
+		await harness.service.saveServicePositionFromSession({
+			projectId: "project-1",
+			serviceId: "service-1",
+			position: { x: 320, y: 256 },
+		});
+		const state = await harness.service.loadDashboardHome();
+
+		expect(state?.services[0]?.layoutPosition).toEqual({ x: 320, y: 256 });
+		expect(state?.service?.layoutPosition).toEqual({ x: 320, y: 256 });
+	});
+
 	it("creates projects from the active session", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
@@ -263,8 +303,12 @@ describe("dashboard service", () => {
 		);
 
 		const home = await harness.service.loadDashboardHome();
+		expect(home?.repositories).toEqual([]);
+		expect(harness.github.listRepositoriesCalls).toEqual([]);
 
-		expect(home?.repositories).toEqual(harness.github.nextRepositories);
+		const catalog = await harness.service.loadGitHubCatalogFromSession();
+
+		expect(catalog.repositories).toEqual(harness.github.nextRepositories);
 		expect(harness.github.refreshedTokens).toEqual(["github-refresh-token"]);
 		expect(harness.github.listRepositoriesCalls).toEqual([
 			"expired-github-token",
@@ -273,6 +317,62 @@ describe("dashboard service", () => {
 		const account = await harness.store.getGitHubAccount("user-1");
 		expect(account?.accessToken).toBe("fresh-github-token");
 		expect(account?.refreshToken).toBe("next-github-refresh-token");
+	});
+
+	it("does not list GitHub repositories on initial home load", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await harness.service.completeAuthCallback({
+			code: "github-code",
+			state: "session-1",
+		});
+
+		const home = await harness.service.loadDashboardHome();
+
+		expect(home?.githubAccount?.login).toBe("octocat");
+		expect(home?.repositories).toEqual([]);
+		expect(harness.github.listRepositoriesCalls).toEqual([]);
+	});
+
+	it("returns project and services without loading status or domain bindings", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			subject: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.projects = [
+			{ id: "project-1", name: "project", kind: "user" },
+		];
+		harness.platform.services = [
+			{
+				id: "service-1",
+				projectId: "project-1",
+				name: "hello",
+				spec: { runtime: { env: {}, ports: [] } },
+			},
+		];
+		await harness.store.saveOnboardingDraft("user-1", {
+			currentStep: "build",
+			projectId: "project-1",
+			serviceId: "service-1",
+			repositorySelector: "",
+			trackedRef: "",
+			dockerfilePath: "",
+			contextDir: ".",
+			hostname: "hello.example.test",
+		});
+
+		const home = await harness.service.loadDashboardHome();
+
+		expect(home?.project?.id).toBe("project-1");
+		expect(home?.services).toHaveLength(1);
+		expect(home?.service?.id).toBe("service-1");
+		expect(home?.serviceStatus).toBeUndefined();
+		expect(home?.domainBindings).toEqual([]);
+		expect(home?.domainVerification).toBeUndefined();
+		expect(harness.platform.getServiceStatusCalls).toEqual([]);
+		expect(harness.platform.listDomainBindingsCalls).toEqual([]);
 	});
 
 	it("initializes the dashboard schema before reading a home page from an existing access token", async () => {
@@ -328,7 +428,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { ports: [{ port: 8080, primary: true }] },
+					runtime: { env: {}, ports: [{ port: 8080, primary: true }] },
 				},
 			},
 		];
@@ -369,7 +469,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { ports: [] },
+					runtime: { env: {}, ports: [] },
 				},
 			},
 		]);
@@ -496,7 +596,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { ports: [{ port: 8080, primary: true }] },
+					runtime: { env: {}, ports: [{ port: 8080, primary: true }] },
 				},
 			},
 		];

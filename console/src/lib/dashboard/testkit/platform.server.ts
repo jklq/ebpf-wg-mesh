@@ -35,6 +35,18 @@ export interface FakePlatformGateway extends PlatformGateway {
 		name?: string;
 		spec: DashboardServiceSpec;
 	}>;
+	redeployServiceCalls: Array<{
+		user: DashboardUser;
+		projectId: string;
+		serviceId: string;
+	}>;
+	discardServiceChangesCalls: Array<{
+		user: DashboardUser;
+		projectId: string;
+		serviceId: string;
+		changeIds?: Array<string>;
+		discardAll?: boolean;
+	}>;
 	getServiceCalls: Array<{
 		user: DashboardUser;
 		projectId: string;
@@ -90,6 +102,8 @@ export interface FakePlatformGateway extends PlatformGateway {
 		inspectRepositorySource?: Error;
 		createService?: Error;
 		updateService?: Error;
+		redeployService?: Error;
+		discardServiceChanges?: Error;
 		getService?: Error;
 		getServiceStatus?: Error;
 		listServiceLogs?: Error;
@@ -108,6 +122,8 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		inspectRepositorySourceCalls: [],
 		createServiceCalls: [],
 		updateServiceCalls: [],
+		redeployServiceCalls: [],
+		discardServiceChangesCalls: [],
 		getServiceCalls: [],
 		getServiceStatusCalls: [],
 		listServiceLogsCalls: [],
@@ -207,6 +223,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					imageDigest: "",
 					failureReason: "",
 				},
+				pendingChanges: true,
 			};
 			platform.services = [...platform.services, serviceRecord];
 			platform.serviceStatuses.set(serviceRecord.id, {
@@ -266,6 +283,56 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					service: updated,
 				});
 			}
+			return updated;
+		},
+		async redeployService(user, input): Promise<DashboardServiceStatus> {
+			platform.redeployServiceCalls.push({ user, ...input });
+			if (platform.errors.redeployService) {
+				throw platform.errors.redeployService;
+			}
+			const current = platform.services.find(
+				(service) =>
+					service.projectId === input.projectId &&
+					service.id === input.serviceId,
+			);
+			if (!current) {
+				throw new Error("service not found");
+			}
+			const updated = { ...current, pendingChanges: false };
+			platform.services = platform.services.map((service) =>
+				service.id === updated.id ? updated : service,
+			);
+			return (
+				platform.serviceStatuses.get(input.serviceId) ?? { service: updated }
+			);
+		},
+		async discardServiceChanges(user, input): Promise<DashboardServiceRecord> {
+			platform.discardServiceChangesCalls.push({ user, ...input });
+			if (platform.errors.discardServiceChanges) {
+				throw platform.errors.discardServiceChanges;
+			}
+			const current = platform.services.find(
+				(service) =>
+					service.projectId === input.projectId &&
+					service.id === input.serviceId,
+			);
+			if (!current) {
+				throw new Error("service not found");
+			}
+			const remainingChanges = input.discardAll
+				? []
+				: (current.unappliedChanges ?? []).filter(
+						(change) => !(input.changeIds ?? []).includes(change.id),
+					);
+			const updated = {
+				...current,
+				pendingChanges: remainingChanges.length > 0,
+				unappliedChangeCount: remainingChanges.length,
+				unappliedChanges: remainingChanges,
+			};
+			platform.services = platform.services.map((service) =>
+				service.id === updated.id ? updated : service,
+			);
 			return updated;
 		},
 		async getService(user, input): Promise<DashboardServiceRecord> {

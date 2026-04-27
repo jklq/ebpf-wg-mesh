@@ -8,17 +8,23 @@ import {
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
-	createServiceFastFromSession,
 	createProjectFromSession,
+	createServiceFastFromSession,
 	deleteDomainBindingFromSession,
+	discardServiceChangesFromSession,
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
+	inspectRepositorySourceFromSession,
 	listDomainBindingsFromSession,
+	listProjectServicesFromSession,
 	listServiceDeploymentsFromSession,
 	listServiceLogsFromSession,
 	loadDashboardHome,
+	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
+	redeployServiceFromSession,
 	saveHostnameFromSession,
+	saveServicePositionFromSession,
 	updateDomainBindingFromSession,
 	updateServiceFromSession,
 } from "#/lib/dashboard/core/operations.server";
@@ -54,6 +60,12 @@ export function createDashboardService(
 		loadDashboardHome() {
 			return loadDashboardHome(runtime);
 		},
+		loadGitHubCatalogFromSession() {
+			return loadGitHubCatalogFromSession(runtime);
+		},
+		inspectRepositorySourceFromSession(input) {
+			return inspectRepositorySourceFromSession(runtime, input);
+		},
 		createProjectFromSession(name) {
 			return createProjectFromSession(runtime, name);
 		},
@@ -81,6 +93,9 @@ export function createDashboardService(
 		getServiceStatusFromSession(input) {
 			return getServiceStatusFromSession(runtime, input);
 		},
+		listProjectServicesFromSession(input) {
+			return listProjectServicesFromSession(runtime, input);
+		},
 		listServiceLogsFromSession(input) {
 			return listServiceLogsFromSession(runtime, input);
 		},
@@ -89,6 +104,15 @@ export function createDashboardService(
 		},
 		updateServiceFromSession(input) {
 			return updateServiceFromSession(runtime, input);
+		},
+		redeployServiceFromSession(input) {
+			return redeployServiceFromSession(runtime, input);
+		},
+		discardServiceChangesFromSession(input) {
+			return discardServiceChangesFromSession(runtime, input);
+		},
+		saveServicePositionFromSession(input) {
+			return saveServicePositionFromSession(runtime, input);
 		},
 		listDomainBindingsFromSession(input) {
 			return listDomainBindingsFromSession(runtime, input);

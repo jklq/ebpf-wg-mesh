@@ -109,6 +109,7 @@ export interface DashboardRuntimePort {
 }
 
 export interface DashboardRuntimeSpec {
+  env: Record<string, string>;
   ports: DashboardRuntimePort[];
 }
 
@@ -152,6 +153,27 @@ export interface DashboardServiceSourceSummary {
   resolvedBinding?: DashboardResolvedSourceBinding;
 }
 
+export interface DashboardServicePosition {
+  x: number;
+  y: number;
+}
+
+export type DashboardUnappliedChangeAction =
+  | "add"
+  | "update"
+  | "remove"
+  | "unspecified";
+
+export interface DashboardUnappliedChange {
+  id: string;
+  section: string;
+  field: string;
+  path: string;
+  action: DashboardUnappliedChangeAction;
+  currentValue: string;
+  newValue: string;
+}
+
 export interface DashboardServiceRecord {
   id: string;
   projectId: string;
@@ -166,6 +188,10 @@ export interface DashboardServiceRecord {
   lastSuccessfulCommitSha?: string;
   resolvedImage?: string;
   latestBuild?: DashboardBuildStatus;
+  pendingChanges?: boolean;
+  unappliedChangeCount?: number;
+  unappliedChanges?: Array<DashboardUnappliedChange>;
+  layoutPosition?: DashboardServicePosition;
 }
 
 export interface DashboardAllocationStatus {
@@ -406,6 +432,18 @@ export interface DashboardStore {
     userID: string,
     draft: DashboardOnboardingDraft,
   ): Promise<DashboardOnboardingDraft>;
+  listServicePositions(
+    userID: string,
+    projectId: string,
+  ): Promise<Record<string, DashboardServicePosition>>;
+  saveServicePosition(
+    userID: string,
+    input: {
+      projectId: string;
+      serviceId: string;
+      position: DashboardServicePosition;
+    },
+  ): Promise<DashboardServicePosition>;
   createRefreshSession(
     sessionId: string,
     userID: string,
@@ -448,6 +486,19 @@ export interface PlatformGateway {
       serviceId: string;
       name?: string;
       spec: DashboardServiceSpec;
+    },
+  ): Promise<DashboardServiceRecord>;
+  redeployService(
+    user: DashboardUser,
+    input: { projectId: string; serviceId: string },
+  ): Promise<DashboardServiceStatus>;
+  discardServiceChanges(
+    user: DashboardUser,
+    input: {
+      projectId: string;
+      serviceId: string;
+      changeIds?: Array<string>;
+      discardAll?: boolean;
     },
   ): Promise<DashboardServiceRecord>;
   getService(
@@ -557,10 +608,11 @@ export interface UpdateServiceInput {
   projectId: string;
   serviceId: string;
   serviceName?: string;
-  repositorySelector: string;
-  trackedRef: string;
-  dockerfilePath: string;
-  contextDir: string;
+  runtimeEnv?: Record<string, string>;
+  repositorySelector?: string;
+  trackedRef?: string;
+  dockerfilePath?: string;
+  contextDir?: string;
 }
 
 export interface DashboardService {
@@ -576,6 +628,13 @@ export interface DashboardService {
     redirectTo?: string;
   }): Promise<string>;
   loadDashboardHome(): Promise<DashboardHomeState | null>;
+  loadGitHubCatalogFromSession(): Promise<{
+    githubAccount?: DashboardGitHubAccount;
+    repositories: Array<GitHubUserRepository>;
+  }>;
+  inspectRepositorySourceFromSession(input: {
+    repositorySelector: string;
+  }): Promise<DashboardRepositoryInspection | undefined>;
   createProjectFromSession(name: string): Promise<DashboardProject>;
   inspectRepositoryFromSession(input: {
     repositorySelector: string;
@@ -602,6 +661,9 @@ export interface DashboardService {
     projectId: string;
     serviceId: string;
   }): Promise<DashboardServiceStatus>;
+  listProjectServicesFromSession(input: {
+    projectId: string;
+  }): Promise<Array<DashboardServiceRecord>>;
   listServiceLogsFromSession(input: {
     projectId: string;
     serviceId: string;
@@ -621,6 +683,21 @@ export interface DashboardService {
   updateServiceFromSession(
     input: UpdateServiceInput,
   ): Promise<DashboardServiceRecord>;
+  redeployServiceFromSession(input: {
+    projectId: string;
+    serviceId: string;
+  }): Promise<DashboardServiceStatus>;
+  discardServiceChangesFromSession(input: {
+    projectId: string;
+    serviceId: string;
+    changeIds?: Array<string>;
+    discardAll?: boolean;
+  }): Promise<DashboardServiceRecord>;
+  saveServicePositionFromSession(input: {
+    projectId: string;
+    serviceId: string;
+    position: DashboardServicePosition;
+  }): Promise<DashboardServicePosition>;
   listDomainBindingsFromSession(input: {
     projectId: string;
     serviceId: string;

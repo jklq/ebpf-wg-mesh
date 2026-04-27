@@ -90,5 +90,22 @@ export function dashboardStoreMigrations(
 						ON ${tableName(runtime, "refresh_sessions")} (expires_at)`,
 			],
 		},
+		{
+			version: 6,
+			statements: [
+				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "service_positions")} (
+					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
+					project_id STRING NOT NULL,
+					service_id STRING NOT NULL,
+					x INT8 NOT NULL,
+					y INT8 NOT NULL,
+					created_at TIMESTAMPTZ NOT NULL,
+					updated_at TIMESTAMPTZ NOT NULL,
+					PRIMARY KEY (user_id, project_id, service_id)
+				)`,
+				`CREATE INDEX IF NOT EXISTS ${runtime.databaseSchema}_service_positions_project_idx
+					ON ${tableName(runtime, "service_positions")} (user_id, project_id)`,
+			],
+		},
 	];
 }

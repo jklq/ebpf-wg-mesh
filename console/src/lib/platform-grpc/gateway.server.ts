@@ -89,6 +89,19 @@ export function createPlatformGateway(
 			);
 			return decodeServiceMessage(response);
 		},
+		async redeployService(user, input) {
+			const response = await unaryCall(runtime, "RedeployService", input, user);
+			return decodeServiceStatusMessage(response);
+		},
+		async discardServiceChanges(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"DiscardServiceChanges",
+				input,
+				user,
+			);
+			return decodeServiceMessage(response);
+		},
 		async getService(user, input) {
 			const response = await unaryCall(runtime, "GetService", input, user);
 			return decodeServiceMessage(response);

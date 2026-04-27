@@ -26,12 +26,11 @@ export function PanelDomains({
 	project: DashboardProject;
 	state: DashboardHomeState;
 }) {
+	const recommendedPort = recommendedTargetPort(service, state);
 	const [bindings, setBindings] = useState<DashboardDomainBinding[]>([]);
 	const [loadingBindings, setLoadingBindings] = useState(true);
 	const [hostname, setHostname] = useState("");
-	const [targetPort, setTargetPort] = useState(() =>
-		String(recommendedTargetPort(service, state)),
-	);
+	const [targetPort, setTargetPort] = useState("");
 	const [dnsResult, setDnsResult] = useState<{
 		state: string;
 		instruction: string;
@@ -64,8 +63,8 @@ export function PanelDomains({
 	}, [project.id, service.id]);
 
 	useEffect(() => {
-		setTargetPort(String(recommendedTargetPort(service, state)));
-	}, [service, state]);
+		setTargetPort("");
+	}, [service.id]);
 
 	const handleCheckDNS = async () => {
 		if (!hostname.trim()) return;
@@ -94,7 +93,7 @@ export function PanelDomains({
 					projectId: project.id,
 					serviceId: service.id,
 					hostname: hostname.trim(),
-					targetPort,
+					targetPort: targetPort.trim() || String(recommendedPort),
 				},
 			});
 			setBindings((prev) => [...prev, binding]);
@@ -374,7 +373,7 @@ export function PanelDomains({
 								setTargetPort(e.target.value);
 								setError(undefined);
 							}}
-							placeholder="8080"
+							placeholder={String(recommendedPort)}
 							inputMode="numeric"
 						/>
 					</div>
