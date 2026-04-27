@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlatformGateway } from "#/lib/platform-grpc/gateway.server";
 import type { PlatformRuntimeConfig } from "#/lib/platform-grpc/types.server";
 
-const unaryCall = vi.fn();
+const unaryCall = vi.hoisted(() => vi.fn());
 
 vi.mock("#/lib/platform-grpc/client.server", () => ({
 	getOpsClient: vi.fn(),

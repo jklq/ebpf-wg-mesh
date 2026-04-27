@@ -107,6 +107,18 @@ export function PanelDeployments({
 	}, [activeRollout, loadDeployments]);
 
 	useEffect(() => {
+		if (!logTarget) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			setLogTarget(null);
+		};
+		document.addEventListener("keydown", onKeyDown, { capture: true });
+		return () =>
+			document.removeEventListener("keydown", onKeyDown, { capture: true });
+	}, [logTarget]);
+
+	useEffect(() => {
 		const currentDeployment = createDeploymentRecord({
 			serviceId: service.id,
 			build,
@@ -154,8 +166,7 @@ export function PanelDeployments({
 	return (
 		<div className="deployments-panel">
 			<div className="deployments-list">
-				<DeploymentCard
-					isCurrent
+				<CurrentDeploymentCard
 					build={build}
 					allocation={allocation}
 					logsEnabled={Boolean(project)}
@@ -175,14 +186,11 @@ export function PanelDeployments({
 
 				{previousDeployments.length > 0 && (
 					<section className="deployment-history">
-						<div className="deployment-section-heading">
-							Previous deployments
-						</div>
+						<div className="deployment-section-heading">Previous</div>
 						<div className="deployment-history-list">
 							{previousDeployments.map((entry) => (
-								<DeploymentCard
+								<DeploymentHistoryRow
 									key={deploymentRecordKey(entry)}
-									isCurrent={false}
 									build={entry.build}
 									allocation={entry.allocation}
 									logsEnabled={Boolean(project)}
@@ -249,15 +257,13 @@ export function PanelDeployments({
 	);
 }
 
-function DeploymentCard({
-	isCurrent,
+function CurrentDeploymentCard({
 	build,
 	allocation,
 	logsEnabled,
 	nowMs,
 	onOpenLogs,
 }: {
-	isCurrent: boolean;
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
 	logsEnabled: boolean;
@@ -266,7 +272,6 @@ function DeploymentCard({
 }) {
 	const stages = build?.stages ?? [];
 	const active = hasActiveRollout(build, allocation);
-	const showStageTrail = active && stages.length > 0;
 	const timestamp =
 		build?.startedAt ??
 		build?.queuedAt ??
@@ -276,46 +281,61 @@ function DeploymentCard({
 		build,
 		allocation,
 		active,
-		isCurrent,
+		isCurrent: true,
 	});
+	const meta = deploymentMeta(build);
 
 	return (
-		<section className={`deployment-shell ${tone ? `tone-${tone}` : ""}`}>
-			<div className="deployment-summary">
-				<div className="deployment-summary-top">
-					<div className="deployment-summary-main">
-						<p className="deployment-commit-message">
-							{deploymentCardHeadline(build)}
-						</p>
+		<section
+			className={`deployment-shell deployment-shell-current ${tone ? `tone-${tone}` : ""}`}
+		>
+			<div className="deployment-current-head">
+				<div className="deployment-current-copy">
+					<p className="deployment-current-message">
+						{deploymentCardHeadline(build)}
+					</p>
+					<div className="deployment-current-meta">
+						{meta.map((entry, index) => (
+							<span key={entry}>
+								{index > 0 && <span className="deployment-inline-dot" />}
+								{entry}
+							</span>
+						))}
+						{timestamp && meta.length > 0 && (
+							<span className="deployment-inline-dot" />
+						)}
 						{timestamp && (
-							<div className="deployment-summary-meta">
-								<div className="deployment-summary-time">
-									{formatRelativeAge(timestamp, nowMs)}
-								</div>
-							</div>
+							<span className="deployment-current-time">
+								{formatRelativeAge(timestamp, nowMs)}
+							</span>
 						)}
 					</div>
-
-					<button
-						type="button"
-						className="deployment-view-logs"
-						onClick={onOpenLogs}
-						disabled={!logsEnabled}
-					>
-						View logs
-					</button>
 				</div>
+				<button
+					type="button"
+					className="deployment-view-logs"
+					onClick={onOpenLogs}
+					disabled={!logsEnabled}
+				>
+					Logs
+				</button>
 			</div>
 
-			<div className="deployment-updates">
-				{showStageTrail && (
-					<div className="stage-list">
-						{stages.map((stage) => (
-							<div
+			{stages.length > 0 ? (
+				<ol className="stage-list">
+					{stages.map((stage) => {
+						// While the deployment is still active, already-succeeded stages use
+						// the building colour so the whole list reads as one amber tone.
+						const markerState =
+							tone === "running" && stage.state === "succeeded"
+								? "building-done"
+								: stage.state;
+						return (
+							<li
 								key={stage.key || stage.label}
 								className={`stage-row ${stage.state}`}
 							>
-								<span className={`stage-marker ${stage.state}`}>
+								<span className={`stage-marker ${markerState}`}>
 									<StageIcon state={stage.state} />
 								</span>
 								<div className="stage-copy">
@@ -325,12 +345,63 @@ function DeploymentCard({
 									)}
 								</div>
 								<div className="stage-status">{stageStatusText(stage)}</div>
-							</div>
-						))}
-					</div>
-				)}
-			</div>
+							</li>
+						);
+					})}
+				</ol>
+			) : (
+				<div className="deployment-empty-state">
+					No stage data has been reported for this deployment yet.
+				</div>
+			)}
 		</section>
+	);
+}
+
+function DeploymentHistoryRow({
+	build,
+	allocation,
+	logsEnabled,
+	nowMs,
+	onOpenLogs,
+}: {
+	build: DashboardBuildStatus | undefined;
+	allocation: DashboardAllocationStatus | undefined;
+	logsEnabled: boolean;
+	nowMs: number;
+	onOpenLogs: () => void;
+}) {
+	const tone =
+		getDeploymentCardTone({
+			build,
+			allocation,
+			active: hasActiveRollout(build, allocation),
+			isCurrent: false,
+		}) ?? "failed";
+	const timestamp =
+		build?.startedAt ??
+		build?.queuedAt ??
+		build?.finishedAt ??
+		allocation?.updatedAt;
+
+	return (
+		<button
+			type="button"
+			className="deployment-history-row"
+			onClick={onOpenLogs}
+			disabled={!logsEnabled}
+		>
+			<span className={`status-dot ${toneToHealthClass(tone)}`} />
+			<span className="deployment-history-message">
+				{deploymentCardHeadline(build)}
+			</span>
+			<span className="deployment-history-meta">
+				{build?.commitSha && (
+					<span className="mono">{shortSha(build.commitSha)}</span>
+				)}
+				{timestamp && <span>{formatRelativeAge(timestamp, nowMs)}</span>}
+			</span>
+		</button>
 	);
 }
 
@@ -546,6 +617,10 @@ function getDeploymentCardTone({
 		return "running";
 	}
 
+	if (isCurrent && !active && !failed && allocation?.healthy) {
+		return "succeeded";
+	}
+
 	if (!isCurrent && build?.state === "succeeded") {
 		return "succeeded";
 	}
@@ -715,6 +790,8 @@ function deploymentCardHeadline(
 	build: DashboardBuildStatus | undefined,
 ): string {
 	if (build?.commitMessage?.trim()) return build.commitMessage.trim();
+	if (build?.commitSha) return `Commit ${shortSha(build.commitSha)}`;
+	if (build?.buildId) return `Build ${shortId(build.buildId)}`;
 	return "No commit message";
 }
 
@@ -758,6 +835,27 @@ function formatDuration(ms: number): string {
 	const seconds = Math.max(0, Math.round(ms / 1000));
 	if (seconds < 60) return `${seconds}s`;
 	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function deploymentMeta(build: DashboardBuildStatus | undefined): string[] {
+	const parts: string[] = [];
+	if (build?.commitSha) parts.push(shortSha(build.commitSha));
+	if (build?.commitAuthor) parts.push(build.commitAuthor);
+	if (build?.state && build.state !== "unspecified") parts.push(build.state);
+	return parts;
+}
+
+function toneToHealthClass(
+	tone: "running" | "succeeded" | "failed",
+): "building" | "healthy" | "failed" {
+	switch (tone) {
+		case "running":
+			return "building";
+		case "succeeded":
+			return "healthy";
+		case "failed":
+			return "failed";
+	}
 }
 
 function formatLogTime(date: Date): string {

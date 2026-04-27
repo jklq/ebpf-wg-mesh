@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+const STATUS_POLL_INTERVAL_MS = 500;
+const STATUS_HEARTBEAT_INTERVAL_MS = 15_000;
+
 export const Route = createFileRoute("/events/service-status")({
 	server: {
 		handlers: {
@@ -57,6 +60,7 @@ function createServiceStatusEventStream({
 	const encoder = new TextEncoder();
 	let closed = false;
 	let lastPayload = "";
+	let lastHeartbeat = Date.now();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let closeStream: (() => void) | undefined;
 
@@ -91,7 +95,7 @@ function createServiceStatusEventStream({
 				clearTimer();
 				timer = setTimeout(() => {
 					void publish();
-				}, 2000);
+				}, STATUS_POLL_INTERVAL_MS);
 			};
 
 			const publish = async () => {
@@ -102,11 +106,14 @@ function createServiceStatusEventStream({
 				try {
 					const status = await loadStatus();
 					const payload = JSON.stringify(status);
+					const now = Date.now();
 					if (payload !== lastPayload) {
 						enqueue(`event: status\ndata: ${payload}\n\n`);
 						lastPayload = payload;
-					} else {
+						lastHeartbeat = now;
+					} else if (now - lastHeartbeat >= STATUS_HEARTBEAT_INTERVAL_MS) {
 						enqueue("event: ping\ndata: {}\n\n");
+						lastHeartbeat = now;
 					}
 				} catch (error) {
 					enqueue(
@@ -120,7 +127,7 @@ function createServiceStatusEventStream({
 			};
 
 			signal.addEventListener("abort", close, { once: true });
-			enqueue("retry: 2000\n\n");
+			enqueue("retry: 500\n\n");
 			void publish();
 		},
 		cancel() {

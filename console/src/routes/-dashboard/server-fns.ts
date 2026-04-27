@@ -3,7 +3,11 @@ import { createServerFn } from "@tanstack/react-start";
 
 import type {
 	DashboardDeploymentRecord,
+	DashboardGitHubAccount,
+	DashboardRepositoryInspection,
 	DashboardServiceLogType,
+	DashboardServicePosition,
+	GitHubUserRepository,
 	UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 
@@ -26,6 +30,23 @@ export const fetchServiceStatus = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.getServiceStatusFromSession(data);
+	});
+
+export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
+	async (): Promise<{
+		githubAccount?: DashboardGitHubAccount;
+		repositories: Array<GitHubUserRepository>;
+	}> => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.loadGitHubCatalogFromSession();
+	},
+);
+
+export const fetchRepositoryInspection = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { repositorySelector: string })
+	.handler(async ({ data }): Promise<DashboardRepositoryInspection | undefined> => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.inspectRepositorySourceFromSession(data);
 	});
 
 export const fetchServiceLogs = createServerFn({ method: "POST" })
@@ -76,6 +97,44 @@ export const doUpdateService = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.updateServiceFromSession(data);
+	});
+
+export const doRedeployService = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) => input as { projectId: string; serviceId: string },
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.redeployServiceFromSession(data);
+	});
+
+export const doDiscardServiceChanges = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				changeIds?: Array<string>;
+				discardAll?: boolean;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.discardServiceChangesFromSession(data);
+	});
+
+export const doSaveServicePosition = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				projectId: string;
+				serviceId: string;
+				position: DashboardServicePosition;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.saveServicePositionFromSession(data);
 	});
 
 export const doCreateDomainBinding = createServerFn({ method: "POST" })

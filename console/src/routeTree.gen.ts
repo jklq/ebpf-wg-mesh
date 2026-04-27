@@ -15,6 +15,7 @@ import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
+import { Route as EventsProjectServicesRouteImport } from './routes/events/project-services'
 import { Route as AuthStartRouteImport } from './routes/auth/start'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 
@@ -48,6 +49,11 @@ const EventsServiceStatusRoute = EventsServiceStatusRouteImport.update({
   path: '/events/service-status',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EventsProjectServicesRoute = EventsProjectServicesRouteImport.update({
+  id: '/events/project-services',
+  path: '/events/project-services',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthStartRoute = AuthStartRouteImport.update({
   id: '/auth/start',
   path: '/auth/start',
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
+  '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
 }
@@ -76,6 +83,7 @@ export interface FileRoutesByTo {
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
+  '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
 }
@@ -87,6 +95,7 @@ export interface FileRoutesById {
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
+  '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
 }
@@ -99,6 +108,7 @@ export interface FileRouteTypes {
     | '/logout'
     | '/auth/callback'
     | '/auth/start'
+    | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
   fileRoutesByTo: FileRoutesByTo
@@ -109,6 +119,7 @@ export interface FileRouteTypes {
     | '/logout'
     | '/auth/callback'
     | '/auth/start'
+    | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
   id:
@@ -119,6 +130,7 @@ export interface FileRouteTypes {
     | '/logout'
     | '/auth/callback'
     | '/auth/start'
+    | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
   fileRoutesById: FileRoutesById
@@ -130,6 +142,7 @@ export interface RootRouteChildren {
   LogoutRoute: typeof LogoutRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthStartRoute: typeof AuthStartRoute
+  EventsProjectServicesRoute: typeof EventsProjectServicesRoute
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
 }
@@ -178,6 +191,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EventsServiceStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/events/project-services': {
+      id: '/events/project-services'
+      path: '/events/project-services'
+      fullPath: '/events/project-services'
+      preLoaderRoute: typeof EventsProjectServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth/start': {
       id: '/auth/start'
       path: '/auth/start'
@@ -202,6 +222,7 @@ const rootRouteChildren: RootRouteChildren = {
   LogoutRoute: LogoutRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthStartRoute: AuthStartRoute,
+  EventsProjectServicesRoute: EventsProjectServicesRoute,
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,
 }

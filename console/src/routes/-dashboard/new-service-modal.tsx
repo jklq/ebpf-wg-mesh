@@ -16,11 +16,13 @@ import type {
 
 export function NewServiceModal({
 	state,
+	catalogLoading = false,
 	onClose,
 	onCreated,
 	confirmRepository = doCreateServiceFast,
 }: {
 	state: DashboardHomeState;
+	catalogLoading?: boolean;
 	onClose: () => void;
 	onCreated: (result: CreateServiceFastResult) => void;
 	confirmRepository?: ConfirmRepositoryFn;
@@ -135,6 +137,7 @@ export function NewServiceModal({
 					filteredRepositories={filteredRepositories}
 					highlightedIndex={highlightedIndex}
 					hoveredIndex={hoveredIndex}
+					catalogLoading={catalogLoading}
 					loading={loading}
 					onActivateIndex={activatePickerSelection}
 					onClose={onClose}
