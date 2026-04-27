@@ -83,6 +83,7 @@ export function createDashboardTestHarness(
 	const refreshSessions = new Map<string, RefreshSessionRecord>();
 	const githubAccounts = new Map<string, FakeGitHubAccount>();
 	const onboardingDrafts = new Map<string, DashboardOnboardingDraft>();
+	const servicePositions = new Map<string, { x: number; y: number }>();
 	let nextUserID = 1;
 	let nextSessionID = 1;
 	const now = new Date("2026-03-18T12:00:00Z");
@@ -234,6 +235,27 @@ export function createDashboardTestHarness(
 		): Promise<DashboardOnboardingDraft> {
 			onboardingDrafts.set(userID, draft);
 			return draft;
+		},
+		async listServicePositions(userID, projectId) {
+			const positions: Record<string, { x: number; y: number }> = {};
+			const prefix = `${userID}:${projectId}:`;
+			for (const [key, position] of servicePositions.entries()) {
+				if (key.startsWith(prefix)) {
+					positions[key.slice(prefix.length)] = position;
+				}
+			}
+			return positions;
+		},
+		async saveServicePosition(userID, input) {
+			const position = {
+				x: input.position.x,
+				y: input.position.y,
+			};
+			servicePositions.set(
+				`${userID}:${input.projectId}:${input.serviceId}`,
+				position,
+			);
+			return position;
 		},
 		async createRefreshSession(sessionId, userID, expiresAt): Promise<void> {
 			refreshSessions.set(sessionId, { id: sessionId, userID, expiresAt });

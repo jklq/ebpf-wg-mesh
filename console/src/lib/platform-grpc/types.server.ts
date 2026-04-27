@@ -38,6 +38,7 @@ export interface CreateServiceRequest {
 		name: string;
 		spec: {
 			runtime: {
+				env: Record<string, string>;
 				ports: Array<{
 					port: number;
 					primary: boolean;
@@ -65,6 +66,7 @@ export interface UpdateServiceRequest {
 		name?: string;
 		spec: {
 			runtime: {
+				env: Record<string, string>;
 				ports: Array<{
 					port: number;
 					primary: boolean;
@@ -93,6 +95,18 @@ export interface GetServiceRequest {
 export interface GetServiceStatusRequest {
 	projectId: string;
 	serviceId: string;
+}
+
+export interface RedeployServiceRequest {
+	projectId: string;
+	serviceId: string;
+}
+
+export interface DiscardServiceChangesRequest {
+	projectId: string;
+	serviceId: string;
+	changeIds?: Array<string>;
+	discardAll?: boolean;
 }
 
 export interface ListServiceLogsRequest {
@@ -163,6 +177,8 @@ export type PlatformMethod =
 	| "ListServices"
 	| "CreateService"
 	| "UpdateService"
+	| "RedeployService"
+	| "DiscardServiceChanges"
 	| "GetService"
 	| "GetServiceStatus"
 	| "ListServiceLogs"
@@ -180,6 +196,8 @@ export type PlatformRequestMap = {
 	ListServices: ListServicesRequest;
 	CreateService: CreateServiceRequest;
 	UpdateService: UpdateServiceRequest;
+	RedeployService: RedeployServiceRequest;
+	DiscardServiceChanges: DiscardServiceChangesRequest;
 	GetService: GetServiceRequest;
 	GetServiceStatus: GetServiceStatusRequest;
 	ListServiceLogs: ListServiceLogsRequest;
@@ -228,6 +246,16 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	UpdateService: (
 		request: UpdateServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	RedeployService: (
+		request: RedeployServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	DiscardServiceChanges: (
+		request: DiscardServiceChangesRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;

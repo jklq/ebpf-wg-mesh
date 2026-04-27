@@ -22,13 +22,14 @@ export function PanelSettings({
 	onSaved: (service: DashboardServiceRecord) => void;
 }) {
 	const source = service.spec?.source;
-	const serviceNameId = `service-name-${service.id}`;
+	const changedFields = new Set(
+		(service.unappliedChanges ?? []).map((change) => change.id),
+	);
 	const repoSelectId = `service-repo-select-${service.id}`;
 	const repoInputId = `service-repo-input-${service.id}`;
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
-	const [serviceName, setServiceName] = useState(service.name);
 	const [repoSelector, setRepoSelector] = useState(
 		source?.repositorySelector ?? "",
 	);
@@ -52,7 +53,6 @@ export function PanelSettings({
 				data: {
 					projectId: project.id,
 					serviceId: service.id,
-					serviceName,
 					repositorySelector: repoSelector,
 					trackedRef,
 					dockerfilePath,
@@ -71,22 +71,6 @@ export function PanelSettings({
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 			<div>
-				<p className="section-header">Service</p>
-				<div>
-					<label className="field-label" htmlFor={serviceNameId}>
-						Name
-					</label>
-					<input
-						id={serviceNameId}
-						className="field-input"
-						value={serviceName}
-						onChange={(e) => setServiceName(e.target.value)}
-						placeholder="talented-harmony"
-					/>
-				</div>
-			</div>
-
-			<div>
 				<p className="section-header">Source</p>
 				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 					{state.repositories.length > 0 && (
@@ -96,7 +80,7 @@ export function PanelSettings({
 							</label>
 							<select
 								id={repoSelectId}
-								className="field-input"
+								className={`field-input ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
 								value={
 									state.repositories.some((r) => r.fullName === repoSelector)
 										? repoSelector
@@ -122,7 +106,7 @@ export function PanelSettings({
 						</label>
 						<input
 							id={repoInputId}
-							className="field-input"
+							className={`field-input ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
 							value={repoSelector}
 							onChange={(e) => setRepoSelector(e.target.value)}
 							placeholder="owner/repo"
@@ -135,7 +119,7 @@ export function PanelSettings({
 						</label>
 						<input
 							id={trackedRefId}
-							className="field-input"
+							className={`field-input ${changedFields.has("source.trackedRef") ? "unapplied-field" : ""}`}
 							value={trackedRef}
 							onChange={(e) => setTrackedRef(e.target.value)}
 							placeholder="main"
@@ -153,7 +137,7 @@ export function PanelSettings({
 						</label>
 						<input
 							id={dockerfilePathId}
-							className="field-input"
+							className={`field-input ${changedFields.has("source.buildRecipe.dockerfilePath") ? "unapplied-field" : ""}`}
 							value={dockerfilePath}
 							onChange={(e) => setDockerfilePath(e.target.value)}
 							placeholder="Dockerfile"
@@ -166,7 +150,7 @@ export function PanelSettings({
 						</label>
 						<input
 							id={contextDirId}
-							className="field-input"
+							className={`field-input ${changedFields.has("source.buildRecipe.contextDir") ? "unapplied-field" : ""}`}
 							value={contextDir}
 							onChange={(e) => setContextDir(e.target.value)}
 							placeholder="."
@@ -178,7 +162,7 @@ export function PanelSettings({
 			{error && <p className="error-msg">{error}</p>}
 			{success && (
 				<p className="success-msg">
-					Settings saved. A new build will start shortly.
+					Settings saved. Deploy the pending changes when ready.
 				</p>
 			)}
 
@@ -186,15 +170,13 @@ export function PanelSettings({
 				type="button"
 				className="btn-primary"
 				onClick={handleSave}
-				disabled={
-					saving || repoSelector.trim() === "" || serviceName.trim() === ""
-				}
+				disabled={saving || repoSelector.trim() === ""}
 				style={{ alignSelf: "flex-start" }}
 			>
 				{saving ? (
 					<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
 				) : null}
-				{saving ? "Saving…" : "Save & redeploy"}
+				{saving ? "Saving…" : "Save changes"}
 			</button>
 		</div>
 	);
