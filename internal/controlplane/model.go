@@ -50,6 +50,8 @@ type serviceRecord struct {
 	ResolvedImage           string
 	LatestBuildID           string
 	LatestBuild             *platformv1.BuildStatus
+	PendingChanges          bool
+	UnappliedChanges        []*platformv1.ServiceUnappliedChange
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }

@@ -198,6 +198,10 @@ func (s *Store) updateService(ctx context.Context, subject, projectID, serviceID
 	if err != nil {
 		return serviceRecord{}, false, err
 	}
+	current, err = s.serviceByID(ctx, subject, projectID, serviceID)
+	if err != nil {
+		return serviceRecord{}, false, err
+	}
 	return current, changed, nil
 }
 
@@ -252,16 +256,7 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 
 	now := time.Now().UTC()
 	nextSpecRevision := current.SpecRevision + 1
-	nextRolloutGeneration := current.RolloutGeneration + 1
-	nextResolvedImage := directImageRef(spec)
-	nextLastSuccessfulCommit := ""
-	nextLatestBuildID := ""
 	sourceChanged := desiredSourceSpec(spec) != nil && !sameDesiredSourceSpec(current.Spec, spec)
-	if desiredSourceSpec(spec) != nil && !sourceChanged {
-		nextResolvedImage = current.ResolvedImage
-		nextLastSuccessfulCommit = current.LastSuccessfulCommitSHA
-		nextLatestBuildID = current.LatestBuildID
-	}
 	specJSON, err := protojson.Marshal(spec)
 	if err != nil {
 		return serviceRecord{}, false, false, err
@@ -270,15 +265,11 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 		`UPDATE services
 		    SET name = $1,
 		        current_spec_revision = $2,
-		        current_rollout_generation = $3,
-		        current_resolved_image = $4,
-		        last_successful_commit_sha = $5,
-		        latest_build_id = $6,
-		        updated_at = $7
-		  WHERE id = $8
-		    AND current_spec_revision = $9
-		    AND current_rollout_generation = $10`,
-		nextName, nextSpecRevision, nextRolloutGeneration, nextResolvedImage, nextLastSuccessfulCommit, nextLatestBuildID, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		        updated_at = $3
+		  WHERE id = $4
+		    AND current_spec_revision = $5
+		    AND current_rollout_generation = $6`,
+		nextName, nextSpecRevision, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 	)
 	if err != nil {
 		return serviceRecord{}, false, false, err
@@ -296,22 +287,6 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 	); err != nil {
 		return serviceRecord{}, false, false, err
 	}
-	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, nextSpecRevision, "spec-update", "", subject, "", now); err != nil {
-		return serviceRecord{}, false, false, err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE allocations
-		    SET desired_spec_revision = $1,
-		        desired_rollout_generation = $2,
-		        phase = $3,
-		        message = $4,
-		        healthy = $5,
-		        updated_at = $6
-		  WHERE service_id = $7`,
-		nextSpecRevision, nextRolloutGeneration, "Pending", "", false, now, serviceID,
-	); err != nil {
-		return serviceRecord{}, false, false, err
-	}
 	nextRecord := current
 	nextRecord.Name = nextName
 	nextRecord.Spec = spec
@@ -320,24 +295,10 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, subject, projec
 	} else {
 		nextRecord.SourceSummary = buildSourceSummary(spec)
 	}
-	nextRecord.ResolvedImage = nextResolvedImage
-	nextRecord.LastSuccessfulCommitSHA = nextLastSuccessfulCommit
-	nextRecord.LatestBuildID = nextLatestBuildID
 	nextRecord.SpecRevision = nextSpecRevision
-	nextRecord.RolloutGeneration = nextRolloutGeneration
 	nextRecord.UpdatedAt = now
-	if desiredSourceSpec(spec) != nil {
-		if err := s.enqueueSourceSpecChangedTx(ctx, tx, serviceID, nextSpecRevision, false); err != nil {
-			return serviceRecord{}, false, false, err
-		}
-	}
-	if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID}); err != nil {
-		return serviceRecord{}, false, false, err
-	}
-	if nextLatestBuildID == "" {
-		nextRecord.LatestBuild = nil
-	}
-	return nextRecord, true, sourceChanged, nil
+	nextRecord.PendingChanges = true
+	return nextRecord, false, sourceChanged, nil
 }
 
 func (s *Store) redeployService(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error) {
@@ -398,13 +359,14 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, subject, proj
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE allocations
-		    SET desired_rollout_generation = $1,
-		        phase = $2,
-		        message = $3,
-		        healthy = $4,
-		        updated_at = $5
-		  WHERE service_id = $6`,
-		nextRolloutGeneration, "Pending", "", false, now, serviceID,
+		    SET desired_spec_revision = $1,
+		        desired_rollout_generation = $2,
+		        phase = $3,
+		        message = $4,
+		        healthy = $5,
+		        updated_at = $6
+		  WHERE service_id = $7`,
+		current.SpecRevision, nextRolloutGeneration, "Pending", "", false, now, serviceID,
 	); err != nil {
 		return serviceRecord{}, err
 	}
@@ -413,6 +375,7 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, subject, proj
 	}
 
 	current.RolloutGeneration = nextRolloutGeneration
+	current.PendingChanges = false
 	current.UpdatedAt = now
 	return current, nil
 }
@@ -485,6 +448,11 @@ func (s *Store) listServices(ctx context.Context, subject, projectID string) ([]
 		if err != nil {
 			return nil, err
 		}
+		out[i].UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, s.db, out[i].ID, out[i].Spec, out[i].RolloutGeneration)
+		if err != nil {
+			return nil, err
+		}
+		out[i].PendingChanges = len(out[i].UnappliedChanges) > 0
 	}
 	return out, nil
 }
@@ -522,6 +490,11 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, subjec
 	if err != nil {
 		return serviceRecord{}, err
 	}
+	rec.UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, q, rec.ID, rec.Spec, rec.RolloutGeneration)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	rec.PendingChanges = len(rec.UnappliedChanges) > 0
 	return rec, nil
 }
 

@@ -49,6 +49,9 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 		LastSuccessfulCommitSha: rec.LastSuccessfulCommitSHA,
 		ResolvedImage:           rec.ResolvedImage,
 		LatestBuild:             rec.LatestBuild,
+		PendingChanges:          rec.PendingChanges,
+		UnappliedChangeCount:    int32(len(rec.UnappliedChanges)),
+		UnappliedChanges:        rec.UnappliedChanges,
 	}
 }
 

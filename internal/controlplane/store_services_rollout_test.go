@@ -128,8 +128,11 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 	if current.SpecRevision != 3 {
 		t.Fatalf("expected current spec revision 3, got %d", current.SpecRevision)
 	}
-	if current.RolloutGeneration != 3 {
-		t.Fatalf("expected rollout generation 3, got %d", current.RolloutGeneration)
+	if current.RolloutGeneration != 1 {
+		t.Fatalf("expected rollout generation to remain 1 before deploy, got %d", current.RolloutGeneration)
+	}
+	if !current.PendingChanges {
+		t.Fatal("expected updated service to report pending changes")
 	}
 	var revisions int
 	if revisions, err = store.countServiceRevisionsForTest(ctx, service.ID); err != nil {

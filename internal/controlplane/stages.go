@@ -141,9 +141,6 @@ func deployStage(service serviceRecord, build *buildRunRecord, alloc allocationR
 	case "Failed", "Unhealthy":
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = firstNonEmpty(alloc.Message, "Deploy failed")
-	case "Pending", "":
-		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING
-		stage.Detail = firstNonEmpty(alloc.Message, "Queued for rollout")
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SUCCEEDED
 		stage.Detail = "Running on " + alloc.AgentID
