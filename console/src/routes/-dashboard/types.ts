@@ -11,7 +11,7 @@ import type {
 	DashboardHomeState,
 } from "#/lib/dashboard/core/types.server";
 
-export type DashboardTab = "overview" | "deployments" | "settings" | "domains";
+export type DashboardTab = "deployments" | "variables" | "settings" | "domains";
 
 export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
 
@@ -46,6 +46,7 @@ export type RepositoryPickerProps = {
 	filteredRepositories: PickerRepository[];
 	highlightedIndex: number;
 	hoveredIndex: number | null;
+	catalogLoading?: boolean;
 	loading: boolean;
 	onActivateIndex: (index: number) => void;
 	onClose: () => void;

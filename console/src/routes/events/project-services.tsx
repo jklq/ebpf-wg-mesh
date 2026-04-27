@@ -1,18 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-const STATUS_POLL_INTERVAL_MS = 500;
-const STATUS_HEARTBEAT_INTERVAL_MS = 15_000;
+const SERVICES_POLL_INTERVAL_MS = 500;
+const SERVICES_HEARTBEAT_INTERVAL_MS = 15_000;
 
-export const Route = createFileRoute("/events/service-status")({
+export const Route = createFileRoute("/events/project-services")({
 	server: {
 		handlers: {
 			GET: async ({ request }: { request: Request }) => {
 				const url = new URL(request.url);
 				const projectId = url.searchParams.get("projectId")?.trim() ?? "";
-				const serviceId = url.searchParams.get("serviceId")?.trim() ?? "";
 
-				if (!projectId || !serviceId) {
-					return new Response("missing projectId or serviceId", {
+				if (!projectId) {
+					return new Response("missing projectId", {
 						status: 400,
 					});
 				}
@@ -20,11 +19,10 @@ export const Route = createFileRoute("/events/service-status")({
 				try {
 					const svc = await import("#/lib/dashboard/server");
 					return new Response(
-						createServiceStatusEventStream({
-							loadStatus: () =>
-								svc.getServiceStatusFromSession({
+						createProjectServicesEventStream({
+							loadServices: () =>
+								svc.listProjectServicesFromSession({
 									projectId,
-									serviceId,
 								}),
 							signal: request.signal,
 						}),
@@ -43,18 +41,18 @@ export const Route = createFileRoute("/events/service-status")({
 			},
 		},
 	},
-	component: ServiceStatusEventPage,
+	component: ProjectServicesEventPage,
 });
 
-function ServiceStatusEventPage() {
+function ProjectServicesEventPage() {
 	return null;
 }
 
-function createServiceStatusEventStream({
-	loadStatus,
+function createProjectServicesEventStream({
+	loadServices,
 	signal,
 }: {
-	loadStatus: () => Promise<unknown>;
+	loadServices: () => Promise<unknown>;
 	signal: AbortSignal;
 }): ReadableStream<Uint8Array> {
 	const encoder = new TextEncoder();
@@ -95,7 +93,7 @@ function createServiceStatusEventStream({
 				clearTimer();
 				timer = setTimeout(() => {
 					void publish();
-				}, STATUS_POLL_INTERVAL_MS);
+				}, SERVICES_POLL_INTERVAL_MS);
 			};
 
 			const publish = async () => {
@@ -104,20 +102,20 @@ function createServiceStatusEventStream({
 					return;
 				}
 				try {
-					const status = await loadStatus();
-					const payload = JSON.stringify(status);
+					const services = await loadServices();
+					const payload = JSON.stringify(services);
 					const now = Date.now();
 					if (payload !== lastPayload) {
-						enqueue(`event: status\ndata: ${payload}\n\n`);
+						enqueue(`event: services\ndata: ${payload}\n\n`);
 						lastPayload = payload;
 						lastHeartbeat = now;
-					} else if (now - lastHeartbeat >= STATUS_HEARTBEAT_INTERVAL_MS) {
+					} else if (now - lastHeartbeat >= SERVICES_HEARTBEAT_INTERVAL_MS) {
 						enqueue("event: ping\ndata: {}\n\n");
 						lastHeartbeat = now;
 					}
 				} catch (error) {
 					enqueue(
-						`event: status-error\ndata: ${JSON.stringify({
+						`event: services-error\ndata: ${JSON.stringify({
 							message: error instanceof Error ? error.message : "stream failed",
 						})}\n\n`,
 					);
