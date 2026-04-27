@@ -28,6 +28,7 @@ const (
 	PlatformService_CreateService_FullMethodName          = "/platform.v1.PlatformService/CreateService"
 	PlatformService_UpdateService_FullMethodName          = "/platform.v1.PlatformService/UpdateService"
 	PlatformService_RedeployService_FullMethodName        = "/platform.v1.PlatformService/RedeployService"
+	PlatformService_DiscardServiceChanges_FullMethodName  = "/platform.v1.PlatformService/DiscardServiceChanges"
 	PlatformService_DeleteService_FullMethodName          = "/platform.v1.PlatformService/DeleteService"
 	PlatformService_GetService_FullMethodName             = "/platform.v1.PlatformService/GetService"
 	PlatformService_ListServices_FullMethodName           = "/platform.v1.PlatformService/ListServices"
@@ -57,6 +58,7 @@ type PlatformServiceClient interface {
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	UpdateService(ctx context.Context, in *UpdateServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	RedeployService(ctx context.Context, in *RedeployServiceRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
+	DiscardServiceChanges(ctx context.Context, in *DiscardServiceChangesRequest, opts ...grpc.CallOption) (*Service, error)
 	DeleteService(ctx context.Context, in *DeleteServiceRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetService(ctx context.Context, in *GetServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
@@ -156,6 +158,16 @@ func (c *platformServiceClient) RedeployService(ctx context.Context, in *Redeplo
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ServiceStatus)
 	err := c.cc.Invoke(ctx, PlatformService_RedeployService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DiscardServiceChanges(ctx context.Context, in *DiscardServiceChangesRequest, opts ...grpc.CallOption) (*Service, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Service)
+	err := c.cc.Invoke(ctx, PlatformService_DiscardServiceChanges_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +336,7 @@ type PlatformServiceServer interface {
 	CreateService(context.Context, *CreateServiceRequest) (*Service, error)
 	UpdateService(context.Context, *UpdateServiceRequest) (*Service, error)
 	RedeployService(context.Context, *RedeployServiceRequest) (*ServiceStatus, error)
+	DiscardServiceChanges(context.Context, *DiscardServiceChangesRequest) (*Service, error)
 	DeleteService(context.Context, *DeleteServiceRequest) (*emptypb.Empty, error)
 	GetService(context.Context, *GetServiceRequest) (*Service, error)
 	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
@@ -372,6 +385,9 @@ func (UnimplementedPlatformServiceServer) UpdateService(context.Context, *Update
 }
 func (UnimplementedPlatformServiceServer) RedeployService(context.Context, *RedeployServiceRequest) (*ServiceStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method RedeployService not implemented")
+}
+func (UnimplementedPlatformServiceServer) DiscardServiceChanges(context.Context, *DiscardServiceChangesRequest) (*Service, error) {
+	return nil, status.Error(codes.Unimplemented, "method DiscardServiceChanges not implemented")
 }
 func (UnimplementedPlatformServiceServer) DeleteService(context.Context, *DeleteServiceRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteService not implemented")
@@ -579,6 +595,24 @@ func _PlatformService_RedeployService_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).RedeployService(ctx, req.(*RedeployServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DiscardServiceChanges_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DiscardServiceChangesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DiscardServiceChanges(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DiscardServiceChanges_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DiscardServiceChanges(ctx, req.(*DiscardServiceChangesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -891,6 +925,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RedeployService",
 			Handler:    _PlatformService_RedeployService_Handler,
+		},
+		{
+			MethodName: "DiscardServiceChanges",
+			Handler:    _PlatformService_DiscardServiceChanges_Handler,
 		},
 		{
 			MethodName: "DeleteService",

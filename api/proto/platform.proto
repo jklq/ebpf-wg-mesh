@@ -193,6 +193,23 @@ message BuildStatus {
   repeated DeploymentStage stages = 11;
 }
 
+enum ServiceUnappliedChangeAction {
+  SERVICE_UNAPPLIED_CHANGE_ACTION_UNSPECIFIED = 0;
+  SERVICE_UNAPPLIED_CHANGE_ACTION_ADD = 1;
+  SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE = 2;
+  SERVICE_UNAPPLIED_CHANGE_ACTION_REMOVE = 3;
+}
+
+message ServiceUnappliedChange {
+  string id = 1;
+  string section = 2;
+  string field = 3;
+  string path = 4;
+  ServiceUnappliedChangeAction action = 5;
+  string current_value = 6;
+  string new_value = 7;
+}
+
 message Service {
   string id = 1;
   string project_id = 2;
@@ -207,6 +224,9 @@ message Service {
   string last_successful_commit_sha = 12;
   string resolved_image = 13;
   BuildStatus latest_build = 14;
+  bool pending_changes = 15;
+  int32 unapplied_change_count = 16;
+  repeated ServiceUnappliedChange unapplied_changes = 17;
 }
 
 message DomainBinding {
@@ -302,6 +322,13 @@ message UpdateServiceRequest {
 message RedeployServiceRequest {
   string project_id = 1;
   string service_id = 2;
+}
+
+message DiscardServiceChangesRequest {
+  string project_id = 1;
+  string service_id = 2;
+  repeated string change_ids = 3;
+  bool discard_all = 4;
 }
 
 message DeleteServiceRequest {
@@ -536,6 +563,7 @@ service PlatformService {
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
   rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus);
+  rpc DiscardServiceChanges(DiscardServiceChangesRequest) returns (Service);
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
   rpc GetService(GetServiceRequest) returns (Service);
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
