@@ -9,6 +9,7 @@ export function RepositoryPicker({
 	filteredRepositories,
 	highlightedIndex,
 	hoveredIndex,
+	catalogLoading = false,
 	loading,
 	onActivateIndex,
 	onClose,
@@ -148,7 +149,11 @@ export function RepositoryPicker({
 					);
 				})()}
 
-				{showEmptyState && (
+				{catalogLoading && filteredRepositories.length === 0 && (
+					<RepositoryPickerSkeleton actionsCount={actions.length} />
+				)}
+
+				{showEmptyState && !catalogLoading && (
 					<p
 						style={{
 							margin: 0,
@@ -170,6 +175,31 @@ export function RepositoryPicker({
 				</p>
 			)}
 		</>
+	);
+}
+
+function RepositoryPickerSkeleton({ actionsCount }: { actionsCount: number }) {
+	const rows = actionsCount > 0 ? 7 : 8;
+	return (
+		<div
+			className="repo-picker-skeleton"
+			aria-label="Loading repositories"
+			aria-busy="true"
+		>
+			{Array.from({ length: rows }).map((_, index) => (
+				<div
+					key={index}
+					className="repo-picker-skeleton-row"
+					style={{ borderTop: index > 0 || actionsCount > 0 ? undefined : 0 }}
+				>
+					<span className="repo-picker-skeleton-icon" />
+					<span
+						className="repo-picker-skeleton-line"
+						style={{ width: `${index % 2 === 0 ? 68 : 52}%` }}
+					/>
+				</div>
+			))}
+		</div>
 	);
 }
 

@@ -46,6 +46,7 @@ export type RepositoryPickerProps = {
 	filteredRepositories: PickerRepository[];
 	highlightedIndex: number;
 	hoveredIndex: number | null;
+	catalogLoading?: boolean;
 	loading: boolean;
 	onActivateIndex: (index: number) => void;
 	onClose: () => void;

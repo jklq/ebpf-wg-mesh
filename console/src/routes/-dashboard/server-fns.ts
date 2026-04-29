@@ -3,8 +3,11 @@ import { createServerFn } from "@tanstack/react-start";
 
 import type {
 	DashboardDeploymentRecord,
+	DashboardGitHubAccount,
+	DashboardRepositoryInspection,
 	DashboardServiceLogType,
 	DashboardServicePosition,
+	GitHubUserRepository,
 	UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 
@@ -27,6 +30,23 @@ export const fetchServiceStatus = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.getServiceStatusFromSession(data);
+	});
+
+export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
+	async (): Promise<{
+		githubAccount?: DashboardGitHubAccount;
+		repositories: Array<GitHubUserRepository>;
+	}> => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.loadGitHubCatalogFromSession();
+	},
+);
+
+export const fetchRepositoryInspection = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { repositorySelector: string })
+	.handler(async ({ data }): Promise<DashboardRepositoryInspection | undefined> => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.inspectRepositorySourceFromSession(data);
 	});
 
 export const fetchServiceLogs = createServerFn({ method: "POST" })

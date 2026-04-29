@@ -6,10 +6,12 @@ import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 export function DeployButton({
 	state,
 	onNewService,
+	onPreload,
 	stopPropagation,
 }: {
 	state: DashboardHomeState;
 	onNewService: () => void;
+	onPreload?: () => void;
 	stopPropagation?: boolean;
 }) {
 	const stop = (e: MouseEvent) => e.stopPropagation();
@@ -32,6 +34,8 @@ export function DeployButton({
 		<button
 			type="button"
 			className="btn-primary"
+			onFocus={onPreload}
+			onMouseEnter={onPreload}
 			onMouseDown={stopPropagation ? stop : undefined}
 			onClick={
 				stopPropagation

@@ -1,5 +1,4 @@
 import {
-	ArrowUpRight,
 	Check,
 	Globe,
 	KeyRound,
@@ -9,7 +8,12 @@ import {
 	Settings,
 	X,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+	type FormEvent,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 
 import type {
 	DashboardHomeState,
@@ -18,19 +22,45 @@ import type {
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
-import { PanelDeployments } from "./panel-deployments";
-import { PanelDomains } from "./panel-domains";
-import { PanelSettings } from "./panel-settings";
-import { PanelVariables } from "./panel-variables";
 import { doUpdateService } from "./server-fns";
+import { PanelDeployments } from "./panel-deployments";
 import {
-	buildServiceURL,
 	formatError,
-	heroStatusLabel,
+	healthLabel,
 	serviceHealth,
-	shortSha,
 } from "./service-utils";
 import type { DashboardTab } from "./types";
+
+type PanelModules = {
+	variables?: typeof import("./panel-variables").PanelVariables;
+	domains?: typeof import("./panel-domains").PanelDomains;
+	settings?: typeof import("./panel-settings").PanelSettings;
+};
+
+const loadedPanelModules: PanelModules = {};
+let preloadPanelTabsPromise: Promise<void> | null = null;
+
+const loadPanelVariables = async () => {
+	const module = await import("./panel-variables");
+	loadedPanelModules.variables = module.PanelVariables;
+};
+const loadPanelDomains = async () => {
+	const module = await import("./panel-domains");
+	loadedPanelModules.domains = module.PanelDomains;
+};
+const loadPanelSettings = async () => {
+	const module = await import("./panel-settings");
+	loadedPanelModules.settings = module.PanelSettings;
+};
+
+const preloadAllPanelTabs = (): Promise<void> => {
+	preloadPanelTabsPromise ??= Promise.all([
+		loadPanelVariables(),
+		loadPanelDomains(),
+		loadPanelSettings(),
+	]).then(() => undefined);
+	return preloadPanelTabsPromise;
+};
 
 const tabs = [
 	{ id: "deployments", label: "Deployments", icon: <Layers size={11} /> },
@@ -64,23 +94,12 @@ export function ServicePanel({
 	const build = currentService.latestBuild ?? service.latestBuild;
 	const health = serviceHealth(currentService);
 	const stages = build?.stages ?? [];
-	const domainBindings = state.domainBindings.filter(
-		(binding) => binding.serviceId === service.id,
-	);
-	const primaryDomain = domainBindings[0];
-	const serviceURL = primaryDomain
-		? buildServiceURL(state, primaryDomain.hostname)
-		: null;
-	const statusMeta = buildStatusMeta(build, status?.allocation);
-	const runningStageCount = stages.filter(
-		(stage) => stage.state === "running" || stage.state === "succeeded",
-	).length;
-
-	// Hero visibility — hidden when healthy, animated out when transitioning to healthy
+	// Deploy badge visibility — hidden when healthy, animated out when transitioning to healthy
 	const prevHealthRef = useRef(health);
 	const [heroVisible, setHeroVisible] = useState(health !== "healthy");
 	const [heroExiting, setHeroExiting] = useState(false);
 	const [heroCompleting, setHeroCompleting] = useState(false);
+	const [, setPanelModulesVersion] = useState(0);
 
 	useEffect(() => {
 		const prevHealth = prevHealthRef.current;
@@ -119,6 +138,31 @@ export function ServicePanel({
 	const pulseDelay =
 		health === "building" ? `${-(Date.now() % 1400)}ms` : "0ms";
 
+	useEffect(() => {
+		let cancelled = false;
+		const markLoaded = () => {
+			if (!cancelled) {
+				setPanelModulesVersion((version) => version + 1);
+			}
+		};
+		if (typeof window.requestIdleCallback === "function") {
+			const id = window.requestIdleCallback(() => {
+				void preloadAllPanelTabs().then(markLoaded);
+			});
+			return () => {
+				cancelled = true;
+				window.cancelIdleCallback(id);
+			};
+		}
+		const id = window.setTimeout(() => {
+			void preloadAllPanelTabs().then(markLoaded);
+		}, 0);
+		return () => {
+			cancelled = true;
+			window.clearTimeout(id);
+		};
+	}, []);
+
 	return (
 		<>
 			<div className="panel-crumbs">
@@ -128,6 +172,48 @@ export function ServicePanel({
 					onSaved={onServiceUpdated}
 				/>
 				<span style={{ flex: 1 }} />
+				{heroVisible && (
+					<div
+						className={`panel-deploy-badge tone-${health}${heroCompleting ? " completing" : ""}${heroExiting ? " exiting" : ""}`}
+					>
+						<span
+							className="panel-badge-label"
+							style={
+								health === "building"
+									? { animationDelay: pulseDelay }
+									: undefined
+							}
+						>
+							{healthLabel(health)}
+						</span>
+						{stages.length > 0 && (
+							<div
+								className="panel-badge-rail"
+								role="img"
+								aria-label="Deploy progress"
+							>
+								{stages.map((stage) => {
+									const segmentState =
+										health === "building" && stage.state === "succeeded"
+											? "building-done"
+											: stage.state;
+									return (
+										<span
+											key={stage.key || stage.label}
+											className={`panel-badge-segment ${segmentState}`}
+											style={
+												stage.state === "running"
+													? { animationDelay: pulseDelay }
+													: undefined
+											}
+											title={stage.label}
+										/>
+									);
+								})}
+							</div>
+						)}
+					</div>
+				)}
 				<button
 					type="button"
 					className="panel-icon-btn"
@@ -146,103 +232,6 @@ export function ServicePanel({
 				</button>
 			</div>
 
-			{heroVisible && (
-				<div
-					className={`panel-hero tone-${health}${heroCompleting ? " hero-completing" : ""}${heroExiting ? " hero-exiting" : ""}`}
-				>
-					<div className="panel-hero-row">
-						<h1 className="panel-service-name">{currentService.name}</h1>
-						{serviceURL && primaryDomain && (
-							<a
-								href={serviceURL}
-								target="_blank"
-								rel="noreferrer"
-								className="panel-service-link"
-							>
-								<Globe size={11} />
-								<span>{primaryDomain.hostname}</span>
-								<ArrowUpRight size={11} />
-							</a>
-						)}
-					</div>
-
-					<div className="panel-status-strip">
-						<span
-							className={`status-dot ${health} panel-status-dot`}
-							style={{ animationDelay: pulseDelay }}
-						/>
-						<span className="panel-status-label">{heroStatusLabel(build)}</span>
-						<div className="panel-status-meta">
-							{build?.commitSha && (
-								<span className="mono">{shortSha(build.commitSha)}</span>
-							)}
-							{build?.commitSha && statusMeta.length > 0 && (
-								<span className="panel-inline-dot" />
-							)}
-							{statusMeta.map((entry, index) => (
-								<span key={entry} className="panel-status-meta-item">
-									{index > 0 && <span className="panel-inline-dot" />}
-									{entry}
-								</span>
-							))}
-						</div>
-					</div>
-
-					{stages.length > 0 && (
-						<div
-							className="panel-rollout-rail"
-							role="img"
-							aria-label="Deployment progress"
-						>
-							{stages.map((stage) => {
-								// While the overall build is in progress, colour already-succeeded
-								// segments with the building tone so the rail is one uniform colour.
-								// They only flip to green during the hero-completing flash.
-								const segmentState =
-									health === "building" && stage.state === "succeeded"
-										? "building-done"
-										: stage.state;
-								return (
-									<span
-										key={stage.key || stage.label}
-										className={`panel-rollout-segment ${segmentState}`}
-										style={
-											stage.state === "running"
-												? { animationDelay: pulseDelay }
-												: undefined
-										}
-										title={stage.label}
-									/>
-								);
-							})}
-						</div>
-					)}
-
-					{build?.commitMessage && (
-						<p className="panel-hero-commit">{build.commitMessage}</p>
-					)}
-					{build?.commitAuthor && (
-						<p className="panel-hero-subtle">
-							<span>{build.commitAuthor}</span>
-							{currentService.spec?.source?.trackedRef && (
-								<>
-									<span className="panel-inline-dot" />
-									<span className="mono">
-										{currentService.spec.source.trackedRef}
-									</span>
-								</>
-							)}
-							{stages.length > 0 && (
-								<>
-									<span className="panel-inline-dot" />
-									<span>{`${runningStageCount}/${stages.length} stages`}</span>
-								</>
-							)}
-						</p>
-					)}
-				</div>
-			)}
-
 			<div className="tab-bar condensed">
 				{tabs.map((tab) => (
 					<button
@@ -253,14 +242,18 @@ export function ServicePanel({
 					>
 						{tab.icon}
 						<span>{tab.label}</span>
-						{tab.id === "domains" && domainBindings.length > 0 ? (
-							<span className="tab-item-count">{domainBindings.length}</span>
-						) : null}
 					</button>
 				))}
 			</div>
 
 			<div className="service-panel-content">
+				{(() => {
+					const VariablesPanel = loadedPanelModules.variables;
+					const SettingsPanel = loadedPanelModules.settings;
+					const DomainsPanel = loadedPanelModules.domains;
+
+					return (
+						<>
 				{activeTab === "deployments" && (
 					<PanelDeployments
 						key={service.id}
@@ -269,38 +262,67 @@ export function ServicePanel({
 						project={project}
 					/>
 				)}
-				{activeTab === "variables" && project && (
-					<div className="service-panel-scroll">
-						<PanelVariables
-							service={service}
-							project={project}
-							onSaved={(updated) => {
-								onServiceUpdated(updated);
-								onRefresh();
-							}}
-						/>
-					</div>
-				)}
-				{activeTab === "settings" && project && (
-					<div className="service-panel-scroll">
-						<PanelSettings
-							service={service}
-							project={project}
-							state={state}
-							onSaved={(updated) => {
-								onServiceUpdated(updated);
-								onRefresh();
-							}}
-						/>
-					</div>
-				)}
-				{activeTab === "domains" && project && (
-					<div className="service-panel-scroll">
-						<PanelDomains service={service} project={project} state={state} />
-					</div>
-				)}
+					{activeTab === "variables" && project && (
+						VariablesPanel ? (
+							<div className="service-panel-scroll">
+								<VariablesPanel
+									service={service}
+									project={project}
+									onSaved={(updated) => {
+										onServiceUpdated(updated);
+										onRefresh();
+									}}
+								/>
+							</div>
+						) : (
+							<PanelTabFallback />
+						)
+					)}
+					{activeTab === "settings" && project && (
+						SettingsPanel ? (
+							<div className="service-panel-scroll">
+								<SettingsPanel
+									service={service}
+									project={project}
+									state={state}
+									onSaved={(updated) => {
+										onServiceUpdated(updated);
+										onRefresh();
+									}}
+								/>
+							</div>
+						) : (
+							<PanelTabFallback />
+						)
+					)}
+					{activeTab === "domains" && project && (
+						DomainsPanel ? (
+							<div className="service-panel-scroll">
+								<DomainsPanel
+									service={service}
+									project={project}
+									state={state}
+								/>
+							</div>
+						) : (
+							<PanelTabFallback />
+						)
+					)}
+						</>
+					);
+				})()}
 			</div>
 		</>
+	);
+}
+
+function PanelTabFallback() {
+	return (
+		<div className="service-panel-scroll">
+			<div className="panel-loading-row">
+				<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+			</div>
+		</div>
 	);
 }
 
@@ -438,48 +460,4 @@ function EditableServiceHeaderName({
 			<span className="panel-title-name">{service.name}</span>
 		</button>
 	);
-}
-
-function buildStatusMeta(
-	build: DashboardServiceRecord["latestBuild"],
-	allocation: DashboardServiceStatus["allocation"],
-): string[] {
-	const parts: string[] = [];
-	const activeStages = build?.stages?.filter(
-		(stage) => stage.state === "running" || stage.state === "succeeded",
-	).length;
-	if (build?.stages?.length) {
-		parts.push(`${activeStages ?? 0}/${build.stages.length} stages`);
-	}
-	const startedAt =
-		build?.startedAt ??
-		build?.queuedAt ??
-		build?.finishedAt ??
-		allocation?.updatedAt;
-	if (startedAt) {
-		parts.push(formatRelativeAge(startedAt));
-	}
-	return parts;
-}
-
-function formatRelativeAge(date: Date): string {
-	const diffMs = date.getTime() - Date.now();
-	const absSeconds = Math.round(Math.abs(diffMs) / 1000);
-	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-	if (absSeconds < 60) {
-		return rtf.format(Math.round(diffMs / 1000), "second");
-	}
-
-	const absMinutes = Math.round(absSeconds / 60);
-	if (absMinutes < 60) {
-		return rtf.format(Math.round(diffMs / 60_000), "minute");
-	}
-
-	const absHours = Math.round(absMinutes / 60);
-	if (absHours < 24) {
-		return rtf.format(Math.round(diffMs / 3_600_000), "hour");
-	}
-
-	return rtf.format(Math.round(diffMs / 86_400_000), "day");
 }

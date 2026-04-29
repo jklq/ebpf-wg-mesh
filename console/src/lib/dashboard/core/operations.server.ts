@@ -25,9 +25,11 @@ import {
 	type CreateServiceFastResult,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
+	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
 	type DashboardProject,
+	type DashboardRepositoryInspection,
 	type DashboardServiceLogLine,
 	type DashboardServiceLogType,
 	type DashboardServicePosition,
@@ -58,41 +60,15 @@ export async function loadDashboardHome(
 		store.ensureSessionUser(session.user),
 	);
 	const onboarding = await loadOnboardingDraft(runtime, session.user.id);
-	let githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
+	const githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
 		store.getGitHubAccount(session.user.id),
 	);
-	let repositories: Array<GitHubUserRepository> = [];
-	if (githubAccount?.accessToken) {
-		try {
-			repositories = await listGitHubRepositories(
-				runtime,
-				githubAccount.accessToken,
-			);
-		} catch (cause) {
-			const err = toGitHubApiError("listRepositories", cause);
-			if (
-				err instanceof GitHubApiError &&
-				err.status === 401 &&
-				githubAccount.refreshToken
-			) {
-				try {
-					githubAccount = await refreshGitHubAccount(runtime, githubAccount);
-					repositories = await listGitHubRepositories(
-						runtime,
-						githubAccount.accessToken,
-					);
-				} catch {
-					repositories = [];
-				}
-			}
-		}
-	}
 
 	const baseState = {
 		user: session.user,
 		githubAccount: githubAccount ?? undefined,
 		onboarding,
-		repositories,
+		repositories: [],
 		githubLoginURL: runtime.github ? "/auth/start?redirect=%2F" : undefined,
 		githubInstallURL: config.githubInstallURL,
 		publicBaseURL: config.publicBaseURL,
@@ -119,31 +95,21 @@ export async function loadDashboardHome(
 				(entry) => entry.name === onboarding.repositorySelector,
 			);
 		}
-		const repositoryInspection = onboarding.repositorySelector
-			? await platformCall(runtime, "inspectRepositorySource", (platform) =>
-					platform.inspectRepositorySource(session.user, {
-						provider: "github",
-						repositorySelector: onboarding.repositorySelector,
-					}),
-				)
-			: undefined;
 
 		let reconciledDraft = onboarding;
 		let allServices: Array<DashboardServiceRecord> = [];
 		let service: DashboardServiceRecord | undefined;
-		let serviceStatus: DashboardServiceStatus | undefined;
-		let domainBindings: Array<DashboardDomainBinding> = [];
 
 		if (project) {
-			allServices =
-				(await safePlatformCall(runtime, "listServices", (platform) =>
+			const [servicesResult, positions] = await Promise.all([
+				safePlatformCall(runtime, "listServices", (platform) =>
 					platform.listServices(session.user, project.id),
-				)) ?? [];
-			const positions = await storeCall(
-				runtime,
-				"listServicePositions",
-				(store) => store.listServicePositions(session.user.id, project.id),
-			);
+				),
+				storeCall(runtime, "listServicePositions", (store) =>
+					store.listServicePositions(session.user.id, project.id),
+				),
+			]);
+			allServices = servicesResult ?? [];
 			allServices = applyServicePositions(allServices, positions);
 		}
 
@@ -171,34 +137,18 @@ export async function loadDashboardHome(
 		}
 
 		if (project && service) {
-			serviceStatus = await safePlatformCall(
-				runtime,
-				"getServiceStatus",
-				(platform) =>
-					platform.getServiceStatus(session.user, {
-						projectId: project.id,
-						serviceId: service.id,
-					}),
-			);
-			domainBindings =
-				(await safePlatformCall(runtime, "listDomainBindings", (platform) =>
-					platform.listDomainBindings(session.user, {
-						projectId: project.id,
-						serviceId: service.id,
-					}),
-				)) ?? [];
 			reconciledDraft = reconcileOnboardingDraft(
 				onboarding,
-				repositoryInspection,
+				undefined,
 				project,
 				service,
-				serviceStatus,
-				domainBindings,
+				undefined,
+				[],
 			);
 		} else if (onboarding.projectId || onboarding.serviceId) {
 			reconciledDraft = reconcileOnboardingDraft(
 				onboarding,
-				repositoryInspection,
+				undefined,
 				project,
 				undefined,
 				undefined,
@@ -214,31 +164,102 @@ export async function loadDashboardHome(
 			);
 		}
 
-		const domainVerification = reconciledDraft.hostname
-			? await safeVerifyHostname(runtime, reconciledDraft.hostname)
-			: undefined;
-
 		return {
 			...baseState,
+			githubAccount: githubAccount ?? undefined,
 			onboarding: reconciledDraft,
 			project,
 			services: allServices,
 			service,
-			serviceStatus,
-			repositoryInspection,
-			domainVerification,
-			domainBindings,
 		} satisfies DashboardHomeState;
 	} catch (error) {
 		if (error instanceof PlatformGatewayError) {
 			return {
 				...baseState,
+				githubAccount: githubAccount ?? undefined,
 				controlPlaneReachable: false,
 				controlPlaneError: error.message,
 			} satisfies DashboardHomeState;
 		}
 		throw error;
 	}
+}
+
+export async function loadGitHubCatalogFromSession(
+	runtime: DashboardRuntime,
+): Promise<{
+	githubAccount?: DashboardGitHubAccount;
+	repositories: Array<GitHubUserRepository>;
+}> {
+	const session = await requireSession(runtime);
+	const githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
+		store.getGitHubAccount(session.user.id),
+	);
+	const catalog = await loadGitHubCatalog(runtime, githubAccount);
+	return {
+		githubAccount: catalog.githubAccount ?? undefined,
+		repositories: catalog.repositories,
+	};
+}
+
+async function loadGitHubCatalog(
+	runtime: DashboardRuntime,
+	githubAccount: DashboardGitHubAccount | null,
+): Promise<{
+	githubAccount: DashboardGitHubAccount | null;
+	repositories: Array<GitHubUserRepository>;
+}> {
+	if (!githubAccount?.accessToken) {
+		return { githubAccount, repositories: [] };
+	}
+	try {
+		return {
+			githubAccount,
+			repositories: await listGitHubRepositories(
+				runtime,
+				githubAccount.accessToken,
+			),
+		};
+	} catch (cause) {
+		const err = toGitHubApiError("listRepositories", cause);
+		if (
+			err instanceof GitHubApiError &&
+			err.status === 401 &&
+			githubAccount.refreshToken
+		) {
+			try {
+				const refreshed = await refreshGitHubAccount(runtime, githubAccount);
+				return {
+					githubAccount: refreshed,
+					repositories: await listGitHubRepositories(
+						runtime,
+						refreshed.accessToken,
+					),
+				};
+			} catch {
+				return { githubAccount, repositories: [] };
+			}
+		}
+		return { githubAccount, repositories: [] };
+	}
+}
+
+export async function inspectRepositorySourceFromSession(
+	runtime: DashboardRuntime,
+	input: { repositorySelector: string },
+): Promise<DashboardRepositoryInspection | undefined> {
+	const session = await requireSession(runtime);
+	const selector = normalizeRepositorySelector(input.repositorySelector);
+	if (!selector) return undefined;
+	await platformCall(runtime, "ensurePrincipal", (platform) =>
+		platform.ensurePrincipal(session.user),
+	);
+	return platformCall(runtime, "inspectRepositorySource", (platform) =>
+		platform.inspectRepositorySource(session.user, {
+			provider: "github",
+			repositorySelector: selector,
+		}),
+	);
 }
 
 export async function createProjectFromSession(
@@ -504,6 +525,22 @@ export async function getServiceStatusFromSession(
 	return platformCall(runtime, "getServiceStatus", (platform) =>
 		platform.getServiceStatus(session.user, input),
 	);
+}
+
+export async function listProjectServicesFromSession(
+	runtime: DashboardRuntime,
+	input: { projectId: string },
+): Promise<Array<DashboardServiceRecord>> {
+	const session = await requireSession(runtime);
+	const [services, positions] = await Promise.all([
+		platformCall(runtime, "listServices", (platform) =>
+			platform.listServices(session.user, input.projectId),
+		),
+		storeCall(runtime, "listServicePositions", (store) =>
+			store.listServicePositions(session.user.id, input.projectId),
+		),
+	]);
+	return applyServicePositions(services, positions);
 }
 
 export async function listServiceLogsFromSession(

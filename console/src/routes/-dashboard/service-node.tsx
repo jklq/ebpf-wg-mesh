@@ -11,7 +11,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 
 import { NODE_H, NODE_W } from "./layout";
-import { healthLabel, serviceHealth, shortSha } from "./service-utils";
+import { serviceHealth, shortSha } from "./service-utils";
 
 export function ServiceNode({
 	service,
@@ -32,6 +32,9 @@ export function ServiceNode({
 	const repoShort = repo.split("/").pop() ?? repo;
 	const unappliedCount =
 		service.unappliedChangeCount ?? (service.pendingChanges ? 1 : 0);
+	const stages = service.latestBuild?.stages ?? [];
+	const pulseDelay =
+		health === "building" ? `${-(Date.now() % 1400)}ms` : "0ms";
 
 	return (
 		<button
@@ -61,7 +64,10 @@ export function ServiceNode({
 					gap: 8,
 				}}
 			>
-				<span className={`status-dot ${health}`} style={{ flexShrink: 0 }} />
+				<span
+					className={`status-dot ${health}`}
+					style={{ flexShrink: 0, animationDelay: pulseDelay }}
+				/>
 				<span
 					style={{
 						fontSize: 14,
@@ -132,21 +138,42 @@ export function ServiceNode({
 					}}
 				>
 					<div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-						<span className={`badge ${health}`}>
-							{health === "building" && (
-								<Loader2
-									size={10}
-									style={{ animation: "spin 1s linear infinite" }}
-								/>
+						<span className={`node-deploy-badge tone-${health}`}>
+							{health === "building" ? (
+								<Loader2 size={9} className="node-badge-icon" />
+							) : health === "healthy" ? (
+								<CheckCircle2 size={9} className="node-badge-icon" />
+							) : health === "failed" ? (
+								<AlertCircle size={9} className="node-badge-icon" />
+							) : (
+								<Clock size={9} className="node-badge-icon" />
 							)}
-							{health === "healthy" && <CheckCircle2 size={10} />}
-							{health === "failed" && <AlertCircle size={10} />}
-							{health === "offline" && <Clock size={10} />}
-							{healthLabel(health)}
+							{stages.length > 0 && (
+								<div className="node-badge-rail">
+									{stages.map((stage) => {
+										const segmentState =
+											health === "building" && stage.state === "succeeded"
+												? "building-done"
+												: stage.state;
+										return (
+											<span
+												key={stage.key || stage.label}
+												className={`panel-badge-segment ${segmentState}`}
+												style={
+													stage.state === "running"
+														? { animationDelay: pulseDelay }
+														: undefined
+												}
+												title={stage.label}
+											/>
+										);
+									})}
+								</div>
+							)}
 						</span>
 						{unappliedCount > 0 && (
 							<span className="badge edited">
-								Edited · {unappliedCount}{" "}
+								{unappliedCount}{" "}
 								{unappliedCount === 1 ? "change" : "changes"}
 							</span>
 						)}

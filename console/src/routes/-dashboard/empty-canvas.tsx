@@ -7,9 +7,11 @@ import { DeployButton } from "./deploy-button";
 export function EmptyCanvas({
 	state,
 	onAdd,
+	onPreloadAdd,
 }: {
 	state: DashboardHomeState;
 	onAdd: () => void;
+	onPreloadAdd?: () => void;
 }) {
 	return (
 		<div className="empty-canvas">
@@ -45,7 +47,12 @@ export function EmptyCanvas({
 					Deploy your first service from a GitHub repo
 				</p>
 			</div>
-			<DeployButton state={state} onNewService={onAdd} stopPropagation />
+			<DeployButton
+				state={state}
+				onNewService={onAdd}
+				onPreload={onPreloadAdd}
+				stopPropagation
+			/>
 		</div>
 	);
 }

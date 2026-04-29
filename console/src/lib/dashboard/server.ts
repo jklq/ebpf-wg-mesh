@@ -14,9 +14,11 @@ import {
 	DashboardConfigError,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
+	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
 	type DashboardProject,
+	type DashboardRepositoryInspection,
 	type DashboardService,
 	type DashboardServiceLogLine,
 	type DashboardServiceLogType,
@@ -24,6 +26,7 @@ import {
 	type DashboardServiceRecord,
 	type DashboardServiceStatus,
 	type DevLoginIdentity,
+	type GitHubUserRepository,
 	type UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 import {
@@ -105,6 +108,19 @@ export function loadDashboardHome(): Promise<DashboardHomeState | null> {
 	return getDashboardService().loadDashboardHome();
 }
 
+export function loadGitHubCatalogFromSession(): Promise<{
+	githubAccount?: DashboardGitHubAccount;
+	repositories: Array<GitHubUserRepository>;
+}> {
+	return getDashboardService().loadGitHubCatalogFromSession();
+}
+
+export function inspectRepositorySourceFromSession(input: {
+	repositorySelector: string;
+}): Promise<DashboardRepositoryInspection | undefined> {
+	return getDashboardService().inspectRepositorySourceFromSession(input);
+}
+
 export function createProjectFromSession(
 	name: string,
 ): Promise<DashboardProject> {
@@ -152,6 +168,12 @@ export function getServiceStatusFromSession(input: {
 	serviceId: string;
 }): Promise<DashboardServiceStatus> {
 	return getDashboardService().getServiceStatusFromSession(input);
+}
+
+export function listProjectServicesFromSession(input: {
+	projectId: string;
+}): Promise<Array<DashboardServiceRecord>> {
+	return getDashboardService().listProjectServicesFromSession(input);
 }
 
 export function listServiceLogsFromSession(input: {

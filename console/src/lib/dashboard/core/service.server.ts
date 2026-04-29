@@ -14,10 +14,13 @@ import {
 	discardServiceChangesFromSession,
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
+	inspectRepositorySourceFromSession,
 	listDomainBindingsFromSession,
+	listProjectServicesFromSession,
 	listServiceDeploymentsFromSession,
 	listServiceLogsFromSession,
 	loadDashboardHome,
+	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
 	redeployServiceFromSession,
 	saveHostnameFromSession,
@@ -57,6 +60,12 @@ export function createDashboardService(
 		loadDashboardHome() {
 			return loadDashboardHome(runtime);
 		},
+		loadGitHubCatalogFromSession() {
+			return loadGitHubCatalogFromSession(runtime);
+		},
+		inspectRepositorySourceFromSession(input) {
+			return inspectRepositorySourceFromSession(runtime, input);
+		},
 		createProjectFromSession(name) {
 			return createProjectFromSession(runtime, name);
 		},
@@ -83,6 +92,9 @@ export function createDashboardService(
 		},
 		getServiceStatusFromSession(input) {
 			return getServiceStatusFromSession(runtime, input);
+		},
+		listProjectServicesFromSession(input) {
+			return listProjectServicesFromSession(runtime, input);
 		},
 		listServiceLogsFromSession(input) {
 			return listServiceLogsFromSession(runtime, input);

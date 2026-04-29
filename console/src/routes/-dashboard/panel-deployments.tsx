@@ -107,6 +107,18 @@ export function PanelDeployments({
 	}, [activeRollout, loadDeployments]);
 
 	useEffect(() => {
+		if (!logTarget) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			setLogTarget(null);
+		};
+		document.addEventListener("keydown", onKeyDown, { capture: true });
+		return () =>
+			document.removeEventListener("keydown", onKeyDown, { capture: true });
+	}, [logTarget]);
+
+	useEffect(() => {
 		const currentDeployment = createDeploymentRecord({
 			serviceId: service.id,
 			build,
@@ -274,7 +286,9 @@ function CurrentDeploymentCard({
 	const meta = deploymentMeta(build);
 
 	return (
-		<section className={`deployment-shell deployment-shell-current ${tone ? `tone-${tone}` : ""}`}>
+		<section
+			className={`deployment-shell deployment-shell-current ${tone ? `tone-${tone}` : ""}`}
+		>
 			<div className="deployment-current-head">
 				<div className="deployment-current-copy">
 					<p className="deployment-current-message">
@@ -282,7 +296,7 @@ function CurrentDeploymentCard({
 					</p>
 					<div className="deployment-current-meta">
 						{meta.map((entry, index) => (
-							<span key={`${entry}-${index}`}>
+							<span key={entry}>
 								{index > 0 && <span className="deployment-inline-dot" />}
 								{entry}
 							</span>
@@ -317,13 +331,18 @@ function CurrentDeploymentCard({
 								? "building-done"
 								: stage.state;
 						return (
-							<li key={stage.key || stage.label} className={`stage-row ${stage.state}`}>
+							<li
+								key={stage.key || stage.label}
+								className={`stage-row ${stage.state}`}
+							>
 								<span className={`stage-marker ${markerState}`}>
 									<StageIcon state={stage.state} />
 								</span>
 								<div className="stage-copy">
 									<div className="stage-label">{stage.label || stage.key}</div>
-									{stage.detail && <div className="stage-detail">{stage.detail}</div>}
+									{stage.detail && (
+										<div className="stage-detail">{stage.detail}</div>
+									)}
 								</div>
 								<div className="stage-status">{stageStatusText(stage)}</div>
 							</li>
@@ -377,7 +396,9 @@ function DeploymentHistoryRow({
 				{deploymentCardHeadline(build)}
 			</span>
 			<span className="deployment-history-meta">
-				{build?.commitSha && <span className="mono">{shortSha(build.commitSha)}</span>}
+				{build?.commitSha && (
+					<span className="mono">{shortSha(build.commitSha)}</span>
+				)}
 				{timestamp && <span>{formatRelativeAge(timestamp, nowMs)}</span>}
 			</span>
 		</button>

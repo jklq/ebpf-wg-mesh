@@ -628,6 +628,13 @@ export interface DashboardService {
     redirectTo?: string;
   }): Promise<string>;
   loadDashboardHome(): Promise<DashboardHomeState | null>;
+  loadGitHubCatalogFromSession(): Promise<{
+    githubAccount?: DashboardGitHubAccount;
+    repositories: Array<GitHubUserRepository>;
+  }>;
+  inspectRepositorySourceFromSession(input: {
+    repositorySelector: string;
+  }): Promise<DashboardRepositoryInspection | undefined>;
   createProjectFromSession(name: string): Promise<DashboardProject>;
   inspectRepositoryFromSession(input: {
     repositorySelector: string;
@@ -654,6 +661,9 @@ export interface DashboardService {
     projectId: string;
     serviceId: string;
   }): Promise<DashboardServiceStatus>;
+  listProjectServicesFromSession(input: {
+    projectId: string;
+  }): Promise<Array<DashboardServiceRecord>>;
   listServiceLogsFromSession(input: {
     projectId: string;
     serviceId: string;

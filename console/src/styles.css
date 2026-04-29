@@ -119,6 +119,245 @@ textarea {
   pointer-events: none;
 }
 
+.canvas-skeleton-page {
+  background: var(--bg);
+}
+
+.canvas-skeleton-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 15;
+  background: var(--bg);
+}
+
+.canvas-skeleton-page .canvas-skeleton-stage {
+  position: relative;
+  height: calc(100dvh - 48px);
+}
+
+.canvas-loading-skeleton {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.skeleton-node {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.92;
+  left: calc(round(down, calc(50% - 128px), 128px));
+  top: calc(round(down, calc(50% - 64px), 128px));
+}
+
+@supports not (left: round(down, 1px, 1px)) {
+  .skeleton-node {
+    left: calc(50% - 128px);
+    top: calc(50% - 64px);
+  }
+}
+
+.skeleton-node::after,
+.topbar-skeleton span::after,
+.repo-picker-skeleton-icon::after,
+.repo-picker-skeleton-line::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(212, 205, 197, 0.08),
+    transparent
+  );
+  animation: skeleton-shimmer 1.25s ease-in-out infinite;
+}
+
+.repo-picker-skeleton {
+  display: flex;
+  flex-direction: column;
+  min-height: 260px;
+}
+
+.repo-picker-skeleton-row {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.repo-picker-skeleton-icon,
+.repo-picker-skeleton-line {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  background: rgba(80, 76, 71, 0.42);
+}
+
+.repo-picker-skeleton-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.repo-picker-skeleton-line {
+  height: 12px;
+  border-radius: 1px;
+}
+
+.skeleton-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skeleton-node-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 7px;
+  padding: 8px 14px 10px;
+}
+
+.skeleton-status,
+.skeleton-mark {
+  display: inline-block;
+  flex-shrink: 0;
+  background: rgba(212, 119, 26, 0.22);
+}
+
+.skeleton-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.skeleton-line,
+.skeleton-pill,
+.skeleton-icon,
+.skeleton-button,
+.skeleton-icon-inline,
+.skeleton-badge-icon {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  background: rgba(80, 76, 71, 0.42);
+}
+
+.skeleton-node-title {
+  width: 104px;
+  height: 13px;
+}
+
+.skeleton-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.skeleton-icon-inline {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.skeleton-row {
+  height: 9px;
+}
+
+.skeleton-row.row-1 {
+  width: 86px;
+}
+
+.skeleton-row.row-2 {
+  width: 58px;
+}
+
+.skeleton-node-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.skeleton-deploy-badge {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border);
+}
+
+.skeleton-badge-icon {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+}
+
+.skeleton-sha {
+  width: 42px;
+  height: 10px;
+}
+
+.topbar-skeleton {
+  pointer-events: none;
+}
+
+.skeleton-mark {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  overflow: hidden;
+  clip-path: polygon(52% 0, 100% 44%, 68% 44%, 86% 100%, 0 48%, 40% 48%);
+}
+
+.skeleton-title {
+  width: 48px;
+  height: 14px;
+}
+
+.skeleton-pill {
+  width: 108px;
+  height: 24px;
+  border: 1px solid var(--border);
+}
+
+.skeleton-count {
+  width: 66px;
+  height: 10px;
+}
+
+.skeleton-spacer {
+  flex: 1;
+}
+
+.skeleton-icon {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+}
+
+.skeleton-button {
+  width: 96px;
+  height: 30px;
+  border: 1px solid rgba(212, 119, 26, 0.24);
+  background: rgba(212, 119, 26, 0.08);
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(120%);
+  }
+}
+
 /* Node card */
 .service-node {
   position: absolute;
@@ -143,6 +382,56 @@ textarea {
   box-shadow:
     3px 3px 0 rgba(0, 0, 0, 0.6),
     0 0 0 1px var(--accent);
+}
+
+/* Node deploy badge — icon + stage bars, no text */
+.node-deploy-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  height: 20px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  flex-shrink: 0;
+}
+
+.node-deploy-badge.tone-building {
+  border-color: rgba(192, 133, 32, 0.28);
+  background: rgba(192, 133, 32, 0.06);
+}
+
+.node-deploy-badge.tone-failed {
+  border-color: rgba(184, 66, 66, 0.26);
+  background: rgba(184, 66, 66, 0.05);
+}
+
+.node-badge-icon {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.node-deploy-badge.tone-building .node-badge-icon {
+  color: var(--building);
+  animation: spin 2s linear infinite;
+}
+
+.node-deploy-badge.tone-failed .node-badge-icon {
+  color: var(--failed);
+}
+
+.node-deploy-badge.tone-healthy .node-badge-icon {
+  color: var(--healthy);
+}
+
+.node-badge-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  height: 3px;
+  width: 38px;
+  flex-shrink: 0;
 }
 
 /* Status indicators — square indicator lights */
@@ -416,266 +705,144 @@ textarea {
   opacity: 0.45;
 }
 
-@keyframes panel-hero-enter {
+/* Deploy badge — compact status pill in the panel header crumb bar */
+@keyframes panel-badge-enter {
   from {
-    max-height: 0;
     opacity: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-    border-bottom-color: transparent;
+    transform: translateX(5px);
   }
 }
 
-.panel-hero {
-  padding: 18px var(--panel-content-inset) 16px;
-  border-bottom: 1px solid var(--border);
-  position: relative;
-  overflow: hidden;
+@keyframes panel-badge-exit {
+  to {
+    opacity: 0;
+    transform: scale(0.9) translateX(3px);
+  }
+}
+
+.panel-deploy-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  /* Wide enough so the badge never shrinks below "Building" + rail */
+  min-width: 96px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.025);
   flex-shrink: 0;
-  max-height: 500px;
-  /* Delay matches the side-panel slide-in (0.2s) so the hero enters after the
-     panel is fully visible, not while it's still off-screen */
-  animation: panel-hero-enter 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.2s both;
-  transition:
-    max-height 0.38s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.28s ease,
-    padding-top 0.38s cubic-bezier(0.4, 0, 0.2, 1),
-    padding-bottom 0.38s cubic-bezier(0.4, 0, 0.2, 1),
-    border-bottom-color 0.28s ease;
+  overflow: hidden;
+  position: relative;
+  /* Enter from the right, delay matches side-panel slide-in */
+  animation: panel-badge-enter 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.18s both;
 }
 
-.panel-hero.hero-exiting {
-  max-height: 0;
-  opacity: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-bottom-color: transparent;
+.panel-deploy-badge.exiting {
+  animation: panel-badge-exit 0.2s cubic-bezier(0.4, 0, 1, 1) both;
 }
 
-/* All stages flash green + glimmer sweeps before the hero slides away */
-.panel-hero.hero-completing .panel-rollout-segment {
-  background: var(--healthy) !important;
-  animation: none !important;
+.panel-deploy-badge.tone-building {
+  border-color: rgba(192, 133, 32, 0.28);
+  background: rgba(192, 133, 32, 0.07);
 }
 
-.panel-hero.hero-completing::after {
-  animation: hero-glimmer 0.52s ease-in-out 0.12s both;
+.panel-deploy-badge.tone-failed {
+  border-color: rgba(184, 66, 66, 0.26);
+  background: rgba(184, 66, 66, 0.06);
 }
 
-.panel-hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at top right, rgba(255, 255, 255, 0.03), transparent 44%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.01), transparent 72%);
-  pointer-events: none;
-}
-
-/* Glimmer sweep — activated during hero-completing */
-.panel-hero::after {
+/* Glimmer sweep — fires once during completing before badge exits */
+.panel-deploy-badge::after {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
-    105deg,
-    transparent 25%,
-    rgba(255, 255, 255, 0.04) 42%,
-    rgba(255, 255, 255, 0.09) 50%,
-    rgba(255, 255, 255, 0.04) 58%,
-    transparent 75%
+    90deg,
+    transparent 15%,
+    rgba(255, 255, 255, 0.14) 50%,
+    transparent 85%
   );
-  pointer-events: none;
   opacity: 0;
   transform: translateX(-150%);
-  z-index: 2;
+  pointer-events: none;
 }
 
-.panel-hero.tone-building {
-  background:
-    linear-gradient(180deg, rgba(192, 133, 32, 0.14), rgba(192, 133, 32, 0.03) 70%),
-    var(--surface);
-  /* No animation here — putting animation on .panel-hero.tone-building would
-     override the panel-hero-enter animation on .panel-hero (higher specificity
-     wins), causing it to restart and flash opacity:0 whenever the tone class
-     changes at the healthy transition. Pulse sync is handled via JS instead. */
+.panel-deploy-badge.completing::after {
+  animation: hero-glimmer 0.38s ease-in-out both;
 }
 
-.panel-hero.tone-healthy {
-  background:
-    linear-gradient(180deg, rgba(92, 170, 112, 0.12), rgba(92, 170, 112, 0.03) 70%),
-    var(--surface);
+.panel-deploy-badge.completing .panel-badge-segment {
+  background: var(--healthy) !important;
+  animation: none !important;
 }
 
-.panel-hero.tone-failed {
-  background:
-    linear-gradient(180deg, rgba(184, 66, 66, 0.14), rgba(184, 66, 66, 0.03) 70%),
-    var(--surface);
+/* Mini stage rail */
+.panel-badge-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  height: 3px;
+  width: 54px;
+  flex-shrink: 0;
 }
 
-.panel-hero.tone-offline {
-  background:
-    linear-gradient(180deg, rgba(72, 68, 64, 0.18), rgba(72, 68, 64, 0.03) 70%),
-    var(--surface);
+.panel-badge-segment {
+  border-radius: 999px;
+  background: rgba(80, 76, 71, 0.7);
+  transition: background 0.28s ease;
 }
 
-.panel-hero-row,
-.panel-status-strip,
-.panel-rollout-rail,
-.panel-hero-commit,
-.panel-hero-subtle {
-  position: relative;
-  z-index: 1;
+.panel-badge-segment.succeeded {
+  background: var(--healthy);
 }
 
-.panel-hero-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
+/* Segments that succeeded during an active build stay amber until badge exits */
+.panel-badge-segment.building-done {
+  background: var(--building);
 }
 
-.panel-service-name {
-  margin: 0;
+.panel-badge-segment.running {
+  background: var(--building);
+  /* animation-delay set via inline style (JS) to stay in phase with the label */
+  animation: pulse-building 1.4s ease-in-out infinite;
+}
+
+.panel-badge-segment.failed {
+  background: var(--failed);
+}
+
+/* Label — pulses in sync with stage bars when building */
+.panel-badge-label {
   font-family: "Barlow Condensed", var(--font-sans);
-  font-size: 32px;
-  line-height: 0.95;
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
-  color: var(--text);
-}
-
-.panel-service-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  background: rgba(15, 14, 13, 0.44);
-  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  max-width: 48%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.panel-service-link:hover {
-  color: var(--text);
-  border-color: var(--border-bright);
-}
-
-.panel-status-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.panel-status-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-}
-
-.panel-status-label {
-  font-family: "Barlow Condensed", var(--font-sans);
-  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-muted);
 }
 
-.panel-hero.tone-building .panel-status-label {
+.panel-deploy-badge.tone-building .panel-badge-label {
   color: var(--building);
+  /* animation-delay applied inline (JS) to sync with running stage segments */
+  animation: pulse-building 1.4s ease-in-out infinite;
 }
 
-.panel-hero.tone-healthy .panel-status-label {
-  color: var(--healthy);
-}
-
-.panel-hero.tone-failed .panel-status-label {
+.panel-deploy-badge.tone-failed .panel-badge-label {
   color: var(--failed);
 }
 
-.panel-hero.tone-offline .panel-status-label {
-  color: var(--text-muted);
+.panel-deploy-badge.tone-healthy .panel-badge-label {
+  color: var(--healthy);
 }
 
-.panel-status-meta,
-.panel-hero-subtle {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  min-width: 0;
-}
-
-.panel-status-meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.panel-inline-dot,
 .deployment-inline-dot {
   width: 3px;
   height: 3px;
   border-radius: 999px;
   background: var(--text-dim);
   flex-shrink: 0;
-}
-
-.panel-rollout-rail {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 4px;
-  height: 4px;
-  margin-bottom: 12px;
-}
-
-.panel-rollout-segment {
-  border-radius: 999px;
-  background: rgba(80, 76, 71, 0.7);
-  transition: background 0.28s ease;
-}
-
-.panel-rollout-segment.succeeded {
-  background: var(--healthy);
-}
-
-/* Segments that were succeeded during an active build are rendered with this
-   class instead of "succeeded" so they stay amber until the hero exits. */
-.panel-rollout-segment.building-done {
-  background: var(--building);
-}
-
-.panel-rollout-segment.running {
-  background: var(--building);
-  /* animation-delay is set via inline style (JS) so this stays in phase with
-     the status dot — both targets are in the same React render pass. */
-  animation: pulse-building 1.4s ease-in-out infinite;
-}
-
-.panel-rollout-segment.failed {
-  background: var(--failed);
-}
-
-.panel-hero-commit {
-  margin: 0 0 8px;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.panel-hero-subtle {
-  margin: 0;
 }
 
 /* Tab bar */
@@ -1989,15 +2156,9 @@ select.field-input {
     --deployment-column-gap: 12px;
   }
 
-  .panel-hero-row,
-  .panel-status-strip,
   .deployment-current-head,
   .deployment-log-drawer-header {
     flex-direction: column;
-  }
-
-  .panel-service-link {
-    max-width: 100%;
   }
 
   .deployment-view-logs {

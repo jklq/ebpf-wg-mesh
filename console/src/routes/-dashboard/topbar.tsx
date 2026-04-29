@@ -13,10 +13,12 @@ import { DeployButton } from "./deploy-button";
 export function Topbar({
 	state,
 	onNewService,
+	onPreloadNewService,
 	onRefresh,
 }: {
 	state: DashboardHomeState;
 	onNewService: () => void;
+	onPreloadNewService?: () => void;
 	onRefresh: () => void;
 }) {
 	return (
@@ -102,7 +104,11 @@ export function Topbar({
 				<RefreshCw size={13} />
 			</button>
 
-			<DeployButton state={state} onNewService={onNewService} />
+			<DeployButton
+				state={state}
+				onNewService={onNewService}
+				onPreload={onPreloadNewService}
+			/>
 
 			<a
 				href="/logout"
