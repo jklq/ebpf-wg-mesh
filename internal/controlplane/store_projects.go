@@ -22,14 +22,19 @@ func (s *Store) ensureUserProjectNamedQuerier(ctx context.Context, q serviceQuer
 
 	id := mustID()
 	now := time.Now().UTC()
+	networkIdentity, err := allocateProjectNetworkIdentity(ctx, q)
+	if err != nil {
+		return "", err
+	}
 	if _, err := q.ExecContext(
 		ctx,
-		`INSERT INTO projects(id, owner_subject, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		`INSERT INTO projects(id, owner_subject, name, kind, system_key, network_identity, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		id,
 		subject,
 		name,
 		string(projectKindUser),
 		nil,
+		networkIdentity,
 		now,
 	); err != nil {
 		return "", fmt.Errorf("insert project: %w", err)
@@ -58,20 +63,26 @@ func (s *Store) ensureManagedProject(ctx context.Context, name, systemKey string
 		}
 		now := time.Now().UTC()
 		if !found {
+			networkIdentity, err := allocateProjectNetworkIdentity(ctx, tx)
+			if err != nil {
+				return err
+			}
 			project = projectRecord{
-				ID:        mustID(),
-				Name:      name,
-				Kind:      projectKindManaged,
-				SystemKey: systemKey,
-				CreatedAt: now,
+				ID:              mustID(),
+				Name:            name,
+				Kind:            projectKindManaged,
+				SystemKey:       systemKey,
+				NetworkIdentity: networkIdentity,
+				CreatedAt:       now,
 			}
 			_, err = tx.ExecContext(
 				ctx,
-				`INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5)`,
+				`INSERT INTO projects(id, name, kind, system_key, network_identity, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 				project.ID,
 				project.Name,
 				string(project.Kind),
 				project.SystemKey,
+				project.NetworkIdentity,
 				project.CreatedAt,
 			)
 			return err
@@ -120,7 +131,7 @@ func (s *Store) createProject(ctx context.Context, subject, name string) (projec
 func (s *Store) listProjects(ctx context.Context, subject string) ([]projectRecord, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
+		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.network_identity, p.created_at
 		   FROM projects p
 		   JOIN project_memberships m ON m.project_id = p.id
 		  WHERE m.subject = $1 AND p.kind = $2
@@ -151,7 +162,7 @@ func (s *Store) projectByID(ctx context.Context, subject, projectID string) (pro
 func (s *Store) projectByIDQuerier(ctx context.Context, q serviceQueryer, subject, projectID string) (projectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
+		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.network_identity, p.created_at
 		   FROM projects p
 		   JOIN project_memberships m ON m.project_id = p.id
 		  WHERE p.id = $1 AND m.subject = $2 AND p.kind = $3`,
@@ -169,7 +180,7 @@ func (s *Store) projectByIDInternal(ctx context.Context, projectID string) (proj
 func (s *Store) projectByIDInternalQuerier(ctx context.Context, q serviceQueryer, projectID string) (projectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), network_identity, created_at
 		   FROM projects
 		  WHERE id = $1`,
 		projectID,
@@ -180,7 +191,7 @@ func (s *Store) projectByIDInternalQuerier(ctx context.Context, q serviceQueryer
 func (s *Store) projectBySystemKeyQuerier(ctx context.Context, q serviceQueryer, systemKey string) (projectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), network_identity, created_at
 		   FROM projects
 		  WHERE system_key = $1`,
 		systemKey,
@@ -199,7 +210,7 @@ func (s *Store) projectBySystemKeyQuerier(ctx context.Context, q serviceQueryer,
 func (s *Store) projectByOwnedNameQuerier(ctx context.Context, q serviceQueryer, subject, name string) (projectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), network_identity, created_at
 		   FROM projects
 		  WHERE owner_subject = $1 AND name = $2 AND kind = $3`,
 		subject,
@@ -220,14 +231,35 @@ func (s *Store) projectByOwnedNameQuerier(ctx context.Context, q serviceQueryer,
 func scanProjectRow(scanner interface{ Scan(...any) error }) (projectRecord, error) {
 	var rec projectRecord
 	var kind string
-	if err := scanner.Scan(&rec.ID, &rec.Name, &kind, &rec.SystemKey, &rec.CreatedAt); err != nil {
+	var networkIdentity int64
+	if err := scanner.Scan(&rec.ID, &rec.Name, &kind, &rec.SystemKey, &networkIdentity, &rec.CreatedAt); err != nil {
 		return projectRecord{}, err
 	}
+	if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
+		return projectRecord{}, fmt.Errorf("project %s has invalid network identity %d", rec.ID, networkIdentity)
+	}
+	rec.NetworkIdentity = uint32(networkIdentity)
 	rec.Kind = projectKind(kind)
 	if rec.Kind == "" {
 		rec.Kind = projectKindUser
 	}
 	return rec, nil
+}
+
+func allocateProjectNetworkIdentity(ctx context.Context, q serviceQueryer) (uint32, error) {
+	var identity int64
+	if err := q.QueryRowContext(ctx,
+		`UPDATE project_network_identity_counter
+		    SET next_identity = next_identity + 1
+		  WHERE id = TRUE AND next_identity <= 4294967295
+		  RETURNING next_identity - 1`,
+	).Scan(&identity); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("project network identity space exhausted")
+		}
+		return 0, fmt.Errorf("allocate project network identity: %w", err)
+	}
+	return uint32(identity), nil
 }
 
 func nullIfEmpty(value string) any {

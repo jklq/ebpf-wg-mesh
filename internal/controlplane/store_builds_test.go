@@ -5,12 +5,24 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
+
+func claimBuildForTest(t *testing.T, store *Store, ctx context.Context, builderID, expectedBuildID string) {
+	t.Helper()
+	claimed, err := store.claimNextBuild(ctx, builderID, builderID, 0)
+	if err != nil {
+		t.Fatalf("claimNextBuild: %v", err)
+	}
+	if claimed.ID != expectedBuildID {
+		t.Fatalf("expected build %q to be claimed, got %q", expectedBuildID, claimed.ID)
+	}
+}
 
 func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	t.Parallel()
@@ -58,6 +70,10 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	if err := store.completeBuild(ctx, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:999", ""); !errors.Is(err, errBuildNotOwned) {
+		t.Fatalf("expected foreign builder completion to be rejected, got %v", err)
 	}
 	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
@@ -127,6 +143,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService(first): %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", firstBuild.ID)
 	if err := store.completeBuild(ctx, "builder-1", firstBuild.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild(first): %v", err)
 	}
@@ -138,6 +155,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService(second): %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", secondBuild.ID)
 	if err := store.completeBuild(ctx, "builder-1", secondBuild.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-2", "", "docker build failed"); err != nil {
 		t.Fatalf("completeBuild(second): %v", err)
 	}
@@ -222,6 +240,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 		t.Fatalf("expected older build success to stay unapplied while newer work exists, got %q", current.ResolvedImage)
 	}
 
+	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
 	if err := store.completeBuild(ctx, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
@@ -360,6 +379,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
@@ -417,6 +437,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
@@ -496,6 +517,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}

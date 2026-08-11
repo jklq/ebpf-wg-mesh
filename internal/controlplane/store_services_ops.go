@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"time"
 
@@ -440,9 +441,10 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.id, s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, s.current_resolved_image, r.spec_json
+		`SELECT a.id, s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, s.current_resolved_image, r.spec_json, p.network_identity
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
+		   JOIN projects p ON p.id = s.project_id
 		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
 		  WHERE a.agent_id = $1
 		    AND s.current_resolved_image <> ''
@@ -459,9 +461,14 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		svc := &agentv1.DesiredService{}
 		var resolvedImage string
 		var rawSpec []byte
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.ProjectId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec); err != nil {
+		var networkIdentity int64
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.ProjectId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity); err != nil {
 			return nil, err
 		}
+		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
+			return nil, fmt.Errorf("project %s has invalid network identity %d", svc.ProjectId, networkIdentity)
+		}
+		svc.NetworkIdentity = uint32(networkIdentity)
 		spec, err := loadServiceSpec(rawSpec)
 		if err != nil {
 			return nil, err
@@ -508,10 +515,11 @@ func (s *Store) domainTargetPortsForService(ctx context.Context, serviceID strin
 
 func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT d.hostname, d.target_port, a.allocation_ip
+		`SELECT d.hostname, d.target_port, a.healthy_ports, ag.workload_ipv6_subnet, a.project_id, a.service_id
 		   FROM domain_bindings d
 		   JOIN allocations a ON a.service_id = d.service_id
-		  WHERE a.healthy = TRUE AND a.allocation_ip <> ''
+		   JOIN agents ag ON ag.id = a.agent_id
+		  WHERE a.healthy = TRUE
 		  ORDER BY d.hostname ASC`,
 	)
 	if err != nil {
@@ -522,12 +530,22 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 	var backends []ingressBackend
 	for rows.Next() {
 		var (
-			domain       string
-			targetPort   int32
-			allocationIP string
+			domain         string
+			targetPort     int32
+			healthyPorts   []int32
+			workloadSubnet string
+			projectID      string
+			serviceID      string
 		)
-		if err := rows.Scan(&domain, &targetPort, &allocationIP); err != nil {
+		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyPorts), &workloadSubnet, &projectID, &serviceID); err != nil {
 			return nil, err
+		}
+		if !slices.Contains(healthyPorts, targetPort) {
+			continue
+		}
+		allocationIP, err := privateIPv6(workloadSubnet, projectID, serviceID)
+		if err != nil {
+			return nil, fmt.Errorf("derive ingress allocation ip: %w", err)
 		}
 		backends = append(backends, ingressBackend{
 			Domain:   domain,

@@ -21,11 +21,12 @@ type principalRecord struct {
 }
 
 type projectRecord struct {
-	ID        string
-	Name      string
-	Kind      projectKind
-	SystemKey string
-	CreatedAt time.Time
+	ID              string
+	Name            string
+	Kind            projectKind
+	SystemKey       string
+	NetworkIdentity uint32
+	CreatedAt       time.Time
 }
 
 type volumeRecord struct {
@@ -63,6 +64,14 @@ type domainBindingRecord struct {
 	TargetPort int32
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+}
+
+type domainOwnershipChallengeRecord struct {
+	Hostname    string
+	ProjectID   string
+	RecordName  string
+	RecordValue string
+	ExpiresAt   time.Time
 }
 
 type agentRecord struct {

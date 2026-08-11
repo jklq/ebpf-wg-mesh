@@ -67,6 +67,9 @@ func (a *InternalAuth) StreamServerInterceptor() grpc.StreamServerInterceptor {
 }
 
 func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStream bool) (context.Context, error) {
+	if fullMethod == "" || fullMethod[0] != '/' {
+		return nil, status.Error(codes.Unimplemented, "malformed method name")
+	}
 	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
@@ -112,9 +115,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStrea
 			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
 		}
 	default:
-		if isStream {
-			return nil, status.Error(codes.PermissionDenied, "unsupported stream method")
-		}
+		return nil, status.Error(codes.PermissionDenied, "unsupported method")
 	}
 
 	return ctx, nil
