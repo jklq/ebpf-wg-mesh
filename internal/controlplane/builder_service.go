@@ -3,7 +3,9 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -67,9 +69,9 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 	if err != nil {
 		return nil, err
 	}
-	builderID := req.GetBuilderId()
-	if builderID == "" {
-		builderID = caller.ID
+	builderID, err := authenticatedBuilderID(caller, req.GetBuilderId())
+	if err != nil {
+		return nil, err
 	}
 	build, err := s.store.claimNextBuild(ctx, builderID, req.GetBuilderName(), s.staleAfter)
 	if err != nil {
@@ -109,12 +111,24 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 }
 
 func (s *BuilderService) DownloadSourceSnapshot(ctx context.Context, req *platformv1.DownloadSourceSnapshotRequest) (*platformv1.SourceSnapshotArtifact, error) {
-	if _, err := ServiceCallerFromContext(ctx); err != nil {
+	caller, err := ServiceCallerFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	builderID, err := authenticatedBuilderID(caller, "")
+	if err != nil {
 		return nil, err
 	}
 	snapshotID := req.GetSnapshotId()
 	if snapshotID == "" {
 		return nil, status.Error(codes.InvalidArgument, "snapshot id is required")
+	}
+	owned, err := s.store.builderOwnsSourceSnapshot(ctx, builderID, snapshotID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "authorize source snapshot: %v", err)
+	}
+	if !owned {
+		return nil, status.Error(codes.PermissionDenied, "source snapshot is not assigned to this builder")
 	}
 	snapshot, err := s.store.sourceSnapshotByID(ctx, snapshotID)
 	if err != nil {
@@ -138,11 +152,14 @@ func (s *BuilderService) ReportBuildHeartbeat(ctx context.Context, req *platform
 	if err != nil {
 		return nil, err
 	}
-	builderID := req.GetBuilderId()
-	if builderID == "" {
-		builderID = caller.ID
+	builderID, err := authenticatedBuilderID(caller, req.GetBuilderId())
+	if err != nil {
+		return nil, err
 	}
 	if err := s.store.recordBuilderHeartbeat(ctx, builderID, req.GetBuildId()); err != nil {
+		if errors.Is(err, errBuildNotOwned) {
+			return nil, status.Error(codes.PermissionDenied, err.Error())
+		}
 		return nil, status.Errorf(codes.Internal, "builder heartbeat: %v", err)
 	}
 	return &emptypb.Empty{}, nil
@@ -153,9 +170,9 @@ func (s *BuilderService) ReportBuildLogs(ctx context.Context, req *platformv1.Re
 	if err != nil {
 		return nil, err
 	}
-	builderID := req.GetBuilderId()
-	if builderID == "" {
-		builderID = caller.ID
+	builderID, err := authenticatedBuilderID(caller, req.GetBuilderId())
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.GetBuildId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "build id is required")
@@ -169,6 +186,9 @@ func (s *BuilderService) ReportBuildLogs(ctx context.Context, req *platformv1.Re
 			return nil, status.Error(codes.Internal, "build not found")
 		}
 		return nil, status.Errorf(codes.Internal, "load build for log report: %v", err)
+	}
+	if build.State != buildStateRunning || build.BuilderID != builderID {
+		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
 	service, err := s.store.serviceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
@@ -188,9 +208,9 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 	if err != nil {
 		return nil, err
 	}
-	builderID := req.GetBuilderId()
-	if builderID == "" {
-		builderID = caller.ID
+	builderID, err := authenticatedBuilderID(caller, req.GetBuilderId())
+	if err != nil {
+		return nil, err
 	}
 	// Load build + service up-front so we can emit synthetic logs keyed to
 	// the correct service/allocation regardless of the terminal state.
@@ -198,15 +218,31 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
 	}
+	if build.State != buildStateRunning || build.BuilderID != builderID {
+		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
+	}
+	if req.GetCommitSha() != build.CommitSHA {
+		return nil, status.Error(codes.InvalidArgument, "commit_sha does not match the claimed build")
+	}
 	service, err := s.store.serviceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service before completion: %v", err)
 	}
 	var agentID string
 	if req.GetState() == platformv1.BuildState_BUILD_STATE_SUCCEEDED {
+		if s.registry == nil || !s.registry.Enabled() {
+			return nil, status.Error(codes.FailedPrecondition, "registry policy is not configured")
+		}
+		pushRef := s.registry.PushRef(build.ProjectID, build.ServiceID, build.CommitSHA)
+		if err := validateRuntimeImageRef(pushRef, req.GetImageDigest()); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "image_digest: %v", err)
+		}
 		agentID = service.AllocatedAgentID
 	}
 	if err := s.store.completeBuild(ctx, builderID, req.GetBuildId(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason()); err != nil {
+		if errors.Is(err, errBuildNotOwned) {
+			return nil, status.Error(codes.PermissionDenied, err.Error())
+		}
 		return nil, status.Errorf(codes.Internal, "complete build: %v", err)
 	}
 	slog.InfoContext(ctx, "build completed", "build_id", req.GetBuildId(), "builder_id", builderID, "state", req.GetState().String(), "commit_sha", req.GetCommitSha(), "image_digest", req.GetImageDigest(), "failure_reason", req.GetFailureReason())
@@ -232,6 +268,38 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 		s.notifier.Notify(agentID)
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func validateRuntimeImageRef(pushRef, imageRef string) error {
+	lastSlash := strings.LastIndexByte(pushRef, '/')
+	tagSeparator := strings.LastIndexByte(pushRef, ':')
+	if tagSeparator <= lastSlash {
+		return errors.New("assigned push reference has no tag")
+	}
+	repository := pushRef[:tagSeparator]
+	prefix := repository + "@"
+	if !strings.HasPrefix(imageRef, prefix) {
+		return fmt.Errorf("must reference assigned repository %q", repository)
+	}
+	digest := strings.TrimPrefix(imageRef, prefix)
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+		return errors.New("must contain a full sha256 digest")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
+		return errors.New("sha256 digest is not hexadecimal")
+	}
+	return nil
+}
+
+func authenticatedBuilderID(caller ServiceCaller, requested string) (string, error) {
+	if caller.Class != serviceCallerBuilder {
+		return "", status.Error(codes.PermissionDenied, "builder client certificate required")
+	}
+	requested = strings.TrimSpace(requested)
+	if requested != "" && requested != caller.ID {
+		return "", status.Error(codes.PermissionDenied, "builder_id does not match client certificate")
+	}
+	return caller.ID, nil
 }
 
 // shortSHA truncates a git SHA for human-friendly log lines. We keep the first
