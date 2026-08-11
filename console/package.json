@@ -6,9 +6,6 @@
   "imports": {
     "#/*": "./src/*"
   },
-  "overrides": {
-    "@tanstack/start-server-core": "1.167.30"
-  },
   "scripts": {
     "dev": "bun --bun vite dev --host 127.0.0.1 --port 3000 --strictPort",
     "build": "NITRO_PRESET=bun bun --bun vite build",
