@@ -9,9 +9,9 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 
 import {
-	doCheckDNS,
 	doCreateDomainBinding,
 	doDeleteDomainBinding,
+	doRequestDomainOwnershipChallenge,
 	doUpdateDomainBinding,
 	fetchDomainBindings,
 } from "./server-fns";
@@ -72,10 +72,13 @@ export function PanelDomains({
 		setDnsResult(null);
 		setChecking(true);
 		try {
-			const result = await doCheckDNS({ data: { hostname: hostname.trim() } });
-			if (result) {
-				setDnsResult({ state: result.state, instruction: result.instruction });
-			}
+			const result = await doRequestDomainOwnershipChallenge({
+				data: { projectId: project.id, hostname: hostname.trim() },
+			});
+			setDnsResult({
+				state: "pending",
+				instruction: `Create TXT record ${result.recordName} with value ${result.recordValue}. The control plane will verify it when you publish.`,
+			});
 		} catch (e) {
 			setError(formatError(e));
 		} finally {
@@ -396,13 +399,7 @@ export function PanelDomains({
 					)}
 
 					{dnsResult && (
-						<div
-							className={
-								dnsResult.state === "verified" ? "success-msg" : "error-msg"
-							}
-						>
-							{dnsResult.instruction}
-						</div>
+						<div className="success-msg">{dnsResult.instruction}</div>
 					)}
 
 					{error && <p className="error-msg">{error}</p>}
@@ -421,10 +418,10 @@ export function PanelDomains({
 									style={{ animation: "spin 1s linear infinite" }}
 								/>
 							)}
-							Check DNS
+							Generate TXT proof
 						</button>
 
-						{dnsResult?.state === "verified" && (
+						{dnsResult && (
 							<button
 								type="button"
 								className="btn-primary"

@@ -5,7 +5,12 @@ import {
 } from "#/lib/dashboard/core/types.server";
 
 export function sanitizeRedirect(value?: string): string {
-	if (!value || !value.startsWith("/")) {
+	if (
+		!value ||
+		!value.startsWith("/") ||
+		value.startsWith("//") ||
+		value.includes("\\")
+	) {
 		return "/";
 	}
 	return value;

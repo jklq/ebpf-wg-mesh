@@ -8,6 +8,7 @@ import {
 } from "#/lib/platform-grpc/client.server";
 import {
 	decodeDomainBindingMessage,
+	decodeDomainOwnershipChallengeMessage,
 	decodeInspectSourceResponse,
 	decodeListDomainBindingsResponse,
 	decodeListProjectsResponse,
@@ -143,6 +144,15 @@ export function createPlatformGateway(
 				user,
 			);
 			return decodeListDomainBindingsResponse(response);
+		},
+		async requestDomainOwnershipChallenge(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"RequestDomainOwnershipChallenge",
+				input,
+				user,
+			);
+			return decodeDomainOwnershipChallengeMessage(response);
 		},
 		async createDomainBinding(user, input) {
 			const response = await unaryCall(

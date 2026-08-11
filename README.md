@@ -36,8 +36,10 @@ The binaries no longer require YAML config files.
 
 Common bootstrap inputs:
 
-- control plane: listen addresses, agent bootstrap token(s), DB URL, state dir, ingress admin URL, managed console service settings
+- control plane: listen addresses, single-use agent-bound bootstrap token(s) (`agent_id=token`), DB URL, state dir, ingress admin URL, managed console service settings
 - agent: control-plane address, control-plane CA, bootstrap token, data dir
+
+Custom domains use a control-plane-verified DNS ownership challenge. Request a challenge for the project and hostname, publish the returned TXT name/value, then create the binding before the 30-minute challenge expires. The control plane performs the TXT lookup; console-side DNS checks are not accepted as proof.
 
 ## Build
 
@@ -81,16 +83,35 @@ make dev-ephemeral
 
 GitHub-enabled interactive devstack via 1Password Environments:
 
+**Preferred for local dev:** mount the Environment as a repo-root `.env` in the 1Password desktop app (Developer → Environments → local `.env` destination). `localteststack` loads that file automatically — including 1Password’s FIFO mount — and enables GitHub mode when the required keys are present. No `OP_*` vars needed.
+
+```bash
+make dev-ephemeral
+```
+
+**Headless / automation (SDK):** load the Environment remotely when the local contract is incomplete:
+
 ```bash
 export OP_ENVIRONMENT_ID=envs/...
-export OP_SERVICE_ACCOUNT_TOKEN=ops_... # preferred
+export OP_SERVICE_ACCOUNT_TOKEN=ops_... # preferred; full token from a service account
 # or: export OP_ACCOUNT=my.1password.account
 make dev-ephemeral
 ```
 
-- When `OP_ENVIRONMENT_ID` is unset, `make dev-ephemeral` keeps the existing local-only behavior.
-- When the 1Password Environment is readable but incomplete, the stack still starts and logs the missing key names while leaving GitHub disabled.
+You can also put bootstrap or feature keys in a normal gitignored `.env` (process env still wins over file values):
+
+```bash
+# .env — either a 1Password-mounted Environment, or plain KEY=VALUE pairs
+# CONTROLPLANE_GITHUB_APP_ID=...
+# CLOUDFLARE_TUNNEL_TOKEN=...
+# CLOUDFLARE_HOSTNAME=...
+```
+
+- When neither process/`.env` nor a remote Environment provides the GitHub contract, `make dev-ephemeral` keeps the existing local-only behavior.
+- When secrets are already complete in process env / mounted `.env`, the 1Password SDK is skipped even if `OP_ENVIRONMENT_ID` is set (avoids bad/placeholder service-account tokens breaking local runs).
+- When the remote Environment is readable but incomplete, the stack still starts and logs the missing key names while leaving GitHub disabled.
 - Service-account auth takes precedence over desktop-app auth when both `OP_SERVICE_ACCOUNT_TOKEN` and `OP_ACCOUNT` are set.
+- `localteststack` loads `.env` from the repo root before reading config. Already-exported shell variables are not overwritten.
 
 Required 1Password Environment keys for GitHub-enabled `make dev-ephemeral`:
 
@@ -146,7 +167,7 @@ make test-e2e-vm
 ## Internal mTLS
 
 - The control plane auto-creates an internal CA and gRPC server certificate under `CONTROLPLANE_STATE_DIR/pki`.
-- Agents no longer need pre-generated client certificates. Each agent generates its own key in `AGENT_DATA_DIR/tls`, enrolls with `AGENT_BOOTSTRAP_TOKEN`, receives a short-lived mTLS certificate, and renews it automatically before expiry.
+- Agents no longer need pre-generated client certificates. Each agent generates its own key in `AGENT_DATA_DIR/tls`, enrolls once with its `AGENT_BOOTSTRAP_TOKEN`, receives a short-lived mTLS certificate, and renews it automatically before expiry. Configure the control plane with `CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS=agent_id=token[,agent_id=token...]`; bindings are durable and consumed atomically.
 - Agents still need the control-plane CA certificate for the initial TLS trust root. In the devstack this is shared from the control-plane data volume; on separate VPSes, copy the public `ca.crt` once.
 
 ## Notes

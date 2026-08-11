@@ -7,6 +7,7 @@ import type {
 	DashboardDeploymentStage,
 	DashboardDeploymentStageState,
 	DashboardDomainBinding,
+	DashboardDomainOwnershipChallenge,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardResolvedSourceBinding,
@@ -486,6 +487,30 @@ export function decodeDomainBindingMessage(
 		projectId: readRequiredString(value, "projectId", "domain binding"),
 		serviceId: readRequiredString(value, "serviceId", "domain binding"),
 		targetPort: readRequiredNumber(value, "targetPort", "domain binding"),
+	};
+}
+
+export function decodeDomainOwnershipChallengeMessage(
+	raw: unknown,
+): DashboardDomainOwnershipChallenge {
+	const value = readRecord(raw, "domain ownership challenge");
+	return {
+		hostname: readRequiredString(
+			value,
+			"hostname",
+			"domain ownership challenge",
+		),
+		recordName: readRequiredString(
+			value,
+			"recordName",
+			"domain ownership challenge",
+		),
+		recordValue: readRequiredString(
+			value,
+			"recordValue",
+			"domain ownership challenge",
+		),
+		expiresAt: readOptionalDate(value, "expiresAt"),
 	};
 }
 

@@ -25,6 +25,7 @@ import {
 	type CreateServiceFastResult,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
+	type DashboardDomainOwnershipChallenge,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
@@ -675,6 +676,20 @@ export async function listDomainBindingsFromSession(
 		(await safePlatformCall(runtime, "listDomainBindings", (platform) =>
 			platform.listDomainBindings(session.user, input),
 		)) ?? []
+	);
+}
+
+export async function requestDomainOwnershipChallengeFromSession(
+	runtime: DashboardRuntime,
+	input: { projectId: string; hostname: string },
+): Promise<DashboardDomainOwnershipChallenge> {
+	const session = await requireSession(runtime);
+	const hostname = normalizeHostname(input.hostname);
+	return platformCall(runtime, "requestDomainOwnershipChallenge", (platform) =>
+		platform.requestDomainOwnershipChallenge(session.user, {
+			projectId: input.projectId,
+			hostname,
+		}),
 	);
 }
 

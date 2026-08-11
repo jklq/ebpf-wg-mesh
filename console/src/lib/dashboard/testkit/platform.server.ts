@@ -1,6 +1,7 @@
 import type {
 	DashboardDeploymentRecord,
 	DashboardDomainBinding,
+	DashboardDomainOwnershipChallenge,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardServiceLogLine,
@@ -400,6 +401,16 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					binding.projectId === input.projectId &&
 					binding.serviceId === input.serviceId,
 			);
+		},
+		async requestDomainOwnershipChallenge(
+			_,
+			input,
+		): Promise<DashboardDomainOwnershipChallenge> {
+			return {
+				hostname: input.hostname,
+				recordName: `_mesh-challenge.${input.hostname}.`,
+				recordValue: "ebpf-wg-mesh-domain-verification=test-token",
+			};
 		},
 		async createDomainBinding(user, input): Promise<DashboardDomainBinding> {
 			platform.createDomainBindingCalls.push({ user, ...input });
