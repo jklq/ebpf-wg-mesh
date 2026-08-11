@@ -48,6 +48,8 @@ type gitHubCommitMetadata struct {
 
 var errGitHubNotModified = errors.New("github not modified")
 
+const maxSourceArchiveCompressedBytes = 64 << 20
+
 type gitHubAPIError struct {
 	StatusCode int
 	Method     string
@@ -109,7 +111,17 @@ func (c *GitHubClient) FetchArchive(ctx context.Context, owner, repo, ref string
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, &gitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
 	}
-	return io.ReadAll(resp.Body)
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, maxSourceArchiveCompressedBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(archive) > maxSourceArchiveCompressedBytes {
+		return nil, errors.New("github source archive exceeds compressed size limit")
+	}
+	if err := validateSourceArchive(archive); err != nil {
+		return nil, err
+	}
+	return archive, nil
 }
 
 func (c *GitHubClient) GetBranchHead(ctx context.Context, owner, repo, branch string, installationID int64) (string, error) {

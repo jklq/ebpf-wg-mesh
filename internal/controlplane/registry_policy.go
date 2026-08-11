@@ -43,7 +43,10 @@ func (p *RegistryPolicy) RuntimeDigestRef(pushRef, digest string) string {
 	if pushRef == "" || digest == "" {
 		return ""
 	}
-	base, _, _ := strings.Cut(pushRef, ":")
+	base := pushRef
+	if tagSeparator := strings.LastIndexByte(pushRef, ':'); tagSeparator > strings.LastIndexByte(pushRef, '/') {
+		base = pushRef[:tagSeparator]
+	}
 	return base + "@" + digest
 }
 
