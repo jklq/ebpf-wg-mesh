@@ -22,6 +22,7 @@ import {
 	loadDashboardHome,
 	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
+	requestDomainOwnershipChallengeFromSession,
 	redeployServiceFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
@@ -116,6 +117,9 @@ export function createDashboardService(
 		},
 		listDomainBindingsFromSession(input) {
 			return listDomainBindingsFromSession(runtime, input);
+		},
+		requestDomainOwnershipChallengeFromSession(input) {
+			return requestDomainOwnershipChallengeFromSession(runtime, input);
 		},
 		createDomainBindingFromSession(input) {
 			return createDomainBindingFromSession(runtime, input);

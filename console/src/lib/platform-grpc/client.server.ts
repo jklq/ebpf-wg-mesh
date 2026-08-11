@@ -29,6 +29,7 @@ import type {
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
 	RedeployServiceRequest,
+	RequestDomainOwnershipChallengeRequest,
 	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
@@ -154,6 +155,13 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "ListDomainBindings":
 					client.ListDomainBindings(
 						request as ListDomainBindingsRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "RequestDomainOwnershipChallenge":
+					client.RequestDomainOwnershipChallenge(
+						request as RequestDomainOwnershipChallengeRequest,
 						metadata,
 						handleResponse,
 					);

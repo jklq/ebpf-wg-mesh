@@ -19,10 +19,28 @@ import { completeLoginRoute } from "#/routes/auth/callback";
 import { loadHomeRouteState, NewServiceModal } from "#/routes/index";
 import { LoginPageView, loadLoginRouteState } from "#/routes/login";
 import { logoutRouteResponse } from "#/routes/logout";
+import {
+	readBoundedRequestBody,
+	WebhookPayloadTooLargeError,
+} from "#/routes/webhooks/github";
 
 afterEach(() => cleanup());
 
 describe("dashboard routes", () => {
+	it("rejects oversized webhook bodies while streaming", async () => {
+		const request = new Request(
+			"https://dashboard.example.test/webhooks/github",
+			{
+				method: "POST",
+				body: "1234",
+			},
+		);
+
+		await expect(readBoundedRequestBody(request, 3)).rejects.toBeInstanceOf(
+			WebhookPayloadTooLargeError,
+		);
+	});
+
 	it("loads login state from the dashboard service", async () => {
 		const harness = createDashboardTestHarness();
 

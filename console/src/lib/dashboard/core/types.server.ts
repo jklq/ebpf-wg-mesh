@@ -254,6 +254,13 @@ export interface DashboardDomainBinding {
   targetPort: number;
 }
 
+export interface DashboardDomainOwnershipChallenge {
+  hostname: string;
+  recordName: string;
+  recordValue: string;
+  expiresAt?: Date;
+}
+
 export interface DashboardHomeState {
   user: DashboardUser;
   githubAccount?: DashboardGitHubAccount;
@@ -531,6 +538,10 @@ export interface PlatformGateway {
     user: DashboardUser,
     input: { projectId: string; serviceId: string },
   ): Promise<Array<DashboardDomainBinding>>;
+  requestDomainOwnershipChallenge(
+    user: DashboardUser,
+    input: { projectId: string; hostname: string },
+  ): Promise<DashboardDomainOwnershipChallenge>;
   createDomainBinding(
     user: DashboardUser,
     input: {
@@ -702,6 +713,10 @@ export interface DashboardService {
     projectId: string;
     serviceId: string;
   }): Promise<Array<DashboardDomainBinding>>;
+  requestDomainOwnershipChallengeFromSession(input: {
+    projectId: string;
+    hostname: string;
+  }): Promise<DashboardDomainOwnershipChallenge>;
   createDomainBindingFromSession(input: {
     projectId: string;
     serviceId: string;

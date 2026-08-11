@@ -141,6 +141,11 @@ export interface CreateDomainBindingRequest {
 	};
 }
 
+export interface RequestDomainOwnershipChallengeRequest {
+	projectId: string;
+	hostname: string;
+}
+
 export interface UpdateDomainBindingRequest {
 	projectId: string;
 	hostname: string;
@@ -184,6 +189,7 @@ export type PlatformMethod =
 	| "ListServiceLogs"
 	| "ListServiceDeployments"
 	| "ListDomainBindings"
+	| "RequestDomainOwnershipChallenge"
 	| "CreateDomainBinding"
 	| "UpdateDomainBinding"
 	| "DeleteDomainBinding";
@@ -203,6 +209,7 @@ export type PlatformRequestMap = {
 	ListServiceLogs: ListServiceLogsRequest;
 	ListServiceDeployments: ListServiceDeploymentsRequest;
 	ListDomainBindings: ListDomainBindingsRequest;
+	RequestDomainOwnershipChallenge: RequestDomainOwnershipChallengeRequest;
 	CreateDomainBinding: CreateDomainBindingRequest;
 	UpdateDomainBinding: UpdateDomainBindingRequest;
 	DeleteDomainBinding: DeleteDomainBindingRequest;
@@ -281,6 +288,11 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	ListDomainBindings: (
 		request: ListDomainBindingsRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	RequestDomainOwnershipChallenge: (
+		request: RequestDomainOwnershipChallengeRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;

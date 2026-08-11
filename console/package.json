@@ -6,6 +6,9 @@
   "imports": {
     "#/*": "./src/*"
   },
+  "overrides": {
+    "@tanstack/start-server-core": "1.167.30"
+  },
   "scripts": {
     "dev": "bun --bun vite dev --host 127.0.0.1 --port 3000 --strictPort",
     "build": "NITRO_PRESET=bun bun --bun vite build",
@@ -20,14 +23,14 @@
     "check": "bunx biome check"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.14.0",
+    "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
     "@tanstack/react-router-devtools": "latest",
     "@tanstack/react-router-ssr-query": "latest",
-    "@tanstack/react-start": "latest",
+    "@tanstack/react-start": "^1.166.17",
     "@tanstack/router-plugin": "^1.132.0",
     "google-proto-files": "^5.0.1",
     "lucide-react": "^0.545.0",
@@ -38,6 +41,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
+    "@playwright/test": "^1.55.0",
     "@tailwindcss/typography": "^0.5.16",
     "@tanstack/devtools-vite": "latest",
     "@testing-library/dom": "^10.4.1",
@@ -46,13 +50,12 @@
     "@types/pg": "^8.15.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@playwright/test": "^1.55.0",
     "@vitejs/plugin-react": "^5.1.4",
     "jsdom": "^28.1.0",
-    "nitro": "^3.0.0",
+    "nitro": "^3.0.260610-beta",
     "typescript": "^5.7.2",
-    "vite": "^7.3.1",
+    "vite": "^8.1.4",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.5"
+    "vitest": "^3.2.6"
   }
 }

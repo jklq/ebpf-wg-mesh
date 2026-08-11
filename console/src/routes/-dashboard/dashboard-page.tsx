@@ -1080,7 +1080,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				tabIndex={-1}
 				style={{
 					flex: 1,
-					marginTop: 48,
+					marginTop: "var(--dashboard-header-height)",
 					position: "relative",
 					overflow: "hidden",
 					cursor: panStart.current ? "grabbing" : "grab",
@@ -1294,7 +1294,11 @@ export function DashboardCanvasSkeleton({
 			)}
 			<div
 				className="canvas-grid canvas-skeleton-stage"
-				style={showTopbar ? { marginTop: 48 } : undefined}
+				style={
+					showTopbar
+						? { marginTop: "var(--dashboard-header-height)" }
+						: undefined
+				}
 			>
 				<div className="canvas-world-grid" />
 				<div className="canvas-loading-skeleton">
