@@ -32,6 +32,56 @@ func TestSelectAuthPrefersServiceAccountToken(t *testing.T) {
 	}
 }
 
+func TestOverlayEnvFromLookupCollectsKnownKeys(t *testing.T) {
+	t.Parallel()
+
+	env := OverlayEnvFromLookup(func(key string) string {
+		switch key {
+		case ControlPlaneGitHubAppIDKey:
+			return " 123 "
+		case CloudflareHostnameKey:
+			return "mesh.example.test"
+		case "UNRELATED":
+			return "nope"
+		default:
+			return ""
+		}
+	})
+	if len(env) != 2 {
+		t.Fatalf("len(env)=%d, want 2: %#v", len(env), env)
+	}
+	if env[ControlPlaneGitHubAppIDKey] != "123" {
+		t.Fatalf("app id = %q", env[ControlPlaneGitHubAppIDKey])
+	}
+	if env[CloudflareHostnameKey] != "mesh.example.test" {
+		t.Fatalf("hostname = %q", env[CloudflareHostnameKey])
+	}
+}
+
+func TestMergeOverlayEnvPrimaryWins(t *testing.T) {
+	t.Parallel()
+
+	merged := MergeOverlayEnv(
+		map[string]string{
+			ControlPlaneGitHubAppIDKey: "sdk",
+			CloudflareHostnameKey:      "from-sdk.example.test",
+		},
+		map[string]string{
+			ControlPlaneGitHubAppIDKey: "local",
+			CloudflareTunnelTokenKey:   "token",
+		},
+	)
+	if merged[ControlPlaneGitHubAppIDKey] != "local" {
+		t.Fatalf("app id = %q, want local", merged[ControlPlaneGitHubAppIDKey])
+	}
+	if merged[CloudflareHostnameKey] != "from-sdk.example.test" {
+		t.Fatalf("hostname = %q", merged[CloudflareHostnameKey])
+	}
+	if merged[CloudflareTunnelTokenKey] != "token" {
+		t.Fatalf("token = %q", merged[CloudflareTunnelTokenKey])
+	}
+}
+
 func TestVariablesToMapRejectsDuplicateNormalizedKeys(t *testing.T) {
 	t.Parallel()
 

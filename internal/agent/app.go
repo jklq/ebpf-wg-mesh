@@ -11,8 +11,8 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/mesh"
 
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
@@ -22,7 +22,7 @@ type App struct {
 	runtime        Runtime
 	mesh           MeshHandle
 	meshFactory    MeshFactory
-	meshAssignment config.AgentMeshAssignment
+	meshAssignment mesh.Assignment
 }
 
 const (
@@ -121,7 +121,7 @@ func (a *App) runSession(ctx context.Context) error {
 		return fmt.Errorf("open sync stream: %w", err)
 	}
 	slog.Info("opened sync stream", "agent_id", a.cfg.Node.ID)
-	publicKey, err := a.wireGuardPublicKey()
+	publicKey, err := mesh.PublicKey(a.cfg.Mesh.WireGuard.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("derive wireguard public key: %w", err)
 	}
@@ -276,31 +276,11 @@ func (a *App) heartbeatLoop(ctx context.Context, send func(*agentv1.AgentClientM
 	}
 }
 
-func (a *App) wireGuardPublicKey() (string, error) {
-	privateKey, err := wgtypes.ParseKey(a.cfg.Mesh.WireGuard.PrivateKey)
-	if err != nil {
-		return "", err
-	}
-	return privateKey.PublicKey().String(), nil
-}
-
 func (a *App) applyNodeConfig(ctx context.Context, assigned *agentv1.AssignedNodeConfig) error {
 	if assigned == nil {
 		return errors.New("assigned node config missing")
 	}
-	next := config.AgentMeshAssignment{
-		WorkloadIPv6Subnet: assigned.GetWorkloadIpv6Subnet(),
-		WireGuardAddresses: append([]string(nil), assigned.GetWireguardAddresses()...),
-	}
-	for _, peer := range assigned.GetPeers() {
-		next.Peers = append(next.Peers, config.PeerConfig{
-			Name:                 peer.GetName(),
-			PublicKey:            peer.GetPublicKey(),
-			Endpoint:             peer.GetEndpoint(),
-			AllowedIPs:           append([]string(nil), peer.GetAllowedIps()...),
-			PersistentKeepaliveS: int(peer.GetPersistentKeepaliveSeconds()),
-		})
-	}
+	next := mesh.AssignmentFrom(assigned)
 	if reflect.DeepEqual(a.meshAssignment, next) {
 		return nil
 	}
@@ -308,7 +288,7 @@ func (a *App) applyNodeConfig(ctx context.Context, assigned *agentv1.AssignedNod
 		_ = a.mesh.Close()
 		a.mesh = nil
 	}
-	meshRuntime, err := a.meshFactory(ctx, a.cfg.MeshRuntimeConfig(next))
+	meshRuntime, err := a.meshFactory(ctx, mesh.RuntimeConfig(a.cfg, next))
 	if err != nil {
 		return err
 	}

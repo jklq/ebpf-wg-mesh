@@ -1,10 +1,17 @@
 package config
 
+import "ebof-wg-mesh/internal/meshlabels"
+
 type ServerTLSConfig struct {
 	ServerNames             []string
-	BootstrapTokens         []string
+	BootstrapTokens         []AgentBootstrapToken
 	ServerCertValidityHours int
 	ClientCertValidityHours int
+}
+
+type AgentBootstrapToken struct {
+	AgentID string
+	Token   string
 }
 
 type ClientTLSConfig struct {
@@ -200,31 +207,12 @@ type BuilderConfig struct {
 	CleanupWorkDir           bool
 }
 
-type AgentMeshAssignment struct {
-	WorkloadIPv6Subnet string
-	WireGuardAddresses []string
-	Peers              []PeerConfig
-}
-
 type MeshRuntimeConfig struct {
 	NodeName   string
 	Host       HostConfig
 	Containerd ContainerdConfig
 	WireGuard  WireGuard
 	Firewall   FirewallConfig
-}
-
-func (cfg AgentConfig) MeshRuntimeConfig(assignment AgentMeshAssignment) MeshRuntimeConfig {
-	wireGuard := cfg.Mesh.WireGuard
-	wireGuard.Addresses = append([]string(nil), assignment.WireGuardAddresses...)
-	wireGuard.Peers = append([]PeerConfig(nil), assignment.Peers...)
-	return MeshRuntimeConfig{
-		NodeName:   cfg.Node.Name,
-		Host:       cfg.Mesh.Host,
-		Containerd: cfg.Containerd,
-		WireGuard:  wireGuard,
-		Firewall:   cfg.Mesh.Firewall,
-	}
 }
 
 type HostConfig struct {
@@ -238,6 +226,12 @@ type ContainerdConfig struct {
 	IPv6Label         string
 	IdentitySeeds     []IdentitySeed
 	StaticAssignments []ContainerAssignment
+}
+
+// LabelKeys resolves the identity label keys shared by the agent, which stamps
+// them, and the firewall, which reads them back.
+func (cfg ContainerdConfig) LabelKeys() meshlabels.Keys {
+	return meshlabels.NewKeys(cfg.ProjectLabel, cfg.IPv6Label)
 }
 
 type IdentitySeed struct {

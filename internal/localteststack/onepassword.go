@@ -100,6 +100,75 @@ func EnvironmentLoaderConfigFromLookup(lookup func(string) string) EnvironmentLo
 	}
 }
 
+// OverlayKeys are feature keys that can enable GitHub/devstack mode when present
+// in process environment (including a 1Password-mounted local .env) or a remote
+// 1Password Environment loaded via the SDK.
+func OverlayKeys() []string {
+	return []string{
+		ControlPlaneGitHubAppIDKey,
+		ControlPlaneGitHubWebhookSecretKey,
+		ControlPlaneGitHubPrivateKeyPEMKey,
+		ControlPlaneDashboardGitHubInstallKey,
+		ControlPlaneGitHubAPIBaseURLKey,
+		ControlPlaneGitHubWebBaseURLKey,
+		ControlPlaneGitHubWebhookPathKey,
+		ControlPlaneRegistryHostKey,
+		ControlPlaneRegistryNamespacePrefixKey,
+		ControlPlaneRegistryUsernameKey,
+		ControlPlaneRegistryPasswordKey,
+		DashboardGitHubAppIDKey,
+		DashboardGitHubClientIDKey,
+		DashboardGitHubClientSecretKey,
+		DashboardGitHubAuthBaseURLKey,
+		DashboardGitHubAPIBaseURLKey,
+		DashboardGitHubInstallURLKey,
+		CloudflareTunnelTokenKey,
+		CloudflareHostnameKey,
+	}
+}
+
+// OverlayEnvFromLookup collects known overlay keys from a getenv-style lookup.
+// Empty values are omitted.
+func OverlayEnvFromLookup(lookup func(string) string) map[string]string {
+	if lookup == nil {
+		return nil
+	}
+	env := make(map[string]string)
+	for _, key := range OverlayKeys() {
+		if value := strings.TrimSpace(lookup(key)); value != "" {
+			// Preserve original value for secrets where leading/trailing space is unlikely
+			// but TrimSpace is correct for typical env/dotenv sources.
+			env[key] = value
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
+// MergeOverlayEnv returns a map where non-empty values in primary win over base.
+func MergeOverlayEnv(base, primary map[string]string) map[string]string {
+	if len(base) == 0 && len(primary) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(primary))
+	for key, value := range base {
+		if strings.TrimSpace(value) != "" {
+			out[key] = value
+		}
+	}
+	for key, value := range primary {
+		if strings.TrimSpace(value) != "" {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func SelectAuth(cfg EnvironmentLoaderConfig) SelectedAuth {
 	if token := strings.TrimSpace(cfg.ServiceAccountToken); token != "" {
 		return SelectedAuth{

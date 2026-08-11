@@ -201,7 +201,7 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
     __u32 l3_off = 0;
     int rc = load_ipv6(skb, &ip6, &l3_off);
     if (rc == -2) {
-        return TC_ACT_OK;
+        return TC_ACT_SHOT;
     }
     if (rc < 0) {
         return TC_ACT_SHOT;
@@ -294,7 +294,7 @@ static __always_inline int handle_container_egress(struct __sk_buff *skb)
     __u32 l3_off = 0;
     int rc = load_ipv6(skb, &ip6, &l3_off);
     if (rc == -2) {
-        return TC_ACT_OK;
+        return TC_ACT_SHOT;
     }
     if (rc < 0) {
         return TC_ACT_SHOT;
