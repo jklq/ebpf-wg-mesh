@@ -40,6 +40,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	if err := store.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if err := store.ensureAgentBootstrapTokens(ctx, cfg.InternalGRPC.TLS.BootstrapTokens); err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 	logStore, err := OpenLogStore(ctx, cfg.Logs)

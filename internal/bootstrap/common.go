@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"ebof-wg-mesh/internal/config"
 )
 
 func envOr(key, fallback string) string {
@@ -116,6 +118,22 @@ func splitCommaList(raw string) []string {
 		}
 	}
 	return values
+}
+
+func parseAgentBootstrapTokens(raw string) ([]config.AgentBootstrapToken, error) {
+	values := splitCommaList(raw)
+	tokens := make([]config.AgentBootstrapToken, 0, len(values))
+	for _, value := range values {
+		parts := strings.SplitN(value, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, fmt.Errorf("agent bootstrap token must be agent_id=token")
+		}
+		tokens = append(tokens, config.AgentBootstrapToken{
+			AgentID: strings.TrimSpace(parts[0]),
+			Token:   strings.TrimSpace(parts[1]),
+		})
+	}
+	return tokens, nil
 }
 
 func splitWhitespaceList(raw string) []string {

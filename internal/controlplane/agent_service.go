@@ -31,16 +31,22 @@ func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
 	}
-	allowBootstrap := true
 	if authenticated {
+		if caller.Class != serviceCallerAgent {
+			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
+		}
 		if caller.ID != req.GetAgentId() {
 			return nil, status.Error(codes.PermissionDenied, "client certificate does not match agent_id")
 		}
-		allowBootstrap = false
 	}
-	resp, err := s.authority.Enroll(req, allowBootstrap)
+	resp, err := s.authority.Enroll(req)
 	if err != nil {
 		return nil, err
+	}
+	if !authenticated {
+		if err := s.store.consumeAgentBootstrapToken(ctx, req.GetAgentId(), req.GetBootstrapToken()); err != nil {
+			return nil, status.Error(codes.Unauthenticated, "invalid bootstrap token")
+		}
 	}
 	slog.Info("agent certificate issued", "agent_id", req.GetAgentId(), "authenticated_renewal", authenticated)
 	return resp, nil
@@ -62,6 +68,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 	if !authenticated {
 		return status.Error(codes.Unauthenticated, "client certificate is required")
+	}
+	if caller.Class != serviceCallerAgent {
+		return status.Error(codes.PermissionDenied, "agent client certificate required")
 	}
 	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
@@ -105,12 +114,18 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		}
 		switch payload := msg.Payload.(type) {
 		case *agentv1.AgentClientMessage_Heartbeat:
-			if err := s.store.heartbeatAgent(ctx, payload.Heartbeat.GetAgentId()); err != nil {
+			if payload.Heartbeat.GetAgentId() != hello.GetAgentId() {
+				return status.Error(codes.PermissionDenied, "heartbeat agent_id does not match session")
+			}
+			if err := s.store.heartbeatAgent(ctx, hello.GetAgentId()); err != nil {
 				return status.Errorf(codes.Internal, "heartbeat: %v", err)
 			}
 		case *agentv1.AgentClientMessage_StatusReport:
+			if payload.StatusReport.GetAgentId() != hello.GetAgentId() {
+				return status.Error(codes.PermissionDenied, "status report agent_id does not match session")
+			}
 			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()))
-			ingressChanged, err := s.store.recordStatusReport(ctx, payload.StatusReport)
+			ingressChanged, err := s.store.recordStatusReport(ctx, hello.GetAgentId(), payload.StatusReport)
 			if err != nil {
 				return status.Errorf(codes.Internal, "status report: %v", err)
 			}
@@ -121,6 +136,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			batch := payload.LogBatch
 			if batch.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "log batch agent_id does not match session")
+			}
+			if err := s.store.validateAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
+				return status.Errorf(codes.PermissionDenied, "log batch ownership: %v", err)
 			}
 			if s.logStore != nil {
 				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {

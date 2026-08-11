@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -145,7 +146,7 @@ func (s *Store) agentByID(ctx context.Context, agentID string) (agentRecord, err
 	return rec, nil
 }
 
-func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusReport) (bool, error) {
+func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *agentv1.StatusReport) (bool, error) {
 	var ingressChanged bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
@@ -155,16 +156,23 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 				prevAllocationIP string
 				prevHealthyPorts []int32
 				hasDomain        bool
+				workloadSubnet   string
+				projectID        string
+				serviceID        string
 			)
 			err := tx.QueryRowContext(ctx,
 				`SELECT a.healthy,
 				        a.allocation_ip,
 				        a.healthy_ports,
-				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id)
+				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id),
+				        ag.workload_ipv6_subnet,
+				        a.project_id,
+				        a.service_id
 				   FROM allocations a
-				  WHERE a.id = $1`,
-				cond.AllocationId,
-			).Scan(&prevHealthy, &prevAllocationIP, (*jsonInt32Slice)(&prevHealthyPorts), &hasDomain)
+				   JOIN agents ag ON ag.id = a.agent_id
+				  WHERE a.id = $1 AND a.agent_id = $2`,
+				cond.AllocationId, agentID,
+			).Scan(&prevHealthy, &prevAllocationIP, (*jsonInt32Slice)(&prevHealthyPorts), &hasDomain, &workloadSubnet, &projectID, &serviceID)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					continue
@@ -174,6 +182,10 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 			healthyPorts, err := encodeHealthyPorts(cond.GetHealthyPorts())
 			if err != nil {
 				return fmt.Errorf("encode healthy ports: %w", err)
+			}
+			allocationIP, err := privateIPv6(workloadSubnet, projectID, serviceID)
+			if err != nil {
+				return fmt.Errorf("derive allocation ip: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
@@ -185,12 +197,12 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 				        healthy_ports = $6,
 				        healthy = $7,
 				        updated_at = $8
-				  WHERE id = $9`,
-				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, cond.Phase, cond.Message, cond.GetAllocationIp(), healthyPorts, cond.Healthy, now, cond.AllocationId,
+				  WHERE id = $9 AND agent_id = $10`,
+				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, cond.Phase, cond.Message, allocationIP, healthyPorts, cond.Healthy, now, cond.AllocationId, agentID,
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
-			if hasDomain && (prevHealthy != cond.Healthy || prevAllocationIP != cond.GetAllocationIp() || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts())) {
+			if hasDomain && (prevHealthy != cond.Healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts())) {
 				ingressChanged = true
 			}
 		}
@@ -200,6 +212,44 @@ func (s *Store) recordStatusReport(ctx context.Context, report *agentv1.StatusRe
 		return false, err
 	}
 	return ingressChanged, nil
+}
+
+func (s *Store) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
+	type logOwner struct {
+		allocationID string
+		projectID    string
+		serviceID    string
+	}
+	seen := make(map[logOwner]struct{}, len(batch.GetEntries()))
+	for _, entry := range batch.GetEntries() {
+		allocationID := entry.GetAllocationId()
+		if allocationID == "" {
+			continue
+		}
+		owner := logOwner{
+			allocationID: allocationID,
+			projectID:    entry.GetProjectId(),
+			serviceID:    entry.GetServiceId(),
+		}
+		if _, ok := seen[owner]; ok {
+			continue
+		}
+		seen[owner] = struct{}{}
+		var one int
+		err := s.db.QueryRowContext(ctx,
+			`SELECT 1
+			   FROM allocations
+			  WHERE id = $1 AND agent_id = $2 AND project_id = $3 AND service_id = $4`,
+			allocationID, agentID, entry.GetProjectId(), entry.GetServiceId(),
+		).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("allocation %q is not assigned to agent", allocationID)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) agentIDs(ctx context.Context) ([]string, error) {

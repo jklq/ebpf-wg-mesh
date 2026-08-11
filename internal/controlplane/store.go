@@ -412,6 +412,51 @@ var storeMigrations = []migration{
 			    ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
 		},
 	},
+	{
+		version: 6,
+		stmts: []string{
+			`ALTER TABLE projects ADD COLUMN IF NOT EXISTS network_identity INT8 NULL`,
+			`UPDATE projects
+			    SET network_identity = numbered.network_identity
+			   FROM (
+			     SELECT id, row_number() OVER (ORDER BY created_at ASC, id ASC) AS network_identity
+			       FROM projects
+			   ) AS numbered
+			  WHERE projects.id = numbered.id
+			    AND projects.network_identity IS NULL`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_network_identity_unique ON projects(network_identity)`,
+			`ALTER TABLE projects ALTER COLUMN network_identity SET NOT NULL`,
+			`CREATE TABLE IF NOT EXISTS project_network_identity_counter (
+				id BOOL PRIMARY KEY,
+				next_identity INT8 NOT NULL
+			)`,
+			`INSERT INTO project_network_identity_counter(id, next_identity)
+			 SELECT TRUE, COALESCE(MAX(network_identity), 0) + 1 FROM projects
+			 ON CONFLICT(id) DO NOTHING`,
+			`CREATE TABLE IF NOT EXISTS agent_bootstrap_tokens (
+				token_hash BYTES PRIMARY KEY,
+				agent_id STRING NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL,
+				consumed_at TIMESTAMPTZ NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_agent_bootstrap_tokens_agent_id ON agent_bootstrap_tokens(agent_id, consumed_at)`,
+			`UPDATE agents SET desired_revision = desired_revision + 1`,
+		},
+	},
+	{
+		version: 7,
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS domain_ownership_challenges (
+				hostname STRING NOT NULL,
+				project_id STRING NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+				token STRING NOT NULL,
+				expires_at TIMESTAMPTZ NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL,
+				PRIMARY KEY (hostname, project_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_domain_ownership_challenges_expiry ON domain_ownership_challenges(expires_at)`,
+		},
+	},
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {

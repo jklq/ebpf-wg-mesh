@@ -103,6 +103,22 @@ func TestInternalAuthRejectsWrongClassOpsCalls(t *testing.T) {
 	}
 }
 
+func TestInternalAuthRejectsNonCanonicalAndUnknownMethods(t *testing.T) {
+	t.Parallel()
+
+	authz := NewInternalAuth()
+	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
+	for _, method := range []string{
+		"platform.v1.BuilderService/ClaimBuild",
+		"/unknown.v1.Service/Method",
+	} {
+		_, err := authz.authorize(ctx, method, false)
+		if status.Code(err) != codes.PermissionDenied && status.Code(err) != codes.Unimplemented {
+			t.Fatalf("expected method %q to be rejected, got %v", method, err)
+		}
+	}
+}
+
 func TestServiceCallerFromContextFallsBackToAuthenticatedPeerIdentity(t *testing.T) {
 	t.Parallel()
 

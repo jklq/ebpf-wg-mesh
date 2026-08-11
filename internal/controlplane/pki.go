@@ -36,13 +36,12 @@ const (
 )
 
 type TLSAuthority struct {
-	pkiDir          string
-	caCert          *x509.Certificate
-	caKey           crypto.Signer
-	caPEM           []byte
-	serverCert      tls.Certificate
-	bootstrapTokens map[string]struct{}
-	clientCertTTL   time.Duration
+	pkiDir        string
+	caCert        *x509.Certificate
+	caKey         crypto.Signer
+	caPEM         []byte
+	serverCert    tls.Certificate
+	clientCertTTL time.Duration
 }
 
 func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
@@ -66,22 +65,13 @@ func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
 		return nil, err
 	}
 
-	tokens := make(map[string]struct{}, len(cfg.InternalGRPC.TLS.BootstrapTokens))
-	for _, token := range cfg.InternalGRPC.TLS.BootstrapTokens {
-		token = strings.TrimSpace(token)
-		if token != "" {
-			tokens[token] = struct{}{}
-		}
-	}
-
 	return &TLSAuthority{
-		pkiDir:          pkiDir,
-		caCert:          caCert,
-		caKey:           caKey,
-		caPEM:           caPEM,
-		serverCert:      serverCert,
-		bootstrapTokens: tokens,
-		clientCertTTL:   time.Duration(cfg.InternalGRPC.TLS.ClientCertValidityHours) * time.Hour,
+		pkiDir:        pkiDir,
+		caCert:        caCert,
+		caKey:         caKey,
+		caPEM:         caPEM,
+		serverCert:    serverCert,
+		clientCertTTL: time.Duration(cfg.InternalGRPC.TLS.ClientCertValidityHours) * time.Hour,
 	}, nil
 }
 
@@ -96,17 +86,11 @@ func (a *TLSAuthority) TransportCredentials() (credentials.TransportCredentials,
 	}), nil
 }
 
-func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest, allowBootstrap bool) (*agentv1.EnrollResponse, error) {
+func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
 	agentID := strings.TrimSpace(req.GetAgentId())
 	if agentID == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
-	if allowBootstrap {
-		if _, ok := a.bootstrapTokens[strings.TrimSpace(req.GetBootstrapToken())]; !ok {
-			return nil, status.Error(codes.Unauthenticated, "invalid bootstrap token")
-		}
-	}
-
 	block, _ := pem.Decode([]byte(req.GetCsrPem()))
 	if block == nil {
 		return nil, status.Error(codes.InvalidArgument, "decode csr")

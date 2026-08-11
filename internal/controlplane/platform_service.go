@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"net"
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -16,12 +17,13 @@ import (
 
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
-	store     platformStore
-	logStore  serviceLogStore
-	emitter   *LogEmitter
-	notifier  platformNotifier
-	ingress   platformIngress
-	inspector *gitHubSourceInspector
+	store       platformStore
+	logStore    serviceLogStore
+	emitter     *LogEmitter
+	notifier    platformNotifier
+	ingress     platformIngress
+	inspector   *gitHubSourceInspector
+	dnsResolver domainTXTResolver
 }
 
 type platformStore interface {
@@ -42,6 +44,9 @@ type platformStore interface {
 	listVolumes(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
 	deleteVolume(ctx context.Context, subject, projectID, volumeID string) error
 	createDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
+	requestDomainOwnershipChallenge(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error)
+	domainOwnershipChallenge(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error)
+	deleteDomainOwnershipChallenge(ctx context.Context, projectID, hostname string) error
 	updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
 	domainBindingByHostname(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
 	listDomainBindings(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
@@ -67,6 +72,16 @@ type serviceLogStore interface {
 
 type PlatformServiceOption func(*PlatformService)
 
+type domainTXTResolver interface {
+	LookupTXT(context.Context, string) ([]string, error)
+}
+
+func WithDomainTXTResolver(resolver domainTXTResolver) PlatformServiceOption {
+	return func(service *PlatformService) {
+		service.dnsResolver = resolver
+	}
+}
+
 func WithServiceLogs(logStore serviceLogStore) PlatformServiceOption {
 	return func(service *PlatformService) {
 		service.logStore = logStore
@@ -89,7 +104,7 @@ func WithGitHubSourceInspection(catalog *GitHubCatalog, client *GitHubClient) Pl
 }
 
 func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, opts ...PlatformServiceOption) *PlatformService {
-	service := &PlatformService{store: store, notifier: notifier, ingress: ingress}
+	service := &PlatformService{store: store, notifier: notifier, ingress: ingress, dnsResolver: net.DefaultResolver}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
@@ -456,11 +471,24 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 	if req.GetBinding() == nil {
 		return nil, status.Error(codes.InvalidArgument, "binding is required")
 	}
+	hostname, err := canonicalDomainHostname(req.GetBinding().GetHostname())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "hostname: %v", err)
+	}
 	targetPort := req.GetBinding().GetTargetPort()
 	if err := validatePort(targetPort); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 	}
-	binding, changed, err := s.store.createDomainBinding(ctx, identity.Subject, req.GetProjectId(), req.GetBinding().GetHostname(), req.GetBinding().GetServiceId(), targetPort)
+	if err := s.verifyDomainOwnership(ctx, identity.Subject, req.GetProjectId(), hostname); err != nil {
+		if errors.Is(err, errDomainOwnershipNotProven) {
+			return nil, status.Errorf(codes.FailedPrecondition, "domain ownership: %v", err)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "project: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "verify domain ownership: %v", err)
+	}
+	binding, changed, err := s.store.createDomainBinding(ctx, identity.Subject, req.GetProjectId(), hostname, req.GetBinding().GetServiceId(), targetPort)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -474,10 +502,37 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 		return nil, status.Errorf(codes.Internal, "create domain binding: %v", err)
 	}
 	if changed {
+		if err := s.store.deleteDomainOwnershipChallenge(ctx, req.GetProjectId(), hostname); err != nil {
+			slog.Warn("delete consumed domain ownership challenge", "hostname", hostname, "project_id", req.GetProjectId(), "error", err)
+		}
 		s.notifyServices(ctx, identity.Subject, req.GetProjectId(), binding.ServiceID)
 		s.ingress.RequestSync()
 	}
 	return toProtoDomainBinding(binding), nil
+}
+
+func (s *PlatformService) RequestDomainOwnershipChallenge(ctx context.Context, req *platformv1.RequestDomainOwnershipChallengeRequest) (*platformv1.DomainOwnershipChallenge, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hostname, err := canonicalDomainHostname(req.GetHostname())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "hostname: %v", err)
+	}
+	challenge, err := s.store.requestDomainOwnershipChallenge(ctx, identity.Subject, req.GetProjectId(), hostname)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "project: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "request domain ownership challenge: %v", err)
+	}
+	return &platformv1.DomainOwnershipChallenge{
+		Hostname:    challenge.Hostname,
+		RecordName:  challenge.RecordName,
+		RecordValue: challenge.RecordValue,
+		ExpiresAt:   ts(challenge.ExpiresAt),
+	}, nil
 }
 
 func (s *PlatformService) GetDomainBinding(ctx context.Context, req *platformv1.GetDomainBindingRequest) (*platformv1.DomainBinding, error) {

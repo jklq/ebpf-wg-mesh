@@ -26,7 +26,7 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 		InternalGRPC: config.ListenerConfig{
 			TLS: config.ServerTLSConfig{
 				ServerNames:             []string{"controlplane", "localhost"},
-				BootstrapTokens:         []string{"bootstrap-token"},
+				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: "agent-1", Token: "bootstrap-token"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 6,
 			},
@@ -49,7 +49,7 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 		AgentId:        "agent-1",
 		CsrPem:         string(csrPEM),
 		BootstrapToken: "bootstrap-token",
-	}, true)
+	})
 	if err != nil {
 		t.Fatalf("Enroll(valid): %v", err)
 	}
@@ -61,13 +61,9 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 		t.Fatalf("unexpected enrolled common name %q", cert.Subject.CommonName)
 	}
 
-	_, err = authority.Enroll(&agentv1.EnrollRequest{
-		AgentId:        "agent-1",
-		CsrPem:         string(csrPEM),
-		BootstrapToken: "wrong-token",
-	}, true)
-	if got := status.Code(err); got != codes.Unauthenticated {
-		t.Fatalf("expected Unauthenticated for wrong token, got %s", got)
+	_, err = authority.Enroll(&agentv1.EnrollRequest{AgentId: "agent-2", CsrPem: string(csrPEM)})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument for mismatched CSR, got %s", got)
 	}
 }
 

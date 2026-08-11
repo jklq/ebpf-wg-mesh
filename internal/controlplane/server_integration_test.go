@@ -31,7 +31,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
 				ServerNames:             []string{"localhost"},
-				BootstrapTokens:         []string{"bootstrap-token"},
+				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: "agent-1", Token: "bootstrap-token"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},

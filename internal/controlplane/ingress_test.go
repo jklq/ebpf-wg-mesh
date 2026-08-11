@@ -61,6 +61,54 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if len(hosts) != 1 || hosts[0] != "demo.example.com" {
 		t.Fatalf("unexpected ingress host match %+v", hosts)
 	}
+	agent, err := store.agentByID(ctx, "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedIP, err := privateIPv6(agent.WorkloadIPv6Subnet, service.ProjectID, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := routes[0].Handle[0].Upstreams[0].Dial; got != "["+expectedIP+"]:8080" {
+		t.Fatalf("expected control-plane-derived upstream, got %q", got)
+	}
+}
+
+func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "demo.example.com", service.ID, 8080); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "attacker.example", 9090); err != nil {
+		t.Fatal(err)
+	}
+
+	backends, err := store.listHealthyIngressBackends(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backends) != 0 {
+		t.Fatalf("expected unhealthy target port to be excluded, got %+v", backends)
+	}
 }
 
 func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
