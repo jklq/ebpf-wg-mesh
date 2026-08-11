@@ -21,9 +21,12 @@ type GitHubWebhookHandler struct {
 	processor *GitHubWebhookProcessor
 }
 
+const maxGitHubWebhookPayloadBytes = 2 << 20
+
 var (
 	errGitHubWebhookInvalidSignature = errors.New("invalid signature")
 	errGitHubWebhookMissingHeaders   = errors.New("missing delivery headers")
+	errGitHubWebhookPayloadTooLarge  = errors.New("webhook payload too large")
 )
 
 func NewGitHubWebhookHandler(store *Store, secret string, processor *GitHubWebhookProcessor) *GitHubWebhookHandler {
@@ -42,9 +45,13 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	payload, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	payload, err := io.ReadAll(io.LimitReader(r.Body, maxGitHubWebhookPayloadBytes+1))
 	if err != nil {
 		http.Error(w, "read webhook body", http.StatusBadRequest)
+		return
+	}
+	if len(payload) > maxGitHubWebhookPayloadBytes {
+		http.Error(w, errGitHubWebhookPayloadTooLarge.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	err = h.HandleDelivery(
@@ -61,12 +68,17 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 	case errors.Is(err, errGitHubWebhookMissingHeaders):
 		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, errGitHubWebhookPayloadTooLarge):
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 	default:
 		http.Error(w, "enqueue webhook", http.StatusInternalServerError)
 	}
 }
 
 func (h *GitHubWebhookHandler) HandleDelivery(ctx context.Context, signature, deliveryID, eventType string, payload []byte) error {
+	if len(payload) > maxGitHubWebhookPayloadBytes {
+		return errGitHubWebhookPayloadTooLarge
+	}
 	deliveryID = strings.TrimSpace(deliveryID)
 	eventType = strings.TrimSpace(eventType)
 	payloadBytes := len(payload)

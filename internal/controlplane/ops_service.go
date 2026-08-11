@@ -38,6 +38,8 @@ func (s *OpsService) IngestGitHubWebhook(ctx context.Context, req *platformv1.In
 		return nil, status.Error(codes.Unauthenticated, err.Error())
 	case errors.Is(err, errGitHubWebhookMissingHeaders):
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, errGitHubWebhookPayloadTooLarge):
+		return nil, status.Error(codes.ResourceExhausted, err.Error())
 	default:
 		return nil, status.Errorf(codes.Internal, "ingest github webhook: %v", err)
 	}

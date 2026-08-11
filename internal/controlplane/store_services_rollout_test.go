@@ -465,7 +465,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatalf("serviceStatus(internal): %v", err)
 	}
 
-	changed, err := store.recordStatusReport(ctx, &agentv1.StatusReport{
+	changed, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        routedAlloc.ID,
@@ -482,8 +482,37 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if !changed {
 		t.Fatal("expected routed status change to trigger ingress update")
 	}
+	changed, err = store.recordStatusReport(ctx, "node-2", &agentv1.StatusReport{
+		AgentId: "node-2",
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId: routedAlloc.ID,
+			AllocationIp: "10.0.0.99",
+			Healthy:      false,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("recordStatusReport(foreign agent): %v", err)
+	}
+	if changed {
+		t.Fatal("expected foreign agent report to leave ingress unchanged")
+	}
+	_, routedAllocAfterForeignReport, err := store.serviceStatus(ctx, "user-1", projects[0].ID, routedService.ID)
+	if err != nil {
+		t.Fatalf("serviceStatus(after foreign report): %v", err)
+	}
+	agent, err := store.agentByID(ctx, "node-1")
+	if err != nil {
+		t.Fatalf("agentByID: %v", err)
+	}
+	expectedAllocationIP, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.ProjectID, routedService.ID)
+	if err != nil {
+		t.Fatalf("privateIPv6: %v", err)
+	}
+	if routedAllocAfterForeignReport.AllocationIP != expectedAllocationIP || !routedAllocAfterForeignReport.Healthy {
+		t.Fatalf("foreign agent changed allocation state: %+v", routedAllocAfterForeignReport)
+	}
 
-	changed, err = store.recordStatusReport(ctx, &agentv1.StatusReport{
+	changed, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        routedAlloc.ID,
@@ -501,7 +530,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatal("expected unchanged routed status to skip ingress update")
 	}
 
-	changed, err = store.recordStatusReport(ctx, &agentv1.StatusReport{
+	changed, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        internalAlloc.ID,

@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,9 +60,12 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	builderService := NewBuilderService(store, notifier, nil, 0)
+	registry := NewRegistryPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform"})
+	builderService := NewBuilderService(store, notifier, registry, 0)
+	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -70,7 +74,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 			BuildId:     build.ID,
 			State:       platformv1.BuildState_BUILD_STATE_SUCCEEDED,
 			CommitSha:   "commit-1",
-			ImageDigest: "registry.example.test/platform/web@sha256:111",
+			ImageDigest: imageRef,
 		},
 	)
 	if err != nil {
@@ -119,6 +123,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
 	builderService := NewBuilderService(store, notifier, nil, 0)
@@ -178,6 +183,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
 	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
@@ -269,6 +275,7 @@ func TestBuilderServiceReportBuildLogsReturnsSuccessWhenEmitterDisabled(t *testi
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: &recordingLogWriter{enabled: false}}))
 	if _, err := builderService.ReportBuildLogs(
@@ -319,6 +326,7 @@ func TestBuilderServiceReportBuildLogsEmptyBatchIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForService: %v", err)
 	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
 	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))

@@ -152,6 +152,17 @@ export const doCreateDomainBinding = createServerFn({ method: "POST" })
 		return svc.createDomainBindingFromSession(data);
 	});
 
+export const doRequestDomainOwnershipChallenge = createServerFn({
+	method: "POST",
+})
+	.inputValidator(
+		(input: unknown) => input as { projectId: string; hostname: string },
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/server");
+		return svc.requestDomainOwnershipChallengeFromSession(data);
+	});
+
 export const doUpdateDomainBinding = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>

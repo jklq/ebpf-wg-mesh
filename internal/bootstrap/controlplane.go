@@ -82,7 +82,11 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 		return config.ControlPlaneConfig{}, err
 	}
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
-	cfg.InternalGRPC.TLS.BootstrapTokens = splitCommaList(agentBootstrapTokens)
+	var err error
+	cfg.InternalGRPC.TLS.BootstrapTokens, err = parseAgentBootstrapTokens(agentBootstrapTokens)
+	if err != nil {
+		return config.ControlPlaneConfig{}, err
+	}
 	cfg.Dashboard.ContainerPort = int32(dashboardContainerPort)
 	cfg.Dashboard.Command = splitWhitespaceList(dashboardCommand)
 	cfg.Dashboard.Args = splitWhitespaceList(dashboardArgs)

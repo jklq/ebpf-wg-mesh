@@ -389,6 +389,18 @@ message DomainBindingTarget {
   int32 target_port = 2;
 }
 
+message RequestDomainOwnershipChallengeRequest {
+  string project_id = 1;
+  string hostname = 2;
+}
+
+message DomainOwnershipChallenge {
+  string hostname = 1;
+  string record_name = 2;
+  string record_value = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
 message CreateDomainBindingRequest {
   string project_id = 1;
   DomainBindingInput binding = 2;
@@ -573,6 +585,7 @@ service PlatformService {
   rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
 
   rpc CreateDomainBinding(CreateDomainBindingRequest) returns (DomainBinding);
+  rpc RequestDomainOwnershipChallenge(RequestDomainOwnershipChallengeRequest) returns (DomainOwnershipChallenge);
   rpc GetDomainBinding(GetDomainBindingRequest) returns (DomainBinding);
   rpc ListDomainBindings(ListDomainBindingsRequest) returns (ListDomainBindingsResponse);
   rpc UpdateDomainBinding(UpdateDomainBindingRequest) returns (DomainBinding);

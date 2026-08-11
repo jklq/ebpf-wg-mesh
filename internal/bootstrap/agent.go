@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/config"
-
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"ebof-wg-mesh/internal/mesh"
+	"ebof-wg-mesh/internal/meshlabels"
 )
 
 func Agent(args []string) (config.AgentConfig, error) {
@@ -39,8 +39,8 @@ func Agent(args []string) (config.AgentConfig, error) {
 	boolFlag(fs, &cfg.Runtime.DisableCgroups, "disable-cgroups", "AGENT_DISABLE_CGROUPS", false, "")
 	stringFlag(fs, &cfg.Containerd.Socket, "containerd-socket", "AGENT_CONTAINERD_SOCKET", "/run/containerd/containerd.sock", "")
 	stringFlag(fs, &cfg.Containerd.Namespace, "containerd-namespace", "AGENT_CONTAINERD_NAMESPACE", "default", "")
-	stringFlag(fs, &cfg.Containerd.ProjectLabel, "containerd-project-label", "AGENT_CONTAINERD_PROJECT_LABEL", "mesh.project_id", "")
-	stringFlag(fs, &cfg.Containerd.IPv6Label, "containerd-ipv6-label", "AGENT_CONTAINERD_IPV6_LABEL", "mesh.ipv6", "")
+	stringFlag(fs, &cfg.Containerd.ProjectLabel, "containerd-project-label", "AGENT_CONTAINERD_PROJECT_LABEL", meshlabels.DefaultProjectKey, "")
+	stringFlag(fs, &cfg.Containerd.IPv6Label, "containerd-ipv6-label", "AGENT_CONTAINERD_IPV6_LABEL", meshlabels.DefaultIPv6Key, "")
 	stringFlag(fs, &cfg.Mesh.WireGuard.InterfaceName, "mesh-interface-name", "AGENT_MESH_INTERFACE_NAME", "wg0", "")
 	intFlag(fs, &cfg.Mesh.WireGuard.ListenPort, "mesh-listen-port", "AGENT_MESH_LISTEN_PORT", 51820, "")
 	intFlag(fs, &cfg.Mesh.Firewall.ConntrackInnerEntries, "firewall-conntrack-inner-entries", "AGENT_FIREWALL_CONNTRACK_INNER_ENTRIES", 10000, "")
@@ -168,12 +168,12 @@ func loadOrCreateWireGuardKey(path string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("read wireguard key %s: %w", path, err)
 	}
-	key, err := wgtypes.GeneratePrivateKey()
+	key, err := mesh.GeneratePrivateKey()
 	if err != nil {
-		return "", fmt.Errorf("generate wireguard key: %w", err)
+		return "", err
 	}
-	if err := os.WriteFile(path, []byte(key.String()+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("write wireguard key %s: %w", path, err)
 	}
-	return key.String(), nil
+	return key, nil
 }

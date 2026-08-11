@@ -226,6 +226,63 @@ func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
 	}
 }
 
+func TestPlatformServiceCreateDomainBindingRequiresControlPlaneTXTProof(t *testing.T) {
+	t.Parallel()
+
+	challengeDeleted := false
+	store := &fakePlatformStore{
+		domainOwnershipChallengeFn: func(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error) {
+			return domainOwnershipChallengeRecord{
+				Hostname:    hostname,
+				ProjectID:   projectID,
+				RecordName:  domainChallengeRecordName(hostname),
+				RecordValue: domainChallengeRecordValue("proof-token"),
+				ExpiresAt:   time.Now().UTC().Add(domainChallengeTTL),
+			}, nil
+		},
+		deleteDomainOwnershipChallengeFn: func(ctx context.Context, projectID, hostname string) error {
+			challengeDeleted = true
+			return nil
+		},
+	}
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, WithDomainTXTResolver(staticTXTResolver{
+		"_mesh-challenge.web.example.com.": {"ebpf-wg-mesh-domain-verification=proof-token"},
+	}))
+
+	binding, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
+		ProjectId: "project-1",
+		Binding:   &platformv1.DomainBindingInput{Hostname: "Web.Example.com.", ServiceId: "service-1", TargetPort: 8080},
+	})
+	if err != nil {
+		t.Fatalf("CreateDomainBinding: %v", err)
+	}
+	if binding.GetHostname() != "web.example.com" {
+		t.Fatalf("expected canonical hostname, got %q", binding.GetHostname())
+	}
+	if !challengeDeleted {
+		t.Fatal("expected successful proof challenge to be consumed")
+	}
+}
+
+func TestPlatformServiceCreateDomainBindingRejectsMissingTXTProof(t *testing.T) {
+	t.Parallel()
+
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, WithDomainTXTResolver(staticTXTResolver{}))
+	_, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
+		ProjectId: "project-1",
+		Binding:   &platformv1.DomainBindingInput{Hostname: "web.example.com", ServiceId: "service-1", TargetPort: 8080},
+	})
+	if got := status.Code(err); got != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %s: %v", got, err)
+	}
+}
+
+type staticTXTResolver map[string][]string
+
+func (r staticTXTResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	return append([]string(nil), r[name]...), nil
+}
+
 func TestPlatformServiceDeleteDomainBindingRequestsIngress(t *testing.T) {
 	t.Parallel()
 
@@ -336,31 +393,34 @@ func (c *countingIngress) RequestSync() {
 }
 
 type fakePlatformStore struct {
-	ensurePrincipalFn          func(ctx context.Context, subject, email string) (principalRecord, error)
-	createProjectFn            func(ctx context.Context, subject, name string) (projectRecord, error)
-	listProjectsFn             func(ctx context.Context, subject string) ([]projectRecord, error)
-	projectByIDFn              func(ctx context.Context, subject, projectID string) (projectRecord, error)
-	createScheduledServiceFn   func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
-	updateServiceFn            func(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
-	redeployServiceFn          func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
-	discardServiceChangesFn    func(ctx context.Context, subject, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
-	requestServiceSourceSyncFn func(ctx context.Context, subject, projectID, serviceID string) error
-	enqueueBuildForServiceFn   func(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
-	deleteServiceFn            func(ctx context.Context, subject, projectID, serviceID string) error
-	serviceByIDFn              func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
-	listServicesFn             func(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
-	createScheduledVolumeFn    func(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
-	listVolumesFn              func(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
-	deleteVolumeFn             func(ctx context.Context, subject, projectID, volumeID string) error
-	createDomainBindingFn      func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
-	updateDomainBindingFn      func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
-	domainBindingByHostFn      func(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
-	listDomainBindingsFn       func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
-	deleteDomainBindingFn      func(ctx context.Context, subject, projectID, hostname string) (bool, error)
-	serviceStatusFn            func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
-	listServiceDeploymentsFn   func(ctx context.Context, subject, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
-	allocationByServiceIDFn    func(ctx context.Context, serviceID string) (allocationRecord, error)
-	listAgentsFn               func(ctx context.Context) ([]agentRecord, error)
+	ensurePrincipalFn                 func(ctx context.Context, subject, email string) (principalRecord, error)
+	createProjectFn                   func(ctx context.Context, subject, name string) (projectRecord, error)
+	listProjectsFn                    func(ctx context.Context, subject string) ([]projectRecord, error)
+	projectByIDFn                     func(ctx context.Context, subject, projectID string) (projectRecord, error)
+	createScheduledServiceFn          func(ctx context.Context, subject, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
+	updateServiceFn                   func(ctx context.Context, subject, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	redeployServiceFn                 func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	discardServiceChangesFn           func(ctx context.Context, subject, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
+	requestServiceSourceSyncFn        func(ctx context.Context, subject, projectID, serviceID string) error
+	enqueueBuildForServiceFn          func(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error)
+	deleteServiceFn                   func(ctx context.Context, subject, projectID, serviceID string) error
+	serviceByIDFn                     func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, error)
+	listServicesFn                    func(ctx context.Context, subject, projectID string) ([]serviceRecord, error)
+	createScheduledVolumeFn           func(ctx context.Context, subject, projectID, name string, sizeBytes int64) (volumeRecord, error)
+	listVolumesFn                     func(ctx context.Context, subject, projectID string) ([]volumeRecord, error)
+	deleteVolumeFn                    func(ctx context.Context, subject, projectID, volumeID string) error
+	createDomainBindingFn             func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
+	requestDomainOwnershipChallengeFn func(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error)
+	domainOwnershipChallengeFn        func(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error)
+	deleteDomainOwnershipChallengeFn  func(ctx context.Context, projectID, hostname string) error
+	updateDomainBindingFn             func(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
+	domainBindingByHostFn             func(ctx context.Context, subject, projectID, hostname string) (domainBindingRecord, error)
+	listDomainBindingsFn              func(ctx context.Context, subject, projectID, serviceID string) ([]domainBindingRecord, error)
+	deleteDomainBindingFn             func(ctx context.Context, subject, projectID, hostname string) (bool, error)
+	serviceStatusFn                   func(ctx context.Context, subject, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	listServiceDeploymentsFn          func(ctx context.Context, subject, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
+	allocationByServiceIDFn           func(ctx context.Context, serviceID string) (allocationRecord, error)
+	listAgentsFn                      func(ctx context.Context) ([]agentRecord, error)
 }
 
 func (f *fakePlatformStore) ensurePrincipal(ctx context.Context, subject, email string) (principalRecord, error) {
@@ -480,6 +540,37 @@ func (f *fakePlatformStore) createDomainBinding(ctx context.Context, subject, pr
 		return f.createDomainBindingFn(ctx, subject, projectID, hostname, serviceID, targetPort)
 	}
 	return domainBindingRecord{Hostname: hostname, ProjectID: projectID, ServiceID: serviceID, TargetPort: targetPort}, true, nil
+}
+
+func (f *fakePlatformStore) requestDomainOwnershipChallenge(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error) {
+	if f.requestDomainOwnershipChallengeFn != nil {
+		return f.requestDomainOwnershipChallengeFn(ctx, subject, projectID, hostname)
+	}
+	return domainOwnershipChallengeRecord{
+		Hostname: hostname, ProjectID: projectID,
+		RecordName:  domainChallengeRecordName(hostname),
+		RecordValue: domainChallengeRecordValue("test-token"),
+		ExpiresAt:   time.Now().UTC().Add(domainChallengeTTL),
+	}, nil
+}
+
+func (f *fakePlatformStore) domainOwnershipChallenge(ctx context.Context, subject, projectID, hostname string) (domainOwnershipChallengeRecord, error) {
+	if f.domainOwnershipChallengeFn != nil {
+		return f.domainOwnershipChallengeFn(ctx, subject, projectID, hostname)
+	}
+	return domainOwnershipChallengeRecord{
+		Hostname: hostname, ProjectID: projectID,
+		RecordName:  domainChallengeRecordName(hostname),
+		RecordValue: domainChallengeRecordValue("test-token"),
+		ExpiresAt:   time.Now().UTC().Add(domainChallengeTTL),
+	}, nil
+}
+
+func (f *fakePlatformStore) deleteDomainOwnershipChallenge(ctx context.Context, projectID, hostname string) error {
+	if f.deleteDomainOwnershipChallengeFn != nil {
+		return f.deleteDomainOwnershipChallengeFn(ctx, projectID, hostname)
+	}
+	return nil
 }
 
 func (f *fakePlatformStore) updateDomainBinding(ctx context.Context, subject, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {

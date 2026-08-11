@@ -27,6 +27,7 @@
   --failed-dim: rgba(184, 66, 66, 0.1);
   --offline: #484440;
   --danger: #b84242;
+  --dashboard-header-height: 48px;
 }
 
 * {
@@ -133,7 +134,7 @@ textarea {
 
 .canvas-skeleton-page .canvas-skeleton-stage {
   position: relative;
-  height: calc(100dvh - 48px);
+  height: calc(100dvh - var(--dashboard-header-height));
 }
 
 .canvas-loading-skeleton {
@@ -519,7 +520,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 48px;
+  height: var(--dashboard-header-height);
   padding: 8px var(--panel-content-inset);
   border-bottom: 1px solid var(--border);
   background:
@@ -1511,7 +1512,7 @@ select.field-input {
   top: 0;
   left: 0;
   right: 0;
-  height: 48px;
+  height: var(--dashboard-header-height);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;

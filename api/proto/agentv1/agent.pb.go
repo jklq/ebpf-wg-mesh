@@ -518,6 +518,7 @@ type DesiredService struct {
 	PrivateIpv6              string                          `protobuf:"bytes,7,opt,name=private_ipv6,json=privateIpv6,proto3" json:"private_ipv6,omitempty"`
 	VolumeId                 string                          `protobuf:"bytes,8,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	DesiredRolloutGeneration int64                           `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
+	NetworkIdentity          uint32                          `protobuf:"varint,10,opt,name=network_identity,json=networkIdentity,proto3" json:"network_identity,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -611,6 +612,13 @@ func (x *DesiredService) GetVolumeId() string {
 func (x *DesiredService) GetDesiredRolloutGeneration() int64 {
 	if x != nil {
 		return x.DesiredRolloutGeneration
+	}
+	return 0
+}
+
+func (x *DesiredService) GetNetworkIdentity() uint32 {
+	if x != nil {
+		return x.NetworkIdentity
 	}
 	return 0
 }
@@ -1344,7 +1352,7 @@ const file_agent_proto_rawDesc = "" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xef\x02\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\x9a\x03\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1356,7 +1364,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x04spec\x18\x06 \x01(\v2 .platform.v1.ResolvedServiceSpecR\x04spec\x12!\n" +
 	"\fprivate_ipv6\x18\a \x01(\tR\vprivateIpv6\x12\x1b\n" +
 	"\tvolume_id\x18\b \x01(\tR\bvolumeId\x12<\n" +
-	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\"\xb0\x02\n" +
+	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\x12)\n" +
+	"\x10network_identity\x18\n" +
+	" \x01(\rR\x0fnetworkIdentity\"\xb0\x02\n" +
 	"\x10DesiredNodeState\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x03R\brevision\x121\n" +

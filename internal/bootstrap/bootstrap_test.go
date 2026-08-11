@@ -12,7 +12,7 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 
 	cfg, err := ControlPlane([]string{
 		"-internal-server-names", "controlplane,controlplane-internal",
-		"-agent-bootstrap-tokens", "token-a,token-b",
+		"-agent-bootstrap-tokens", "node-a=token-a,node-b=token-b",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		"-logs-clickhouse-url", "clickhouse://127.0.0.1:9000/default",
 		"-logs-retention-days", "30",
@@ -37,8 +37,8 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	if got := strings.Join(cfg.InternalGRPC.TLS.ServerNames, ","); got != "controlplane,controlplane-internal" {
 		t.Fatalf("unexpected internal server names %q", got)
 	}
-	if got := strings.Join(cfg.InternalGRPC.TLS.BootstrapTokens, ","); got != "token-a,token-b" {
-		t.Fatalf("unexpected bootstrap tokens %q", got)
+	if got := cfg.InternalGRPC.TLS.BootstrapTokens; len(got) != 2 || got[0].AgentID != "node-a" || got[0].Token != "token-a" || got[1].AgentID != "node-b" || got[1].Token != "token-b" {
+		t.Fatalf("unexpected bootstrap tokens %#v", got)
 	}
 	if got := cfg.Database.URL; got != "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable" {
 		t.Fatalf("unexpected db url %q", got)
@@ -51,6 +51,17 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 	if got := cfg.StateDir; got != "var/controlplane" {
 		t.Fatalf("unexpected state dir %q", got)
+	}
+}
+
+func TestControlPlaneBootstrapRejectsUnboundAgentToken(t *testing.T) {
+	t.Parallel()
+
+	_, err := ControlPlane([]string{
+		"-agent-bootstrap-tokens", "reusable-token",
+	})
+	if err == nil || err.Error() != "agent bootstrap token must be agent_id=token" {
+		t.Fatalf("expected agent-bound token validation error, got %v", err)
 	}
 }
 

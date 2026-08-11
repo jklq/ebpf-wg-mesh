@@ -14,6 +14,7 @@ import {
 	DashboardConfigError,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
+	type DashboardDomainOwnershipChallenge,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
@@ -233,6 +234,15 @@ export function listDomainBindingsFromSession(input: {
 	serviceId: string;
 }): Promise<Array<DashboardDomainBinding>> {
 	return getDashboardService().listDomainBindingsFromSession(input);
+}
+
+export function requestDomainOwnershipChallengeFromSession(input: {
+	projectId: string;
+	hostname: string;
+}): Promise<DashboardDomainOwnershipChallenge> {
+	return getDashboardService().requestDomainOwnershipChallengeFromSession(
+		input,
+	);
 }
 
 export function createDomainBindingFromSession(input: {
