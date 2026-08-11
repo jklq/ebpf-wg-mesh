@@ -1,6 +1,10 @@
 package config
 
-import "runtime"
+import (
+	"runtime"
+
+	"ebof-wg-mesh/internal/meshlabels"
+)
 
 func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.InternalGRPC.Listen == "" {
@@ -156,10 +160,10 @@ func applyAgentDefaults(cfg *AgentConfig) {
 		cfg.Containerd.Namespace = "default"
 	}
 	if cfg.Containerd.ProjectLabel == "" {
-		cfg.Containerd.ProjectLabel = "mesh.project_id"
+		cfg.Containerd.ProjectLabel = meshlabels.DefaultProjectKey
 	}
 	if cfg.Containerd.IPv6Label == "" {
-		cfg.Containerd.IPv6Label = "mesh.ipv6"
+		cfg.Containerd.IPv6Label = meshlabels.DefaultIPv6Key
 	}
 	if cfg.Mesh.WireGuard.InterfaceName == "" {
 		cfg.Mesh.WireGuard.InterfaceName = "wg0"

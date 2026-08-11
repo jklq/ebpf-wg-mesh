@@ -288,6 +288,23 @@ func validateServerTLS(prefix string, cfg ServerTLSConfig) error {
 	if len(cfg.BootstrapTokens) == 0 {
 		return fmt.Errorf("%s.bootstrapTokens must include at least one token", prefix)
 	}
+	agents := make(map[string]struct{}, len(cfg.BootstrapTokens))
+	tokens := make(map[string]struct{}, len(cfg.BootstrapTokens))
+	for _, bootstrap := range cfg.BootstrapTokens {
+		agentID := strings.TrimSpace(bootstrap.AgentID)
+		token := strings.TrimSpace(bootstrap.Token)
+		if agentID == "" || token == "" {
+			return fmt.Errorf("%s.bootstrapTokens entries require agentID and token", prefix)
+		}
+		if _, exists := agents[agentID]; exists {
+			return fmt.Errorf("%s.bootstrapTokens contains duplicate agentID %q", prefix, agentID)
+		}
+		if _, exists := tokens[token]; exists {
+			return fmt.Errorf("%s.bootstrapTokens contains a token assigned more than once", prefix)
+		}
+		agents[agentID] = struct{}{}
+		tokens[token] = struct{}{}
+	}
 	if cfg.ServerCertValidityHours <= 0 {
 		return fmt.Errorf("%s.serverCertValidityHours must be greater than 0", prefix)
 	}

@@ -16,12 +16,17 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/meshlabels"
+
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
 	localRuntimeVolumeMount = "/data"
 	localRuntimeManagedBy   = "localteststack"
+	// localRuntimeLabel marks containers this runtime owns; the real agent
+	// never writes it.
+	localRuntimeLabel = "platform.runtime"
 )
 
 type DockerRuntimeConfig struct {
@@ -247,12 +252,12 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		"--name", r.containerName(svc.GetAllocationId()),
 		"--network", r.cfg.DockerNetwork,
 		"--hostname", svc.GetName(),
-		"--label", "platform.managed=true",
-		"--label", "platform.runtime=" + localRuntimeManagedBy,
-		"--label", "platform.allocation_id=" + svc.GetAllocationId(),
-		"--label", "platform.service_id=" + svc.GetServiceId(),
-		"--label", "platform.desired_spec_revision=" + strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
-		"--label", "platform.desired_rollout_generation=" + strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
+		"--label", meshlabels.Managed + "=true",
+		"--label", localRuntimeLabel + "=" + localRuntimeManagedBy,
+		"--label", meshlabels.AllocationID + "=" + svc.GetAllocationId(),
+		"--label", meshlabels.ServiceID + "=" + svc.GetServiceId(),
+		"--label", meshlabels.DesiredSpecRevision + "=" + strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
+		"--label", meshlabels.DesiredRolloutGeneration + "=" + strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
 	}
 	for _, port := range publishedPorts(runtime) {
 		args = append(args, "--publish", fmt.Sprintf("127.0.0.1::%d", port))
@@ -506,11 +511,11 @@ func labelsMatchDesired(labels map[string]string, svc *agentv1.DesiredService) b
 	if labels == nil {
 		return false
 	}
-	return labels["platform.runtime"] == localRuntimeManagedBy &&
-		labels["platform.allocation_id"] == svc.GetAllocationId() &&
-		labels["platform.service_id"] == svc.GetServiceId() &&
-		labels["platform.desired_spec_revision"] == strconv.FormatInt(svc.GetDesiredSpecRevision(), 10) &&
-		labels["platform.desired_rollout_generation"] == strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10)
+	return labels[localRuntimeLabel] == localRuntimeManagedBy &&
+		labels[meshlabels.AllocationID] == svc.GetAllocationId() &&
+		labels[meshlabels.ServiceID] == svc.GetServiceId() &&
+		labels[meshlabels.DesiredSpecRevision] == strconv.FormatInt(svc.GetDesiredSpecRevision(), 10) &&
+		labels[meshlabels.DesiredRolloutGeneration] == strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10)
 }
 
 func indexDesiredVolumes(items []*agentv1.DesiredVolume) map[string]*agentv1.DesiredVolume {

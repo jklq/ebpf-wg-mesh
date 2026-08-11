@@ -32,7 +32,7 @@ func main() {
 		InternalGRPC: config.ListenerConfig{
 			TLS: config.ServerTLSConfig{
 				ServerNames:             []string{"controlplane", "localhost"},
-				BootstrapTokens:         []string{"unused"},
+				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: "unused", Token: "unused"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},

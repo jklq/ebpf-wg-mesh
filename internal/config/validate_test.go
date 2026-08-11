@@ -11,7 +11,7 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 		},
 		InternalGRPC: ListenerConfig{
 			TLS: ServerTLSConfig{
-				BootstrapTokens: []string{"token-a"},
+				BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 			},
 		},
 		Dashboard: ManagedDashboardConfig{
@@ -44,7 +44,7 @@ func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
 				ServerNames:             []string{"controlplane"},
-				BootstrapTokens:         []string{"token-a"},
+				BootstrapTokens:         []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},
@@ -84,7 +84,7 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
 				ServerNames:             []string{"controlplane"},
-				BootstrapTokens:         []string{"token-a"},
+				BootstrapTokens:         []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},
@@ -184,7 +184,7 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
 				ServerNames:             []string{"controlplane"},
-				BootstrapTokens:         []string{"token-a"},
+				BootstrapTokens:         []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},

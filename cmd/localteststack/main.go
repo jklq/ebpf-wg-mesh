@@ -47,6 +47,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("getwd: %v", err)
 	}
+	// Optional local overrides, including a 1Password Environments-mounted .env FIFO.
+	// Existing process env wins; missing .env is fine.
+	if n, err := localteststack.LoadDotEnvFile(filepath.Join(repoRoot, ".env")); err != nil {
+		log.Fatalf("load .env: %v", err)
+	} else if n > 0 {
+		log.Printf("loaded %d variable(s) from .env", n)
+	}
 	stackCfg, err := loadLocalStackConfig(os.Getenv)
 	if err != nil {
 		log.Fatalf("load localteststack config: %v", err)
@@ -120,7 +127,7 @@ func main() {
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
 				ServerNames:             []string{"controlplane", "localhost"},
-				BootstrapTokens:         []string{"agent-bootstrap-token"},
+				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: localAgentID, Token: "agent-bootstrap-token"}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},
@@ -173,29 +180,48 @@ func main() {
 	}
 
 	overlay := localteststack.OverlayResult{}
+	// Prefer secrets already in process env (shell exports and/or mounted .env).
+	// The SDK path is only needed for headless/automation when OP_* is configured
+	// and the local contract is still incomplete.
+	processOverlay := localteststack.OverlayEnvFromLookup(os.Getenv)
+	overlayEnv := processOverlay
 	loader := localteststack.NewEnvironmentLoader(localteststack.EnvironmentLoaderConfigFromLookup(os.Getenv))
 	publicBaseURL := ""
-	var overlayEnv map[string]string
+	processComplete := len(localteststack.MissingGitHubKeys(processOverlay)) == 0
 	switch {
+	case processComplete && loader.Enabled():
+		log.Printf(
+			"using GitHub devstack secrets from process environment/.env; skipping 1Password SDK (%s is set but not required)",
+			localteststack.OPEnvironmentIDKey,
+		)
+	case processComplete:
+		log.Printf("using GitHub devstack secrets from process environment/.env")
 	case !loader.Enabled():
+		if len(processOverlay) > 0 {
+			log.Printf(
+				"GitHub devstack secrets from process environment/.env are incomplete; missing keys: %s; GitHub mode stays disabled",
+				strings.Join(localteststack.MissingGitHubKeys(processOverlay), ", "),
+			)
+		}
 	case !loader.Ready():
 		log.Printf(
-			"1Password environment loading skipped: %s is set but neither %s nor %s is configured; set one of those, or export the required env vars directly for local-only mode",
+			"1Password environment loading skipped: %s is set but neither %s nor %s is configured; set one of those, mount a 1Password local .env, or export the required env vars directly",
 			localteststack.OPEnvironmentIDKey,
 			localteststack.OPServiceAccountTokenKey,
 			localteststack.OPAccountKey,
 		)
 	default:
-		log.Printf("loading 1Password environment")
+		log.Printf("loading 1Password environment via SDK")
 		loadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		env, err := loader.Load(loadCtx)
 		cancel()
 		if err != nil {
 			log.Fatalf("%s", describeOnePasswordLoadError(err))
 		}
-		overlayEnv = env
-		log.Printf("loaded 1Password environment")
-		missingGitHubKeys := localteststack.MissingGitHubKeys(env)
+		// Process/shell/.env values win over remote SDK values.
+		overlayEnv = localteststack.MergeOverlayEnv(env, processOverlay)
+		log.Printf("loaded 1Password environment via SDK")
+		missingGitHubKeys := localteststack.MissingGitHubKeys(overlayEnv)
 		if len(missingGitHubKeys) > 0 {
 			log.Printf(
 				"1Password environment is incomplete for GitHub devstack enablement; missing keys: %s; GitHub mode stays disabled until these are present",
@@ -535,6 +561,17 @@ func describeOnePasswordLoadError(err error) string {
 			"load 1Password environment: desktop-app auth could not find %s; set %s to the exact account UUID/name shown by 1Password, or use %s instead",
 			localteststack.OPAccountKey,
 			localteststack.OPAccountKey,
+			localteststack.OPServiceAccountTokenKey,
+		)
+	}
+	if strings.Contains(message, "invalid service account token") ||
+		strings.Contains(message, "base64 decoding failed") ||
+		strings.Contains(message, "service account token") {
+		return fmt.Sprintf(
+			"load 1Password environment: invalid %s (SDK could not decode it). For local dev, prefer a 1Password Environments-mounted repo-root .env with the GitHub/devstack keys and unset %s/%s; for headless SDK use, set %s to a full token starting with ops_ from a 1Password service account",
+			localteststack.OPServiceAccountTokenKey,
+			localteststack.OPEnvironmentIDKey,
+			localteststack.OPServiceAccountTokenKey,
 			localteststack.OPServiceAccountTokenKey,
 		)
 	}

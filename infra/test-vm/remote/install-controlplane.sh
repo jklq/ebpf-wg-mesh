@@ -5,7 +5,7 @@ CONTROLPLANE_BIN=${CONTROLPLANE_BIN:-/opt/ebpf-wg-mesh/controlplane}
 INTERNAL_CLIENT_CERT_BIN=${INTERNAL_CLIENT_CERT_BIN:-/opt/ebpf-wg-mesh/internal-client-cert}
 STATE_DIR=${STATE_DIR:-/var/lib/ebpf-wg-mesh/controlplane}
 COCKROACH_VERSION=${COCKROACH_VERSION:-v26.1.0}
-BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN:-vm-bootstrap-token}
+AGENT_BOOTSTRAP_TOKENS=${AGENT_BOOTSTRAP_TOKENS:?AGENT_BOOTSTRAP_TOKENS must contain comma-separated agent_id=token bindings}
 INTERNAL_LISTEN=${INTERNAL_LISTEN:-0.0.0.0:9443}
 PUBLIC_ADDR=${PUBLIC_ADDR:-platform.local}
 BOOTSTRAP_USER=${BOOTSTRAP_USER:-vm-user:vm@example.com}
@@ -45,7 +45,7 @@ Requires=ebpf-wg-mesh-cockroach.service
 
 [Service]
 Type=simple
-ExecStart=${CONTROLPLANE_BIN} -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${BOOTSTRAP_TOKEN} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
+ExecStart=${CONTROLPLANE_BIN} -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
 Restart=always
 RestartSec=3
 

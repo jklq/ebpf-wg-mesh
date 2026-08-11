@@ -19,6 +19,21 @@ func TestDescribeOnePasswordLoadErrorForDesktopAccountMismatch(t *testing.T) {
 	}
 }
 
+func TestDescribeOnePasswordLoadErrorForInvalidServiceAccountToken(t *testing.T) {
+	t.Parallel()
+
+	message := describeOnePasswordLoadError(errors.New("initialize 1Password client: error initializing client: invalid service account token, please make sure you provide a valid service account token as parameter:  service account token base64 decoding failed, please create another token"))
+	if !strings.Contains(message, "invalid OP_SERVICE_ACCOUNT_TOKEN") {
+		t.Fatalf("unexpected message %q", message)
+	}
+	if !strings.Contains(message, "mounted repo-root .env") {
+		t.Fatalf("expected mounted .env guidance in %q", message)
+	}
+	if !strings.Contains(message, "ops_") {
+		t.Fatalf("expected ops_ token format hint in %q", message)
+	}
+}
+
 func TestDescribeCloudflareStartupErrorForMissingTunnelToken(t *testing.T) {
 	t.Parallel()
 

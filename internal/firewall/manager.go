@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/netip"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/vishvananda/netns"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/meshlabels"
 )
 
 const (
@@ -44,6 +44,7 @@ type containerRuntime struct {
 
 type Manager struct {
 	cfg           config.MeshRuntimeConfig
+	labelKeys     meshlabels.Keys
 	objs          firewallObjects
 	wgIfindex     uint32
 	wgIngressLink link.Link
@@ -196,6 +197,7 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 	eventsCtx, cancel := context.WithCancel(ctx)
 	m := &Manager{
 		cfg:           cfg,
+		labelKeys:     cfg.Containerd.LabelKeys(),
 		objs:          objs,
 		wgIfindex:     wgIfindex,
 		wgIngressLink: wgIngress,
@@ -326,7 +328,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		return fmt.Errorf("task start for %q has zero pid", evt.ContainerID)
 	}
 
-	meta, err := m.resolveContainerMetadata(ctx, evt.ContainerID)
+	identity, err := m.resolveContainerIdentity(ctx, evt.ContainerID)
 	if err != nil {
 		return err
 	}
@@ -363,8 +365,8 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	policy := firewallContainerPolicy{
-		ProjectId: meta.projectID,
-		Ipv6:      addrAs16(meta.ipv6),
+		ProjectId: identity.ProjectID,
+		Ipv6:      addrAs16(identity.IPv6),
 	}
 	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
@@ -380,10 +382,10 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 
 	identityKey := firewallIdentityKey{
 		Prefixlen: uint32(128),
-		IpAddress: addrAs16(meta.ipv6),
+		IpAddress: addrAs16(identity.IPv6),
 	}
 	identityValue := firewallIdentityValue{
-		ProjectId:   meta.projectID,
+		ProjectId:   identity.ProjectID,
 		HostIp:      m.localHostIP,
 		VethIfindex: ifKey,
 	}
@@ -427,8 +429,8 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	runtime := &containerRuntime{
 		containerID: evt.ContainerID,
 		ifindex:     ifKey,
-		ipv6:        meta.ipv6,
-		projectID:   meta.projectID,
+		ipv6:        identity.IPv6,
+		projectID:   identity.ProjectID,
 		innerMap:    innerMap,
 		ingressLink: ingress,
 		egressLink:  egress,
@@ -438,8 +440,8 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		"container", evt.ContainerID,
 		"pid", evt.Pid,
 		"ifindex", ifindex,
-		"projectID", meta.projectID,
-		"ipv6", meta.ipv6.String(),
+		"projectID", identity.ProjectID,
+		"ipv6", identity.IPv6.String(),
 	)
 
 	return nil
@@ -517,58 +519,32 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 	return errors.Join(errs...)
 }
 
-type containerMeta struct {
-	projectID uint32
-	ipv6      netip.Addr
-}
-
-func (m *Manager) resolveContainerMetadata(ctx context.Context, containerID string) (containerMeta, error) {
+func (m *Manager) resolveContainerIdentity(ctx context.Context, containerID string) (meshlabels.Identity, error) {
 	if assignment, ok := m.staticByID[containerID]; ok {
 		ip, err := netip.ParseAddr(assignment.IPv6)
 		if err != nil || !ip.Is6() {
-			return containerMeta{}, fmt.Errorf("static assignment invalid ipv6 for %s: %w", containerID, err)
+			return meshlabels.Identity{}, fmt.Errorf("static assignment invalid ipv6 for %s: %w", containerID, err)
 		}
-		return containerMeta{
-			projectID: assignment.ProjectID,
-			ipv6:      ip,
+		return meshlabels.Identity{
+			ProjectID: assignment.ProjectID,
+			IPv6:      ip,
 		}, nil
 	}
 
 	container, err := m.containerd.LoadContainer(ctx, containerID)
 	if err != nil {
-		return containerMeta{}, fmt.Errorf("load container %s: %w", containerID, err)
+		return meshlabels.Identity{}, fmt.Errorf("load container %s: %w", containerID, err)
 	}
 	info, err := container.Info(ctx)
 	if err != nil {
-		return containerMeta{}, fmt.Errorf("container info %s: %w", containerID, err)
-	}
-	labels := info.Labels
-	if labels == nil {
-		return containerMeta{}, fmt.Errorf("container %s has no labels", containerID)
+		return meshlabels.Identity{}, fmt.Errorf("container info %s: %w", containerID, err)
 	}
 
-	rawProject := labels[m.cfg.Containerd.ProjectLabel]
-	if rawProject == "" {
-		return containerMeta{}, fmt.Errorf("container %s missing label %q", containerID, m.cfg.Containerd.ProjectLabel)
+	identity, err := m.labelKeys.Decode(info.Labels)
+	if err != nil {
+		return meshlabels.Identity{}, fmt.Errorf("container %s: %w", containerID, err)
 	}
-	projectParsed, err := strconv.ParseUint(rawProject, 10, 32)
-	if err != nil || projectParsed == 0 {
-		return containerMeta{}, fmt.Errorf("container %s invalid project label %q", containerID, rawProject)
-	}
-
-	rawIP := labels[m.cfg.Containerd.IPv6Label]
-	if rawIP == "" {
-		return containerMeta{}, fmt.Errorf("container %s missing label %q", containerID, m.cfg.Containerd.IPv6Label)
-	}
-	ip, err := netip.ParseAddr(rawIP)
-	if err != nil || !ip.Is6() {
-		return containerMeta{}, fmt.Errorf("container %s invalid ipv6 label %q", containerID, rawIP)
-	}
-
-	return containerMeta{
-		projectID: uint32(projectParsed),
-		ipv6:      ip,
-	}, nil
+	return identity, nil
 }
 
 func resolveHostVethIfindex(pid uint32) (int, error) {

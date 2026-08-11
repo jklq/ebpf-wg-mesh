@@ -9,8 +9,7 @@ import (
 	"ebof-wg-mesh/internal/agent"
 	"ebof-wg-mesh/internal/config"
 	localstack "ebof-wg-mesh/internal/localteststack"
-
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"ebof-wg-mesh/internal/mesh"
 )
 
 const localAgentID = "localteststack-agent"
@@ -24,9 +23,9 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 	if err := os.WriteFile(caPath, caPEM, 0o644); err != nil {
 		return nil, nil, fmt.Errorf("write local agent controlplane ca: %w", err)
 	}
-	privateKey, err := wgtypes.GeneratePrivateKey()
+	privateKey, err := mesh.GeneratePrivateKey()
 	if err != nil {
-		return nil, nil, fmt.Errorf("generate local agent wireguard key: %w", err)
+		return nil, nil, fmt.Errorf("local agent: %w", err)
 	}
 	runtimeImpl, err := localstack.NewDockerRuntime(localstack.DockerRuntimeConfig{
 		DataDir:            agentDir,
@@ -67,7 +66,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 			Host: config.HostConfig{IPv6: "::1"},
 			WireGuard: config.WireGuard{
 				InterfaceName: "wg0",
-				PrivateKey:    privateKey.String(),
+				PrivateKey:    privateKey,
 				ListenPort:    51820,
 			},
 		},

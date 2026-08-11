@@ -432,6 +432,15 @@ func TestParseBuildMetadataReturnsDigest(t *testing.T) {
 	}
 }
 
+func TestRuntimeDigestRefPreservesRegistryPort(t *testing.T) {
+	t.Parallel()
+	got := runtimeDigestRef("registry.example.test:5000/platform/service:git-deadbeef", "sha256:abc")
+	want := "registry.example.test:5000/platform/service@sha256:abc"
+	if got != want {
+		t.Fatalf("runtimeDigestRef() = %q, want %q", got, want)
+	}
+}
+
 func makeSnapshotArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 

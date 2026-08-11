@@ -6,7 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
+	"maps"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/meshlabels"
 
 	containerd "github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
@@ -91,12 +93,16 @@ func (e *containerdEngine) SetLogSink(sink LogSink) {
 }
 
 func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
+	if svc.GetNetworkIdentity() == 0 {
+		return serviceStatus{}, false, fmt.Errorf("service %s missing network identity", svc.GetServiceId())
+	}
 	ctx = e.namespaced(ctx)
 	containerID := containerName(svc.GetAllocationId())
 	if rec, exists, err := e.inspect(ctx, containerID); err != nil {
 		return serviceStatus{}, false, err
 	} else if exists {
-		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() && rec.running {
+		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() &&
+			rec.networkIdentity == svc.GetNetworkIdentity() && rec.running {
 			return serviceStatus{
 				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 				AppliedRolloutGeneration: rec.rolloutGeneration,
@@ -248,6 +254,7 @@ func (e *containerdEngine) deleteTask(ctx context.Context, task containerd.Task,
 
 type inspectRecord struct {
 	rolloutGeneration int64
+	networkIdentity   uint32
 	running           bool
 }
 
@@ -263,11 +270,12 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 	if err != nil {
 		return inspectRecord{}, false, err
 	}
-	rolloutGeneration, _ := strconv.ParseInt(info.Labels["platform.desired_rollout_generation"], 10, 64)
+	rolloutGeneration, _ := strconv.ParseInt(info.Labels[meshlabels.DesiredRolloutGeneration], 10, 64)
+	networkIdentity := e.cfg.Containerd.LabelKeys().ProjectID(info.Labels)
 	task, err := container.Task(ctx, nil)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
-			return inspectRecord{rolloutGeneration: rolloutGeneration}, true, nil
+			return inspectRecord{rolloutGeneration: rolloutGeneration, networkIdentity: networkIdentity}, true, nil
 		}
 		return inspectRecord{}, false, err
 	}
@@ -275,7 +283,7 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 	if err != nil {
 		return inspectRecord{}, false, err
 	}
-	return inspectRecord{rolloutGeneration: rolloutGeneration, running: status.Status == containerd.Running}, true, nil
+	return inspectRecord{rolloutGeneration: rolloutGeneration, networkIdentity: networkIdentity, running: status.Status == containerd.Running}, true, nil
 }
 
 func (e *containerdEngine) ensureImage(ctx context.Context, ref string) (containerd.Image, error) {
@@ -295,6 +303,8 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		oci.WithDefaultSpec(),
 		oci.WithDefaultPathEnv,
 		oci.WithDefaultUnixDevices,
+		oci.WithNoNewPrivileges,
+		oci.WithCapabilities(nil),
 		oci.WithHostHostsFile,
 		oci.WithHostResolvconf,
 		oci.WithHostname(svc.GetName()),
@@ -366,29 +376,24 @@ func withoutCgroups(_ context.Context, _ oci.Client, _ *containers.Container, s 
 }
 
 func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string]string {
-	return map[string]string{
-		"platform.managed":                    "true",
-		"platform.allocation_id":              svc.GetAllocationId(),
-		"platform.service_id":                 svc.GetServiceId(),
-		"platform.desired_spec_revision":      strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
-		"platform.desired_rollout_generation": strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
-		e.cfg.Containerd.ProjectLabel:         strconv.FormatUint(uint64(projectLabelValue(svc.GetProjectId())), 10),
-		e.cfg.Containerd.IPv6Label:            svc.GetPrivateIpv6(),
+	labels := map[string]string{
+		meshlabels.Managed:                  "true",
+		meshlabels.AllocationID:             svc.GetAllocationId(),
+		meshlabels.ServiceID:                svc.GetServiceId(),
+		meshlabels.DesiredSpecRevision:      strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
+		meshlabels.DesiredRolloutGeneration: strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
 	}
+	// The firewall recovers this identity from the labels once the task starts.
+	ipv6, _ := netip.ParseAddr(svc.GetPrivateIpv6())
+	maps.Copy(labels, e.cfg.Containerd.LabelKeys().Encode(meshlabels.Identity{
+		ProjectID: svc.GetNetworkIdentity(),
+		IPv6:      ipv6,
+	}))
+	return labels
 }
 
 func allocationIPForService(svc *agentv1.DesiredService) string {
 	return svc.GetPrivateIpv6()
-}
-
-func projectLabelValue(projectID string) uint32 {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(projectID))
-	value := h.Sum32()
-	if value == 0 {
-		return 1
-	}
-	return value
 }
 
 func (e *containerdEngine) namespaced(ctx context.Context) context.Context {

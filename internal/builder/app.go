@@ -30,6 +30,11 @@ const (
 	failureKindBuild    = "build failure"
 	failureKindPush     = "push failure"
 	failureKindProtocol = "protocol/reporting failure"
+
+	maxSourceArchiveCompressedBytes = 64 << 20
+	maxSourceArchiveExpandedBytes   = 1 << 30
+	maxSourceArchiveFileBytes       = 256 << 20
+	maxSourceArchiveEntries         = 100_000
 )
 
 type commandRequest struct {
@@ -411,12 +416,17 @@ func safeChildPath(root, child string) (string, error) {
 }
 
 func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
+	if len(archiveTGZ) > maxSourceArchiveCompressedBytes {
+		return errors.New("snapshot archive exceeds compressed size limit")
+	}
 	gzr, err := gzip.NewReader(bytes.NewReader(archiveTGZ))
 	if err != nil {
 		return fmt.Errorf("open snapshot archive: %w", err)
 	}
 	defer gzr.Close()
 	tr := tar.NewReader(gzr)
+	var totalBytes int64
+	var entries int
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -425,6 +435,17 @@ func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
 		if err != nil {
 			return fmt.Errorf("read snapshot archive: %w", err)
 		}
+		entries++
+		if entries > maxSourceArchiveEntries {
+			return errors.New("snapshot archive contains too many entries")
+		}
+		if hdr.Size < 0 || hdr.Size > maxSourceArchiveFileBytes {
+			return fmt.Errorf("snapshot entry %q exceeds file size limit", hdr.Name)
+		}
+		if hdr.Size > maxSourceArchiveExpandedBytes-totalBytes {
+			return errors.New("snapshot archive exceeds expanded size limit")
+		}
+		totalBytes += hdr.Size
 		name := strings.TrimSpace(hdr.Name)
 		if name == "" {
 			continue
@@ -450,7 +471,7 @@ func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
 			if err != nil {
 				return fmt.Errorf("create snapshot file: %w", err)
 			}
-			if _, err := io.Copy(file, tr); err != nil {
+			if _, err := io.CopyN(file, tr, hdr.Size); err != nil {
 				_ = file.Close()
 				return fmt.Errorf("write snapshot file: %w", err)
 			}
@@ -623,7 +644,10 @@ func mergedDockerConfigJSON(baseDir, host, auth string) ([]byte, error) {
 }
 
 func runtimeDigestRef(pushRef, digest string) string {
-	base, _, _ := strings.Cut(pushRef, ":")
+	base := pushRef
+	if tagSeparator := strings.LastIndexByte(pushRef, ':'); tagSeparator > strings.LastIndexByte(pushRef, '/') {
+		base = pushRef[:tagSeparator]
+	}
 	return base + "@" + digest
 }
 
