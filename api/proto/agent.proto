@@ -67,6 +67,7 @@ message DesiredService {
   string private_ipv6 = 7;
   string volume_id = 8;
   int64 desired_rollout_generation = 9;
+  uint32 network_identity = 10;
 }
 
 message DesiredNodeState {

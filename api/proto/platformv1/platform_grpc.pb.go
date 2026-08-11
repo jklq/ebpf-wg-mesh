@@ -20,30 +20,31 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_EnsurePrincipal_FullMethodName        = "/platform.v1.PlatformService/EnsurePrincipal"
-	PlatformService_CreateProject_FullMethodName          = "/platform.v1.PlatformService/CreateProject"
-	PlatformService_ListProjects_FullMethodName           = "/platform.v1.PlatformService/ListProjects"
-	PlatformService_GetProject_FullMethodName             = "/platform.v1.PlatformService/GetProject"
-	PlatformService_InspectSource_FullMethodName          = "/platform.v1.PlatformService/InspectSource"
-	PlatformService_CreateService_FullMethodName          = "/platform.v1.PlatformService/CreateService"
-	PlatformService_UpdateService_FullMethodName          = "/platform.v1.PlatformService/UpdateService"
-	PlatformService_RedeployService_FullMethodName        = "/platform.v1.PlatformService/RedeployService"
-	PlatformService_DiscardServiceChanges_FullMethodName  = "/platform.v1.PlatformService/DiscardServiceChanges"
-	PlatformService_DeleteService_FullMethodName          = "/platform.v1.PlatformService/DeleteService"
-	PlatformService_GetService_FullMethodName             = "/platform.v1.PlatformService/GetService"
-	PlatformService_ListServices_FullMethodName           = "/platform.v1.PlatformService/ListServices"
-	PlatformService_CreateVolume_FullMethodName           = "/platform.v1.PlatformService/CreateVolume"
-	PlatformService_DeleteVolume_FullMethodName           = "/platform.v1.PlatformService/DeleteVolume"
-	PlatformService_ListVolumes_FullMethodName            = "/platform.v1.PlatformService/ListVolumes"
-	PlatformService_CreateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/CreateDomainBinding"
-	PlatformService_GetDomainBinding_FullMethodName       = "/platform.v1.PlatformService/GetDomainBinding"
-	PlatformService_ListDomainBindings_FullMethodName     = "/platform.v1.PlatformService/ListDomainBindings"
-	PlatformService_UpdateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/UpdateDomainBinding"
-	PlatformService_DeleteDomainBinding_FullMethodName    = "/platform.v1.PlatformService/DeleteDomainBinding"
-	PlatformService_GetServiceStatus_FullMethodName       = "/platform.v1.PlatformService/GetServiceStatus"
-	PlatformService_ListServiceLogs_FullMethodName        = "/platform.v1.PlatformService/ListServiceLogs"
-	PlatformService_ListServiceDeployments_FullMethodName = "/platform.v1.PlatformService/ListServiceDeployments"
-	PlatformService_ListAgents_FullMethodName             = "/platform.v1.PlatformService/ListAgents"
+	PlatformService_EnsurePrincipal_FullMethodName                 = "/platform.v1.PlatformService/EnsurePrincipal"
+	PlatformService_CreateProject_FullMethodName                   = "/platform.v1.PlatformService/CreateProject"
+	PlatformService_ListProjects_FullMethodName                    = "/platform.v1.PlatformService/ListProjects"
+	PlatformService_GetProject_FullMethodName                      = "/platform.v1.PlatformService/GetProject"
+	PlatformService_InspectSource_FullMethodName                   = "/platform.v1.PlatformService/InspectSource"
+	PlatformService_CreateService_FullMethodName                   = "/platform.v1.PlatformService/CreateService"
+	PlatformService_UpdateService_FullMethodName                   = "/platform.v1.PlatformService/UpdateService"
+	PlatformService_RedeployService_FullMethodName                 = "/platform.v1.PlatformService/RedeployService"
+	PlatformService_DiscardServiceChanges_FullMethodName           = "/platform.v1.PlatformService/DiscardServiceChanges"
+	PlatformService_DeleteService_FullMethodName                   = "/platform.v1.PlatformService/DeleteService"
+	PlatformService_GetService_FullMethodName                      = "/platform.v1.PlatformService/GetService"
+	PlatformService_ListServices_FullMethodName                    = "/platform.v1.PlatformService/ListServices"
+	PlatformService_CreateVolume_FullMethodName                    = "/platform.v1.PlatformService/CreateVolume"
+	PlatformService_DeleteVolume_FullMethodName                    = "/platform.v1.PlatformService/DeleteVolume"
+	PlatformService_ListVolumes_FullMethodName                     = "/platform.v1.PlatformService/ListVolumes"
+	PlatformService_CreateDomainBinding_FullMethodName             = "/platform.v1.PlatformService/CreateDomainBinding"
+	PlatformService_RequestDomainOwnershipChallenge_FullMethodName = "/platform.v1.PlatformService/RequestDomainOwnershipChallenge"
+	PlatformService_GetDomainBinding_FullMethodName                = "/platform.v1.PlatformService/GetDomainBinding"
+	PlatformService_ListDomainBindings_FullMethodName              = "/platform.v1.PlatformService/ListDomainBindings"
+	PlatformService_UpdateDomainBinding_FullMethodName             = "/platform.v1.PlatformService/UpdateDomainBinding"
+	PlatformService_DeleteDomainBinding_FullMethodName             = "/platform.v1.PlatformService/DeleteDomainBinding"
+	PlatformService_GetServiceStatus_FullMethodName                = "/platform.v1.PlatformService/GetServiceStatus"
+	PlatformService_ListServiceLogs_FullMethodName                 = "/platform.v1.PlatformService/ListServiceLogs"
+	PlatformService_ListServiceDeployments_FullMethodName          = "/platform.v1.PlatformService/ListServiceDeployments"
+	PlatformService_ListAgents_FullMethodName                      = "/platform.v1.PlatformService/ListAgents"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -66,6 +67,7 @@ type PlatformServiceClient interface {
 	DeleteVolume(ctx context.Context, in *DeleteVolumeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ListVolumes(ctx context.Context, in *ListVolumesRequest, opts ...grpc.CallOption) (*ListVolumesResponse, error)
 	CreateDomainBinding(ctx context.Context, in *CreateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
+	RequestDomainOwnershipChallenge(ctx context.Context, in *RequestDomainOwnershipChallengeRequest, opts ...grpc.CallOption) (*DomainOwnershipChallenge, error)
 	GetDomainBinding(ctx context.Context, in *GetDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	ListDomainBindings(ctx context.Context, in *ListDomainBindingsRequest, opts ...grpc.CallOption) (*ListDomainBindingsResponse, error)
 	UpdateDomainBinding(ctx context.Context, in *UpdateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
@@ -244,6 +246,16 @@ func (c *platformServiceClient) CreateDomainBinding(ctx context.Context, in *Cre
 	return out, nil
 }
 
+func (c *platformServiceClient) RequestDomainOwnershipChallenge(ctx context.Context, in *RequestDomainOwnershipChallengeRequest, opts ...grpc.CallOption) (*DomainOwnershipChallenge, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DomainOwnershipChallenge)
+	err := c.cc.Invoke(ctx, PlatformService_RequestDomainOwnershipChallenge_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) GetDomainBinding(ctx context.Context, in *GetDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DomainBinding)
@@ -344,6 +356,7 @@ type PlatformServiceServer interface {
 	DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error)
 	ListVolumes(context.Context, *ListVolumesRequest) (*ListVolumesResponse, error)
 	CreateDomainBinding(context.Context, *CreateDomainBindingRequest) (*DomainBinding, error)
+	RequestDomainOwnershipChallenge(context.Context, *RequestDomainOwnershipChallengeRequest) (*DomainOwnershipChallenge, error)
 	GetDomainBinding(context.Context, *GetDomainBindingRequest) (*DomainBinding, error)
 	ListDomainBindings(context.Context, *ListDomainBindingsRequest) (*ListDomainBindingsResponse, error)
 	UpdateDomainBinding(context.Context, *UpdateDomainBindingRequest) (*DomainBinding, error)
@@ -409,6 +422,9 @@ func (UnimplementedPlatformServiceServer) ListVolumes(context.Context, *ListVolu
 }
 func (UnimplementedPlatformServiceServer) CreateDomainBinding(context.Context, *CreateDomainBindingRequest) (*DomainBinding, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateDomainBinding not implemented")
+}
+func (UnimplementedPlatformServiceServer) RequestDomainOwnershipChallenge(context.Context, *RequestDomainOwnershipChallengeRequest) (*DomainOwnershipChallenge, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestDomainOwnershipChallenge not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetDomainBinding(context.Context, *GetDomainBindingRequest) (*DomainBinding, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDomainBinding not implemented")
@@ -743,6 +759,24 @@ func _PlatformService_CreateDomainBinding_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_RequestDomainOwnershipChallenge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestDomainOwnershipChallengeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RequestDomainOwnershipChallenge(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RequestDomainOwnershipChallenge_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RequestDomainOwnershipChallenge(ctx, req.(*RequestDomainOwnershipChallengeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_GetDomainBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetDomainBindingRequest)
 	if err := dec(in); err != nil {
@@ -957,6 +991,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateDomainBinding",
 			Handler:    _PlatformService_CreateDomainBinding_Handler,
+		},
+		{
+			MethodName: "RequestDomainOwnershipChallenge",
+			Handler:    _PlatformService_RequestDomainOwnershipChallenge_Handler,
 		},
 		{
 			MethodName: "GetDomainBinding",
