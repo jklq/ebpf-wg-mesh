@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"ebof-wg-mesh/internal/localteststack"
 )
 
 func TestDescribeOnePasswordLoadErrorForDesktopAccountMismatch(t *testing.T) {
@@ -71,5 +73,25 @@ func TestStartupInterrupted(t *testing.T) {
 	cancel()
 	if !startupInterrupted(ctx) {
 		t.Fatal("expected canceled context to interrupt startup")
+	}
+}
+
+func TestCloudflareTunnelRequestedWithoutCompleteGitHubConfig(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		localteststack.CloudflareTunnelTokenKey: "tunnel-token",
+		localteststack.CloudflareHostnameKey:    "mesh.example.test",
+	}
+	if !cloudflareTunnelRequested(env, env[localteststack.CloudflareTunnelTokenKey], env[localteststack.CloudflareHostnameKey]) {
+		t.Fatal("expected Cloudflare credentials to request the public tunnel independently of GitHub config")
+	}
+}
+
+func TestCloudflareTunnelNotRequestedWithoutCloudflareOrGitHubConfig(t *testing.T) {
+	t.Parallel()
+
+	if cloudflareTunnelRequested(nil, "", "") {
+		t.Fatal("expected local-only mode when neither Cloudflare nor GitHub is configured")
 	}
 }

@@ -229,18 +229,18 @@ func main() {
 			)
 		}
 	}
-	if overlayEnv != nil && len(localteststack.MissingGitHubKeys(overlayEnv)) == 0 {
-		cloudflareTunnelToken := strings.TrimSpace(overlayEnv[localteststack.CloudflareTunnelTokenKey])
-		if cloudflareTunnelToken == "" {
-			cloudflareTunnelToken = strings.TrimSpace(os.Getenv(localteststack.CloudflareTunnelTokenKey))
-		}
-		cloudflareHostname := strings.TrimSpace(overlayEnv[localteststack.CloudflareHostnameKey])
-		if cloudflareHostname == "" {
-			cloudflareHostname = strings.TrimSpace(os.Getenv(localteststack.CloudflareHostnameKey))
-		}
+	cloudflareTunnelToken := strings.TrimSpace(overlayEnv[localteststack.CloudflareTunnelTokenKey])
+	if cloudflareTunnelToken == "" {
+		cloudflareTunnelToken = strings.TrimSpace(os.Getenv(localteststack.CloudflareTunnelTokenKey))
+	}
+	cloudflareHostname := strings.TrimSpace(overlayEnv[localteststack.CloudflareHostnameKey])
+	if cloudflareHostname == "" {
+		cloudflareHostname = strings.TrimSpace(os.Getenv(localteststack.CloudflareHostnameKey))
+	}
+	if cloudflareTunnelRequested(overlayEnv, cloudflareTunnelToken, cloudflareHostname) {
 		if missingRuntimeKeys := missingCloudflareRuntimeKeys(cloudflareTunnelToken, cloudflareHostname); len(missingRuntimeKeys) > 0 {
 			log.Fatalf(
-				"GitHub devstack is enabled, but the Cloudflare tunnel runtime contract is incomplete; set these env vars before starting again: %s. Cloudflare should already route %s to the local ingress origin %s",
+				"Cloudflare tunnel configuration is incomplete; set these env vars before starting again: %s. Cloudflare should already route %s to the local ingress origin %s",
 				strings.Join(missingRuntimeKeys, ", "),
 				cloudflareHostname,
 				ingressURL[:len(ingressURL)-1],
@@ -483,6 +483,12 @@ func appendUniqueStrings(items []string, value string) []string {
 		}
 	}
 	return append(items, value)
+}
+
+func cloudflareTunnelRequested(env map[string]string, token, hostname string) bool {
+	return len(localteststack.MissingGitHubKeys(env)) == 0 ||
+		strings.TrimSpace(token) != "" ||
+		strings.TrimSpace(hostname) != ""
 }
 
 func writeSummary(path string, summary stackSummary) error {
