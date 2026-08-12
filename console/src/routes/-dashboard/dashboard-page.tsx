@@ -15,6 +15,7 @@ import {
 
 import type {
 	CreateServiceFastResult,
+	DashboardEnvironment,
 	DashboardHomeState,
 	DashboardServiceRecord,
 	DashboardServiceStatus,
@@ -109,6 +110,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	// the "Edited" badge / highlights back. Cleared once the server confirms
 	// the service is clean or a newer spec has been saved.
 	const deployedRevisionsRef = useRef<Map<string, number>>(new Map());
+	const pendingCreatedServiceRef = useRef<{
+		service: DashboardServiceRecord;
+		environment: DashboardEnvironment;
+		expiresAt: number;
+	} | null>(null);
 	const panStart = useRef<{
 		mx: number;
 		my: number;
@@ -510,10 +516,31 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		[suppressJustDeployedChanges],
 	);
 
+	// A freshly created service is known to us before the server snapshot (SSE or
+	// router.invalidate()) catches up. Keep it in the list until the server
+	// reports it, otherwise the just-opened service panel closes again.
+	const withPendingCreatedService = useCallback(
+		(list: Array<DashboardServiceRecord>) => {
+			const pending = pendingCreatedServiceRef.current;
+			if (!pending) return list;
+			if (
+				list.some((service) => service.id === pending.service.id) ||
+				Date.now() > pending.expiresAt
+			) {
+				pendingCreatedServiceRef.current = null;
+				return list;
+			}
+			return [...list, pending.service];
+		},
+		[],
+	);
+
 	const mergeEnvironmentServices = useCallback(
 		(nextServices: Array<DashboardServiceRecord>) => {
 			setLocalState((current) => {
-				const mergedServices = nextServices.map(suppressJustDeployedChanges);
+				const mergedServices = withPendingCreatedService(
+					nextServices.map(suppressJustDeployedChanges),
+				);
 				const selectedService =
 					current.service &&
 					mergedServices.find((service) => service.id === current.service?.id);
@@ -540,7 +567,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				return service ? { ...current, service } : current;
 			});
 		},
-		[suppressJustDeployedChanges],
+		[suppressJustDeployedChanges, withPendingCreatedService],
 	);
 
 	const mergeAppliedStatusService = useCallback(
@@ -602,6 +629,18 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	useEffect(() => {
 		const deployedMap = deployedRevisionsRef.current;
+		// A just-created service can also be the first one to materialise its
+		// environment; keep that environment until the server snapshot has it,
+		// otherwise the environment flips back to none and the selection resets.
+		const pendingEnvironment =
+			!state.environment &&
+			pendingCreatedServiceRef.current &&
+			Date.now() <= pendingCreatedServiceRef.current.expiresAt
+				? pendingCreatedServiceRef.current.environment
+				: undefined;
+		const pendingEnvironments = pendingEnvironment
+			? [...state.environments, pendingEnvironment]
+			: state.environments;
 		if (deployedMap.size === 0) {
 			setLocalState((current) => ({
 				...state,
@@ -613,6 +652,9 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					githubCatalogLoaded || githubCatalogLoading
 						? current.repositories
 						: state.repositories,
+				environment: state.environment ?? pendingEnvironment,
+				environments: pendingEnvironments,
+				services: withPendingCreatedService(state.services),
 			}));
 		} else {
 			// For services that were just deployed, the backend may still report
@@ -628,7 +670,9 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					githubCatalogLoaded || githubCatalogLoading
 						? current.repositories
 						: state.repositories,
-				services: state.services.map((service) => {
+				environment: state.environment ?? pendingEnvironment,
+				environments: pendingEnvironments,
+				services: withPendingCreatedService(state.services).map((service) => {
 					const deployedRevision = deployedMap.get(service.id);
 					if (deployedRevision === undefined) return service;
 					// Server confirms clean — stop suppressing.
@@ -652,7 +696,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			}));
 		}
 		setStatusLoading(false);
-	}, [state, githubCatalogLoaded, githubCatalogLoading]);
+	}, [
+		state,
+		githubCatalogLoaded,
+		githubCatalogLoading,
+		withPendingCreatedService,
+	]);
 
 	useEffect(() => {
 		if (totalUnappliedChanges === 0) {
@@ -851,6 +900,21 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		});
 	};
 
+	// Environment switching is a route change, not a page load — a full reload
+	// would throw away the canvas, the SSE streams, and the selection.
+	const handleNavigateEnvironment = (nextEnvironmentId: string | null) => {
+		startTransition(() => {
+			void router.navigate(
+				nextEnvironmentId
+					? {
+							to: "/environments/$environmentId",
+							params: { environmentId: nextEnvironmentId },
+						}
+					: { to: "/" },
+			);
+		});
+	};
+
 	const openNewService = () => {
 		setShowNewService(true);
 		void ensureGitHubCatalog();
@@ -920,6 +984,17 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			}
 		}
 
+		// Creating the first service can materialise the project's environment,
+		// which flips `environmentId` from null. Claim that transition here so the
+		// environment-change effect doesn't immediately clear the selection and
+		// close the panel we are about to open for the new service.
+		previousEnvironmentIdRef.current = result.environment.id ?? null;
+		pendingCreatedServiceRef.current = {
+			service: result.service,
+			environment: result.environment,
+			expiresAt: Date.now() + 60_000,
+		};
+
 		setLocalState((current) => {
 			const nextServices = current.services.some(
 				(service) => service.id === result.service.id,
@@ -948,6 +1023,25 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		setActiveTab("deployments");
 		setLiveStatus(result.serviceStatus);
 		setShowNewService(false);
+		startTransition(() => void router.invalidate());
+	};
+
+	const handleServiceDeleted = (serviceId: string) => {
+		if (pendingCreatedServiceRef.current?.service.id === serviceId) {
+			pendingCreatedServiceRef.current = null;
+		}
+		deployedRevisionsRef.current.delete(serviceId);
+		setSelectedId((current) => (current === serviceId ? null : current));
+		setLiveStatus(null);
+		setLocalState((current) => ({
+			...current,
+			services: current.services.filter((service) => service.id !== serviceId),
+			service: current.service?.id === serviceId ? undefined : current.service,
+			serviceStatus:
+				current.serviceStatus?.service.id === serviceId
+					? undefined
+					: current.serviceStatus,
+		}));
 		startTransition(() => void router.invalidate());
 	};
 
@@ -1097,12 +1191,18 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				onNewService={openNewService}
 				onPreloadNewService={preloadNewService}
 				onRefresh={handleRefresh}
-				onManageEnvironments={() => setShowEnvironmentDialog(true)}
+				onNewEnvironment={() => setShowEnvironmentDialog(true)}
+				onEnvironmentsChanged={handleRefresh}
+				onNavigateEnvironment={handleNavigateEnvironment}
 			/>
 			{showEnvironmentDialog && (
 				<EnvironmentDialog
 					state={localState}
 					onClose={() => setShowEnvironmentDialog(false)}
+					onCreated={(environmentId) => {
+						setShowEnvironmentDialog(false);
+						handleNavigateEnvironment(environmentId);
+					}}
 				/>
 			)}
 			<div
@@ -1263,6 +1363,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							}}
 							onRefresh={handleRefresh}
 							onServiceUpdated={mergeService}
+							onServiceDeleted={handleServiceDeleted}
 						/>
 					</Suspense>
 				)}

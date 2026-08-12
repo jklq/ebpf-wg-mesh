@@ -1,28 +1,26 @@
-import {
-	AlertCircle,
-	Layers,
-	LogOut,
-	RefreshCw,
-	Settings,
-	Zap,
-} from "lucide-react";
+import { AlertCircle, Layers, LogOut, RefreshCw, Zap } from "lucide-react";
 
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 
 import { DeployButton } from "./deploy-button";
+import { EnvironmentSwitcher } from "./environment-switcher";
 
 export function Topbar({
 	state,
 	onNewService,
 	onPreloadNewService,
 	onRefresh,
-	onManageEnvironments,
+	onNewEnvironment,
+	onEnvironmentsChanged,
+	onNavigateEnvironment,
 }: {
 	state: DashboardHomeState;
 	onNewService: () => void;
 	onPreloadNewService?: () => void;
 	onRefresh: () => void;
-	onManageEnvironments: () => void;
+	onNewEnvironment: () => void;
+	onEnvironmentsChanged: () => void;
+	onNavigateEnvironment: (environmentId: string | null) => void;
 }) {
 	return (
 		<div className="topbar">
@@ -50,66 +48,23 @@ export function Topbar({
 			</div>
 
 			{state.project && (
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 6,
-						padding: "3px 8px",
-						background: "var(--surface-raised)",
-						border: "1px solid var(--border)",
-						borderRadius: 1,
-						fontSize: 11,
-						fontWeight: 600,
-						letterSpacing: "0.06em",
-						textTransform: "uppercase",
-						fontFamily: "'Barlow Condensed', sans-serif",
-						color: "var(--text-muted)",
-						cursor: "default",
-					}}
-				>
-					<Layers size={11} />
-					{state.project.name}
-				</div>
-			)}
-			{state.environment && (
-				<>
-					<select
-						aria-label="Environment"
-						value={state.environment.id}
-						onChange={(event) =>
-							window.location.assign(
-								`/environments/${encodeURIComponent(event.target.value)}`,
-							)
-						}
-					>
-						{state.environments.map((environment) => (
-							<option key={environment.id} value={environment.id}>
-								{environment.name}
-								{environment.isProduction ? " · Production" : ""}
-							</option>
-						))}
-					</select>
-					{state.environment.isProduction && (
-						<span
-							style={{
-								fontSize: 10,
-								color: "var(--accent)",
-								textTransform: "uppercase",
-							}}
-						>
-							Production
-						</span>
+				<div className="breadcrumb">
+					<span className="breadcrumb-project">
+						<Layers size={12} />
+						{state.project.name}
+					</span>
+					{state.environment && (
+						<>
+							<span className="breadcrumb-sep">/</span>
+							<EnvironmentSwitcher
+								state={state}
+								onCreateEnvironment={onNewEnvironment}
+								onChanged={onEnvironmentsChanged}
+								onNavigateEnvironment={onNavigateEnvironment}
+							/>
+						</>
 					)}
-					<button
-						type="button"
-						className="btn-ghost"
-						title="Manage environments"
-						onClick={onManageEnvironments}
-					>
-						<Settings size={12} />
-					</button>
-				</>
+				</div>
 			)}
 
 			{state.services.length > 0 && (

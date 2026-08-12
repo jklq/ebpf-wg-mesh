@@ -463,6 +463,46 @@ describe("DashboardPage", () => {
 		]);
 		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
 	});
+
+	it("keeps the panel open for a new service while the server state catches up", async () => {
+		const created = serviceRecord();
+		doCreateServiceFastMock.mockResolvedValue({
+			project: { id: "project-1", name: "test-project", kind: "user" },
+			environment: {
+				id: "environment-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: "persistent",
+				isProduction: true,
+			},
+			service: created,
+			serviceStatus: null,
+			onboarding: emptyState().onboarding,
+		});
+
+		const { rerender } = render(<DashboardPage state={emptyState()} />);
+
+		fireEvent.click(
+			screen.getAllByRole("button", {
+				name: /deploy service/i,
+			})[0] as HTMLElement,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /octocat\/hello/i }),
+		);
+
+		expect(
+			await screen.findByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+
+		// The server snapshot still predates the created service.
+		rerender(<DashboardPage state={emptyState()} />);
+
+		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+	});
 });
 
 function dashboardState(
@@ -516,6 +556,30 @@ function dashboardState(
 		controlPlaneReachable: true,
 		...overrides,
 	};
+}
+
+function emptyState(): DashboardHomeState {
+	return dashboardState(serviceRecord(), {
+		services: [],
+		service: undefined,
+		environment: undefined,
+		githubAccount: {
+			providerSubject: "1",
+			login: "octocat",
+			primaryEmail: "octocat@example.com",
+			tokenType: "bearer",
+			scope: "repo",
+		},
+		repositories: [
+			{
+				owner: "octocat",
+				name: "hello",
+				fullName: "octocat/hello",
+				private: false,
+				defaultBranch: "main",
+			},
+		],
+	});
 }
 
 function serviceRecord(
