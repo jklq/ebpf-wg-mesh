@@ -38,7 +38,6 @@ ensure_cni() {
       "type": "bridge",
       "bridge": "mesh0",
       "isGateway": true,
-      "hairpinMode": true,
       "ipMasq": false,
       "promiscMode": true,
       "ipam": {

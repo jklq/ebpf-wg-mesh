@@ -48,7 +48,12 @@ console/test-results/
 *.tfstate
 *.tfstate.*
 *.tfvars
+*.tfvars.json
 *.tfplan
+
+# Ephemeral VM credentials
+runner_ed25519
+runner_ed25519.pub
 
 # Logs and temp files
 *.log
@@ -64,6 +69,8 @@ api/proto/**/*.pb.go
 # Build/test binaries and artifacts
 integration.test
 testvm
+!cmd/testvm/
+!cmd/testvm/main.go
 artifacts/
 testbed.log
 

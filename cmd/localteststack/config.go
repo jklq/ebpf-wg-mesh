@@ -12,13 +12,17 @@ const (
 	defaultLocalIngressPort   = 8080
 	defaultLocalDockerNetwork = "ebpf-wg-mesh-local"
 	defaultLocalDomainSuffix  = "localtest.me"
+	defaultConsoleBindAddress = "127.0.0.1"
 )
 
 type localStackConfig struct {
-	IngressHost       string
-	IngressPort       int
-	DockerNetwork     string
-	LocalDomainSuffix string
+	IngressHost           string
+	IngressPort           int
+	DockerNetwork         string
+	LocalDomainSuffix     string
+	PlatformDomainSuffix  string
+	ConsoleBindAddress    string
+	EnablePublicTunnel    bool
 }
 
 func loadLocalStackConfig(lookup func(string) string) (localStackConfig, error) {
@@ -26,10 +30,13 @@ func loadLocalStackConfig(lookup func(string) string) (localStackConfig, error) 
 		return localStackConfig{}, fmt.Errorf("LOCALTESTSTACK_RUNTIME has been removed; localteststack always uses the Docker runtime")
 	}
 	cfg := localStackConfig{
-		IngressHost:       firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_INGRESS_HOST")), defaultLocalIngressHost),
-		DockerNetwork:     firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_DOCKER_NETWORK")), defaultLocalDockerNetwork),
-		LocalDomainSuffix: normalizeDomainSuffix(firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_LOCAL_DOMAIN_SUFFIX")), defaultLocalDomainSuffix)),
-		IngressPort:       defaultLocalIngressPort,
+		IngressHost:          firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_INGRESS_HOST")), defaultLocalIngressHost),
+		DockerNetwork:        firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_DOCKER_NETWORK")), defaultLocalDockerNetwork),
+		LocalDomainSuffix:    normalizeDomainSuffix(firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_LOCAL_DOMAIN_SUFFIX")), defaultLocalDomainSuffix)),
+		PlatformDomainSuffix: normalizeDomainSuffix(strings.TrimSpace(lookup("LOCALTESTSTACK_PLATFORM_DOMAIN_SUFFIX"))),
+		ConsoleBindAddress:   firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")), defaultConsoleBindAddress),
+		EnablePublicTunnel:   strings.EqualFold(strings.TrimSpace(lookup("LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL")), "true") || strings.TrimSpace(lookup("LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL")) == "1",
+		IngressPort:          defaultLocalIngressPort,
 	}
 	if raw := strings.TrimSpace(lookup("LOCALTESTSTACK_INGRESS_PORT")); raw != "" {
 		port, err := strconv.Atoi(raw)
@@ -52,6 +59,20 @@ func loadLocalStackConfig(lookup func(string) string) (localStackConfig, error) 
 	}
 	if cfg.LocalDomainSuffix == "" {
 		return localStackConfig{}, fmt.Errorf("LOCALTESTSTACK_LOCAL_DOMAIN_SUFFIX is required")
+	}
+	if cfg.PlatformDomainSuffix != "" {
+		if net.ParseIP(cfg.PlatformDomainSuffix) != nil {
+			return localStackConfig{}, fmt.Errorf("LOCALTESTSTACK_PLATFORM_DOMAIN_SUFFIX must be a hostname")
+		}
+		if !strings.Contains(cfg.PlatformDomainSuffix, ".") {
+			return localStackConfig{}, fmt.Errorf("LOCALTESTSTACK_PLATFORM_DOMAIN_SUFFIX must be a DNS name with a dot")
+		}
+	}
+	if net.ParseIP(cfg.ConsoleBindAddress) == nil {
+		return localStackConfig{}, fmt.Errorf("LOCALTESTSTACK_CONSOLE_BIND_ADDRESS must be an IP address")
+	}
+	if cfg.EnablePublicTunnel && net.ParseIP(cfg.ConsoleBindAddress).IsLoopback() {
+		return localStackConfig{}, fmt.Errorf("public tunnel requires an explicit non-loopback LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")
 	}
 	return cfg, nil
 }

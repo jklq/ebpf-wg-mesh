@@ -14,7 +14,7 @@ import (
 
 const localAgentID = "localteststack-agent"
 
-func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir string, controlPlaneAddr string, caPEM []byte) (*agent.App, <-chan error, error) {
+func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir string, controlPlaneAddr string, caPEM []byte, bootstrapToken string) (*agent.App, <-chan error, error) {
 	agentDir := filepath.Join(stateDir, "local-agent")
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("mkdir local agent dir: %w", err)
@@ -53,7 +53,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 			TLS: config.ClientTLSConfig{
 				CAFile:         caPath,
 				ServerName:     "localhost",
-				BootstrapToken: "agent-bootstrap-token",
+				BootstrapToken: bootstrapToken,
 			},
 		},
 		Runtime: config.RuntimeConfig{

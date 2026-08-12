@@ -6,7 +6,7 @@ const dashboardReadyURL = new URL("/healthz", dashboardBaseURL).toString();
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 30_000,
+  timeout: 60_000,
   retries: 0,
   reporter: [
     ["list"],
@@ -19,10 +19,14 @@ export default defineConfig({
         cwd: "..",
         env: {
           LOCALTESTSTACK_RUN_PLAYWRIGHT: "0",
+          LOCALTESTSTACK_PRODUCT_E2E: "1",
+          LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL: "1",
+          LOCALTESTSTACK_CONSOLE_BIND_ADDRESS: "0.0.0.0",
         },
         url: dashboardReadyURL,
         reuseExistingServer: false,
-        timeout: 120_000,
+        // Product fixture deploy/redeploy plus Cloudflare tunnel startup.
+        timeout: 300_000,
       },
   use: {
     baseURL: dashboardBaseURL,

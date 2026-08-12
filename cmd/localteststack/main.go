@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -28,16 +29,20 @@ import (
 )
 
 type stackSummary struct {
-	ControlPlaneURL   string `json:"control_plane_url"`
-	DashboardURL      string `json:"dashboard_url"`
-	DatabaseURL       string `json:"database_url"`
-	ClickHouseURL     string `json:"clickhouse_url"`
-	ArtifactsDir      string `json:"artifacts_dir"`
-	PublicBaseURL     string `json:"public_base_url"`
-	GitHubEnabled     bool   `json:"github_enabled"`
-	GitHubCallbackURL string `json:"github_callback_url"`
-	GitHubWebhookURL  string `json:"github_webhook_url"`
+	ControlPlaneURL   string             `json:"control_plane_url"`
+	DashboardURL      string             `json:"dashboard_url"`
+	DatabaseURL       string             `json:"database_url"`
+	ClickHouseURL     string             `json:"clickhouse_url"`
+	RegistryURL       string             `json:"registry_url"`
+	ArtifactsDir      string             `json:"artifacts_dir"`
+	PublicBaseURL     string             `json:"public_base_url"`
+	GitHubEnabled     bool               `json:"github_enabled"`
+	GitHubCallbackURL string             `json:"github_callback_url"`
+	GitHubWebhookURL  string             `json:"github_webhook_url"`
+	ProductE2E        *productE2ESummary `json:"product_e2e,omitempty"`
 }
+
+const consoleStartupTimeout = 2 * time.Minute
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -63,6 +68,9 @@ func main() {
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
 		log.Fatalf("mkdir artifacts: %v", err)
 	}
+	// Drop stale summary so Playwright cannot race a previous run's session cookie
+	// against a freshly generated JWT secret once /healthz becomes ready.
+	_ = os.Remove(filepath.Join(artifactsDir, "stack.json"))
 
 	cockroach, err := testserver.NewTestServer(testserver.CustomVersionOpt("v26.1.0"))
 	if err != nil {
@@ -76,10 +84,21 @@ func main() {
 		log.Fatalf("mkdir state dir: %v", err)
 	}
 	defer os.RemoveAll(stateDir)
-	consolePort, err := pickConsolePort()
-	if err != nil {
-		log.Fatalf("pick console port: %v", err)
+	// A killed previous run leaves fixed-name containers and published ports
+	// (especially :8080). Clean them before reserving host ports or starting
+	// managed containers so health waits do not hang on a wedged bind.
+	if removed, err := localteststack.CleanupStaleLocalteststackContainers(ctx, localteststack.ExecDockerRunner{}); err != nil {
+		log.Fatalf("cleanup stale localteststack containers: %v", err)
+	} else if removed > 0 {
+		log.Printf("removed %d stale localteststack container(s) from a previous run", removed)
 	}
+	// Hold the console listen port until vite/bun starts. pick-and-release leaves
+	// a long race with Docker port publishes while cockroach/ingress/agent boot.
+	consoleListener, consolePort, err := reservePort(stackCfg.ConsoleBindAddress)
+	if err != nil {
+		log.Fatalf("reserve console port: %v", err)
+	}
+	defer consoleListener.Close()
 	ingressAdminPort, err := pickLoopbackPort()
 	if err != nil {
 		log.Fatalf("pick ingress admin port: %v", err)
@@ -87,6 +106,10 @@ func main() {
 	clickHousePort, err := pickLoopbackPort()
 	if err != nil {
 		log.Fatalf("pick clickhouse port: %v", err)
+	}
+	registryPort, err := pickLoopbackPort()
+	if err != nil {
+		log.Fatalf("pick registry port: %v", err)
 	}
 	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
 		StateDir:      filepath.Join(stateDir, "local-ingress"),
@@ -121,17 +144,34 @@ func main() {
 		}
 	}()
 	clickHouseURL := clickHouse.URL()
+	dashboardJWTSecret, err := randomSecret(32)
+	if err != nil {
+		log.Fatalf("generate dashboard JWT secret: %v", err)
+	}
+	userAssertionSecret, err := randomSecret(32)
+	if err != nil {
+		log.Fatalf("generate user assertion secret: %v", err)
+	}
+	githubTokenEncryptionKey, err := randomSecret(32)
+	if err != nil {
+		log.Fatalf("generate GitHub token encryption key: %v", err)
+	}
+	agentBootstrapToken, err := randomSecret(32)
+	if err != nil {
+		log.Fatalf("generate agent bootstrap token: %v", err)
+	}
 
 	cfg := config.ControlPlaneConfig{
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
 				ServerNames:             []string{"controlplane", "localhost"},
-				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: localAgentID, Token: "agent-bootstrap-token"}},
+				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: localAgentID, Token: agentBootstrapToken}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},
 		},
+		UserAssertions: config.UserAssertionConfig{HMACSecret: userAssertionSecret},
 		Database: config.DatabaseConfig{
 			URL: dbURL,
 		},
@@ -142,11 +182,13 @@ func main() {
 		},
 		StateDir: stateDir,
 		Ingress: config.IngressConfig{
-			AdminURL:              ingress.AdminURL(),
-			AdminListen:           ":2019",
-			ListenAddrs:           []string{fmt.Sprintf(":%d", stackCfg.IngressPort)},
-			DisableAutomaticHTTPS: true,
-			PublicAddr:            stackCfg.IngressHost,
+			AdminURL:                ingress.AdminURL(),
+			AdminListen:             ":2019",
+			AllowNonLoopbackAdmin:   true,
+			ListenAddrs:             []string{fmt.Sprintf(":%d", stackCfg.IngressPort)},
+			DisableAutomaticHTTPS:   true,
+			PublicAddr:              stackCfg.IngressHost,
+			UseReportedAllocationIP: true,
 			StaticRoutes: []config.StaticIngressRouteConfig{{
 				Hosts:    []string{stackCfg.IngressHost},
 				Upstream: fmt.Sprintf("host.docker.internal:%d", consolePort),
@@ -155,9 +197,12 @@ func main() {
 		},
 		Bootstrap: config.BootstrapConfig{
 			Users: []config.BootstrapUser{{
-				Subject: "dev-user",
-				Email:   "dev@example.com",
+				ID:    "dev-user",
+				Email: "dev@example.com",
 			}},
+		},
+		Dashboard: config.ManagedDashboardConfig{
+			ServiceCallerID: "dashboard-local",
 		},
 		Mesh: config.ControlPlaneMeshConfig{
 			InterfaceName:              "wg0",
@@ -168,15 +213,25 @@ func main() {
 		},
 	}
 	consoleEnv := map[string]string{
-		"DASHBOARD_DATABASE_URL":           dbURL,
-		"DASHBOARD_DATABASE_SCHEMA":        "dashboard_local_e2e",
-		"DASHBOARD_SESSION_COOKIE_NAME":    "dashboard_local_e2e_session",
-		"DASHBOARD_JWT_SECRET":             "dashboard-local-e2e-jwt-secret",
-		"DASHBOARD_PUBLIC_BASE_URL":        ingressURL[:len(ingressURL)-1],
-		"DASHBOARD_LOCAL_INGRESS_BASE_URL": ingressURL[:len(ingressURL)-1],
-		"DASHBOARD_INGRESS_TARGET_HOST":    stackCfg.IngressHost,
-		"DASHBOARD_LOCAL_DOMAIN_SUFFIX":    stackCfg.LocalDomainSuffix,
-		"DASHBOARD_DEV_USERS":              "dev-user:dev@example.com",
+		"DASHBOARD_DATABASE_URL":                       dbURL,
+		"DASHBOARD_DATABASE_SCHEMA":                    "dashboard_local_e2e",
+		"DASHBOARD_SESSION_COOKIE_NAME":                "dashboard_local_e2e_session",
+		"DASHBOARD_JWT_SECRET":                         dashboardJWTSecret,
+		"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": userAssertionSecret,
+		"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY":        githubTokenEncryptionKey,
+		"DASHBOARD_PUBLIC_BASE_URL":                    ingressURL[:len(ingressURL)-1],
+		"DASHBOARD_LOCAL_INGRESS_BASE_URL":             ingressURL[:len(ingressURL)-1],
+		"DASHBOARD_INGRESS_TARGET_HOST":                stackCfg.IngressHost,
+		"DASHBOARD_LOCAL_DOMAIN_SUFFIX":                stackCfg.LocalDomainSuffix,
+	}
+	// Public tunnel mode must not expose open dev logins on the internet-facing
+	// hostname. Product e2e authenticates via a per-run session cookie written
+	// only to the local stack artifact (signed with this run's JWT secret).
+	productE2EEnabled := os.Getenv("LOCALTESTSTACK_PRODUCT_E2E") == "1"
+	if !stackCfg.EnablePublicTunnel {
+		consoleEnv["DASHBOARD_DEV_USERS"] = "dev-user:dev@example.com"
+	} else {
+		consoleEnv["DASHBOARD_DEV_USERS"] = ""
 	}
 
 	overlay := localteststack.OverlayResult{}
@@ -237,7 +292,21 @@ func main() {
 	if cloudflareHostname == "" {
 		cloudflareHostname = strings.TrimSpace(os.Getenv(localteststack.CloudflareHostnameKey))
 	}
-	if cloudflareTunnelRequested(overlayEnv, cloudflareTunnelToken, cloudflareHostname) {
+	missingGitHubKeys := localteststack.MissingGitHubKeys(overlayEnv)
+	publicTunnelEnabled := cloudflareTunnelRequested(
+		stackCfg.EnablePublicTunnel,
+		len(missingGitHubKeys) == 0,
+		cloudflareTunnelToken,
+		cloudflareHostname,
+	)
+	if publicTunnelEnabled {
+		if len(missingGitHubKeys) > 0 {
+			log.Fatalf("public tunnel requires non-dev GitHub authentication; missing keys: %s", strings.Join(missingGitHubKeys, ", "))
+		}
+		if net.ParseIP(stackCfg.ConsoleBindAddress).IsLoopback() {
+			log.Fatalf("public tunnel requires an explicit non-loopback LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")
+		}
+		consoleEnv["DASHBOARD_DEV_USERS"] = ""
 		if missingRuntimeKeys := missingCloudflareRuntimeKeys(cloudflareTunnelToken, cloudflareHostname); len(missingRuntimeKeys) > 0 {
 			log.Fatalf(
 				"Cloudflare tunnel configuration is incomplete; set these env vars before starting again: %s. Cloudflare should already route %s to the local ingress origin %s",
@@ -275,6 +344,13 @@ func main() {
 	if parsedPublicURL, err := url.Parse(overlay.PublicBaseURL); err == nil && parsedPublicURL.Host != "" && len(cfg.Ingress.StaticRoutes) > 0 {
 		cfg.Ingress.StaticRoutes[0].Hosts = appendUniqueStrings(cfg.Ingress.StaticRoutes[0].Hosts, parsedPublicURL.Host)
 	}
+	// Optional separate platform domain suffix keeps generated service hosts on
+	// free Universal SSL (e.g. *.relay5.com) while the dashboard/public base
+	// stays on a non-apex tunnel hostname (e.g. mesh.relay5.com).
+	if stackCfg.PlatformDomainSuffix != "" {
+		cfg.Ingress.PublicAddr = stackCfg.PlatformDomainSuffix
+		log.Printf("platform domain suffix: %s", stackCfg.PlatformDomainSuffix)
+	}
 	if overlay.PublicBaseURL != "" {
 		log.Printf("public base url: %s", overlay.PublicBaseURL)
 		log.Printf("github enabled: %t", overlay.GitHubEnabled)
@@ -283,6 +359,17 @@ func main() {
 	}
 	if startupInterrupted(ctx) {
 		return
+	}
+	registryHost := fmt.Sprintf("localhost:%d", registryPort)
+	cfg.Registry = config.RegistryConfig{
+		Host:            registryHost,
+		NamespacePrefix: "mesh",
+		// Registry clients run inside Docker Desktop/BuildKit and reach this
+		// host process through Docker's host gateway.
+		AuthListen:           "0.0.0.0:0",
+		TokenIssuer:          "ebpf-wg-mesh-local",
+		TokenService:         registryHost,
+		CredentialTTLSeconds: 300,
 	}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		log.Fatalf("finalize controlplane config: %v", err)
@@ -310,13 +397,63 @@ func main() {
 	}); err != nil {
 		log.Fatalf("wait for controlplane grpc listener: %v", err)
 	}
+	_, registryAuthPort, err := net.SplitHostPort(server.RegistryAuthAddr())
+	if err != nil {
+		log.Fatalf("resolve registry auth port: %v", err)
+	}
+	registryAuthUpstreamPort, err := strconv.Atoi(registryAuthPort)
+	if err != nil {
+		log.Fatalf("parse registry auth port: %v", err)
+	}
+	// Docker Desktop BuildKit can push to localhost:<published-port> (same as the
+	// registry) but often cannot dial host-gateway IPs for host listeners
+	// (i/o timeout) and cannot resolve host.docker.internal. Publish a tiny
+	// localhost proxy container that forwards to the control-plane token service.
+	registryAuthProxyPort, err := pickLoopbackPort()
+	if err != nil {
+		log.Fatalf("pick registry auth proxy port: %v", err)
+	}
+	registryAuthProxy, err := localteststack.StartManagedRegistryAuthProxy(ctx, localteststack.LocalRegistryAuthProxyConfig{
+		ContainerName: "localteststack-registry-auth-proxy",
+		UpstreamHost:  "host.docker.internal",
+		UpstreamPort:  registryAuthUpstreamPort,
+		HostPort:      registryAuthProxyPort,
+	}, localteststack.ExecDockerRunner{})
+	if err != nil {
+		log.Fatalf("start registry auth proxy: %v", err)
+	}
+	defer func() {
+		if err := registryAuthProxy.Close(); err != nil {
+			log.Printf("stop registry auth proxy: %v", err)
+		}
+	}()
+	tokenRealm := registryAuthProxy.TokenRealmBaseURL() + controlplane.RegistryTokenPath
+	log.Printf("registry token realm: %s (proxy -> host.docker.internal:%d)", tokenRealm, registryAuthUpstreamPort)
+	registry, err := localteststack.StartManagedRegistry(ctx, localteststack.LocalRegistryConfig{
+		StateDir:       filepath.Join(stateDir, "local-registry"),
+		ContainerName:  "localteststack-registry",
+		HostPort:       registryPort,
+		TokenRealm:     tokenRealm,
+		TokenService:   cfg.Registry.TokenService,
+		TokenIssuer:    cfg.Registry.TokenIssuer,
+		RootCertBundle: server.RegistryAuthCertificatePath(),
+	}, localteststack.ExecDockerRunner{})
+	if err != nil {
+		log.Fatalf("start managed local registry: %v", err)
+	}
+	defer func() {
+		if err := registry.Close(); err != nil {
+			log.Printf("stop managed local registry: %v", err)
+		}
+	}()
+	log.Printf("local registry ready: %s", registry.Host())
 
 	identity, err := server.EnsureDashboardClientIdentity("dashboard-local")
 	if err != nil {
 		log.Fatalf("mint dashboard client identity: %v", err)
 	}
 
-	localAgent, localAgentErrCh, err := startLocalAgent(ctx, stackCfg, stateDir, controlPlaneURL, identity.CAPEM)
+	localAgent, localAgentErrCh, err := startLocalAgent(ctx, stackCfg, stateDir, controlPlaneURL, identity.CAPEM, agentBootstrapToken)
 	if err != nil {
 		log.Fatalf("start local agent: %v", err)
 	}
@@ -326,6 +463,41 @@ func main() {
 	}
 	log.Printf("local agent ready: %s", localAgentID)
 	go monitorBackgroundComponent(ctx, stop, "local agent", localAgentErrCh)
+
+	var productFixture *productE2ESummary
+	if productE2EEnabled {
+		if strings.TrimSpace(overlay.PublicBaseURL) == "" {
+			log.Fatalf("local product e2e requires the public Cloudflare tunnel; set LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1 with CLOUDFLARE_TUNNEL_TOKEN and CLOUDFLARE_HOSTNAME")
+		}
+		log.Printf("running local product deploy/redeploy/domain fixture via public tunnel %s", overlay.PublicBaseURL)
+		result, err := runProductE2EScenario(
+			ctx,
+			controlPlaneURL,
+			identity,
+			userAssertionSecret,
+			stackCfg.IngressPort,
+			overlay.PublicBaseURL,
+			consoleEnv["DASHBOARD_SESSION_COOKIE_NAME"],
+			dashboardJWTSecret,
+		)
+		if err != nil {
+			log.Fatalf("local product e2e: %v", err)
+		}
+		productFixture = &result
+		log.Printf("local product fixture ready: %s", result.RouteURL)
+		// Seed before the console becomes healthy so Playwright cannot start
+		// against /healthz with a missing dashboard user or stale stack.json.
+		if err := seedProductE2EDashboardUser(
+			ctx,
+			dbURL,
+			consoleEnv["DASHBOARD_DATABASE_SCHEMA"],
+			productE2EUserID,
+			productE2EUserEmail,
+		); err != nil {
+			log.Fatalf("seed product e2e dashboard user: %v", err)
+		}
+		log.Printf("product e2e dashboard user seeded: %s", productE2EUserID)
+	}
 
 	if overlay.GitHubEnabled {
 		localBuilder, localBuilderErrCh, err := startLocalBuilder(ctx, stateDir, controlPlaneURL, server)
@@ -343,28 +515,32 @@ func main() {
 	consoleEnv["DASHBOARD_CONTROLPLANE_CERT_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CertPEM)
 	consoleEnv["DASHBOARD_CONTROLPLANE_KEY_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.KeyPEM)
 
-	_, consoleCmd, err := startConsole(ctx, consoleDir, consoleEnv, consolePort)
-	if err != nil {
-		log.Fatalf("start console: %v", err)
-	}
-	defer stopProcess(consoleCmd)
-	if err := waitForIngressDashboard(ctx, ingressURL+"healthz"); err != nil {
-		log.Fatalf("wait for ingress dashboard health: %v", err)
-	}
-
+	// Publish stack.json before /healthz is up so Playwright always reads this run.
 	summary := stackSummary{
 		ControlPlaneURL:   controlPlaneURL,
 		DashboardURL:      ingressURL,
 		DatabaseURL:       dbURL,
 		ClickHouseURL:     clickHouseURL,
+		RegistryURL:       "http://" + registry.Host(),
 		ArtifactsDir:      artifactsDir,
 		PublicBaseURL:     firstNonEmpty(overlay.PublicBaseURL, ingressURL[:len(ingressURL)-1]),
 		GitHubEnabled:     overlay.GitHubEnabled,
 		GitHubCallbackURL: overlay.GitHubCallbackURL,
 		GitHubWebhookURL:  overlay.GitHubWebhookURL,
+		ProductE2E:        productFixture,
 	}
 	if err := writeSummary(filepath.Join(artifactsDir, "stack.json"), summary); err != nil {
 		log.Fatalf("write stack summary: %v", err)
+	}
+
+	consoleProc, err := startConsole(ctx, consoleDir, consoleEnv, consolePort, stackCfg.ConsoleBindAddress, consoleListener)
+	if err != nil {
+		log.Fatalf("start console: %v", err)
+	}
+	// startConsole closes the reserved listener before binding the real server.
+	defer stopConsoleProcess(consoleProc)
+	if err := waitForIngressDashboard(ctx, ingressURL+"healthz"); err != nil {
+		log.Fatalf("wait for ingress dashboard health: %v", err)
 	}
 
 	runPlaywright := os.Getenv("LOCALTESTSTACK_RUN_PLAYWRIGHT") != "0"
@@ -405,56 +581,159 @@ func main() {
 	}
 }
 
-func startConsole(ctx context.Context, consoleDir string, env map[string]string, port int) (string, *exec.Cmd, error) {
-	consoleURL := fmt.Sprintf("http://127.0.0.1:%d/", port)
+type consoleProcess struct {
+	cmd     *exec.Cmd
+	done    <-chan struct{}
+	waitErr error // set before done is closed; read only after <-done
+}
 
-	cmd := exec.CommandContext(ctx, "bun", "--bun", "vite", "dev", "--host", "0.0.0.0", "--port", strconv.Itoa(port), "--strictPort")
+func startConsole(ctx context.Context, consoleDir string, env map[string]string, port int, bindAddress string, reserved net.Listener) (*consoleProcess, error) {
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
+
+	var cmd *exec.Cmd
+	commandEnv := mergeCommandEnv(os.Environ(), env)
+	if os.Getenv("LOCALTESTSTACK_CONSOLE_PRODUCTION") == "1" {
+		build := exec.CommandContext(ctx, "bun", "--bun", "vite", "build")
+		build.Dir = consoleDir
+		build.Stdout = os.Stdout
+		build.Stderr = os.Stderr
+		buildEnv := cloneEnvironmentOverrides(env)
+		buildEnv["NITRO_PRESET"] = "bun"
+		build.Env = mergeCommandEnv(os.Environ(), buildEnv)
+		if err := build.Run(); err != nil {
+			if reserved != nil {
+				_ = reserved.Close()
+			}
+			return nil, fmt.Errorf("build console: %w", err)
+		}
+
+		cmd = exec.CommandContext(ctx, "bun", "run", ".output/server/index.mjs")
+		runtimeEnv := cloneEnvironmentOverrides(env)
+		runtimeEnv["HOST"] = bindAddress
+		runtimeEnv["PORT"] = strconv.Itoa(port)
+		commandEnv = mergeCommandEnv(os.Environ(), runtimeEnv)
+	} else {
+		cmd = exec.CommandContext(ctx, "bun", "--bun", "vite", "dev", "--host", bindAddress, "--port", strconv.Itoa(port), "--strictPort")
+	}
 	cmd.Dir = consoleDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	for key, value := range env {
-		cmd.Env = append(cmd.Env, key+"="+value)
+	cmd.Env = commandEnv
+	// Release the reserved port only immediately before the console binds it.
+	if reserved != nil {
+		if err := reserved.Close(); err != nil {
+			return nil, fmt.Errorf("release reserved console port %d: %w", port, err)
+		}
 	}
 	if err := cmd.Start(); err != nil {
-		return "", nil, fmt.Errorf("start console process: %w", err)
+		return nil, fmt.Errorf("start console process: %w", err)
 	}
 
-	healthURL := consoleURL + "healthz"
-	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second}, func(ctx context.Context) (bool, error) {
+	done := make(chan struct{})
+	proc := &consoleProcess{cmd: cmd, done: done}
+	go func() {
+		proc.waitErr = cmd.Wait()
+		close(done)
+	}()
+
+	// Per-attempt timeout so a single hung cold-compile or half-open port does
+	// not consume the full startup budget without retrying. Fail fast if the
+	// process exits (port conflict, crash) instead of polling for 2 minutes.
+	client := &http.Client{Timeout: 5 * time.Second}
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: consoleStartupTimeout, Interval: 200 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+		select {
+		case <-done:
+			if proc.waitErr == nil {
+				return false, fmt.Errorf("console process exited before becoming healthy")
+			}
+			return false, fmt.Errorf("console process exited before becoming healthy: %w", proc.waitErr)
+		default:
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 		if err != nil {
 			return false, err
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return false, nil
 		}
 		defer resp.Body.Close()
 		return resp.StatusCode == http.StatusOK, nil
 	}); err != nil {
-		stopProcess(cmd)
-		return "", nil, fmt.Errorf("wait for console health at %s: %w", healthURL, err)
+		stopConsoleProcess(proc)
+		return nil, fmt.Errorf("wait for console health at %s: %w", healthURL, err)
 	}
 
-	return consoleURL, cmd, nil
+	return proc, nil
 }
 
-func pickConsolePort() (int, error) {
-	return pickLoopbackPort()
+func cloneEnvironmentOverrides(env map[string]string) map[string]string {
+	cloned := make(map[string]string, len(env)+2)
+	for key, value := range env {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func mergeCommandEnv(base []string, overrides map[string]string) []string {
+	merged := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, overridden := overrides[key]; overridden {
+				continue
+			}
+			if sensitiveEnvironmentKey(key) {
+				continue
+			}
+		}
+		merged = append(merged, entry)
+	}
+	for key, value := range overrides {
+		merged = append(merged, key+"="+value)
+	}
+	return merged
+}
+
+func sensitiveEnvironmentKey(key string) bool {
+	key = strings.ToUpper(key)
+	return strings.Contains(key, "TOKEN") ||
+		strings.Contains(key, "SECRET") ||
+		strings.Contains(key, "PASSWORD") ||
+		strings.Contains(key, "PRIVATE_KEY") ||
+		strings.Contains(key, "CREDENTIAL")
+}
+
+func randomSecret(byteLength int) (string, error) {
+	secret := make([]byte, byteLength)
+	if _, err := rand.Read(secret); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(secret), nil
 }
 
 func pickLoopbackPort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, port, err := reservePort("127.0.0.1")
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
+	_ = listener.Close()
+	return port, nil
+}
+
+// reservePort binds bindAddress:0 and returns the listener still held open so
+// callers can keep the port reserved until the real server is ready to bind it.
+func reservePort(bindAddress string) (net.Listener, int, error) {
+	listener, err := net.Listen("tcp", net.JoinHostPort(bindAddress, "0"))
+	if err != nil {
+		return nil, 0, err
+	}
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
-		return 0, fmt.Errorf("unexpected listener address %T", listener.Addr())
+		_ = listener.Close()
+		return nil, 0, fmt.Errorf("unexpected listener address %T", listener.Addr())
 	}
-	return addr.Port, nil
+	return listener, addr.Port, nil
 }
 
 func waitForIngressDashboard(ctx context.Context, healthURL string) error {
@@ -485,10 +764,9 @@ func appendUniqueStrings(items []string, value string) []string {
 	return append(items, value)
 }
 
-func cloudflareTunnelRequested(env map[string]string, token, hostname string) bool {
-	return len(localteststack.MissingGitHubKeys(env)) == 0 ||
-		strings.TrimSpace(token) != "" ||
-		strings.TrimSpace(hostname) != ""
+func cloudflareTunnelRequested(explicit, githubConfigured bool, token, hostname string) bool {
+	return explicit ||
+		(githubConfigured && strings.TrimSpace(token) != "" && strings.TrimSpace(hostname) != "")
 }
 
 func writeSummary(path string, summary stackSummary) error {
@@ -634,12 +912,22 @@ func startupInterrupted(ctx context.Context) bool {
 	return true
 }
 
-func stopProcess(cmd *exec.Cmd) {
-	if cmd == nil || cmd.Process == nil {
+func stopConsoleProcess(proc *consoleProcess) {
+	if proc == nil || proc.cmd == nil || proc.cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
-	_, _ = cmd.Process.Wait()
+	select {
+	case <-proc.done:
+		return
+	default:
+	}
+	_ = proc.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-proc.done:
+	case <-time.After(5 * time.Second):
+		_ = proc.cmd.Process.Kill()
+		<-proc.done
+	}
 }
 
 func normalizeURL(source *url.URL) *url.URL {

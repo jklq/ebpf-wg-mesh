@@ -38,7 +38,9 @@ func StartManagedClickHouse(ctx context.Context, cfg LocalClickHouseConfig, runn
 	if cfg.Image == "" {
 		cfg.Image = defaultLocalClickHouseImage
 	}
-	_ = removeContainer(context.Background(), runner, cfg.ContainerName)
+	if err := removeContainer(context.Background(), runner, cfg.ContainerName); err != nil {
+		return nil, fmt.Errorf("remove existing local clickhouse container %s: %w", cfg.ContainerName, err)
+	}
 	args := []string{
 		"run", "--detach", "--rm",
 		"--name", cfg.ContainerName,
