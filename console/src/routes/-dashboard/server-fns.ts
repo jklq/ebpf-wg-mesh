@@ -171,6 +171,13 @@ export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 		return svc.discardServiceChangesFromSession(data);
 	});
 
+export const doDeleteService = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { serviceId: string })
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/entry.server");
+		await svc.deleteServiceFromSession(data);
+	});
+
 export const doSaveServicePosition = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>

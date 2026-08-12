@@ -935,6 +935,16 @@ export async function discardServiceChangesFromSession(
 	);
 }
 
+export async function deleteServiceFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string },
+): Promise<void> {
+	const session = await requireSession(runtime);
+	await platformCall(runtime, "deleteService", (platform) =>
+		platform.deleteService(session.user, { serviceId: input.serviceId }),
+	);
+}
+
 export async function saveServicePositionFromSession(
 	runtime: DashboardRuntime,
 	input: {

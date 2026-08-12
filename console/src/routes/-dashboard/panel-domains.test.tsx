@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,6 +38,49 @@ describe("domains panel", () => {
 		serverFns.create.mockReset();
 		serverFns.generate.mockReset();
 		serverFns.list.mockReset().mockResolvedValue([]);
+	});
+
+	it("closes the generate dialog immediately and shows the domain as pending", async () => {
+		const platformBinding: DashboardDomainBinding = {
+			hostname: "violet-7k3.platform.example",
+			projectId: "project-1",
+			serviceId: "service-1",
+			targetPort: 8080,
+			platformGenerated: true,
+		};
+		let resolveGenerate: (binding: DashboardDomainBinding) => void = () => {};
+		serverFns.generate.mockReturnValue(
+			new Promise<DashboardDomainBinding>((resolve) => {
+				resolveGenerate = resolve;
+			}),
+		);
+
+		render(<PanelDomains service={domainService()} state={domainState()} />);
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Generate Domain" }),
+		);
+		const dialog = screen.getByRole("dialog", { name: "Generate domain" });
+		fireEvent.click(
+			within(dialog).getByRole("button", { name: "Generate Domain" }),
+		);
+
+		// The dialog is gone right away and the list carries the progress.
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: "Generate domain" }),
+			).toBeNull(),
+		);
+		expect(screen.getByText("Generating domain…")).toBeTruthy();
+
+		resolveGenerate(platformBinding);
+
+		expect(
+			await screen.findByText(/violet-7k3\.platform\.example/),
+		).toBeTruthy();
+		await waitFor(() =>
+			expect(screen.queryByText("Generating domain…")).toBeNull(),
+		);
 	});
 
 	it("offers separate generated and custom domain flows and keeps CNAME instructions pending", async () => {
@@ -77,7 +121,9 @@ describe("domains panel", () => {
 			await screen.findByRole("button", { name: "Generate Domain" }),
 		).toBeTruthy();
 		expect(screen.getByText("accurate-reflection.mesh.internal")).toBeTruthy();
-		expect(screen.getByText("accurate-reflection", { selector: "code" })).toBeTruthy();
+		expect(
+			screen.getByText("accurate-reflection", { selector: "code" }),
+		).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "Custom Domain" }));
 		expect(screen.getByRole("dialog", { name: "Custom domain" })).toBeTruthy();
 		expect(
@@ -110,3 +156,20 @@ describe("domains panel", () => {
 		).toBeTruthy();
 	});
 });
+
+function domainService(): DashboardServiceRecord {
+	return {
+		id: "service-1",
+		environmentId: "environment-1",
+		projectId: "project-1",
+		name: "web",
+		internalHostname: "accurate-reflection.mesh.internal",
+		spec: {
+			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+		},
+	} as DashboardServiceRecord;
+}
+
+function domainState(): DashboardHomeState {
+	return { domainBindings: [] } as unknown as DashboardHomeState;
+}

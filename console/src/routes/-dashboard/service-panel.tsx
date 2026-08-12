@@ -69,6 +69,7 @@ export function ServicePanel({
 	onClose,
 	onRefresh,
 	onServiceUpdated,
+	onServiceDeleted,
 }: {
 	service: DashboardServiceRecord;
 	status: DashboardServiceStatus | null;
@@ -79,6 +80,7 @@ export function ServicePanel({
 	onClose: () => void;
 	onRefresh: () => void;
 	onServiceUpdated: (service: DashboardServiceRecord) => void;
+	onServiceDeleted: (serviceId: string) => void;
 }) {
 	const currentService = status?.service ?? service;
 	const build = currentService.latestBuild ?? service.latestBuild;
@@ -256,12 +258,12 @@ export function ServicePanel({
 								project &&
 								(VariablesPanel ? (
 									<div className="service-panel-scroll">
+										{/* The save response is the new record — merging it is
+										    enough; re-running the route loader here only
+										    re-renders the whole dashboard. */}
 										<VariablesPanel
 											service={service}
-											onSaved={(updated) => {
-												onServiceUpdated(updated);
-												onRefresh();
-											}}
+											onSaved={onServiceUpdated}
 										/>
 									</div>
 								) : (
@@ -274,10 +276,8 @@ export function ServicePanel({
 										<SettingsPanel
 											service={service}
 											state={state}
-											onSaved={(updated) => {
-												onServiceUpdated(updated);
-												onRefresh();
-											}}
+											onSaved={onServiceUpdated}
+											onDeleted={onServiceDeleted}
 										/>
 									</div>
 								) : (

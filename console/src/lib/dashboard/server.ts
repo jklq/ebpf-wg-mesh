@@ -288,6 +288,12 @@ export function discardServiceChangesFromSession(input: {
 	return getDashboardService().discardServiceChangesFromSession(input);
 }
 
+export function deleteServiceFromSession(input: {
+	serviceId: string;
+}): Promise<void> {
+	return getDashboardService().deleteServiceFromSession(input);
+}
+
 export function saveServicePositionFromSession(input: {
 	environmentId: string;
 	serviceId: string;
