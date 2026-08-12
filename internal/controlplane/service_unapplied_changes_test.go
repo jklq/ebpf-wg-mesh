@@ -44,6 +44,41 @@ func TestServiceUnappliedChangesSemanticSourceEquality(t *testing.T) {
 	}
 }
 
+func TestServiceUnappliedChangesIncludesHTTPReadinessCheck(t *testing.T) {
+	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{})
+	current := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{
+		HealthCheck: &platformv1.HealthCheck{
+			Type:           platformv1.HealthCheck_TYPE_HTTP,
+			Path:           "/ready",
+			Port:           8080,
+			TimeoutSeconds: 3,
+		},
+	})
+
+	changes := diffServiceUnappliedChanges(current, deployed)
+	if got, want := len(changes), 1; got != want {
+		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
+	}
+	assertChange(t, changes[0], "runtime.healthCheck", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_ADD, "", "GET /ready on port 8080, timeout 3s")
+
+	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"runtime.healthCheck"})
+	if discarded.GetRuntime().GetHealthCheck() != nil {
+		t.Fatalf("discarded health check = %+v, want nil", discarded.GetRuntime().GetHealthCheck())
+	}
+}
+
+func TestServiceSpecsCompareHTTPReadinessConfiguration(t *testing.T) {
+	left := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{
+		HealthCheck: &platformv1.HealthCheck{Type: platformv1.HealthCheck_TYPE_HTTP, Path: "/ready"},
+	})
+	right := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{
+		HealthCheck: &platformv1.HealthCheck{Type: platformv1.HealthCheck_TYPE_HTTP, Path: "/healthz"},
+	})
+	if sameServiceSpec(left, right) {
+		t.Fatal("service specs with different readiness paths compared equal")
+	}
+}
+
 func assertChange(t *testing.T, change *platformv1.ServiceUnappliedChange, id string, action platformv1.ServiceUnappliedChangeAction, current, next string) {
 	t.Helper()
 	if change.GetId() != id {

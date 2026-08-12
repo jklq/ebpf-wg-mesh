@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,6 +65,53 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 	_, err = authority.Enroll(&agentv1.EnrollRequest{AgentId: "agent-2", CsrPem: string(csrPEM)})
 	if got := status.Code(err); got != codes.InvalidArgument {
 		t.Fatalf("expected InvalidArgument for mismatched CSR, got %s", got)
+	}
+}
+
+func TestAgentServiceIssuesManagedDashboardCertificateOnlyToTrustedAgent(t *testing.T) {
+	t.Parallel()
+
+	authority, err := NewTLSAuthority(config.ControlPlaneConfig{
+		StateDir: t.TempDir(),
+		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
+			ServerNames:             []string{"controlplane"},
+			ServerCertValidityHours: 24,
+			ClientCertValidityHours: 6,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewTLSAuthority: %v", err)
+	}
+	service := NewAgentService(nil, nil, nil, nil, authority, nil, true, "agent-trusted", "dashboard-1")
+	req := &agentv1.ManagedDashboardCertificateRequest{
+		AgentId: "agent-trusted",
+		CsrPem:  string(mustCreateCSR(t, "locally-generated")),
+	}
+
+	resp, err := service.IssueManagedDashboardCertificate(
+		contextWithClientIdentity(serviceCallerAgent, "agent-trusted"),
+		req,
+	)
+	if err != nil {
+		t.Fatalf("IssueManagedDashboardCertificate: %v", err)
+	}
+	cert := mustParseCertificate(t, resp.GetCertPem())
+	if cert.Subject.CommonName != "dashboard-1" {
+		t.Fatalf("unexpected dashboard common name %q", cert.Subject.CommonName)
+	}
+	if len(cert.Subject.OrganizationalUnit) != 1 || cert.Subject.OrganizationalUnit[0] != string(serviceCallerDashboard) {
+		t.Fatalf("unexpected dashboard organizational unit %#v", cert.Subject.OrganizationalUnit)
+	}
+	if _, err := os.Stat(filepath.Join(authority.pkiDir, clientCertsDirName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dashboard issuance persisted client key material on the control plane: %v", err)
+	}
+
+	_, err = service.IssueManagedDashboardCertificate(
+		contextWithClientIdentity(serviceCallerAgent, "agent-other"),
+		&agentv1.ManagedDashboardCertificateRequest{AgentId: "agent-other", CsrPem: req.GetCsrPem()},
+	)
+	if got := status.Code(err); got != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied for untrusted agent, got %s", got)
 	}
 }
 

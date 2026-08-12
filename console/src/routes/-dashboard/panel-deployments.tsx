@@ -72,7 +72,6 @@ export function PanelDeployments({
 		try {
 			const nextDeployments = await fetchServiceDeployments({
 				data: {
-					projectId: project.id,
 					serviceId: service.id,
 					limit: 10,
 				},
@@ -440,7 +439,6 @@ function DeploymentLogsView({
 			const logType = filter === "all" ? undefined : filter;
 			const nextLines = await fetchServiceLogs({
 				data: {
-					projectId: project.id,
 					serviceId: service.id,
 					limit: 500,
 					logType,

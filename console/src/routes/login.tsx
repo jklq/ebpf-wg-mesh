@@ -33,7 +33,7 @@ export async function loadLoginRouteState(
 }
 
 const loadLoginState = createServerFn({ method: "GET" }).handler(async () => {
-	const service = await import("#/lib/dashboard/server");
+	const service = await import("#/lib/dashboard/entry.server");
 	return loadLoginRouteState(service);
 });
 
@@ -244,8 +244,8 @@ export function LoginPageView({
 								</div>
 								{state.devUsers.map((user) => (
 									<a
-										key={user.subject}
-										href={`/auth/callback?subject=${encodeURIComponent(user.subject)}&email=${encodeURIComponent(user.email)}&redirect=${encodeURIComponent(redirectTo ?? "/")}`}
+										key={user.id}
+										href={`/auth/callback?user_id=${encodeURIComponent(user.id)}&email=${encodeURIComponent(user.email)}&redirect=${encodeURIComponent(redirectTo ?? "/")}`}
 										style={{
 											display: "flex",
 											alignItems: "center",
@@ -284,7 +284,7 @@ export function LoginPageView({
 													fontFamily: "var(--font-mono)",
 												}}
 											>
-												{user.subject}
+												{user.id}
 											</p>
 										</div>
 										<span

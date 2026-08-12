@@ -80,13 +80,12 @@ func (s *Store) upsertSourceBindingTx(ctx context.Context, tx *sql.Tx, rec sourc
 	}
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO source_bindings(
-			id, service_id, project_id, provider, repository_selector, tracked_ref,
+			id, service_id, provider, repository_selector, tracked_ref,
 			provider_repository_external_id, provider_scope_external_id, access_state,
 			build_recipe_json, resolved_at, fresh_until, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT(service_id) DO UPDATE
-		   SET project_id = excluded.project_id,
-		       provider = excluded.provider,
+		   SET provider = excluded.provider,
 		       repository_selector = excluded.repository_selector,
 		       tracked_ref = excluded.tracked_ref,
 		       provider_repository_external_id = excluded.provider_repository_external_id,
@@ -96,7 +95,7 @@ func (s *Store) upsertSourceBindingTx(ctx context.Context, tx *sql.Tx, rec sourc
 		       resolved_at = excluded.resolved_at,
 		       fresh_until = excluded.fresh_until,
 		       updated_at = excluded.updated_at`,
-		rec.ID, rec.ServiceID, rec.ProjectID, rec.Provider, rec.RepositorySelector, rec.TrackedRef,
+		rec.ID, rec.ServiceID, rec.Provider, rec.RepositorySelector, rec.TrackedRef,
 		rec.ProviderRepositoryExternalID, rec.ProviderScopeExternalID, rec.AccessState,
 		recipeJSON, rec.ResolvedAt, rec.FreshUntil, rec.CreatedAt, rec.UpdatedAt,
 	)
@@ -121,16 +120,18 @@ func (s *Store) sourceBindingByServiceIDQuerier(ctx context.Context, q serviceQu
 		recipeJSON []byte
 	)
 	err := q.QueryRowContext(ctx,
-		`SELECT id, service_id, project_id, provider, repository_selector, tracked_ref,
-		        provider_repository_external_id, provider_scope_external_id, access_state,
-		        build_recipe_json, resolved_at, fresh_until, created_at, updated_at
-		   FROM source_bindings
-		  WHERE service_id = $1`,
+		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
+		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
+		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
+		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
+		   JOIN environments e ON e.id = s.environment_id
+		  WHERE sb.service_id = $1`,
 		serviceID,
 	).Scan(
 		&rec.ID,
 		&rec.ServiceID,
 		&rec.ProjectID,
+		&rec.EnvironmentID,
 		&rec.Provider,
 		&rec.RepositorySelector,
 		&rec.TrackedRef,
@@ -155,14 +156,15 @@ func (s *Store) sourceBindingByServiceIDQuerier(ctx context.Context, q serviceQu
 
 func (s *Store) sourceBindingsForGitHubRepositoryAndRef(ctx context.Context, repositoryExternalID, trackedRef string) ([]sourceBindingRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, service_id, project_id, provider, repository_selector, tracked_ref,
-		        provider_repository_external_id, provider_scope_external_id, access_state,
-		        build_recipe_json, resolved_at, fresh_until, created_at, updated_at
-		   FROM source_bindings
-		  WHERE provider = 'github'
-		    AND provider_repository_external_id = $1
-		    AND tracked_ref = $2
-		  ORDER BY created_at ASC, id ASC`,
+		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
+		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
+		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
+		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
+		   JOIN environments e ON e.id = s.environment_id
+		  WHERE sb.provider = 'github'
+		    AND sb.provider_repository_external_id = $1
+		    AND sb.tracked_ref = $2
+		  ORDER BY sb.created_at ASC, sb.id ASC`,
 		strings.TrimSpace(repositoryExternalID), strings.TrimSpace(trackedRef),
 	)
 	if err != nil {
@@ -180,6 +182,7 @@ func (s *Store) sourceBindingsForGitHubRepositoryAndRef(ctx context.Context, rep
 			&rec.ID,
 			&rec.ServiceID,
 			&rec.ProjectID,
+			&rec.EnvironmentID,
 			&rec.Provider,
 			&rec.RepositorySelector,
 			&rec.TrackedRef,
@@ -205,13 +208,14 @@ func (s *Store) sourceBindingsForGitHubRepositoryAndRef(ctx context.Context, rep
 
 func (s *Store) sourceBindingsForProviderScope(ctx context.Context, provider, providerScopeExternalID string) ([]sourceBindingRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, service_id, project_id, provider, repository_selector, tracked_ref,
-		        provider_repository_external_id, provider_scope_external_id, access_state,
-		        build_recipe_json, resolved_at, fresh_until, created_at, updated_at
-		   FROM source_bindings
-		  WHERE provider = $1
-		    AND provider_scope_external_id = $2
-		  ORDER BY created_at ASC, id ASC`,
+		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
+		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
+		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
+		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
+		   JOIN environments e ON e.id = s.environment_id
+		  WHERE sb.provider = $1
+		    AND sb.provider_scope_external_id = $2
+		  ORDER BY sb.created_at ASC, sb.id ASC`,
 		strings.TrimSpace(provider), strings.TrimSpace(providerScopeExternalID),
 	)
 	if err != nil {
@@ -229,6 +233,7 @@ func (s *Store) sourceBindingsForProviderScope(ctx context.Context, provider, pr
 			&rec.ID,
 			&rec.ServiceID,
 			&rec.ProjectID,
+			&rec.EnvironmentID,
 			&rec.Provider,
 			&rec.RepositorySelector,
 			&rec.TrackedRef,
@@ -318,15 +323,26 @@ func (s *Store) upsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec sour
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = now
 	}
+	archiveSize := rec.ArchiveSizeBytes
+	if archiveSize <= 0 {
+		archiveSize = rec.ArchiveSize
+	}
+	if archiveSize <= 0 && rec.ArchiveTGZ != nil {
+		archiveSize = int64(len(rec.ArchiveTGZ))
+	}
+	archivePayload := rec.ArchiveTGZ
+	if archivePayload == nil {
+		archivePayload = []byte{}
+	}
 	rec.UpdatedAt = now
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO source_snapshots(
 			id, source_revision_id, provider, provider_repository_external_id, commit_sha,
-			digest, archive_tgz, ready, fetched_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			digest, object_key, archive_size_bytes, archive_tgz, ready, fetched_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT(source_revision_id) DO NOTHING`,
 		rec.ID, rec.SourceRevisionID, rec.Provider, rec.ProviderRepositoryExternalID, rec.CommitSHA,
-		rec.Digest, rec.ArchiveTGZ, rec.Ready, nullableTime(rec.FetchedAt), rec.CreatedAt, rec.UpdatedAt,
+		rec.Digest, rec.ObjectKey, archiveSize, archivePayload, rec.Ready, nullableTime(rec.FetchedAt), rec.CreatedAt, rec.UpdatedAt,
 	)
 	if err != nil {
 		return sourceSnapshotRecord{}, err
@@ -356,7 +372,7 @@ func (s *Store) sourceSnapshotByProviderRepoAndCommitTx(ctx context.Context, q s
 	var rec sourceSnapshotRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
-		        archive_tgz, ready, fetched_at, created_at, updated_at
+		        object_key, GREATEST(archive_size_bytes, octet_length(archive_tgz)), ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE provider = $1
 		    AND provider_repository_external_id = $2
@@ -369,7 +385,8 @@ func (s *Store) sourceSnapshotByProviderRepoAndCommitTx(ctx context.Context, q s
 		&rec.ProviderRepositoryExternalID,
 		&rec.CommitSHA,
 		&rec.Digest,
-		&rec.ArchiveTGZ,
+		&rec.ObjectKey,
+		&rec.ArchiveSizeBytes,
 		&rec.Ready,
 		&rec.FetchedAt,
 		&rec.CreatedAt,
@@ -378,6 +395,7 @@ func (s *Store) sourceSnapshotByProviderRepoAndCommitTx(ctx context.Context, q s
 	if err != nil {
 		return sourceSnapshotRecord{}, err
 	}
+	rec.ArchiveSize = rec.ArchiveSizeBytes
 	return rec, nil
 }
 
@@ -389,7 +407,7 @@ func (s *Store) sourceSnapshotByRevisionIDTx(ctx context.Context, q serviceQuery
 	var rec sourceSnapshotRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
-		        archive_tgz, ready, fetched_at, created_at, updated_at
+		        object_key, GREATEST(archive_size_bytes, octet_length(archive_tgz)), ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE source_revision_id = $1`,
 		sourceRevisionID,
@@ -400,7 +418,8 @@ func (s *Store) sourceSnapshotByRevisionIDTx(ctx context.Context, q serviceQuery
 		&rec.ProviderRepositoryExternalID,
 		&rec.CommitSHA,
 		&rec.Digest,
-		&rec.ArchiveTGZ,
+		&rec.ObjectKey,
+		&rec.ArchiveSizeBytes,
 		&rec.Ready,
 		&rec.FetchedAt,
 		&rec.CreatedAt,
@@ -419,6 +438,7 @@ func (s *Store) sourceSnapshotByRevisionIDTx(ctx context.Context, q serviceQuery
 		}
 		return s.sourceSnapshotByProviderRepoAndCommitTx(ctx, q, revision.Provider, revision.ProviderRepositoryExternalID, revision.CommitSHA)
 	}
+	rec.ArchiveSize = rec.ArchiveSizeBytes
 	return rec, nil
 }
 
@@ -453,7 +473,7 @@ func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (sour
 	var rec sourceSnapshotRecord
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
-		        archive_tgz, ready, fetched_at, created_at, updated_at
+		        object_key, GREATEST(archive_size_bytes, octet_length(archive_tgz)), ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE id = $1`,
 		snapshotID,
@@ -464,7 +484,8 @@ func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (sour
 		&rec.ProviderRepositoryExternalID,
 		&rec.CommitSHA,
 		&rec.Digest,
-		&rec.ArchiveTGZ,
+		&rec.ObjectKey,
+		&rec.ArchiveSizeBytes,
 		&rec.Ready,
 		&rec.FetchedAt,
 		&rec.CreatedAt,
@@ -473,5 +494,35 @@ func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (sour
 	if err != nil {
 		return sourceSnapshotRecord{}, err
 	}
+	rec.ArchiveSize = rec.ArchiveSizeBytes
 	return rec, nil
+}
+
+// sourceSnapshotArchiveChunk streams from the archive store for migrated
+// snapshots and retains a CockroachDB fallback for legacy rows.
+func (s *Store) sourceSnapshotArchiveChunk(ctx context.Context, snapshotID string, offset int64, limit int) ([]byte, error) {
+	if offset < 0 || limit <= 0 {
+		return nil, errors.New("invalid source snapshot archive range")
+	}
+	snapshot, err := s.sourceSnapshotByID(ctx, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.ObjectKey != "" {
+		if s.sourceArchives == nil {
+			return nil, errors.New("source archive store is not configured")
+		}
+		return s.sourceArchives.ReadRange(ctx, snapshot.ObjectKey, offset, limit)
+	}
+	var chunk []byte
+	err = s.db.QueryRowContext(ctx,
+		`SELECT substring(archive_tgz, $2, $3)
+		   FROM source_snapshots
+		  WHERE id = $1`,
+		snapshotID, offset+1, limit,
+	).Scan(&chunk)
+	if err != nil {
+		return nil, err
+	}
+	return chunk, nil
 }

@@ -33,30 +33,31 @@ const (
 )
 
 type containerRuntime struct {
-	containerID string
-	ifindex     uint32
-	ipv6        netip.Addr
-	projectID   uint32
-	innerMap    *ebpf.Map
-	ingressLink link.Link
-	egressLink  link.Link
+	containerID     string
+	ifindex         uint32
+	ipv6            netip.Addr
+	networkIdentity uint32
+	innerMap        *ebpf.Map
+	ingressLink     link.Link
+	egressLink      link.Link
 }
 
 type Manager struct {
-	cfg           config.MeshRuntimeConfig
-	labelKeys     meshlabels.Keys
-	objs          firewallObjects
-	wgIfindex     uint32
-	wgIngressLink link.Link
-	wgEgressLink  link.Link
-	containerd    *containerd.Client
-	cancel        context.CancelFunc
-	done          chan struct{}
-	mu            sync.Mutex
-	containers    map[string]*containerRuntime
-	staticByID    map[string]config.ContainerAssignment
-	seedByIP      map[[16]byte]firewallIdentityValue
-	localHostIP   [16]byte
+	cfg             config.MeshRuntimeConfig
+	labelKeys       meshlabels.Keys
+	objs            firewallObjects
+	wgIfindex       uint32
+	wgIngressLink   link.Link
+	wgEgressLink    link.Link
+	containerd      *containerd.Client
+	cancel          context.CancelFunc
+	done            chan struct{}
+	mu              sync.Mutex
+	containers      map[string]*containerRuntime
+	staticByID      map[string]config.ContainerAssignment
+	seedByIP        map[[16]byte]firewallIdentityValue
+	configuredByKey map[firewallIdentityKey]firewallIdentityValue
+	localHostIP     [16]byte
 }
 
 func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retErr error) {
@@ -112,31 +113,32 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 	if err := objs.LocalNodeMap.Put(zero, localHostIP); err != nil {
 		return nil, fmt.Errorf("set local host map: %w", err)
 	}
+	configuredSeeds, err := configuredIdentities(cfg)
+	if err != nil {
+		return nil, err
+	}
 	seedByIP := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
-	for _, seed := range cfg.Containerd.IdentitySeeds {
-		seedIP, err := netip.ParseAddr(seed.IPv6)
-		if err != nil || !seedIP.Is6() {
-			return nil, fmt.Errorf("parse containerd identity seed ip %q: %w", seed.IPv6, err)
-		}
-		hostIP, err := netip.ParseAddr(seed.HostIPv6)
-		if err != nil || !hostIP.Is6() {
-			return nil, fmt.Errorf("parse containerd identity seed host ip %q: %w", seed.HostIPv6, err)
-		}
-
-		seedIP16 := addrAs16(seedIP)
+	configuredByKey := make(map[firewallIdentityKey]firewallIdentityValue, len(configuredSeeds))
+	for _, seed := range configuredSeeds {
+		seedIP16 := addrAs16(seed.prefix.Addr())
 		value := firewallIdentityValue{
-			ProjectId:   seed.ProjectID,
-			HostIp:      addrAs16(hostIP),
-			VethIfindex: 0,
+			NetworkIdentity: seed.networkIdentity,
+			VethIfindex:     0,
+		}
+		if seed.hostIPv6.IsValid() {
+			value.HostIp = addrAs16(seed.hostIPv6)
 		}
 		key := firewallIdentityKey{
-			Prefixlen: uint32(128),
+			Prefixlen: uint32(seed.prefix.Bits()),
 			IpAddress: seedIP16,
 		}
 		if err := objs.ClusterIdentityTrie.Put(key, value); err != nil {
-			return nil, fmt.Errorf("seed identity trie for ip %s: %w", seedIP.String(), err)
+			return nil, fmt.Errorf("seed identity trie for prefix %s: %w", seed.prefix.String(), err)
 		}
-		seedByIP[seedIP16] = value
+		configuredByKey[key] = value
+		if seed.prefix.Bits() == 128 {
+			seedByIP[seedIP16] = value
+		}
 	}
 	wgIfindex := uint32(wgIface.Index)
 	if err := objs.InterfaceRoleMap.Put(wgIfindex, roleWireGuard); err != nil {
@@ -196,19 +198,20 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 
 	eventsCtx, cancel := context.WithCancel(ctx)
 	m := &Manager{
-		cfg:           cfg,
-		labelKeys:     cfg.Containerd.LabelKeys(),
-		objs:          objs,
-		wgIfindex:     wgIfindex,
-		wgIngressLink: wgIngress,
-		wgEgressLink:  wgEgress,
-		containerd:    client,
-		cancel:        cancel,
-		done:          make(chan struct{}),
-		containers:    make(map[string]*containerRuntime),
-		staticByID:    staticByID,
-		seedByIP:      seedByIP,
-		localHostIP:   localHostIP,
+		cfg:             cfg,
+		labelKeys:       cfg.Containerd.LabelKeys(),
+		objs:            objs,
+		wgIfindex:       wgIfindex,
+		wgIngressLink:   wgIngress,
+		wgEgressLink:    wgEgress,
+		containerd:      client,
+		cancel:          cancel,
+		done:            make(chan struct{}),
+		containers:      make(map[string]*containerRuntime),
+		staticByID:      staticByID,
+		seedByIP:        seedByIP,
+		configuredByKey: configuredByKey,
+		localHostIP:     localHostIP,
 	}
 
 	cleanupObjs = false
@@ -218,6 +221,72 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 
 	go m.eventLoop(eventsCtx)
 	return m, nil
+}
+
+// UpdateIdentityCatalog changes the configured identity catalog in the
+// existing BPF map. Local container entries take precedence and are restored
+// to the latest configured value when their container exits.
+func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
+	if m == nil {
+		return errors.New("firewall manager is not running")
+	}
+	configured, err := configuredIdentities(cfg)
+	if err != nil {
+		return err
+	}
+	next := make(map[firewallIdentityKey]firewallIdentityValue, len(configured))
+	nextSeeds := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
+	for _, seed := range configured {
+		key := firewallIdentityKey{Prefixlen: uint32(seed.prefix.Bits()), IpAddress: addrAs16(seed.prefix.Addr())}
+		value := firewallIdentityValue{NetworkIdentity: seed.networkIdentity, VethIfindex: 0}
+		if seed.hostIPv6.IsValid() {
+			value.HostIp = addrAs16(seed.hostIPv6)
+		}
+		next[key] = value
+		if key.Prefixlen == 128 {
+			nextSeeds[key.IpAddress] = value
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	local := make(map[[16]byte]struct{}, len(m.containers))
+	for _, runtime := range m.containers {
+		if runtime != nil && runtime.ipv6.IsValid() && runtime.ipv6.Is6() {
+			local[addrAs16(runtime.ipv6)] = struct{}{}
+		}
+	}
+	for key := range m.configuredByKey {
+		if _, retained := next[key]; retained {
+			continue
+		}
+		if key.Prefixlen == 128 {
+			if _, overridden := local[key.IpAddress]; overridden {
+				continue
+			}
+		}
+		if err := m.objs.ClusterIdentityTrie.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			return fmt.Errorf("delete identity trie entry for %s: %w", netip.AddrFrom16(key.IpAddress), err)
+		}
+	}
+	for key, value := range next {
+		if key.Prefixlen == 128 {
+			if _, overridden := local[key.IpAddress]; overridden {
+				continue
+			}
+		}
+		if current, exists := m.configuredByKey[key]; exists && current == value {
+			continue
+		}
+		if err := m.objs.ClusterIdentityTrie.Put(key, value); err != nil {
+			return fmt.Errorf("update identity trie entry for %s: %w", netip.AddrFrom16(key.IpAddress), err)
+		}
+	}
+	m.configuredByKey = next
+	m.seedByIP = nextSeeds
+	m.cfg = cfg
+	return nil
 }
 
 func (m *Manager) eventLoop(ctx context.Context) {
@@ -365,8 +434,8 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	policy := firewallContainerPolicy{
-		ProjectId: identity.ProjectID,
-		Ipv6:      addrAs16(identity.IPv6),
+		NetworkIdentity: identity.NetworkIdentity,
+		Ipv6:            addrAs16(identity.IPv6),
 	}
 	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
@@ -385,9 +454,9 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		IpAddress: addrAs16(identity.IPv6),
 	}
 	identityValue := firewallIdentityValue{
-		ProjectId:   identity.ProjectID,
-		HostIp:      m.localHostIP,
-		VethIfindex: ifKey,
+		NetworkIdentity: identity.NetworkIdentity,
+		HostIp:          m.localHostIP,
+		VethIfindex:     ifKey,
 	}
 	if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
 		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
@@ -427,20 +496,20 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	runtime := &containerRuntime{
-		containerID: evt.ContainerID,
-		ifindex:     ifKey,
-		ipv6:        identity.IPv6,
-		projectID:   identity.ProjectID,
-		innerMap:    innerMap,
-		ingressLink: ingress,
-		egressLink:  egress,
+		containerID:     evt.ContainerID,
+		ifindex:         ifKey,
+		ipv6:            identity.IPv6,
+		networkIdentity: identity.NetworkIdentity,
+		innerMap:        innerMap,
+		ingressLink:     ingress,
+		egressLink:      egress,
 	}
 	m.containers[evt.ContainerID] = runtime
 	slog.Info("container firewall attached",
 		"container", evt.ContainerID,
 		"pid", evt.Pid,
 		"ifindex", ifindex,
-		"projectID", identity.ProjectID,
+		"networkIdentity", identity.NetworkIdentity,
 		"ipv6", identity.IPv6.String(),
 	)
 
@@ -526,8 +595,8 @@ func (m *Manager) resolveContainerIdentity(ctx context.Context, containerID stri
 			return meshlabels.Identity{}, fmt.Errorf("static assignment invalid ipv6 for %s: %w", containerID, err)
 		}
 		return meshlabels.Identity{
-			ProjectID: assignment.ProjectID,
-			IPv6:      ip,
+			NetworkIdentity: assignment.NetworkIdentity,
+			IPv6:            ip,
 		}, nil
 	}
 

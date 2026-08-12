@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -17,6 +18,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+const sourceSnapshotChunkBytes = 64 << 10
+
 type BuilderService struct {
 	platformv1.UnimplementedBuilderServiceServer
 	store    *Store
@@ -25,12 +28,13 @@ type BuilderService struct {
 	}
 	registry interface {
 		Enabled() bool
-		PushRef(projectID, serviceID, commitSHA string) string
+		PushRef(projectID, environmentID, buildID, serviceID, commitSHA string) string
 	}
 	credentials interface {
-		CredentialsForPushRef(pushRef string) (string, string, error)
+		CredentialsForBuild(ctx context.Context, projectID, buildID, pushRef string) (string, string, error)
 	}
 	emitter    *LogEmitter
+	events     *PlatformEvents
 	staleAfter time.Duration
 }
 
@@ -45,6 +49,12 @@ type BuilderServiceOption func(*BuilderService)
 func WithBuilderLogEmitter(emitter *LogEmitter) BuilderServiceOption {
 	return func(s *BuilderService) {
 		s.emitter = emitter
+	}
+}
+
+func WithBuilderPlatformEvents(events *PlatformEvents) BuilderServiceOption {
+	return func(s *BuilderService) {
+		s.events = events
 	}
 }
 
@@ -81,6 +91,7 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 		return &platformv1.BuildJob{}, nil
 	}
 	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
+	s.events.Publish(build.EnvironmentID)
 	if s.store == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
@@ -91,8 +102,8 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 	if build.SourceSnapshotID == "" {
 		return nil, status.Error(codes.FailedPrecondition, "build source snapshot is missing")
 	}
-	pushRef := s.registry.PushRef(service.ProjectID, service.ID, build.CommitSHA)
-	registryUsername, registryPassword, err := s.credentials.CredentialsForPushRef(pushRef)
+	pushRef := s.registry.PushRef(service.ProjectID, service.EnvironmentID, build.ID, service.ID, build.CommitSHA)
+	registryUsername, registryPassword, err := s.credentials.CredentialsForBuild(ctx, service.ProjectID, build.ID, pushRef)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "resolve registry credentials: %v", err)
 	}
@@ -101,6 +112,7 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 		BuildId:               build.ID,
 		ServiceId:             service.ID,
 		ProjectId:             service.ProjectID,
+		EnvironmentId:         service.EnvironmentID,
 		ServiceName:           service.Name,
 		CommitSha:             build.CommitSHA,
 		Source:                buildJobSourceFromRecord(build),
@@ -110,41 +122,77 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 	}, nil
 }
 
-func (s *BuilderService) DownloadSourceSnapshot(ctx context.Context, req *platformv1.DownloadSourceSnapshotRequest) (*platformv1.SourceSnapshotArtifact, error) {
+func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSnapshotRequest, stream platformv1.BuilderService_DownloadSourceSnapshotServer) error {
+	ctx := stream.Context()
 	caller, err := ServiceCallerFromContext(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	builderID, err := authenticatedBuilderID(caller, "")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	snapshotID := req.GetSnapshotId()
 	if snapshotID == "" {
-		return nil, status.Error(codes.InvalidArgument, "snapshot id is required")
+		return status.Error(codes.InvalidArgument, "snapshot id is required")
 	}
 	owned, err := s.store.builderOwnsSourceSnapshot(ctx, builderID, snapshotID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "authorize source snapshot: %v", err)
+		return status.Errorf(codes.Internal, "authorize source snapshot: %v", err)
 	}
 	if !owned {
-		return nil, status.Error(codes.PermissionDenied, "source snapshot is not assigned to this builder")
+		return status.Error(codes.PermissionDenied, "source snapshot is not assigned to this builder")
 	}
 	snapshot, err := s.store.sourceSnapshotByID(ctx, snapshotID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Error(codes.NotFound, "source snapshot not found")
+			return status.Error(codes.NotFound, "source snapshot not found")
 		}
-		return nil, status.Errorf(codes.Internal, "load source snapshot: %v", err)
+		return status.Errorf(codes.Internal, "load source snapshot metadata: %v", err)
 	}
 	if err := ensureReadySnapshot(snapshot); err != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "source snapshot not ready: %v", err)
+		return status.Errorf(codes.FailedPrecondition, "source snapshot not ready: %v", err)
 	}
-	return &platformv1.SourceSnapshotArtifact{
-		SnapshotId: snapshot.ID,
-		Digest:     snapshot.Digest,
-		ArchiveTgz: snapshot.ArchiveTGZ,
-	}, nil
+	if snapshot.ArchiveSize > maxSourceArchiveCompressedBytes {
+		return status.Error(codes.ResourceExhausted, "source snapshot exceeds compressed size limit")
+	}
+	if !strings.HasPrefix(snapshot.Digest, "sha256:") || len(snapshot.Digest) != len("sha256:")+sha256.Size*2 {
+		return status.Error(codes.DataLoss, "source snapshot digest is invalid")
+	}
+
+	hash := sha256.New()
+	for offset := int64(0); offset < snapshot.ArchiveSize; {
+		remaining := snapshot.ArchiveSize - offset
+		limit := sourceSnapshotChunkBytes
+		if remaining < int64(limit) {
+			limit = int(remaining)
+		}
+		chunk, err := s.store.sourceSnapshotArchiveChunk(ctx, snapshot.ID, offset, limit)
+		if err != nil {
+			return status.Errorf(codes.Internal, "read source snapshot chunk: %v", err)
+		}
+		if len(chunk) == 0 || len(chunk) > limit {
+			return status.Error(codes.DataLoss, "source snapshot archive changed while streaming")
+		}
+		if _, err := hash.Write(chunk); err != nil {
+			return status.Errorf(codes.Internal, "hash source snapshot chunk: %v", err)
+		}
+		if err := stream.Send(&platformv1.SourceSnapshotChunk{
+			SnapshotId: snapshot.ID,
+			Digest:     snapshot.Digest,
+			TotalSize:  snapshot.ArchiveSize,
+			Offset:     offset,
+			Data:       chunk,
+		}); err != nil {
+			return err
+		}
+		offset += int64(len(chunk))
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if actualDigest != snapshot.Digest {
+		return status.Error(codes.DataLoss, "source snapshot digest verification failed")
+	}
+	return nil
 }
 
 func (s *BuilderService) ReportBuildHeartbeat(ctx context.Context, req *platformv1.BuilderHeartbeatRequest) (*emptypb.Empty, error) {
@@ -233,7 +281,7 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 		if s.registry == nil || !s.registry.Enabled() {
 			return nil, status.Error(codes.FailedPrecondition, "registry policy is not configured")
 		}
-		pushRef := s.registry.PushRef(build.ProjectID, build.ServiceID, build.CommitSHA)
+		pushRef := s.registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA)
 		if err := validateRuntimeImageRef(pushRef, req.GetImageDigest()); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "image_digest: %v", err)
 		}
@@ -267,6 +315,7 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 	if agentID != "" && s.notifier != nil {
 		s.notifier.Notify(agentID)
 	}
+	s.events.Publish(build.EnvironmentID)
 	return &emptypb.Empty{}, nil
 }
 

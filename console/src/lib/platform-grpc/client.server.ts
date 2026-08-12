@@ -14,11 +14,14 @@ import type {
 	CreateServiceRequest,
 	DeleteDomainBindingRequest,
 	DiscardServiceChangesRequest,
-	EnsurePrincipalRequest,
+	GenerateDomainBindingRequest,
+	GetEnvironmentRequest,
 	GetServiceRequest,
 	GetServiceStatusRequest,
 	InspectSourceRequest,
+	LinkGitHubRepositoryRequest,
 	ListDomainBindingsRequest,
+	ListEnvironmentsRequest,
 	ListServiceDeploymentsRequest,
 	ListServiceLogsRequest,
 	ListServicesRequest,
@@ -29,10 +32,10 @@ import type {
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
 	RedeployServiceRequest,
-	RequestDomainOwnershipChallengeRequest,
 	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
+import { createPlatformUserAssertion } from "#/lib/platform-grpc/user-assertion.server";
 
 let clientInstance: PlatformClient | undefined;
 let opsClientInstance: OpsClient | undefined;
@@ -46,8 +49,13 @@ export async function unaryCall<M extends PlatformMethod>(
 	const client = getPlatformClient(runtime);
 	const metadata = new grpc.Metadata();
 	if (user) {
-		metadata.set("x-platform-user-subject", user.subject);
-		metadata.set("x-platform-user-email", user.email);
+		metadata.set(
+			"x-platform-user-assertion",
+			createPlatformUserAssertion({
+				secret: runtime.userAssertionSecret,
+				userId: user.id,
+			}),
+		);
 	}
 
 	try {
@@ -61,13 +69,6 @@ export async function unaryCall<M extends PlatformMethod>(
 			};
 
 			switch (method) {
-				case "EnsurePrincipal":
-					client.EnsurePrincipal(
-						request as EnsurePrincipalRequest,
-						metadata,
-						handleResponse,
-					);
-					return;
 				case "ListProjects":
 					client.ListProjects(
 						request as Record<string, never>,
@@ -78,6 +79,34 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "CreateProject":
 					client.CreateProject(
 						request as CreateProjectRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "ListEnvironments":
+					client.ListEnvironments(
+						request as ListEnvironmentsRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "GetEnvironment":
+					client.GetEnvironment(
+						request as GetEnvironmentRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "CreateEnvironment":
+				case "DuplicateEnvironment":
+				case "RenameEnvironment":
+				case "DeleteEnvironment":
+				case "DeployEnvironment":
+					client[method](request as never, metadata, handleResponse);
+					return;
+				case "LinkGitHubRepository":
+					client.LinkGitHubRepository(
+						request as LinkGitHubRepositoryRequest,
 						metadata,
 						handleResponse,
 					);
@@ -159,9 +188,9 @@ export async function unaryCall<M extends PlatformMethod>(
 						handleResponse,
 					);
 					return;
-				case "RequestDomainOwnershipChallenge":
-					client.RequestDomainOwnershipChallenge(
-						request as RequestDomainOwnershipChallengeRequest,
+				case "GenerateDomainBinding":
+					client.GenerateDomainBinding(
+						request as GenerateDomainBindingRequest,
 						metadata,
 						handleResponse,
 					);

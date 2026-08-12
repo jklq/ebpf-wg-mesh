@@ -42,12 +42,21 @@ type TLSAuthority struct {
 	caPEM         []byte
 	serverCert    tls.Certificate
 	clientCertTTL time.Duration
+	revocations   *CertificateRevocations
 }
 
 func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
 	pkiDir := filepath.Join(cfg.StateDir, pkiDirName)
 	if err := os.MkdirAll(pkiDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir pki dir: %w", err)
+	}
+	revocationFile := strings.TrimSpace(cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile)
+	if revocationFile == "" {
+		revocationFile = filepath.Join(pkiDir, "revoked-client-cert-serials.txt")
+	}
+	revocations, err := NewCertificateRevocations(revocationFile)
+	if err != nil {
+		return nil, err
 	}
 
 	caCert, caKey, caPEM, err := loadOrCreateCA(pkiDir)
@@ -72,6 +81,7 @@ func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
 		caPEM:         caPEM,
 		serverCert:    serverCert,
 		clientCertTTL: time.Duration(cfg.InternalGRPC.TLS.ClientCertValidityHours) * time.Hour,
+		revocations:   revocations,
 	}, nil
 }
 
@@ -83,6 +93,12 @@ func (a *TLSAuthority) TransportCredentials() (credentials.TransportCredentials,
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 		ClientCAs:    pool,
 		MinVersion:   tls.VersionTLS13,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return nil
+			}
+			return a.revocations.Check(state.PeerCertificates[0])
+		},
 	}), nil
 }
 
@@ -91,7 +107,30 @@ func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest) (*agentv1.EnrollRespon
 	if agentID == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
-	block, _ := pem.Decode([]byte(req.GetCsrPem()))
+	csr, err := parseClientCSR(req.GetCsrPem())
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(csr.Subject.CommonName) != agentID {
+		return nil, status.Error(codes.InvalidArgument, "csr common name must match agent_id")
+	}
+	return a.issueClientCertificate(serviceCallerAgent, agentID, csr.PublicKey)
+}
+
+func (a *TLSAuthority) IssueManagedDashboardCertificate(id, csrPEM string) (*agentv1.EnrollResponse, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, status.Error(codes.FailedPrecondition, "managed dashboard caller id is not configured")
+	}
+	csr, err := parseClientCSR(csrPEM)
+	if err != nil {
+		return nil, err
+	}
+	return a.issueClientCertificate(serviceCallerDashboard, id, csr.PublicKey)
+}
+
+func parseClientCSR(raw string) (*x509.CertificateRequest, error) {
+	block, _ := pem.Decode([]byte(raw))
 	if block == nil {
 		return nil, status.Error(codes.InvalidArgument, "decode csr")
 	}
@@ -102,17 +141,21 @@ func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest) (*agentv1.EnrollRespon
 	if err := csr.CheckSignature(); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "verify csr: %v", err)
 	}
-	if strings.TrimSpace(csr.Subject.CommonName) != agentID {
-		return nil, status.Error(codes.InvalidArgument, "csr common name must match agent_id")
-	}
+	return csr, nil
+}
 
+func (a *TLSAuthority) issueClientCertificate(class serviceCallerClass, id string, publicKey any) (*agentv1.EnrollResponse, error) {
 	now := time.Now().UTC()
 	notAfter := now.Add(a.clientCertTTL)
+	serial, err := randomCertificateSerial()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "create client certificate serial")
+	}
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(now.UnixNano()),
+		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:         agentID,
-			OrganizationalUnit: []string{string(serviceCallerAgent)},
+			CommonName:         id,
+			OrganizationalUnit: []string{string(class)},
 		},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              notAfter,
@@ -120,7 +163,7 @@ func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest) (*agentv1.EnrollRespon
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, a.caCert, csr.PublicKey, a.caKey)
+	certDER, err := x509.CreateCertificate(rand.Reader, template, a.caCert, publicKey, a.caKey)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "issue client certificate")
 	}
@@ -167,8 +210,12 @@ func (a *TLSAuthority) EnsureClientIdentity(class serviceCallerClass, id string)
 	}
 	now := time.Now().UTC()
 	notAfter := now.Add(a.clientCertTTL)
+	serial, err := randomCertificateSerial()
+	if err != nil {
+		return ClientIdentityMaterial{}, fmt.Errorf("create client certificate serial: %w", err)
+	}
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(now.UnixNano()),
+		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:         strings.TrimSpace(id),
 			OrganizationalUnit: []string{string(class)},
@@ -199,6 +246,19 @@ func (a *TLSAuthority) EnsureClientIdentity(class serviceCallerClass, id string)
 		KeyPEM:  keyPEM,
 		CAPEM:   append([]byte(nil), a.caPEM...),
 	}, nil
+}
+
+func randomCertificateSerial() (*big.Int, error) {
+	limit := new(big.Int).Lsh(big.NewInt(1), 128)
+	for {
+		serial, err := rand.Int(rand.Reader, limit)
+		if err != nil {
+			return nil, err
+		}
+		if serial.Sign() > 0 {
+			return serial, nil
+		}
+	}
 }
 
 func (a *TLSAuthority) EnsureDashboardClientIdentity(id string) (ClientIdentityMaterial, error) {

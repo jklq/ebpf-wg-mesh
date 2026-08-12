@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,7 @@ const (
 	failureKindProtocol = "protocol/reporting failure"
 
 	maxSourceArchiveCompressedBytes = 64 << 20
+	maxSourceArchiveChunkBytes      = 64 << 10
 	maxSourceArchiveExpandedBytes   = 1 << 30
 	maxSourceArchiveFileBytes       = 256 << 20
 	maxSourceArchiveEntries         = 100_000
@@ -212,19 +215,95 @@ func (a *App) materializeSourceSnapshot(ctx context.Context, job *platformv1.Bui
 	if source == nil || source.GetSourceSnapshotId() == "" {
 		return &buildFailureError{kind: failureKindFetch, err: errors.New("build job source snapshot is required")}
 	}
-	artifact, err := a.client.DownloadSourceSnapshot(ctx, &platformv1.DownloadSourceSnapshotRequest{
+	stream, err := a.client.DownloadSourceSnapshot(ctx, &platformv1.DownloadSourceSnapshotRequest{
 		SnapshotId: source.GetSourceSnapshotId(),
 	})
 	if err != nil {
 		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("download source snapshot: %w", err)}
 	}
-	if len(artifact.GetArchiveTgz()) == 0 {
-		return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot archive is empty")}
+	archiveFile, err := os.CreateTemp(filepath.Dir(repoDir), ".source-snapshot-*.tgz")
+	if err != nil {
+		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("create source snapshot file: %w", err)}
 	}
-	if digest := strings.TrimSpace(source.GetSourceSnapshotDigest()); digest != "" && digest != artifact.GetDigest() {
-		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest mismatch: job=%s artifact=%s", digest, artifact.GetDigest())}
+	archivePath := archiveFile.Name()
+	defer os.Remove(archivePath)
+
+	expectedSnapshotID := source.GetSourceSnapshotId()
+	expectedDigest := strings.TrimSpace(source.GetSourceSnapshotDigest())
+	var streamDigest string
+	hash := sha256.New()
+	var totalSize int64 = -1
+	var written int64
+	for {
+		chunk, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("receive source snapshot: %w", recvErr)}
+		}
+		if chunk.GetSnapshotId() != expectedSnapshotID {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot id changed while streaming")}
+		}
+		if totalSize < 0 {
+			totalSize = chunk.GetTotalSize()
+			streamDigest = strings.TrimSpace(chunk.GetDigest())
+			if totalSize <= 0 {
+				_ = archiveFile.Close()
+				return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot archive is empty")}
+			}
+			if totalSize > maxSourceArchiveCompressedBytes {
+				_ = archiveFile.Close()
+				return &buildFailureError{kind: failureKindFetch, err: errors.New("snapshot archive exceeds compressed size limit")}
+			}
+			if !strings.HasPrefix(streamDigest, "sha256:") || len(streamDigest) != len("sha256:")+sha256.Size*2 {
+				_ = archiveFile.Close()
+				return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot digest is invalid")}
+			}
+		}
+		if chunk.GetTotalSize() != totalSize || chunk.GetOffset() != written || chunk.GetDigest() != streamDigest {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot chunk metadata is inconsistent")}
+		}
+		if len(chunk.GetData()) == 0 || len(chunk.GetData()) > maxSourceArchiveChunkBytes {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot chunk exceeds size limit")}
+		}
+		if written+int64(len(chunk.GetData())) > totalSize {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot stream exceeds declared size")}
+		}
+		if expectedDigest != "" && chunk.GetDigest() != expectedDigest {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest mismatch: job=%s stream=%s", expectedDigest, chunk.GetDigest())}
+		}
+		n, err := archiveFile.Write(chunk.GetData())
+		if err != nil {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("write source snapshot: %w", err)}
+		}
+		if n != len(chunk.GetData()) {
+			_ = archiveFile.Close()
+			return &buildFailureError{kind: failureKindFetch, err: io.ErrShortWrite}
+		}
+		_, _ = hash.Write(chunk.GetData())
+		written += int64(len(chunk.GetData()))
 	}
-	if err := extractSourceSnapshot(repoDir, artifact.GetArchiveTgz()); err != nil {
+	if written == 0 || written != totalSize {
+		_ = archiveFile.Close()
+		return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot stream ended before declared size")}
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if actualDigest != streamDigest {
+		_ = archiveFile.Close()
+		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest verification failed: expected=%s actual=%s", streamDigest, actualDigest)}
+	}
+	if err := archiveFile.Close(); err != nil {
+		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("close source snapshot: %w", err)}
+	}
+	if err := extractSourceSnapshotFile(repoDir, archivePath, written); err != nil {
 		return &buildFailureError{kind: failureKindFetch, err: err}
 	}
 	return nil
@@ -294,6 +373,9 @@ func dockerBuildxCommand(dockerBinary, contextDir, repoDir, dockerfilePath, push
 		Args: []string{
 			"buildx", "build",
 			"--progress=plain",
+			// Help BuildKit / intermediate steps reach host services when a
+			// registry challenge still references host.docker.internal.
+			"--add-host", "host.docker.internal:host-gateway",
 			"--file", filepath.Join(repoDir, filepath.FromSlash(dockerfilePath)),
 			"--tag", pushRef,
 			"--push",
@@ -416,10 +498,26 @@ func safeChildPath(root, child string) (string, error) {
 }
 
 func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
-	if len(archiveTGZ) > maxSourceArchiveCompressedBytes {
+	return extractSourceSnapshotReader(repoDir, bytes.NewReader(archiveTGZ), int64(len(archiveTGZ)))
+}
+
+func extractSourceSnapshotFile(repoDir, archivePath string, compressedSize int64) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open snapshot archive file: %w", err)
+	}
+	defer file.Close()
+	return extractSourceSnapshotReader(repoDir, file, compressedSize)
+}
+
+func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSize int64) error {
+	if compressedSize <= 0 {
+		return errors.New("snapshot archive is empty")
+	}
+	if compressedSize > maxSourceArchiveCompressedBytes {
 		return errors.New("snapshot archive exceeds compressed size limit")
 	}
-	gzr, err := gzip.NewReader(bytes.NewReader(archiveTGZ))
+	gzr, err := gzip.NewReader(archive)
 	if err != nil {
 		return fmt.Errorf("open snapshot archive: %w", err)
 	}
@@ -640,6 +738,17 @@ func mergedDockerConfigJSON(baseDir, host, auth string) ([]byte, error) {
 	entry["auth"] = auth
 	auths[host] = entry
 	config["auths"] = auths
+
+	// A registry-specific helper takes precedence over auths, and Docker's
+	// global credsStore is otherwise used for every registry. An explicit empty
+	// helper selects the file-backed auth entry for this host while preserving
+	// helper-backed credentials for every other registry.
+	credentialHelpers, ok := config["credHelpers"].(map[string]any)
+	if !ok || credentialHelpers == nil {
+		credentialHelpers = map[string]any{}
+	}
+	credentialHelpers[host] = ""
+	config["credHelpers"] = credentialHelpers
 	return json.Marshal(config)
 }
 

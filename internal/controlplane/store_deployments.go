@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-func (s *Store) listServiceDeployments(ctx context.Context, subject, projectID, serviceID string, limit int32) ([]deploymentRecord, error) {
-	service, err := s.serviceByIDQuerier(ctx, s.db, subject, projectID, serviceID)
+func (s *Store) listServiceDeployments(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error) {
+	service, err := s.serviceByIDQuerier(ctx, s.db, userID, projectID, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,12 +71,10 @@ func (s *Store) listRolloutBackedDeployments(ctx context.Context, serviceID stri
 			r.spec_revision,
 			r.reason,
 			r.build_id,
-			r.requested_by_subject,
-			r.requested_by_email,
+			r.requested_by_user_id,
 			r.created_at,
 			COALESCE(b.id, ''),
 			COALESCE(b.service_id, ''),
-			COALESCE(b.project_id, ''),
 			COALESCE(b.commit_sha, ''),
 			COALESCE(b.commit_message, ''),
 			COALESCE(b.commit_author, ''),
@@ -117,12 +115,10 @@ func (s *Store) listRolloutBackedDeployments(ctx context.Context, serviceID stri
 			&rollout.SpecRevision,
 			&rollout.Reason,
 			&rollout.BuildID,
-			&rollout.RequestedBySubject,
-			&rollout.RequestedByEmail,
+			&rollout.RequestedByUserID,
 			&rollout.CreatedAt,
 			&build.ID,
 			&build.ServiceID,
-			&build.ProjectID,
 			&build.CommitSHA,
 			&build.CommitMessage,
 			&build.CommitAuthor,
@@ -152,15 +148,14 @@ func (s *Store) listRolloutBackedDeployments(ctx context.Context, serviceID stri
 			buildPtr = &buildCopy
 		}
 		out = append(out, deploymentRecord{
-			ID:                 deploymentRecordIDForRollout(rollout.ServiceID, rollout.RolloutGeneration),
-			ServiceID:          rollout.ServiceID,
-			RolloutGeneration:  rollout.RolloutGeneration,
-			SpecRevision:       rollout.SpecRevision,
-			Reason:             rollout.Reason,
-			CreatedAt:          rollout.CreatedAt,
-			Build:              buildPtr,
-			RequestedBySubject: rollout.RequestedBySubject,
-			RequestedByEmail:   rollout.RequestedByEmail,
+			ID:                deploymentRecordIDForRollout(rollout.ServiceID, rollout.RolloutGeneration),
+			ServiceID:         rollout.ServiceID,
+			RolloutGeneration: rollout.RolloutGeneration,
+			SpecRevision:      rollout.SpecRevision,
+			Reason:            rollout.Reason,
+			CreatedAt:         rollout.CreatedAt,
+			Build:             buildPtr,
+			RequestedByUserID: rollout.RequestedByUserID,
 		})
 	}
 	return out, rows.Err()

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -19,7 +20,9 @@ import (
 func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.T) {
 	t.Parallel()
 
+	var readinessRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		readinessRequests.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -45,6 +48,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 						"platform.service_id":                 "svc-1",
 						"platform.desired_spec_revision":      "2",
 						"platform.desired_rollout_generation": "3",
+						"platform.internal_hostname":          "accurate-reflection.mesh.internal",
 					},
 				},
 				NetworkSettings: fakeNetworkSettings(host, port, 8080),
@@ -69,7 +73,9 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 		Services: []*agentv1.DesiredService{{
 			AllocationId:             "alloc-1",
 			ServiceId:                "svc-1",
+			EnvironmentId:            "environment-1",
 			Name:                     "echo",
+			InternalHostname:         "accurate-reflection.mesh.internal",
 			DesiredSpecRevision:      2,
 			DesiredRolloutGeneration: 3,
 			VolumeId:                 "vol-1",
@@ -106,13 +112,57 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	if len(service.HealthyPorts) != 1 || service.HealthyPorts[0] != 8080 {
 		t.Fatalf("unexpected healthy ports %+v", service.HealthyPorts)
 	}
+	if _, err := runtime.Reconcile(context.Background(), state); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if got := readinessRequests.Load(); got != 1 {
+		t.Fatalf("expected readiness endpoint to be called once, got %d", got)
+	}
 	runArgs := runner.firstCommand("run")
-	assertArgContains(t, runArgs, "--network", "mesh-local")
+	assertArgContains(t, runArgs, "--network", runtime.environmentNetworkName("environment-1"))
+	assertArgContains(t, runArgs, "--network-alias", "accurate-reflection.mesh.internal")
+	assertArgContains(t, runArgs, "--network-alias", "accurate-reflection")
+	if !runner.hasCommand("network", "connect", "mesh-local", "localteststack-svc-alloc-1") {
+		t.Fatalf("expected ingress network connection, got commands %+v", runner.commands)
+	}
 	assertArgContains(t, runArgs, "--mount", "type=bind,src="+filepath.Join(dir, "volumes", "vol-1")+",dst="+localRuntimeVolumeMount)
 	assertArgContains(t, runArgs, "--publish", "127.0.0.1::8080")
 }
 
-func TestDockerRuntimeReconcileKeepsServiceStartingUntilHealthPasses(t *testing.T) {
+func TestDockerRuntimePullUsesEphemeralScopedCredentials(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	var authConfig map[string]any
+	runner.onRun = func(args []string) {
+		if len(args) < 4 || args[0] != "--config" || args[2] != "pull" {
+			return
+		}
+		raw, err := os.ReadFile(filepath.Join(args[1], "config.json"))
+		if err != nil {
+			t.Fatalf("read ephemeral docker config: %v", err)
+		}
+		if err := json.Unmarshal(raw, &authConfig); err != nil {
+			t.Fatalf("decode ephemeral docker config: %v", err)
+		}
+	}
+	runtime := &DockerRuntime{cfg: DockerRuntimeConfig{DataDir: dir}, runner: runner}
+	image := "localhost:5000/mesh/project/build/service@sha256:" + strings.Repeat("a", 64)
+	if err := runtime.ensureImage(context.Background(), image, "pull-agent", "scoped-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if authConfig == nil {
+		t.Fatal("authenticated pull did not receive a Docker config")
+	}
+	auths := authConfig["auths"].(map[string]any)
+	entry := auths["localhost:5000"].(map[string]any)
+	if entry["auth"] != "cHVsbC1hZ2VudDpzY29wZWQtc2VjcmV0" {
+		t.Fatalf("unexpected encoded auth %v", entry["auth"])
+	}
+}
+
+func TestDockerRuntimeReconcileWithoutHealthCheckIsReadyAfterStart(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -176,10 +226,10 @@ func TestDockerRuntimeReconcileKeepsServiceStartingUntilHealthPasses(t *testing.
 		t.Fatalf("expected Healthy phase, got %q", got)
 	}
 	if !report.Services[0].Healthy {
-		t.Fatalf("expected workload healthy %+v", report.Services[0])
+		t.Fatalf("expected running workload to be ready without a check %+v", report.Services[0])
 	}
-	if len(report.Services[0].HealthyPorts) != 0 {
-		t.Fatalf("expected no healthy ports %+v", report.Services[0])
+	if len(report.Services[0].HealthyPorts) != 1 || report.Services[0].HealthyPorts[0] != 8080 {
+		t.Fatalf("expected declared port to be routable %+v", report.Services[0])
 	}
 }
 
@@ -266,12 +316,17 @@ func (f *fakeDockerRunner) Run(_ context.Context, args ...string) ([]byte, error
 		return nil, fmt.Errorf("not found")
 	case len(args) >= 3 && args[0] == "network" && args[1] == "create":
 		return []byte("mesh-local"), nil
+	case len(args) >= 4 && args[0] == "network" && args[1] == "connect":
+		return []byte("connected"), nil
 	case len(args) >= 3 && args[0] == "image" && args[1] == "inspect":
 		if f.imageExists {
 			return []byte("{}"), nil
 		}
 		return nil, fmt.Errorf("not found")
 	case len(args) >= 2 && args[0] == "pull":
+		f.imageExists = true
+		return []byte("pulled"), nil
+	case len(args) >= 4 && args[0] == "--config" && args[2] == "pull":
 		f.imageExists = true
 		return []byte("pulled"), nil
 	case len(args) >= 2 && args[0] == "inspect":

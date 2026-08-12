@@ -1,11 +1,18 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const testUserAssertionHMACSecret = "test-user-assertion-secret-at-least-32-bytes"
 
 func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		Database: DatabaseConfig{
 			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		},
@@ -34,12 +41,46 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	if len(cfg.InternalGRPC.TLS.ServerNames) == 0 {
 		t.Fatal("expected default internal server names")
 	}
+	if got := cfg.Ingress.AdminListen; got != "127.0.0.1:2019" {
+		t.Fatalf("expected loopback Caddy admin listener, got %q", got)
+	}
+	if got, want := cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile, filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt"); got != want {
+		t.Fatalf("unexpected default client certificate revocation file %q, want %q", got, want)
+	}
+	if cfg.Failover.ReconcileIntervalSeconds != 5 || cfg.Failover.UnhealthyThresholdSeconds != 30 {
+		t.Fatalf("unexpected failover defaults: %+v", cfg.Failover)
+	}
+}
+
+func TestFinalizeControlPlaneRejectsNonLoopbackCaddyAdminWithoutOptIn(t *testing.T) {
+	t.Parallel()
+
+	base := ControlPlaneConfig{
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
+			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
+		}},
+		Ingress: IngressConfig{
+			AdminURL:    "http://10.0.0.2:2019/load",
+			AdminListen: ":2019",
+		},
+	}
+
+	if err := FinalizeControlPlane(&base); err == nil {
+		t.Fatal("expected non-loopback Caddy admin configuration to be rejected")
+	}
+	base.Ingress.AllowNonLoopbackAdmin = true
+	if err := FinalizeControlPlane(&base); err != nil {
+		t.Fatalf("expected explicit non-loopback opt-in to pass: %v", err)
+	}
 }
 
 func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
@@ -80,6 +121,7 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
@@ -101,9 +143,10 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 			Image:            "ghcr.io/example/dashboard:latest",
 			ProjectSystemKey: "mesh",
 			ServiceName:      "dashboard",
+			ServiceCallerID:  "dashboard",
+			TrustedAgentID:   "trusted-dashboard-node",
 			PublicDomain:     "dashboard.example.test",
 			ControlPlaneAddr: "controlplane:9443",
-			JWTSecret:        "dashboard-jwt-secret",
 		},
 		GitHub: GitHubAppConfig{
 			Enabled:       true,
@@ -114,9 +157,7 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 			WebBaseURL:    "https://github.com",
 		},
 		Registry: RegistryConfig{
-			Host:     "ghcr.io",
-			Username: "registry-user",
-			Password: "registry-password",
+			Host: "registry.example.test",
 		},
 		Mesh: ControlPlaneMeshConfig{
 			InterfaceName:    "wg0",
@@ -180,6 +221,7 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
@@ -214,6 +256,64 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 	}
 	if got := err.Error(); got != "controlplane.registry.host is required when GitHub is enabled" {
 		t.Fatalf("unexpected error %q", got)
+	}
+}
+
+func TestFinalizeControlPlaneRejectsInvalidRegistryAuthListen(t *testing.T) {
+	t.Parallel()
+
+	cfg := validControlPlaneConfigForRegistryTest()
+	cfg.Registry.AuthListen = "not a tcp address"
+	err := FinalizeControlPlane(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "controlplane.registry.authListen") {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+func TestFinalizeControlPlaneRejectsLongLivedRegistryCredentials(t *testing.T) {
+	t.Parallel()
+
+	cfg := validControlPlaneConfigForRegistryTest()
+	cfg.Registry.CredentialTTLSeconds = 901
+	err := FinalizeControlPlane(&cfg)
+	if err == nil || err.Error() != "controlplane.registry.credentialTTLSeconds must be between 60 and 900" {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+func validControlPlaneConfigForRegistryTest() ControlPlaneConfig {
+	return ControlPlaneConfig{
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		InternalGRPC: ListenerConfig{
+			Listen: "127.0.0.1:9443",
+			TLS: ServerTLSConfig{
+				ServerNames:             []string{"controlplane"},
+				BootstrapTokens:         []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
+				ServerCertValidityHours: 24,
+				ClientCertValidityHours: 24,
+			},
+		},
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		StateDir: "var/controlplane",
+		Ingress:  IngressConfig{PublicAddr: "platform.example.test"},
+		GitHub: GitHubAppConfig{
+			Enabled:       true,
+			AppID:         123,
+			WebhookSecret: "secret",
+			PrivateKeyPEM: "pem",
+			APIBaseURL:    "https://api.github.com",
+			WebBaseURL:    "https://github.com",
+		},
+		Registry: RegistryConfig{
+			Host:                 "registry.example.test",
+			CredentialTTLSeconds: 300,
+		},
+		Mesh: ControlPlaneMeshConfig{
+			InterfaceName:    "wg0",
+			ListenPort:       51820,
+			NetworkCIDR:      "fd00:44::/64",
+			WorkloadPoolCIDR: "fd00:200::/48",
+		},
 	}
 }
 

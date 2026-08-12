@@ -124,7 +124,7 @@ func (s *streamLogSink) run() {
 }
 
 type containerLogWriter struct {
-	projectID         string
+	environmentID     string
 	serviceID         string
 	allocationID      string
 	stream            string
@@ -184,7 +184,7 @@ func (w *containerLogWriter) emitLocked() {
 	}
 	sink.AppendLog(&agentv1.LogEntry{
 		ObservedAt:        timestamppb.Now(),
-		ProjectId:         w.projectID,
+		EnvironmentId:     w.environmentID,
 		ServiceId:         w.serviceID,
 		AllocationId:      w.allocationID,
 		Stream:            w.stream,

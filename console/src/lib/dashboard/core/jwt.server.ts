@@ -22,7 +22,7 @@ interface DashboardTokenPayload {
 	aud: string;
 	typ: "access" | "refresh";
 	sub: string;
-	uid: string;
+	uid?: string;
 	email: string;
 	iat: number;
 	exp: number;
@@ -139,8 +139,7 @@ function signToken(
 		iss: DashboardJWTIssuer,
 		aud: DashboardJWTAudience,
 		typ: input.typ,
-		sub: input.user.subject,
-		uid: input.user.id,
+		sub: input.user.id,
 		email: input.user.email,
 		iat: toUnixTime(input.now),
 		exp: toUnixTime(input.expiresAt),
@@ -206,8 +205,8 @@ function sign(secret: string, value: string): string {
 
 function payloadUser(payload: DashboardTokenPayload): DashboardUser {
 	return {
-		id: payload.uid,
-		subject: payload.sub,
+		// uid is accepted only to rotate sessions issued before user IDs moved to sub.
+		id: payload.uid ?? payload.sub,
 		email: payload.email,
 	};
 }
@@ -245,11 +244,13 @@ function isDashboardTokenPayload(
 		typeof payload.iss !== "string" ||
 		typeof payload.aud !== "string" ||
 		typeof payload.sub !== "string" ||
-		typeof payload.uid !== "string" ||
 		typeof payload.email !== "string" ||
 		typeof payload.iat !== "number" ||
 		typeof payload.exp !== "number"
 	) {
+		return false;
+	}
+	if (payload.uid !== undefined && typeof payload.uid !== "string") {
 		return false;
 	}
 	if (expectedType === "refresh" && typeof payload.sid !== "string") {

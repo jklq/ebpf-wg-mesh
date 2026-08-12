@@ -1,10 +1,7 @@
 import { Code2, List, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type {
-	DashboardProject,
-	DashboardServiceRecord,
-} from "#/lib/dashboard/core/types.server";
+import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 
 import { doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
@@ -21,11 +18,9 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function PanelVariables({
 	service,
-	project,
 	onSaved,
 }: {
 	service: DashboardServiceRecord;
-	project: DashboardProject;
 	onSaved: (service: DashboardServiceRecord) => void;
 }) {
 	const savedEnvKey = stableEnvKey(service.spec?.runtime.env ?? {});
@@ -102,7 +97,6 @@ export function PanelVariables({
 		try {
 			const updated = await doUpdateService({
 				data: {
-					projectId: project.id,
 					serviceId: service.id,
 					runtimeEnv: parsed.env,
 				},
@@ -159,50 +153,50 @@ export function PanelVariables({
 						rows.map((row) => {
 							const isUnapplied = changedEnvKeys.has(row.key);
 							return (
-							<div
-								className={`variable-row ${isUnapplied ? "unapplied-field" : ""}`}
-								key={row.id}
-							>
-								<div>
-									<label className="field-label" htmlFor={`${row.id}-key`}>
-										Name
-									</label>
-									<input
-										id={`${row.id}-key`}
-										className={`field-input ${isUnapplied ? "unapplied-field" : ""}`}
-										value={row.key}
-										onChange={(event) =>
-											updateRow(row.id, "key", event.target.value)
-										}
-										placeholder="DATABASE_URL"
-										spellCheck={false}
-									/>
-								</div>
-								<div>
-									<label className="field-label" htmlFor={`${row.id}-value`}>
-										Value
-									</label>
-									<input
-										id={`${row.id}-value`}
-										className={`field-input ${isUnapplied ? "unapplied-field" : ""}`}
-										value={row.value}
-										onChange={(event) =>
-											updateRow(row.id, "value", event.target.value)
-										}
-										placeholder="value"
-										spellCheck={false}
-									/>
-								</div>
-								<button
-									type="button"
-									className="panel-icon-btn variable-remove"
-									onClick={() => removeRow(row.id)}
-									title="Remove variable"
-									aria-label="Remove variable"
+								<div
+									className={`variable-row ${isUnapplied ? "unapplied-field" : ""}`}
+									key={row.id}
 								>
-									<Trash2 size={13} />
-								</button>
-							</div>
+									<div>
+										<label className="field-label" htmlFor={`${row.id}-key`}>
+											Name
+										</label>
+										<input
+											id={`${row.id}-key`}
+											className={`field-input ${isUnapplied ? "unapplied-field" : ""}`}
+											value={row.key}
+											onChange={(event) =>
+												updateRow(row.id, "key", event.target.value)
+											}
+											placeholder="DATABASE_URL"
+											spellCheck={false}
+										/>
+									</div>
+									<div>
+										<label className="field-label" htmlFor={`${row.id}-value`}>
+											Value
+										</label>
+										<input
+											id={`${row.id}-value`}
+											className={`field-input ${isUnapplied ? "unapplied-field" : ""}`}
+											value={row.value}
+											onChange={(event) =>
+												updateRow(row.id, "value", event.target.value)
+											}
+											placeholder="value"
+											spellCheck={false}
+										/>
+									</div>
+									<button
+										type="button"
+										className="panel-icon-btn variable-remove"
+										onClick={() => removeRow(row.id)}
+										title="Remove variable"
+										aria-label="Remove variable"
+									>
+										<Trash2 size={13} />
+									</button>
+								</div>
 							);
 						})
 					)}

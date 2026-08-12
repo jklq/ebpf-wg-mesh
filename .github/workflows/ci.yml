@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: 1.26.5
+  BUN_VERSION: 1.3.11
+
+jobs:
+  unit:
+    name: Format, typecheck, and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install console dependencies
+        run: bun --cwd=console install --frozen-lockfile
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          files=$(gofmt -l $(git ls-files '*.go'))
+          test -z "$files" || { printf '%s\n' "$files"; exit 1; }
+      - name: Check console formatting and lint
+        run: bun --cwd=console run check
+      - name: Typecheck console
+        run: bun --cwd=console run typecheck
+      - name: Run Go unit tests
+        run: make test-unit-go
+      - name: Run console unit tests
+        run: make test-unit-console
+
+  integration:
+    name: CockroachDB integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install test tools and console dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep zsh
+          bun --cwd=console install --frozen-lockfile
+      - name: Run real CockroachDB integration suites
+        run: make test-integration
+
+  product-e2e:
+    name: Local product e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install console dependencies
+        run: bun --cwd=console install --frozen-lockfile
+      - name: Install Chromium and system dependencies
+        working-directory: console
+        run: bunx playwright install --with-deps chromium
+      - name: Run control-plane, agent, Docker, Caddy, ClickHouse, and browser e2e
+        run: make test-e2e-local
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-local-product
+          path: console/artifacts/e2e-local
+          if-no-files-found: warn
+          retention-days: 7

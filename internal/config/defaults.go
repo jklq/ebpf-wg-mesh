@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"runtime"
 
 	"ebof-wg-mesh/internal/meshlabels"
@@ -21,6 +22,15 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.StateDir == "" {
 		cfg.StateDir = "var/controlplane"
+	}
+	if cfg.SourceArchives.Directory == "" {
+		cfg.SourceArchives.Directory = filepath.Join(cfg.StateDir, "source-archives")
+	}
+	if cfg.SourceArchives.RetentionDays <= 0 {
+		cfg.SourceArchives.RetentionDays = 30
+	}
+	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
+		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
 	}
 	if cfg.Database.MaxOpenConns <= 0 {
 		cfg.Database.MaxOpenConns = maxInt(32, runtime.GOMAXPROCS(0)*8)
@@ -49,7 +59,7 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.Ingress.AdminURL = "http://127.0.0.1:2019/load"
 	}
 	if cfg.Ingress.AdminListen == "" {
-		cfg.Ingress.AdminListen = ":2019"
+		cfg.Ingress.AdminListen = "127.0.0.1:2019"
 	}
 	if len(cfg.Ingress.ListenAddrs) == 0 {
 		cfg.Ingress.ListenAddrs = []string{":80", ":443"}
@@ -111,8 +121,28 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.GitHub.WebhookPath == "" {
 		cfg.GitHub.WebhookPath = "/webhooks/github"
 	}
+	if cfg.Registry.CredentialTTLSeconds <= 0 {
+		cfg.Registry.CredentialTTLSeconds = 300
+	}
+	if cfg.Registry.Host != "" {
+		if cfg.Registry.AuthListen == "" {
+			cfg.Registry.AuthListen = "127.0.0.1:9444"
+		}
+		if cfg.Registry.TokenIssuer == "" {
+			cfg.Registry.TokenIssuer = "ebpf-wg-mesh"
+		}
+		if cfg.Registry.TokenService == "" {
+			cfg.Registry.TokenService = cfg.Registry.Host
+		}
+	}
 	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
 		cfg.Builder.HeartbeatTimeoutSeconds = 120
+	}
+	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
+		cfg.Failover.ReconcileIntervalSeconds = 5
+	}
+	if cfg.Failover.UnhealthyThresholdSeconds <= 0 {
+		cfg.Failover.UnhealthyThresholdSeconds = 30
 	}
 	if cfg.Mesh.InterfaceName == "" {
 		cfg.Mesh.InterfaceName = "wg0"
@@ -138,6 +168,12 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	if cfg.Node.Resources.MemoryMebibytes <= 0 {
 		cfg.Node.Resources.MemoryMebibytes = 4096
 	}
+	if cfg.Node.Resources.ReservedCPUMillis <= 0 {
+		cfg.Node.Resources.ReservedCPUMillis = 500
+	}
+	if cfg.Node.Resources.ReservedMemoryMebibytes <= 0 {
+		cfg.Node.Resources.ReservedMemoryMebibytes = 512
+	}
 	if cfg.ControlPlane.TLS.ServerName == "" {
 		cfg.ControlPlane.TLS.ServerName = "controlplane"
 	}
@@ -159,8 +195,8 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	if cfg.Containerd.Namespace == "" {
 		cfg.Containerd.Namespace = "default"
 	}
-	if cfg.Containerd.ProjectLabel == "" {
-		cfg.Containerd.ProjectLabel = meshlabels.DefaultProjectKey
+	if cfg.Containerd.EnvironmentLabel == "" {
+		cfg.Containerd.EnvironmentLabel = meshlabels.DefaultEnvironmentKey
 	}
 	if cfg.Containerd.IPv6Label == "" {
 		cfg.Containerd.IPv6Label = meshlabels.DefaultIPv6Key

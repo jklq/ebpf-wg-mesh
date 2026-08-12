@@ -243,6 +243,37 @@ func (s *Store) listGitHubRepositoryGrantsByName(ctx context.Context, owner, rep
 	return out, rows.Err()
 }
 
+func (s *Store) linkProjectGitHubRepository(ctx context.Context, projectID, userID string, view GitHubRepositoryView) error {
+	if projectID == "" || userID == "" || view.RepositoryID <= 0 || view.FullName == "" {
+		return errors.New("project, user, and repository are required")
+	}
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO project_github_repositories(
+			project_id, installation_id, repository_id, full_name, linked_by_user_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $6)
+		ON CONFLICT (project_id, full_name) DO UPDATE SET
+		   installation_id = excluded.installation_id,
+		   repository_id = excluded.repository_id,
+		   full_name = excluded.full_name,
+		   linked_by_user_id = excluded.linked_by_user_id,
+		   updated_at = excluded.updated_at`,
+		projectID, view.InstallationID, view.RepositoryID, strings.ToLower(view.FullName), userID, now,
+	)
+	return err
+}
+
+func (s *Store) projectGitHubRepositoryInstallation(ctx context.Context, projectID, owner, repo string) (int64, error) {
+	var installationID int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT installation_id
+		   FROM project_github_repositories
+		  WHERE project_id = $1 AND full_name = $2`,
+		projectID, githubFullName(owner, repo),
+	).Scan(&installationID)
+	return installationID, err
+}
+
 func (s *Store) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, eventType string, payload []byte) (bool, error) {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx,

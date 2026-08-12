@@ -23,14 +23,14 @@ flowchart LR
         platform["Single platform system\n(control plane + console + agents + builder + private mesh)"]
     end
 
-    operator -->|"uses browser console to manage projects, services, domains"| platform
+    operator -->|"uses browser console to manage projects and environment-owned services, volumes, and domains"| platform
     developer -->|"pushes source changes and installs/authorizes GitHub App"| github
     github -->|"OAuth login, repository metadata, installation grants, webhook deliveries"| platform
     platform -->|"GitHub API calls for user auth, repo inspection, installation sync, source snapshot coordination"| github
     platform -->|"stores platform state, dashboard sessions, onboarding metadata"| cockroach
     platform -->|"replaces public routing config via admin API"| caddy
     caddy -->|"routes public HTTP(S) traffic for console and deployed service domains"| platform
-    platform -->|"claims build jobs and pushes built images"| registry
+    platform -->|"mints exact-scope tokens; pushes and pulls built images"| registry
     platform -->|"invokes remote/local image builds"| buildkit
     platform -->|"agents maintain mTLS control stream and node-to-node WireGuard/eBPF fabric over IPv6 underlay"| underlay
     platform -->|"pulls images, reconciles runtime state, exposes services"| workloads
@@ -42,9 +42,17 @@ flowchart LR
 - The primary human actor is the platform operator using the browser console.
 - GitHub is both an identity/source-control dependency and an event source via webhooks.
 - CockroachDB is the authoritative persistent store for both control-plane data and console session/account data.
+- The console owns GitHub OAuth, canonical user profiles, cookies, and browser sessions in its own CockroachDB schema.
+- The console signs a 30-second user assertion for each platform RPC and sends it over mTLS. The control plane verifies its signature, issuer, audience, expiry, and subject, then authorizes the operation from user-ID memberships and roles without storing a duplicate user profile.
+- GitHub repository access is linked to a project. Repository inspection and deployment require that project-specific grant rather than any installation grant visible to the platform.
+- Projects own access and grouping; every deployable resource and private network belongs to one environment.
 - Caddy is external to the platform system boundary in this diagram because the control plane drives it through the admin API rather than owning it as an in-process component.
+- The Caddy admin listener and control-plane admin target are loopback-only by default. Remote administration requires an explicit unsafe-network opt-in and an operator-provided protected transport.
 - BuildKit and the container registry are separate external runtime dependencies used by the builder path.
+- Registry token minting and ACL decisions are embedded in the control plane. The external registry verifies signed access locally from the persisted control-plane trust certificate; no separate credential-broker service is required.
 - The node underlay network is shown as an external system because the retained WireGuard/eBPF mesh rides on top of host/network infrastructure rather than replacing it.
+- Desired state carries every allocated workload's IPv6, environment/network identity, and hosting node identity to every agent. Exact entries override a workload-pool deny prefix in the eBPF LPM trie, making unknown mesh destinations and cross-environment traffic fail closed.
+- Workload health comes from TCP/HTTP probe results rather than container existence. Production probe sockets originate inside the workload network namespace, only healthy ports become ingress backends, and probe failures remain visible as allocation phase and failure detail.
 
 ## Repo Mapping
 

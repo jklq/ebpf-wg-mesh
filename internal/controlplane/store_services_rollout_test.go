@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -19,7 +20,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +28,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
+	environmentID := productionEnvironmentID(t, store, projects[0].ID)
 
 	for _, id := range []string{"node-a", "node-b"} {
 		hello := agentHello(id)
@@ -47,7 +49,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 		name := name
 		go func() {
 			<-start
-			rec, err := store.createScheduledService(ctx, "user-1", projects[0].ID, name, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			rec, err := store.createScheduledService(ctx, "user-1", environmentID, name, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				Ports:           runtimePortsFromInts([]int32{8080}),
@@ -65,8 +67,12 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 	if second.err != nil {
 		t.Fatalf("second createScheduledService: %v", second.err)
 	}
-	if first.rec.AllocatedAgentID == second.rec.AllocatedAgentID {
-		t.Fatalf("expected placement to spread across agents, both services landed on %q", first.rec.AllocatedAgentID)
+	deployed, _, err := store.deployEnvironment(ctx, "user-1", environmentID)
+	if err != nil || len(deployed) != 2 {
+		t.Fatalf("deployEnvironment: %#v: %v", deployed, err)
+	}
+	if deployed[0].AllocatedAgentID == deployed[1].AllocatedAgentID {
+		t.Fatalf("expected placement to spread across agents, both services landed on %q", deployed[0].AllocatedAgentID)
 	}
 }
 
@@ -77,7 +83,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +95,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -150,7 +156,7 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -167,11 +173,10 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
 	})
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", spec, "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", spec, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-
 	updated, changed, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "", canonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService noop: %v", err)
@@ -198,6 +203,62 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	}
 }
 
+func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	for _, agentID := range []string{"node-1", "node-2"} {
+		if _, err := store.upsertAgent(ctx, agentHello(agentID)); err != nil {
+			t.Fatalf("upsertAgent(%s): %v", agentID, err)
+		}
+	}
+
+	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
+	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
+	environmentID := productionEnvironmentID(t, store, projects[0].ID)
+	service, err := store.createService(ctx, "user-1", environmentID, "web", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
+		t.Fatalf("expected node-1 revision %d after create, got %d", node1Before+1, got)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
+		t.Fatalf("service create did not refresh node-2 identity catalog: got %d want %d", got, node2Before+1)
+	}
+	node2State, err := store.desiredStateForAgent(ctx, "node-2")
+	if err != nil {
+		t.Fatalf("desiredStateForAgent(node-2): %v", err)
+	}
+	if len(node2State.GetServices()) != 0 {
+		t.Fatalf("unaffected node-2 received service-local desired state: %#v", node2State.GetServices())
+	}
+	identities := node2State.GetNodeConfig().GetWorkloadIdentities()
+	if len(identities) != 1 || identities[0].GetHostAgentId() != "node-1" {
+		t.Fatalf("node-2 did not receive the new cross-node identity: %#v", identities)
+	}
+
+	if err := store.deleteService(ctx, "user-1", environmentID, service.ID); err != nil {
+		t.Fatalf("deleteService: %v", err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+2 {
+		t.Fatalf("expected node-1 revision %d after delete, got %d", node1Before+2, got)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+2 {
+		t.Fatalf("service delete did not refresh node-2 network state: got %d want %d", got, node2Before+2)
+	}
+}
+
 func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	t.Parallel()
 
@@ -205,7 +266,7 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,10 +283,11 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
 	})
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", spec, "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", spec, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
+	beforeRevision := mustDesiredRevision(t, store, ctx, "node-1")
 
 	updated, changed, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "talented-harmony", canonicalServiceSpec(spec))
 	if err != nil {
@@ -240,6 +302,16 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if updated.SpecRevision != 1 || updated.RolloutGeneration != 1 {
 		t.Fatalf("expected rename to preserve revisions, got spec=%d rollout=%d", updated.SpecRevision, updated.RolloutGeneration)
 	}
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != beforeRevision+1 {
+		t.Fatalf("expected rename to refresh internal hosts, desired revision=%d want %d", got, beforeRevision+1)
+	}
+	desired, err := store.desiredStateForAgent(ctx, "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := desired.GetServices()[0].GetInternalHostname(); got != "talented-harmony.mesh.internal" {
+		t.Fatalf("renamed service kept internal hostname %q", got)
+	}
 }
 
 func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
@@ -249,7 +321,7 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +333,7 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -303,14 +375,13 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 	}
 }
 
-func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
+func TestDirectImageRedeployUpdatesDesiredImage(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
 	ctx := context.Background()
-
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +392,51 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("example.test/web:a", nil), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if _, _, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "", directImageServiceSpec("example.test/web:b", nil)); err != nil {
+		t.Fatalf("updateService: %v", err)
+	}
+	before, err := store.desiredStateForAgent(ctx, "node-1")
+	if err != nil {
+		t.Fatalf("desiredStateForAgent before redeploy: %v", err)
+	}
+	if got := before.GetServices()[0].GetSpec().GetImage(); got != "example.test/web:a" {
+		t.Fatalf("draft image leaked before redeploy: got %q", got)
+	}
+	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
+		t.Fatalf("redeployService: %v", err)
+	}
+	after, err := store.desiredStateForAgent(ctx, "node-1")
+	if err != nil {
+		t.Fatalf("desiredStateForAgent after redeploy: %v", err)
+	}
+	if got := after.GetServices()[0].GetSpec().GetImage(); got != "example.test/web:b" {
+		t.Fatalf("redeploy kept stale image: got %q", got)
+	}
+}
+
+func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -351,7 +466,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatal("expected createDomainBinding for deleted service to fail")
 	}
 
-	service, err = store.createService(ctx, "user-1", projects[0].ID, "web-2", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err = store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-2", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -368,7 +483,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatalf("expected revision bumped after createDomainBinding, got %d want %d", got, node1BeforeDomains+1)
 	}
 
-	otherService, err := store.createService(ctx, "user-1", projects[0].ID, "web-3", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	otherService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-3", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -432,7 +547,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -444,14 +559,14 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	routedService, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	routedService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService(routed): %v", err)
 	}
 	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", routedService.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
-	internalService, err := store.createService(ctx, "user-1", projects[0].ID, "worker", serviceSpec(), "node-1")
+	internalService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "worker", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService(internal): %v", err)
 	}
@@ -465,7 +580,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatalf("serviceStatus(internal): %v", err)
 	}
 
-	changed, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	changed, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        routedAlloc.ID,
@@ -482,7 +597,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if !changed {
 		t.Fatal("expected routed status change to trigger ingress update")
 	}
-	changed, err = store.recordStatusReport(ctx, "node-2", &agentv1.StatusReport{
+	changed, _, err = store.recordStatusReport(ctx, "node-2", &agentv1.StatusReport{
 		AgentId: "node-2",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: routedAlloc.ID,
@@ -504,15 +619,19 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agentByID: %v", err)
 	}
-	expectedAllocationIP, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.ProjectID, routedService.ID)
+	expectedAllocationIP, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.EnvironmentID, routedService.ID)
 	if err != nil {
 		t.Fatalf("privateIPv6: %v", err)
 	}
 	if routedAllocAfterForeignReport.AllocationIP != expectedAllocationIP || !routedAllocAfterForeignReport.Healthy {
 		t.Fatalf("foreign agent changed allocation state: %+v", routedAllocAfterForeignReport)
 	}
+	sentinelUpdatedAt := time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
+	if _, err := store.db.ExecContext(ctx, `UPDATE allocations SET updated_at = $1 WHERE id = $2`, sentinelUpdatedAt, routedAlloc.ID); err != nil {
+		t.Fatalf("set sentinel allocation updated_at: %v", err)
+	}
 
-	changed, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	changed, _, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        routedAlloc.ID,
@@ -529,8 +648,15 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if changed {
 		t.Fatal("expected unchanged routed status to skip ingress update")
 	}
+	_, routedAllocAfterUnchangedReport, err := store.serviceStatus(ctx, "user-1", projects[0].ID, routedService.ID)
+	if err != nil {
+		t.Fatalf("serviceStatus(after unchanged report): %v", err)
+	}
+	if !routedAllocAfterUnchangedReport.UpdatedAt.Equal(sentinelUpdatedAt) {
+		t.Fatalf("unchanged status rewrote allocation: updated_at = %v, want %v", routedAllocAfterUnchangedReport.UpdatedAt, sentinelUpdatedAt)
+	}
 
-	changed, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	changed, _, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        internalAlloc.ID,
@@ -556,7 +682,7 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +696,7 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-b")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.createService(ctx, "user-1", projects[0].ID, "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -598,7 +724,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +738,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.createService(ctx, "user-1", projects[0].ID, "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       400,
 		MemoryMebibytes: 256,
 		Ports:           runtimePortsFromInts([]int32{8080}),

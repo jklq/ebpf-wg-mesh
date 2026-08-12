@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
 )
 
 func TestAssignedNodeConfigSupportsClusterSizes(t *testing.T) {
@@ -67,6 +69,84 @@ func TestAssignedNodeConfigSupportsClusterSizes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	for i, host := range []string{"fd00:30::10", "fd00:30::11"} {
+		hello := testAgentHello(i + 1)
+		hello.AdvertiseAddr = host
+		if _, err := store.upsertAgent(ctx, hello); err != nil {
+			t.Fatalf("upsertAgent: %v", err)
+		}
+	}
+	services := make([]serviceRecord, 0, 2)
+	for i, agentID := range []string{"node-1", "node-2"} {
+		service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), fmt.Sprintf("web-%d", i+1), directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			Ports: runtimePortsFromInts([]int32{8080}),
+		}), agentID)
+		if err != nil {
+			t.Fatalf("createService(%s): %v", agentID, err)
+		}
+		services = append(services, service)
+	}
+
+	for _, agentID := range []string{"node-1", "node-2"} {
+		state, err := store.desiredStateForAgent(ctx, agentID)
+		if err != nil {
+			t.Fatalf("desiredStateForAgent(%s): %v", agentID, err)
+		}
+		if got := state.GetNodeConfig().GetWorkloadIpv6Pool(); got != "fd00:200::/48" {
+			t.Fatalf("agent %s got workload pool %q", agentID, got)
+		}
+		identities := state.GetNodeConfig().GetWorkloadIdentities()
+		if len(identities) != 2 {
+			t.Fatalf("agent %s expected 2 cluster identities, got %d", agentID, len(identities))
+		}
+		seenHosts := map[string]string{}
+		for _, identity := range identities {
+			if identity.GetEnvironmentId() != services[0].EnvironmentID || identity.GetNetworkIdentity() == 0 {
+				t.Fatalf("agent %s got invalid tenant identity %+v", agentID, identity)
+			}
+			seenHosts[identity.GetHostAgentId()] = identity.GetHostIpv6()
+		}
+		if seenHosts["node-1"] != "fd00:30::10" || seenHosts["node-2"] != "fd00:30::11" {
+			t.Fatalf("agent %s got incomplete host identities: %+v", agentID, seenHosts)
+		}
+	}
+
+	node1BeforeDelete := mustDesiredRevision(t, store, ctx, "node-1")
+	node2BeforeDelete := mustDesiredRevision(t, store, ctx, "node-2")
+	if err := store.deleteService(ctx, "user-1", projects[0].ID, services[0].ID); err != nil {
+		t.Fatalf("deleteService: %v", err)
+	}
+	for _, item := range []struct {
+		id     string
+		before int64
+	}{{"node-1", node1BeforeDelete}, {"node-2", node2BeforeDelete}} {
+		if got := mustDesiredRevision(t, store, ctx, item.id); got != item.before+1 {
+			t.Fatalf("agent %s identity revision was not bumped: got %d want %d", item.id, got, item.before+1)
+		}
+		state, err := store.desiredStateForAgent(ctx, item.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(state.GetNodeConfig().GetWorkloadIdentities()); got != 1 {
+			t.Fatalf("agent %s retained deleted workload identity, got %d", item.id, got)
+		}
 	}
 }
 

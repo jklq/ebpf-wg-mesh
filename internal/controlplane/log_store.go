@@ -41,7 +41,7 @@ type LogStore struct {
 
 type serviceLogRecord struct {
 	ObservedAt        time.Time
-	ProjectID         string
+	EnvironmentID     string
 	ServiceID         string
 	AllocationID      string
 	AgentID           string
@@ -59,7 +59,7 @@ type serviceLogRecord struct {
 // via the agent gRPC stream and skip this path.
 type LogLineInput struct {
 	ObservedAt        time.Time
-	ProjectID         string
+	EnvironmentID     string
 	ServiceID         string
 	AllocationID      string
 	AgentID           string
@@ -77,10 +77,8 @@ type logStoreMigration struct {
 	stmts []string
 }
 
-// logStoreMigrations returns the idempotent schema statements we run on every
-// control-plane start. Returning a slice lets us encode ordering constraints
-// (for example, adding new columns after base table creation) without pulling
-// in a migration framework.
+// logStoreMigrations returns the clean ClickHouse baseline used by this
+// breaking release.
 func logStoreMigrations(retentionDays int) []logStoreMigration {
 	if retentionDays <= 0 {
 		retentionDays = 14
@@ -92,7 +90,7 @@ func logStoreMigrations(retentionDays int) []logStoreMigration {
 				fmt.Sprintf(`CREATE TABLE IF NOT EXISTS service_logs (
 	observed_at DateTime64(9, 'UTC'),
 	ingested_at DateTime64(9, 'UTC'),
-	project_id String,
+	environment_id String,
 	service_id String,
 	allocation_id String,
 	agent_id String,
@@ -105,19 +103,8 @@ func logStoreMigrations(retentionDays int) []logStoreMigration {
 	stage LowCardinality(String) DEFAULT ''
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMM(observed_at)
-ORDER BY (project_id, service_id, log_type, observed_at, allocation_id, sequence)
+ORDER BY (environment_id, service_id, log_type, observed_at, allocation_id, sequence)
 TTL toDateTime(observed_at) + INTERVAL %d DAY`, retentionDays),
-			},
-		},
-		{
-			name: "service_logs_add_columns",
-			stmts: []string{
-				// These ALTERs are idempotent thanks to IF NOT EXISTS. They
-				// exist so pre-existing databases created before log_type was
-				// introduced pick up the new columns transparently.
-				`ALTER TABLE service_logs ADD COLUMN IF NOT EXISTS log_type LowCardinality(String) DEFAULT 'runtime'`,
-				`ALTER TABLE service_logs ADD COLUMN IF NOT EXISTS build_id String DEFAULT ''`,
-				`ALTER TABLE service_logs ADD COLUMN IF NOT EXISTS stage LowCardinality(String) DEFAULT ''`,
 			},
 		},
 	}
@@ -195,7 +182,7 @@ func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *a
 	}
 	inputs := make([]LogLineInput, 0, len(batch.GetEntries()))
 	for _, entry := range batch.GetEntries() {
-		if strings.TrimSpace(entry.GetProjectId()) == "" ||
+		if strings.TrimSpace(entry.GetEnvironmentId()) == "" ||
 			strings.TrimSpace(entry.GetServiceId()) == "" ||
 			strings.TrimSpace(entry.GetAllocationId()) == "" {
 			continue
@@ -203,7 +190,7 @@ func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *a
 		observedAt := entry.GetObservedAt().AsTime()
 		inputs = append(inputs, LogLineInput{
 			ObservedAt:        observedAt,
-			ProjectID:         entry.GetProjectId(),
+			EnvironmentID:     entry.GetEnvironmentId(),
 			ServiceID:         entry.GetServiceId(),
 			AllocationID:      entry.GetAllocationId(),
 			AgentID:           agentID,
@@ -230,7 +217,7 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	values := make([]string, 0, len(inputs))
 	args := make([]any, 0, len(inputs)*13)
 	for _, in := range inputs {
-		if strings.TrimSpace(in.ProjectID) == "" || strings.TrimSpace(in.ServiceID) == "" {
+		if strings.TrimSpace(in.EnvironmentID) == "" || strings.TrimSpace(in.ServiceID) == "" {
 			continue
 		}
 		observedAt := in.ObservedAt
@@ -242,7 +229,7 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 		args = append(args,
 			observedAt.UTC(),
 			now,
-			in.ProjectID,
+			in.EnvironmentID,
 			in.ServiceID,
 			in.AllocationID,
 			in.AgentID,
@@ -261,7 +248,7 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	query := `INSERT INTO service_logs (
 	observed_at,
 	ingested_at,
-	project_id,
+	environment_id,
 	service_id,
 	allocation_id,
 	agent_id,
@@ -290,8 +277,8 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 	if limit > maxLogQueryLimit {
 		limit = maxLogQueryLimit
 	}
-	filters := []string{"project_id = ?", "service_id = ?"}
-	args := []any{req.GetProjectId(), req.GetServiceId()}
+	filters := []string{"service_id = ?"}
+	args := []any{req.GetServiceId()}
 	if allocationID := strings.TrimSpace(req.GetAllocationId()); allocationID != "" {
 		filters = append(filters, "allocation_id = ?")
 		args = append(args, allocationID)
@@ -320,7 +307,7 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 	}
 	args = append(args, limit)
 	query := `
-SELECT observed_at, project_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line, log_type, build_id, stage
+SELECT observed_at, environment_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line, log_type, build_id, stage
   FROM service_logs
  WHERE ` + strings.Join(filters, " AND ") + `
  ORDER BY observed_at DESC, sequence DESC
@@ -336,7 +323,7 @@ SELECT observed_at, project_id, service_id, allocation_id, agent_id, stream, rol
 		var rec serviceLogRecord
 		if err := rows.Scan(
 			&rec.ObservedAt,
-			&rec.ProjectID,
+			&rec.EnvironmentID,
 			&rec.ServiceID,
 			&rec.AllocationID,
 			&rec.AgentID,

@@ -31,7 +31,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -112,7 +112,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -182,7 +182,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -260,7 +260,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -297,7 +297,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -347,7 +347,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -406,7 +406,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatal(err)
 	}
 
-	repoService, err := store.createService(ctx, "user-1", projects[0].ID, "repo-web", repositoryServiceSpec(
+	repoService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "repo-web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -453,7 +453,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("expected latest repo deployment to include persisted commit message, got %+v", repoDeployments[0].Build)
 	}
 
-	imageService, err := store.createService(ctx, "user-1", projects[0].ID, "img-web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
+	imageService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8081}),
 	}), "node-1")
 	if err != nil {
@@ -485,7 +485,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -544,7 +544,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -605,6 +605,11 @@ func seedReadySourceState(t *testing.T, store *Store, service serviceRecord, com
 
 func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service serviceRecord, commitSHA, commitMessage, commitAuthor string) error {
 	t.Helper()
+	archive := []byte("snapshot-" + commitSHA)
+	digest, objectKey, err := store.storeSourceArchive(context.Background(), archive)
+	if err != nil {
+		return err
+	}
 
 	return store.withTx(context.Background(), func(tx *sql.Tx) error {
 		binding, err := store.upsertSourceBindingTx(context.Background(), tx, sourceBindingRecord{
@@ -637,14 +642,14 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service servic
 		if err != nil {
 			return err
 		}
-		archive := []byte("snapshot-" + commitSHA)
 		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, sourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
 			CommitSHA:                    commitSHA,
-			Digest:                       snapshotDigest(archive),
-			ArchiveTGZ:                   archive,
+			Digest:                       digest,
+			ObjectKey:                    objectKey,
+			ArchiveSizeBytes:             int64(len(archive)),
 			Ready:                        true,
 			FetchedAt:                    sql.NullTime{Time: time.Now().UTC(), Valid: true},
 		})

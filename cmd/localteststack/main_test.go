@@ -3,11 +3,37 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
-
-	"ebof-wg-mesh/internal/localteststack"
 )
+
+func TestReservePortHoldsBindUntilClosed(t *testing.T) {
+	t.Parallel()
+
+	listener, port, err := reservePort("127.0.0.1")
+	if err != nil {
+		t.Fatalf("reservePort: %v", err)
+	}
+	if port <= 0 {
+		t.Fatalf("unexpected port %d", port)
+	}
+	// While reserved, another bind to the same port must fail.
+	_, err = net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err == nil {
+		t.Fatal("expected second listen on reserved port to fail")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close reserved listener: %v", err)
+	}
+	// After release the port can be bound again.
+	second, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatalf("listen after release: %v", err)
+	}
+	_ = second.Close()
+}
 
 func TestDescribeOnePasswordLoadErrorForDesktopAccountMismatch(t *testing.T) {
 	t.Parallel()
@@ -36,62 +62,80 @@ func TestDescribeOnePasswordLoadErrorForInvalidServiceAccountToken(t *testing.T)
 	}
 }
 
-func TestDescribeCloudflareStartupErrorForMissingTunnelToken(t *testing.T) {
+func TestDescribeCloudflareStartupErrors(t *testing.T) {
 	t.Parallel()
 
-	message := describeCloudflareStartupError(errors.New("start cloudflare tunnel: CLOUDFLARE_TUNNEL_TOKEN is required"), "mesh.example.test")
-	if !strings.Contains(message, "CLOUDFLARE_TUNNEL_TOKEN is required") {
-		t.Fatalf("unexpected message %q", message)
+	cases := []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{
+			name: "missing tunnel token",
+			err:  errors.New("start cloudflare tunnel: CLOUDFLARE_TUNNEL_TOKEN is required"),
+			want: []string{"CLOUDFLARE_TUNNEL_TOKEN is required", "mesh.example.test"},
+		},
+		{
+			name: "early exit",
+			err:  errors.New("start cloudflare tunnel: cloudflared exited: exit status 1"),
+			want: []string{"cloudflared exited before becoming ready"},
+		},
+		{
+			name: "timeout",
+			err:  context.DeadlineExceeded,
+			want: []string{"timed out after 30s"},
+		},
 	}
-	if !strings.Contains(message, "mesh.example.test") {
-		t.Fatalf("expected hostname in %q", message)
+	for _, tc := range cases {
+		message := describeCloudflareStartupError(tc.err, "mesh.example.test")
+		for _, want := range tc.want {
+			if !strings.Contains(message, want) {
+				t.Fatalf("%s: expected %q in %q", tc.name, want, message)
+			}
+		}
 	}
 }
 
-func TestDescribeCloudflareStartupErrorForEarlyExit(t *testing.T) {
+func TestMergeCommandEnvReplacesInheritedSecrets(t *testing.T) {
 	t.Parallel()
 
-	message := describeCloudflareStartupError(errors.New("start cloudflare tunnel: cloudflared exited: exit status 1"), "mesh.example.test")
-	if !strings.Contains(message, "cloudflared exited before becoming ready") {
-		t.Fatalf("unexpected message %q", message)
+	merged := mergeCommandEnv(
+		[]string{"PATH=/bin", "DASHBOARD_DEV_USERS=inherited", "DASHBOARD_JWT_SECRET=old", "UNRELATED_API_TOKEN=do-not-inherit"},
+		map[string]string{"DASHBOARD_DEV_USERS": "", "DASHBOARD_JWT_SECRET": "fresh"},
+	)
+	values := make(map[string]string, len(merged))
+	for _, entry := range merged {
+		key, value, _ := strings.Cut(entry, "=")
+		values[key] = value
+	}
+	if values["DASHBOARD_DEV_USERS"] != "" || values["DASHBOARD_JWT_SECRET"] != "fresh" {
+		t.Fatalf("explicit overrides not enforced: %#v", values)
+	}
+	if _, exists := values["UNRELATED_API_TOKEN"]; exists {
+		t.Fatalf("unrelated secret inherited by console: %#v", values)
 	}
 }
 
-func TestDescribeCloudflareStartupErrorForTimeout(t *testing.T) {
+func TestCloudflareTunnelRequestedForCompletePublicConfig(t *testing.T) {
 	t.Parallel()
 
-	message := describeCloudflareStartupError(context.DeadlineExceeded, "mesh.example.test")
-	if !strings.Contains(message, "timed out after 30s") {
-		t.Fatalf("unexpected message %q", message)
+	if !cloudflareTunnelRequested(false, true, "tunnel-token", "mesh.example.test") {
+		t.Fatal("expected complete GitHub and Cloudflare config to request the public tunnel")
 	}
 }
 
-func TestStartupInterrupted(t *testing.T) {
+func TestCloudflareTunnelNotRequestedForIncompleteImplicitConfig(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if !startupInterrupted(ctx) {
-		t.Fatal("expected canceled context to interrupt startup")
+	if cloudflareTunnelRequested(false, false, "tunnel-token", "mesh.example.test") {
+		t.Fatal("expected local-only mode without complete GitHub config")
 	}
 }
 
-func TestCloudflareTunnelRequestedWithoutCompleteGitHubConfig(t *testing.T) {
+func TestCloudflareTunnelExplicitModeStillValidatesRuntimeConfig(t *testing.T) {
 	t.Parallel()
 
-	env := map[string]string{
-		localteststack.CloudflareTunnelTokenKey: "tunnel-token",
-		localteststack.CloudflareHostnameKey:    "mesh.example.test",
-	}
-	if !cloudflareTunnelRequested(env, env[localteststack.CloudflareTunnelTokenKey], env[localteststack.CloudflareHostnameKey]) {
-		t.Fatal("expected Cloudflare credentials to request the public tunnel independently of GitHub config")
-	}
-}
-
-func TestCloudflareTunnelNotRequestedWithoutCloudflareOrGitHubConfig(t *testing.T) {
-	t.Parallel()
-
-	if cloudflareTunnelRequested(nil, "", "") {
-		t.Fatal("expected local-only mode when neither Cloudflare nor GitHub is configured")
+	if !cloudflareTunnelRequested(true, false, "", "") {
+		t.Fatal("expected explicit public mode to continue into configuration validation")
 	}
 }

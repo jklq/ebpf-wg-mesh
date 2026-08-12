@@ -25,7 +25,7 @@ import {
 	type CreateServiceFastResult,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
-	type DashboardDomainOwnershipChallenge,
+	type DashboardEnvironment,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
@@ -38,10 +38,14 @@ import {
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
 	type DashboardSourceSpec,
+	type DashboardUser,
 	DashboardValidationError,
+	DEFAULT_SERVICE_CPU_MILLIS,
+	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
 	GitHubApiError,
 	type GitHubUserRepository,
 	PlatformGatewayError,
+	type StoredDashboardGitHubAccount,
 	type UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
@@ -50,6 +54,7 @@ import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
 
 export async function loadDashboardHome(
 	runtime: DashboardRuntime,
+	selectedEnvironmentId?: string,
 ): Promise<DashboardHomeState | null> {
 	const session = await currentSession(runtime);
 	if (!session) {
@@ -57,9 +62,6 @@ export async function loadDashboardHome(
 	}
 
 	const { config } = runtime;
-	await storeCall(runtime, "ensureSessionUser", (store) =>
-		store.ensureSessionUser(session.user),
-	);
 	const onboarding = await loadOnboardingDraft(runtime, session.user.id);
 	const githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
 		store.getGitHubAccount(session.user.id),
@@ -67,7 +69,7 @@ export async function loadDashboardHome(
 
 	const baseState = {
 		user: session.user,
-		githubAccount: githubAccount ?? undefined,
+		githubAccount: publicGitHubAccount(githubAccount),
 		onboarding,
 		repositories: [],
 		githubLoginURL: runtime.github ? "/auth/start?redirect=%2F" : undefined,
@@ -76,38 +78,63 @@ export async function loadDashboardHome(
 		localIngressBaseURL: config.localIngressBaseURL,
 		ingressTargetHost: config.ingressTargetHost,
 		localDomainSuffix: config.localDomainSuffix,
+		environments: [],
 		services: [],
 		domainBindings: [],
 		controlPlaneReachable: true,
 	} satisfies DashboardHomeState;
 
 	try {
-		await platformCall(runtime, "ensurePrincipal", (platform) =>
-			platform.ensurePrincipal(session.user),
-		);
 		const projects = await platformCall(runtime, "listProjects", (platform) =>
 			platform.listProjects(session.user),
 		);
-		let project = onboarding.projectId
-			? projects.find((entry) => entry.id === onboarding.projectId)
+		const selectedEnvironment = selectedEnvironmentId
+			? await safePlatformCall(runtime, "getEnvironment", (platform) =>
+					platform.getEnvironment(session.user, selectedEnvironmentId),
+				)
 			: undefined;
+		let project = selectedEnvironment
+			? projects.find((entry) => entry.id === selectedEnvironment.projectId)
+			: onboarding.projectId
+				? projects.find((entry) => entry.id === onboarding.projectId)
+				: undefined;
 		if (!project && onboarding.repositorySelector) {
 			project = projects.find(
 				(entry) => entry.name === onboarding.repositorySelector,
 			);
 		}
+		// Returning users (and product e2e fixtures) may already own projects
+		// without an onboarding draft pointer.
+		if (!project && projects.length > 0) {
+			project = projects[0];
+		}
 
 		let reconciledDraft = onboarding;
+		let environments: DashboardHomeState["environments"] = [];
+		let environment: DashboardHomeState["environment"];
 		let allServices: Array<DashboardServiceRecord> = [];
 		let service: DashboardServiceRecord | undefined;
 
 		if (project) {
+			environments = await platformCall(
+				runtime,
+				"listEnvironments",
+				(platform) => platform.listEnvironments(session.user, project.id),
+			);
+			environment =
+				environments.find((entry) => entry.id === selectedEnvironment?.id) ??
+				environments.find((entry) => entry.id === onboarding.environmentId) ??
+				environments.find((entry) => entry.isProduction) ??
+				environments[0];
+		}
+
+		if (environment) {
 			const [servicesResult, positions] = await Promise.all([
 				safePlatformCall(runtime, "listServices", (platform) =>
-					platform.listServices(session.user, project.id),
+					platform.listServices(session.user, environment.id),
 				),
 				storeCall(runtime, "listServicePositions", (store) =>
-					store.listServicePositions(session.user.id, project.id),
+					store.listServicePositions(session.user.id, environment.id),
 				),
 			]);
 			allServices = servicesResult ?? [];
@@ -116,14 +143,6 @@ export async function loadDashboardHome(
 
 		if (project && onboarding.serviceId) {
 			service = allServices.find((s) => s.id === onboarding.serviceId);
-			if (!service) {
-				service = await safePlatformCall(runtime, "getService", (platform) =>
-					platform.getService(session.user, {
-						projectId: project.id,
-						serviceId: onboarding.serviceId,
-					}),
-				);
-			}
 		}
 
 		if (!service && project && onboarding.repositorySelector) {
@@ -157,6 +176,10 @@ export async function loadDashboardHome(
 			);
 		}
 
+		reconciledDraft = {
+			...reconciledDraft,
+			environmentId: environment?.id ?? "",
+		};
 		if (!onboardingDraftEquals(onboarding, reconciledDraft)) {
 			reconciledDraft = await saveOnboardingDraft(
 				runtime,
@@ -167,9 +190,10 @@ export async function loadDashboardHome(
 
 		return {
 			...baseState,
-			githubAccount: githubAccount ?? undefined,
 			onboarding: reconciledDraft,
 			project,
+			environments,
+			environment,
 			services: allServices,
 			service,
 		} satisfies DashboardHomeState;
@@ -177,7 +201,6 @@ export async function loadDashboardHome(
 		if (error instanceof PlatformGatewayError) {
 			return {
 				...baseState,
-				githubAccount: githubAccount ?? undefined,
 				controlPlaneReachable: false,
 				controlPlaneError: error.message,
 			} satisfies DashboardHomeState;
@@ -196,18 +219,23 @@ export async function loadGitHubCatalogFromSession(
 	const githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
 		store.getGitHubAccount(session.user.id),
 	);
-	const catalog = await loadGitHubCatalog(runtime, githubAccount);
+	const catalog = await loadGitHubCatalog(
+		runtime,
+		session.user.id,
+		githubAccount,
+	);
 	return {
-		githubAccount: catalog.githubAccount ?? undefined,
+		githubAccount: publicGitHubAccount(catalog.githubAccount),
 		repositories: catalog.repositories,
 	};
 }
 
 async function loadGitHubCatalog(
 	runtime: DashboardRuntime,
-	githubAccount: DashboardGitHubAccount | null,
+	userID: string,
+	githubAccount: StoredDashboardGitHubAccount | null,
 ): Promise<{
-	githubAccount: DashboardGitHubAccount | null;
+	githubAccount: StoredDashboardGitHubAccount | null;
 	repositories: Array<GitHubUserRepository>;
 }> {
 	if (!githubAccount?.accessToken) {
@@ -229,7 +257,11 @@ async function loadGitHubCatalog(
 			githubAccount.refreshToken
 		) {
 			try {
-				const refreshed = await refreshGitHubAccount(runtime, githubAccount);
+				const refreshed = await refreshGitHubAccount(
+					runtime,
+					userID,
+					githubAccount,
+				);
 				return {
 					githubAccount: refreshed,
 					repositories: await listGitHubRepositories(
@@ -245,6 +277,21 @@ async function loadGitHubCatalog(
 	}
 }
 
+function publicGitHubAccount(
+	account: StoredDashboardGitHubAccount | null,
+): DashboardGitHubAccount | undefined {
+	if (!account) {
+		return undefined;
+	}
+	return {
+		providerSubject: account.providerSubject,
+		login: account.login,
+		primaryEmail: account.primaryEmail,
+		tokenType: account.tokenType,
+		scope: account.scope,
+	};
+}
+
 export async function inspectRepositorySourceFromSession(
 	runtime: DashboardRuntime,
 	input: { repositorySelector: string },
@@ -252,13 +299,22 @@ export async function inspectRepositorySourceFromSession(
 	const session = await requireSession(runtime);
 	const selector = normalizeRepositorySelector(input.repositorySelector);
 	if (!selector) return undefined;
-	await platformCall(runtime, "ensurePrincipal", (platform) =>
-		platform.ensurePrincipal(session.user),
+	const githubUserAccessToken = await requireGitHubRepositoryAccess(
+		runtime,
+		session.user.id,
+		selector,
 	);
-	return platformCall(runtime, "inspectRepositorySource", (platform) =>
-		platform.inspectRepositorySource(session.user, {
-			provider: "github",
+	const draft = await loadOnboardingDraft(runtime, session.user.id);
+	const project = await repositoryProject(
+		runtime,
+		session.user,
+		draft.projectId,
+	);
+	return platformCall(runtime, "linkGitHubRepository", (platform) =>
+		platform.linkGitHubRepository(session.user, {
+			projectId: project.id,
 			repositorySelector: selector,
+			githubUserAccessToken,
 		}),
 	);
 }
@@ -274,11 +330,99 @@ export async function createProjectFromSession(
 			message: "project name is required",
 		});
 	}
-	await platformCall(runtime, "ensurePrincipal", (platform) =>
-		platform.ensurePrincipal(session.user),
-	);
 	return platformCall(runtime, "createProject", (platform) =>
 		platform.createProject(session.user, projectName),
+	);
+}
+
+export async function createEnvironmentFromSession(
+	runtime: DashboardRuntime,
+	input: { projectId: string; name: string },
+): Promise<DashboardEnvironment> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "createEnvironment", (platform) =>
+		platform.createEnvironment(session.user, {
+			...input,
+			name: input.name.trim(),
+		}),
+	);
+}
+
+export async function duplicateEnvironmentFromSession(
+	runtime: DashboardRuntime,
+	input: { sourceEnvironmentId: string; name: string; copyVariables: boolean },
+): Promise<DashboardEnvironment> {
+	const session = await requireSession(runtime);
+	const duplicate = await platformCall(
+		runtime,
+		"duplicateEnvironment",
+		(platform) =>
+			platform.duplicateEnvironment(session.user, {
+				...input,
+				name: input.name.trim(),
+			}),
+	);
+	const [sourceServices, copiedServices, sourcePositions] = await Promise.all([
+		platformCall(runtime, "listServices", (platform) =>
+			platform.listServices(session.user, input.sourceEnvironmentId),
+		),
+		platformCall(runtime, "listServices", (platform) =>
+			platform.listServices(session.user, duplicate.id),
+		),
+		storeCall(runtime, "listServicePositions", (store) =>
+			store.listServicePositions(session.user.id, input.sourceEnvironmentId),
+		),
+	]);
+	const sourceByName = new Map(
+		sourceServices.map((service) => [service.name, service]),
+	);
+	await Promise.all(
+		copiedServices.map(async (service) => {
+			const source = sourceByName.get(service.name);
+			const position = source ? sourcePositions[source.id] : undefined;
+			if (!position) return;
+			await storeCall(runtime, "saveServicePosition", (store) =>
+				store.saveServicePosition(session.user.id, {
+					environmentId: duplicate.id,
+					serviceId: service.id,
+					position,
+				}),
+			);
+		}),
+	);
+	return duplicate;
+}
+
+export async function renameEnvironmentFromSession(
+	runtime: DashboardRuntime,
+	input: { environmentId: string; name: string },
+): Promise<DashboardEnvironment> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "renameEnvironment", (platform) =>
+		platform.renameEnvironment(session.user, {
+			...input,
+			name: input.name.trim(),
+		}),
+	);
+}
+
+export async function deleteEnvironmentFromSession(
+	runtime: DashboardRuntime,
+	environmentId: string,
+): Promise<void> {
+	const session = await requireSession(runtime);
+	await platformCall(runtime, "deleteEnvironment", (platform) =>
+		platform.deleteEnvironment(session.user, environmentId),
+	);
+}
+
+export async function deployEnvironmentFromSession(
+	runtime: DashboardRuntime,
+	environmentId: string,
+): Promise<Array<DashboardServiceStatus>> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "deployEnvironment", (platform) =>
+		platform.deployEnvironment(session.user, environmentId),
 	);
 }
 
@@ -288,25 +432,33 @@ export async function inspectRepositoryFromSession(
 ): Promise<DashboardOnboardingDraft> {
 	const session = await requireSession(runtime);
 	const selector = normalizeRepositorySelector(input.repositorySelector);
-	await platformCall(runtime, "ensurePrincipal", (platform) =>
-		platform.ensurePrincipal(session.user),
+	const githubUserAccessToken = await requireGitHubRepositoryAccess(
+		runtime,
+		session.user.id,
+		selector,
+	);
+	const draft = await loadOnboardingDraft(runtime, session.user.id);
+	const project = await repositoryProject(
+		runtime,
+		session.user,
+		draft.projectId,
 	);
 	const inspection = await platformCall(
 		runtime,
-		"inspectRepositorySource",
+		"linkGitHubRepository",
 		(platform) =>
-			platform.inspectRepositorySource(session.user, {
-				provider: "github",
+			platform.linkGitHubRepository(session.user, {
+				projectId: project.id,
 				repositorySelector: selector,
+				githubUserAccessToken,
 			}),
 	);
-	const draft = await loadOnboardingDraft(runtime, session.user.id);
 	const recommended = inspection.recommendedBuildRecipe;
 	const selectorChanged = draft.repositorySelector !== selector;
 	const nextDraft: DashboardOnboardingDraft = {
 		...draft,
 		currentStep: "repository",
-		projectId: selectorChanged ? "" : draft.projectId,
+		projectId: project.id,
 		serviceId: selectorChanged ? "" : draft.serviceId,
 		repositorySelector: selector,
 		trackedRef:
@@ -334,6 +486,8 @@ export async function confirmRepositoryFromSession(
 		trackedRef?: string;
 		dockerfilePath?: string;
 		contextDir?: string;
+		cpuMillis?: number;
+		memoryMebibytes?: number;
 	},
 ): Promise<DashboardOnboardingDraft> {
 	const result = await createServiceFastFromSession(runtime, input);
@@ -348,20 +502,53 @@ export async function createServiceFastFromSession(
 		trackedRef?: string;
 		dockerfilePath?: string;
 		contextDir?: string;
+		cpuMillis?: number;
+		memoryMebibytes?: number;
 	},
 ): Promise<CreateServiceFastResult> {
 	const session = await requireSession(runtime);
 	const selector = normalizeRepositorySelector(input.repositorySelector);
-	await platformCall(runtime, "ensurePrincipal", (platform) =>
-		platform.ensurePrincipal(session.user),
+	const githubUserAccessToken = await requireGitHubRepositoryAccess(
+		runtime,
+		session.user.id,
+		selector,
 	);
+	const currentDraft = await loadOnboardingDraft(runtime, session.user.id);
+	const projects = await platformCall(runtime, "listProjects", (platform) =>
+		platform.listProjects(session.user),
+	);
+	const project =
+		(currentDraft.projectId
+			? projects.find((entry) => entry.id === currentDraft.projectId)
+			: undefined) ??
+		(await platformCall(runtime, "createProject", (platform) =>
+			platform.createProject(
+				session.user,
+				nextGeneratedProjectName(projects, runtime.randomUUID()),
+			),
+		));
+	const environments = await platformCall(
+		runtime,
+		"listEnvironments",
+		(platform) => platform.listEnvironments(session.user, project.id),
+	);
+	const environment =
+		environments.find((entry) => entry.id === currentDraft.environmentId) ??
+		environments.find((entry) => entry.isProduction) ??
+		environments[0];
+	if (!environment) {
+		throw new DashboardValidationError({
+			message: "Project has no production environment.",
+		});
+	}
 	const inspection = await platformCall(
 		runtime,
-		"inspectRepositorySource",
+		"linkGitHubRepository",
 		(platform) =>
-			platform.inspectRepositorySource(session.user, {
-				provider: "github",
+			platform.linkGitHubRepository(session.user, {
+				projectId: project.id,
 				repositorySelector: selector,
+				githubUserAccessToken,
 			}),
 	);
 	if (inspection.accessState !== "available") {
@@ -380,22 +567,8 @@ export async function createServiceFastFromSession(
 		".";
 	const trackedRef =
 		input.trackedRef?.trim() || inspection.defaultBranch || "main";
-	const currentDraft = await loadOnboardingDraft(runtime, session.user.id);
-	const projects = await platformCall(runtime, "listProjects", (platform) =>
-		platform.listProjects(session.user),
-	);
-	const project =
-		(currentDraft.projectId
-			? projects.find((entry) => entry.id === currentDraft.projectId)
-			: undefined) ??
-		(await platformCall(runtime, "createProject", (platform) =>
-			platform.createProject(
-				session.user,
-				nextGeneratedProjectName(projects, runtime.randomUUID()),
-			),
-		));
 	const services = await platformCall(runtime, "listServices", (platform) =>
-		platform.listServices(session.user, project.id),
+		platform.listServices(session.user, environment.id),
 	);
 	const desiredSpec: DashboardServiceSpec = buildServiceSpec(
 		{
@@ -408,10 +581,12 @@ export async function createServiceFastFromSession(
 			},
 		},
 		inspection.recommendedPorts,
+		input.cpuMillis,
+		input.memoryMebibytes,
 	);
 	const service = await platformCall(runtime, "createService", (platform) =>
 		platform.createService(session.user, {
-			projectId: project.id,
+			environmentId: environment.id,
 			name: nextGeneratedServiceName(
 				services,
 				input.serviceName,
@@ -423,6 +598,7 @@ export async function createServiceFastFromSession(
 	const onboarding = await saveOnboardingDraft(runtime, session.user.id, {
 		currentStep: "build",
 		projectId: project.id,
+		environmentId: environment.id,
 		serviceId: service.id,
 		repositorySelector: selector,
 		trackedRef,
@@ -433,12 +609,12 @@ export async function createServiceFastFromSession(
 	const serviceStatus =
 		(await safePlatformCall(runtime, "getServiceStatus", (platform) =>
 			platform.getServiceStatus(session.user, {
-				projectId: project.id,
 				serviceId: service.id,
 			}),
 		)) ?? null;
 	return {
 		project,
+		environment,
 		service,
 		serviceStatus,
 		onboarding,
@@ -481,7 +657,6 @@ export async function publishDomainFromSession(
 	}
 	const service = await platformCall(runtime, "getService", (platform) =>
 		platform.getService(session.user, {
-			projectId: draft.projectId,
 			serviceId: draft.serviceId,
 		}),
 	);
@@ -490,7 +665,6 @@ export async function publishDomainFromSession(
 		"getServiceStatus",
 		(platform) =>
 			platform.getServiceStatus(session.user, {
-				projectId: draft.projectId,
 				serviceId: draft.serviceId,
 			}),
 	);
@@ -505,7 +679,6 @@ export async function publishDomainFromSession(
 		"createDomainBinding",
 		(platform) =>
 			platform.createDomainBinding(session.user, {
-				projectId: draft.projectId,
 				serviceId: draft.serviceId,
 				hostname: draft.hostname,
 				targetPort: recommendedTargetPort(service, serviceStatus),
@@ -520,34 +693,111 @@ export async function publishDomainFromSession(
 
 export async function getServiceStatusFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; serviceId: string },
+	input: { serviceId: string },
 ): Promise<DashboardServiceStatus> {
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "getServiceStatus", (platform) =>
-		platform.getServiceStatus(session.user, input),
+		platform.getServiceStatus(session.user, { serviceId: input.serviceId }),
 	);
 }
 
-export async function listProjectServicesFromSession(
+export async function waitForServiceStatusFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string },
+	input: {
+		serviceId: string;
+		waitIndex: number;
+		waitTimeoutSeconds: number;
+	},
+) {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "waitForServiceStatus", (platform) =>
+		platform.waitForServiceStatus(session.user, input),
+	);
+}
+
+export async function listEnvironmentServicesFromSession(
+	runtime: DashboardRuntime,
+	input: { environmentId: string },
 ): Promise<Array<DashboardServiceRecord>> {
 	const session = await requireSession(runtime);
 	const [services, positions] = await Promise.all([
 		platformCall(runtime, "listServices", (platform) =>
-			platform.listServices(session.user, input.projectId),
+			platform.listServices(session.user, input.environmentId),
 		),
 		storeCall(runtime, "listServicePositions", (store) =>
-			store.listServicePositions(session.user.id, input.projectId),
+			store.listServicePositions(session.user.id, input.environmentId),
 		),
 	]);
 	return applyServicePositions(services, positions);
 }
 
-export async function listServiceLogsFromSession(
+export async function waitForEnvironmentServicesFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		environmentId: string;
+		waitIndex: number;
+		waitTimeoutSeconds: number;
+	},
+) {
+	const session = await requireSession(runtime);
+	const result = await platformCall(runtime, "waitForServices", (platform) =>
+		platform.waitForServices(session.user, input),
+	);
+	if (result.notModified || !result.services) {
+		return result;
+	}
+	const positions = await storeCall(runtime, "listServicePositions", (store) =>
+		store.listServicePositions(session.user.id, input.environmentId),
+	);
+	return {
+		...result,
+		services: applyServicePositions(result.services, positions),
+	};
+}
+
+export async function waitForProjectServicesFromSession(
 	runtime: DashboardRuntime,
 	input: {
 		projectId: string;
+		waitIndex: number;
+		waitTimeoutSeconds: number;
+	},
+) {
+	const session = await requireSession(runtime);
+	const environments = await platformCall(
+		runtime,
+		"listEnvironments",
+		(platform) => platform.listEnvironments(session.user, input.projectId),
+	);
+	const environment =
+		environments.find((entry) => entry.isProduction) ?? environments[0];
+	if (!environment) {
+		throw new DashboardValidationError({
+			message: "project has no environment",
+		});
+	}
+	const result = await platformCall(runtime, "waitForServices", (platform) =>
+		platform.waitForServices(session.user, {
+			environmentId: environment.id,
+			waitIndex: input.waitIndex,
+			waitTimeoutSeconds: input.waitTimeoutSeconds,
+		}),
+	);
+	if (result.notModified || !result.services) {
+		return result;
+	}
+	const positions = await storeCall(runtime, "listServicePositions", (store) =>
+		store.listServicePositions(session.user.id, environment.id),
+	);
+	return {
+		...result,
+		services: applyServicePositions(result.services, positions),
+	};
+}
+
+export async function listServiceLogsFromSession(
+	runtime: DashboardRuntime,
+	input: {
 		serviceId: string;
 		allocationId?: string;
 		limit?: number;
@@ -566,11 +816,14 @@ export async function listServiceLogsFromSession(
 
 export async function listServiceDeploymentsFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; serviceId: string; limit?: number },
+	input: { serviceId: string; limit?: number },
 ): Promise<Array<DashboardDeploymentRecord>> {
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "listServiceDeployments", (platform) =>
-		platform.listServiceDeployments(session.user, input),
+		platform.listServiceDeployments(session.user, {
+			serviceId: input.serviceId,
+			limit: input.limit,
+		}),
 	);
 }
 
@@ -581,7 +834,6 @@ export async function updateServiceFromSession(
 	const session = await requireSession(runtime);
 	const current = await platformCall(runtime, "getService", (platform) =>
 		platform.getService(session.user, {
-			projectId: input.projectId,
 			serviceId: input.serviceId,
 		}),
 	);
@@ -605,9 +857,28 @@ export async function updateServiceFromSession(
 					},
 				}
 			: undefined;
+	if (desiredSource?.provider === "github") {
+		const environment = await platformCall(
+			runtime,
+			"getEnvironment",
+			(platform) =>
+				platform.getEnvironment(session.user, current.environmentId),
+		);
+		const githubUserAccessToken = await requireGitHubRepositoryAccess(
+			runtime,
+			session.user.id,
+			desiredSource.repositorySelector,
+		);
+		await platformCall(runtime, "linkGitHubRepository", (platform) =>
+			platform.linkGitHubRepository(session.user, {
+				projectId: environment.projectId,
+				repositorySelector: desiredSource.repositorySelector,
+				githubUserAccessToken,
+			}),
+		);
+	}
 	return platformCall(runtime, "updateService", (platform) =>
 		platform.updateService(session.user, {
-			projectId: input.projectId,
 			serviceId: input.serviceId,
 			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
 			spec: {
@@ -616,7 +887,20 @@ export async function updateServiceFromSession(
 					env: normalizeRuntimeEnv(
 						input.runtimeEnv ?? current.spec?.runtime.env,
 					),
+					cpuMillis: normalizeResource(
+						input.cpuMillis ?? current.spec?.runtime.cpuMillis,
+						DEFAULT_SERVICE_CPU_MILLIS,
+						"CPU request",
+					),
+					memoryMebibytes: normalizeResource(
+						input.memoryMebibytes ?? current.spec?.runtime.memoryMebibytes,
+						DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+						"memory request",
+					),
 					ports: current.spec?.runtime.ports ?? [],
+					...(current.spec?.runtime.healthCheck
+						? { healthCheck: current.spec.runtime.healthCheck }
+						: {}),
 				},
 			},
 		}),
@@ -625,18 +909,17 @@ export async function updateServiceFromSession(
 
 export async function redeployServiceFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; serviceId: string },
+	input: { serviceId: string },
 ): Promise<DashboardServiceStatus> {
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "redeployService", (platform) =>
-		platform.redeployService(session.user, input),
+		platform.redeployService(session.user, { serviceId: input.serviceId }),
 	);
 }
 
 export async function discardServiceChangesFromSession(
 	runtime: DashboardRuntime,
 	input: {
-		projectId: string;
 		serviceId: string;
 		changeIds?: Array<string>;
 		discardAll?: boolean;
@@ -644,14 +927,18 @@ export async function discardServiceChangesFromSession(
 ): Promise<DashboardServiceRecord> {
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "discardServiceChanges", (platform) =>
-		platform.discardServiceChanges(session.user, input),
+		platform.discardServiceChanges(session.user, {
+			serviceId: input.serviceId,
+			changeIds: input.changeIds,
+			discardAll: input.discardAll,
+		}),
 	);
 }
 
 export async function saveServicePositionFromSession(
 	runtime: DashboardRuntime,
 	input: {
-		projectId: string;
+		environmentId: string;
 		serviceId: string;
 		position: DashboardServicePosition;
 	},
@@ -660,7 +947,7 @@ export async function saveServicePositionFromSession(
 	const position = normalizeServicePosition(input.position);
 	return storeCall(runtime, "saveServicePosition", (store) =>
 		store.saveServicePosition(session.user.id, {
-			projectId: input.projectId,
+			environmentId: input.environmentId,
 			serviceId: input.serviceId,
 			position,
 		}),
@@ -669,7 +956,7 @@ export async function saveServicePositionFromSession(
 
 export async function listDomainBindingsFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; serviceId: string },
+	input: { serviceId: string },
 ): Promise<Array<DashboardDomainBinding>> {
 	const session = await requireSession(runtime);
 	return (
@@ -679,16 +966,19 @@ export async function listDomainBindingsFromSession(
 	);
 }
 
-export async function requestDomainOwnershipChallengeFromSession(
+export async function generateDomainBindingFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; hostname: string },
-): Promise<DashboardDomainOwnershipChallenge> {
+	input: {
+		serviceId: string;
+		targetPort: string | number | undefined;
+	},
+): Promise<DashboardDomainBinding> {
 	const session = await requireSession(runtime);
-	const hostname = normalizeHostname(input.hostname);
-	return platformCall(runtime, "requestDomainOwnershipChallenge", (platform) =>
-		platform.requestDomainOwnershipChallenge(session.user, {
-			projectId: input.projectId,
-			hostname,
+	const targetPort = parseTargetPort(input.targetPort);
+	return platformCall(runtime, "generateDomainBinding", (platform) =>
+		platform.generateDomainBinding(session.user, {
+			serviceId: input.serviceId,
+			targetPort,
 		}),
 	);
 }
@@ -696,7 +986,6 @@ export async function requestDomainOwnershipChallengeFromSession(
 export async function createDomainBindingFromSession(
 	runtime: DashboardRuntime,
 	input: {
-		projectId: string;
 		serviceId: string;
 		hostname: string;
 		targetPort: string | number | undefined;
@@ -705,15 +994,8 @@ export async function createDomainBindingFromSession(
 	const session = await requireSession(runtime);
 	const normalizedHostname = normalizeHostname(input.hostname);
 	const targetPort = parseTargetPort(input.targetPort);
-	const verification = await verifyHostnameOrThrow(runtime, normalizedHostname);
-	if (verification.state !== "verified") {
-		throw new DashboardValidationError({
-			message: "DNS has not verified yet for this hostname.",
-		});
-	}
 	return platformCall(runtime, "createDomainBinding", (platform) =>
 		platform.createDomainBinding(session.user, {
-			projectId: input.projectId,
 			serviceId: input.serviceId,
 			hostname: normalizedHostname,
 			targetPort,
@@ -724,7 +1006,6 @@ export async function createDomainBindingFromSession(
 export async function updateDomainBindingFromSession(
 	runtime: DashboardRuntime,
 	input: {
-		projectId: string;
 		serviceId: string;
 		hostname: string;
 		targetPort: string | number | undefined;
@@ -735,7 +1016,6 @@ export async function updateDomainBindingFromSession(
 	const targetPort = parseTargetPort(input.targetPort);
 	return platformCall(runtime, "updateDomainBinding", (platform) =>
 		platform.updateDomainBinding(session.user, {
-			projectId: input.projectId,
 			hostname: normalizedHostname,
 			serviceId: input.serviceId,
 			targetPort,
@@ -745,11 +1025,11 @@ export async function updateDomainBindingFromSession(
 
 export async function deleteDomainBindingFromSession(
 	runtime: DashboardRuntime,
-	input: { projectId: string; hostname: string },
+	input: { hostname: string },
 ): Promise<void> {
 	const session = await requireSession(runtime);
 	await platformCall(runtime, "deleteDomainBinding", (platform) =>
-		platform.deleteDomainBinding(session.user, input),
+		platform.deleteDomainBinding(session.user, { hostname: input.hostname }),
 	);
 }
 
@@ -761,9 +1041,58 @@ export async function checkDomainDNSFromSession(
 	return safeVerifyHostname(runtime, normalizeHostname(hostname));
 }
 
+async function requireGitHubRepositoryAccess(
+	runtime: DashboardRuntime,
+	userID: string,
+	repositorySelector: string,
+): Promise<string> {
+	const account = await storeCall(runtime, "getGitHubAccount", (store) =>
+		store.getGitHubAccount(userID),
+	);
+	if (!account && runtime.config.devUsers.some((user) => user.id === userID)) {
+		return "";
+	}
+	const catalog = await loadGitHubCatalog(runtime, userID, account);
+	const expected = repositorySelector.toLowerCase();
+	if (
+		!catalog.repositories.some(
+			(repository) => repository.fullName.toLowerCase() === expected,
+		)
+	) {
+		throw new DashboardValidationError({
+			message: "The signed-in GitHub account cannot access this repository.",
+		});
+	}
+	return catalog.githubAccount?.accessToken ?? "";
+}
+
+async function repositoryProject(
+	runtime: DashboardRuntime,
+	user: DashboardUser,
+	preferredProjectID: string,
+): Promise<DashboardProject> {
+	const projects = await platformCall(runtime, "listProjects", (platform) =>
+		platform.listProjects(user),
+	);
+	const existing = projects.find(
+		(project) => project.id === preferredProjectID,
+	);
+	if (existing) {
+		return existing;
+	}
+	return platformCall(runtime, "createProject", (platform) =>
+		platform.createProject(
+			user,
+			nextGeneratedProjectName(projects, runtime.randomUUID()),
+		),
+	);
+}
+
 function buildServiceSpec(
 	source: DashboardSourceSpec,
 	recommendedPorts: number[],
+	cpuMillis?: number,
+	memoryMebibytes?: number,
 ): DashboardServiceSpec {
 	const seen = new Set<number>();
 	const ports = recommendedPorts
@@ -781,8 +1110,35 @@ function buildServiceSpec(
 		}));
 	return {
 		source,
-		runtime: { env: {}, ports },
+		runtime: {
+			env: {},
+			cpuMillis: normalizeResource(
+				cpuMillis,
+				DEFAULT_SERVICE_CPU_MILLIS,
+				"CPU request",
+			),
+			memoryMebibytes: normalizeResource(
+				memoryMebibytes,
+				DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+				"memory request",
+			),
+			ports,
+		},
 	};
+}
+
+function normalizeResource(
+	value: number | undefined,
+	fallback: number,
+	label: string,
+): number {
+	const normalized = value ?? fallback;
+	if (!Number.isSafeInteger(normalized) || normalized < fallback) {
+		throw new DashboardValidationError({
+			message: `${label} must be at least ${fallback}`,
+		});
+	}
+	return normalized;
 }
 
 function normalizeRuntimeEnv(

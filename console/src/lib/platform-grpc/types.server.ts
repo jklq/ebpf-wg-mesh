@@ -2,6 +2,7 @@ import type * as grpc from "@grpc/grpc-js";
 
 import type {
 	DashboardDeploymentRecord,
+	DashboardEnvironment,
 	DashboardProject,
 	DashboardServiceLogType,
 } from "#/lib/dashboard/core/types.server";
@@ -12,11 +13,7 @@ export interface PlatformRuntimeConfig {
 	controlPlaneCA: Buffer;
 	controlPlaneCert: Buffer;
 	controlPlaneKey: Buffer;
-}
-
-export interface EnsurePrincipalRequest {
-	subject: string;
-	email: string;
+	userAssertionSecret: string;
 }
 
 export interface CreateProjectRequest {
@@ -24,25 +21,69 @@ export interface CreateProjectRequest {
 }
 
 export interface InspectSourceRequest {
+	projectId: string;
 	provider: string;
 	repositorySelector: string;
+	githubUserAccessToken: string;
+}
+
+export interface LinkGitHubRepositoryRequest {
+	projectId: string;
+	repositorySelector: string;
+	githubUserAccessToken: string;
 }
 
 export interface ListServicesRequest {
+	environmentId: string;
+	waitIndex?: number;
+	waitTimeoutSeconds?: number;
+}
+
+export interface ListEnvironmentsRequest {
 	projectId: string;
+}
+export interface GetEnvironmentRequest {
+	environmentId: string;
+}
+export interface CreateEnvironmentRequest {
+	projectId: string;
+	name: string;
+}
+export interface DuplicateEnvironmentRequest {
+	sourceEnvironmentId: string;
+	name: string;
+	copyVariables: boolean;
+}
+export interface RenameEnvironmentRequest {
+	environmentId: string;
+	name: string;
+}
+export interface DeleteEnvironmentRequest {
+	environmentId: string;
+}
+export interface DeployEnvironmentRequest {
+	environmentId: string;
 }
 
 export interface CreateServiceRequest {
-	projectId: string;
+	environmentId: string;
 	service: {
 		name: string;
 		spec: {
 			runtime: {
 				env: Record<string, string>;
+				cpuMillis: number;
+				memoryMebibytes: number;
 				ports: Array<{
 					port: number;
 					primary: boolean;
 				}>;
+				healthCheck?: {
+					type: "TYPE_HTTP";
+					path: string;
+					port?: number;
+					timeoutSeconds?: number;
+				};
 			};
 			source: {
 				sourceSpec: {
@@ -60,17 +101,24 @@ export interface CreateServiceRequest {
 }
 
 export interface UpdateServiceRequest {
-	projectId: string;
 	serviceId: string;
 	service: {
 		name?: string;
 		spec: {
 			runtime: {
 				env: Record<string, string>;
+				cpuMillis: number;
+				memoryMebibytes: number;
 				ports: Array<{
 					port: number;
 					primary: boolean;
 				}>;
+				healthCheck?: {
+					type: "TYPE_HTTP";
+					path: string;
+					port?: number;
+					timeoutSeconds?: number;
+				};
 			};
 			source: {
 				sourceSpec: {
@@ -88,29 +136,26 @@ export interface UpdateServiceRequest {
 }
 
 export interface GetServiceRequest {
-	projectId: string;
 	serviceId: string;
 }
 
 export interface GetServiceStatusRequest {
-	projectId: string;
 	serviceId: string;
+	waitIndex?: number;
+	waitTimeoutSeconds?: number;
 }
 
 export interface RedeployServiceRequest {
-	projectId: string;
 	serviceId: string;
 }
 
 export interface DiscardServiceChangesRequest {
-	projectId: string;
 	serviceId: string;
 	changeIds?: Array<string>;
 	discardAll?: boolean;
 }
 
 export interface ListServiceLogsRequest {
-	projectId: string;
 	serviceId: string;
 	allocationId?: string;
 	limit?: number;
@@ -122,18 +167,15 @@ export interface ListServiceLogsRequest {
 }
 
 export interface ListServiceDeploymentsRequest {
-	projectId: string;
 	serviceId: string;
 	limit?: number;
 }
 
 export interface ListDomainBindingsRequest {
-	projectId: string;
 	serviceId: string;
 }
 
 export interface CreateDomainBindingRequest {
-	projectId: string;
 	binding: {
 		hostname: string;
 		serviceId: string;
@@ -141,13 +183,12 @@ export interface CreateDomainBindingRequest {
 	};
 }
 
-export interface RequestDomainOwnershipChallengeRequest {
-	projectId: string;
-	hostname: string;
+export interface GenerateDomainBindingRequest {
+	serviceId: string;
+	targetPort: number;
 }
 
 export interface UpdateDomainBindingRequest {
-	projectId: string;
 	hostname: string;
 	binding: {
 		serviceId: string;
@@ -156,7 +197,6 @@ export interface UpdateDomainBindingRequest {
 }
 
 export interface DeleteDomainBindingRequest {
-	projectId: string;
 	hostname: string;
 }
 
@@ -175,9 +215,16 @@ export interface IngestGitHubWebhookRequest {
 }
 
 export type PlatformMethod =
-	| "EnsurePrincipal"
 	| "ListProjects"
 	| "CreateProject"
+	| "ListEnvironments"
+	| "GetEnvironment"
+	| "CreateEnvironment"
+	| "DuplicateEnvironment"
+	| "RenameEnvironment"
+	| "DeleteEnvironment"
+	| "DeployEnvironment"
+	| "LinkGitHubRepository"
 	| "InspectSource"
 	| "ListServices"
 	| "CreateService"
@@ -189,15 +236,22 @@ export type PlatformMethod =
 	| "ListServiceLogs"
 	| "ListServiceDeployments"
 	| "ListDomainBindings"
-	| "RequestDomainOwnershipChallenge"
+	| "GenerateDomainBinding"
 	| "CreateDomainBinding"
 	| "UpdateDomainBinding"
 	| "DeleteDomainBinding";
 
 export type PlatformRequestMap = {
-	EnsurePrincipal: EnsurePrincipalRequest;
 	ListProjects: Record<string, never>;
 	CreateProject: CreateProjectRequest;
+	ListEnvironments: ListEnvironmentsRequest;
+	GetEnvironment: GetEnvironmentRequest;
+	CreateEnvironment: CreateEnvironmentRequest;
+	DuplicateEnvironment: DuplicateEnvironmentRequest;
+	RenameEnvironment: RenameEnvironmentRequest;
+	DeleteEnvironment: DeleteEnvironmentRequest;
+	DeployEnvironment: DeployEnvironmentRequest;
+	LinkGitHubRepository: LinkGitHubRepositoryRequest;
 	InspectSource: InspectSourceRequest;
 	ListServices: ListServicesRequest;
 	CreateService: CreateServiceRequest;
@@ -209,7 +263,7 @@ export type PlatformRequestMap = {
 	ListServiceLogs: ListServiceLogsRequest;
 	ListServiceDeployments: ListServiceDeploymentsRequest;
 	ListDomainBindings: ListDomainBindingsRequest;
-	RequestDomainOwnershipChallenge: RequestDomainOwnershipChallengeRequest;
+	GenerateDomainBinding: GenerateDomainBindingRequest;
 	CreateDomainBinding: CreateDomainBindingRequest;
 	UpdateDomainBinding: UpdateDomainBindingRequest;
 	DeleteDomainBinding: DeleteDomainBindingRequest;
@@ -221,11 +275,6 @@ export type RawUnaryCallback = (
 ) => void;
 
 export type PlatformClient = grpc.Client & {
-	EnsurePrincipal: (
-		request: EnsurePrincipalRequest,
-		metadata: grpc.Metadata,
-		callback: RawUnaryCallback,
-	) => void;
 	ListProjects: (
 		request: Record<string, never>,
 		metadata: grpc.Metadata,
@@ -233,6 +282,46 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	CreateProject: (
 		request: CreateProjectRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	ListEnvironments: (
+		request: ListEnvironmentsRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	GetEnvironment: (
+		request: GetEnvironmentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	CreateEnvironment: (
+		request: CreateEnvironmentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	DuplicateEnvironment: (
+		request: DuplicateEnvironmentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	RenameEnvironment: (
+		request: RenameEnvironmentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	DeleteEnvironment: (
+		request: DeleteEnvironmentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	DeployEnvironment: (
+		request: DeployEnvironmentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	LinkGitHubRepository: (
+		request: LinkGitHubRepositoryRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
@@ -291,8 +380,8 @@ export type PlatformClient = grpc.Client & {
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
-	RequestDomainOwnershipChallenge: (
-		request: RequestDomainOwnershipChallengeRequest,
+	GenerateDomainBinding: (
+		request: GenerateDomainBindingRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
@@ -332,9 +421,14 @@ export interface ListProjectsResponseMessage {
 	projects: Array<PlatformProjectMessage>;
 }
 
+export interface PlatformEnvironmentMessage extends DashboardEnvironment {}
+export interface ListEnvironmentsResponseMessage {
+	environments: Array<PlatformEnvironmentMessage>;
+}
+
 export interface ServiceLogLineMessage {
 	observedAt?: Date;
-	projectId: string;
+	environmentId: string;
 	serviceId: string;
 	allocationId: string;
 	agentId: string;

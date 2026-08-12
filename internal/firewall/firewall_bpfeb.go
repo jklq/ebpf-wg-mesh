@@ -25,9 +25,9 @@ type firewallConnectionKey struct {
 }
 
 type firewallContainerPolicy struct {
-	_         structs.HostLayout
-	ProjectId uint32
-	Ipv6      [16]uint8
+	_               structs.HostLayout
+	NetworkIdentity uint32
+	Ipv6            [16]uint8
 }
 
 type firewallHostIpValue struct {
@@ -42,10 +42,10 @@ type firewallIdentityKey struct {
 }
 
 type firewallIdentityValue struct {
-	_           structs.HostLayout
-	ProjectId   uint32
-	HostIp      [16]uint8
-	VethIfindex uint32
+	_               structs.HostLayout
+	NetworkIdentity uint32
+	HostIp          [16]uint8
+	VethIfindex     uint32
 }
 
 // loadFirewall returns the embedded CollectionSpec for firewall.

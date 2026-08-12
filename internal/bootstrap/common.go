@@ -49,7 +49,7 @@ type bootstrapUsersFlag struct {
 }
 
 type bootstrapUserSpec struct {
-	subject  string
+	userID   string
 	email    string
 	projects []string
 }
@@ -60,7 +60,7 @@ func (f bootstrapUsersFlag) String() string {
 	}
 	parts := make([]string, 0, len(*f.users))
 	for _, user := range *f.users {
-		parts = append(parts, fmt.Sprintf("%s:%s:%s", user.subject, user.email, strings.Join(user.projects, ",")))
+		parts = append(parts, fmt.Sprintf("%s:%s:%s", user.userID, user.email, strings.Join(user.projects, ",")))
 	}
 	return strings.Join(parts, ";")
 }
@@ -68,11 +68,11 @@ func (f bootstrapUsersFlag) String() string {
 func (f bootstrapUsersFlag) Set(value string) error {
 	parts := strings.SplitN(value, ":", 3)
 	if len(parts) < 2 {
-		return fmt.Errorf("bootstrap user must be subject:email[:project1,project2]")
+		return fmt.Errorf("bootstrap user must be user-id:email[:project1,project2]")
 	}
 	spec := bootstrapUserSpec{
-		subject: strings.TrimSpace(parts[0]),
-		email:   strings.TrimSpace(parts[1]),
+		userID: strings.TrimSpace(parts[0]),
+		email:  strings.TrimSpace(parts[1]),
 	}
 	if len(parts) == 3 && strings.TrimSpace(parts[2]) != "" {
 		for _, item := range strings.Split(parts[2], ",") {
@@ -82,8 +82,8 @@ func (f bootstrapUsersFlag) Set(value string) error {
 			}
 		}
 	}
-	if spec.subject == "" || spec.email == "" {
-		return fmt.Errorf("bootstrap user subject and email are required")
+	if spec.userID == "" || spec.email == "" {
+		return fmt.Errorf("bootstrap user ID and email are required")
 	}
 	*f.users = append(*f.users, spec)
 	return nil

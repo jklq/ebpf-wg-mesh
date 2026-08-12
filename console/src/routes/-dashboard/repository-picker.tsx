@@ -3,6 +3,17 @@ import type { CSSProperties } from "react";
 
 import type { RepositoryPickerProps } from "./types";
 
+const skeletonRowIDs = [
+	"repository-skeleton-1",
+	"repository-skeleton-2",
+	"repository-skeleton-3",
+	"repository-skeleton-4",
+	"repository-skeleton-5",
+	"repository-skeleton-6",
+	"repository-skeleton-7",
+	"repository-skeleton-8",
+] as const;
+
 export function RepositoryPicker({
 	actions,
 	error,
@@ -39,7 +50,6 @@ export function RepositoryPicker({
 				}}
 			>
 				<input
-					autoFocus
 					placeholder="Search repositories…"
 					value={repoSearch}
 					onChange={(event) => {
@@ -181,14 +191,14 @@ export function RepositoryPicker({
 function RepositoryPickerSkeleton({ actionsCount }: { actionsCount: number }) {
 	const rows = actionsCount > 0 ? 7 : 8;
 	return (
-		<div
+		<output
 			className="repo-picker-skeleton"
 			aria-label="Loading repositories"
 			aria-busy="true"
 		>
-			{Array.from({ length: rows }).map((_, index) => (
+			{skeletonRowIDs.slice(0, rows).map((rowID, index) => (
 				<div
-					key={index}
+					key={rowID}
 					className="repo-picker-skeleton-row"
 					style={{ borderTop: index > 0 || actionsCount > 0 ? undefined : 0 }}
 				>
@@ -199,7 +209,7 @@ function RepositoryPickerSkeleton({ actionsCount }: { actionsCount: number }) {
 					/>
 				</div>
 			))}
-		</div>
+		</output>
 	);
 }
 

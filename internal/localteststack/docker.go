@@ -68,6 +68,68 @@ func RemoveDockerNetwork(ctx context.Context, runner DockerRunner, name string) 
 	return err
 }
 
+// CleanupStaleLocalteststackContainers removes leftover infrastructure and
+// workload containers from a previous localteststack run. Without this, dirty
+// Docker state (containers still present after a killed process) can hold the
+// fixed ingress publish port or other host ports and leave the next run wedged
+// waiting on health checks.
+func CleanupStaleLocalteststackContainers(ctx context.Context, runner DockerRunner) (int, error) {
+	if runner == nil {
+		runner = ExecDockerRunner{}
+	}
+	ids := make(map[string]struct{})
+	// Workload containers from the Docker agent runtime.
+	labeled, err := listContainerIDs(ctx, runner, "label="+localRuntimeLabel+"="+localRuntimeManagedBy)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range labeled {
+		ids[id] = struct{}{}
+	}
+	// Infrastructure + any other localteststack-* leftovers (name filter is a substring match).
+	prefixed, err := listContainerIDs(ctx, runner, "name=localteststack-")
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range prefixed {
+		ids[id] = struct{}{}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := []string{"rm", "--force"}
+	for id := range ids {
+		args = append(args, id)
+	}
+	if _, err := runner.Run(ctx, args...); err != nil {
+		if isDockerMissingObjectError(err) {
+			return len(ids), nil
+		}
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+func listContainerIDs(ctx context.Context, runner DockerRunner, filters ...string) ([]string, error) {
+	args := []string{"ps", "-aq"}
+	for _, filter := range filters {
+		args = append(args, "--filter", filter)
+	}
+	out, err := runner.Run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(string(out))
+	ids := make([]string, 0, len(fields))
+	for _, id := range fields {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 func isDockerMissingObjectError(err error) bool {
 	if err == nil {
 		return false

@@ -3,8 +3,10 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
@@ -14,19 +16,59 @@ import (
 
 type AgentService struct {
 	agentv1.UnimplementedAgentControlServer
-	store     *Store
-	logStore  *LogStore
-	notifier  *Notifier
-	ingress   *IngressSyncer
-	authority *TLSAuthority
-	dashboard *ManagedDashboardReconciler
+	store                   *Store
+	logStore                *LogStore
+	notifier                *Notifier
+	ingress                 *IngressSyncer
+	authority               *TLSAuthority
+	dashboard               *ManagedDashboardReconciler
+	dashboardEnabled        bool
+	dashboardTrustedAgentID string
+	dashboardCallerID       string
+	expiry                  *AgentExpiryTracker
+	events                  *PlatformEvents
+	registry                *RegistryPolicy
 }
 
-func NewAgentService(store *Store, logStore *LogStore, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority, dashboard *ManagedDashboardReconciler) *AgentService {
-	return &AgentService{store: store, logStore: logStore, notifier: notifier, ingress: ingress, authority: authority, dashboard: dashboard}
+type AgentServiceOption func(*AgentService)
+
+func WithAgentExpiryTracker(expiry *AgentExpiryTracker) AgentServiceOption {
+	return func(service *AgentService) {
+		service.expiry = expiry
+	}
+}
+
+func WithAgentPlatformEvents(events *PlatformEvents) AgentServiceOption {
+	return func(service *AgentService) {
+		service.events = events
+	}
+}
+
+func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
+	return func(service *AgentService) {
+		service.registry = registry
+	}
+}
+
+func NewAgentService(store *Store, logStore *LogStore, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
+	service := &AgentService{
+		store: store, logStore: logStore, notifier: notifier, ingress: ingress, authority: authority, dashboard: dashboard,
+		dashboardEnabled:        dashboardEnabled,
+		dashboardTrustedAgentID: strings.TrimSpace(dashboardTrustedAgentID),
+		dashboardCallerID:       strings.TrimSpace(dashboardCallerID),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service
 }
 
 func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
+	if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+		return nil, err
+	}
 	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
@@ -52,8 +94,33 @@ func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (
 	return resp, nil
 }
 
+func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+	if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+		return nil, err
+	}
+	caller, err := ServiceCallerFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if caller.Class != serviceCallerAgent || caller.ID != req.GetAgentId() {
+		return nil, status.Error(codes.PermissionDenied, "client certificate does not match agent_id")
+	}
+	if !s.dashboardEnabled || s.dashboardTrustedAgentID == "" || caller.ID != s.dashboardTrustedAgentID {
+		return nil, status.Error(codes.PermissionDenied, "managed dashboard certificate requires the trusted agent")
+	}
+	resp, err := s.authority.IssueManagedDashboardCertificate(s.dashboardCallerID, req.GetCsrPem())
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("managed dashboard certificate issued", "agent_id", caller.ID, "dashboard_caller_id", s.dashboardCallerID)
+	return resp, nil
+}
+
 func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	ctx := stream.Context()
+	if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+		return err
+	}
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -86,6 +153,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			}
 		}
 	}
+	if s.expiry != nil {
+		s.expiry.Touch(hello.GetAgentId())
+	}
 	slog.Info("agent connected", "agent_id", hello.AgentId, "name", hello.Name)
 	notifyCh, stop := s.notifier.Watch(hello.AgentId)
 	defer stop()
@@ -112,6 +182,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		if err != nil {
 			return err
 		}
+		if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+			return err
+		}
 		switch payload := msg.Payload.(type) {
 		case *agentv1.AgentClientMessage_Heartbeat:
 			if payload.Heartbeat.GetAgentId() != hello.GetAgentId() {
@@ -120,14 +193,20 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if err := s.store.heartbeatAgent(ctx, hello.GetAgentId()); err != nil {
 				return status.Errorf(codes.Internal, "heartbeat: %v", err)
 			}
+			if s.expiry != nil {
+				s.expiry.Touch(hello.GetAgentId())
+			}
 		case *agentv1.AgentClientMessage_StatusReport:
 			if payload.StatusReport.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "status report agent_id does not match session")
 			}
 			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()))
-			ingressChanged, err := s.store.recordStatusReport(ctx, hello.GetAgentId(), payload.StatusReport)
+			ingressChanged, changedEnvironmentIDs, err := s.store.recordStatusReport(ctx, hello.GetAgentId(), payload.StatusReport)
 			if err != nil {
 				return status.Errorf(codes.Internal, "status report: %v", err)
+			}
+			for _, environmentID := range changedEnvironmentIDs {
+				s.events.Publish(environmentID)
 			}
 			if ingressChanged {
 				s.ingress.RequestSync()
@@ -166,7 +245,14 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			}
 			slog.Info("notify received", "agent_id", agentID)
 			nextRevision, err := sendLatestDesiredState(ctx, agentID, lastRevision, func() (*agentv1.DesiredNodeState, error) {
-				return s.store.desiredStateForAgent(ctx, agentID)
+				state, err := s.store.desiredStateForAgent(ctx, agentID)
+				if err != nil {
+					return nil, err
+				}
+				if err := s.attachRegistryPullCredentials(agentID, state); err != nil {
+					return nil, err
+				}
+				return state, nil
 			}, func(state *agentv1.DesiredNodeState) error {
 				return stream.Send(&agentv1.AgentServerMessage{
 					Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
@@ -178,6 +264,23 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			lastRevision = nextRevision
 		}
 	}
+}
+
+func (s *AgentService) attachRegistryPullCredentials(agentID string, state *agentv1.DesiredNodeState) error {
+	if s == nil || s.registry == nil || !s.registry.Enabled() || state == nil {
+		return nil
+	}
+	for _, service := range state.GetServices() {
+		username, password, err := s.registry.CredentialsForPull(
+			agentID+"-"+service.GetAllocationId(), service.GetEnvironmentId(), service.GetServiceId(), service.GetSpec().GetImage(),
+		)
+		if err != nil {
+			return fmt.Errorf("mint pull credential for service %s: %w", service.GetServiceId(), err)
+		}
+		service.RegistryUsername = username
+		service.RegistryPassword = password
+	}
+	return nil
 }
 
 func sendLatestDesiredState(

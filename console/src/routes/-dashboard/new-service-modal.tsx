@@ -5,14 +5,15 @@ import type {
 	CreateServiceFastResult,
 	DashboardHomeState,
 } from "#/lib/dashboard/core/types.server";
+import {
+	DEFAULT_SERVICE_CPU_MILLIS,
+	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+} from "#/lib/dashboard/core/defaults";
 
 import { RepositoryPicker } from "./repository-picker";
 import { doCreateServiceFast } from "./server-fns";
 import { formatError } from "./service-utils";
-import type {
-	ConfirmRepositoryFn,
-	PickerAction,
-} from "./types";
+import type { ConfirmRepositoryFn, PickerAction } from "./types";
 
 export function NewServiceModal({
 	state,
@@ -31,6 +32,10 @@ export function NewServiceModal({
 		state.onboarding.repositorySelector,
 	);
 	const [loading, setLoading] = useState(false);
+	const [cpuMillis, setCpuMillis] = useState(DEFAULT_SERVICE_CPU_MILLIS);
+	const [memoryMebibytes, setMemoryMebibytes] = useState(
+		DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+	);
 	const [error, setError] = useState<string>();
 	const [repoSearch, setRepoSearch] = useState("");
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -76,12 +81,25 @@ export function NewServiceModal({
 		if (loading) return;
 		const selector = (selectorOverride ?? repoSelector).trim();
 		if (!selector) return;
+		if (
+			!Number.isSafeInteger(cpuMillis) ||
+			cpuMillis < DEFAULT_SERVICE_CPU_MILLIS ||
+			!Number.isSafeInteger(memoryMebibytes) ||
+			memoryMebibytes < DEFAULT_SERVICE_MEMORY_MEBIBYTES
+		) {
+			setError(
+				`CPU must be at least ${DEFAULT_SERVICE_CPU_MILLIS}m and memory at least ${DEFAULT_SERVICE_MEMORY_MEBIBYTES} MiB.`,
+			);
+			return;
+		}
 		setError(undefined);
 		setLoading(true);
 		try {
 			const result = await confirmRepository({
 				data: {
 					repositorySelector: selector,
+					cpuMillis,
+					memoryMebibytes,
 				},
 			});
 			onCreated(result);
@@ -151,10 +169,45 @@ export function NewServiceModal({
 					setHoveredIndex={setHoveredIndex}
 					setRepoSearch={setRepoSearch}
 					showEmptyState={
-						filteredRepositories.length === 0 &&
-						state.repositories.length > 0
+						filteredRepositories.length === 0 && state.repositories.length > 0
 					}
 				/>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: "1fr 1fr",
+						gap: 12,
+						padding: 12,
+						borderTop: "1px solid var(--border)",
+					}}
+				>
+					<label className="field-label">
+						CPU request (millicores)
+						<input
+							type="number"
+							min={DEFAULT_SERVICE_CPU_MILLIS}
+							step={1}
+							className="field-input"
+							value={cpuMillis}
+							onChange={(event) =>
+								setCpuMillis(event.currentTarget.valueAsNumber)
+							}
+						/>
+					</label>
+					<label className="field-label">
+						Memory request (MiB)
+						<input
+							type="number"
+							min={DEFAULT_SERVICE_MEMORY_MEBIBYTES}
+							step={1}
+							className="field-input"
+							value={memoryMebibytes}
+							onChange={(event) =>
+								setMemoryMebibytes(event.currentTarget.valueAsNumber)
+							}
+						/>
+					</label>
+				</div>
 			</div>
 		</div>
 	);

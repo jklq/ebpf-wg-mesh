@@ -68,7 +68,9 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 	if err != nil {
 		return nil, err
 	}
-	_ = removeContainer(context.Background(), runner, cfg.ContainerName)
+	if err := removeContainer(context.Background(), runner, cfg.ContainerName); err != nil {
+		return nil, fmt.Errorf("remove existing local ingress container %s: %w", cfg.ContainerName, err)
+	}
 	args := []string{
 		"run", "--detach", "--rm",
 		"--name", cfg.ContainerName,

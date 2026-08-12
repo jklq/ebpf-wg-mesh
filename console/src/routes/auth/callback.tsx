@@ -5,7 +5,7 @@ export interface AuthCallbackService {
 	completeAuthCallback(input: {
 		code?: string;
 		state?: string;
-		subject?: string;
+		userId?: string;
 		email?: string;
 		redirectTo?: string;
 	}): Promise<string>;
@@ -16,7 +16,7 @@ export async function completeLoginRoute(
 	data: {
 		code?: string;
 		state?: string;
-		subject?: string;
+		userId?: string;
 		email?: string;
 		redirectTo?: string;
 	},
@@ -30,13 +30,13 @@ const completeLogin = createServerFn({ method: "GET" })
 		return {
 			code: data.code ?? "",
 			state: data.state ?? "",
-			subject: data.subject ?? "",
+			userId: data.userId ?? "",
 			email: data.email ?? "",
 			redirectTo: data.redirectTo ?? "/",
 		};
 	})
 	.handler(async ({ data }) => {
-		const service = await import("#/lib/dashboard/server");
+		const service = await import("#/lib/dashboard/entry.server");
 		try {
 			return await completeLoginRoute(service, data);
 		} catch (error) {
@@ -67,7 +67,7 @@ export const Route = createFileRoute("/auth/callback")({
 		return {
 			code: data.code ?? "",
 			state: data.state ?? "",
-			subject: data.subject ?? "",
+			userId: data.userId ?? "",
 			email: data.email ?? "",
 			redirectTo: data.redirect ?? "/",
 		};
@@ -78,7 +78,7 @@ export const Route = createFileRoute("/auth/callback")({
 			data: {
 				code: query.get("code") ?? "",
 				state: query.get("state") ?? "",
-				subject: query.get("subject") ?? "",
+				userId: query.get("user_id") ?? "",
 				email: query.get("email") ?? "",
 				redirectTo: query.get("redirect") ?? "/",
 			},
@@ -126,7 +126,7 @@ function githubCallbackErrorDetail(error: unknown): string {
 function parseAuthCallbackInput(input: unknown): {
 	code?: string;
 	state?: string;
-	subject?: string;
+	userId?: string;
 	email?: string;
 	redirectTo?: string;
 } {
@@ -137,7 +137,7 @@ function parseAuthCallbackInput(input: unknown): {
 	return {
 		code: readOptionalString(data.code),
 		state: readOptionalString(data.state),
-		subject: readOptionalString(data.subject),
+		userId: readOptionalString(data.userId),
 		email: readOptionalString(data.email),
 		redirectTo: readOptionalString(data.redirectTo),
 	};
@@ -146,7 +146,7 @@ function parseAuthCallbackInput(input: unknown): {
 function parseAuthCallbackSearch(input: unknown): {
 	code?: string;
 	state?: string;
-	subject?: string;
+	userId?: string;
 	email?: string;
 	redirect?: string;
 } {
@@ -157,7 +157,7 @@ function parseAuthCallbackSearch(input: unknown): {
 	return {
 		code: readOptionalString(data.code),
 		state: readOptionalString(data.state),
-		subject: readOptionalString(data.subject),
+		userId: readOptionalString(data.userId ?? data.user_id),
 		email: readOptionalString(data.email),
 		redirect: readOptionalString(data.redirect),
 	};
