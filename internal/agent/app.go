@@ -26,9 +26,9 @@ type App struct {
 }
 
 const (
-	initialReconnectDelay = time.Second
-	maxReconnectDelay     = 30 * time.Second
-	reconcilePollInterval = 2 * time.Second
+	initialReconnectDelay   = time.Second
+	maxReconnectDelay       = 30 * time.Second
+	reconcileSafetyInterval = time.Minute
 )
 
 var errRotateSession = errors.New("rotate mTLS session")
@@ -136,8 +136,8 @@ func (a *App) runSession(ctx context.Context) error {
 			AgentId:                 a.cfg.Node.ID,
 			Name:                    a.cfg.Node.Name,
 			AdvertiseAddr:           a.cfg.Node.AdvertiseAddr,
-			CpuMillisCapacity:       a.cfg.Node.Resources.CPUMillis,
-			MemoryMebibytesCapacity: a.cfg.Node.Resources.MemoryMebibytes,
+			CpuMillisCapacity:       a.cfg.Node.Resources.AdvertisedCPUMillis(),
+			MemoryMebibytesCapacity: a.cfg.Node.Resources.AdvertisedMemoryMebibytes(),
 			WireguardPublicKey:      publicKey,
 			WireguardListenPort:     int32(a.cfg.Mesh.WireGuard.ListenPort),
 		}},
@@ -157,41 +157,77 @@ func (a *App) runSession(ctx context.Context) error {
 		desiredStateMu   sync.RWMutex
 		latestDesired    *agentv1.DesiredNodeState
 		reconcileStateMu sync.Mutex
+		lastReport       *agentv1.StatusReport
 	)
 	reconcileAndReport := func(state *agentv1.DesiredNodeState) error {
 		reconcileStateMu.Lock()
 		defer reconcileStateMu.Unlock()
-		report, err := a.runtime.Reconcile(sessionCtx, state)
-		if err != nil {
-			slog.Error("reconcile failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", err)
+		identityChanged, reconcileErr := a.ensureManagedDashboardIdentity(sessionCtx, client, state)
+		if reconcileErr != nil {
+			reconcileErr = fmt.Errorf("ensure managed dashboard identity: %w", reconcileErr)
+		}
+		if reconcileErr == nil && identityChanged {
+			restarter, ok := a.runtime.(managedDashboardRestartRuntime)
+			if !ok {
+				reconcileErr = errors.New("runtime cannot restart the managed dashboard after certificate renewal")
+			} else if err := restarter.RestartManagedDashboard(sessionCtx, state); err != nil {
+				reconcileErr = err
+			}
+		}
+		var report *agentv1.StatusReport
+		if reconcileErr == nil {
+			report, reconcileErr = a.runtime.Reconcile(sessionCtx, state)
+		}
+		if reconcileErr != nil {
+			slog.Error("reconcile failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", reconcileErr)
 			report = &agentv1.StatusReport{
 				AgentId: a.cfg.Node.ID,
 				Services: []*agentv1.ServiceCondition{{
 					Phase:   "Error",
-					Message: err.Error(),
+					Message: reconcileErr.Error(),
 				}},
 			}
+		}
+		if !statusReportChanged(lastReport, report) {
+			return nil
 		}
 		if err := send(&agentv1.AgentClientMessage{
 			Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: report},
 		}); err != nil {
 			return err
 		}
+		lastReport = proto.Clone(report).(*agentv1.StatusReport)
 		return nil
 	}
 	go a.heartbeatLoop(sessionCtx, send)
-	go periodicReconcileLoop(sessionCtx, reconcilePollInterval, func() *agentv1.DesiredNodeState {
+	latestDesiredState := func() *agentv1.DesiredNodeState {
 		desiredStateMu.RLock()
 		defer desiredStateMu.RUnlock()
 		if latestDesired == nil {
 			return nil
 		}
 		return proto.Clone(latestDesired).(*agentv1.DesiredNodeState)
-	}, func(state *agentv1.DesiredNodeState) {
-		if err := reconcileAndReport(state); err != nil && sessionCtx.Err() == nil {
-			slog.Warn("periodic status report failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", err)
+	}
+	reconcileLatest := func(source string) {
+		state := latestDesiredState()
+		if state == nil {
+			return
 		}
+		if err := reconcileAndReport(state); err != nil && sessionCtx.Err() == nil {
+			slog.Warn("runtime reconciliation failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "source", source, "error", err)
+		}
+	}
+	go periodicReconcileLoop(sessionCtx, reconcileSafetyInterval, latestDesiredState, func(*agentv1.DesiredNodeState) {
+		reconcileLatest("safety-resync")
 	})
+	if source, ok := a.runtime.(RuntimeEventSource); ok {
+		events, eventErrors := source.ReconcileEvents(sessionCtx)
+		go runtimeEventReconcileLoop(sessionCtx, events, eventErrors, func() {
+			reconcileLatest("runtime-event")
+		}, func(err error) {
+			slog.Warn("runtime event watch ended", "agent_id", a.cfg.Node.ID, "error", err)
+		})
+	}
 
 	for {
 		msg, err := stream.Recv()
@@ -212,11 +248,60 @@ func (a *App) runSession(ctx context.Context) error {
 			return fmt.Errorf("apply assigned node config: %w", err)
 		}
 		desiredStateMu.Lock()
+		workloadsChanged := !desiredWorkloadsEqual(latestDesired, state)
 		latestDesired = proto.Clone(state).(*agentv1.DesiredNodeState)
 		desiredStateMu.Unlock()
 		slog.Info("received desired state", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
+		if !workloadsChanged {
+			continue
+		}
 		if err := reconcileAndReport(state); err != nil {
 			return err
+		}
+	}
+}
+
+func desiredWorkloadsEqual(previous, next *agentv1.DesiredNodeState) bool {
+	if previous == nil || next == nil {
+		return previous == next
+	}
+	return proto.Equal(
+		&agentv1.DesiredNodeState{Services: previous.GetServices(), Volumes: previous.GetVolumes()},
+		&agentv1.DesiredNodeState{Services: next.GetServices(), Volumes: next.GetVolumes()},
+	)
+}
+
+func statusReportChanged(previous, next *agentv1.StatusReport) bool {
+	return !proto.Equal(previous, next)
+}
+
+func runtimeEventReconcileLoop(
+	ctx context.Context,
+	events <-chan struct{},
+	errs <-chan error,
+	reconcile func(),
+	reportError func(error),
+) {
+	for events != nil || errs != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if reconcile != nil {
+				reconcile()
+			}
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			if err != nil && reportError != nil {
+				reportError(err)
+			}
 		}
 	}
 }
@@ -285,8 +370,11 @@ func (a *App) applyNodeConfig(ctx context.Context, assigned *agentv1.AssignedNod
 		return nil
 	}
 	if a.mesh != nil {
-		_ = a.mesh.Close()
-		a.mesh = nil
+		if err := a.mesh.Update(mesh.RuntimeConfig(a.cfg, next)); err != nil {
+			return err
+		}
+		a.meshAssignment = next
+		return nil
 	}
 	meshRuntime, err := a.meshFactory(ctx, mesh.RuntimeConfig(a.cfg, next))
 	if err != nil {

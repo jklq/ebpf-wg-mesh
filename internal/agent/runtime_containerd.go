@@ -21,6 +21,8 @@ import (
 
 const defaultVolumeMount = "/data"
 
+const defaultCPUCFSPeriod uint64 = 100_000
+
 var jsonEncoderPool = sync.Pool{
 	New: func() interface{} {
 		return &bytes.Buffer{}
@@ -38,11 +40,19 @@ type serviceStatus struct {
 	AppliedSpecRevision      int64
 	AppliedRolloutGeneration int64
 	AllocationIP             string
+	NetworkNamespacePath     string
 }
 
 type ContainerdRuntime struct {
-	cfg    config.AgentConfig
-	engine serviceEngine
+	cfg         config.AgentConfig
+	engine      serviceEngine
+	probeHealth func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe
+	ready       map[string]rolloutReadiness
+}
+
+type rolloutReadiness struct {
+	rolloutGeneration int64
+	healthyPorts      []int32
 }
 
 func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
@@ -51,6 +61,15 @@ func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
 	}
 	if err := os.MkdirAll(cfg.Runtime.VolumesDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir volumes dir: %w", err)
+	}
+	if secretsDir := cfg.Runtime.ManagedDashboardSecretsDir; secretsDir != "" {
+		info, err := os.Stat(secretsDir)
+		if err != nil {
+			return nil, fmt.Errorf("stat managed dashboard secrets dir: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, errors.New("managed dashboard secrets path is not a directory")
+		}
 	}
 	engine, err := newContainerdEngine(cfg)
 	if err != nil {
@@ -66,11 +85,33 @@ func (r *ContainerdRuntime) Close() error {
 	return r.engine.Close()
 }
 
+func (r *ContainerdRuntime) ReconcileEvents(ctx context.Context) (<-chan struct{}, <-chan error) {
+	if r == nil || r.engine == nil {
+		return nil, nil
+	}
+	if source, ok := r.engine.(RuntimeEventSource); ok {
+		return source.ReconcileEvents(ctx)
+	}
+	return nil, nil
+}
+
 func (r *ContainerdRuntime) SetLogSink(sink LogSink) {
 	if r == nil || r.engine == nil {
 		return
 	}
 	r.engine.SetLogSink(sink)
+}
+
+func (r *ContainerdRuntime) RestartManagedDashboard(ctx context.Context, state *agentv1.DesiredNodeState) error {
+	for _, svc := range state.GetServices() {
+		if !isManagedDashboardService(svc) {
+			continue
+		}
+		if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+			return fmt.Errorf("restart managed dashboard: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNodeState) (*agentv1.StatusReport, error) {
@@ -86,7 +127,15 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 	}
 
 	for _, vol := range state.GetVolumes() {
-		path := filepath.Join(r.cfg.Runtime.VolumesDir, vol.GetVolumeId())
+		path, pathErr := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", vol.GetVolumeId())
+		if pathErr != nil {
+			report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
+				VolumeId: vol.GetVolumeId(),
+				Phase:    "Error",
+				Message:  pathErr.Error(),
+			})
+			continue
+		}
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
 				VolumeId: vol.GetVolumeId(),
@@ -110,6 +159,20 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 			DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
 			Phase:                    "Pending",
 		}
+		if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			report.Services = append(report.Services, cond)
+			continue
+		}
+		if volumeID := svc.GetVolumeId(); volumeID != "" {
+			if _, err := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", volumeID); err != nil {
+				cond.Phase = "Error"
+				cond.Message = err.Error()
+				report.Services = append(report.Services, cond)
+				continue
+			}
+		}
 		if err := r.persistDesiredService(svc); err != nil {
 			cond.Phase = "Error"
 			cond.Message = err.Error()
@@ -126,18 +189,47 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 		cond.AppliedSpecRevision = status.AppliedSpecRevision
 		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
 		cond.AllocationIp = status.AllocationIP
-		cond.HealthyPorts = probeHealthyPorts(status.AllocationIP, svc)
-		cond.Healthy = true
-		switch {
-		case cond.Healthy:
+		check := explicitHTTPHealthCheck(svc)
+		if check == nil {
+			cond.Healthy = true
+			cond.HealthyPorts = readinessPorts(svc)
 			cond.Phase = "Healthy"
-			cond.Message = "container healthy"
-		case created:
+			cond.Message = "process running; no health check configured"
+			report.Services = append(report.Services, cond)
+			continue
+		}
+		if created {
+			delete(r.ready, svc.GetAllocationId())
+		}
+		if ready, ok := r.ready[svc.GetAllocationId()]; ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
+			cond.Healthy = true
+			cond.HealthyPorts = append([]int32(nil), ready.healthyPorts...)
+			cond.Phase = "Healthy"
+			cond.Message = "HTTP readiness check passed"
+			report.Services = append(report.Services, cond)
+			continue
+		}
+		probeHealth := r.probeHealth
+		if probeHealth == nil {
+			probeHealth = probeServiceHealthInNamespace
+		}
+		probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIP, svc)
+		if probe.healthy {
+			ports := readinessPorts(svc)
+			if r.ready == nil {
+				r.ready = make(map[string]rolloutReadiness)
+			}
+			r.ready[svc.GetAllocationId()] = rolloutReadiness{
+				rolloutGeneration: svc.GetDesiredRolloutGeneration(),
+				healthyPorts:      append([]int32(nil), ports...),
+			}
+			cond.Healthy = true
+			cond.HealthyPorts = ports
+			cond.Phase = "Healthy"
+			cond.Message = "HTTP readiness check passed"
+		} else {
 			cond.Phase = "Starting"
-			cond.Message = "container created or replaced"
-		default:
-			cond.Phase = "Running"
-			cond.Message = "container reconciled"
+			cond.Message = "HTTP readiness check not ready: " + probe.failureReason
 		}
 		report.Services = append(report.Services, cond)
 	}
@@ -157,6 +249,7 @@ func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[
 		if err := r.engine.RemoveService(ctx, allocationID); err != nil {
 			return err
 		}
+		delete(r.ready, allocationID)
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove desired file %s: %w", path, err)
 		}
@@ -184,7 +277,11 @@ func (r *ContainerdRuntime) pruneStaleVolumes(desired map[string]*agentv1.Desire
 }
 
 func (r *ContainerdRuntime) persistDesiredService(svc *agentv1.DesiredService) error {
-	path := filepath.Join(r.cfg.Runtime.DataDir, "desired", svc.GetAllocationId()+".json")
+	path, err := runtimeChildPath(filepath.Join(r.cfg.Runtime.DataDir, "desired"), "allocation ID", svc.GetAllocationId())
+	if err != nil {
+		return err
+	}
+	path += ".json"
 	buf := jsonEncoderPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer jsonEncoderPool.Put(buf)
@@ -193,66 +290,136 @@ func (r *ContainerdRuntime) persistDesiredService(svc *agentv1.DesiredService) e
 	if err := enc.Encode(svc); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	current, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(current, buf.Bytes()) {
+		return os.Chmod(path, 0o600)
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read desired service %s: %w", svc.GetAllocationId(), err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
-func probeHealthyPorts(allocationIP string, svc *agentv1.DesiredService) []int32 {
+type serviceHealthProbe struct {
+	configured    bool
+	healthy       bool
+	failureReason string
+}
+
+type dialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+func probeServiceHealth(allocationIP string, svc *agentv1.DesiredService) serviceHealthProbe {
+	return probeServiceHealthWithDialer(context.Background(), allocationIP, svc, (&net.Dialer{}).DialContext)
+}
+
+func probeServiceHealthWithDialer(ctx context.Context, allocationIP string, svc *agentv1.DesiredService, dial dialContextFunc) serviceHealthProbe {
 	runtime := svc.GetSpec().GetRuntime()
-	ports := runtimePortNumbers(runtime)
-	if allocationIP == "" || len(ports) == 0 {
-		return nil
-	}
 	check := runtime.GetHealthCheck()
 	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
-		var healthy []int32
-		for _, port := range ports {
-			if probeTCP(net.JoinHostPort(allocationIP, fmt.Sprintf("%d", port)), 2*time.Second) {
-				healthy = append(healthy, port)
-			}
-		}
-		return healthy
+		return serviceHealthProbe{}
 	}
-	if check.GetPort() > 0 {
-		if probeHealthCheck(allocationIP, check.GetPort(), check) {
-			return []int32{check.GetPort()}
-		}
-		return nil
+	result := serviceHealthProbe{configured: true}
+	if check.GetType() != platformv1.HealthCheck_TYPE_HTTP {
+		result.failureReason = "only HTTP readiness checks are supported"
+		return result
 	}
-	var healthy []int32
-	for _, port := range ports {
-		if probeHealthCheck(allocationIP, port, check) {
-			healthy = append(healthy, port)
-		}
+	if allocationIP == "" {
+		result.failureReason = "allocation IP is unavailable"
+		return result
 	}
-	return healthy
+	port := readinessCheckPort(runtime, check)
+	if port == 0 {
+		result.failureReason = "HTTP readiness check port is unavailable"
+		return result
+	}
+	if err := probeHealthCheck(ctx, allocationIP, port, check, dial); err != nil {
+		result.failureReason = err.Error()
+		return result
+	}
+	result.healthy = true
+	return result
 }
 
-func probeHealthCheck(allocationIP string, port int32, check *platformv1.HealthCheck) bool {
+func probeHealthCheck(ctx context.Context, allocationIP string, port int32, check *platformv1.HealthCheck, dial dialContextFunc) error {
 	endpoint := net.JoinHostPort(allocationIP, fmt.Sprintf("%d", port))
 	switch check.GetType() {
 	case platformv1.HealthCheck_TYPE_HTTP:
-		client := http.Client{Timeout: time.Duration(maxInt32(check.GetTimeoutSeconds(), 2)) * time.Second}
-		resp, err := client.Get("http://" + endpoint + check.GetPath())
-		if err == nil && resp.StatusCode < 500 {
-			resp.Body.Close()
-			return true
+		path := check.GetPath()
+		if !validHealthCheckPath(path) {
+			return fmt.Errorf("HTTP port %d: invalid health path %q", port, path)
 		}
-		if resp != nil {
-			resp.Body.Close()
+		client := healthHTTPClient(time.Duration(maxInt32(check.GetTimeoutSeconds(), 2))*time.Second, dial)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+endpoint+path, nil)
+		if err != nil {
+			return fmt.Errorf("HTTP port %d: %w", port, err)
 		}
-	case platformv1.HealthCheck_TYPE_TCP:
-		return probeTCP(endpoint, time.Duration(maxInt32(check.GetTimeoutSeconds(), 2))*time.Second)
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("HTTP port %d: %w", port, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("HTTP port %d: status %d", port, resp.StatusCode)
+		}
+		return nil
 	}
-	return false
+	return errors.New("unsupported health check type")
 }
 
-func probeTCP(endpoint string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", endpoint, timeout)
-	if err != nil {
-		return false
+func explicitHTTPHealthCheck(svc *agentv1.DesiredService) *platformv1.HealthCheck {
+	check := svc.GetSpec().GetRuntime().GetHealthCheck()
+	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
+		return nil
 	}
-	_ = conn.Close()
-	return true
+	return check
+}
+
+func readinessCheckPort(runtime *platformv1.ServiceRuntime, check *platformv1.HealthCheck) int32 {
+	if check.GetPort() > 0 {
+		return check.GetPort()
+	}
+	for _, item := range runtime.GetPorts() {
+		if item.GetPrimary() {
+			return item.GetPort()
+		}
+	}
+	ports := runtimePortNumbers(runtime)
+	if len(ports) > 0 {
+		return ports[0]
+	}
+	return 0
+}
+
+func readinessPorts(svc *agentv1.DesiredService) []int32 {
+	runtime := svc.GetSpec().GetRuntime()
+	ports := runtimePortNumbers(runtime)
+	if len(ports) == 0 {
+		if check := runtime.GetHealthCheck(); check != nil && check.GetPort() > 0 {
+			return []int32{check.GetPort()}
+		}
+	}
+	return ports
+}
+
+func healthHTTPClient(timeout time.Duration, dial dialContextFunc) *http.Client {
+	transport := &http.Transport{Proxy: nil}
+	if dial != nil {
+		transport.DialContext = dial
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func validHealthCheckPath(path string) bool {
+	return strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "\r\n")
 }
 
 func runtimePortNumbers(runtime *platformv1.ServiceRuntime) []int32 {
@@ -284,6 +451,13 @@ func maxInt32(v int32, fallback int32) int32 {
 		return fallback
 	}
 	return v
+}
+
+func cpuCFSForMillis(cpuMillis int64) (int64, uint64) {
+	if cpuMillis <= 0 {
+		return 0, defaultCPUCFSPeriod
+	}
+	return cpuMillis * int64(defaultCPUCFSPeriod) / 1000, defaultCPUCFSPeriod
 }
 
 func indexDesiredVolumes(items []*agentv1.DesiredVolume) map[string]*agentv1.DesiredVolume {

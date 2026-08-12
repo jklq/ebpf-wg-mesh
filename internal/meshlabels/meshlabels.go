@@ -21,34 +21,34 @@ const (
 
 // Default keys for the identity labels, which operators may rename.
 const (
-	DefaultProjectKey = "mesh.project_id"
-	DefaultIPv6Key    = "mesh.ipv6"
+	DefaultEnvironmentKey = "mesh.environment_id"
+	DefaultIPv6Key        = "mesh.ipv6"
 )
 
 // Identity is a workload's mesh identity: the network identity its datapath
 // policy is keyed by, and the address it owns inside the mesh.
 type Identity struct {
-	ProjectID uint32
-	IPv6      netip.Addr
+	NetworkIdentity uint32
+	IPv6            netip.Addr
 }
 
 // Keys names the labels carrying an Identity. Because they are configurable,
 // the writing and reading sides must be handed the same pair.
 type Keys struct {
-	Project string
-	IPv6    string
+	Environment string
+	IPv6        string
 }
 
 // NewKeys resolves configured label keys, substituting the defaults for empty
 // ones so a partially configured agent and firewall still agree.
-func NewKeys(projectKey, ipv6Key string) Keys {
-	if projectKey == "" {
-		projectKey = DefaultProjectKey
+func NewKeys(environmentKey, ipv6Key string) Keys {
+	if environmentKey == "" {
+		environmentKey = DefaultEnvironmentKey
 	}
 	if ipv6Key == "" {
 		ipv6Key = DefaultIPv6Key
 	}
-	return Keys{Project: projectKey, IPv6: ipv6Key}
+	return Keys{Environment: environmentKey, IPv6: ipv6Key}
 }
 
 // Encode renders id into the label pair named by k.
@@ -58,25 +58,25 @@ func (k Keys) Encode(id Identity) map[string]string {
 		ipv6 = id.IPv6.String()
 	}
 	return map[string]string{
-		k.Project: strconv.FormatUint(uint64(id.ProjectID), 10),
-		k.IPv6:    ipv6,
+		k.Environment: strconv.FormatUint(uint64(id.NetworkIdentity), 10),
+		k.IPv6:        ipv6,
 	}
 }
 
 // Decode recovers the identity Encode wrote, rejecting missing or malformed
-// values rather than attaching a workload to the wrong project.
+// values rather than attaching a workload to the wrong environment.
 func (k Keys) Decode(labels map[string]string) (Identity, error) {
 	if labels == nil {
-		return Identity{}, fmt.Errorf("missing label %q", k.Project)
+		return Identity{}, fmt.Errorf("missing label %q", k.Environment)
 	}
 
-	rawProject := labels[k.Project]
-	if rawProject == "" {
-		return Identity{}, fmt.Errorf("missing label %q", k.Project)
+	rawEnvironment := labels[k.Environment]
+	if rawEnvironment == "" {
+		return Identity{}, fmt.Errorf("missing label %q", k.Environment)
 	}
-	projectID, err := strconv.ParseUint(rawProject, 10, 32)
-	if err != nil || projectID == 0 {
-		return Identity{}, fmt.Errorf("invalid project label %q", rawProject)
+	networkIdentity, err := strconv.ParseUint(rawEnvironment, 10, 32)
+	if err != nil || networkIdentity == 0 {
+		return Identity{}, fmt.Errorf("invalid environment label %q", rawEnvironment)
 	}
 
 	rawIP := labels[k.IPv6]
@@ -88,13 +88,13 @@ func (k Keys) Decode(labels map[string]string) (Identity, error) {
 		return Identity{}, fmt.Errorf("invalid ipv6 label %q", rawIP)
 	}
 
-	return Identity{ProjectID: uint32(projectID), IPv6: ip}, nil
+	return Identity{NetworkIdentity: uint32(networkIdentity), IPv6: ip}, nil
 }
 
-// ProjectID reports the network identity stamped under k.Project, or zero when
+// NetworkIdentity reports the network identity stamped under k.Environment, or zero when
 // the label is absent or malformed. Callers comparing against a desired
 // identity use this to avoid treating a decode failure as a mismatch reason.
-func (k Keys) ProjectID(labels map[string]string) uint32 {
-	value, _ := strconv.ParseUint(labels[k.Project], 10, 32)
+func (k Keys) NetworkIdentity(labels map[string]string) uint32 {
+	value, _ := strconv.ParseUint(labels[k.Environment], 10, 32)
 	return uint32(value)
 }

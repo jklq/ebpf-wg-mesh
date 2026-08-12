@@ -31,7 +31,7 @@ struct identity_key {
 };
 
 struct identity_value {
-    __u32 project_id;
+    __u32 network_identity;
     __u8 host_ip[16];
     __u32 veth_ifindex;
 };
@@ -41,7 +41,7 @@ struct host_ip_value {
 };
 
 struct container_policy {
-    __u32 project_id;
+    __u32 network_identity;
     __u8 ipv6[16];
 };
 
@@ -213,7 +213,7 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
 
     struct identity_value *dst_identity = lookup_identity((const __u8 *)&ip6.daddr);
     if (dst_identity) {
-        if (dst_identity->project_id != policy->project_id) {
+        if (dst_identity->network_identity != policy->network_identity) {
             return TC_ACT_SHOT;
         }
 
@@ -266,7 +266,7 @@ static __always_inline int handle_wireguard_ingress(struct __sk_buff *skb)
     if (!src_identity || !dst_identity) {
         return TC_ACT_SHOT;
     }
-    if (src_identity->project_id != dst_identity->project_id) {
+    if (src_identity->network_identity != dst_identity->network_identity) {
         return TC_ACT_SHOT;
     }
 
@@ -310,10 +310,10 @@ static __always_inline int handle_container_egress(struct __sk_buff *skb)
         if (!dst_identity) {
             return TC_ACT_SHOT;
         }
-        if (dst_identity->project_id != policy->project_id) {
+        if (dst_identity->network_identity != policy->network_identity) {
             return TC_ACT_SHOT;
         }
-        if (src_identity->project_id != dst_identity->project_id) {
+        if (src_identity->network_identity != dst_identity->network_identity) {
             return TC_ACT_SHOT;
         }
         return TC_ACT_OK;

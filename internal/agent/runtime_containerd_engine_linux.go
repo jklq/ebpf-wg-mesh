@@ -19,6 +19,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/meshlabels"
 
@@ -29,14 +30,18 @@ import (
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
 	cnetns "github.com/containerd/containerd/pkg/netns"
+	"github.com/containerd/containerd/remotes/docker"
 	cni "github.com/containerd/go-cni"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 const (
-	defaultCNIPluginDir = "/usr/lib/cni"
-	defaultCNIConfDir   = "/etc/cni/net.d"
-	defaultNetworkName  = "mesh-cni"
+	defaultCNIPluginDir                 = "/usr/lib/cni"
+	defaultCNIConfDir                   = "/etc/cni/net.d"
+	defaultNetworkName                  = "mesh-cni"
+	serviceHostsDir                     = "hosts"
+	defaultServiceCPUMillis       int64 = 250
+	defaultServiceMemoryMebibytes int64 = 256
 )
 
 type containerdEngine struct {
@@ -73,6 +78,10 @@ func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("mkdir netns dir: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(cfg.Runtime.DataDir, serviceHostsDir), 0o755); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("mkdir hosts dir: %w", err)
+	}
 	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin}, nil
 }
 
@@ -92,9 +101,67 @@ func (e *containerdEngine) SetLogSink(sink LogSink) {
 	e.logSink = sink
 }
 
+func (e *containerdEngine) ReconcileEvents(ctx context.Context) (<-chan struct{}, <-chan error) {
+	events, subscriptionErrors := e.client.Subscribe(
+		e.namespaced(ctx),
+		`topic=="/tasks/exit",event.container_id~="^platform-"`,
+	)
+	out := make(chan struct{}, 1)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(out)
+		defer close(errs)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
+				if event == nil {
+					continue
+				}
+				select {
+				case out <- struct{}{}:
+				default:
+				}
+			case err, ok := <-subscriptionErrors:
+				if !ok || err == nil {
+					return
+				}
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+		}
+	}()
+	return out, errs
+}
+
 func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
 	if svc.GetNetworkIdentity() == 0 {
 		return serviceStatus{}, false, fmt.Errorf("service %s missing network identity", svc.GetServiceId())
+	}
+	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
+		return serviceStatus{}, false, err
+	}
+	if volumeID := svc.GetVolumeId(); volumeID != "" {
+		if _, err := runtimeChildPath(e.cfg.Runtime.VolumesDir, "volume ID", volumeID); err != nil {
+			return serviceStatus{}, false, err
+		}
+	}
+	if isManagedDashboardService(svc) {
+		secretsDir := filepath.Clean(e.cfg.Runtime.ManagedDashboardSecretsDir)
+		if secretsDir == "." || !filepath.IsAbs(secretsDir) {
+			return serviceStatus{}, false, errors.New("managed dashboard secrets directory is not configured on this agent")
+		}
+	}
+	hostsPath, err := e.ensureServiceHostsFile(svc)
+	if err != nil {
+		return serviceStatus{}, false, err
 	}
 	ctx = e.namespaced(ctx)
 	containerID := containerName(svc.GetAllocationId())
@@ -103,18 +170,24 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	} else if exists {
 		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() &&
 			rec.networkIdentity == svc.GetNetworkIdentity() && rec.running {
+			netnsPath, _ := e.netnsPath(svc.GetAllocationId())
 			return serviceStatus{
 				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 				AppliedRolloutGeneration: rec.rolloutGeneration,
 				AllocationIP:             allocationIPForService(svc),
+				NetworkNamespacePath:     netnsPath,
 			}, false, nil
 		}
 		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			return serviceStatus{}, false, err
 		}
+		hostsPath, err = e.ensureServiceHostsFile(svc)
+		if err != nil {
+			return serviceStatus{}, false, err
+		}
 	}
 
-	image, err := e.ensureImage(ctx, svc.GetSpec().GetImage())
+	image, err := e.ensureImage(ctx, svc.GetSpec().GetImage(), svc.GetRegistryUsername(), svc.GetRegistryPassword())
 	if err != nil {
 		return serviceStatus{}, false, err
 	}
@@ -128,10 +201,15 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		}
 	}
 
+	specOpts, err := e.specOpts(svc, image, netnsPath, hostsPath)
+	if err != nil {
+		_ = e.cleanupNetNS(svc.GetAllocationId())
+		return serviceStatus{}, false, err
+	}
 	container, err := e.client.NewContainer(ctx, containerID,
 		containerd.WithSnapshotter(e.cfg.Runtime.Snapshotter),
 		containerd.WithNewSnapshot(containerID, image),
-		containerd.WithNewSpec(e.specOpts(svc, image, netnsPath)...),
+		containerd.WithNewSpec(specOpts...),
 		containerd.WithContainerLabels(e.serviceLabels(svc)),
 	)
 	if err != nil {
@@ -160,12 +238,13 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
 		AllocationIP:             allocationIPForService(svc),
+		NetworkNamespacePath:     netnsPath,
 	}, true, nil
 }
 
 func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator {
 	stdout := &containerLogWriter{
-		projectID:         svc.GetProjectId(),
+		environmentID:     svc.GetEnvironmentId(),
 		serviceID:         svc.GetServiceId(),
 		allocationID:      svc.GetAllocationId(),
 		stream:            "stdout",
@@ -174,7 +253,7 @@ func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator
 		sink:              e.currentLogSink,
 	}
 	stderr := &containerLogWriter{
-		projectID:         svc.GetProjectId(),
+		environmentID:     svc.GetEnvironmentId(),
 		serviceID:         svc.GetServiceId(),
 		allocationID:      svc.GetAllocationId(),
 		stream:            "stderr",
@@ -226,6 +305,9 @@ func (e *containerdEngine) RemoveService(ctx context.Context, allocationID strin
 			errs = append(errs, err)
 		}
 	}
+	if err := e.cleanupServiceHostsFile(allocationID); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -271,7 +353,7 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 		return inspectRecord{}, false, err
 	}
 	rolloutGeneration, _ := strconv.ParseInt(info.Labels[meshlabels.DesiredRolloutGeneration], 10, 64)
-	networkIdentity := e.cfg.Containerd.LabelKeys().ProjectID(info.Labels)
+	networkIdentity := e.cfg.Containerd.LabelKeys().NetworkIdentity(info.Labels)
 	task, err := container.Task(ctx, nil)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
@@ -286,7 +368,7 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 	return inspectRecord{rolloutGeneration: rolloutGeneration, networkIdentity: networkIdentity, running: status.Status == containerd.Running}, true, nil
 }
 
-func (e *containerdEngine) ensureImage(ctx context.Context, ref string) (containerd.Image, error) {
+func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, password string) (containerd.Image, error) {
 	image, err := e.client.GetImage(ctx, ref)
 	if err == nil {
 		return image, nil
@@ -294,10 +376,22 @@ func (e *containerdEngine) ensureImage(ctx context.Context, ref string) (contain
 	if !errdefs.IsNotFound(err) {
 		return nil, err
 	}
-	return e.client.Pull(ctx, ref, containerd.WithPullUnpack, containerd.WithPullSnapshotter(e.cfg.Runtime.Snapshotter))
+	opts := []containerd.RemoteOpt{
+		containerd.WithPullUnpack,
+		containerd.WithPullSnapshotter(e.cfg.Runtime.Snapshotter),
+	}
+	if username != "" || password != "" {
+		resolver := docker.NewResolver(docker.ResolverOptions{
+			Credentials: func(string) (string, string, error) {
+				return username, password, nil
+			},
+		})
+		opts = append(opts, containerd.WithResolver(resolver))
+	}
+	return e.client.Pull(ctx, ref, opts...)
 }
 
-func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image containerd.Image, netnsPath string) []oci.SpecOpts {
+func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image containerd.Image, netnsPath, hostsPath string) ([]oci.SpecOpts, error) {
 	runtime := svc.GetSpec().GetRuntime()
 	opts := []oci.SpecOpts{
 		oci.WithDefaultSpec(),
@@ -305,7 +399,7 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		oci.WithDefaultUnixDevices,
 		oci.WithNoNewPrivileges,
 		oci.WithCapabilities(nil),
-		oci.WithHostHostsFile,
+		withServiceHostsFile(hostsPath),
 		oci.WithHostResolvconf,
 		oci.WithHostname(svc.GetName()),
 		oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace, Path: netnsPath}),
@@ -328,19 +422,35 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		opts = append(opts, oci.WithEnv(envs))
 	}
 	if svc.GetVolumeId() != "" {
+		volumePath, err := runtimeChildPath(e.cfg.Runtime.VolumesDir, "volume ID", svc.GetVolumeId())
+		if err != nil {
+			return nil, err
+		}
 		opts = append(opts, oci.WithMounts([]specs.Mount{{
-			Source:      filepath.Join(e.cfg.Runtime.VolumesDir, svc.GetVolumeId()),
+			Source:      volumePath,
 			Destination: defaultVolumeMount,
 			Type:        "bind",
 			Options:     []string{"rbind", "rw"},
 		}}))
 		opts = append(opts, oci.WithEnv([]string{"PLATFORM_VOLUME_DIR=" + defaultVolumeMount}))
 	}
-	if !e.cfg.Runtime.DisableCgroups && runtime.GetMemoryMebibytes() > 0 {
-		opts = append(opts, oci.WithMemoryLimit(uint64(runtime.GetMemoryMebibytes())*1024*1024))
+	if isManagedDashboardService(svc) {
+		secretsDir := filepath.Clean(e.cfg.Runtime.ManagedDashboardSecretsDir)
+		if secretsDir == "." || !filepath.IsAbs(secretsDir) {
+			return nil, errors.New("managed dashboard secrets directory is not configured on this agent")
+		}
+		opts = append(opts, oci.WithMounts([]specs.Mount{{
+			Source:      secretsDir,
+			Destination: managedDashboardSecretMount,
+			Type:        "bind",
+			Options:     []string{"rbind", "ro"},
+		}}))
 	}
-	if !e.cfg.Runtime.DisableCgroups && runtime.GetCpuMillis() > 0 {
-		opts = append(opts, oci.WithCPUs(fmt.Sprintf("%.3f", float64(runtime.GetCpuMillis())/1000.0)))
+	if !e.cfg.Runtime.DisableCgroups {
+		memoryMebibytes := effectiveMemoryMebibytes(runtime)
+		opts = append(opts, oci.WithMemoryLimit(uint64(memoryMebibytes)*1024*1024))
+		quota, period := cpuCFSForMillis(effectiveCPUMillis(runtime))
+		opts = append(opts, oci.WithCPUCFS(quota, period))
 	}
 	if cmd := runtime.GetCommand(); len(cmd) > 0 {
 		args := append([]string{}, cmd...)
@@ -354,7 +464,59 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 	if e.cfg.Runtime.DisableCgroups {
 		opts = append(opts, withoutCgroups)
 	}
-	return opts
+	return opts, nil
+}
+
+func withServiceHostsFile(path string) oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
+		spec.Mounts = append(spec.Mounts, specs.Mount{
+			Destination: "/etc/hosts",
+			Type:        "bind",
+			Source:      path,
+			Options:     []string{"rbind", "ro"},
+		})
+		return nil
+	}
+}
+
+func (e *containerdEngine) ensureServiceHostsFile(svc *agentv1.DesiredService) (string, error) {
+	path, err := runtimeChildPath(filepath.Join(e.cfg.Runtime.DataDir, serviceHostsDir), "allocation ID", svc.GetAllocationId())
+	if err != nil {
+		return "", err
+	}
+	contents, err := renderServiceHostsFile(svc.GetInternalHosts())
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, contents, 0o644); err != nil {
+		return "", fmt.Errorf("write service hosts file: %w", err)
+	}
+	return path, nil
+}
+
+func (e *containerdEngine) cleanupServiceHostsFile(allocationID string) error {
+	path, err := runtimeChildPath(filepath.Join(e.cfg.Runtime.DataDir, serviceHostsDir), "allocation ID", allocationID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove service hosts file: %w", err)
+	}
+	return nil
+}
+
+func effectiveCPUMillis(runtime *platformv1.ServiceRuntime) int64 {
+	if runtime.GetCpuMillis() > 0 {
+		return runtime.GetCpuMillis()
+	}
+	return defaultServiceCPUMillis
+}
+
+func effectiveMemoryMebibytes(runtime *platformv1.ServiceRuntime) int64 {
+	if runtime.GetMemoryMebibytes() > 0 {
+		return runtime.GetMemoryMebibytes()
+	}
+	return defaultServiceMemoryMebibytes
 }
 
 func withoutCgroups(_ context.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
@@ -386,8 +548,8 @@ func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string
 	// The firewall recovers this identity from the labels once the task starts.
 	ipv6, _ := netip.ParseAddr(svc.GetPrivateIpv6())
 	maps.Copy(labels, e.cfg.Containerd.LabelKeys().Encode(meshlabels.Identity{
-		ProjectID: svc.GetNetworkIdentity(),
-		IPv6:      ipv6,
+		NetworkIdentity: svc.GetNetworkIdentity(),
+		IPv6:            ipv6,
 	}))
 	return labels
 }
@@ -416,7 +578,7 @@ func (e *containerdEngine) setupNetwork(ctx context.Context, containerID, netnsP
 		cni.WithArgs("IgnoreUnknown", "1"),
 		cni.WithLabels(map[string]string{
 			"K8S_POD_NAME":      svc.GetName(),
-			"K8S_POD_NAMESPACE": svc.GetProjectId(),
+			"K8S_POD_NAMESPACE": svc.GetEnvironmentId(),
 		}),
 	}
 	if svc.GetPrivateIpv6() != "" {

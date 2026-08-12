@@ -21,7 +21,7 @@ func TestContainerLogWriterSplitsLinesWithMetadata(t *testing.T) {
 	sink := &recordingLogSink{}
 	var seq uint64
 	writer := &containerLogWriter{
-		projectID:         "project-1",
+		environmentID:     "project-1",
 		serviceID:         "service-1",
 		allocationID:      "alloc-1",
 		stream:            "stdout",
@@ -49,7 +49,7 @@ func TestContainerLogWriterSplitsLinesWithMetadata(t *testing.T) {
 	if got := sink.entries[1].GetLine(); got != "second" {
 		t.Fatalf("unexpected second line %q", got)
 	}
-	if got := sink.entries[0].GetProjectId(); got != "project-1" {
+	if got := sink.entries[0].GetEnvironmentId(); got != "project-1" {
 		t.Fatalf("unexpected project id %q", got)
 	}
 	if got := sink.entries[0].GetRolloutGeneration(); got != 7 {
@@ -66,7 +66,7 @@ func TestContainerLogWriterBoundsPartialLines(t *testing.T) {
 	sink := &recordingLogSink{}
 	var seq uint64
 	writer := &containerLogWriter{
-		projectID:         "project-1",
+		environmentID:     "project-1",
 		serviceID:         "service-1",
 		allocationID:      "alloc-1",
 		stream:            "stderr",
