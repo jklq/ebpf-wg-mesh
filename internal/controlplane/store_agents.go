@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -146,33 +148,57 @@ func (s *Store) agentByID(ctx context.Context, agentID string) (agentRecord, err
 	return rec, nil
 }
 
-func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *agentv1.StatusReport) (bool, error) {
+func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *agentv1.StatusReport) (bool, []string, error) {
 	var ingressChanged bool
+	changedEnvironments := make(map[string]struct{})
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		ingressChanged = false
+		changedEnvironments = make(map[string]struct{})
 		now := time.Now().UTC()
 		for _, cond := range report.Services {
 			var (
-				prevHealthy      bool
-				prevAllocationIP string
-				prevHealthyPorts []int32
-				hasDomain        bool
-				workloadSubnet   string
-				projectID        string
-				serviceID        string
+				prevAppliedSpecRevision      int64
+				prevAppliedRolloutGeneration int64
+				prevPhase                    string
+				prevMessage                  string
+				prevHealthy                  bool
+				prevAllocationIP             string
+				prevHealthyPorts             []int32
+				hasDomain                    bool
+				workloadSubnet               string
+				environmentID                string
+				serviceID                    string
 			)
 			err := tx.QueryRowContext(ctx,
-				`SELECT a.healthy,
+				`SELECT a.applied_spec_revision,
+				        a.applied_rollout_generation,
+				        a.phase,
+				        a.message,
+				        a.healthy,
 				        a.allocation_ip,
 				        a.healthy_ports,
 				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id),
 				        ag.workload_ipv6_subnet,
-				        a.project_id,
+				        s.environment_id,
 				        a.service_id
 				   FROM allocations a
+				   JOIN services s ON s.id = a.service_id
 				   JOIN agents ag ON ag.id = a.agent_id
 				  WHERE a.id = $1 AND a.agent_id = $2`,
 				cond.AllocationId, agentID,
-			).Scan(&prevHealthy, &prevAllocationIP, (*jsonInt32Slice)(&prevHealthyPorts), &hasDomain, &workloadSubnet, &projectID, &serviceID)
+			).Scan(
+				&prevAppliedSpecRevision,
+				&prevAppliedRolloutGeneration,
+				&prevPhase,
+				&prevMessage,
+				&prevHealthy,
+				&prevAllocationIP,
+				(*jsonInt32Slice)(&prevHealthyPorts),
+				&hasDomain,
+				&workloadSubnet,
+				&environmentID,
+				&serviceID,
+			)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					continue
@@ -183,9 +209,26 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 			if err != nil {
 				return fmt.Errorf("encode healthy ports: %w", err)
 			}
-			allocationIP, err := privateIPv6(workloadSubnet, projectID, serviceID)
-			if err != nil {
-				return fmt.Errorf("derive allocation ip: %w", err)
+			allocationIP := strings.TrimSpace(cond.GetAllocationIp())
+			if s.useReportedAllocationIP {
+				if net.ParseIP(allocationIP) == nil {
+					return fmt.Errorf("reported allocation ip %q is invalid", allocationIP)
+				}
+			} else {
+				allocationIP, err = privateIPv6(workloadSubnet, environmentID, serviceID)
+				if err != nil {
+					return fmt.Errorf("derive allocation ip: %w", err)
+				}
+			}
+			statusChanged := prevAppliedSpecRevision != cond.GetAppliedSpecRevision() ||
+				prevAppliedRolloutGeneration != cond.GetAppliedRolloutGeneration() ||
+				prevPhase != cond.GetPhase() ||
+				prevMessage != cond.GetMessage() ||
+				prevAllocationIP != allocationIP ||
+				!equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) ||
+				prevHealthy != cond.GetHealthy()
+			if !statusChanged {
+				continue
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
@@ -202,6 +245,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
+			changedEnvironments[environmentID] = struct{}{}
 			if hasDomain && (prevHealthy != cond.Healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts())) {
 				ingressChanged = true
 			}
@@ -209,16 +253,20 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return ingressChanged, nil
+	environmentIDs := make([]string, 0, len(changedEnvironments))
+	for environmentID := range changedEnvironments {
+		environmentIDs = append(environmentIDs, environmentID)
+	}
+	return ingressChanged, environmentIDs, nil
 }
 
 func (s *Store) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	type logOwner struct {
-		allocationID string
-		projectID    string
-		serviceID    string
+		allocationID  string
+		environmentID string
+		serviceID     string
 	}
 	seen := make(map[logOwner]struct{}, len(batch.GetEntries()))
 	for _, entry := range batch.GetEntries() {
@@ -227,9 +275,9 @@ func (s *Store) validateAgentLogBatch(ctx context.Context, agentID string, batch
 			continue
 		}
 		owner := logOwner{
-			allocationID: allocationID,
-			projectID:    entry.GetProjectId(),
-			serviceID:    entry.GetServiceId(),
+			allocationID:  allocationID,
+			environmentID: entry.GetEnvironmentId(),
+			serviceID:     entry.GetServiceId(),
 		}
 		if _, ok := seen[owner]; ok {
 			continue
@@ -239,8 +287,10 @@ func (s *Store) validateAgentLogBatch(ctx context.Context, agentID string, batch
 		err := s.db.QueryRowContext(ctx,
 			`SELECT 1
 			   FROM allocations
-			  WHERE id = $1 AND agent_id = $2 AND project_id = $3 AND service_id = $4`,
-			allocationID, agentID, entry.GetProjectId(), entry.GetServiceId(),
+			  JOIN services s ON s.id = allocations.service_id
+			 WHERE allocations.id = $1 AND allocations.agent_id = $2
+			   AND s.environment_id = $3 AND allocations.service_id = $4`,
+			allocationID, agentID, entry.GetEnvironmentId(), entry.GetServiceId(),
 		).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("allocation %q is not assigned to agent", allocationID)
@@ -282,9 +332,14 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 
 	assigned := &agentv1.AssignedNodeConfig{
 		WorkloadIpv6Subnet:     agent.WorkloadIPv6Subnet,
+		WorkloadIpv6Pool:       s.mesh.WorkloadPoolCIDR,
 		WireguardInterfaceName: s.mesh.InterfaceName,
 		WireguardAddresses:     []string{agent.WireGuardIPv6},
 		WireguardListenPort:    int32(agent.WireGuardListenPort),
+	}
+	assigned.WorkloadIdentities, err = s.listWorkloadIdentities(ctx)
+	if err != nil {
+		return nil, err
 	}
 	for _, peer := range agents {
 		if peer.ID == agentID || peer.WireGuardPublicKey == "" || peer.WireGuardListenPort <= 0 || peer.WorkloadIPv6Subnet == "" {
@@ -304,6 +359,51 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 		})
 	}
 	return assigned, nil
+}
+
+func (s *Store) listWorkloadIdentities(ctx context.Context) ([]*agentv1.WorkloadIdentity, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT s.id, s.environment_id, e.network_identity, a.agent_id, ag.advertise_addr, ag.workload_ipv6_subnet
+		   FROM allocations a
+		   JOIN services s ON s.id = a.service_id
+		   JOIN environments e ON e.id = s.environment_id
+		   JOIN agents ag ON ag.id = a.agent_id
+		  ORDER BY s.created_at ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var identities []*agentv1.WorkloadIdentity
+	for rows.Next() {
+		var (
+			serviceID       string
+			environmentID   string
+			networkIdentity int64
+			hostAgentID     string
+			hostIPv6        string
+			workloadSubnet  string
+		)
+		if err := rows.Scan(&serviceID, &environmentID, &networkIdentity, &hostAgentID, &hostIPv6, &workloadSubnet); err != nil {
+			return nil, err
+		}
+		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
+			return nil, fmt.Errorf("environment %s has invalid network identity %d", environmentID, networkIdentity)
+		}
+		workloadIPv6, err := privateIPv6(workloadSubnet, environmentID, serviceID)
+		if err != nil {
+			return nil, err
+		}
+		identities = append(identities, &agentv1.WorkloadIdentity{
+			WorkloadIpv6:    workloadIPv6,
+			EnvironmentId:   environmentID,
+			NetworkIdentity: uint32(networkIdentity),
+			HostAgentId:     hostAgentID,
+			HostIpv6:        hostIPv6,
+		})
+	}
+	return identities, rows.Err()
 }
 
 func (s *Store) allocateWorkloadSubnetTx(ctx context.Context, tx *sql.Tx, agentID string) (string, error) {
@@ -358,8 +458,11 @@ func (s *Store) schedulerSnapshotTx(ctx context.Context, q serviceQueryer) ([]ag
 		return nil, nil, err
 	}
 	rows, err := q.QueryContext(ctx,
-		`SELECT s.id, s.project_id, s.name, s.current_spec_revision, s.current_rollout_generation, s.allocated_agent_id, s.created_at, s.updated_at
-		   FROM services s
+		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
+		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
+		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
+		   FROM services s JOIN environments e ON e.id = s.environment_id
+		   LEFT JOIN allocations a ON a.service_id = s.id
 		  ORDER BY s.created_at ASC`,
 	)
 	if err != nil {
@@ -376,6 +479,9 @@ func (s *Store) schedulerSnapshotTx(ctx context.Context, q serviceQueryer) ([]ag
 		services = append(services, rec)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := rows.Close(); err != nil {
 		return nil, nil, err
 	}
 	for i := range services {

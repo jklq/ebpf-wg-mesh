@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"ebof-wg-mesh/internal/config"
@@ -17,7 +18,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{
-			Subject:  "user-1",
+			ID:       "user-1",
 			Email:    "user@example.com",
 			Projects: []string{"demo"},
 		}},
@@ -42,7 +43,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 	}
 }
 
-func TestProjectNamesAreScopedBySubject(t *testing.T) {
+func TestProjectNamesAreScopedByUserID(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -51,12 +52,12 @@ func TestProjectNamesAreScopedBySubject(t *testing.T) {
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{
 			{
-				Subject:  "user-1",
+				ID:       "user-1",
 				Email:    "user1@example.com",
 				Projects: []string{"demo"},
 			},
 			{
-				Subject:  "user-2",
+				ID:       "user-2",
 				Email:    "user2@example.com",
 				Projects: []string{"demo"},
 			},
@@ -77,7 +78,7 @@ func TestProjectNamesAreScopedBySubject(t *testing.T) {
 		t.Fatalf("unexpected project lists: user-1=%+v user-2=%+v", firstProjects, secondProjects)
 	}
 	if firstProjects[0].ID == secondProjects[0].ID {
-		t.Fatalf("expected distinct projects for each subject, got shared id %q", firstProjects[0].ID)
+		t.Fatalf("expected distinct projects for each user ID, got shared id %q", firstProjects[0].ID)
 	}
 	if firstProjects[0].Name != "demo" || secondProjects[0].Name != "demo" {
 		t.Fatalf("unexpected project names: user-1=%q user-2=%q", firstProjects[0].Name, secondProjects[0].Name)
@@ -97,7 +98,7 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{
-			Subject:  "user-1",
+			ID:       "user-1",
 			Email:    "user1@example.com",
 			Projects: []string{"demo"},
 		}},
@@ -116,12 +117,15 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 	projectID := projects[0].ID
 	if _, err := store.db.ExecContext(
 		ctx,
-		`UPDATE project_memberships SET role = $1 WHERE subject = $2 AND project_id = $3`,
+		`UPDATE project_memberships SET role = $1 WHERE user_id = $2 AND project_id = $3`,
 		"viewer",
 		"user-1",
 		projectID,
 	); err != nil {
 		t.Fatalf("downgrade owner membership: %v", err)
+	}
+	if err := store.authorizeProjectWrite(ctx, "user-1", projectID); err != sql.ErrNoRows {
+		t.Fatalf("expected viewer write denial, got %v", err)
 	}
 
 	project, err := store.createProject(ctx, "user-1", "demo")
@@ -134,45 +138,26 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 	assertProjectOwnerInvariant(t, store, projectID, "user-1")
 }
 
-func TestEnsurePrincipalIsIdempotent(t *testing.T) {
-	t.Parallel()
-
-	store := openTestStore(t)
-	ctx := context.Background()
-
-	first, err := store.ensurePrincipal(ctx, "user-1", "user@example.com")
-	if err != nil {
-		t.Fatalf("ensurePrincipal first: %v", err)
-	}
-	second, err := store.ensurePrincipal(ctx, "user-1", "user@example.com")
-	if err != nil {
-		t.Fatalf("ensurePrincipal second: %v", err)
-	}
-	if first.Subject != second.Subject || first.Email != second.Email {
-		t.Fatalf("unexpected principal mismatch: %+v vs %+v", first, second)
-	}
-}
-
-func assertProjectOwnerInvariant(t *testing.T, store *Store, projectID, subject string) {
+func assertProjectOwnerInvariant(t *testing.T, store *Store, projectID, userID string) {
 	t.Helper()
 
-	var ownerSubject string
+	var ownerUserID string
 	var role string
 	if err := store.db.QueryRowContext(
 		context.Background(),
-		`SELECT p.owner_subject, m.role
+		`SELECT p.owner_user_id, m.role
 		   FROM projects p
-		   JOIN project_memberships m ON m.project_id = p.id AND m.subject = $2
+		   JOIN project_memberships m ON m.project_id = p.id AND m.user_id = $2
 		  WHERE p.id = $1`,
 		projectID,
-		subject,
-	).Scan(&ownerSubject, &role); err != nil {
-		t.Fatalf("load project ownership invariant for %q/%q: %v", projectID, subject, err)
+		userID,
+	).Scan(&ownerUserID, &role); err != nil {
+		t.Fatalf("load project ownership invariant for %q/%q: %v", projectID, userID, err)
 	}
-	if ownerSubject != subject {
-		t.Fatalf("expected project %q owner_subject %q, got %q", projectID, subject, ownerSubject)
+	if ownerUserID != userID {
+		t.Fatalf("expected project %q owner user ID %q, got %q", projectID, userID, ownerUserID)
 	}
 	if role != "owner" {
-		t.Fatalf("expected project %q membership role owner for %q, got %q", projectID, subject, role)
+		t.Fatalf("expected project %q membership role owner for %q, got %q", projectID, userID, role)
 	}
 }

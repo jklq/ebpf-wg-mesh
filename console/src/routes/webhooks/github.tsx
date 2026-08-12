@@ -32,7 +32,7 @@ export const Route = createFileRoute("/webhooks/github")({
 				});
 
 				try {
-					const service = await import("#/lib/dashboard/server");
+					const service = await import("#/lib/dashboard/entry.server");
 					await service.forwardGitHubWebhook({
 						deliveryId,
 						eventType,

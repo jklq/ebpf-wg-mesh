@@ -12,6 +12,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -27,10 +28,58 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
+func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{
+			ID:       "user-1",
+			Projects: []string{"one", "two"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 2 {
+		t.Fatalf("list projects: %v (%d)", err, len(projects))
+	}
+	if err := store.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+		InstallationID: 7,
+		AccountLogin:   "octocat",
+		AccountType:    "User",
+		TargetType:     "User",
+		Active:         true,
+	}, []githubRepositoryRecord{{
+		InstallationID: 7,
+		RepositoryID:   42,
+		Owner:          "octocat",
+		Repo:           "hello",
+		FullName:       "octocat/hello",
+		DefaultBranch:  "main",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+		RepositoryID:   42,
+		FullName:       "octocat/hello",
+		InstallationID: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if installationID, err := store.projectGitHubRepositoryInstallation(ctx, projects[0].ID, "octocat", "hello"); err != nil || installationID != 7 {
+		t.Fatalf("linked project installation = %d, %v", installationID, err)
+	}
+	if _, err := store.projectGitHubRepositoryInstallation(ctx, projects[1].ID, "octocat", "hello"); err != sql.ErrNoRows {
+		t.Fatalf("expected unlinked project denial, got %v", err)
+	}
+}
+
 func bootstrapProjectAndAgent(t *testing.T, store *Store, ctx context.Context) string {
 	t.Helper()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +129,7 @@ func createRepoBackedTestService(t *testing.T, store *Store, ctx context.Context
 			t.Fatalf("replaceGitHubInstallationRepositories: %v", err)
 		}
 	}
-	service, err := store.createService(ctx, "user-1", projectID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -165,6 +214,10 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 	})
 	mux.HandleFunc("/repos/public/hello", func(w http.ResponseWriter, r *http.Request) {
 		server.recordHit(r.URL.Path)
+		if authorization := r.Header.Get("Authorization"); authorization != "" && authorization != "Bearer user-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":             1,
 			"name":           "hello",
@@ -222,7 +275,11 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 	})
 	mux.HandleFunc("/repos/private/secret", func(w http.ResponseWriter, r *http.Request) {
 		server.recordHit(r.URL.Path)
-		if got := r.Header.Get("Authorization"); got != "Bearer installation-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer installation-token" && got != "Bearer user-token" {
+			if got != "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 			http.Error(w, http.StatusText(server.privateRepoStatus), server.privateRepoStatus)
 			return
 		}

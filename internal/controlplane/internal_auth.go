@@ -5,6 +5,9 @@ import (
 	"crypto/x509"
 	"errors"
 	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -26,8 +29,13 @@ const (
 )
 
 const (
-	delegatedUserSubjectHeader = "x-platform-user-subject"
-	delegatedUserEmailHeader   = "x-platform-user-email"
+	legacyDelegatedUserIDHeader = "x-platform-user-id"
+	userAssertionHeader         = "x-platform-user-assertion"
+	userAssertionIssuer         = "managed-dashboard"
+	userAssertionAudience       = "controlplane"
+	userAssertionMaxAge         = 30 * time.Second
+	userAssertionClockSkew      = 5 * time.Second
+	maxUserAssertionLength      = 4096
 )
 
 type ServiceCaller struct {
@@ -36,14 +44,26 @@ type ServiceCaller struct {
 }
 
 type DelegatedUser struct {
-	Subject string
-	Email   string
+	UserID string
 }
 
-type InternalAuth struct{}
+type InternalAuth struct {
+	dashboardCallerID   string
+	userAssertionSecret []byte
+	revocations         *CertificateRevocations
+	now                 func() time.Time
+}
 
-func NewInternalAuth() *InternalAuth {
-	return &InternalAuth{}
+func NewInternalAuth(dashboardCallerID, userAssertionSecret string, revocations ...*CertificateRevocations) *InternalAuth {
+	auth := &InternalAuth{
+		dashboardCallerID:   strings.TrimSpace(dashboardCallerID),
+		userAssertionSecret: []byte(userAssertionSecret),
+		now:                 time.Now,
+	}
+	if len(revocations) > 0 {
+		auth.revocations = revocations[0]
+	}
+	return auth
 }
 
 func (a *InternalAuth) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
@@ -74,12 +94,21 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStrea
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
 	}
+	if authenticated && a.revocations != nil {
+		if err := checkClientCertificateRevocation(a.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+			return nil, err
+		}
+	}
 
 	if authenticated {
 		ctx = context.WithValue(ctx, serviceCallerContextKey{}, caller)
 	}
+	if authenticated && caller.Class == serviceCallerDashboard &&
+		(a.dashboardCallerID == "" || caller.ID != a.dashboardCallerID) {
+		return nil, status.Error(codes.PermissionDenied, "dashboard client certificate common name is not allowed")
+	}
 
-	delegatedUser, delegated, err := delegatedUserFromMetadata(ctx)
+	delegatedUser, delegated, err := a.delegatedUserFromMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +124,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStrea
 		if !authenticated || caller.Class != serviceCallerDashboard {
 			return nil, status.Error(codes.PermissionDenied, "dashboard client certificate required")
 		}
-		if !strings.HasSuffix(fullMethod, "/EnsurePrincipal") && !delegated {
+		if !delegated {
 			return nil, status.Error(codes.Unauthenticated, "delegated user metadata is required")
 		}
 	case strings.HasPrefix(fullMethod, "/platform.v1.OpsService/"):
@@ -140,25 +169,46 @@ func ServiceCallerFromContext(ctx context.Context) (ServiceCaller, error) {
 func DelegatedUserFromContext(ctx context.Context) (DelegatedUser, error) {
 	value := ctx.Value(delegatedUserContextKey{})
 	user, ok := value.(DelegatedUser)
-	if !ok || user.Subject == "" {
+	if !ok || user.UserID == "" {
 		return DelegatedUser{}, status.Error(codes.Unauthenticated, "delegated user missing from context")
 	}
 	return user, nil
 }
 
 func authenticatedServiceCallerFromContext(ctx context.Context) (ServiceCaller, bool, error) {
+	cert := verifiedClientCertificateFromContext(ctx)
+	if cert == nil {
+		return ServiceCaller{}, false, nil
+	}
+	return serviceCallerFromCertificate(cert)
+}
+
+func verifiedClientCertificateFromContext(ctx context.Context) *x509.Certificate {
 	peerInfo, ok := peer.FromContext(ctx)
 	if !ok || peerInfo.AuthInfo == nil {
-		return ServiceCaller{}, false, nil
+		return nil
 	}
 	tlsInfo, ok := peerInfo.AuthInfo.(credentials.TLSInfo)
 	if !ok {
-		return ServiceCaller{}, false, nil
+		return nil
 	}
 	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.VerifiedChains[0]) == 0 {
-		return ServiceCaller{}, false, nil
+		return nil
 	}
-	return serviceCallerFromCertificate(tlsInfo.State.VerifiedChains[0][0])
+	return tlsInfo.State.VerifiedChains[0][0]
+}
+
+func checkClientCertificateRevocation(revocations *CertificateRevocations, cert *x509.Certificate) error {
+	if revocations == nil || cert == nil {
+		return nil
+	}
+	if err := revocations.Check(cert); err != nil {
+		if errors.Is(err, errClientCertificateRevoked) {
+			return status.Error(codes.Unauthenticated, "client certificate is revoked")
+		}
+		return status.Error(codes.Unavailable, "client certificate revocation status is unavailable")
+	}
+	return nil
 }
 
 func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, error) {
@@ -181,29 +231,50 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	}
 }
 
-func delegatedUserFromMetadata(ctx context.Context) (DelegatedUser, bool, error) {
+func (a *InternalAuth) delegatedUserFromMetadata(ctx context.Context) (DelegatedUser, bool, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return DelegatedUser{}, false, nil
 	}
-	subjects := md.Get(delegatedUserSubjectHeader)
-	emails := md.Get(delegatedUserEmailHeader)
-	if len(subjects) == 0 && len(emails) == 0 {
+	if len(md.Get(legacyDelegatedUserIDHeader)) != 0 {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "legacy delegated user metadata is not accepted")
+	}
+	assertions := md.Get(userAssertionHeader)
+	if len(assertions) == 0 {
 		return DelegatedUser{}, false, nil
 	}
-	subject := strings.TrimSpace(firstMetadataValue(subjects))
-	email := strings.TrimSpace(firstMetadataValue(emails))
-	if subject == "" || email == "" {
-		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "delegated user subject and email are required")
+	if len(assertions) != 1 {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "exactly one user assertion is required")
 	}
-	return DelegatedUser{Subject: subject, Email: email}, true, nil
-}
+	assertion := assertions[0]
+	if assertion == "" || len(assertion) > maxUserAssertionLength || len(a.userAssertionSecret) == 0 {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
+	}
 
-func firstMetadataValue(values []string) string {
-	if len(values) == 0 {
-		return ""
+	claims := jwt.RegisteredClaims{}
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(userAssertionIssuer),
+		jwt.WithAudience(userAssertionAudience),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithLeeway(userAssertionClockSkew),
+		jwt.WithTimeFunc(a.now),
+	)
+	token, err := parser.ParseWithClaims(assertion, &claims, func(token *jwt.Token) (any, error) {
+		return a.userAssertionSecret, nil
+	})
+	if err != nil || !token.Valid || claims.ExpiresAt == nil || claims.IssuedAt == nil {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
 	}
-	return values[0]
+	if claims.ExpiresAt.Time.Before(claims.IssuedAt.Time) || claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time) > userAssertionMaxAge {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion lifetime")
+	}
+	userID := strings.TrimSpace(claims.Subject)
+	if userID == "" || userID != claims.Subject || len(userID) > 256 || strings.TrimSpace(claims.ID) == "" {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion claims")
+	}
+	return DelegatedUser{UserID: userID}, true, nil
 }
 
 type wrappedServerStream struct {

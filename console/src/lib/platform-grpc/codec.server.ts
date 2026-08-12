@@ -7,7 +7,9 @@ import type {
 	DashboardDeploymentStage,
 	DashboardDeploymentStageState,
 	DashboardDomainBinding,
-	DashboardDomainOwnershipChallenge,
+	DashboardEnvironment,
+	DashboardIndexedServiceStatus,
+	DashboardIndexedServices,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardResolvedSourceBinding,
@@ -21,10 +23,15 @@ import type {
 	DashboardUnappliedChangeAction,
 	RepositoryAccessState,
 } from "#/lib/dashboard/core/types.server";
+import {
+	DEFAULT_SERVICE_CPU_MILLIS,
+	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+} from "#/lib/dashboard/core/types.server";
 import type {
 	CreateServiceRequest,
 	IngestGitHubWebhookInput,
 	IngestGitHubWebhookRequest,
+	ListEnvironmentsResponseMessage,
 	ListProjectsResponseMessage,
 	ListServiceDeploymentsResponseMessage,
 	ListServiceLogsRequest,
@@ -159,7 +166,6 @@ export function encodeListServiceLogsRequest(
 	input: ListServiceLogsRequest,
 ): ListServiceLogsRequest {
 	return {
-		projectId: input.projectId,
 		serviceId: input.serviceId,
 		allocationId: input.allocationId,
 		limit: input.limit,
@@ -180,6 +186,38 @@ export function decodeListProjectsResponse(
 	const projects = readArray(value, "projects");
 	return {
 		projects: projects.map((project) => decodeProjectMessage(project)),
+	};
+}
+
+export function decodeEnvironmentMessage(raw: unknown): DashboardEnvironment {
+	const value = readRecord(raw, "environment");
+	const kind = value.kind;
+	if (kind !== "ENVIRONMENT_KIND_PERSISTENT" && kind !== "persistent") {
+		throw new Error(`invalid environment kind: ${String(kind)}`);
+	}
+	return {
+		id: readRequiredString(value, "id", "environment"),
+		projectId: readRequiredString(value, "projectId", "environment"),
+		name: readRequiredString(value, "name", "environment"),
+		kind: "persistent",
+		isProduction: readBoolean(value, "isProduction"),
+		copiedFromEnvironmentId: readOptionalString(
+			value,
+			"copiedFromEnvironmentId",
+		),
+		createdAt: readOptionalDate(value, "createdAt"),
+		updatedAt: readOptionalDate(value, "updatedAt"),
+	};
+}
+
+export function decodeListEnvironmentsResponse(
+	raw: unknown,
+): ListEnvironmentsResponseMessage {
+	const value = readRecord(raw, "list environments response");
+	return {
+		environments: readArray(value, "environments").map(
+			decodeEnvironmentMessage,
+		),
 	};
 }
 
@@ -219,12 +257,12 @@ export function decodeInspectSourceResponse(
 }
 
 export function encodeCreateServiceRequest(input: {
-	projectId: string;
+	environmentId: string;
 	name: string;
 	spec: DashboardServiceSpec;
 }): CreateServiceRequest {
 	return {
-		projectId: input.projectId,
+		environmentId: input.environmentId,
 		service: {
 			name: input.name,
 			spec: {
@@ -236,13 +274,11 @@ export function encodeCreateServiceRequest(input: {
 }
 
 export function encodeUpdateServiceRequest(input: {
-	projectId: string;
 	serviceId: string;
 	name?: string;
 	spec: DashboardServiceSpec;
 }): UpdateServiceRequest {
 	return {
-		projectId: input.projectId,
 		serviceId: input.serviceId,
 		service: {
 			name: input.name,
@@ -263,12 +299,30 @@ export function decodeListServicesResponse(
 	);
 }
 
+export function decodeIndexedServicesResponse(
+	raw: unknown,
+): DashboardIndexedServices {
+	const value = readRecord(raw, "indexed services response");
+	const notModified = readBoolean(value, "notModified");
+	return {
+		index: readOptionalNumberLike(value, "index") ?? 0,
+		notModified,
+		services: notModified
+			? undefined
+			: readArray(value, "services").map((service) =>
+					decodeServiceMessage(service),
+				),
+	};
+}
+
 export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 	const value = readRecord(raw, "service");
 	return {
 		id: readRequiredString(value, "id", "service"),
-		projectId: readRequiredString(value, "projectId", "service"),
+		environmentId: readRequiredString(value, "environmentId", "service"),
 		name: readRequiredString(value, "name", "service"),
+		internalHostname:
+			readOptionalString(value, "internalHostname") ?? undefined,
 		spec: decodeServiceSpec(value.spec),
 		sourceSummary: decodeServiceSourceSummary(value.sourceSummary),
 		lastSuccessfulCommitSha:
@@ -428,6 +482,18 @@ export function decodeServiceStatusMessage(
 	};
 }
 
+export function decodeIndexedServiceStatusResponse(
+	raw: unknown,
+): DashboardIndexedServiceStatus {
+	const value = readRecord(raw, "indexed service status response");
+	const notModified = readBoolean(value, "notModified");
+	return {
+		index: readOptionalNumberLike(value, "index") ?? 0,
+		notModified,
+		status: notModified ? undefined : decodeServiceStatusMessage(value),
+	};
+}
+
 function decodeAllocationStatus(
 	raw: unknown,
 ): DashboardAllocationStatus | undefined {
@@ -484,33 +550,9 @@ export function decodeDomainBindingMessage(
 	const value = readRecord(raw, "domain binding");
 	return {
 		hostname: readRequiredString(value, "hostname", "domain binding"),
-		projectId: readRequiredString(value, "projectId", "domain binding"),
 		serviceId: readRequiredString(value, "serviceId", "domain binding"),
 		targetPort: readRequiredNumber(value, "targetPort", "domain binding"),
-	};
-}
-
-export function decodeDomainOwnershipChallengeMessage(
-	raw: unknown,
-): DashboardDomainOwnershipChallenge {
-	const value = readRecord(raw, "domain ownership challenge");
-	return {
-		hostname: readRequiredString(
-			value,
-			"hostname",
-			"domain ownership challenge",
-		),
-		recordName: readRequiredString(
-			value,
-			"recordName",
-			"domain ownership challenge",
-		),
-		recordValue: readRequiredString(
-			value,
-			"recordValue",
-			"domain ownership challenge",
-		),
-		expiresAt: readOptionalDate(value, "expiresAt"),
+		platformGenerated: readBoolean(value, "platformGenerated"),
 	};
 }
 
@@ -518,7 +560,11 @@ function decodeServiceLogLine(raw: unknown): ServiceLogLineMessage {
 	const value = readRecord(raw, "service log line");
 	return {
 		observedAt: readOptionalDate(value, "observedAt"),
-		projectId: readRequiredString(value, "projectId", "service log line"),
+		environmentId: readRequiredString(
+			value,
+			"environmentId",
+			"service log line",
+		),
 		serviceId: readRequiredString(value, "serviceId", "service log line"),
 		allocationId: readOptionalString(value, "allocationId") ?? "",
 		agentId: readOptionalString(value, "agentId") ?? "",
@@ -570,10 +616,20 @@ function encodeRuntimeSpec(
 ): CreateServiceRequest["service"]["spec"]["runtime"] {
 	return {
 		env: runtime.env ?? {},
+		cpuMillis: runtime.cpuMillis,
+		memoryMebibytes: runtime.memoryMebibytes,
 		ports: (runtime.ports ?? []).map((port) => ({
 			port: port.port,
 			primary: port.primary,
 		})),
+		healthCheck: runtime.healthCheck
+			? {
+					type: "TYPE_HTTP",
+					path: runtime.healthCheck.path,
+					port: runtime.healthCheck.port,
+					timeoutSeconds: runtime.healthCheck.timeoutSeconds,
+				}
+			: undefined,
 	};
 }
 
@@ -594,10 +650,48 @@ function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
 	const value = readOptionalRecord(raw);
 	return {
 		env: readStringMap(value, "env"),
+		cpuMillis: readPositiveResource(
+			value,
+			"cpuMillis",
+			DEFAULT_SERVICE_CPU_MILLIS,
+		),
+		memoryMebibytes: readPositiveResource(
+			value,
+			"memoryMebibytes",
+			DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+		),
 		ports: readArray(value ?? {}, "ports")
 			.map((item) => decodeRuntimePort(item))
 			.filter((item): item is DashboardRuntimePort => item !== undefined),
+		healthCheck: decodeHTTPHealthCheck(value?.healthCheck),
 	};
+}
+
+function decodeHTTPHealthCheck(
+	raw: unknown,
+): DashboardServiceSpec["runtime"]["healthCheck"] {
+	const value = readOptionalRecord(raw);
+	if (!value || readOptionalString(value, "type") !== "TYPE_HTTP") {
+		return undefined;
+	}
+	const path = readOptionalString(value, "path") ?? "";
+	if (!path) {
+		return undefined;
+	}
+	return {
+		path,
+		port: readOptionalNumber(value, "port") || undefined,
+		timeoutSeconds: readOptionalNumber(value, "timeoutSeconds") || undefined,
+	};
+}
+
+function readPositiveResource(
+	value: Record<string, unknown> | undefined,
+	key: string,
+	fallback: number,
+): number {
+	const resource = readOptionalNumber(value, key);
+	return resource !== undefined && resource > 0 ? resource : fallback;
 }
 
 function decodeRuntimePort(raw: unknown): DashboardRuntimePort | undefined {

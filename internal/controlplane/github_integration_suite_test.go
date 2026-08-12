@@ -5,6 +5,8 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +14,26 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
+
+func linkTestProjectRepository(t *testing.T, store *Store, catalog *GitHubCatalog, projectID, repositorySelector string) {
+	t.Helper()
+	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := catalog.ResolveRepositoryView(context.Background(), owner, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.linkProjectGitHubRepository(context.Background(), projectID, "user-1", view); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 	t.Parallel()
@@ -101,12 +122,14 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 		noopIngress{},
 		WithGitHubSourceInspection(catalog, client),
 	)
+	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
-	resp, err := service.InspectSource(
+	resp, err := service.LinkGitHubRepository(
 		contextWithDelegatedUser("user-1", "user@example.com"),
-		&platformv1.InspectSourceRequest{
-			Provider:           "github",
-			RepositorySelector: "public/hello",
+		&platformv1.LinkGitHubRepositoryRequest{
+			ProjectId:             projectID,
+			RepositorySelector:    "public/hello",
+			GithubUserAccessToken: "user-token",
 		},
 	)
 	if err != nil {
@@ -123,6 +146,93 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 	}
 	if resp.GetRecommendedBuildRecipe().GetDockerfilePath() != "Dockerfile" || resp.GetRecommendedBuildRecipe().GetContextDir() != "." {
 		t.Fatalf("unexpected recommended build recipe %+v", resp.GetRecommendedBuildRecipe())
+	}
+}
+
+func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	server := newTestGitHubServer(t, nil)
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	service := NewPlatformService(
+		store,
+		noopNotifier{},
+		noopIngress{},
+		WithGitHubSourceInspection(NewGitHubCatalog(store, client), client),
+	)
+	projectID := bootstrapProjectAndAgent(t, store, context.Background())
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+
+	for _, test := range []struct {
+		name  string
+		token string
+		code  codes.Code
+	}{
+		{name: "app installation access alone is insufficient", code: codes.Unauthenticated},
+		{name: "wrong user token", token: "wrong-user-token", code: codes.Unauthenticated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := service.LinkGitHubRepository(ctx, &platformv1.LinkGitHubRepositoryRequest{
+				ProjectId:             projectID,
+				RepositorySelector:    "private/secret",
+				GithubUserAccessToken: test.token,
+			})
+			if status.Code(err) != test.code {
+				t.Fatalf("LinkGitHubRepository code = %s, want %s (error: %v)", status.Code(err), test.code, err)
+			}
+			if _, err := store.projectGitHubRepositoryInstallation(context.Background(), projectID, "private", "secret"); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("repository link was persisted after denied user authorization: %v", err)
+			}
+		})
+	}
+
+	if _, err := service.LinkGitHubRepository(ctx, &platformv1.LinkGitHubRepositoryRequest{
+		ProjectId:             projectID,
+		RepositorySelector:    "private/secret",
+		GithubUserAccessToken: "user-token",
+	}); err != nil {
+		t.Fatalf("LinkGitHubRepository with authorized user token: %v", err)
+	}
+	if _, err := service.InspectSource(ctx, &platformv1.InspectSourceRequest{
+		ProjectId:          projectID,
+		Provider:           "github",
+		RepositorySelector: "private/secret",
+	}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("InspectSource without user token code = %s, want %s (error: %v)", status.Code(err), codes.Unauthenticated, err)
+	}
+	if _, err := service.InspectSource(ctx, &platformv1.InspectSourceRequest{
+		ProjectId:             projectID,
+		Provider:              "github",
+		RepositorySelector:    "private/secret",
+		GithubUserAccessToken: "user-token",
+	}); err != nil {
+		t.Fatalf("InspectSource with authorized user token: %v", err)
+	}
+
+	created, err := service.CreateService(ctx, &platformv1.CreateServiceRequest{
+		EnvironmentId: productionEnvironmentID(t, store, projectID),
+		Service: &platformv1.ServiceInput{
+			Name: "authorized-private-service",
+			Spec: repositoryServiceSpec(
+				&platformv1.ServiceRuntime{CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080})},
+				&platformv1.ServiceSourceSpec{
+					Provider:           "github",
+					RepositorySelector: "private/secret",
+					TrackedRef:         "main",
+					BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+				},
+			),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateService from user-authorized project link: %v", err)
+	}
+	if got := created.GetSpec().GetSource().GetSourceSpec().GetRepositorySelector(); got != "private/secret" {
+		t.Fatalf("created service repository = %q", got)
 	}
 }
 
@@ -143,12 +253,14 @@ func TestPlatformServiceInspectSourceReturnsInstallationRequiredForPrivateRepoWi
 		noopIngress{},
 		WithGitHubSourceInspection(catalog, client),
 	)
+	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
-	resp, err := service.InspectSource(
+	resp, err := service.LinkGitHubRepository(
 		contextWithDelegatedUser("user-1", "user@example.com"),
-		&platformv1.InspectSourceRequest{
-			Provider:           "github",
-			RepositorySelector: "private/secret",
+		&platformv1.LinkGitHubRepositoryRequest{
+			ProjectId:             projectID,
+			RepositorySelector:    "private/secret",
+			GithubUserAccessToken: "user-token",
 		},
 	)
 	if err != nil {
@@ -178,12 +290,14 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 		noopIngress{},
 		WithGitHubSourceInspection(catalog, client),
 	)
+	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
-	resp, err := service.InspectSource(
+	resp, err := service.LinkGitHubRepository(
 		contextWithDelegatedUser("user-1", "user@example.com"),
-		&platformv1.InspectSourceRequest{
-			Provider:           "github",
-			RepositorySelector: "private/secret",
+		&platformv1.LinkGitHubRepositoryRequest{
+			ProjectId:             projectID,
+			RepositorySelector:    "private/secret",
+			GithubUserAccessToken: "user-token",
 		},
 	)
 	if err != nil {
@@ -230,12 +344,14 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterForbiddenRepo
 		noopIngress{},
 		WithGitHubSourceInspection(catalog, client),
 	)
+	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
-	resp, err := service.InspectSource(
+	resp, err := service.LinkGitHubRepository(
 		contextWithDelegatedUser("user-1", "user@example.com"),
-		&platformv1.InspectSourceRequest{
-			Provider:           "github",
-			RepositorySelector: "private/secret",
+		&platformv1.LinkGitHubRepositoryRequest{
+			ProjectId:             projectID,
+			RepositorySelector:    "private/secret",
+			GithubUserAccessToken: "user-token",
 		},
 	)
 	if err != nil {
@@ -251,15 +367,28 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 
 	store := openTestStore(t)
 	server := newTestGitHubServer(t, nil)
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store, client)
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, WithGitHubSourceInspection(catalog, client))
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
+	if _, err := service.LinkGitHubRepository(contextWithDelegatedUser("user-1", ""), &platformv1.LinkGitHubRepositoryRequest{
+		ProjectId:             projectID,
+		RepositorySelector:    "public/hello",
+		GithubUserAccessToken: "user-token",
+	}); err != nil {
+		t.Fatalf("LinkGitHubRepository: %v", err)
+	}
+	branchHitsBeforeCreate := server.branchHeadHits()
 	resp, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
-		ProjectId: projectID,
+		EnvironmentId: productionEnvironmentID(t, store, projectID),
 		Service: &platformv1.ServiceInput{
 			Name: "web",
-			Spec: repositoryServiceSpec(&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}, &platformv1.ServiceSourceSpec{
+			Spec: repositoryServiceSpec(&platformv1.ServiceRuntime{CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080})}, &platformv1.ServiceSourceSpec{
 				Provider:           "github",
 				RepositorySelector: "public/hello",
 				TrackedRef:         "main",
@@ -270,14 +399,22 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 	if err != nil {
 		t.Fatalf("CreateService: %v", err)
 	}
-	if resp.GetLatestBuild() != nil {
+	if resp.GetLatestBuild().GetBuildId() != "" {
 		t.Fatalf("expected no synchronous build in create response, got %+v", resp.GetLatestBuild())
 	}
-	if got := server.branchHeadHits(); got != 0 {
-		t.Fatalf("expected no branch head lookup in request path, got %d", got)
+	if got := server.branchHeadHits(); got != branchHitsBeforeCreate {
+		t.Fatalf("expected no branch head lookup during create, got %d new calls", got-branchHitsBeforeCreate)
+	}
+	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 0 {
+		t.Fatalf("expected staged service to queue no work, got %d", got)
+	}
+	if _, err := service.DeployEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeployEnvironmentRequest{
+		EnvironmentId: productionEnvironmentID(t, store, projectID),
+	}); err != nil {
+		t.Fatalf("DeployEnvironment: %v", err)
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 1 {
-		t.Fatalf("expected 1 queued sync item, got %d", got)
+		t.Fatalf("expected deploy to queue 1 sync item, got %d", got)
 	}
 }
 
@@ -286,19 +423,31 @@ func TestPlatformServiceUpdateAndRedeployQueueSyncWithoutBranchLookup(t *testing
 
 	store := openTestStore(t)
 	server := newTestGitHubServer(t, nil)
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store, client)
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, WithGitHubSourceInspection(catalog, client))
 	ctx := context.Background()
 
 	projectID, serviceID := createRepoBackedTestService(t, store, ctx, "public/hello", 0, "main")
+	if _, err := service.LinkGitHubRepository(contextWithDelegatedUser("user-1", ""), &platformv1.LinkGitHubRepositoryRequest{
+		ProjectId:             projectID,
+		RepositorySelector:    "public/hello",
+		GithubUserAccessToken: "user-token",
+	}); err != nil {
+		t.Fatalf("LinkGitHubRepository: %v", err)
+	}
+	branchHitsBeforeMutations := server.branchHeadHits()
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
 
 	updateResp, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
-		ProjectId: projectID,
 		ServiceId: serviceID,
 		Service: &platformv1.ServiceUpdate{
-			Spec: repositoryServiceSpec(&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}, &platformv1.ServiceSourceSpec{
+			Spec: repositoryServiceSpec(&platformv1.ServiceRuntime{CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080})}, &platformv1.ServiceSourceSpec{
 				Provider:           "github",
 				RepositorySelector: "public/hello",
 				TrackedRef:         "release",
@@ -309,31 +458,30 @@ func TestPlatformServiceUpdateAndRedeployQueueSyncWithoutBranchLookup(t *testing
 	if err != nil {
 		t.Fatalf("UpdateService: %v", err)
 	}
-	if updateResp.GetLatestBuild() != nil {
+	if updateResp.GetLatestBuild().GetBuildId() != "" {
 		t.Fatalf("expected no synchronous build on source update, got %+v", updateResp.GetLatestBuild())
 	}
-	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 1 {
-		t.Fatalf("expected 1 queued sync item after source update, got %d", got)
+	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 0 {
+		t.Fatalf("expected source update to remain staged until deployment, got %d queued items", got)
 	}
 
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
 	statusResp, err := service.RedeployService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.RedeployServiceRequest{
-		ProjectId: projectID,
 		ServiceId: serviceID,
 	})
 	if err != nil {
 		t.Fatalf("RedeployService: %v", err)
 	}
-	if statusResp.GetService().GetRolloutGeneration() != 2 {
-		t.Fatalf("expected rollout generation to reflect stored state, got %d", statusResp.GetService().GetRolloutGeneration())
+	if statusResp.GetService().GetRolloutGeneration() != 1 {
+		t.Fatalf("expected rollout generation to remain unchanged until the queued build succeeds, got %d", statusResp.GetService().GetRolloutGeneration())
 	}
-	if statusResp.GetService().GetLatestBuild() != nil {
+	if statusResp.GetService().GetLatestBuild().GetBuildId() != "" {
 		t.Fatalf("expected no synchronous build on redeploy, got %+v", statusResp.GetService().GetLatestBuild())
 	}
-	if got := server.branchHeadHits(); got != 0 {
-		t.Fatalf("expected no branch head lookup in request paths, got %d", got)
+	if got := server.branchHeadHits(); got != branchHitsBeforeMutations {
+		t.Fatalf("expected no branch head lookup in update/redeploy, got %d new calls", got-branchHitsBeforeMutations)
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 1 {
 		t.Fatalf("expected 1 queued sync item after redeploy, got %d", got)
@@ -355,7 +503,8 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
-	service, err := store.createService(ctx, "user-1", projectID, "web", repositoryServiceSpec(
+	linkTestProjectRepository(t, store, catalog, projectID, "public/hello")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -416,7 +565,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	}
 }
 
-func TestGitHubSyncSameRepositoryServicesEachQueueBuild(t *testing.T) {
+func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -431,7 +580,8 @@ func TestGitHubSyncSameRepositoryServicesEachQueueBuild(t *testing.T) {
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
-	spec := repositoryServiceSpec(
+	linkTestProjectRepository(t, store, catalog, projectID, "public/hello")
+	mainSpec := repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -440,11 +590,18 @@ func TestGitHubSyncSameRepositoryServicesEachQueueBuild(t *testing.T) {
 			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	)
-	first, err := store.createService(ctx, "user-1", projectID, "web-a", spec, "node-1")
+	productionID := productionEnvironmentID(t, store, projectID)
+	staging, err := store.createEnvironment(ctx, "user-1", projectID, "Staging")
+	if err != nil {
+		t.Fatalf("create staging environment: %v", err)
+	}
+	first, err := store.createService(ctx, "user-1", productionID, "web", mainSpec, "node-1")
 	if err != nil {
 		t.Fatalf("createService(first): %v", err)
 	}
-	second, err := store.createService(ctx, "user-1", projectID, "web-b", spec, "node-1")
+	releaseSpec := proto.Clone(mainSpec).(*platformv1.ServiceSpec)
+	releaseSpec.GetSource().GetSourceSpec().TrackedRef = "release"
+	second, err := store.createService(ctx, "user-1", staging.ID, "web", releaseSpec, "node-1")
 	if err != nil {
 		t.Fatalf("createService(second): %v", err)
 	}
@@ -459,14 +616,26 @@ func TestGitHubSyncSameRepositoryServicesEachQueueBuild(t *testing.T) {
 		}
 	}
 
-	for _, service := range []serviceRecord{first, second} {
+	for _, item := range []struct {
+		service serviceRecord
+		commit  string
+	}{{first, "commit-public-main"}, {second, "commit-public-release"}} {
+		service := item.service
 		status, _, err := store.serviceStatus(ctx, "user-1", projectID, service.ID)
 		if err != nil {
 			t.Fatalf("serviceStatus(%s): %v", service.Name, err)
 		}
-		if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != "commit-public-main" {
-			t.Fatalf("expected queued build for %s, got %+v", service.Name, status.LatestBuild)
+		if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != item.commit {
+			t.Fatalf("expected %s build for environment %s, got %+v", item.commit, service.EnvironmentID, status.LatestBuild)
 		}
+	}
+	mainBindings, err := store.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "main")
+	if err != nil || len(mainBindings) != 1 || mainBindings[0].ServiceID != first.ID {
+		t.Fatalf("main matched the wrong environment services: %#v: %v", mainBindings, err)
+	}
+	releaseBindings, err := store.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "release")
+	if err != nil || len(releaseBindings) != 1 || releaseBindings[0].ServiceID != second.ID {
+		t.Fatalf("release matched the wrong environment services: %#v: %v", releaseBindings, err)
 	}
 }
 

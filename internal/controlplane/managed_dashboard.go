@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,30 +10,29 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
+const managedDashboardSecretsMount = "/run/secrets/dashboard"
+
 type ManagedDashboardReconciler struct {
-	cfg       config.ManagedDashboardConfig
-	database  config.DatabaseConfig
-	store     *Store
-	authority *TLSAuthority
-	ingress   *IngressSyncer
+	cfg      config.ManagedDashboardConfig
+	store    *Store
+	ingress  *IngressSyncer
+	notifier *Notifier
 }
 
 func NewManagedDashboardReconciler(
 	cfg config.ManagedDashboardConfig,
-	database config.DatabaseConfig,
 	store *Store,
-	authority *TLSAuthority,
 	ingress *IngressSyncer,
+	notifier *Notifier,
 ) *ManagedDashboardReconciler {
 	if !cfg.Enabled {
 		return nil
 	}
 	return &ManagedDashboardReconciler{
-		cfg:       cfg,
-		database:  database,
-		store:     store,
-		authority: authority,
-		ingress:   ingress,
+		cfg:      cfg,
+		store:    store,
+		ingress:  ingress,
+		notifier: notifier,
 	}
 }
 
@@ -46,14 +44,14 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure dashboard managed project: %w", err)
 	}
-	identity, err := r.authority.EnsureClientIdentity(serviceCallerDashboard, r.cfg.ServiceCallerID)
+	env, err := r.dashboardEnv()
 	if err != nil {
-		return fmt.Errorf("ensure dashboard client identity: %w", err)
+		return err
 	}
 	spec := directImageServiceSpec(r.cfg.Image, &platformv1.ServiceRuntime{
 		Command:         append([]string(nil), r.cfg.Command...),
 		Args:            append([]string(nil), r.cfg.Args...),
-		Env:             r.dashboardEnv(identity),
+		Env:             env,
 		CpuMillis:       r.cfg.CPUMillis,
 		MemoryMebibytes: r.cfg.MemoryMebibytes,
 		Ports:           runtimePortsFromInts([]int32{r.cfg.ContainerPort}),
@@ -65,9 +63,14 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 			TimeoutSeconds: 2,
 		}
 	}
-	service, err := r.store.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec)
+	service, affectedAgentIDs, err := r.store.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec, r.cfg.TrustedAgentID)
 	if err != nil {
 		return fmt.Errorf("ensure dashboard managed service: %w", err)
+	}
+	for _, agentID := range affectedAgentIDs {
+		if r.notifier != nil {
+			r.notifier.Notify(agentID)
+		}
 	}
 	if _, err := r.store.ensureManagedDomainBinding(ctx, project.ID, r.cfg.PublicDomain, service.ID, r.cfg.ContainerPort); err != nil {
 		return fmt.Errorf("ensure dashboard domain binding: %w", err)
@@ -76,15 +79,27 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 	return r.ingress.Sync(ctx)
 }
 
-func (r *ManagedDashboardReconciler) dashboardEnv(identity ClientIdentityMaterial) map[string]string {
-	env := make(map[string]string, len(r.cfg.Env)+10)
+func (r *ManagedDashboardReconciler) dashboardEnv() (map[string]string, error) {
+	env := make(map[string]string, len(r.cfg.Env)+12)
 	for key, value := range r.cfg.Env {
+		if managedDashboardSecretEnvKey(key) {
+			return nil, fmt.Errorf("managed dashboard secret %s must be injected out-of-band", key)
+		}
 		env[key] = value
 	}
-	env["DASHBOARD_DATABASE_URL"] = r.database.URL
 	env["DASHBOARD_DATABASE_SCHEMA"] = r.cfg.DatabaseSchema
 	env["DASHBOARD_SESSION_COOKIE_NAME"] = r.cfg.SessionCookieName
-	env["DASHBOARD_JWT_SECRET"] = r.cfg.JWTSecret
+	env["DASHBOARD_DATABASE_URL_FILE"] = managedDashboardSecretsMount + "/database-url"
+	env["DASHBOARD_JWT_SECRET_FILE"] = managedDashboardSecretsMount + "/jwt-secret"
+	env["DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET_FILE"] = managedDashboardSecretsMount + "/user-assertion-secret"
+	env["DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY_FILE"] = managedDashboardSecretsMount + "/github-token-encryption-key"
+	env["DASHBOARD_CONTROLPLANE_CA_FILE"] = managedDashboardSecretsMount + "/controlplane-ca.pem"
+	env["DASHBOARD_CONTROLPLANE_CERT_FILE"] = managedDashboardSecretsMount + "/controlplane-cert.pem"
+	env["DASHBOARD_CONTROLPLANE_KEY_FILE"] = managedDashboardSecretsMount + "/controlplane-key.pem"
+	if env["DASHBOARD_GITHUB_CLIENT_ID"] != "" {
+		env["DASHBOARD_GITHUB_CLIENT_SECRET_FILE"] = managedDashboardSecretsMount + "/github-client-secret"
+	}
+	env["PLATFORM_MANAGED_SECRET_SET"] = "dashboard"
 	if _, ok := env["DASHBOARD_PUBLIC_BASE_URL"]; !ok {
 		env["DASHBOARD_PUBLIC_BASE_URL"] = publicBaseURL(r.cfg.PublicDomain)
 	}
@@ -94,29 +109,21 @@ func (r *ManagedDashboardReconciler) dashboardEnv(identity ClientIdentityMateria
 	env["DASHBOARD_INGRESS_TARGET_HOST"] = r.cfg.IngressTargetHost
 	env["DASHBOARD_CONTROLPLANE_ADDRESS"] = r.cfg.ControlPlaneAddr
 	env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.cfg.ControlPlaneSNI
-	env["DASHBOARD_CONTROLPLANE_CA_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CAPEM)
-	env["DASHBOARD_CONTROLPLANE_CERT_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CertPEM)
-	env["DASHBOARD_CONTROLPLANE_KEY_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.KeyPEM)
-	if devUsers := formatDashboardUsers(r.cfg.DevUsers); devUsers != "" {
-		env["DASHBOARD_DEV_USERS"] = devUsers
-	}
-	return env
+	return env, nil
 }
 
-func formatDashboardUsers(users []config.BootstrapUser) string {
-	if len(users) == 0 {
-		return ""
+func managedDashboardSecretEnvKey(key string) bool {
+	switch strings.ToUpper(strings.TrimSpace(key)) {
+	case "DASHBOARD_DATABASE_URL",
+		"DASHBOARD_JWT_SECRET",
+		"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET",
+		"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY",
+		"DASHBOARD_CONTROLPLANE_KEY_PEM_B64",
+		"DASHBOARD_GITHUB_CLIENT_SECRET":
+		return true
+	default:
+		return false
 	}
-	items := make([]string, 0, len(users))
-	for _, user := range users {
-		subject := strings.TrimSpace(user.Subject)
-		email := strings.TrimSpace(user.Email)
-		if subject == "" || email == "" {
-			continue
-		}
-		items = append(items, subject+":"+email)
-	}
-	return strings.Join(items, ";")
 }
 
 func publicBaseURL(domain string) string {

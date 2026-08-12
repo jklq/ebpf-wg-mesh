@@ -4,22 +4,20 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"strings"
 	"testing"
-	"time"
 
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 )
 
-func TestProjectNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T) {
+func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{
-		{Subject: "user-1", Email: "user-1@example.com", Projects: []string{"one", "two"}},
+		{ID: "user-1", Email: "user-1@example.com", Projects: []string{"one", "two"}},
 	}}); err != nil {
 		t.Fatalf("EnsureBootstrap: %v", err)
 	}
@@ -30,23 +28,81 @@ func TestProjectNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T) {
 	if len(projects) != 2 {
 		t.Fatalf("expected two projects, got %d", len(projects))
 	}
-	if projects[0].NetworkIdentity == 0 || projects[1].NetworkIdentity == 0 || projects[0].NetworkIdentity == projects[1].NetworkIdentity {
-		t.Fatalf("expected distinct non-zero network identities: %#v", projects)
+	environmentsOne, err := store.listEnvironments(ctx, "user-1", projects[0].ID)
+	if err != nil || len(environmentsOne) != 1 {
+		t.Fatalf("list first project environments: %#v: %v", environmentsOne, err)
+	}
+	environmentsTwo, err := store.listEnvironments(ctx, "user-1", projects[1].ID)
+	if err != nil || len(environmentsTwo) != 1 {
+		t.Fatalf("list second project environments: %#v: %v", environmentsTwo, err)
+	}
+	if environmentsOne[0].NetworkIdentity == 0 || environmentsTwo[0].NetworkIdentity == 0 || environmentsOne[0].NetworkIdentity == environmentsTwo[0].NetworkIdentity {
+		t.Fatalf("expected distinct non-zero network identities: %#v %#v", environmentsOne, environmentsTwo)
+	}
+	staging, err := store.createEnvironment(ctx, "user-1", projects[0].ID, "Staging")
+	if err != nil {
+		t.Fatalf("create staging environment: %v", err)
+	}
+	if staging.NetworkIdentity == environmentsOne[0].NetworkIdentity {
+		t.Fatalf("environments in one project shared a network identity: %#v %#v", environmentsOne[0], staging)
 	}
 
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatalf("upsertAgent: %v", err)
 	}
-	service, err := store.createScheduledService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("nginx:1.27", nil))
+	service, err := store.createScheduledService(ctx, "user-1", environmentsOne[0].ID, "web", directImageServiceSpec("nginx:1.27", nil))
 	if err != nil {
 		t.Fatalf("createScheduledService: %v", err)
 	}
+	deployed, _, err := store.deployEnvironment(ctx, "user-1", environmentsOne[0].ID)
+	if err != nil || len(deployed) != 1 {
+		t.Fatalf("deployEnvironment: %#v: %v", deployed, err)
+	}
+	service = deployed[0]
+	stagingService, err := store.createScheduledService(ctx, "user-1", staging.ID, "web", directImageServiceSpec("nginx:1.27", nil))
+	if err != nil {
+		t.Fatalf("create staging service: %v", err)
+	}
+	stagingDeployed, _, err := store.deployEnvironment(ctx, "user-1", staging.ID)
+	if err != nil || len(stagingDeployed) != 1 {
+		t.Fatalf("deploy staging environment: %#v: %v", stagingDeployed, err)
+	}
+	stagingService = stagingDeployed[0]
 	state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)
 	if err != nil {
 		t.Fatalf("desiredStateForAgent: %v", err)
 	}
-	if len(state.GetServices()) != 1 || state.GetServices()[0].GetNetworkIdentity() != projects[0].NetworkIdentity {
-		t.Fatalf("network identity was not delivered in desired state: %#v", state.GetServices())
+	if len(state.GetServices()) != 2 {
+		t.Fatalf("expected both environment services in desired state: %#v", state.GetServices())
+	}
+	servicesByID := make(map[string]*agentv1.DesiredService, len(state.GetServices()))
+	for _, desired := range state.GetServices() {
+		servicesByID[desired.GetServiceId()] = desired
+	}
+	productionDesired := servicesByID[service.ID]
+	stagingDesired := servicesByID[stagingService.ID]
+	if productionDesired.GetEnvironmentId() != environmentsOne[0].ID || productionDesired.GetNetworkIdentity() != environmentsOne[0].NetworkIdentity {
+		t.Fatalf("production network identity was not delivered: %#v", productionDesired)
+	}
+	if stagingDesired.GetEnvironmentId() != staging.ID || stagingDesired.GetNetworkIdentity() != staging.NetworkIdentity {
+		t.Fatalf("staging network identity was not delivered: %#v", stagingDesired)
+	}
+	if productionDesired.GetPrivateIpv6() == stagingDesired.GetPrivateIpv6() {
+		t.Fatalf("environment workload addresses collided: %q", productionDesired.GetPrivateIpv6())
+	}
+	for label, desired := range map[string]*agentv1.DesiredService{
+		"production": productionDesired,
+		"staging":    stagingDesired,
+	} {
+		if desired.GetInternalHostname() != "web.mesh.internal" {
+			t.Fatalf("%s service got internal hostname %q", label, desired.GetInternalHostname())
+		}
+		if len(desired.GetInternalHosts()) != 1 || desired.GetInternalHosts()[0].GetHostname() != "web.mesh.internal" {
+			t.Fatalf("%s service received cross-environment internal hosts: %#v", label, desired.GetInternalHosts())
+		}
+		if desired.GetInternalHosts()[0].GetIpv6() != desired.GetPrivateIpv6() {
+			t.Fatalf("%s internal host points at %q, want %q", label, desired.GetInternalHosts()[0].GetIpv6(), desired.GetPrivateIpv6())
+		}
 	}
 }
 
@@ -106,78 +162,19 @@ func TestRemovedAgentBootstrapTokenIsRevoked(t *testing.T) {
 	}
 }
 
-func TestNetworkIdentityMigrationBackfillsExistingProjects(t *testing.T) {
+func TestProjectCreationCreatesExactlyOneProductionEnvironment(t *testing.T) {
 	t.Parallel()
-
-	dbURL := createTestDatabase(t)
-	db, err := sql.Open("pgx", dbURL)
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.createProject(ctx, "user-1", "demo")
 	if err != nil {
-		t.Fatalf("open database: %v", err)
+		t.Fatalf("createProject: %v", err)
 	}
-	now := time.Now().UTC()
-	statements := []string{
-		`CREATE TABLE schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`,
-		`CREATE TABLE projects (
-			id STRING PRIMARY KEY, name STRING NOT NULL, kind STRING NOT NULL DEFAULT 'user',
-			system_key STRING NULL, owner_subject STRING NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL
-		)`,
-		`CREATE TABLE agents (
-			id STRING PRIMARY KEY, desired_revision INT8 NOT NULL DEFAULT 0
-		)`,
-		`INSERT INTO projects(id, name, created_at) VALUES ('project-b', 'B', $1), ('project-a', 'A', $1)`,
-		`INSERT INTO agents(id, desired_revision) VALUES ('node-1', 9)`,
-	}
-	for _, statement := range statements {
-		var err error
-		if strings.Contains(statement, "$1") {
-			_, err = db.ExecContext(context.Background(), statement, now)
-		} else {
-			_, err = db.ExecContext(context.Background(), statement)
-		}
-		if err != nil {
-			db.Close()
-			t.Fatalf("prepare old schema with %q: %v", statement, err)
-		}
-	}
-	for version := 1; version <= 5; version++ {
-		if _, err := db.ExecContext(context.Background(), `INSERT INTO schema_migrations(version, applied_at) VALUES ($1, $2)`, version, now); err != nil {
-			db.Close()
-			t.Fatalf("mark migration %d: %v", version, err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close old database: %v", err)
-	}
-
-	store, err := OpenStore(config.DatabaseConfig{URL: dbURL}, testMeshConfig())
+	environments, err := store.listEnvironments(ctx, "user-1", project.ID)
 	if err != nil {
-		t.Fatalf("OpenStore migration: %v", err)
+		t.Fatalf("listEnvironments: %v", err)
 	}
-	defer store.Close()
-	rows, err := store.db.QueryContext(context.Background(), `SELECT network_identity FROM projects ORDER BY id`)
-	if err != nil {
-		t.Fatalf("query migrated identities: %v", err)
-	}
-	defer rows.Close()
-	identities := make(map[int64]struct{})
-	for rows.Next() {
-		var identity int64
-		if err := rows.Scan(&identity); err != nil {
-			t.Fatalf("scan identity: %v", err)
-		}
-		if identity <= 0 {
-			t.Fatalf("invalid migrated identity %d", identity)
-		}
-		identities[identity] = struct{}{}
-	}
-	if len(identities) != 2 {
-		t.Fatalf("expected two unique migrated identities, got %v", identities)
-	}
-	var revision int64
-	if err := store.db.QueryRowContext(context.Background(), `SELECT desired_revision FROM agents WHERE id = 'node-1'`).Scan(&revision); err != nil {
-		t.Fatalf("query desired revision: %v", err)
-	}
-	if revision != 10 {
-		t.Fatalf("expected migration to trigger agent reconciliation, got revision %d", revision)
+	if len(environments) != 1 || !environments[0].IsProduction || environments[0].NetworkIdentity == 0 {
+		t.Fatalf("unexpected production environments: %#v", environments)
 	}
 }

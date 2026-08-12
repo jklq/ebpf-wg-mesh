@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,27 +14,32 @@ import (
 )
 
 func TestOnePasswordEnvironmentProvidesGitHubDevstackContract(t *testing.T) {
-	t.Parallel()
+	if _, err := localteststack.LoadDotEnvFile(filepath.Join("..", "..", ".env")); err != nil {
+		t.Fatalf("load .env: %v", err)
+	}
 
+	vars := localteststack.OverlayEnvFromLookup(os.Getenv)
 	loader := localteststack.NewEnvironmentLoader(localteststack.EnvironmentLoaderConfigFromLookup(os.Getenv))
-	if !loader.Enabled() {
-		t.Skipf("%s is not configured", localteststack.OPEnvironmentIDKey)
-	}
-	if !loader.Ready() {
-		t.Skipf(
-			"%s is set but neither %s nor %s is configured",
-			localteststack.OPEnvironmentIDKey,
-			localteststack.OPServiceAccountTokenKey,
-			localteststack.OPAccountKey,
-		)
-	}
+	if len(localteststack.MissingGitHubKeys(vars)) > 0 {
+		if !loader.Enabled() {
+			t.Skip("GitHub devstack environment is not configured in .env, process environment, or 1Password")
+		}
+		if !loader.Ready() {
+			t.Skipf(
+				"%s is set but neither %s nor %s is configured",
+				localteststack.OPEnvironmentIDKey,
+				localteststack.OPServiceAccountTokenKey,
+				localteststack.OPAccountKey,
+			)
+		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	vars, err := loader.Load(ctx)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		remoteVars, err := loader.Load(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		vars = localteststack.MergeOverlayEnv(remoteVars, vars)
 	}
 
 	if missing := localteststack.MissingGitHubKeys(vars); len(missing) > 0 {

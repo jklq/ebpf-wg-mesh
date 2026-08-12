@@ -18,6 +18,7 @@ type GitHubCoordinator struct {
 	catalog    *GitHubCatalog
 	client     *GitHubClient
 	emitter    *LogEmitter
+	events     *PlatformEvents
 	staleAfter time.Duration
 	retryAfter time.Duration
 }
@@ -35,6 +36,12 @@ type GitHubCoordinatorOption func(*GitHubCoordinator)
 func WithGitHubCoordinatorLogEmitter(emitter *LogEmitter) GitHubCoordinatorOption {
 	return func(c *GitHubCoordinator) {
 		c.emitter = emitter
+	}
+}
+
+func WithGitHubCoordinatorPlatformEvents(events *PlatformEvents) GitHubCoordinatorOption {
+	return func(c *GitHubCoordinator) {
+		c.events = events
 	}
 }
 
@@ -197,8 +204,12 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
+	installationID, err := c.store.projectGitHubRepositoryInstallation(ctx, service.ProjectID, owner, repo)
+	if err != nil {
+		return fmt.Errorf("repository is not linked to project: %w", err)
+	}
 
-	preView, err := c.catalog.RepositoryView(ctx, owner, repo, 0)
+	preView, err := c.catalog.RepositoryView(ctx, owner, repo, installationID)
 	if err != nil {
 		return err
 	}
@@ -213,7 +224,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 			return err
 		}
 	}
-	view, err := c.catalog.RepositoryView(ctx, owner, repo, 0)
+	view, err := c.catalog.RepositoryView(ctx, owner, repo, installationID)
 	if err != nil {
 		return err
 	}
@@ -296,9 +307,11 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		committedService serviceRecord
 		committedBuild   buildRunRecord
 		committed        bool
+		revision         sourceRevisionRecord
 	)
 	if err := c.store.withTx(ctx, func(tx *sql.Tx) error {
-		revision, err := c.store.upsertSourceRevisionTx(ctx, tx, sourceRevisionRecord{
+		var err error
+		revision, err = c.store.upsertSourceRevisionTx(ctx, tx, sourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    binding.ServiceID,
 			Provider:                     binding.Provider,
@@ -312,28 +325,51 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		if err != nil {
 			return err
 		}
+		return err
+	}); err != nil {
+		return err
+	}
+
+	var pendingSnapshot sourceSnapshotRecord
+	if _, err := c.store.sourceSnapshotByRevisionID(ctx, revision.ID); errors.Is(err, sql.ErrNoRows) {
+		// Network download, validation, and object storage deliberately happen
+		// outside the serializable CockroachDB transaction.
+		archive, err := c.client.FetchArchive(ctx, owner, repo, commitSHA, installationID)
+		if err != nil {
+			return err
+		}
+		digest, objectKey, err := c.store.storeSourceArchive(ctx, archive)
+		if err != nil {
+			return err
+		}
+		pendingSnapshot = sourceSnapshotRecord{
+			SourceRevisionID:             revision.ID,
+			Provider:                     binding.Provider,
+			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
+			CommitSHA:                    commitSHA,
+			Digest:                       digest,
+			ObjectKey:                    objectKey,
+			ArchiveSizeBytes:             int64(len(archive)),
+			Ready:                        true,
+			FetchedAt:                    sql.NullTime{Time: time.Now().UTC(), Valid: true},
+		}
+	} else if err != nil {
+		return err
+	}
+
+	if err := c.store.withTx(ctx, func(tx *sql.Tx) error {
+		revision, err := c.store.sourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
+		if err != nil {
+			return err
+		}
 		snapshot, err := c.store.sourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
-		switch {
-		case err == nil:
-		case errors.Is(err, sql.ErrNoRows):
-			archive, err := c.client.FetchArchive(ctx, owner, repo, commitSHA, installationID)
-			if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			if pendingSnapshot.ObjectKey == "" {
 				return err
 			}
-			snapshot, err = c.store.upsertSourceSnapshotTx(ctx, tx, sourceSnapshotRecord{
-				SourceRevisionID:             revision.ID,
-				Provider:                     binding.Provider,
-				ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
-				CommitSHA:                    commitSHA,
-				Digest:                       snapshotDigest(archive),
-				ArchiveTGZ:                   archive,
-				Ready:                        true,
-				FetchedAt:                    sql.NullTime{Time: time.Now().UTC(), Valid: true},
-			})
-			if err != nil {
-				return err
-			}
-		default:
+			snapshot, err = c.store.upsertSourceSnapshotTx(ctx, tx, pendingSnapshot)
+		}
+		if err != nil {
 			return err
 		}
 		service, err := c.store.serviceByIDInternalQuerier(ctx, tx, binding.ServiceID)
@@ -356,6 +392,9 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		c.emitter.EmitBuildf(ctx, committedService, committedBuild, StageBuild,
 			"Queued build for commit %s on ref %s", shortSHA(committedBuild.CommitSHA), binding.TrackedRef,
 		)
+	}
+	if committed {
+		c.events.Publish(committedService.EnvironmentID)
 	}
 	return nil
 }
