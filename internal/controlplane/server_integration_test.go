@@ -14,6 +14,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/testutil"
 
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -36,6 +37,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 				ClientCertValidityHours: 24,
 			},
 		},
+		UserAssertions: config.UserAssertionConfig{HMACSecret: testUserAssertionSecret},
 		Database: config.DatabaseConfig{
 			URL:          createTestDatabase(t),
 			MaxOpenConns: 4,
@@ -44,6 +46,9 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 		StateDir: t.TempDir(),
 		Ingress: config.IngressConfig{
 			PublicAddr: "platform.local",
+		},
+		Dashboard: config.ManagedDashboardConfig{
+			ServiceCallerID: "dashboard-test",
 		},
 		Mesh: config.ControlPlaneMeshConfig{
 			InterfaceName:              "wg0",
@@ -91,17 +96,9 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	defer conn.Close()
 
 	client := platformv1.NewPlatformServiceClient(conn)
-	if _, err := client.EnsurePrincipal(ctx, &platformv1.EnsurePrincipalRequest{
-		Subject: "user-1",
-		Email:   "user@example.com",
-	}); err != nil {
-		t.Fatalf("EnsurePrincipal: %v", err)
-	}
-
 	delegatedCtx := metadata.AppendToOutgoingContext(
 		ctx,
-		delegatedUserSubjectHeader, "user-1",
-		delegatedUserEmailHeader, "user@example.com",
+		userAssertionHeader, signedLiveUserAssertion(t, "user-1"),
 	)
 
 	projects, err := client.ListProjects(delegatedCtx, &emptypb.Empty{})
@@ -134,6 +131,24 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	} else if got[0].GetId() != created.GetId() || got[0].GetName() != "demo-app" {
 		t.Fatalf("unexpected listed project %+v", got[0])
 	}
+}
+
+func signedLiveUserAssertion(t *testing.T, userID string) string {
+	t.Helper()
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		Issuer:    userAssertionIssuer,
+		Audience:  jwt.ClaimStrings{userAssertionAudience},
+		Subject:   userID,
+		ExpiresAt: jwt.NewNumericDate(now.Add(userAssertionMaxAge)),
+		IssuedAt:  jwt.NewNumericDate(now),
+		ID:        "integration-assertion-1",
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testUserAssertionSecret))
+	if err != nil {
+		t.Fatalf("sign user assertion: %v", err)
+	}
+	return token
 }
 
 func waitForListener(t *testing.T, address string) {

@@ -43,7 +43,7 @@ func (e *LogEmitter) Enabled() bool {
 func (e *LogEmitter) EmitBuild(ctx context.Context, service serviceRecord, build buildRunRecord, stage, line string) {
 	e.emit(ctx, LogLineInput{
 		ObservedAt:        time.Now().UTC(),
-		ProjectID:         service.ProjectID,
+		EnvironmentID:     service.EnvironmentID,
 		ServiceID:         service.ID,
 		AllocationID:      "",
 		AgentID:           "",
@@ -85,7 +85,7 @@ func (e *LogEmitter) EmitBuildLines(ctx context.Context, service serviceRecord, 
 		}
 		inputs = append(inputs, LogLineInput{
 			ObservedAt:        observedAt,
-			ProjectID:         service.ProjectID,
+			EnvironmentID:     service.EnvironmentID,
 			ServiceID:         service.ID,
 			AllocationID:      "",
 			AgentID:           builderID,
@@ -110,7 +110,7 @@ func (e *LogEmitter) EmitBuildLines(ctx context.Context, service serviceRecord, 
 func (e *LogEmitter) EmitDeploy(ctx context.Context, service serviceRecord, allocationID, buildID, stage, line string) {
 	e.emit(ctx, LogLineInput{
 		ObservedAt:        time.Now().UTC(),
-		ProjectID:         service.ProjectID,
+		EnvironmentID:     service.EnvironmentID,
 		ServiceID:         service.ID,
 		AllocationID:      allocationID,
 		AgentID:           service.AllocatedAgentID,

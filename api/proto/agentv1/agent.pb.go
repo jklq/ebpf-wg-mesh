@@ -235,6 +235,58 @@ func (x *EnrollResponse) GetNotAfter() *timestamppb.Timestamp {
 	return nil
 }
 
+type ManagedDashboardCertificateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	CsrPem        string                 `protobuf:"bytes,2,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ManagedDashboardCertificateRequest) Reset() {
+	*x = ManagedDashboardCertificateRequest{}
+	mi := &file_agent_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ManagedDashboardCertificateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ManagedDashboardCertificateRequest) ProtoMessage() {}
+
+func (x *ManagedDashboardCertificateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ManagedDashboardCertificateRequest.ProtoReflect.Descriptor instead.
+func (*ManagedDashboardCertificateRequest) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ManagedDashboardCertificateRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ManagedDashboardCertificateRequest) GetCsrPem() string {
+	if x != nil {
+		return x.CsrPem
+	}
+	return ""
+}
+
 type WireGuardPeer struct {
 	state                      protoimpl.MessageState `protogen:"open.v1"`
 	AgentId                    string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -249,7 +301,7 @@ type WireGuardPeer struct {
 
 func (x *WireGuardPeer) Reset() {
 	*x = WireGuardPeer{}
-	mi := &file_agent_proto_msgTypes[3]
+	mi := &file_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -261,7 +313,7 @@ func (x *WireGuardPeer) String() string {
 func (*WireGuardPeer) ProtoMessage() {}
 
 func (x *WireGuardPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[3]
+	mi := &file_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -274,7 +326,7 @@ func (x *WireGuardPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WireGuardPeer.ProtoReflect.Descriptor instead.
 func (*WireGuardPeer) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{3}
+	return file_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *WireGuardPeer) GetAgentId() string {
@@ -326,13 +378,15 @@ type AssignedNodeConfig struct {
 	WireguardAddresses     []string               `protobuf:"bytes,3,rep,name=wireguard_addresses,json=wireguardAddresses,proto3" json:"wireguard_addresses,omitempty"`
 	WireguardListenPort    int32                  `protobuf:"varint,4,opt,name=wireguard_listen_port,json=wireguardListenPort,proto3" json:"wireguard_listen_port,omitempty"`
 	Peers                  []*WireGuardPeer       `protobuf:"bytes,5,rep,name=peers,proto3" json:"peers,omitempty"`
+	WorkloadIdentities     []*WorkloadIdentity    `protobuf:"bytes,6,rep,name=workload_identities,json=workloadIdentities,proto3" json:"workload_identities,omitempty"`
+	WorkloadIpv6Pool       string                 `protobuf:"bytes,7,opt,name=workload_ipv6_pool,json=workloadIpv6Pool,proto3" json:"workload_ipv6_pool,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
 
 func (x *AssignedNodeConfig) Reset() {
 	*x = AssignedNodeConfig{}
-	mi := &file_agent_proto_msgTypes[4]
+	mi := &file_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -344,7 +398,7 @@ func (x *AssignedNodeConfig) String() string {
 func (*AssignedNodeConfig) ProtoMessage() {}
 
 func (x *AssignedNodeConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[4]
+	mi := &file_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -357,7 +411,7 @@ func (x *AssignedNodeConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignedNodeConfig.ProtoReflect.Descriptor instead.
 func (*AssignedNodeConfig) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{4}
+	return file_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AssignedNodeConfig) GetWorkloadIpv6Subnet() string {
@@ -395,6 +449,96 @@ func (x *AssignedNodeConfig) GetPeers() []*WireGuardPeer {
 	return nil
 }
 
+func (x *AssignedNodeConfig) GetWorkloadIdentities() []*WorkloadIdentity {
+	if x != nil {
+		return x.WorkloadIdentities
+	}
+	return nil
+}
+
+func (x *AssignedNodeConfig) GetWorkloadIpv6Pool() string {
+	if x != nil {
+		return x.WorkloadIpv6Pool
+	}
+	return ""
+}
+
+type WorkloadIdentity struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	WorkloadIpv6    string                 `protobuf:"bytes,1,opt,name=workload_ipv6,json=workloadIpv6,proto3" json:"workload_ipv6,omitempty"`
+	EnvironmentId   string                 `protobuf:"bytes,2,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
+	NetworkIdentity uint32                 `protobuf:"varint,3,opt,name=network_identity,json=networkIdentity,proto3" json:"network_identity,omitempty"`
+	HostAgentId     string                 `protobuf:"bytes,4,opt,name=host_agent_id,json=hostAgentId,proto3" json:"host_agent_id,omitempty"`
+	HostIpv6        string                 `protobuf:"bytes,5,opt,name=host_ipv6,json=hostIpv6,proto3" json:"host_ipv6,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *WorkloadIdentity) Reset() {
+	*x = WorkloadIdentity{}
+	mi := &file_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkloadIdentity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkloadIdentity) ProtoMessage() {}
+
+func (x *WorkloadIdentity) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkloadIdentity.ProtoReflect.Descriptor instead.
+func (*WorkloadIdentity) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *WorkloadIdentity) GetWorkloadIpv6() string {
+	if x != nil {
+		return x.WorkloadIpv6
+	}
+	return ""
+}
+
+func (x *WorkloadIdentity) GetEnvironmentId() string {
+	if x != nil {
+		return x.EnvironmentId
+	}
+	return ""
+}
+
+func (x *WorkloadIdentity) GetNetworkIdentity() uint32 {
+	if x != nil {
+		return x.NetworkIdentity
+	}
+	return 0
+}
+
+func (x *WorkloadIdentity) GetHostAgentId() string {
+	if x != nil {
+		return x.HostAgentId
+	}
+	return ""
+}
+
+func (x *WorkloadIdentity) GetHostIpv6() string {
+	if x != nil {
+		return x.HostIpv6
+	}
+	return ""
+}
+
 type AgentHeartbeat struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -404,7 +548,7 @@ type AgentHeartbeat struct {
 
 func (x *AgentHeartbeat) Reset() {
 	*x = AgentHeartbeat{}
-	mi := &file_agent_proto_msgTypes[5]
+	mi := &file_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -416,7 +560,7 @@ func (x *AgentHeartbeat) String() string {
 func (*AgentHeartbeat) ProtoMessage() {}
 
 func (x *AgentHeartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[5]
+	mi := &file_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -429,7 +573,7 @@ func (x *AgentHeartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentHeartbeat.ProtoReflect.Descriptor instead.
 func (*AgentHeartbeat) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{5}
+	return file_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AgentHeartbeat) GetAgentId() string {
@@ -442,7 +586,7 @@ func (x *AgentHeartbeat) GetAgentId() string {
 type DesiredVolume struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      string                 `protobuf:"bytes,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EnvironmentId string                 `protobuf:"bytes,2,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
 	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -451,7 +595,7 @@ type DesiredVolume struct {
 
 func (x *DesiredVolume) Reset() {
 	*x = DesiredVolume{}
-	mi := &file_agent_proto_msgTypes[6]
+	mi := &file_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -463,7 +607,7 @@ func (x *DesiredVolume) String() string {
 func (*DesiredVolume) ProtoMessage() {}
 
 func (x *DesiredVolume) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[6]
+	mi := &file_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -476,7 +620,7 @@ func (x *DesiredVolume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredVolume.ProtoReflect.Descriptor instead.
 func (*DesiredVolume) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{6}
+	return file_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DesiredVolume) GetVolumeId() string {
@@ -486,9 +630,9 @@ func (x *DesiredVolume) GetVolumeId() string {
 	return ""
 }
 
-func (x *DesiredVolume) GetProjectId() string {
+func (x *DesiredVolume) GetEnvironmentId() string {
 	if x != nil {
-		return x.ProjectId
+		return x.EnvironmentId
 	}
 	return ""
 }
@@ -511,7 +655,7 @@ type DesiredService struct {
 	state                    protoimpl.MessageState          `protogen:"open.v1"`
 	AllocationId             string                          `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
 	ServiceId                string                          `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	ProjectId                string                          `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EnvironmentId            string                          `protobuf:"bytes,3,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
 	Name                     string                          `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	DesiredSpecRevision      int64                           `protobuf:"varint,5,opt,name=desired_spec_revision,json=desiredSpecRevision,proto3" json:"desired_spec_revision,omitempty"`
 	Spec                     *platformv1.ResolvedServiceSpec `protobuf:"bytes,6,opt,name=spec,proto3" json:"spec,omitempty"`
@@ -519,13 +663,18 @@ type DesiredService struct {
 	VolumeId                 string                          `protobuf:"bytes,8,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	DesiredRolloutGeneration int64                           `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
 	NetworkIdentity          uint32                          `protobuf:"varint,10,opt,name=network_identity,json=networkIdentity,proto3" json:"network_identity,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// Exact-repository pull credential for a platform-built private image.
+	RegistryUsername string          `protobuf:"bytes,11,opt,name=registry_username,json=registryUsername,proto3" json:"registry_username,omitempty"`
+	RegistryPassword string          `protobuf:"bytes,12,opt,name=registry_password,json=registryPassword,proto3" json:"registry_password,omitempty"`
+	InternalHostname string          `protobuf:"bytes,13,opt,name=internal_hostname,json=internalHostname,proto3" json:"internal_hostname,omitempty"`
+	InternalHosts    []*InternalHost `protobuf:"bytes,14,rep,name=internal_hosts,json=internalHosts,proto3" json:"internal_hosts,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *DesiredService) Reset() {
 	*x = DesiredService{}
-	mi := &file_agent_proto_msgTypes[7]
+	mi := &file_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -537,7 +686,7 @@ func (x *DesiredService) String() string {
 func (*DesiredService) ProtoMessage() {}
 
 func (x *DesiredService) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[7]
+	mi := &file_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -550,7 +699,7 @@ func (x *DesiredService) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredService.ProtoReflect.Descriptor instead.
 func (*DesiredService) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{7}
+	return file_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DesiredService) GetAllocationId() string {
@@ -567,9 +716,9 @@ func (x *DesiredService) GetServiceId() string {
 	return ""
 }
 
-func (x *DesiredService) GetProjectId() string {
+func (x *DesiredService) GetEnvironmentId() string {
 	if x != nil {
-		return x.ProjectId
+		return x.EnvironmentId
 	}
 	return ""
 }
@@ -623,6 +772,86 @@ func (x *DesiredService) GetNetworkIdentity() uint32 {
 	return 0
 }
 
+func (x *DesiredService) GetRegistryUsername() string {
+	if x != nil {
+		return x.RegistryUsername
+	}
+	return ""
+}
+
+func (x *DesiredService) GetRegistryPassword() string {
+	if x != nil {
+		return x.RegistryPassword
+	}
+	return ""
+}
+
+func (x *DesiredService) GetInternalHostname() string {
+	if x != nil {
+		return x.InternalHostname
+	}
+	return ""
+}
+
+func (x *DesiredService) GetInternalHosts() []*InternalHost {
+	if x != nil {
+		return x.InternalHosts
+	}
+	return nil
+}
+
+type InternalHost struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Ipv6          string                 `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InternalHost) Reset() {
+	*x = InternalHost{}
+	mi := &file_agent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InternalHost) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InternalHost) ProtoMessage() {}
+
+func (x *InternalHost) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InternalHost.ProtoReflect.Descriptor instead.
+func (*InternalHost) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *InternalHost) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *InternalHost) GetIpv6() string {
+	if x != nil {
+		return x.Ipv6
+	}
+	return ""
+}
+
 type DesiredNodeState struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -637,7 +866,7 @@ type DesiredNodeState struct {
 
 func (x *DesiredNodeState) Reset() {
 	*x = DesiredNodeState{}
-	mi := &file_agent_proto_msgTypes[8]
+	mi := &file_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -649,7 +878,7 @@ func (x *DesiredNodeState) String() string {
 func (*DesiredNodeState) ProtoMessage() {}
 
 func (x *DesiredNodeState) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[8]
+	mi := &file_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -662,7 +891,7 @@ func (x *DesiredNodeState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredNodeState.ProtoReflect.Descriptor instead.
 func (*DesiredNodeState) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{8}
+	return file_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DesiredNodeState) GetAgentId() string {
@@ -718,7 +947,7 @@ type VolumeCondition struct {
 
 func (x *VolumeCondition) Reset() {
 	*x = VolumeCondition{}
-	mi := &file_agent_proto_msgTypes[9]
+	mi := &file_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -730,7 +959,7 @@ func (x *VolumeCondition) String() string {
 func (*VolumeCondition) ProtoMessage() {}
 
 func (x *VolumeCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[9]
+	mi := &file_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -743,7 +972,7 @@ func (x *VolumeCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeCondition.ProtoReflect.Descriptor instead.
 func (*VolumeCondition) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{9}
+	return file_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *VolumeCondition) GetVolumeId() string {
@@ -786,7 +1015,7 @@ type ServiceCondition struct {
 
 func (x *ServiceCondition) Reset() {
 	*x = ServiceCondition{}
-	mi := &file_agent_proto_msgTypes[10]
+	mi := &file_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -798,7 +1027,7 @@ func (x *ServiceCondition) String() string {
 func (*ServiceCondition) ProtoMessage() {}
 
 func (x *ServiceCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[10]
+	mi := &file_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -811,7 +1040,7 @@ func (x *ServiceCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceCondition.ProtoReflect.Descriptor instead.
 func (*ServiceCondition) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{10}
+	return file_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ServiceCondition) GetAllocationId() string {
@@ -902,7 +1131,7 @@ type StatusReport struct {
 
 func (x *StatusReport) Reset() {
 	*x = StatusReport{}
-	mi := &file_agent_proto_msgTypes[11]
+	mi := &file_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -914,7 +1143,7 @@ func (x *StatusReport) String() string {
 func (*StatusReport) ProtoMessage() {}
 
 func (x *StatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[11]
+	mi := &file_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -927,7 +1156,7 @@ func (x *StatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusReport.ProtoReflect.Descriptor instead.
 func (*StatusReport) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{11}
+	return file_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StatusReport) GetAgentId() string {
@@ -954,7 +1183,7 @@ func (x *StatusReport) GetServices() []*ServiceCondition {
 type LogEntry struct {
 	state             protoimpl.MessageState    `protogen:"open.v1"`
 	ObservedAt        *timestamppb.Timestamp    `protobuf:"bytes,1,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
-	ProjectId         string                    `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EnvironmentId     string                    `protobuf:"bytes,2,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
 	ServiceId         string                    `protobuf:"bytes,3,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
 	AllocationId      string                    `protobuf:"bytes,4,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
 	Stream            string                    `protobuf:"bytes,5,opt,name=stream,proto3" json:"stream,omitempty"`
@@ -970,7 +1199,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_agent_proto_msgTypes[12]
+	mi := &file_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -982,7 +1211,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[12]
+	mi := &file_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -995,7 +1224,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{12}
+	return file_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *LogEntry) GetObservedAt() *timestamppb.Timestamp {
@@ -1005,9 +1234,9 @@ func (x *LogEntry) GetObservedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-func (x *LogEntry) GetProjectId() string {
+func (x *LogEntry) GetEnvironmentId() string {
 	if x != nil {
-		return x.ProjectId
+		return x.EnvironmentId
 	}
 	return ""
 }
@@ -1085,7 +1314,7 @@ type LogBatch struct {
 
 func (x *LogBatch) Reset() {
 	*x = LogBatch{}
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1097,7 +1326,7 @@ func (x *LogBatch) String() string {
 func (*LogBatch) ProtoMessage() {}
 
 func (x *LogBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1110,7 +1339,7 @@ func (x *LogBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
 func (*LogBatch) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{13}
+	return file_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LogBatch) GetAgentId() string {
@@ -1142,7 +1371,7 @@ type AgentClientMessage struct {
 
 func (x *AgentClientMessage) Reset() {
 	*x = AgentClientMessage{}
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1154,7 +1383,7 @@ func (x *AgentClientMessage) String() string {
 func (*AgentClientMessage) ProtoMessage() {}
 
 func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1167,7 +1396,7 @@ func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentClientMessage.ProtoReflect.Descriptor instead.
 func (*AgentClientMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{14}
+	return file_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AgentClientMessage) GetPayload() isAgentClientMessage_Payload {
@@ -1253,7 +1482,7 @@ type AgentServerMessage struct {
 
 func (x *AgentServerMessage) Reset() {
 	*x = AgentServerMessage{}
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1265,7 +1494,7 @@ func (x *AgentServerMessage) String() string {
 func (*AgentServerMessage) ProtoMessage() {}
 
 func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1278,7 +1507,7 @@ func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentServerMessage.ProtoReflect.Descriptor instead.
 func (*AgentServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{15}
+	return file_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AgentServerMessage) GetPayload() isAgentServerMessage_Payload {
@@ -1328,7 +1557,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eEnrollResponse\x12\x19\n" +
 	"\bcert_pem\x18\x01 \x01(\tR\acertPem\x12\x15\n" +
 	"\x06ca_pem\x18\x02 \x01(\tR\x05caPem\x127\n" +
-	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"\xdc\x01\n" +
+	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"X\n" +
+	"\"ManagedDashboardCertificateRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
+	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\"\xdc\x01\n" +
 	"\rWireGuardPeer\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
@@ -1337,28 +1569,34 @@ const file_agent_proto_rawDesc = "" +
 	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x03(\tR\n" +
 	"allowedIps\x12@\n" +
-	"\x1cpersistent_keepalive_seconds\x18\x06 \x01(\x05R\x1apersistentKeepaliveSeconds\"\x94\x02\n" +
+	"\x1cpersistent_keepalive_seconds\x18\x06 \x01(\x05R\x1apersistentKeepaliveSeconds\"\x8f\x03\n" +
 	"\x12AssignedNodeConfig\x120\n" +
 	"\x14workload_ipv6_subnet\x18\x01 \x01(\tR\x12workloadIpv6Subnet\x128\n" +
 	"\x18wireguard_interface_name\x18\x02 \x01(\tR\x16wireguardInterfaceName\x12/\n" +
 	"\x13wireguard_addresses\x18\x03 \x03(\tR\x12wireguardAddresses\x122\n" +
 	"\x15wireguard_listen_port\x18\x04 \x01(\x05R\x13wireguardListenPort\x12-\n" +
-	"\x05peers\x18\x05 \x03(\v2\x17.agent.v1.WireGuardPeerR\x05peers\"+\n" +
+	"\x05peers\x18\x05 \x03(\v2\x17.agent.v1.WireGuardPeerR\x05peers\x12K\n" +
+	"\x13workload_identities\x18\x06 \x03(\v2\x1a.agent.v1.WorkloadIdentityR\x12workloadIdentities\x12,\n" +
+	"\x12workload_ipv6_pool\x18\a \x01(\tR\x10workloadIpv6Pool\"\xca\x01\n" +
+	"\x10WorkloadIdentity\x12#\n" +
+	"\rworkload_ipv6\x18\x01 \x01(\tR\fworkloadIpv6\x12%\n" +
+	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12)\n" +
+	"\x10network_identity\x18\x03 \x01(\rR\x0fnetworkIdentity\x12\"\n" +
+	"\rhost_agent_id\x18\x04 \x01(\tR\vhostAgentId\x12\x1b\n" +
+	"\thost_ipv6\x18\x05 \x01(\tR\bhostIpv6\"+\n" +
 	"\x0eAgentHeartbeat\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"~\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x86\x01\n" +
 	"\rDesiredVolume\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x1d\n" +
-	"\n" +
-	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x12\n" +
+	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12%\n" +
+	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\x9a\x03\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xe8\x04\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
-	"service_id\x18\x02 \x01(\tR\tserviceId\x12\x1d\n" +
-	"\n" +
-	"project_id\x18\x03 \x01(\tR\tprojectId\x12\x12\n" +
+	"service_id\x18\x02 \x01(\tR\tserviceId\x12%\n" +
+	"\x0eenvironment_id\x18\x03 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x122\n" +
 	"\x15desired_spec_revision\x18\x05 \x01(\x03R\x13desiredSpecRevision\x124\n" +
 	"\x04spec\x18\x06 \x01(\v2 .platform.v1.ResolvedServiceSpecR\x04spec\x12!\n" +
@@ -1366,7 +1604,14 @@ const file_agent_proto_rawDesc = "" +
 	"\tvolume_id\x18\b \x01(\tR\bvolumeId\x12<\n" +
 	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\x12)\n" +
 	"\x10network_identity\x18\n" +
-	" \x01(\rR\x0fnetworkIdentity\"\xb0\x02\n" +
+	" \x01(\rR\x0fnetworkIdentity\x12+\n" +
+	"\x11registry_username\x18\v \x01(\tR\x10registryUsername\x12+\n" +
+	"\x11registry_password\x18\f \x01(\tR\x10registryPassword\x12+\n" +
+	"\x11internal_hostname\x18\r \x01(\tR\x10internalHostname\x12=\n" +
+	"\x0einternal_hosts\x18\x0e \x03(\v2\x16.agent.v1.InternalHostR\rinternalHosts\">\n" +
+	"\fInternalHost\x12\x1a\n" +
+	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
+	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\"\xb0\x02\n" +
 	"\x10DesiredNodeState\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x03R\brevision\x121\n" +
@@ -1396,12 +1641,11 @@ const file_agent_proto_rawDesc = "" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
-	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\x8a\x03\n" +
+	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\x92\x03\n" +
 	"\bLogEntry\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"observedAt\x12\x1d\n" +
-	"\n" +
-	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x1d\n" +
+	"observedAt\x12%\n" +
+	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x03 \x01(\tR\tserviceId\x12#\n" +
 	"\rallocation_id\x18\x04 \x01(\tR\fallocationId\x12\x16\n" +
@@ -1424,9 +1668,10 @@ const file_agent_proto_rawDesc = "" +
 	"\apayload\"b\n" +
 	"\x12AgentServerMessage\x12A\n" +
 	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredStateB\t\n" +
-	"\apayload2\x93\x01\n" +
+	"\apayload2\xff\x01\n" +
 	"\fAgentControl\x12;\n" +
-	"\x06Enroll\x12\x17.agent.v1.EnrollRequest\x1a\x18.agent.v1.EnrollResponse\x12F\n" +
+	"\x06Enroll\x12\x17.agent.v1.EnrollRequest\x1a\x18.agent.v1.EnrollResponse\x12j\n" +
+	" IssueManagedDashboardCertificate\x12,.agent.v1.ManagedDashboardCertificateRequest\x1a\x18.agent.v1.EnrollResponse\x12F\n" +
 	"\x04Sync\x12\x1c.agent.v1.AgentClientMessage\x1a\x1c.agent.v1.AgentServerMessage(\x010\x01B(Z&ebof-wg-mesh/api/proto/agentv1;agentv1b\x06proto3"
 
 var (
@@ -1441,55 +1686,62 @@ func file_agent_proto_rawDescGZIP() []byte {
 	return file_agent_proto_rawDescData
 }
 
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_agent_proto_goTypes = []any{
-	(*AgentHello)(nil),                     // 0: agent.v1.AgentHello
-	(*EnrollRequest)(nil),                  // 1: agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),                 // 2: agent.v1.EnrollResponse
-	(*WireGuardPeer)(nil),                  // 3: agent.v1.WireGuardPeer
-	(*AssignedNodeConfig)(nil),             // 4: agent.v1.AssignedNodeConfig
-	(*AgentHeartbeat)(nil),                 // 5: agent.v1.AgentHeartbeat
-	(*DesiredVolume)(nil),                  // 6: agent.v1.DesiredVolume
-	(*DesiredService)(nil),                 // 7: agent.v1.DesiredService
-	(*DesiredNodeState)(nil),               // 8: agent.v1.DesiredNodeState
-	(*VolumeCondition)(nil),                // 9: agent.v1.VolumeCondition
-	(*ServiceCondition)(nil),               // 10: agent.v1.ServiceCondition
-	(*StatusReport)(nil),                   // 11: agent.v1.StatusReport
-	(*LogEntry)(nil),                       // 12: agent.v1.LogEntry
-	(*LogBatch)(nil),                       // 13: agent.v1.LogBatch
-	(*AgentClientMessage)(nil),             // 14: agent.v1.AgentClientMessage
-	(*AgentServerMessage)(nil),             // 15: agent.v1.AgentServerMessage
-	(*timestamppb.Timestamp)(nil),          // 16: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil), // 17: platform.v1.ResolvedServiceSpec
-	(platformv1.ServiceLogType)(0),         // 18: platform.v1.ServiceLogType
+	(*AgentHello)(nil),                         // 0: agent.v1.AgentHello
+	(*EnrollRequest)(nil),                      // 1: agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),                     // 2: agent.v1.EnrollResponse
+	(*ManagedDashboardCertificateRequest)(nil), // 3: agent.v1.ManagedDashboardCertificateRequest
+	(*WireGuardPeer)(nil),                      // 4: agent.v1.WireGuardPeer
+	(*AssignedNodeConfig)(nil),                 // 5: agent.v1.AssignedNodeConfig
+	(*WorkloadIdentity)(nil),                   // 6: agent.v1.WorkloadIdentity
+	(*AgentHeartbeat)(nil),                     // 7: agent.v1.AgentHeartbeat
+	(*DesiredVolume)(nil),                      // 8: agent.v1.DesiredVolume
+	(*DesiredService)(nil),                     // 9: agent.v1.DesiredService
+	(*InternalHost)(nil),                       // 10: agent.v1.InternalHost
+	(*DesiredNodeState)(nil),                   // 11: agent.v1.DesiredNodeState
+	(*VolumeCondition)(nil),                    // 12: agent.v1.VolumeCondition
+	(*ServiceCondition)(nil),                   // 13: agent.v1.ServiceCondition
+	(*StatusReport)(nil),                       // 14: agent.v1.StatusReport
+	(*LogEntry)(nil),                           // 15: agent.v1.LogEntry
+	(*LogBatch)(nil),                           // 16: agent.v1.LogBatch
+	(*AgentClientMessage)(nil),                 // 17: agent.v1.AgentClientMessage
+	(*AgentServerMessage)(nil),                 // 18: agent.v1.AgentServerMessage
+	(*timestamppb.Timestamp)(nil),              // 19: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil),     // 20: platform.v1.ResolvedServiceSpec
+	(platformv1.ServiceLogType)(0),             // 21: platform.v1.ServiceLogType
 }
 var file_agent_proto_depIdxs = []int32{
-	16, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
-	3,  // 1: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
-	17, // 2: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
-	6,  // 3: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
-	7,  // 4: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	16, // 5: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
-	4,  // 6: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
-	9,  // 7: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	10, // 8: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	16, // 9: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	18, // 10: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	12, // 11: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	0,  // 12: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	5,  // 13: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	11, // 14: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	13, // 15: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	8,  // 16: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	1,  // 17: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	14, // 18: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	2,  // 19: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	15, // 20: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	19, // [19:21] is the sub-list for method output_type
-	17, // [17:19] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	19, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	4,  // 1: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
+	6,  // 2: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
+	20, // 3: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	10, // 4: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
+	8,  // 5: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
+	9,  // 6: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
+	19, // 7: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	5,  // 8: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
+	12, // 9: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	13, // 10: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	19, // 11: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	21, // 12: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	15, // 13: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	0,  // 14: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	7,  // 15: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	14, // 16: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	16, // 17: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	11, // 18: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	1,  // 19: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	3,  // 20: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	17, // 21: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	2,  // 22: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	2,  // 23: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	18, // 24: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	22, // [22:25] is the sub-list for method output_type
+	19, // [19:22] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -1497,13 +1749,13 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
-	file_agent_proto_msgTypes[14].OneofWrappers = []any{
+	file_agent_proto_msgTypes[17].OneofWrappers = []any{
 		(*AgentClientMessage_Hello)(nil),
 		(*AgentClientMessage_Heartbeat)(nil),
 		(*AgentClientMessage_StatusReport)(nil),
 		(*AgentClientMessage_LogBatch)(nil),
 	}
-	file_agent_proto_msgTypes[15].OneofWrappers = []any{
+	file_agent_proto_msgTypes[18].OneofWrappers = []any{
 		(*AgentServerMessage_DesiredState)(nil),
 	}
 	type x struct{}
@@ -1512,7 +1764,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

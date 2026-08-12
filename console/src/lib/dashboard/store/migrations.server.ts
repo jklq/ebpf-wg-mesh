@@ -11,100 +11,79 @@ export function dashboardStoreMigrations(
 		{
 			version: 1,
 			statements: [
-				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "users")} (
+				`CREATE TABLE ${tableName(runtime, "users")} (
 					id STRING PRIMARY KEY,
-					subject STRING NOT NULL UNIQUE,
 					email STRING NOT NULL,
 					created_at TIMESTAMPTZ NOT NULL,
 					updated_at TIMESTAMPTZ NOT NULL
 				)`,
-				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "sessions")} (
+				`CREATE TABLE ${tableName(runtime, "sessions")} (
 					id STRING PRIMARY KEY,
 					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
 					created_at TIMESTAMPTZ NOT NULL,
 					expires_at TIMESTAMPTZ NOT NULL
 				)`,
-				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "accounts")} (
+				`CREATE INDEX ${runtime.databaseSchema}_sessions_expires_at_idx
+					ON ${tableName(runtime, "sessions")} (expires_at)`,
+				`CREATE TABLE ${tableName(runtime, "refresh_sessions")} (
+					id STRING PRIMARY KEY,
+					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
+					created_at TIMESTAMPTZ NOT NULL,
+					expires_at TIMESTAMPTZ NOT NULL
+				)`,
+				`CREATE INDEX ${runtime.databaseSchema}_refresh_sessions_expires_at_idx
+					ON ${tableName(runtime, "refresh_sessions")} (expires_at)`,
+				`CREATE TABLE ${tableName(runtime, "accounts")} (
 					id STRING PRIMARY KEY,
 					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
 					provider STRING NOT NULL,
 					provider_subject STRING NOT NULL,
+					verified_email_snapshot STRING NOT NULL DEFAULT '',
+					provider_login STRING NOT NULL DEFAULT '',
+					access_token STRING NOT NULL DEFAULT '',
+					access_token_expires_at TIMESTAMPTZ NULL,
+					refresh_token STRING NOT NULL DEFAULT '',
+					refresh_token_expires_at TIMESTAMPTZ NULL,
+					token_type STRING NOT NULL DEFAULT '',
+					scope STRING NOT NULL DEFAULT '',
+					oauth_token_version INT8 NOT NULL DEFAULT 0,
+					oauth_refresh_lease_id STRING NULL,
+					oauth_refresh_lease_expires_at TIMESTAMPTZ NULL,
 					created_at TIMESTAMPTZ NOT NULL,
+					updated_at TIMESTAMPTZ NOT NULL,
+					last_login_at TIMESTAMPTZ NOT NULL,
 					UNIQUE(provider, provider_subject)
 				)`,
-				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "onboarding")} (
+				`CREATE INDEX ${runtime.databaseSchema}_accounts_provider_email_idx
+					ON ${tableName(runtime, "accounts")} (provider, lower(verified_email_snapshot))`,
+				`CREATE TABLE ${tableName(runtime, "onboarding")} (
 					user_id STRING PRIMARY KEY REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
 					account_name STRING NOT NULL DEFAULT '',
 					status STRING NOT NULL DEFAULT 'pending',
+					current_step STRING NOT NULL DEFAULT 'account',
+					project_id STRING NOT NULL DEFAULT '',
+					environment_id STRING NOT NULL DEFAULT '',
+					service_id STRING NOT NULL DEFAULT '',
+					repository_selector STRING NOT NULL DEFAULT '',
+					tracked_ref STRING NOT NULL DEFAULT '',
+					dockerfile_path STRING NOT NULL DEFAULT '',
+					context_dir STRING NOT NULL DEFAULT '',
+					hostname STRING NOT NULL DEFAULT '',
 					created_at TIMESTAMPTZ NOT NULL,
 					updated_at TIMESTAMPTZ NOT NULL
 				)`,
-				`CREATE INDEX IF NOT EXISTS ${runtime.databaseSchema}_sessions_expires_at_idx
-					ON ${tableName(runtime, "sessions")} (expires_at)`,
-			],
-		},
-		{
-			version: 2,
-			statements: [
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS verified_email_snapshot STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS provider_login STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS access_token STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS access_token_expires_at TIMESTAMPTZ NULL`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS refresh_token STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS refresh_token_expires_at TIMESTAMPTZ NULL`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS token_type STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS scope STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL`,
-				`UPDATE ${tableName(runtime, "accounts")} SET updated_at = created_at WHERE updated_at IS NULL`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ALTER COLUMN updated_at SET NOT NULL`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ NULL`,
-				`UPDATE ${tableName(runtime, "accounts")} SET last_login_at = created_at WHERE last_login_at IS NULL`,
-				`ALTER TABLE ${tableName(runtime, "accounts")} ALTER COLUMN last_login_at SET NOT NULL`,
-				`CREATE INDEX IF NOT EXISTS ${runtime.databaseSchema}_accounts_provider_email_idx
-					ON ${tableName(runtime, "accounts")} (provider, lower(verified_email_snapshot))`,
-			],
-		},
-		{
-			version: 3,
-			statements: [
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS current_step STRING NOT NULL DEFAULT 'account'`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS project_id STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS service_id STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS repository_selector STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS tracked_ref STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS dockerfile_path STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS context_dir STRING NOT NULL DEFAULT ''`,
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN IF NOT EXISTS hostname STRING NOT NULL DEFAULT ''`,
-			],
-		},
-		{
-			version: 5,
-			statements: [
-				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "refresh_sessions")} (
-						id STRING PRIMARY KEY,
-						user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
-						created_at TIMESTAMPTZ NOT NULL,
-						expires_at TIMESTAMPTZ NOT NULL
-					)`,
-				`CREATE INDEX IF NOT EXISTS ${runtime.databaseSchema}_refresh_sessions_expires_at_idx
-						ON ${tableName(runtime, "refresh_sessions")} (expires_at)`,
-			],
-		},
-		{
-			version: 6,
-			statements: [
-				`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "service_positions")} (
+				`CREATE TABLE ${tableName(runtime, "service_positions")} (
 					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
-					project_id STRING NOT NULL,
+					environment_id STRING NOT NULL,
 					service_id STRING NOT NULL,
 					x INT8 NOT NULL,
 					y INT8 NOT NULL,
 					created_at TIMESTAMPTZ NOT NULL,
 					updated_at TIMESTAMPTZ NOT NULL,
-					PRIMARY KEY (user_id, project_id, service_id)
+					PRIMARY KEY (user_id, environment_id, service_id)
 				)`,
-				`CREATE INDEX IF NOT EXISTS ${runtime.databaseSchema}_service_positions_project_idx
-					ON ${tableName(runtime, "service_positions")} (user_id, project_id)`,
+				`CREATE INDEX ${runtime.databaseSchema}_service_positions_environment_idx
+					ON ${tableName(runtime, "service_positions")} (user_id, environment_id)`,
 			],
 		},
 	];

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -27,11 +28,15 @@ type Server struct {
 	ingress      *IngressSyncer
 	dashboard    *ManagedDashboardReconciler
 	registry     *RegistryPolicy
+	registryAuth *RegistryAuth
+	registryHTTP *http.Server
 	github       *GitHubCatalog
 	webhooks     *GitHubWebhookProcessor
 	coordinator  *GitHubCoordinator
 	reconciler   *GitHubReconciler
+	expiry       *AgentExpiryTracker
 	internalLn   net.Listener
+	registryLn   net.Listener
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
@@ -39,10 +44,22 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if err != nil {
 		return nil, err
 	}
+	store.useReportedAllocationIP = cfg.Ingress.UseReportedAllocationIP
+	archiveStore, err := NewFileSourceArchiveStore(cfg.SourceArchives.Directory)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	store.ConfigureSourceArchives(archiveStore)
+	if err := store.migrateLegacySourceArchives(ctx); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("migrate source archives: %w", err)
+	}
 	if err := store.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
+	store.reserveAgents(cfg.Dashboard.TrustedAgentID)
 	if err := store.ensureAgentBootstrapTokens(ctx, cfg.InternalGRPC.TLS.BootstrapTokens); err != nil {
 		_ = store.Close()
 		return nil, err
@@ -54,6 +71,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	logEmitter := NewLogEmitter(logStore)
 	notifier := NewNotifier()
+	platformEvents := NewPlatformEvents()
 	ingressOpts := []IngressSyncerOption{
 		WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
 		WithIngressAdminListen(cfg.Ingress.AdminListen),
@@ -70,6 +88,22 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		ingressOpts = append(ingressOpts, WithIngressStaticRoutes(staticRoutes))
 	}
 	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store, ingressOpts...)
+	expiry := NewAgentExpiryTracker(ctx, agentHealthyTTL, func(ctx context.Context, agentID string, cutoff time.Time) error {
+		notifyAgentIDs, changedEnvironmentIDs, err := store.failoverServicesFromAgent(ctx, agentID, cutoff)
+		if err != nil {
+			return err
+		}
+		if len(notifyAgentIDs) > 0 {
+			notifier.NotifyAll(notifyAgentIDs)
+		}
+		if len(notifyAgentIDs) > 0 || len(changedEnvironmentIDs) > 0 {
+			ingress.RequestSync()
+		}
+		for _, environmentID := range changedEnvironmentIDs {
+			platformEvents.Publish(environmentID)
+		}
+		return nil
+	})
 	authority, err := NewTLSAuthority(cfg)
 	if err != nil {
 		return nil, err
@@ -79,7 +113,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 
-	registry := NewRegistryPolicy(cfg.Registry)
+	registryAuth, err := NewRegistryAuth(cfg.Registry, cfg.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("initialize embedded registry auth: %w", err)
+	}
+	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
 	var githubClient *GitHubClient
 	var githubCatalog *GitHubCatalog
 	var githubCoordinator *GitHubCoordinator
@@ -92,7 +130,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			return nil, err
 		}
 		githubCatalog = NewGitHubCatalog(store, githubClient)
-		githubCoordinator = NewGitHubCoordinator(store, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter))
+		githubCoordinator = NewGitHubCoordinator(store, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter), WithGitHubCoordinatorPlatformEvents(platformEvents))
 		githubReconciler = NewGitHubReconciler(store, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
 		webhookProcessor = NewGitHubWebhookProcessor(store, githubCoordinator)
 		webhookHandler = NewGitHubWebhookHandler(store, cfg.GitHub.WebhookSecret, webhookProcessor)
@@ -105,21 +143,41 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithServiceLogs(logStore),
 		WithServiceLogEmitter(logEmitter),
 		WithGitHubSourceInspection(githubCatalog, githubClient),
+		WithPlatformDomainSuffix(cfg.Ingress.PublicAddr),
+		WithPlatformEvents(platformEvents),
 	)
-	authz := NewInternalAuth()
-	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Database, store, authority, ingress)
+	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
+	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, store, ingress, notifier)
 	internal := grpc.NewServer(
 		grpc.Creds(internalCreds),
 		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
 		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
 	)
-	agentv1.RegisterAgentControlServer(internal, NewAgentService(store, logStore, notifier, ingress, authority, dashboard))
+	agentv1.RegisterAgentControlServer(internal, NewAgentService(
+		store, logStore, notifier, ingress, authority, dashboard,
+		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
+		WithAgentExpiryTracker(expiry), WithAgentPlatformEvents(platformEvents), WithAgentRegistry(registry),
+	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter)))
+	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter), WithBuilderPlatformEvents(platformEvents)))
 	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler))
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("listen internal grpc: %w", err)
+	}
+	var registryLn net.Listener
+	var registryHTTP *http.Server
+	if registryAuth != nil {
+		registryLn, err = net.Listen("tcp", cfg.Registry.AuthListen)
+		if err != nil {
+			_ = internalLn.Close()
+			return nil, fmt.Errorf("listen registry auth: %w", err)
+		}
+		registryHTTP = &http.Server{
+			Handler:           registryAuth,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       time.Minute,
+		}
 	}
 
 	return &Server{
@@ -133,15 +191,23 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		ingress:      ingress,
 		dashboard:    dashboard,
 		registry:     registry,
+		registryAuth: registryAuth,
+		registryHTTP: registryHTTP,
 		github:       githubCatalog,
 		webhooks:     webhookProcessor,
 		coordinator:  githubCoordinator,
 		reconciler:   githubReconciler,
+		expiry:       expiry,
 		internalLn:   internalLn,
+		registryLn:   registryLn,
 	}, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if err := s.restoreAgentExpiryDeadlines(ctx, time.Now().UTC()); err != nil {
+		return fmt.Errorf("restore agent expiry deadlines: %w", err)
+	}
+	go s.sourceArchiveRetentionLoop(ctx)
 	if s.ingress != nil {
 		if err := s.ingress.Sync(ctx); err != nil {
 			slog.Warn("initial ingress sync failed", "error", err)
@@ -157,10 +223,19 @@ func (s *Server) Run(ctx context.Context) error {
 			slog.Warn("initial managed dashboard reconcile failed", "error", err)
 		}
 	}
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() {
 		errCh <- serveGRPC(s.internalGRPC, s.internalLn)
 	}()
+	if s.registryHTTP != nil && s.registryLn != nil {
+		go func() {
+			err := s.registryHTTP.Serve(s.registryLn)
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errCh <- err
+		}()
+	}
 	if s.webhooks != nil {
 		go func() {
 			errCh <- s.webhooks.Run(ctx)
@@ -179,13 +254,64 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+func (s *Server) restoreAgentExpiryDeadlines(ctx context.Context, now time.Time) error {
+	if s == nil || s.expiry == nil || s.store == nil {
+		return nil
+	}
+	agents, err := s.store.listAgents(ctx)
+	if err != nil {
+		return err
+	}
+	for _, agent := range agents {
+		s.expiry.Restore(agent.ID, agent.LastSeenAt, now)
+	}
+	return nil
+}
+
+func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
+	prune := func() {
+		cutoff := time.Now().UTC().AddDate(0, 0, -s.cfg.SourceArchives.RetentionDays)
+		deleted, err := s.store.pruneSourceArchives(ctx, cutoff)
+		if err != nil && ctx.Err() == nil {
+			slog.Warn("source archive retention failed", "error", err)
+			return
+		}
+		if deleted > 0 {
+			slog.Info("source archive retention completed", "objects_deleted", deleted)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
 func (s *Server) Close() error {
 	var errs []error
+	if s.expiry != nil {
+		s.expiry.Close()
+	}
 	if s.internalGRPC != nil {
 		s.internalGRPC.GracefulStop()
 	}
 	if s.internalLn != nil {
 		_ = s.internalLn.Close()
+	}
+	if s.registryHTTP != nil {
+		err := s.registryHTTP.Close()
+		if !errors.Is(err, http.ErrServerClosed) {
+			errs = append(errs, err)
+		}
+	}
+	if s.registryLn != nil {
+		_ = s.registryLn.Close()
 	}
 	if s.store != nil {
 		errs = append(errs, s.store.Close())
@@ -203,9 +329,26 @@ func (s *Server) InternalAddr() string {
 	return s.internalLn.Addr().String()
 }
 
+func (s *Server) RegistryAuthAddr() string {
+	if s == nil || s.registryLn == nil {
+		return ""
+	}
+	return s.registryLn.Addr().String()
+}
+
+func (s *Server) RegistryAuthCertificatePath() string {
+	if s == nil || s.registryAuth == nil {
+		return ""
+	}
+	return s.registryAuth.CertificatePath()
+}
+
 func (s *Server) EnsureDashboardClientIdentity(id string) (ClientIdentityMaterial, error) {
 	if s == nil || s.authority == nil {
 		return ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
+	}
+	if allowedID := s.cfg.Dashboard.ServiceCallerID; allowedID == "" || id != allowedID {
+		return ClientIdentityMaterial{}, fmt.Errorf("dashboard client identity %q is not allowed", id)
 	}
 	return s.authority.EnsureDashboardClientIdentity(id)
 }
@@ -224,7 +367,7 @@ func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, err
 	rec, err := s.store.agentByID(ctx, agentID)
 	switch {
 	case err == nil:
-		return rec.LastSeenAt.After(time.Now().UTC().Add(-30 * time.Second)), nil
+		return rec.LastSeenAt.After(time.Now().UTC().Add(-agentHealthyTTL)), nil
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil
 	default:

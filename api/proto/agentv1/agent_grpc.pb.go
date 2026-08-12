@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentControl_Enroll_FullMethodName = "/agent.v1.AgentControl/Enroll"
-	AgentControl_Sync_FullMethodName   = "/agent.v1.AgentControl/Sync"
+	AgentControl_Enroll_FullMethodName                           = "/agent.v1.AgentControl/Enroll"
+	AgentControl_IssueManagedDashboardCertificate_FullMethodName = "/agent.v1.AgentControl/IssueManagedDashboardCertificate"
+	AgentControl_Sync_FullMethodName                             = "/agent.v1.AgentControl/Sync"
 )
 
 // AgentControlClient is the client API for AgentControl service.
@@ -28,6 +29,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentControlClient interface {
 	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
+	IssueManagedDashboardCertificate(ctx context.Context, in *ManagedDashboardCertificateRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
 	Sync(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentClientMessage, AgentServerMessage], error)
 }
 
@@ -43,6 +45,16 @@ func (c *agentControlClient) Enroll(ctx context.Context, in *EnrollRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EnrollResponse)
 	err := c.cc.Invoke(ctx, AgentControl_Enroll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentControlClient) IssueManagedDashboardCertificate(ctx context.Context, in *ManagedDashboardCertificateRequest, opts ...grpc.CallOption) (*EnrollResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnrollResponse)
+	err := c.cc.Invoke(ctx, AgentControl_IssueManagedDashboardCertificate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +79,7 @@ type AgentControl_SyncClient = grpc.BidiStreamingClient[AgentClientMessage, Agen
 // for forward compatibility.
 type AgentControlServer interface {
 	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
+	IssueManagedDashboardCertificate(context.Context, *ManagedDashboardCertificateRequest) (*EnrollResponse, error)
 	Sync(grpc.BidiStreamingServer[AgentClientMessage, AgentServerMessage]) error
 	mustEmbedUnimplementedAgentControlServer()
 }
@@ -80,6 +93,9 @@ type UnimplementedAgentControlServer struct{}
 
 func (UnimplementedAgentControlServer) Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Enroll not implemented")
+}
+func (UnimplementedAgentControlServer) IssueManagedDashboardCertificate(context.Context, *ManagedDashboardCertificateRequest) (*EnrollResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IssueManagedDashboardCertificate not implemented")
 }
 func (UnimplementedAgentControlServer) Sync(grpc.BidiStreamingServer[AgentClientMessage, AgentServerMessage]) error {
 	return status.Error(codes.Unimplemented, "method Sync not implemented")
@@ -123,6 +139,24 @@ func _AgentControl_Enroll_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentControl_IssueManagedDashboardCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ManagedDashboardCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentControlServer).IssueManagedDashboardCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentControl_IssueManagedDashboardCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentControlServer).IssueManagedDashboardCertificate(ctx, req.(*ManagedDashboardCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentControl_Sync_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(AgentControlServer).Sync(&grpc.GenericServerStream[AgentClientMessage, AgentServerMessage]{ServerStream: stream})
 }
@@ -140,6 +174,10 @@ var AgentControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Enroll",
 			Handler:    _AgentControl_Enroll_Handler,
+		},
+		{
+			MethodName: "IssueManagedDashboardCertificate",
+			Handler:    _AgentControl_IssueManagedDashboardCertificate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

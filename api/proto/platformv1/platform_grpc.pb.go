@@ -20,41 +20,55 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_EnsurePrincipal_FullMethodName                 = "/platform.v1.PlatformService/EnsurePrincipal"
-	PlatformService_CreateProject_FullMethodName                   = "/platform.v1.PlatformService/CreateProject"
-	PlatformService_ListProjects_FullMethodName                    = "/platform.v1.PlatformService/ListProjects"
-	PlatformService_GetProject_FullMethodName                      = "/platform.v1.PlatformService/GetProject"
-	PlatformService_InspectSource_FullMethodName                   = "/platform.v1.PlatformService/InspectSource"
-	PlatformService_CreateService_FullMethodName                   = "/platform.v1.PlatformService/CreateService"
-	PlatformService_UpdateService_FullMethodName                   = "/platform.v1.PlatformService/UpdateService"
-	PlatformService_RedeployService_FullMethodName                 = "/platform.v1.PlatformService/RedeployService"
-	PlatformService_DiscardServiceChanges_FullMethodName           = "/platform.v1.PlatformService/DiscardServiceChanges"
-	PlatformService_DeleteService_FullMethodName                   = "/platform.v1.PlatformService/DeleteService"
-	PlatformService_GetService_FullMethodName                      = "/platform.v1.PlatformService/GetService"
-	PlatformService_ListServices_FullMethodName                    = "/platform.v1.PlatformService/ListServices"
-	PlatformService_CreateVolume_FullMethodName                    = "/platform.v1.PlatformService/CreateVolume"
-	PlatformService_DeleteVolume_FullMethodName                    = "/platform.v1.PlatformService/DeleteVolume"
-	PlatformService_ListVolumes_FullMethodName                     = "/platform.v1.PlatformService/ListVolumes"
-	PlatformService_CreateDomainBinding_FullMethodName             = "/platform.v1.PlatformService/CreateDomainBinding"
-	PlatformService_RequestDomainOwnershipChallenge_FullMethodName = "/platform.v1.PlatformService/RequestDomainOwnershipChallenge"
-	PlatformService_GetDomainBinding_FullMethodName                = "/platform.v1.PlatformService/GetDomainBinding"
-	PlatformService_ListDomainBindings_FullMethodName              = "/platform.v1.PlatformService/ListDomainBindings"
-	PlatformService_UpdateDomainBinding_FullMethodName             = "/platform.v1.PlatformService/UpdateDomainBinding"
-	PlatformService_DeleteDomainBinding_FullMethodName             = "/platform.v1.PlatformService/DeleteDomainBinding"
-	PlatformService_GetServiceStatus_FullMethodName                = "/platform.v1.PlatformService/GetServiceStatus"
-	PlatformService_ListServiceLogs_FullMethodName                 = "/platform.v1.PlatformService/ListServiceLogs"
-	PlatformService_ListServiceDeployments_FullMethodName          = "/platform.v1.PlatformService/ListServiceDeployments"
-	PlatformService_ListAgents_FullMethodName                      = "/platform.v1.PlatformService/ListAgents"
+	PlatformService_CreateProject_FullMethodName          = "/platform.v1.PlatformService/CreateProject"
+	PlatformService_ListProjects_FullMethodName           = "/platform.v1.PlatformService/ListProjects"
+	PlatformService_GetProject_FullMethodName             = "/platform.v1.PlatformService/GetProject"
+	PlatformService_ListEnvironments_FullMethodName       = "/platform.v1.PlatformService/ListEnvironments"
+	PlatformService_GetEnvironment_FullMethodName         = "/platform.v1.PlatformService/GetEnvironment"
+	PlatformService_CreateEnvironment_FullMethodName      = "/platform.v1.PlatformService/CreateEnvironment"
+	PlatformService_DuplicateEnvironment_FullMethodName   = "/platform.v1.PlatformService/DuplicateEnvironment"
+	PlatformService_RenameEnvironment_FullMethodName      = "/platform.v1.PlatformService/RenameEnvironment"
+	PlatformService_DeleteEnvironment_FullMethodName      = "/platform.v1.PlatformService/DeleteEnvironment"
+	PlatformService_DeployEnvironment_FullMethodName      = "/platform.v1.PlatformService/DeployEnvironment"
+	PlatformService_LinkGitHubRepository_FullMethodName   = "/platform.v1.PlatformService/LinkGitHubRepository"
+	PlatformService_InspectSource_FullMethodName          = "/platform.v1.PlatformService/InspectSource"
+	PlatformService_CreateService_FullMethodName          = "/platform.v1.PlatformService/CreateService"
+	PlatformService_UpdateService_FullMethodName          = "/platform.v1.PlatformService/UpdateService"
+	PlatformService_RedeployService_FullMethodName        = "/platform.v1.PlatformService/RedeployService"
+	PlatformService_DiscardServiceChanges_FullMethodName  = "/platform.v1.PlatformService/DiscardServiceChanges"
+	PlatformService_DeleteService_FullMethodName          = "/platform.v1.PlatformService/DeleteService"
+	PlatformService_GetService_FullMethodName             = "/platform.v1.PlatformService/GetService"
+	PlatformService_ListServices_FullMethodName           = "/platform.v1.PlatformService/ListServices"
+	PlatformService_CreateVolume_FullMethodName           = "/platform.v1.PlatformService/CreateVolume"
+	PlatformService_DeleteVolume_FullMethodName           = "/platform.v1.PlatformService/DeleteVolume"
+	PlatformService_ListVolumes_FullMethodName            = "/platform.v1.PlatformService/ListVolumes"
+	PlatformService_CreateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/CreateDomainBinding"
+	PlatformService_GenerateDomainBinding_FullMethodName  = "/platform.v1.PlatformService/GenerateDomainBinding"
+	PlatformService_GetDomainBinding_FullMethodName       = "/platform.v1.PlatformService/GetDomainBinding"
+	PlatformService_ListDomainBindings_FullMethodName     = "/platform.v1.PlatformService/ListDomainBindings"
+	PlatformService_UpdateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/UpdateDomainBinding"
+	PlatformService_DeleteDomainBinding_FullMethodName    = "/platform.v1.PlatformService/DeleteDomainBinding"
+	PlatformService_GetServiceStatus_FullMethodName       = "/platform.v1.PlatformService/GetServiceStatus"
+	PlatformService_ListServiceLogs_FullMethodName        = "/platform.v1.PlatformService/ListServiceLogs"
+	PlatformService_ListServiceDeployments_FullMethodName = "/platform.v1.PlatformService/ListServiceDeployments"
+	PlatformService_ListAgents_FullMethodName             = "/platform.v1.PlatformService/ListAgents"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PlatformServiceClient interface {
-	EnsurePrincipal(ctx context.Context, in *EnsurePrincipalRequest, opts ...grpc.CallOption) (*Principal, error)
 	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	ListProjects(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListProjectsResponse, error)
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*Project, error)
+	ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error)
+	GetEnvironment(ctx context.Context, in *GetEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
+	CreateEnvironment(ctx context.Context, in *CreateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
+	DuplicateEnvironment(ctx context.Context, in *DuplicateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
+	RenameEnvironment(ctx context.Context, in *RenameEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
+	DeleteEnvironment(ctx context.Context, in *DeleteEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DeployEnvironment(ctx context.Context, in *DeployEnvironmentRequest, opts ...grpc.CallOption) (*DeployEnvironmentResponse, error)
+	LinkGitHubRepository(ctx context.Context, in *LinkGitHubRepositoryRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
 	InspectSource(ctx context.Context, in *InspectSourceRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	UpdateService(ctx context.Context, in *UpdateServiceRequest, opts ...grpc.CallOption) (*Service, error)
@@ -67,7 +81,7 @@ type PlatformServiceClient interface {
 	DeleteVolume(ctx context.Context, in *DeleteVolumeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ListVolumes(ctx context.Context, in *ListVolumesRequest, opts ...grpc.CallOption) (*ListVolumesResponse, error)
 	CreateDomainBinding(ctx context.Context, in *CreateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
-	RequestDomainOwnershipChallenge(ctx context.Context, in *RequestDomainOwnershipChallengeRequest, opts ...grpc.CallOption) (*DomainOwnershipChallenge, error)
+	GenerateDomainBinding(ctx context.Context, in *GenerateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	GetDomainBinding(ctx context.Context, in *GetDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	ListDomainBindings(ctx context.Context, in *ListDomainBindingsRequest, opts ...grpc.CallOption) (*ListDomainBindingsResponse, error)
 	UpdateDomainBinding(ctx context.Context, in *UpdateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
@@ -84,16 +98,6 @@ type platformServiceClient struct {
 
 func NewPlatformServiceClient(cc grpc.ClientConnInterface) PlatformServiceClient {
 	return &platformServiceClient{cc}
-}
-
-func (c *platformServiceClient) EnsurePrincipal(ctx context.Context, in *EnsurePrincipalRequest, opts ...grpc.CallOption) (*Principal, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Principal)
-	err := c.cc.Invoke(ctx, PlatformService_EnsurePrincipal_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *platformServiceClient) CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error) {
@@ -120,6 +124,86 @@ func (c *platformServiceClient) GetProject(ctx context.Context, in *GetProjectRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Project)
 	err := c.cc.Invoke(ctx, PlatformService_GetProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListEnvironmentsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListEnvironments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetEnvironment(ctx context.Context, in *GetEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Environment)
+	err := c.cc.Invoke(ctx, PlatformService_GetEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) CreateEnvironment(ctx context.Context, in *CreateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Environment)
+	err := c.cc.Invoke(ctx, PlatformService_CreateEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DuplicateEnvironment(ctx context.Context, in *DuplicateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Environment)
+	err := c.cc.Invoke(ctx, PlatformService_DuplicateEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RenameEnvironment(ctx context.Context, in *RenameEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Environment)
+	err := c.cc.Invoke(ctx, PlatformService_RenameEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DeleteEnvironment(ctx context.Context, in *DeleteEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_DeleteEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DeployEnvironment(ctx context.Context, in *DeployEnvironmentRequest, opts ...grpc.CallOption) (*DeployEnvironmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeployEnvironmentResponse)
+	err := c.cc.Invoke(ctx, PlatformService_DeployEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) LinkGitHubRepository(ctx context.Context, in *LinkGitHubRepositoryRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectSourceResponse)
+	err := c.cc.Invoke(ctx, PlatformService_LinkGitHubRepository_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -246,10 +330,10 @@ func (c *platformServiceClient) CreateDomainBinding(ctx context.Context, in *Cre
 	return out, nil
 }
 
-func (c *platformServiceClient) RequestDomainOwnershipChallenge(ctx context.Context, in *RequestDomainOwnershipChallengeRequest, opts ...grpc.CallOption) (*DomainOwnershipChallenge, error) {
+func (c *platformServiceClient) GenerateDomainBinding(ctx context.Context, in *GenerateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DomainOwnershipChallenge)
-	err := c.cc.Invoke(ctx, PlatformService_RequestDomainOwnershipChallenge_FullMethodName, in, out, cOpts...)
+	out := new(DomainBinding)
+	err := c.cc.Invoke(ctx, PlatformService_GenerateDomainBinding_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -340,10 +424,17 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empt
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
 type PlatformServiceServer interface {
-	EnsurePrincipal(context.Context, *EnsurePrincipalRequest) (*Principal, error)
 	CreateProject(context.Context, *CreateProjectRequest) (*Project, error)
 	ListProjects(context.Context, *emptypb.Empty) (*ListProjectsResponse, error)
 	GetProject(context.Context, *GetProjectRequest) (*Project, error)
+	ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error)
+	GetEnvironment(context.Context, *GetEnvironmentRequest) (*Environment, error)
+	CreateEnvironment(context.Context, *CreateEnvironmentRequest) (*Environment, error)
+	DuplicateEnvironment(context.Context, *DuplicateEnvironmentRequest) (*Environment, error)
+	RenameEnvironment(context.Context, *RenameEnvironmentRequest) (*Environment, error)
+	DeleteEnvironment(context.Context, *DeleteEnvironmentRequest) (*emptypb.Empty, error)
+	DeployEnvironment(context.Context, *DeployEnvironmentRequest) (*DeployEnvironmentResponse, error)
+	LinkGitHubRepository(context.Context, *LinkGitHubRepositoryRequest) (*InspectSourceResponse, error)
 	InspectSource(context.Context, *InspectSourceRequest) (*InspectSourceResponse, error)
 	CreateService(context.Context, *CreateServiceRequest) (*Service, error)
 	UpdateService(context.Context, *UpdateServiceRequest) (*Service, error)
@@ -356,7 +447,7 @@ type PlatformServiceServer interface {
 	DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error)
 	ListVolumes(context.Context, *ListVolumesRequest) (*ListVolumesResponse, error)
 	CreateDomainBinding(context.Context, *CreateDomainBindingRequest) (*DomainBinding, error)
-	RequestDomainOwnershipChallenge(context.Context, *RequestDomainOwnershipChallengeRequest) (*DomainOwnershipChallenge, error)
+	GenerateDomainBinding(context.Context, *GenerateDomainBindingRequest) (*DomainBinding, error)
 	GetDomainBinding(context.Context, *GetDomainBindingRequest) (*DomainBinding, error)
 	ListDomainBindings(context.Context, *ListDomainBindingsRequest) (*ListDomainBindingsResponse, error)
 	UpdateDomainBinding(context.Context, *UpdateDomainBindingRequest) (*DomainBinding, error)
@@ -375,9 +466,6 @@ type PlatformServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedPlatformServiceServer struct{}
 
-func (UnimplementedPlatformServiceServer) EnsurePrincipal(context.Context, *EnsurePrincipalRequest) (*Principal, error) {
-	return nil, status.Error(codes.Unimplemented, "method EnsurePrincipal not implemented")
-}
 func (UnimplementedPlatformServiceServer) CreateProject(context.Context, *CreateProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateProject not implemented")
 }
@@ -386,6 +474,30 @@ func (UnimplementedPlatformServiceServer) ListProjects(context.Context, *emptypb
 }
 func (UnimplementedPlatformServiceServer) GetProject(context.Context, *GetProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProject not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListEnvironments not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetEnvironment(context.Context, *GetEnvironmentRequest) (*Environment, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) CreateEnvironment(context.Context, *CreateEnvironmentRequest) (*Environment, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) DuplicateEnvironment(context.Context, *DuplicateEnvironmentRequest) (*Environment, error) {
+	return nil, status.Error(codes.Unimplemented, "method DuplicateEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) RenameEnvironment(context.Context, *RenameEnvironmentRequest) (*Environment, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) DeleteEnvironment(context.Context, *DeleteEnvironmentRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) DeployEnvironment(context.Context, *DeployEnvironmentRequest) (*DeployEnvironmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeployEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) LinkGitHubRepository(context.Context, *LinkGitHubRepositoryRequest) (*InspectSourceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LinkGitHubRepository not implemented")
 }
 func (UnimplementedPlatformServiceServer) InspectSource(context.Context, *InspectSourceRequest) (*InspectSourceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method InspectSource not implemented")
@@ -423,8 +535,8 @@ func (UnimplementedPlatformServiceServer) ListVolumes(context.Context, *ListVolu
 func (UnimplementedPlatformServiceServer) CreateDomainBinding(context.Context, *CreateDomainBindingRequest) (*DomainBinding, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateDomainBinding not implemented")
 }
-func (UnimplementedPlatformServiceServer) RequestDomainOwnershipChallenge(context.Context, *RequestDomainOwnershipChallengeRequest) (*DomainOwnershipChallenge, error) {
-	return nil, status.Error(codes.Unimplemented, "method RequestDomainOwnershipChallenge not implemented")
+func (UnimplementedPlatformServiceServer) GenerateDomainBinding(context.Context, *GenerateDomainBindingRequest) (*DomainBinding, error) {
+	return nil, status.Error(codes.Unimplemented, "method GenerateDomainBinding not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetDomainBinding(context.Context, *GetDomainBindingRequest) (*DomainBinding, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDomainBinding not implemented")
@@ -469,24 +581,6 @@ func RegisterPlatformServiceServer(s grpc.ServiceRegistrar, srv PlatformServiceS
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&PlatformService_ServiceDesc, srv)
-}
-
-func _PlatformService_EnsurePrincipal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EnsurePrincipalRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PlatformServiceServer).EnsurePrincipal(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PlatformService_EnsurePrincipal_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).EnsurePrincipal(ctx, req.(*EnsurePrincipalRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _PlatformService_CreateProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -539,6 +633,150 @@ func _PlatformService_GetProject_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetProject(ctx, req.(*GetProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_ListEnvironments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListEnvironmentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListEnvironments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListEnvironments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListEnvironments(ctx, req.(*ListEnvironmentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetEnvironment(ctx, req.(*GetEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_CreateEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).CreateEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_CreateEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).CreateEnvironment(ctx, req.(*CreateEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DuplicateEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DuplicateEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DuplicateEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DuplicateEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DuplicateEnvironment(ctx, req.(*DuplicateEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RenameEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RenameEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RenameEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RenameEnvironment(ctx, req.(*RenameEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DeleteEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DeleteEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DeleteEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DeleteEnvironment(ctx, req.(*DeleteEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DeployEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeployEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DeployEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DeployEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DeployEnvironment(ctx, req.(*DeployEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_LinkGitHubRepository_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LinkGitHubRepositoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).LinkGitHubRepository(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_LinkGitHubRepository_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).LinkGitHubRepository(ctx, req.(*LinkGitHubRepositoryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -759,20 +997,20 @@ func _PlatformService_CreateDomainBinding_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_RequestDomainOwnershipChallenge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RequestDomainOwnershipChallengeRequest)
+func _PlatformService_GenerateDomainBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateDomainBindingRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).RequestDomainOwnershipChallenge(ctx, in)
+		return srv.(PlatformServiceServer).GenerateDomainBinding(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_RequestDomainOwnershipChallenge_FullMethodName,
+		FullMethod: PlatformService_GenerateDomainBinding_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).RequestDomainOwnershipChallenge(ctx, req.(*RequestDomainOwnershipChallengeRequest))
+		return srv.(PlatformServiceServer).GenerateDomainBinding(ctx, req.(*GenerateDomainBindingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -929,10 +1167,6 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*PlatformServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "EnsurePrincipal",
-			Handler:    _PlatformService_EnsurePrincipal_Handler,
-		},
-		{
 			MethodName: "CreateProject",
 			Handler:    _PlatformService_CreateProject_Handler,
 		},
@@ -943,6 +1177,38 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProject",
 			Handler:    _PlatformService_GetProject_Handler,
+		},
+		{
+			MethodName: "ListEnvironments",
+			Handler:    _PlatformService_ListEnvironments_Handler,
+		},
+		{
+			MethodName: "GetEnvironment",
+			Handler:    _PlatformService_GetEnvironment_Handler,
+		},
+		{
+			MethodName: "CreateEnvironment",
+			Handler:    _PlatformService_CreateEnvironment_Handler,
+		},
+		{
+			MethodName: "DuplicateEnvironment",
+			Handler:    _PlatformService_DuplicateEnvironment_Handler,
+		},
+		{
+			MethodName: "RenameEnvironment",
+			Handler:    _PlatformService_RenameEnvironment_Handler,
+		},
+		{
+			MethodName: "DeleteEnvironment",
+			Handler:    _PlatformService_DeleteEnvironment_Handler,
+		},
+		{
+			MethodName: "DeployEnvironment",
+			Handler:    _PlatformService_DeployEnvironment_Handler,
+		},
+		{
+			MethodName: "LinkGitHubRepository",
+			Handler:    _PlatformService_LinkGitHubRepository_Handler,
 		},
 		{
 			MethodName: "InspectSource",
@@ -993,8 +1259,8 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PlatformService_CreateDomainBinding_Handler,
 		},
 		{
-			MethodName: "RequestDomainOwnershipChallenge",
-			Handler:    _PlatformService_RequestDomainOwnershipChallenge_Handler,
+			MethodName: "GenerateDomainBinding",
+			Handler:    _PlatformService_GenerateDomainBinding_Handler,
 		},
 		{
 			MethodName: "GetDomainBinding",
@@ -1046,7 +1312,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuilderServiceClient interface {
 	ClaimBuild(ctx context.Context, in *ClaimBuildRequest, opts ...grpc.CallOption) (*BuildJob, error)
-	DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (*SourceSnapshotArtifact, error)
+	DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SourceSnapshotChunk], error)
 	ReportBuildHeartbeat(ctx context.Context, in *BuilderHeartbeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ReportBuildLogs(ctx context.Context, in *ReportBuildLogsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	CompleteBuild(ctx context.Context, in *CompleteBuildRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -1070,15 +1336,24 @@ func (c *builderServiceClient) ClaimBuild(ctx context.Context, in *ClaimBuildReq
 	return out, nil
 }
 
-func (c *builderServiceClient) DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (*SourceSnapshotArtifact, error) {
+func (c *builderServiceClient) DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SourceSnapshotChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SourceSnapshotArtifact)
-	err := c.cc.Invoke(ctx, BuilderService_DownloadSourceSnapshot_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BuilderService_ServiceDesc.Streams[0], BuilderService_DownloadSourceSnapshot_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[DownloadSourceSnapshotRequest, SourceSnapshotChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BuilderService_DownloadSourceSnapshotClient = grpc.ServerStreamingClient[SourceSnapshotChunk]
 
 func (c *builderServiceClient) ReportBuildHeartbeat(ctx context.Context, in *BuilderHeartbeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -1115,7 +1390,7 @@ func (c *builderServiceClient) CompleteBuild(ctx context.Context, in *CompleteBu
 // for forward compatibility.
 type BuilderServiceServer interface {
 	ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error)
-	DownloadSourceSnapshot(context.Context, *DownloadSourceSnapshotRequest) (*SourceSnapshotArtifact, error)
+	DownloadSourceSnapshot(*DownloadSourceSnapshotRequest, grpc.ServerStreamingServer[SourceSnapshotChunk]) error
 	ReportBuildHeartbeat(context.Context, *BuilderHeartbeatRequest) (*emptypb.Empty, error)
 	ReportBuildLogs(context.Context, *ReportBuildLogsRequest) (*emptypb.Empty, error)
 	CompleteBuild(context.Context, *CompleteBuildRequest) (*emptypb.Empty, error)
@@ -1132,8 +1407,8 @@ type UnimplementedBuilderServiceServer struct{}
 func (UnimplementedBuilderServiceServer) ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClaimBuild not implemented")
 }
-func (UnimplementedBuilderServiceServer) DownloadSourceSnapshot(context.Context, *DownloadSourceSnapshotRequest) (*SourceSnapshotArtifact, error) {
-	return nil, status.Error(codes.Unimplemented, "method DownloadSourceSnapshot not implemented")
+func (UnimplementedBuilderServiceServer) DownloadSourceSnapshot(*DownloadSourceSnapshotRequest, grpc.ServerStreamingServer[SourceSnapshotChunk]) error {
+	return status.Error(codes.Unimplemented, "method DownloadSourceSnapshot not implemented")
 }
 func (UnimplementedBuilderServiceServer) ReportBuildHeartbeat(context.Context, *BuilderHeartbeatRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportBuildHeartbeat not implemented")
@@ -1183,23 +1458,16 @@ func _BuilderService_ClaimBuild_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _BuilderService_DownloadSourceSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DownloadSourceSnapshotRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _BuilderService_DownloadSourceSnapshot_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(DownloadSourceSnapshotRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(BuilderServiceServer).DownloadSourceSnapshot(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: BuilderService_DownloadSourceSnapshot_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BuilderServiceServer).DownloadSourceSnapshot(ctx, req.(*DownloadSourceSnapshotRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(BuilderServiceServer).DownloadSourceSnapshot(m, &grpc.GenericServerStream[DownloadSourceSnapshotRequest, SourceSnapshotChunk]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BuilderService_DownloadSourceSnapshotServer = grpc.ServerStreamingServer[SourceSnapshotChunk]
 
 func _BuilderService_ReportBuildHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BuilderHeartbeatRequest)
@@ -1267,10 +1535,6 @@ var BuilderService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _BuilderService_ClaimBuild_Handler,
 		},
 		{
-			MethodName: "DownloadSourceSnapshot",
-			Handler:    _BuilderService_DownloadSourceSnapshot_Handler,
-		},
-		{
 			MethodName: "ReportBuildHeartbeat",
 			Handler:    _BuilderService_ReportBuildHeartbeat_Handler,
 		},
@@ -1283,7 +1547,13 @@ var BuilderService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _BuilderService_CompleteBuild_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "DownloadSourceSnapshot",
+			Handler:       _BuilderService_DownloadSourceSnapshot_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "platform.proto",
 }
 

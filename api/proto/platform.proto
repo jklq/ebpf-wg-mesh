@@ -38,23 +38,37 @@ message Project {
   string system_key = 5;
 }
 
-message Principal {
-  string subject = 1;
-  string email = 2;
-  google.protobuf.Timestamp created_at = 3;
+enum EnvironmentKind {
+  ENVIRONMENT_KIND_UNSPECIFIED = 0;
+  ENVIRONMENT_KIND_PERSISTENT = 1;
+}
+
+message Environment {
+  string id = 1;
+  string project_id = 2;
+  string name = 3;
+  EnvironmentKind kind = 4;
+  bool is_production = 5;
+  string copied_from_environment_id = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
 }
 
 message HealthCheck {
   enum Type {
     TYPE_UNSPECIFIED = 0;
     TYPE_HTTP = 1;
+    // Legacy value retained for wire compatibility. New configurations reject it.
     TYPE_TCP = 2;
   }
 
   Type type = 1;
   string path = 2;
   int32 port = 3;
+  // Legacy field retained for wire compatibility. Must be zero: health checks
+  // gate rollout readiness and do not run continuously after they pass.
   int32 interval_seconds = 4;
+  // Timeout for one HTTP readiness request.
   int32 timeout_seconds = 5;
 }
 
@@ -212,11 +226,11 @@ message ServiceUnappliedChange {
 
 message Service {
   string id = 1;
-  string project_id = 2;
+  string environment_id = 2;
   string name = 3;
   ServiceSpec spec = 4;
   int64 spec_revision = 5;
-  string allocated_agent_id = 6;
+  reserved 6;
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
   int64 rollout_generation = 10;
@@ -227,23 +241,25 @@ message Service {
   bool pending_changes = 15;
   int32 unapplied_change_count = 16;
   repeated ServiceUnappliedChange unapplied_changes = 17;
+  string internal_hostname = 18;
 }
 
 message DomainBinding {
   string hostname = 1;
-  string project_id = 2;
+  reserved 2;
   string service_id = 3;
   google.protobuf.Timestamp created_at = 4;
   google.protobuf.Timestamp updated_at = 5;
   int32 target_port = 6;
+  bool platform_generated = 7;
 }
 
 message Volume {
   string id = 1;
-  string project_id = 2;
+  string environment_id = 2;
   string name = 3;
   int64 size_bytes = 4;
-  string bound_agent_id = 5;
+  reserved 5;
   google.protobuf.Timestamp created_at = 6;
 }
 
@@ -276,15 +292,12 @@ message AllocationStatus {
 message ServiceStatus {
   Service service = 1;
   AllocationStatus allocation = 2;
+  int64 index = 3;
+  bool not_modified = 4;
 }
 
 message CreateProjectRequest {
   string name = 1;
-}
-
-message EnsurePrincipalRequest {
-  string subject = 1;
-  string email = 2;
 }
 
 message ListProjectsResponse {
@@ -295,9 +308,53 @@ message GetProjectRequest {
   string project_id = 1;
 }
 
+message ListEnvironmentsRequest {
+  string project_id = 1;
+}
+
+message ListEnvironmentsResponse {
+  repeated Environment environments = 1;
+}
+
+message GetEnvironmentRequest {
+  string environment_id = 1;
+}
+
+message CreateEnvironmentRequest {
+  string project_id = 1;
+  string name = 2;
+}
+
+message DuplicateEnvironmentRequest {
+  string source_environment_id = 1;
+  string name = 2;
+  bool copy_variables = 3;
+}
+
+message RenameEnvironmentRequest {
+  string environment_id = 1;
+  string name = 2;
+}
+
+message DeleteEnvironmentRequest {
+  string environment_id = 1;
+}
+
+message DeployEnvironmentRequest {
+  string environment_id = 1;
+}
+
+message DeployEnvironmentResponse {
+  repeated ServiceStatus services = 1;
+}
+
 message InspectSourceRequest {
   string provider = 1;
   string repository_selector = 2;
+  string project_id = 3;
+  // Transient GitHub OAuth token used by the control plane to verify that the
+  // delegated user can read the selected repository. Never persisted.
+  string github_user_access_token = 4 [debug_redact = true];
 }
 
 message InspectSourceResponse {
@@ -309,59 +366,63 @@ message InspectSourceResponse {
 }
 
 message CreateServiceRequest {
-  string project_id = 1;
+  string environment_id = 1;
   ServiceInput service = 2;
 }
 
 message UpdateServiceRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
   ServiceUpdate service = 3;
 }
 
 message RedeployServiceRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
 }
 
 message DiscardServiceChangesRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
   repeated string change_ids = 3;
   bool discard_all = 4;
 }
 
 message DeleteServiceRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
 }
 
 message GetServiceRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
 }
 
 message ListServicesRequest {
-  string project_id = 1;
+  string environment_id = 1;
+  int64 wait_index = 2;
+  int32 wait_timeout_seconds = 3;
 }
 
 message ListServicesResponse {
   repeated Service services = 1;
+  int64 index = 2;
+  bool not_modified = 3;
 }
 
 message CreateVolumeRequest {
-  string project_id = 1;
+  string environment_id = 1;
   string name = 2;
   int64 size_bytes = 3;
 }
 
 message DeleteVolumeRequest {
-  string project_id = 1;
+  reserved 1;
   string volume_id = 2;
 }
 
 message ListVolumesRequest {
-  string project_id = 1;
+  string environment_id = 1;
 }
 
 message ListVolumesResponse {
@@ -389,30 +450,24 @@ message DomainBindingTarget {
   int32 target_port = 2;
 }
 
-message RequestDomainOwnershipChallengeRequest {
-  string project_id = 1;
-  string hostname = 2;
-}
-
-message DomainOwnershipChallenge {
-  string hostname = 1;
-  string record_name = 2;
-  string record_value = 3;
-  google.protobuf.Timestamp expires_at = 4;
+message GenerateDomainBindingRequest {
+  reserved 1;
+  string service_id = 2;
+  int32 target_port = 3;
 }
 
 message CreateDomainBindingRequest {
-  string project_id = 1;
+  reserved 1;
   DomainBindingInput binding = 2;
 }
 
 message GetDomainBindingRequest {
-  string project_id = 1;
+  reserved 1;
   string hostname = 2;
 }
 
 message ListDomainBindingsRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
 }
 
@@ -421,19 +476,21 @@ message ListDomainBindingsResponse {
 }
 
 message UpdateDomainBindingRequest {
-  string project_id = 1;
+  reserved 1;
   string hostname = 2;
   DomainBindingTarget binding = 3;
 }
 
 message DeleteDomainBindingRequest {
-  string project_id = 1;
+  reserved 1;
   string hostname = 2;
 }
 
 message GetServiceStatusRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
+  int64 wait_index = 3;
+  int32 wait_timeout_seconds = 4;
 }
 
 enum ServiceLogType {
@@ -446,7 +503,7 @@ enum ServiceLogType {
 }
 
 message ListServiceLogsRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
   string allocation_id = 3;
   google.protobuf.Timestamp start_time = 4;
@@ -459,7 +516,7 @@ message ListServiceLogsRequest {
 
 message ServiceLogLine {
   google.protobuf.Timestamp observed_at = 1;
-  string project_id = 2;
+  string environment_id = 2;
   string service_id = 3;
   string allocation_id = 4;
   string agent_id = 5;
@@ -477,7 +534,7 @@ message ListServiceLogsResponse {
 }
 
 message ListServiceDeploymentsRequest {
-  string project_id = 1;
+  reserved 1;
   string service_id = 2;
   int32 limit = 3;
 }
@@ -491,8 +548,8 @@ message DeploymentRecord {
   google.protobuf.Timestamp created_at = 6;
   BuildStatus build = 7;
   bool is_current = 8;
-  string requested_by_subject = 9;
-  string requested_by_email = 10;
+  string requested_by_user_id = 9;
+  reserved 10;
 }
 
 message ListServiceDeploymentsResponse {
@@ -515,19 +572,26 @@ message BuildJob {
   string service_name = 4;
   string commit_sha = 5;
   BuildJobSource source = 6;
+  // The exact build-specific repository and tag assigned by the control plane.
   string registry_push_reference = 7;
+  // Short-lived credentials whose registry-side ACL permits pull/push only on
+  // registry_push_reference's repository. These are never shared platform
+  // registry credentials.
   string registry_username = 8;
   string registry_password = 9;
+  string environment_id = 10;
 }
 
 message DownloadSourceSnapshotRequest {
   string snapshot_id = 1;
 }
 
-message SourceSnapshotArtifact {
+message SourceSnapshotChunk {
   string snapshot_id = 1;
   string digest = 2;
-  bytes archive_tgz = 3;
+  int64 total_size = 3;
+  int64 offset = 4;
+  bytes data = 5;
 }
 
 message BuilderHeartbeatRequest {
@@ -564,12 +628,26 @@ message IngestGitHubWebhookRequest {
   bytes payload = 4;
 }
 
-service PlatformService {
-  rpc EnsurePrincipal(EnsurePrincipalRequest) returns (Principal);
+message LinkGitHubRepositoryRequest {
+  string project_id = 1;
+  string repository_selector = 2;
+  // Transient GitHub OAuth token used by the control plane to verify that the
+  // delegated user can read the selected repository. Never persisted.
+  string github_user_access_token = 3 [debug_redact = true];
+}
 
+service PlatformService {
   rpc CreateProject(CreateProjectRequest) returns (Project);
   rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
   rpc GetProject(GetProjectRequest) returns (Project);
+  rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);
+  rpc GetEnvironment(GetEnvironmentRequest) returns (Environment);
+  rpc CreateEnvironment(CreateEnvironmentRequest) returns (Environment);
+  rpc DuplicateEnvironment(DuplicateEnvironmentRequest) returns (Environment);
+  rpc RenameEnvironment(RenameEnvironmentRequest) returns (Environment);
+  rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc DeployEnvironment(DeployEnvironmentRequest) returns (DeployEnvironmentResponse);
+  rpc LinkGitHubRepository(LinkGitHubRepositoryRequest) returns (InspectSourceResponse);
   rpc InspectSource(InspectSourceRequest) returns (InspectSourceResponse);
 
   rpc CreateService(CreateServiceRequest) returns (Service);
@@ -585,7 +663,7 @@ service PlatformService {
   rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
 
   rpc CreateDomainBinding(CreateDomainBindingRequest) returns (DomainBinding);
-  rpc RequestDomainOwnershipChallenge(RequestDomainOwnershipChallengeRequest) returns (DomainOwnershipChallenge);
+  rpc GenerateDomainBinding(GenerateDomainBindingRequest) returns (DomainBinding);
   rpc GetDomainBinding(GetDomainBindingRequest) returns (DomainBinding);
   rpc ListDomainBindings(ListDomainBindingsRequest) returns (ListDomainBindingsResponse);
   rpc UpdateDomainBinding(UpdateDomainBindingRequest) returns (DomainBinding);
@@ -599,7 +677,7 @@ service PlatformService {
 
 service BuilderService {
   rpc ClaimBuild(ClaimBuildRequest) returns (BuildJob);
-  rpc DownloadSourceSnapshot(DownloadSourceSnapshotRequest) returns (SourceSnapshotArtifact);
+  rpc DownloadSourceSnapshot(DownloadSourceSnapshotRequest) returns (stream SourceSnapshotChunk);
   rpc ReportBuildHeartbeat(BuilderHeartbeatRequest) returns (google.protobuf.Empty);
   rpc ReportBuildLogs(ReportBuildLogsRequest) returns (google.protobuf.Empty);
   rpc CompleteBuild(CompleteBuildRequest) returns (google.protobuf.Empty);

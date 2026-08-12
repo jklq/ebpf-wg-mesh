@@ -29,6 +29,11 @@ message EnrollResponse {
   google.protobuf.Timestamp not_after = 3;
 }
 
+message ManagedDashboardCertificateRequest {
+  string agent_id = 1;
+  string csr_pem = 2;
+}
+
 message WireGuardPeer {
   string agent_id = 1;
   string name = 2;
@@ -44,6 +49,16 @@ message AssignedNodeConfig {
   repeated string wireguard_addresses = 3;
   int32 wireguard_listen_port = 4;
   repeated WireGuardPeer peers = 5;
+  repeated WorkloadIdentity workload_identities = 6;
+  string workload_ipv6_pool = 7;
+}
+
+message WorkloadIdentity {
+  string workload_ipv6 = 1;
+  string environment_id = 2;
+  uint32 network_identity = 3;
+  string host_agent_id = 4;
+  string host_ipv6 = 5;
 }
 
 message AgentHeartbeat {
@@ -52,7 +67,7 @@ message AgentHeartbeat {
 
 message DesiredVolume {
   string volume_id = 1;
-  string project_id = 2;
+  string environment_id = 2;
   string name = 3;
   int64 size_bytes = 4;
 }
@@ -60,7 +75,7 @@ message DesiredVolume {
 message DesiredService {
   string allocation_id = 1;
   string service_id = 2;
-  string project_id = 3;
+  string environment_id = 3;
   string name = 4;
   int64 desired_spec_revision = 5;
   platform.v1.ResolvedServiceSpec spec = 6;
@@ -68,6 +83,16 @@ message DesiredService {
   string volume_id = 8;
   int64 desired_rollout_generation = 9;
   uint32 network_identity = 10;
+  // Exact-repository pull credential for a platform-built private image.
+  string registry_username = 11;
+  string registry_password = 12;
+  string internal_hostname = 13;
+  repeated InternalHost internal_hosts = 14;
+}
+
+message InternalHost {
+  string hostname = 1;
+  string ipv6 = 2;
 }
 
 message DesiredNodeState {
@@ -107,7 +132,7 @@ message StatusReport {
 
 message LogEntry {
   google.protobuf.Timestamp observed_at = 1;
-  string project_id = 2;
+  string environment_id = 2;
   string service_id = 3;
   string allocation_id = 4;
   string stream = 5;
@@ -141,5 +166,6 @@ message AgentServerMessage {
 
 service AgentControl {
   rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc IssueManagedDashboardCertificate(ManagedDashboardCertificateRequest) returns (EnrollResponse);
   rpc Sync(stream AgentClientMessage) returns (stream AgentServerMessage);
 }

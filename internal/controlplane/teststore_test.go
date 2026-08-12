@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -23,6 +24,11 @@ var (
 	testServerOnce sync.Once
 	testServer     testserver.TestServer
 	testServerErr  error
+
+	testDatabaseOnce sync.Once
+	testDatabaseURL  string
+	testDatabaseErr  error
+	testStoreMu      sync.Mutex
 )
 
 func TestMain(m *testing.M) {
@@ -36,7 +42,14 @@ func TestMain(m *testing.M) {
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 
-	dbURL := createTestDatabase(t)
+	// Most integration tests only need isolated data, not an independently
+	// migrated database. Reuse one database and hold the lease until the test's
+	// cleanup runs; rebuilding the full CockroachDB schema for every parallel
+	// test makes the suite spend minutes contending on DDL.
+	testStoreMu.Lock()
+	t.Cleanup(testStoreMu.Unlock)
+
+	dbURL := sharedTestDatabase(t)
 	store, err := OpenStore(config.DatabaseConfig{
 		URL:          dbURL,
 		MaxOpenConns: 4,
@@ -45,6 +58,12 @@ func openTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	archiveStore, err := NewFileSourceArchiveStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create source archive store: %v", err)
+	}
+	store.ConfigureSourceArchives(archiveStore)
+	resetTestStore(t, store)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Fatalf("Close: %v", err)
@@ -53,45 +72,135 @@ func openTestStore(t *testing.T) *Store {
 	return store
 }
 
-func createTestDatabase(t *testing.T) string {
+func sharedTestDatabase(t *testing.T) string {
 	t.Helper()
 
-	ts := sharedTestServer(t)
+	testDatabaseOnce.Do(func() {
+		testDatabaseURL, testDatabaseErr = newTestDatabaseURL()
+	})
+	if testDatabaseErr != nil {
+		t.Fatalf("create shared test database: %v", testDatabaseErr)
+	}
+	return testDatabaseURL
+}
+
+func resetTestStore(t *testing.T, store *Store) {
+	t.Helper()
+
+	// TRUNCATE is a schema change in CockroachDB and takes roughly a second even
+	// for empty tables. These tables hold only a handful of test rows, so ordered
+	// deletes are substantially faster.
+	tables := []string{
+		"project_github_repositories",
+		"source_work_items",
+		"source_snapshots",
+		"source_revisions",
+		"source_bindings",
+		"github_repository_snapshots",
+		"github_installation_repositories",
+		"github_installations",
+		"github_webhook_deliveries",
+		"github_work_items",
+		"build_runs",
+		"builder_workers",
+		"service_rollouts",
+		"allocations",
+		"domain_bindings",
+		"service_revisions",
+		"services",
+		"volumes",
+		"project_memberships",
+		"environments",
+		"projects",
+		"agents",
+		"agent_bootstrap_tokens",
+		"environment_network_identity_counter",
+	}
+	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {
+		for _, table := range tables {
+			if _, err := tx.ExecContext(context.Background(), `DELETE FROM `+table); err != nil {
+				return fmt.Errorf("clear %s: %w", table, err)
+			}
+		}
+		if _, err := tx.ExecContext(context.Background(), `
+			INSERT INTO environment_network_identity_counter(id, next_identity)
+			VALUES (TRUE, 1)
+		`); err != nil {
+			return fmt.Errorf("reset environment network identity counter: %w", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("reset test database: %v", err)
+	}
+}
+
+func createTestDatabase(t *testing.T) string {
+	t.Helper()
+	dbURL, err := newTestDatabaseURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dbURL
+}
+
+func productionEnvironmentID(t *testing.T, store *Store, projectID string) string {
+	t.Helper()
+	environment, err := store.productionEnvironmentByProjectInternal(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("load production environment for project %s: %v", projectID, err)
+	}
+	return environment.ID
+}
+
+func newTestDatabaseURL() (string, error) {
+	ts, err := getSharedTestServer()
+	if err != nil {
+		return "", err
+	}
+
 	adminDB, err := sql.Open("pgx", ts.PGURL().String())
 	if err != nil {
-		t.Fatalf("sql.Open admin db: %v", err)
+		return "", fmt.Errorf("sql.Open admin db: %w", err)
 	}
 	defer adminDB.Close()
 
 	dbName := "cp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if _, err := adminDB.ExecContext(context.Background(), `CREATE DATABASE `+dbName); err != nil {
-		t.Fatalf("CREATE DATABASE %s: %v", dbName, err)
+		return "", fmt.Errorf("CREATE DATABASE %s: %w", dbName, err)
 	}
 
-	pgURL := cloneURL(t, ts.PGURL())
+	pgURL, err := cloneURL(ts.PGURL())
+	if err != nil {
+		return "", err
+	}
 	pgURL.Path = "/" + dbName
-	return pgURL.String()
+	return pgURL.String(), nil
 }
 
 func sharedTestServer(t *testing.T) testserver.TestServer {
 	t.Helper()
+	ts, err := getSharedTestServer()
+	if err != nil {
+		t.Fatalf("NewTestServer: %v", err)
+	}
+	return ts
+}
 
+func getSharedTestServer() (testserver.TestServer, error) {
 	testServerOnce.Do(func() {
 		testServer, testServerErr = testserver.NewTestServer(
 			testserver.CustomVersionOpt(cockroachTestVersion),
 		)
 	})
 	if testServerErr != nil {
-		t.Fatalf("NewTestServer: %v", testServerErr)
+		return nil, testServerErr
 	}
-	return testServer
+	return testServer, nil
 }
 
-func cloneURL(t *testing.T, source *url.URL) *url.URL {
-	t.Helper()
-
+func cloneURL(source *url.URL) (*url.URL, error) {
 	if source == nil {
-		t.Fatal("nil CockroachDB test URL")
+		return nil, fmt.Errorf("nil CockroachDB test URL")
 	}
 	clone := *source
 	query := clone.Query()
@@ -99,5 +208,5 @@ func cloneURL(t *testing.T, source *url.URL) *url.URL {
 		query.Set("sslmode", "disable")
 	}
 	clone.RawQuery = query.Encode()
-	return &clone
+	return &clone, nil
 }

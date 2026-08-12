@@ -17,7 +17,7 @@ func ts(v time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(v)
 }
 
-func privateIPv6(subnetCIDR, projectID, serviceID string) (string, error) {
+func privateIPv6(subnetCIDR, environmentID, serviceID string) (string, error) {
 	prefix, err := netip.ParsePrefix(subnetCIDR)
 	if err != nil {
 		return "", fmt.Errorf("parse workload subnet %q: %w", subnetCIDR, err)
@@ -29,7 +29,7 @@ func privateIPv6(subnetCIDR, projectID, serviceID string) (string, error) {
 		return "", fmt.Errorf("workload subnet %q must be /64", subnetCIDR)
 	}
 	base := prefix.Masked().Addr().As16()
-	sum := sha1.Sum([]byte(projectID + ":" + serviceID))
+	sum := sha1.Sum([]byte(environmentID + ":" + serviceID))
 	copy(base[8:], sum[:8])
 	base[15] = 0x10
 	return netip.AddrFrom16(base).String(), nil

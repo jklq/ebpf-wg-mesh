@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,442 +22,25 @@ import (
 const initialSchemaVersion = 1
 
 type Store struct {
-	db   *sql.DB
-	mesh config.ControlPlaneMeshConfig
+	db                      *sql.DB
+	mesh                    config.ControlPlaneMeshConfig
+	reservedAgentIDs        []string
+	sourceArchives          SourceArchiveStore
+	useReportedAllocationIP bool
+}
+
+func (s *Store) reserveAgents(agentIDs ...string) {
+	for _, agentID := range agentIDs {
+		agentID = strings.TrimSpace(agentID)
+		if agentID != "" && !slices.Contains(s.reservedAgentIDs, agentID) {
+			s.reservedAgentIDs = append(s.reservedAgentIDs, agentID)
+		}
+	}
 }
 
 type migration struct {
 	version int
 	stmts   []string
-}
-
-var storeMigrations = []migration{
-	{
-		version: initialSchemaVersion,
-		stmts: []string{
-			`CREATE TABLE IF NOT EXISTS users (
-				subject STRING PRIMARY KEY,
-				email STRING NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE TABLE IF NOT EXISTS projects (
-				id STRING PRIMARY KEY,
-				name STRING NOT NULL,
-				kind STRING NOT NULL DEFAULT 'user',
-				system_key STRING NULL,
-				owner_subject STRING NOT NULL DEFAULT '',
-				created_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE TABLE IF NOT EXISTS agents (
-				id STRING PRIMARY KEY,
-				name STRING NOT NULL,
-				advertise_addr STRING NOT NULL,
-				workload_ipv6_subnet STRING NOT NULL DEFAULT '',
-				wireguard_public_key STRING NOT NULL DEFAULT '',
-				wireguard_listen_port INT8 NOT NULL DEFAULT 0,
-				wireguard_ipv6 STRING NOT NULL DEFAULT '',
-				cpu_millis_capacity INT8 NOT NULL,
-				memory_mebibytes_capacity INT8 NOT NULL,
-				last_seen_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL,
-				desired_revision INT8 NOT NULL DEFAULT 0
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_agents_last_seen_id
-			    ON agents(last_seen_at DESC, id)
-			    STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
-			`CREATE TABLE IF NOT EXISTS project_memberships (
-				subject STRING NOT NULL REFERENCES users(subject),
-				project_id STRING NOT NULL REFERENCES projects(id),
-				role STRING NOT NULL,
-				PRIMARY KEY (subject, project_id)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_project_memberships_subject ON project_memberships(subject, project_id)`,
-			`CREATE TABLE IF NOT EXISTS volumes (
-				id STRING PRIMARY KEY,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				name STRING NOT NULL,
-				size_bytes INT8 NOT NULL,
-				bound_agent_id STRING NOT NULL REFERENCES agents(id),
-				created_at TIMESTAMPTZ NOT NULL,
-				UNIQUE (project_id, name)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_volumes_project_created_at ON volumes(project_id, created_at, id)`,
-			`CREATE INDEX IF NOT EXISTS idx_volumes_bound_agent_id ON volumes(bound_agent_id, created_at, id)`,
-			`CREATE TABLE IF NOT EXISTS services (
-				id STRING PRIMARY KEY,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				name STRING NOT NULL,
-				current_spec_revision INT8 NOT NULL,
-				current_rollout_generation INT8 NOT NULL,
-				allocated_agent_id STRING NOT NULL REFERENCES agents(id),
-				current_resolved_image STRING NOT NULL DEFAULT '',
-				last_successful_commit_sha STRING NOT NULL DEFAULT '',
-				latest_build_id STRING NOT NULL DEFAULT '',
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL,
-				UNIQUE (project_id, name)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_services_project_created_at ON services(project_id, created_at, id)`,
-			`CREATE INDEX IF NOT EXISTS idx_services_allocated_agent_id ON services(allocated_agent_id, created_at, id)`,
-			`CREATE TABLE IF NOT EXISTS service_revisions (
-				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-				spec_revision INT8 NOT NULL,
-				spec_json JSONB NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				PRIMARY KEY (service_id, spec_revision)
-			)`,
-			`CREATE TABLE IF NOT EXISTS domain_bindings (
-				hostname STRING PRIMARY KEY,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-				target_port INT8 NOT NULL DEFAULT 8080,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_domain_bindings_service_id ON domain_bindings(service_id, hostname)`,
-			`CREATE TABLE IF NOT EXISTS allocations (
-				id STRING PRIMARY KEY,
-				service_id STRING NOT NULL UNIQUE REFERENCES services(id) ON DELETE CASCADE,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				agent_id STRING NOT NULL REFERENCES agents(id),
-				desired_spec_revision INT8 NOT NULL,
-				applied_spec_revision INT8 NOT NULL,
-				desired_rollout_generation INT8 NOT NULL,
-				applied_rollout_generation INT8 NOT NULL,
-				phase STRING NOT NULL,
-				message STRING NOT NULL,
-				allocation_ip STRING NOT NULL DEFAULT '',
-				healthy_ports JSONB NOT NULL DEFAULT '[]',
-				healthy BOOL NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_allocations_agent_id ON allocations(agent_id, updated_at, id)`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_owner_subject_name_unique
-			    ON projects(owner_subject, name)
-			  WHERE kind = 'user'`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_system_key_unique ON projects(system_key) WHERE system_key IS NOT NULL`,
-			`CREATE TABLE IF NOT EXISTS service_rollouts (
-				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-				rollout_generation INT8 NOT NULL,
-				spec_revision INT8 NOT NULL,
-				reason STRING NOT NULL,
-				build_id STRING NOT NULL DEFAULT '',
-				requested_by_subject STRING NOT NULL DEFAULT '',
-				requested_by_email STRING NOT NULL DEFAULT '',
-				created_at TIMESTAMPTZ NOT NULL,
-				PRIMARY KEY (service_id, rollout_generation)
-			)`,
-			`CREATE TABLE IF NOT EXISTS builder_workers (
-				id STRING PRIMARY KEY,
-				name STRING NOT NULL,
-				current_build_id STRING NOT NULL DEFAULT '',
-				last_heartbeat_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE TABLE IF NOT EXISTS build_runs (
-				id STRING PRIMARY KEY,
-				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				commit_sha STRING NOT NULL,
-				commit_message STRING NOT NULL DEFAULT '',
-				commit_author STRING NOT NULL DEFAULT '',
-				state STRING NOT NULL,
-				image_digest STRING NOT NULL DEFAULT '',
-				failure_reason STRING NOT NULL DEFAULT '',
-				repo_owner STRING NOT NULL DEFAULT '',
-				repo_name STRING NOT NULL DEFAULT '',
-				installation_id INT8 NOT NULL DEFAULT 0,
-				tracked_branch STRING NOT NULL DEFAULT '',
-				dockerfile_path STRING NOT NULL DEFAULT '',
-				context_dir STRING NOT NULL DEFAULT '',
-				builder_id STRING NOT NULL DEFAULT '',
-				target_rollout_generation INT8 NOT NULL DEFAULT 0,
-				queued_at TIMESTAMPTZ NOT NULL,
-				started_at TIMESTAMPTZ NULL,
-				finished_at TIMESTAMPTZ NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_build_runs_service_queued_at
-			    ON build_runs(service_id, queued_at DESC, id)`,
-			`CREATE INDEX IF NOT EXISTS idx_build_runs_service_commit_queued_at
-			    ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
-			`CREATE INDEX IF NOT EXISTS idx_build_runs_state_queued_at
-			    ON build_runs(state, queued_at ASC, id)`,
-			`CREATE TABLE IF NOT EXISTS github_installations (
-				installation_id INT8 PRIMARY KEY,
-				account_login STRING NOT NULL,
-				account_type STRING NOT NULL,
-				target_type STRING NOT NULL,
-				active BOOL NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE TABLE IF NOT EXISTS github_installation_repositories (
-				installation_id INT8 NOT NULL REFERENCES github_installations(installation_id) ON DELETE CASCADE,
-				repository_id INT8 NOT NULL,
-				owner STRING NOT NULL,
-				repo STRING NOT NULL,
-				full_name STRING NOT NULL,
-				private BOOL NOT NULL,
-				default_branch STRING NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL,
-				PRIMARY KEY (installation_id, repository_id),
-				UNIQUE (installation_id, full_name)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_github_installation_repositories_full_name
-			    ON github_installation_repositories(full_name, installation_id)`,
-			`CREATE TABLE IF NOT EXISTS github_webhook_deliveries (
-				id STRING PRIMARY KEY,
-				delivery_id STRING NOT NULL UNIQUE,
-				event_type STRING NOT NULL,
-				state STRING NOT NULL,
-				processor_id STRING NOT NULL DEFAULT '',
-				payload JSONB NOT NULL,
-				last_error STRING NOT NULL DEFAULT '',
-				received_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL,
-				processed_at TIMESTAMPTZ NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_github_webhook_deliveries_state_received_at
-			    ON github_webhook_deliveries(state, received_at ASC, id)`,
-			`CREATE TABLE IF NOT EXISTS service_build_sources (
-				service_id STRING PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				provider STRING NOT NULL,
-				owner STRING NOT NULL,
-				repo STRING NOT NULL,
-				full_name STRING NOT NULL,
-				tracked_branch STRING NOT NULL,
-				installation_id INT8 NOT NULL DEFAULT 0,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_service_build_sources_lookup
-			    ON service_build_sources(provider, owner, repo, tracked_branch, installation_id, service_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_service_build_sources_full_name
-			    ON service_build_sources(full_name, installation_id, service_id)`,
-			`CREATE TABLE IF NOT EXISTS github_repository_snapshots (
-				full_name STRING PRIMARY KEY,
-				repository_id INT8 NOT NULL DEFAULT 0,
-				owner STRING NOT NULL,
-				repo STRING NOT NULL,
-				private BOOL NOT NULL DEFAULT FALSE,
-				default_branch STRING NOT NULL DEFAULT '',
-				deleted BOOL NOT NULL DEFAULT FALSE,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_github_repository_snapshots_owner_repo
-			    ON github_repository_snapshots(owner, repo)`,
-		},
-	},
-	{
-		version: 2,
-		stmts: []string{
-			`CREATE TABLE IF NOT EXISTS github_work_items (
-				id STRING PRIMARY KEY,
-				kind STRING NOT NULL,
-				state STRING NOT NULL,
-				processor_id STRING NOT NULL DEFAULT '',
-				idempotency_key STRING NOT NULL UNIQUE,
-				service_id STRING NOT NULL DEFAULT '',
-				spec_revision INT8 NOT NULL DEFAULT 0,
-				installation_id INT8 NOT NULL DEFAULT 0,
-				commit_sha STRING NOT NULL DEFAULT '',
-				last_error STRING NOT NULL DEFAULT '',
-				attempt_count INT8 NOT NULL DEFAULT 0,
-				available_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_github_work_items_state_available_at
-			    ON github_work_items(state, available_at ASC, created_at ASC, id)`,
-		},
-	},
-	{
-		version: 3,
-		stmts: []string{
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS source_revision_id STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS source_snapshot_id STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS source_snapshot_digest STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS build_recipe_json JSONB NOT NULL DEFAULT '{}'`,
-			`CREATE TABLE IF NOT EXISTS source_bindings (
-				id STRING PRIMARY KEY,
-				service_id STRING NOT NULL UNIQUE REFERENCES services(id) ON DELETE CASCADE,
-				project_id STRING NOT NULL REFERENCES projects(id),
-				provider STRING NOT NULL,
-				repository_selector STRING NOT NULL DEFAULT '',
-				tracked_ref STRING NOT NULL DEFAULT '',
-				provider_repository_external_id STRING NOT NULL DEFAULT '',
-				provider_scope_external_id STRING NOT NULL DEFAULT '',
-				access_state STRING NOT NULL DEFAULT '',
-				installation_id INT8 NOT NULL DEFAULT 0,
-				build_recipe_json JSONB NOT NULL DEFAULT '{}',
-				resolved_at TIMESTAMPTZ NOT NULL,
-				fresh_until TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_source_bindings_provider_repo_ref
-			    ON source_bindings(provider, provider_repository_external_id, tracked_ref, service_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_source_bindings_installation
-			    ON source_bindings(provider, installation_id, service_id)`,
-			`CREATE TABLE IF NOT EXISTS source_revisions (
-				id STRING PRIMARY KEY,
-				source_binding_id STRING NOT NULL REFERENCES source_bindings(id) ON DELETE CASCADE,
-				service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-				provider STRING NOT NULL,
-				provider_repository_external_id STRING NOT NULL DEFAULT '',
-				tracked_ref STRING NOT NULL DEFAULT '',
-				commit_sha STRING NOT NULL,
-				commit_message STRING NOT NULL DEFAULT '',
-				commit_author STRING NOT NULL DEFAULT '',
-				observed_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				UNIQUE (source_binding_id, commit_sha)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_source_revisions_service_observed
-			    ON source_revisions(service_id, observed_at DESC, id)`,
-			`CREATE INDEX IF NOT EXISTS idx_source_revisions_provider_repo_commit
-			    ON source_revisions(provider, provider_repository_external_id, commit_sha, id)`,
-			`CREATE TABLE IF NOT EXISTS source_snapshots (
-				id STRING PRIMARY KEY,
-				provider STRING NOT NULL,
-				provider_repository_external_id STRING NOT NULL DEFAULT '',
-				commit_sha STRING NOT NULL,
-				digest STRING NOT NULL DEFAULT '',
-				archive_tgz BYTES NOT NULL DEFAULT b'',
-				ready BOOL NOT NULL DEFAULT FALSE,
-				fetched_at TIMESTAMPTZ NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL,
-				UNIQUE (provider, provider_repository_external_id, commit_sha)
-			)`,
-			`CREATE TABLE IF NOT EXISTS source_work_items (
-				id STRING PRIMARY KEY,
-				kind STRING NOT NULL,
-				state STRING NOT NULL,
-				processor_id STRING NOT NULL DEFAULT '',
-				idempotency_key STRING NOT NULL UNIQUE,
-				service_id STRING NOT NULL DEFAULT '',
-				spec_revision INT8 NOT NULL DEFAULT 0,
-				provider STRING NOT NULL DEFAULT '',
-				provider_repository_external_id STRING NOT NULL DEFAULT '',
-				tracked_ref STRING NOT NULL DEFAULT '',
-				commit_sha STRING NOT NULL DEFAULT '',
-				commit_message STRING NOT NULL DEFAULT '',
-				commit_author STRING NOT NULL DEFAULT '',
-				installation_id INT8 NOT NULL DEFAULT 0,
-				owner STRING NOT NULL DEFAULT '',
-				repo STRING NOT NULL DEFAULT '',
-				last_error STRING NOT NULL DEFAULT '',
-				attempt_count INT8 NOT NULL DEFAULT 0,
-				available_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				updated_at TIMESTAMPTZ NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_source_work_items_state_available_at
-			    ON source_work_items(state, available_at ASC, created_at ASC, id)`,
-		},
-	},
-	{
-		version: 4,
-		stmts: []string{
-			`DROP TABLE IF EXISTS service_build_sources`,
-			`ALTER TABLE build_runs DROP COLUMN IF EXISTS repo_owner`,
-			`ALTER TABLE build_runs DROP COLUMN IF EXISTS repo_name`,
-			`ALTER TABLE build_runs DROP COLUMN IF EXISTS installation_id`,
-			`ALTER TABLE build_runs DROP COLUMN IF EXISTS tracked_branch`,
-			`ALTER TABLE build_runs DROP COLUMN IF EXISTS dockerfile_path`,
-			`ALTER TABLE build_runs DROP COLUMN IF EXISTS context_dir`,
-			`ALTER TABLE source_bindings DROP COLUMN IF EXISTS installation_id`,
-			`DROP INDEX IF EXISTS idx_source_bindings_installation`,
-			`CREATE INDEX IF NOT EXISTS idx_source_bindings_provider_scope
-			    ON source_bindings(provider, provider_scope_external_id, service_id)`,
-			`ALTER TABLE source_snapshots ADD COLUMN IF NOT EXISTS source_revision_id STRING NOT NULL DEFAULT ''`,
-			`UPDATE source_snapshots
-			    SET source_revision_id = COALESCE((
-			      SELECT r.id
-			        FROM source_revisions r
-			       WHERE r.provider = source_snapshots.provider
-			         AND r.provider_repository_external_id = source_snapshots.provider_repository_external_id
-			         AND r.commit_sha = source_snapshots.commit_sha
-			       ORDER BY r.created_at DESC, r.id DESC
-			       LIMIT 1
-			    ), source_revision_id)
-			  WHERE source_revision_id = ''`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_source_snapshots_source_revision_id
-			    ON source_snapshots(source_revision_id)`,
-			`ALTER TABLE source_work_items ADD COLUMN IF NOT EXISTS provider_scope_external_id STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE source_work_items DROP COLUMN IF EXISTS installation_id`,
-			`ALTER TABLE source_work_items DROP COLUMN IF EXISTS owner`,
-			`ALTER TABLE source_work_items DROP COLUMN IF EXISTS repo`,
-		},
-	},
-	{
-		version: 5,
-		stmts: []string{
-			`ALTER TABLE source_work_items ADD COLUMN IF NOT EXISTS commit_message STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE source_work_items ADD COLUMN IF NOT EXISTS commit_author STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE source_revisions ADD COLUMN IF NOT EXISTS commit_message STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE source_revisions ADD COLUMN IF NOT EXISTS commit_author STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS commit_message STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS commit_author STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs ADD COLUMN IF NOT EXISTS target_rollout_generation INT8 NOT NULL DEFAULT 0`,
-			`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS build_id STRING NOT NULL DEFAULT ''`,
-			`ALTER TABLE build_runs DROP CONSTRAINT IF EXISTS build_runs_service_id_commit_sha_key`,
-			`DROP INDEX IF EXISTS build_runs_service_id_commit_sha_key`,
-			`CREATE INDEX IF NOT EXISTS idx_build_runs_service_commit_queued_at
-			    ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
-		},
-	},
-	{
-		version: 6,
-		stmts: []string{
-			`ALTER TABLE projects ADD COLUMN IF NOT EXISTS network_identity INT8 NULL`,
-			`UPDATE projects
-			    SET network_identity = numbered.network_identity
-			   FROM (
-			     SELECT id, row_number() OVER (ORDER BY created_at ASC, id ASC) AS network_identity
-			       FROM projects
-			   ) AS numbered
-			  WHERE projects.id = numbered.id
-			    AND projects.network_identity IS NULL`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_network_identity_unique ON projects(network_identity)`,
-			`ALTER TABLE projects ALTER COLUMN network_identity SET NOT NULL`,
-			`CREATE TABLE IF NOT EXISTS project_network_identity_counter (
-				id BOOL PRIMARY KEY,
-				next_identity INT8 NOT NULL
-			)`,
-			`INSERT INTO project_network_identity_counter(id, next_identity)
-			 SELECT TRUE, COALESCE(MAX(network_identity), 0) + 1 FROM projects
-			 ON CONFLICT(id) DO NOTHING`,
-			`CREATE TABLE IF NOT EXISTS agent_bootstrap_tokens (
-				token_hash BYTES PRIMARY KEY,
-				agent_id STRING NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				consumed_at TIMESTAMPTZ NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_agent_bootstrap_tokens_agent_id ON agent_bootstrap_tokens(agent_id, consumed_at)`,
-			`UPDATE agents SET desired_revision = desired_revision + 1`,
-		},
-	},
-	{
-		version: 7,
-		stmts: []string{
-			`CREATE TABLE IF NOT EXISTS domain_ownership_challenges (
-				hostname STRING NOT NULL,
-				project_id STRING NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-				token STRING NOT NULL,
-				expires_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL,
-				PRIMARY KEY (hostname, project_id)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_domain_ownership_challenges_expiry ON domain_ownership_challenges(expires_at)`,
-		},
-	},
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
@@ -536,22 +120,15 @@ func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
 func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, user := range bootstrap.Users {
-			if user.Subject == "" || user.Email == "" {
+			if user.ID == "" {
 				continue
 			}
-			now := time.Now().UTC()
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO users(subject, email, created_at) VALUES ($1, $2, $3) ON CONFLICT(subject) DO UPDATE SET email=excluded.email`,
-				user.Subject, user.Email, now,
-			); err != nil {
-				return fmt.Errorf("upsert bootstrap user %s: %w", user.Subject, err)
-			}
 			for _, projectName := range user.Projects {
-				projectID, err := s.ensureUserProjectNamedQuerier(ctx, tx, user.Subject, projectName)
+				projectID, err := s.ensureUserProjectNamedQuerier(ctx, tx, user.ID, projectName)
 				if err != nil {
 					return err
 				}
-				if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, user.Subject, projectID); err != nil {
+				if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, user.ID, projectID); err != nil {
 					return fmt.Errorf("insert project membership: %w", err)
 				}
 			}

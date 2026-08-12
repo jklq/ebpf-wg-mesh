@@ -9,10 +9,20 @@ func TestLogStoreMigrationTTLUsesDateTimeCast(t *testing.T) {
 	t.Parallel()
 
 	migrations := logStoreMigrations(14)
-	if len(migrations) != 1 || len(migrations[0].stmts) != 1 {
-		t.Fatalf("unexpected log migrations: %#v", migrations)
+	var stmt string
+	for _, migration := range migrations {
+		if migration.name != "service_logs_table" {
+			continue
+		}
+		if len(migration.stmts) != 1 {
+			t.Fatalf("unexpected service_logs_table migration: %#v", migration)
+		}
+		stmt = migration.stmts[0]
+		break
 	}
-	stmt := migrations[0].stmts[0]
+	if stmt == "" {
+		t.Fatalf("service_logs_table migration not found: %#v", migrations)
+	}
 	if !strings.Contains(stmt, "TTL toDateTime(observed_at) + INTERVAL 14 DAY") {
 		t.Fatalf("expected TTL to cast DateTime64 observed_at to DateTime, got:\n%s", stmt)
 	}
