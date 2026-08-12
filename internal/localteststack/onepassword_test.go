@@ -135,9 +135,6 @@ func TestApplyEnvironmentOverlayPrefersLocalteststackPublicURL(t *testing.T) {
 		ControlPlaneGitHubWebhookSecretKey:    "webhook-secret",
 		ControlPlaneGitHubPrivateKeyPEMKey:    sampleGitHubPrivateKeyPEMBase64(),
 		ControlPlaneDashboardGitHubInstallKey: "https://github.com/apps/demo/installations/new",
-		ControlPlaneRegistryHostKey:           "ghcr.io",
-		ControlPlaneRegistryUsernameKey:       "registry-user",
-		ControlPlaneRegistryPasswordKey:       "registry-password",
 		DashboardGitHubAppIDKey:               "123",
 		DashboardGitHubClientIDKey:            "client-id",
 		DashboardGitHubClientSecretKey:        "client-secret",
@@ -205,9 +202,6 @@ func TestApplyEnvironmentOverlayEnablesGitHubWithoutInstallURL(t *testing.T) {
 		ControlPlaneGitHubAppIDKey:         "123",
 		ControlPlaneGitHubWebhookSecretKey: "webhook-secret",
 		ControlPlaneGitHubPrivateKeyPEMKey: sampleGitHubPrivateKeyPEMBase64(),
-		ControlPlaneRegistryHostKey:        "ghcr.io",
-		ControlPlaneRegistryUsernameKey:    "registry-user",
-		ControlPlaneRegistryPasswordKey:    "registry-password",
 		DashboardGitHubAppIDKey:            "123",
 		DashboardGitHubClientIDKey:         "client-id",
 		DashboardGitHubClientSecretKey:     "client-secret",
@@ -234,9 +228,6 @@ func TestApplyEnvironmentOverlayReportsCloudflareRuntimeRequirementWhenGitHubSec
 		ControlPlaneGitHubWebhookSecretKey:    "webhook-secret",
 		ControlPlaneGitHubPrivateKeyPEMKey:    sampleGitHubPrivateKeyPEMBase64(),
 		ControlPlaneDashboardGitHubInstallKey: "https://github.com/apps/demo/installations/new",
-		ControlPlaneRegistryHostKey:           "ghcr.io",
-		ControlPlaneRegistryUsernameKey:       "registry-user",
-		ControlPlaneRegistryPasswordKey:       "registry-password",
 		DashboardGitHubAppIDKey:               "123",
 		DashboardGitHubClientIDKey:            "client-id",
 		DashboardGitHubClientSecretKey:        "client-secret",
@@ -255,9 +246,7 @@ func TestApplyEnvironmentOverlayReportsCloudflareRuntimeRequirementWhenGitHubSec
 	}
 }
 
-func TestStartCloudflareTunnelRequiresToken(t *testing.T) {
-	t.Parallel()
-
+func TestStartCloudflareTunnelValidationAndStartup(t *testing.T) {
 	_, err := StartCloudflareTunnel(context.Background(), "", "hostname.example.test")
 	if err == nil {
 		t.Fatal("expected cloudflare tunnel token error")
@@ -265,27 +254,31 @@ func TestStartCloudflareTunnelRequiresToken(t *testing.T) {
 	if got := err.Error(); got != "CLOUDFLARE_TUNNEL_TOKEN is required" {
 		t.Fatalf("unexpected error %q", got)
 	}
-}
 
-func TestStartCloudflareTunnelRequiresHostname(t *testing.T) {
-	t.Parallel()
-
-	_, err := StartCloudflareTunnel(context.Background(), "token", "")
+	_, err = StartCloudflareTunnel(context.Background(), "token", "")
 	if err == nil {
 		t.Fatal("expected cloudflare hostname error")
 	}
 	if got := err.Error(); got != "CLOUDFLARE_HOSTNAME is required" {
 		t.Fatalf("unexpected error %q", got)
 	}
-}
 
-func TestStartCloudflareTunnelReturnsHostnameWhenProcessStarts(t *testing.T) {
+	originalPath := os.Getenv("PATH")
+	t.Setenv("PATH", t.TempDir())
+	_, err = StartCloudflareTunnel(context.Background(), "token", "mesh.dev.example.test")
+	if err == nil {
+		t.Fatal("expected missing binary error")
+	}
+	if got := err.Error(); got != `start cloudflared: exec: "cloudflared": executable file not found in $PATH` {
+		t.Fatalf("unexpected error %q", got)
+	}
+
 	binDir := t.TempDir()
 	cloudflaredPath := filepath.Join(binDir, "cloudflared")
 	if err := os.WriteFile(cloudflaredPath, []byte("#!/bin/sh\nsleep 10\n"), 0o755); err != nil {
 		t.Fatalf("write fake cloudflared: %v", err)
 	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+originalPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
@@ -301,36 +294,6 @@ func TestStartCloudflareTunnelReturnsHostnameWhenProcessStarts(t *testing.T) {
 	}
 	if result.Host != "mesh.dev.example.test" {
 		t.Fatalf("unexpected host %q", result.Host)
-	}
-}
-
-func TestStartCloudflareTunnelSurfacesMissingBinary(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	_, err := StartCloudflareTunnel(context.Background(), "token", "mesh.dev.example.test")
-	if err == nil {
-		t.Fatal("expected missing binary error")
-	}
-	if got := err.Error(); got != `start cloudflared: exec: "cloudflared": executable file not found in $PATH` {
-		t.Fatalf("unexpected error %q", got)
-	}
-}
-
-func TestWaitForCommandStartupSucceedsWhileProcessIsStillRunning(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", "sleep 1")
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer func() {
-		_ = stopCommand(cmd)
-	}()
-
-	if err := waitForCommandStartup(ctx, cmd, 100*time.Millisecond); err != nil {
-		t.Fatalf("waitForCommandStartup: %v", err)
 	}
 }
 
@@ -377,14 +340,11 @@ func TestApplyEnvironmentOverlayKeepsGitHubDisabledForPartialContract(t *testing
 
 	result, err := ApplyEnvironmentOverlay(&cfg, dashboardEnv, map[string]string{
 		ControlPlaneGitHubAppIDKey:            "123",
-		ControlPlaneRegistryHostKey:           "ghcr.io",
 		DashboardGitHubAppIDKey:               "123",
 		DashboardGitHubClientIDKey:            "client-id",
-		DashboardGitHubClientSecretKey:        "client-secret",
 		ControlPlaneGitHubWebhookPathKey:      "/custom/webhook",
 		ControlPlaneGitHubWebhookSecretKey:    "webhook-secret",
 		ControlPlaneGitHubPrivateKeyPEMKey:    sampleGitHubPrivateKeyPEMBase64(),
-		ControlPlaneRegistryUsernameKey:       "registry-user",
 		ControlPlaneDashboardGitHubInstallKey: "https://github.com/apps/demo/installations/new",
 	}, "https://mesh.example.test")
 	if err != nil {
@@ -414,21 +374,17 @@ func TestApplyEnvironmentOverlayEnablesGitHubForCompleteContract(t *testing.T) {
 	dashboardEnv := baseDashboardEnv()
 
 	result, err := ApplyEnvironmentOverlay(&cfg, dashboardEnv, map[string]string{
-		ControlPlaneGitHubAppIDKey:             "123",
-		ControlPlaneGitHubWebhookSecretKey:     "webhook-secret",
-		ControlPlaneGitHubPrivateKeyPEMKey:     sampleGitHubPrivateKeyPEMBase64(),
-		ControlPlaneRegistryHostKey:            "ghcr.io",
-		ControlPlaneRegistryNamespacePrefixKey: "mesh-dev",
-		ControlPlaneRegistryUsernameKey:        "registry-user",
-		ControlPlaneRegistryPasswordKey:        "registry-password",
-		ControlPlaneGitHubAPIBaseURLKey:        "https://api.github.example.test",
-		ControlPlaneGitHubWebBaseURLKey:        "https://github.example.test",
-		ControlPlaneGitHubWebhookPathKey:       "/hooks/github",
-		DashboardGitHubAppIDKey:                "123",
-		DashboardGitHubClientIDKey:             "client-id",
-		DashboardGitHubClientSecretKey:         "client-secret",
-		DashboardGitHubAuthBaseURLKey:          "https://github.example.test",
-		DashboardGitHubAPIBaseURLKey:           "https://api.github.example.test",
+		ControlPlaneGitHubAppIDKey:         "123",
+		ControlPlaneGitHubWebhookSecretKey: "webhook-secret",
+		ControlPlaneGitHubPrivateKeyPEMKey: sampleGitHubPrivateKeyPEMBase64(),
+		ControlPlaneGitHubAPIBaseURLKey:    "https://api.github.example.test",
+		ControlPlaneGitHubWebBaseURLKey:    "https://github.example.test",
+		ControlPlaneGitHubWebhookPathKey:   "/hooks/github",
+		DashboardGitHubAppIDKey:            "123",
+		DashboardGitHubClientIDKey:         "client-id",
+		DashboardGitHubClientSecretKey:     "client-secret",
+		DashboardGitHubAuthBaseURLKey:      "https://github.example.test",
+		DashboardGitHubAPIBaseURLKey:       "https://api.github.example.test",
 	}, "https://mesh.dev.example.test")
 	if err != nil {
 		t.Fatalf("ApplyEnvironmentOverlay: %v", err)
@@ -444,12 +400,6 @@ func TestApplyEnvironmentOverlayEnablesGitHubForCompleteContract(t *testing.T) {
 	}
 	if cfg.GitHub.WebhookPath != "/hooks/github" {
 		t.Fatalf("unexpected webhook path %q", cfg.GitHub.WebhookPath)
-	}
-	if cfg.Registry.Host != "ghcr.io" || cfg.Registry.Username != "registry-user" || cfg.Registry.Password != "registry-password" {
-		t.Fatalf("unexpected registry config %+v", cfg.Registry)
-	}
-	if cfg.Registry.NamespacePrefix != "mesh-dev" {
-		t.Fatalf("unexpected registry namespace prefix %q", cfg.Registry.NamespacePrefix)
 	}
 	if dashboardEnv[DashboardGitHubClientIDKey] != "client-id" {
 		t.Fatalf("unexpected dashboard client id %q", dashboardEnv[DashboardGitHubClientIDKey])

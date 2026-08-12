@@ -19,24 +19,19 @@ const (
 	OPServiceAccountTokenKey = "OP_SERVICE_ACCOUNT_TOKEN"
 	OPAccountKey             = "OP_ACCOUNT"
 
-	ControlPlaneGitHubAppIDKey             = "CONTROLPLANE_GITHUB_APP_ID"
-	ControlPlaneGitHubWebhookSecretKey     = "CONTROLPLANE_GITHUB_WEBHOOK_SECRET"
-	ControlPlaneGitHubPrivateKeyPEMKey     = "CONTROLPLANE_GITHUB_PRIVATE_KEY_PEM"
-	ControlPlaneDashboardGitHubInstallKey  = "CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL"
-	ControlPlaneGitHubAPIBaseURLKey        = "CONTROLPLANE_GITHUB_API_BASE_URL"
-	ControlPlaneGitHubWebBaseURLKey        = "CONTROLPLANE_GITHUB_WEB_BASE_URL"
-	ControlPlaneGitHubWebhookPathKey       = "CONTROLPLANE_GITHUB_WEBHOOK_PATH"
-	ControlPlaneRegistryHostKey            = "CONTROLPLANE_REGISTRY_HOST"
-	ControlPlaneRegistryNamespacePrefixKey = "CONTROLPLANE_REGISTRY_NAMESPACE_PREFIX"
-	ControlPlaneRegistryUsernameKey        = "CONTROLPLANE_REGISTRY_USERNAME"
-	ControlPlaneRegistryPasswordKey        = "CONTROLPLANE_REGISTRY_PASSWORD"
-
-	DashboardGitHubAppIDKey        = "DASHBOARD_GITHUB_APP_ID"
-	DashboardGitHubClientIDKey     = "DASHBOARD_GITHUB_CLIENT_ID"
-	DashboardGitHubClientSecretKey = "DASHBOARD_GITHUB_CLIENT_SECRET"
-	DashboardGitHubAuthBaseURLKey  = "DASHBOARD_GITHUB_AUTH_BASE_URL"
-	DashboardGitHubAPIBaseURLKey   = "DASHBOARD_GITHUB_API_BASE_URL"
-	DashboardGitHubInstallURLKey   = "DASHBOARD_GITHUB_INSTALL_URL"
+	ControlPlaneGitHubAppIDKey            = "CONTROLPLANE_GITHUB_APP_ID"
+	ControlPlaneGitHubWebhookSecretKey    = "CONTROLPLANE_GITHUB_WEBHOOK_SECRET"
+	ControlPlaneGitHubPrivateKeyPEMKey    = "CONTROLPLANE_GITHUB_PRIVATE_KEY_PEM"
+	ControlPlaneDashboardGitHubInstallKey = "CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL"
+	ControlPlaneGitHubAPIBaseURLKey       = "CONTROLPLANE_GITHUB_API_BASE_URL"
+	ControlPlaneGitHubWebBaseURLKey       = "CONTROLPLANE_GITHUB_WEB_BASE_URL"
+	ControlPlaneGitHubWebhookPathKey      = "CONTROLPLANE_GITHUB_WEBHOOK_PATH"
+	DashboardGitHubAppIDKey               = "DASHBOARD_GITHUB_APP_ID"
+	DashboardGitHubClientIDKey            = "DASHBOARD_GITHUB_CLIENT_ID"
+	DashboardGitHubClientSecretKey        = "DASHBOARD_GITHUB_CLIENT_SECRET"
+	DashboardGitHubAuthBaseURLKey         = "DASHBOARD_GITHUB_AUTH_BASE_URL"
+	DashboardGitHubAPIBaseURLKey          = "DASHBOARD_GITHUB_API_BASE_URL"
+	DashboardGitHubInstallURLKey          = "DASHBOARD_GITHUB_INSTALL_URL"
 
 	DashboardPublicBaseURLKey     = "DASHBOARD_PUBLIC_BASE_URL"
 	DashboardIngressTargetHostKey = "DASHBOARD_INGRESS_TARGET_HOST"
@@ -112,10 +107,6 @@ func OverlayKeys() []string {
 		ControlPlaneGitHubAPIBaseURLKey,
 		ControlPlaneGitHubWebBaseURLKey,
 		ControlPlaneGitHubWebhookPathKey,
-		ControlPlaneRegistryHostKey,
-		ControlPlaneRegistryNamespacePrefixKey,
-		ControlPlaneRegistryUsernameKey,
-		ControlPlaneRegistryPasswordKey,
 		DashboardGitHubAppIDKey,
 		DashboardGitHubClientIDKey,
 		DashboardGitHubClientSecretKey,
@@ -329,13 +320,6 @@ func ApplyEnvironmentOverlay(cfg *config.ControlPlaneConfig, dashboardEnv map[st
 	cfg.GitHub.WebBaseURL = optionalEnv(env, ControlPlaneGitHubWebBaseURLKey)
 	cfg.GitHub.WebhookPath = webhookPath
 
-	cfg.Registry.Host = strings.TrimSpace(env[ControlPlaneRegistryHostKey])
-	cfg.Registry.Username = strings.TrimSpace(env[ControlPlaneRegistryUsernameKey])
-	cfg.Registry.Password = env[ControlPlaneRegistryPasswordKey]
-	if namespacePrefix := optionalEnv(env, ControlPlaneRegistryNamespacePrefixKey); namespacePrefix != "" {
-		cfg.Registry.NamespacePrefix = namespacePrefix
-	}
-
 	if installURL := strings.TrimSpace(env[ControlPlaneDashboardGitHubInstallKey]); installURL != "" {
 		dashboardEnv[DashboardGitHubInstallURLKey] = installURL
 	}
@@ -359,9 +343,6 @@ func MissingGitHubKeys(env map[string]string) []string {
 		ControlPlaneGitHubAppIDKey,
 		ControlPlaneGitHubWebhookSecretKey,
 		ControlPlaneGitHubPrivateKeyPEMKey,
-		ControlPlaneRegistryHostKey,
-		ControlPlaneRegistryUsernameKey,
-		ControlPlaneRegistryPasswordKey,
 		DashboardGitHubAppIDKey,
 		DashboardGitHubClientIDKey,
 		DashboardGitHubClientSecretKey,

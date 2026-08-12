@@ -20,6 +20,9 @@ type output struct {
 func main() {
 	stateDir := flag.String("state-dir", "", "controlplane state dir")
 	callerID := flag.String("caller-id", "dashboard", "client caller id")
+	// dashboard is used by local/VM smoke harnesses that mint offline client certs
+	// from the control-plane CA. Production managed-dashboard keys are issued by
+	// the trusted agent; builder is the offline path for the build service.
 	callerClass := flag.String("caller-class", "dashboard", "client caller class (dashboard or builder)")
 	flag.Parse()
 

@@ -7,7 +7,6 @@ import {
 import {
 	type DashboardRuntime,
 	githubCall,
-	safePlatformCall,
 	storeAuthCall,
 	storeCall,
 } from "#/lib/dashboard/core/runtime.server";
@@ -61,7 +60,7 @@ export async function completeAuthCallback(
 	input: {
 		code?: string;
 		state?: string;
-		subject?: string;
+		userId?: string;
 		email?: string;
 		redirectTo?: string;
 	},
@@ -121,11 +120,11 @@ export async function completeAuthCallback(
 		return signIn(runtime, result.user, "/");
 	}
 
-	const subject = input.subject?.trim() ?? "";
+	const userID = input.userId?.trim() ?? "";
 	const email = input.email?.trim() ?? "";
-	if (subject === "" || email === "") {
+	if (userID === "" || email === "") {
 		throw new DashboardValidationError({
-			message: "auth callback requires GitHub code or dev login subject/email",
+			message: "auth callback requires GitHub code or dev login user ID/email",
 		});
 	}
 	if (config.devUsers.length === 0) {
@@ -135,7 +134,7 @@ export async function completeAuthCallback(
 		});
 	}
 	const allowed = config.devUsers.some(
-		(entry) => entry.subject === subject && entry.email === email,
+		(entry) => entry.id === userID && entry.email === email,
 	);
 	if (!allowed) {
 		throw new AuthConflictError({
@@ -145,7 +144,7 @@ export async function completeAuthCallback(
 	}
 
 	const user = await storeCall(runtime, "upsertDevUser", (store) =>
-		store.upsertDevUser(subject, email),
+		store.upsertDevUser(userID, email),
 	);
 	return signIn(runtime, user, input.redirectTo);
 }
@@ -189,9 +188,6 @@ async function signIn(
 		config.refreshCookieName,
 		tokens.refreshToken,
 		refreshCookieOptions(config, tokens.refreshTokenExpiresAt),
-	);
-	await safePlatformCall(runtime, "ensurePrincipal", (platform) =>
-		platform.ensurePrincipal(user),
 	);
 	return sanitizeRedirect(redirectTo);
 }

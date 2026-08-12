@@ -11,15 +11,16 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := ControlPlane([]string{
+		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
 		"-internal-server-names", "controlplane,controlplane-internal",
 		"-agent-bootstrap-tokens", "node-a=token-a,node-b=token-b",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		"-logs-clickhouse-url", "clickhouse://127.0.0.1:9000/default",
 		"-logs-retention-days", "30",
+		"-failover-reconcile-interval-seconds", "7",
+		"-failover-unhealthy-threshold-seconds", "45",
 		"-state-dir", "var/controlplane",
-		"-oidc-issuer", "https://issuer.example",
-		"-oidc-audience", "platform",
-		"-oidc-jwks-url", "https://issuer.example/jwks.json",
+		"-internal-revoked-client-cert-serials-file", "var/security/revoked-client-serials.txt",
 		"-bootstrap-user", "demo-user:demo@example.com:demo,ops",
 	})
 	if err != nil {
@@ -52,6 +53,12 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	if got := cfg.StateDir; got != "var/controlplane" {
 		t.Fatalf("unexpected state dir %q", got)
 	}
+	if got := cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile; got != "var/security/revoked-client-serials.txt" {
+		t.Fatalf("unexpected client certificate revocation file %q", got)
+	}
+	if cfg.Failover.ReconcileIntervalSeconds != 7 || cfg.Failover.UnhealthyThresholdSeconds != 45 {
+		t.Fatalf("unexpected failover config: %+v", cfg.Failover)
+	}
 }
 
 func TestControlPlaneBootstrapRejectsUnboundAgentToken(t *testing.T) {
@@ -77,6 +84,10 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 		"-ca-file", "ca.crt",
 		"-bootstrap-token", "test-token",
 		"-data-dir", dataDir,
+		"-cpu-millis", "4000",
+		"-memory-mebibytes", "8192",
+		"-reserved-cpu-millis", "750",
+		"-reserved-memory-mebibytes", "1024",
 	})
 	if err != nil {
 		t.Fatalf("Agent: %v", err)
@@ -97,5 +108,11 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 	}
 	if cfg.ControlPlane.TLS.BootstrapToken != "test-token" {
 		t.Fatalf("unexpected bootstrap token %q", cfg.ControlPlane.TLS.BootstrapToken)
+	}
+	if got := cfg.Node.Resources.AdvertisedCPUMillis(); got != 3250 {
+		t.Fatalf("unexpected advertised CPU capacity %d", got)
+	}
+	if got := cfg.Node.Resources.AdvertisedMemoryMebibytes(); got != 7168 {
+		t.Fatalf("unexpected advertised memory capacity %d", got)
 	}
 }

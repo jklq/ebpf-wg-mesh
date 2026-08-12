@@ -1,8 +1,47 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeListServiceDeploymentsResponse } from "#/lib/platform-grpc/codec.server";
+import {
+	decodeIndexedServiceStatusResponse,
+	decodeIndexedServicesResponse,
+	decodeListServiceDeploymentsResponse,
+	decodeListServicesResponse,
+	encodeCreateServiceRequest,
+	encodeUpdateServiceRequest,
+} from "#/lib/platform-grpc/codec.server";
 
 describe("platform grpc codec", () => {
+	it("decodes blocking-query timeouts without payloads", () => {
+		expect(
+			decodeIndexedServicesResponse({ index: "42", notModified: true }),
+		).toEqual({ index: 42, notModified: true, services: undefined });
+		expect(
+			decodeIndexedServiceStatusResponse({
+				index: "42",
+				notModified: true,
+			}),
+		).toEqual({ index: 42, notModified: true, status: undefined });
+	});
+
+	it("encodes mandatory service resource requests", () => {
+		const request = encodeCreateServiceRequest({
+			environmentId: "environment-1",
+			name: "web",
+			spec: {
+				runtime: {
+					env: {},
+					cpuMillis: 500,
+					memoryMebibytes: 768,
+					ports: [],
+				},
+			},
+		});
+
+		expect(request.service.spec.runtime).toMatchObject({
+			cpuMillis: 500,
+			memoryMebibytes: 768,
+		});
+	});
+
 	it("decodes deployment history with build commit metadata", () => {
 		const response = decodeListServiceDeploymentsResponse({
 			deployments: [
@@ -41,5 +80,55 @@ describe("platform grpc codec", () => {
 				}),
 			}),
 		]);
+	});
+
+	it("preserves HTTP rollout readiness configuration", () => {
+		const [service] = decodeListServicesResponse({
+			services: [
+				{
+					id: "service-1",
+					environmentId: "environment-1",
+					name: "web",
+					internalHostname: "accurate-reflection.mesh.internal",
+					specRevision: 2,
+					rolloutGeneration: 1,
+					spec: {
+						runtime: {
+							env: {},
+							ports: [{ port: 8080, primary: true }],
+							healthCheck: {
+								type: "TYPE_HTTP",
+								path: "/ready",
+								port: 8080,
+								timeoutSeconds: 3,
+							},
+						},
+					},
+				},
+			],
+		});
+		if (!service.spec) {
+			throw new Error("decoded service spec is missing");
+		}
+		expect(service.internalHostname).toBe(
+			"accurate-reflection.mesh.internal",
+		);
+
+		expect(service.spec.runtime.healthCheck).toEqual({
+			path: "/ready",
+			port: 8080,
+			timeoutSeconds: 3,
+		});
+		expect(
+			encodeUpdateServiceRequest({
+				serviceId: service.id,
+				spec: service.spec,
+			}).service.spec.runtime.healthCheck,
+		).toEqual({
+			type: "TYPE_HTTP",
+			path: "/ready",
+			port: 8080,
+			timeoutSeconds: 3,
+		});
 	});
 });
