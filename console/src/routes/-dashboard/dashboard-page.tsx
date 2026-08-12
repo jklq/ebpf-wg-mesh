@@ -21,10 +21,11 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 
 import { EmptyCanvas } from "./empty-canvas";
+import { EnvironmentDialog } from "./environment-dialog";
 import { NODE_H, NODE_W, nextNodePositionNear, nodePosition } from "./layout";
 import {
+	doDeployEnvironment,
 	doDiscardServiceChanges,
-	doRedeployService,
 	doSaveServicePosition,
 	fetchGitHubCatalog,
 } from "./server-fns";
@@ -70,6 +71,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	);
 	const [, setStatusLoading] = useState(false);
 	const [showNewService, setShowNewService] = useState(false);
+	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
 	const [githubCatalogLoading, setGitHubCatalogLoading] = useState(false);
 	const [githubCatalogLoaded, setGitHubCatalogLoaded] = useState(
 		state.repositories.length > 0,
@@ -94,11 +96,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		() => serviceLayoutPositions(state.services),
 	);
 	const [, startTransition] = useTransition();
-	const projectId = localState.project?.id ?? null;
+	const environmentId = localState.environment?.id ?? null;
 	const panOffsetRef = useRef(panOffset);
 	const nodePositionsRef = useRef(nodePositions);
 	const dirtyServicesRef = useRef<Array<DashboardServiceRecord>>([]);
-	const projectIdRef = useRef<string | null>(projectId);
+	const environmentIdRef = useRef<string | null>(environmentId);
+	const previousEnvironmentIdRef = useRef<string | null>(environmentId);
 	const deployQueuedRef = useRef(false);
 	const githubCatalogPromiseRef = useRef<Promise<void> | null>(null);
 	// Tracks spec revisions that were just deployed so that stale server data
@@ -122,7 +125,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const isDragging = useRef(false);
 	const suppressNextClick = useRef(false);
 	const hasUserPanned = useRef(false);
-	const centeredProjectId = useRef<string | null | undefined>(undefined);
+	const centeredEnvironmentId = useRef<string | null | undefined>(undefined);
 	const canvasRef = useRef<HTMLDivElement>(null);
 	const selected = services.find((service) => service.id === selectedId);
 	const dirtyServices = services.filter(hasUnappliedChanges);
@@ -245,8 +248,17 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	}, [dirtyServices]);
 
 	useEffect(() => {
-		projectIdRef.current = projectId;
-	}, [projectId]);
+		environmentIdRef.current = environmentId;
+	}, [environmentId]);
+
+	useEffect(() => {
+		if (previousEnvironmentIdRef.current === environmentId) return;
+		previousEnvironmentIdRef.current = environmentId;
+		setSelectedId(null);
+		setLiveStatus(null);
+		setNodePositions(serviceLayoutPositions(localState.services));
+		nodePositionsRef.current = serviceLayoutPositions(localState.services);
+	}, [environmentId, localState.services]);
 
 	useLayoutEffect(() => {
 		const canvas = canvasRef.current;
@@ -275,12 +287,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	const persistNodePositions = useCallback(
 		(serviceId: string, position: Point) => {
-			if (!projectId) return;
+			if (!environmentId) return;
 			void doSaveServicePosition({
-				data: { projectId, serviceId, position },
+				data: { environmentId, serviceId, position },
 			});
 		},
-		[projectId],
+		[environmentId],
 	);
 
 	const servicePositions = useMemo(() => {
@@ -303,7 +315,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			(canvasReady &&
 				(selectedId ||
 					hasUserPanned.current ||
-					centeredProjectId.current === projectId))
+					centeredEnvironmentId.current === environmentId))
 		) {
 			return;
 		}
@@ -314,13 +326,13 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			zoom,
 		});
 		if (!next) return;
-		centeredProjectId.current = projectId;
+		centeredEnvironmentId.current = environmentId;
 		setTargetPanOffset(next, { immediate: true });
 		setCanvasReady(true);
 	}, [
 		canvasReady,
 		canvasSize,
-		projectId,
+		environmentId,
 		selectedId,
 		servicePositions,
 		setTargetPanOffset,
@@ -498,16 +510,10 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		[suppressJustDeployedChanges],
 	);
 
-	const mergeProjectServices = useCallback(
+	const mergeEnvironmentServices = useCallback(
 		(nextServices: Array<DashboardServiceRecord>) => {
 			setLocalState((current) => {
 				const mergedServices = nextServices.map(suppressJustDeployedChanges);
-				const seen = new Set(mergedServices.map((service) => service.id));
-				for (const service of current.services) {
-					if (!seen.has(service.id)) {
-						mergedServices.push(service);
-					}
-				}
 				const selectedService =
 					current.service &&
 					mergedServices.find((service) => service.id === current.service?.id);
@@ -519,11 +525,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				return {
 					...current,
 					services: mergedServices,
-					service: selectedService ?? current.service,
+					service: selectedService,
 					serviceStatus:
 						current.serviceStatus && statusService
 							? { ...current.serviceStatus, service: statusService }
-							: current.serviceStatus,
+							: undefined,
 				};
 			});
 			setLiveStatus((current) => {
@@ -655,30 +661,37 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	}, [totalUnappliedChanges]);
 
 	useEffect(() => {
-		if (!projectId) return;
+		if (!environmentId) return;
+		let active = true;
 		const source = new EventSource(
-			`/events/project-services?projectId=${encodeURIComponent(projectId)}`,
+			`/events/environment-services?environmentId=${encodeURIComponent(environmentId)}`,
 		);
 		source.addEventListener("services", (event) => {
+			if (!active) return;
 			const services = hydrateServiceSnapshots(
 				JSON.parse((event as MessageEvent<string>).data),
 			);
-			mergeProjectServices(services);
+			mergeEnvironmentServices(services);
 		});
-		return () => source.close();
-	}, [projectId, mergeProjectServices]);
+		return () => {
+			active = false;
+			source.close();
+		};
+	}, [environmentId, mergeEnvironmentServices]);
 
 	useEffect(() => {
-		if (!selectedId || !projectId) {
+		if (!selectedId) {
 			setLiveStatus(null);
 			setStatusLoading(false);
 			return;
 		}
 		setStatusLoading(true);
+		let active = true;
 		const source = new EventSource(
-			`/events/service-status?projectId=${encodeURIComponent(projectId)}&serviceId=${encodeURIComponent(selectedId)}`,
+			`/events/service-status?serviceId=${encodeURIComponent(selectedId)}`,
 		);
 		source.addEventListener("status", (event) => {
+			if (!active) return;
 			const nextStatus = hydrateServiceStatusSnapshot(
 				JSON.parse((event as MessageEvent<string>).data),
 			);
@@ -687,13 +700,18 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			setStatusLoading(false);
 		});
 		source.addEventListener("status-error", () => {
+			if (!active) return;
 			setStatusLoading(false);
 		});
 		source.onerror = () => {
+			if (!active) return;
 			setStatusLoading(false);
 		};
-		return () => source.close();
-	}, [selectedId, projectId, mergeStatusService]);
+		return () => {
+			active = false;
+			source.close();
+		};
+	}, [selectedId, mergeStatusService]);
 
 	const onCanvasMouseDown = useCallback(
 		(event: ReactMouseEvent<HTMLElement>) => {
@@ -891,10 +909,10 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				...nodePositionsRef.current,
 				[result.service.id]: spawnPosition,
 			};
-			if (result.project.id) {
+			if (result.environment.id) {
 				void doSaveServicePosition({
 					data: {
-						projectId: result.project.id,
+						environmentId: result.environment.id,
 						serviceId: result.service.id,
 						position: spawnPosition,
 					},
@@ -916,6 +934,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					current.project?.id === result.project.id
 						? current.project
 						: result.project,
+				environment: result.environment,
 				services: nextServices,
 				service: result.service,
 				serviceStatus: result.serviceStatus ?? current.serviceStatus,
@@ -941,7 +960,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	const deployServiceBatch = async (
 		servicesToDeploy: Array<DashboardServiceRecord>,
-		currentProjectId: string,
+		currentEnvironmentId: string,
 	) => {
 		const applying = servicesToDeploy.map(snapshotApplyingChanges);
 		const deployingIds = new Set(applying.map((a) => a.serviceId));
@@ -973,10 +992,14 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			),
 		}));
 		try {
-			for (const service of applying) {
-				const status = await doRedeployService({
-					data: { projectId: currentProjectId, serviceId: service.serviceId },
-				});
+			const statuses = await doDeployEnvironment({
+				data: { environmentId: currentEnvironmentId },
+			});
+			for (const status of statuses) {
+				const service = applying.find(
+					(entry) => entry.serviceId === status.service.id,
+				);
+				if (!service) continue;
 				// Strip unapplied changes from the response: for source-based services
 				// the backend still reports them as unapplied until the build rolls out,
 				// but the user just deployed — they are in flight, not pending.
@@ -1008,20 +1031,20 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			setDeployingChanges(false);
 			window.setTimeout(() => {
 				if (!deployQueuedRef.current) return;
-				const nextProjectId = projectIdRef.current;
+				const nextEnvironmentId = environmentIdRef.current;
 				const nextDirtyServices = dirtyServicesRef.current;
-				if (!nextProjectId || nextDirtyServices.length === 0) {
+				if (!nextEnvironmentId || nextDirtyServices.length === 0) {
 					deployQueuedRef.current = false;
 					setDeployQueued(false);
 					return;
 				}
-				void deployServiceBatch(nextDirtyServices, nextProjectId);
+				void deployServiceBatch(nextDirtyServices, nextEnvironmentId);
 			}, 0);
 		}
 	};
 
 	const handleDeployChanges = async () => {
-		if (!projectId) {
+		if (!environmentId) {
 			return;
 		}
 		if (deployingChanges) {
@@ -1031,15 +1054,15 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			return;
 		}
 		if (deployableServices.length === 0) return;
-		await deployServiceBatch(deployableServices, projectId);
+		await deployServiceBatch(deployableServices, environmentId);
 	};
 
 	const handleDiscardServiceChanges = async (serviceId: string) => {
-		if (!projectId || discardingChangeId) return;
+		if (discardingChangeId) return;
 		setDiscardingChangeId(`service:${serviceId}`);
 		try {
 			const service = await doDiscardServiceChanges({
-				data: { projectId, serviceId, discardAll: true },
+				data: { serviceId, discardAll: true },
 			});
 			mergeService(service);
 		} catch (error) {
@@ -1050,11 +1073,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	};
 
 	const handleDiscardChange = async (serviceId: string, changeId: string) => {
-		if (!projectId || discardingChangeId) return;
+		if (discardingChangeId) return;
 		setDiscardingChangeId(`${serviceId}:${changeId}`);
 		try {
 			const service = await doDiscardServiceChanges({
-				data: { projectId, serviceId, changeIds: [changeId] },
+				data: { serviceId, changeIds: [changeId] },
 			});
 			mergeService(service);
 		} catch (error) {
@@ -1074,7 +1097,14 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				onNewService={openNewService}
 				onPreloadNewService={preloadNewService}
 				onRefresh={handleRefresh}
+				onManageEnvironments={() => setShowEnvironmentDialog(true)}
 			/>
+			{showEnvironmentDialog && (
+				<EnvironmentDialog
+					state={localState}
+					onClose={() => setShowEnvironmentDialog(false)}
+				/>
+			)}
 			<div
 				role="application"
 				tabIndex={-1}

@@ -4,7 +4,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// projectDeploymentStages synthesizes the deployment timeline that
+// deploymentStages synthesizes the deployment timeline that
 // the web console renders in the right-hand panel. We derive it from the
 // build run + allocation records instead of tracking an explicit state
 // machine: the inputs already express the ground truth (build state, phase,
@@ -22,7 +22,7 @@ import (
 // start at Build because the service has already been initialized in an
 // earlier rollout. Direct-image services still include Build as SKIPPED so the
 // UI can keep a consistent shape without pretending a build ran.
-func projectDeploymentStages(service serviceRecord, build *buildRunRecord, alloc allocationRecord) []*platformv1.DeploymentStage {
+func deploymentStages(service serviceRecord, build *buildRunRecord, alloc allocationRecord) []*platformv1.DeploymentStage {
 	stages := make([]*platformv1.DeploymentStage, 0, 4)
 	if includeInitializationStage(service, build) {
 		stages = append(stages, initializationStage(service))
@@ -138,7 +138,7 @@ func deployStage(service serviceRecord, build *buildRunRecord, alloc allocationR
 		return stage
 	}
 	switch alloc.Phase {
-	case "Failed", "Unhealthy":
+	case "Error", "Failed", "Unhealthy":
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = firstNonEmpty(alloc.Message, "Deploy failed")
 	default:
@@ -166,22 +166,20 @@ func postDeployStage(service serviceRecord, build *buildRunRecord, alloc allocat
 	}
 	if alloc.Healthy {
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SUCCEEDED
-		stage.Detail = "Health checks passing"
+		stage.Detail = firstNonEmpty(alloc.Message, "Deployment ready")
 		stage.StartedAt = ts(alloc.UpdatedAt)
 		stage.FinishedAt = ts(alloc.UpdatedAt)
 		return stage
 	}
-	// When the rollout is applied but health checks have not reported a
-	// green yet we stay in running. If the phase explicitly says Failed we
-	// surface the failure here too so the user sees "crash looping" style
-	// errors without drilling into the deploy stage again.
+	// An explicit HTTP check gates readiness during rollout. Once it passes,
+	// the agent latches the result and does not continuously monitor it.
 	switch alloc.Phase {
-	case "Failed", "Unhealthy":
+	case "Error", "Failed", "Unhealthy":
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = firstNonEmpty(alloc.Message, "Workload unhealthy")
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING
-		stage.Detail = "Waiting for health checks"
+		stage.Detail = "Waiting for HTTP readiness check"
 	}
 	stage.StartedAt = ts(alloc.UpdatedAt)
 	return stage

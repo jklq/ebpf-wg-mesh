@@ -11,24 +11,77 @@ import type {
 	UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 
-export const loadHome = createServerFn({ method: "GET" }).handler(async () => {
-	const svc = await import("#/lib/dashboard/server");
-	const state = await svc.loadDashboardHome();
-	if (!state) {
-		throw redirect({
-			to: "/login",
-			search: { redirect: undefined, error: undefined },
-		});
-	}
-	return state;
-});
-
-export const fetchServiceStatus = createServerFn({ method: "POST" })
+export const loadHome = createServerFn({ method: "GET" })
 	.inputValidator(
-		(input: unknown) => input as { projectId: string; serviceId: string },
+		(input: unknown) => input as { environmentId?: string } | undefined,
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
+		const state = await svc.loadDashboardHome(data?.environmentId);
+		if (!state) {
+			throw redirect({
+				to: "/login",
+				search: { redirect: undefined, error: undefined },
+			});
+		}
+		return state;
+	});
+
+export const doCreateEnvironment = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) => input as { projectId: string; name: string },
+	)
+	.handler(async ({ data }) =>
+		(await import("#/lib/dashboard/entry.server")).createEnvironmentFromSession(
+			data,
+		),
+	);
+
+export const doDuplicateEnvironment = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				sourceEnvironmentId: string;
+				name: string;
+				copyVariables: boolean;
+			},
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/entry.server")
+		).duplicateEnvironmentFromSession(data),
+	);
+
+export const doRenameEnvironment = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) => input as { environmentId: string; name: string },
+	)
+	.handler(async ({ data }) =>
+		(await import("#/lib/dashboard/entry.server")).renameEnvironmentFromSession(
+			data,
+		),
+	);
+
+export const doDeleteEnvironment = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { environmentId: string })
+	.handler(async ({ data }) =>
+		(await import("#/lib/dashboard/entry.server")).deleteEnvironmentFromSession(
+			data.environmentId,
+		),
+	);
+
+export const doDeployEnvironment = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { environmentId: string })
+	.handler(async ({ data }) =>
+		(await import("#/lib/dashboard/entry.server")).deployEnvironmentFromSession(
+			data.environmentId,
+		),
+	);
+
+export const fetchServiceStatus = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { serviceId: string })
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.getServiceStatusFromSession(data);
 	});
 
@@ -37,23 +90,24 @@ export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
 		githubAccount?: DashboardGitHubAccount;
 		repositories: Array<GitHubUserRepository>;
 	}> => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.loadGitHubCatalogFromSession();
 	},
 );
 
 export const fetchRepositoryInspection = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => input as { repositorySelector: string })
-	.handler(async ({ data }): Promise<DashboardRepositoryInspection | undefined> => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.inspectRepositorySourceFromSession(data);
-	});
+	.handler(
+		async ({ data }): Promise<DashboardRepositoryInspection | undefined> => {
+			const svc = await import("#/lib/dashboard/entry.server");
+			return svc.inspectRepositorySourceFromSession(data);
+		},
+	);
 
 export const fetchServiceLogs = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
 			input as {
-				projectId: string;
 				serviceId: string;
 				allocationId?: string;
 				limit?: number;
@@ -65,7 +119,7 @@ export const fetchServiceLogs = createServerFn({ method: "POST" })
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.listServiceLogsFromSession(data);
 	});
 
@@ -73,38 +127,33 @@ export const fetchServiceDeployments = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
 			input as {
-				projectId: string;
 				serviceId: string;
 				limit?: number;
 			},
 	)
 	.handler(async ({ data }): Promise<Array<DashboardDeploymentRecord>> => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.listServiceDeploymentsFromSession(data);
 	});
 
 export const fetchDomainBindings = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) => input as { projectId: string; serviceId: string },
-	)
+	.inputValidator((input: unknown) => input as { serviceId: string })
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.listDomainBindingsFromSession(data);
 	});
 
 export const doUpdateService = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => input as UpdateServiceInput)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.updateServiceFromSession(data);
 	});
 
 export const doRedeployService = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) => input as { projectId: string; serviceId: string },
-	)
+	.inputValidator((input: unknown) => input as { serviceId: string })
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.redeployServiceFromSession(data);
 	});
 
@@ -112,14 +161,13 @@ export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
 			input as {
-				projectId: string;
 				serviceId: string;
 				changeIds?: Array<string>;
 				discardAll?: boolean;
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.discardServiceChangesFromSession(data);
 	});
 
@@ -127,13 +175,13 @@ export const doSaveServicePosition = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
 			input as {
-				projectId: string;
+				environmentId: string;
 				serviceId: string;
 				position: DashboardServicePosition;
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.saveServicePositionFromSession(data);
 	});
 
@@ -141,63 +189,61 @@ export const doCreateDomainBinding = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
 			input as {
-				projectId: string;
 				serviceId: string;
 				hostname: string;
 				targetPort: string | number | undefined;
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.createDomainBindingFromSession(data);
 	});
 
-export const doRequestDomainOwnershipChallenge = createServerFn({
-	method: "POST",
-})
+export const doGenerateDomainBinding = createServerFn({ method: "POST" })
 	.inputValidator(
-		(input: unknown) => input as { projectId: string; hostname: string },
+		(input: unknown) =>
+			input as {
+				serviceId: string;
+				targetPort: string | number | undefined;
+			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.requestDomainOwnershipChallengeFromSession(data);
+		const svc = await import("#/lib/dashboard/entry.server");
+		return svc.generateDomainBindingFromSession(data);
 	});
 
 export const doUpdateDomainBinding = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>
 			input as {
-				projectId: string;
 				serviceId: string;
 				hostname: string;
 				targetPort: string | number | undefined;
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.updateDomainBindingFromSession(data);
 	});
 
 export const doDeleteDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) => input as { projectId: string; hostname: string },
-	)
+	.inputValidator((input: unknown) => input as { hostname: string })
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.deleteDomainBindingFromSession(data);
 	});
 
 export const doCheckDNS = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => input as { hostname: string })
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.checkDomainDNSFromSession(data.hostname);
 	});
 
 export const doInspectRepository = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => input as { repositorySelector: string })
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		await svc.inspectRepositoryFromSession(data);
 		const state = await svc.loadDashboardHome();
 		if (!state) {
@@ -218,10 +264,12 @@ export const doConfirmRepository = createServerFn({ method: "POST" })
 				trackedRef?: string;
 				dockerfilePath?: string;
 				contextDir?: string;
+				cpuMillis?: number;
+				memoryMebibytes?: number;
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		await svc.confirmRepositoryFromSession(data);
 		const state = await svc.loadDashboardHome();
 		if (!state) {
@@ -242,9 +290,11 @@ export const doCreateServiceFast = createServerFn({ method: "POST" })
 				trackedRef?: string;
 				dockerfilePath?: string;
 				contextDir?: string;
+				cpuMillis?: number;
+				memoryMebibytes?: number;
 			},
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
+		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.createServiceFastFromSession(data);
 	});

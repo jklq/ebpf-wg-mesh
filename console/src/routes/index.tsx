@@ -6,10 +6,7 @@ import {
 	DashboardCanvasSkeleton,
 	DashboardPage,
 } from "./-dashboard/dashboard-page";
-import { NewServiceModal } from "./-dashboard/new-service-modal";
 import { loadHome } from "./-dashboard/server-fns";
-
-export { NewServiceModal };
 
 export async function loadHomeRouteState(service: {
 	loadDashboardHome(): Promise<DashboardHomeState | null>;
@@ -25,7 +22,16 @@ export async function loadHomeRouteState(service: {
 }
 
 export const Route = createFileRoute("/")({
-	loader: async () => loadHome(),
+	loader: async () => {
+		const state = await loadHome();
+		if (state.environment) {
+			throw redirect({
+				to: "/environments/$environmentId",
+				params: { environmentId: state.environment.id },
+			});
+		}
+		return state;
+	},
 	pendingComponent: DashboardPendingRoute,
 	component: DashboardRoute,
 });

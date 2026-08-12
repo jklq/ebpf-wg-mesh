@@ -1,19 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 // Keep under Bun.serve's default 10s idleTimeout so quiet SSE streams stay open.
-const STATUS_HEARTBEAT_INTERVAL_MS = 5_000;
-const STATUS_WAIT_TIMEOUT_SECONDS = 300;
-const STATUS_RETRY_DELAY_MS = 1_000;
+const SERVICES_HEARTBEAT_INTERVAL_MS = 5_000;
+const SERVICES_WAIT_TIMEOUT_SECONDS = 300;
+const SERVICES_RETRY_DELAY_MS = 1_000;
 
-export const Route = createFileRoute("/events/service-status")({
+export const Route = createFileRoute("/events/environment-services")({
 	server: {
 		handlers: {
 			GET: async ({ request }: { request: Request }) => {
 				const url = new URL(request.url);
-				const serviceId = url.searchParams.get("serviceId")?.trim() ?? "";
+				const environmentId =
+					url.searchParams.get("environmentId")?.trim() ?? "";
 
-				if (!serviceId) {
-					return new Response("missing serviceId", {
+				if (!environmentId) {
+					return new Response("missing environmentId", {
 						status: 400,
 					});
 				}
@@ -21,12 +22,12 @@ export const Route = createFileRoute("/events/service-status")({
 				try {
 					const svc = await import("#/lib/dashboard/entry.server");
 					return new Response(
-						createServiceStatusEventStream({
-							loadStatus: (waitIndex) =>
-								svc.waitForServiceStatusFromSession({
-									serviceId,
+						createEnvironmentServicesEventStream({
+							loadServices: (waitIndex) =>
+								svc.waitForEnvironmentServicesFromSession({
+									environmentId,
 									waitIndex,
-									waitTimeoutSeconds: STATUS_WAIT_TIMEOUT_SECONDS,
+									waitTimeoutSeconds: SERVICES_WAIT_TIMEOUT_SECONDS,
 								}),
 							signal: request.signal,
 						}),
@@ -45,21 +46,21 @@ export const Route = createFileRoute("/events/service-status")({
 			},
 		},
 	},
-	component: ServiceStatusEventPage,
+	component: EnvironmentServicesEventPage,
 });
 
-function ServiceStatusEventPage() {
+function EnvironmentServicesEventPage() {
 	return null;
 }
 
-function createServiceStatusEventStream({
-	loadStatus,
+function createEnvironmentServicesEventStream({
+	loadServices,
 	signal,
 }: {
-	loadStatus: (waitIndex: number) => Promise<{
+	loadServices: (waitIndex: number) => Promise<{
 		index: number;
 		notModified: boolean;
-		status?: unknown;
+		services?: unknown;
 	}>;
 	signal: AbortSignal;
 }): ReadableStream<Uint8Array> {
@@ -107,7 +108,7 @@ function createServiceStatusEventStream({
 				clearTimer();
 				timer = setTimeout(() => {
 					void publish();
-				}, STATUS_RETRY_DELAY_MS);
+				}, SERVICES_RETRY_DELAY_MS);
 			};
 
 			const publish = async () => {
@@ -116,17 +117,17 @@ function createServiceStatusEventStream({
 					return;
 				}
 				try {
-					const result = await loadStatus(lastIndex);
+					const result = await loadServices(lastIndex);
 					lastIndex = result.index;
-					if (!result.notModified && result.status !== undefined) {
+					if (!result.notModified && result.services !== undefined) {
 						enqueue(
-							`id: ${result.index}\nevent: status\ndata: ${JSON.stringify(result.status)}\n\n`,
+							`id: ${result.index}\nevent: services\ndata: ${JSON.stringify(result.services)}\n\n`,
 						);
 					}
 					if (!closed) void publish();
 				} catch (error) {
 					enqueue(
-						`event: status-error\ndata: ${JSON.stringify({
+						`event: services-error\ndata: ${JSON.stringify({
 							message: error instanceof Error ? error.message : "stream failed",
 						})}\n\n`,
 					);
@@ -135,10 +136,10 @@ function createServiceStatusEventStream({
 			};
 
 			signal.addEventListener("abort", close, { once: true });
-			enqueue(`retry: ${STATUS_RETRY_DELAY_MS}\n\n`);
+			enqueue(`retry: ${SERVICES_RETRY_DELAY_MS}\n\n`);
 			heartbeat = setInterval(() => {
 				enqueue("event: ping\ndata: {}\n\n");
-			}, STATUS_HEARTBEAT_INTERVAL_MS);
+			}, SERVICES_HEARTBEAT_INTERVAL_MS);
 			void publish();
 		},
 		cancel() {

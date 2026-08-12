@@ -173,8 +173,7 @@ export function ServiceNode({
 						</span>
 						{unappliedCount > 0 && (
 							<span className="badge edited">
-								{unappliedCount}{" "}
-								{unappliedCount === 1 ? "change" : "changes"}
+								{unappliedCount} {unappliedCount === 1 ? "change" : "changes"}
 							</span>
 						)}
 					</div>

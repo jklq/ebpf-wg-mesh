@@ -3,6 +3,7 @@ import {
 	Layers,
 	LogOut,
 	RefreshCw,
+	Settings,
 	Zap,
 } from "lucide-react";
 
@@ -15,11 +16,13 @@ export function Topbar({
 	onNewService,
 	onPreloadNewService,
 	onRefresh,
+	onManageEnvironments,
 }: {
 	state: DashboardHomeState;
 	onNewService: () => void;
 	onPreloadNewService?: () => void;
 	onRefresh: () => void;
+	onManageEnvironments: () => void;
 }) {
 	return (
 		<div className="topbar">
@@ -68,6 +71,45 @@ export function Topbar({
 					<Layers size={11} />
 					{state.project.name}
 				</div>
+			)}
+			{state.environment && (
+				<>
+					<select
+						aria-label="Environment"
+						value={state.environment.id}
+						onChange={(event) =>
+							window.location.assign(
+								`/environments/${encodeURIComponent(event.target.value)}`,
+							)
+						}
+					>
+						{state.environments.map((environment) => (
+							<option key={environment.id} value={environment.id}>
+								{environment.name}
+								{environment.isProduction ? " · Production" : ""}
+							</option>
+						))}
+					</select>
+					{state.environment.isProduction && (
+						<span
+							style={{
+								fontSize: 10,
+								color: "var(--accent)",
+								textTransform: "uppercase",
+							}}
+						>
+							Production
+						</span>
+					)}
+					<button
+						type="button"
+						className="btn-ghost"
+						title="Manage environments"
+						onClick={onManageEnvironments}
+					>
+						<Settings size={12} />
+					</button>
+				</>
 			)}
 
 			{state.services.length > 0 && (

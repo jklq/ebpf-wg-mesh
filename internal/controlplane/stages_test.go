@@ -8,7 +8,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func TestProjectDeploymentStagesOmitsInitializationForBuildDrivenSourceDeployments(t *testing.T) {
+func TestDeploymentStagesOmitsInitializationForBuildDrivenSourceDeployments(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
@@ -33,7 +33,7 @@ func TestProjectDeploymentStagesOmitsInitializationForBuildDrivenSourceDeploymen
 		UpdatedAt:                now,
 	}
 
-	stages := projectDeploymentStages(service, build, alloc)
+	stages := deploymentStages(service, build, alloc)
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
 	}
@@ -53,7 +53,7 @@ func TestProjectDeploymentStagesOmitsInitializationForBuildDrivenSourceDeploymen
 	}
 }
 
-func TestProjectDeploymentStagesKeepsInitializationForDirectImageDeployments(t *testing.T) {
+func TestDeploymentStagesKeepsInitializationForDirectImageDeployments(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
@@ -71,7 +71,7 @@ func TestProjectDeploymentStagesKeepsInitializationForDirectImageDeployments(t *
 		UpdatedAt:                now,
 	}
 
-	stages := projectDeploymentStages(service, nil, alloc)
+	stages := deploymentStages(service, nil, alloc)
 	if len(stages) != 4 {
 		t.Fatalf("expected 4 stages, got %d", len(stages))
 	}
@@ -80,7 +80,7 @@ func TestProjectDeploymentStagesKeepsInitializationForDirectImageDeployments(t *
 	}
 }
 
-func TestProjectDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testing.T) {
+func TestDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
@@ -107,7 +107,7 @@ func TestProjectDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testi
 		UpdatedAt:                now,
 	}
 
-	stages := projectDeploymentStages(service, build, alloc)
+	stages := deploymentStages(service, build, alloc)
 	deploy := stages[1]
 	if deploy.GetKey() != StageDeploy {
 		t.Fatalf("expected second stage to be deploy, got %q", deploy.GetKey())
@@ -121,5 +121,30 @@ func TestProjectDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testi
 	}
 	if postDeploy.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING {
 		t.Fatalf("expected post-deploy to wait for health checks, got %v", postDeploy.GetState())
+	}
+}
+
+func TestDeploymentStagesSurfacesFailedHealthProbe(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	stages := deploymentStages(serviceRecord{
+		AllocatedAgentID: "node-1",
+		CreatedAt:        now,
+		Spec:             directImageServiceSpec("nginx:1.27", nil),
+	}, nil, allocationRecord{
+		ID:                       "alloc-1",
+		AgentID:                  "node-1",
+		DesiredRolloutGeneration: 1,
+		AppliedRolloutGeneration: 1,
+		Phase:                    "Unhealthy",
+		Message:                  "health probe failed: HTTP port 8080: status 503",
+		UpdatedAt:                now,
+	})
+	if got := stages[2]; got.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED || got.GetDetail() != "health probe failed: HTTP port 8080: status 503" {
+		t.Fatalf("deploy stage did not surface probe failure: %+v", got)
+	}
+	if got := stages[3]; got.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED || got.GetDetail() != "health probe failed: HTTP port 8080: status 503" {
+		t.Fatalf("post-deploy stage did not surface probe failure: %+v", got)
 	}
 }

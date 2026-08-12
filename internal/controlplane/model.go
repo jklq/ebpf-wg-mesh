@@ -14,32 +14,41 @@ const (
 	projectKindManaged projectKind = "managed"
 )
 
-type principalRecord struct {
-	Subject   string
-	Email     string
+type projectRecord struct {
+	ID        string
+	Name      string
+	Kind      projectKind
+	SystemKey string
 	CreatedAt time.Time
 }
 
-type projectRecord struct {
-	ID              string
-	Name            string
-	Kind            projectKind
-	SystemKey       string
-	NetworkIdentity uint32
-	CreatedAt       time.Time
+type environmentKind string
+
+const environmentKindPersistent environmentKind = "persistent"
+
+type environmentRecord struct {
+	ID                      string
+	ProjectID               string
+	Name                    string
+	Kind                    environmentKind
+	IsProduction            bool
+	NetworkIdentity         uint32
+	CopiedFromEnvironmentID string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 type volumeRecord struct {
-	ID           string
-	ProjectID    string
-	Name         string
-	SizeBytes    int64
-	BoundAgentID string
-	CreatedAt    time.Time
+	ID            string
+	EnvironmentID string
+	Name          string
+	SizeBytes     int64
+	CreatedAt     time.Time
 }
 
 type serviceRecord struct {
 	ID                      string
+	EnvironmentID           string
 	ProjectID               string
 	Name                    string
 	Spec                    *platformv1.ServiceSpec
@@ -58,20 +67,14 @@ type serviceRecord struct {
 }
 
 type domainBindingRecord struct {
-	Hostname   string
-	ProjectID  string
-	ServiceID  string
-	TargetPort int32
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
-type domainOwnershipChallengeRecord struct {
-	Hostname    string
-	ProjectID   string
-	RecordName  string
-	RecordValue string
-	ExpiresAt   time.Time
+	Hostname          string
+	ProjectID         string
+	EnvironmentID     string
+	ServiceID         string
+	TargetPort        int32
+	PlatformGenerated bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type agentRecord struct {
@@ -87,14 +90,17 @@ type agentRecord struct {
 	LastSeenAt             time.Time
 }
 
+const agentHealthyTTL = 30 * time.Second
+
 func (a agentRecord) healthy(now time.Time) bool {
-	return now.Sub(a.LastSeenAt) < 30*time.Second
+	return now.Sub(a.LastSeenAt) < agentHealthyTTL
 }
 
 type allocationRecord struct {
 	ID                       string
 	ServiceID                string
 	ProjectID                string
+	EnvironmentID            string
 	AgentID                  string
 	DesiredSpecRevision      int64
 	AppliedSpecRevision      int64
@@ -112,6 +118,7 @@ type buildRunRecord struct {
 	ID                      string
 	ServiceID               string
 	ProjectID               string
+	EnvironmentID           string
 	CommitSHA               string
 	CommitMessage           string
 	CommitAuthor            string
@@ -211,6 +218,7 @@ type sourceBindingRecord struct {
 	ID                           string
 	ServiceID                    string
 	ProjectID                    string
+	EnvironmentID                string
 	Provider                     string
 	RepositorySelector           string
 	TrackedRef                   string
@@ -245,7 +253,10 @@ type sourceSnapshotRecord struct {
 	ProviderRepositoryExternalID string
 	CommitSHA                    string
 	Digest                       string
+	ObjectKey                    string
+	ArchiveSizeBytes             int64
 	ArchiveTGZ                   []byte
+	ArchiveSize                  int64
 	Ready                        bool
 	FetchedAt                    sql.NullTime
 	CreatedAt                    time.Time
@@ -275,25 +286,23 @@ type sourceWorkItemRecord struct {
 }
 
 type serviceRolloutRecord struct {
-	ServiceID          string
-	RolloutGeneration  int64
-	SpecRevision       int64
-	Reason             string
-	BuildID            string
-	RequestedBySubject string
-	RequestedByEmail   string
-	CreatedAt          time.Time
+	ServiceID         string
+	RolloutGeneration int64
+	SpecRevision      int64
+	Reason            string
+	BuildID           string
+	RequestedByUserID string
+	CreatedAt         time.Time
 }
 
 type deploymentRecord struct {
-	ID                 string
-	ServiceID          string
-	RolloutGeneration  int64
-	SpecRevision       int64
-	Reason             string
-	CreatedAt          time.Time
-	Build              *buildRunRecord
-	IsCurrent          bool
-	RequestedBySubject string
-	RequestedByEmail   string
+	ID                string
+	ServiceID         string
+	RolloutGeneration int64
+	SpecRevision      int64
+	Reason            string
+	CreatedAt         time.Time
+	Build             *buildRunRecord
+	IsCurrent         bool
+	RequestedByUserID string
 }

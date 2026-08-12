@@ -1,7 +1,7 @@
 import type {
 	DashboardDeploymentRecord,
 	DashboardDomainBinding,
-	DashboardDomainOwnershipChallenge,
+	DashboardEnvironment,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardServiceLogLine,
@@ -14,53 +14,55 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 
 export interface FakePlatformGateway extends PlatformGateway {
-	ensurePrincipalCalls: Array<DashboardUser>;
 	listProjectsCalls: Array<DashboardUser>;
 	createProjectCalls: Array<{ user: DashboardUser; name: string }>;
-	listServicesCalls: Array<{ user: DashboardUser; projectId: string }>;
+	listEnvironmentsCalls: Array<{ user: DashboardUser; projectId: string }>;
+	listServicesCalls: Array<{ user: DashboardUser; environmentId: string }>;
 	inspectRepositorySourceCalls: Array<{
 		user: DashboardUser;
+		projectId: string;
 		provider: string;
 		repositorySelector: string;
+		githubUserAccessToken: string;
+	}>;
+	linkGitHubRepositoryCalls: Array<{
+		user: DashboardUser;
+		projectId: string;
+		repositorySelector: string;
+		githubUserAccessToken: string;
 	}>;
 	createServiceCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
+		environmentId: string;
 		name: string;
 		spec: DashboardServiceSpec;
 	}>;
 	updateServiceCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 		name?: string;
 		spec: DashboardServiceSpec;
 	}>;
 	redeployServiceCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 	}>;
 	discardServiceChangesCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 		changeIds?: Array<string>;
 		discardAll?: boolean;
 	}>;
 	getServiceCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 	}>;
 	getServiceStatusCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 	}>;
 	listServiceLogsCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 		allocationId?: string;
 		limit?: number;
@@ -72,23 +74,21 @@ export interface FakePlatformGateway extends PlatformGateway {
 	}>;
 	listServiceDeploymentsCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 		limit?: number;
 	}>;
 	listDomainBindingsCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 	}>;
 	createDomainBindingCalls: Array<{
 		user: DashboardUser;
-		projectId: string;
 		serviceId: string;
 		hostname: string;
 		targetPort: number;
 	}>;
 	projects: Array<DashboardProject>;
+	environments: Array<DashboardEnvironment>;
 	services: Array<DashboardServiceRecord>;
 	serviceStatuses: Map<string, DashboardServiceStatus>;
 	serviceLogs: Array<DashboardServiceLogLine>;
@@ -96,7 +96,6 @@ export interface FakePlatformGateway extends PlatformGateway {
 	domainBindings: Array<DashboardDomainBinding>;
 	nextRepositoryInspection?: DashboardRepositoryInspection;
 	errors: {
-		ensurePrincipal?: Error;
 		listProjects?: Error;
 		createProject?: Error;
 		listServices?: Error;
@@ -116,11 +115,12 @@ export interface FakePlatformGateway extends PlatformGateway {
 
 export function createFakePlatformGateway(): FakePlatformGateway {
 	const platform: FakePlatformGateway = {
-		ensurePrincipalCalls: [],
 		listProjectsCalls: [],
 		createProjectCalls: [],
+		listEnvironmentsCalls: [],
 		listServicesCalls: [],
 		inspectRepositorySourceCalls: [],
+		linkGitHubRepositoryCalls: [],
 		createServiceCalls: [],
 		updateServiceCalls: [],
 		redeployServiceCalls: [],
@@ -132,6 +132,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		listDomainBindingsCalls: [],
 		createDomainBindingCalls: [],
 		projects: [],
+		environments: [],
 		services: [],
 		serviceStatuses: new Map<string, DashboardServiceStatus>(),
 		serviceLogs: [],
@@ -139,12 +140,6 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		domainBindings: [],
 		nextRepositoryInspection: undefined,
 		errors: {},
-		async ensurePrincipal(user): Promise<void> {
-			platform.ensurePrincipalCalls.push(user);
-			if (platform.errors.ensurePrincipal) {
-				throw platform.errors.ensurePrincipal;
-			}
-		},
 		async listProjects(user): Promise<Array<DashboardProject>> {
 			platform.listProjectsCalls.push(user);
 			if (platform.errors.listProjects) {
@@ -163,25 +158,142 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				kind: "user",
 			};
 			platform.projects = [...platform.projects, project];
+			platform.environments = [
+				...platform.environments,
+				{
+					id: `environment-${platform.createProjectCalls.length}`,
+					projectId: project.id,
+					name: "Production",
+					kind: "persistent",
+					isProduction: true,
+				},
+			];
 			return project;
+		},
+		async listEnvironments(user, projectId) {
+			platform.listEnvironmentsCalls.push({ user, projectId });
+			let environments = platform.environments.filter(
+				(entry) => entry.projectId === projectId,
+			);
+			if (
+				environments.length === 0 &&
+				platform.projects.some((entry) => entry.id === projectId)
+			) {
+				const production: DashboardEnvironment = {
+					id: `environment-${projectId}`,
+					projectId,
+					name: "Production",
+					kind: "persistent",
+					isProduction: true,
+				};
+				platform.environments.push(production);
+				environments = [production];
+			}
+			return environments;
+		},
+		async getEnvironment(_, environmentId) {
+			const environment = platform.environments.find(
+				(entry) => entry.id === environmentId,
+			);
+			if (!environment) throw new Error("environment not found");
+			return environment;
+		},
+		async createEnvironment(_, input) {
+			const environment: DashboardEnvironment = {
+				id: `environment-${platform.environments.length + 1}`,
+				projectId: input.projectId,
+				name: input.name,
+				kind: "persistent",
+				isProduction: false,
+			};
+			platform.environments.push(environment);
+			return environment;
+		},
+		async duplicateEnvironment(_, input) {
+			const source = platform.environments.find(
+				(entry) => entry.id === input.sourceEnvironmentId,
+			);
+			if (!source) throw new Error("environment not found");
+			const environment: DashboardEnvironment = {
+				...source,
+				id: `environment-${platform.environments.length + 1}`,
+				name: input.name,
+				isProduction: false,
+				copiedFromEnvironmentId: source.id,
+			};
+			platform.environments.push(environment);
+			return environment;
+		},
+		async renameEnvironment(_, input) {
+			const environment = platform.environments.find(
+				(entry) => entry.id === input.environmentId,
+			);
+			if (!environment) throw new Error("environment not found");
+			environment.name = input.name;
+			return environment;
+		},
+		async deleteEnvironment(_, environmentId) {
+			platform.environments = platform.environments.filter(
+				(entry) => entry.id !== environmentId || entry.isProduction,
+			);
+			platform.services = platform.services.filter(
+				(entry) => entry.environmentId !== environmentId,
+			);
+		},
+		async deployEnvironment(_, environmentId) {
+			const services = platform.services.filter(
+				(entry) => entry.environmentId === environmentId,
+			);
+			return services.map((service) => ({
+				service: { ...service, pendingChanges: false },
+			}));
 		},
 		async listServices(
 			user,
-			projectId,
+			environmentId,
 		): Promise<Array<DashboardServiceRecord>> {
-			platform.listServicesCalls.push({ user, projectId });
+			platform.listServicesCalls.push({ user, environmentId });
 			if (platform.errors.listServices) {
 				throw platform.errors.listServices;
 			}
 			return platform.services.filter(
-				(service) => service.projectId === projectId,
+				(service) => service.environmentId === environmentId,
 			);
+		},
+		async waitForServices(user, input) {
+			const services = await platform.listServices(user, input.environmentId);
+			return {
+				index: input.waitIndex + 1,
+				notModified: false,
+				services,
+			};
 		},
 		async inspectRepositorySource(
 			user,
 			input,
 		): Promise<DashboardRepositoryInspection> {
 			platform.inspectRepositorySourceCalls.push({ user, ...input });
+			if (platform.errors.inspectRepositorySource) {
+				throw platform.errors.inspectRepositorySource;
+			}
+			return (
+				platform.nextRepositoryInspection ?? {
+					accessState: "available",
+					defaultBranch: "main",
+					dockerfileCandidates: ["Dockerfile"],
+					recommendedBuildRecipe: {
+						dockerfilePath: "Dockerfile",
+						contextDir: ".",
+					},
+					recommendedPorts: [],
+				}
+			);
+		},
+		async linkGitHubRepository(
+			user,
+			input,
+		): Promise<DashboardRepositoryInspection> {
+			platform.linkGitHubRepositoryCalls.push({ user, ...input });
 			if (platform.errors.inspectRepositorySource) {
 				throw platform.errors.inspectRepositorySource;
 			}
@@ -205,7 +317,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			const serviceRecord: DashboardServiceRecord = {
 				id: `service-${platform.services.length + 1}`,
-				projectId: input.projectId,
+				environmentId: input.environmentId,
 				name: input.name,
 				spec: input.spec,
 				sourceSummary: {
@@ -253,9 +365,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.updateService;
 			}
 			const current = platform.services.find(
-				(service) =>
-					service.projectId === input.projectId &&
-					service.id === input.serviceId,
+				(service) => service.id === input.serviceId,
 			);
 			if (!current) {
 				throw new Error("service not found");
@@ -292,9 +402,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.redeployService;
 			}
 			const current = platform.services.find(
-				(service) =>
-					service.projectId === input.projectId &&
-					service.id === input.serviceId,
+				(service) => service.id === input.serviceId,
 			);
 			if (!current) {
 				throw new Error("service not found");
@@ -313,9 +421,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.discardServiceChanges;
 			}
 			const current = platform.services.find(
-				(service) =>
-					service.projectId === input.projectId &&
-					service.id === input.serviceId,
+				(service) => service.id === input.serviceId,
 			);
 			if (!current) {
 				throw new Error("service not found");
@@ -342,8 +448,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.getService;
 			}
 			const service = platform.services.find(
-				(entry) =>
-					entry.projectId === input.projectId && entry.id === input.serviceId,
+				(entry) => entry.id === input.serviceId,
 			);
 			if (!service) {
 				throw new Error("service not found");
@@ -360,6 +465,13 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw new Error("service status not found");
 			}
 			return status;
+		},
+		async waitForServiceStatus(user, input) {
+			return {
+				index: input.waitIndex + 1,
+				notModified: false,
+				status: await platform.getServiceStatus(user, input),
+			};
 		},
 		async listServiceLogs(
 			user,
@@ -397,20 +509,24 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.listDomainBindings;
 			}
 			return platform.domainBindings.filter(
-				(binding) =>
-					binding.projectId === input.projectId &&
-					binding.serviceId === input.serviceId,
+				(binding) => binding.serviceId === input.serviceId,
 			);
 		},
-		async requestDomainOwnershipChallenge(
-			_,
-			input,
-		): Promise<DashboardDomainOwnershipChallenge> {
-			return {
-				hostname: input.hostname,
-				recordName: `_mesh-challenge.${input.hostname}.`,
-				recordValue: "ebpf-wg-mesh-domain-verification=test-token",
+		async generateDomainBinding(_, input): Promise<DashboardDomainBinding> {
+			const binding: DashboardDomainBinding = {
+				hostname: `violet-test.platform.example`,
+				serviceId: input.serviceId,
+				targetPort: input.targetPort,
+				platformGenerated: true,
 			};
+			platform.domainBindings = [
+				...platform.domainBindings.filter(
+					(item) =>
+						!item.platformGenerated || item.serviceId !== input.serviceId,
+				),
+				binding,
+			];
+			return binding;
 		},
 		async createDomainBinding(user, input): Promise<DashboardDomainBinding> {
 			platform.createDomainBindingCalls.push({ user, ...input });
@@ -419,9 +535,9 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			const binding: DashboardDomainBinding = {
 				hostname: input.hostname,
-				projectId: input.projectId,
 				serviceId: input.serviceId,
 				targetPort: input.targetPort,
+				platformGenerated: false,
 			};
 			platform.domainBindings = [
 				...platform.domainBindings.filter(
@@ -433,7 +549,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		},
 		async updateDomainBinding(_, input): Promise<DashboardDomainBinding> {
 			const existing = platform.domainBindings.find(
-				(b) => b.hostname === input.hostname && b.projectId === input.projectId,
+				(b) => b.hostname === input.hostname,
 			);
 			if (!existing) {
 				throw new Error("domain binding not found");
@@ -450,8 +566,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		},
 		async deleteDomainBinding(_, input): Promise<void> {
 			platform.domainBindings = platform.domainBindings.filter(
-				(b) =>
-					!(b.hostname === input.hostname && b.projectId === input.projectId),
+				(b) => b.hostname !== input.hostname,
 			);
 		},
 	};
