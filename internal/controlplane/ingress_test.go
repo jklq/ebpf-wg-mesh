@@ -26,7 +26,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedIP, err := privateIPv6(agent.WorkloadIPv6Subnet, service.ProjectID, service.ID)
+	expectedIP, err := privateIPv6(agent.WorkloadIPv6Subnet, service.EnvironmentID, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	serviceA, err := store.createService(ctx, "user-1", projects[0].ID, "web-a", serviceSpec(), "node-1")
+	serviceA, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-a", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 
 	<-transport.firstStarted
 
-	serviceB, err := store.createService(ctx, "user-1", projects[0].ID, "web-b", serviceSpec(), "node-1")
+	serviceB, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-b", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", serviceSpec(), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
