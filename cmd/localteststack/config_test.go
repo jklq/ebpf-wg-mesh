@@ -21,18 +21,45 @@ func TestLoadLocalStackConfigDefaults(t *testing.T) {
 	if cfg.LocalDomainSuffix != defaultLocalDomainSuffix {
 		t.Fatalf("unexpected local domain suffix %q", cfg.LocalDomainSuffix)
 	}
+	if cfg.ConsoleBindAddress != "127.0.0.1" {
+		t.Fatalf("unexpected console bind address %q", cfg.ConsoleBindAddress)
+	}
+	if cfg.EnablePublicTunnel {
+		t.Fatal("public tunnel must be opt-in")
+	}
 }
 
-func TestLoadLocalStackConfigRejectsRemovedRuntimeOverride(t *testing.T) {
+func TestLoadLocalStackConfigRequiresExplicitValidConsoleBind(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := loadLocalStackConfig(func(key string) string {
+		switch key {
+		case "LOCALTESTSTACK_CONSOLE_BIND_ADDRESS":
+			return "0.0.0.0"
+		case "LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL":
+			return "1"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("loadLocalStackConfig: %v", err)
+	}
+	if cfg.ConsoleBindAddress != "0.0.0.0" || !cfg.EnablePublicTunnel {
+		t.Fatalf("unexpected explicit config: %+v", cfg)
+	}
+}
+
+func TestLoadLocalStackConfigRejectsPublicTunnelWithLoopbackConsole(t *testing.T) {
 	t.Parallel()
 
 	_, err := loadLocalStackConfig(func(key string) string {
-		if key == "LOCALTESTSTACK_RUNTIME" {
-			return "synthetic"
+		if key == "LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL" {
+			return "true"
 		}
 		return ""
 	})
 	if err == nil {
-		t.Fatal("expected removed runtime override to fail")
+		t.Fatal("expected public tunnel with loopback console to be rejected")
 	}
 }

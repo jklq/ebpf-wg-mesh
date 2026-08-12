@@ -2,12 +2,12 @@ import { createDashboardService } from "#/lib/dashboard/core/service.server";
 import {
 	AuthConflictError,
 	type DashboardConfig,
-	type DashboardGitHubAccount,
 	type DashboardOnboardingDraft,
 	type DashboardService,
 	type DashboardStore,
 	type DashboardUser,
 	type SessionCookies,
+	type StoredDashboardGitHubAccount,
 } from "#/lib/dashboard/core/types.server";
 import {
 	createFakeGitHubAppUserClient,
@@ -30,11 +30,14 @@ interface FakeGitHubAccount {
 	email: string;
 	login: string;
 	accessToken: string;
+	tokenVersion: number;
 	tokenType: string;
 	scope: string;
 	accessTokenExpiresAt?: Date;
 	refreshToken?: string;
 	refreshTokenExpiresAt?: Date;
+	refreshLeaseID?: string;
+	refreshLeaseExpiresAt?: Date;
 }
 
 export interface DashboardTestHarness {
@@ -46,7 +49,6 @@ export interface DashboardTestHarness {
 	github: FakeGitHubAppUserClient;
 	users: Map<string, DashboardUser>;
 	storeEnsureInitializedCalls: Array<number>;
-	storeEnsureSessionUserCalls: Array<DashboardUser>;
 }
 
 export interface FakeSessionCookies extends SessionCookies {
@@ -62,7 +64,7 @@ export function createDashboardTestHarness(
 		authStateCookieName: "dashboard_auth_state",
 		publicBaseURL: "https://dashboard.example.test",
 		localIngressBaseURL: undefined,
-		devUsers: [{ subject: "user-1", email: "user@example.com" }],
+		devUsers: [{ id: "user-1", email: "user@example.com" }],
 		sessionMaxAgeSeconds: 30 * 24 * 60 * 60,
 		jwtSecret: "dashboard-test-secret",
 		githubInstallURL:
@@ -88,26 +90,21 @@ export function createDashboardTestHarness(
 	let nextSessionID = 1;
 	const now = new Date("2026-03-18T12:00:00Z");
 	const storeEnsureInitializedCalls: Array<number> = [];
-	const storeEnsureSessionUserCalls: Array<DashboardUser> = [];
 
 	const store: DashboardStore = {
 		async ensureInitialized(): Promise<void> {
 			storeEnsureInitializedCalls.push(storeEnsureInitializedCalls.length + 1);
 		},
-		async ensureSessionUser(user): Promise<void> {
-			storeEnsureSessionUserCalls.push(user);
-			users.set(user.subject, user);
-		},
-		async upsertDevUser(subject, email): Promise<DashboardUser> {
-			const existing = users.get(subject);
+		async upsertDevUser(userID, email): Promise<DashboardUser> {
+			const existing = users.get(userID);
 			if (existing) {
 				const updated = { ...existing, email };
-				users.set(subject, updated);
+				users.set(userID, updated);
 				onboardingDrafts.set(updated.id, defaultOnboardingDraft());
 				return updated;
 			}
-			const user = { id: `user-${nextUserID++}`, subject, email };
-			users.set(subject, user);
+			const user = { id: userID, email };
+			users.set(userID, user);
 			onboardingDrafts.set(user.id, defaultOnboardingDraft());
 			return user;
 		},
@@ -115,18 +112,21 @@ export function createDashboardTestHarness(
 			const existing = githubAccounts.get(input.providerSubject);
 			if (existing) {
 				const updatedUser = { ...existing.user, email: input.primaryEmail };
-				users.set(updatedUser.subject, updatedUser);
+				users.set(updatedUser.id, updatedUser);
 				githubAccounts.set(input.providerSubject, {
 					...existing,
 					user: updatedUser,
 					email: input.primaryEmail,
 					login: input.login,
 					accessToken: input.accessToken,
+					tokenVersion: existing.tokenVersion + 1,
 					tokenType: input.tokenType,
 					scope: input.scope,
 					accessTokenExpiresAt: input.accessTokenExpiresAt,
 					refreshToken: input.refreshToken,
 					refreshTokenExpiresAt: input.refreshTokenExpiresAt,
+					refreshLeaseID: undefined,
+					refreshLeaseExpiresAt: undefined,
 				});
 				onboardingDrafts.set(
 					updatedUser.id,
@@ -156,13 +156,15 @@ export function createDashboardTestHarness(
 				});
 			}
 			if (emailMatches.length === 1) {
-				const user = emailMatches[0];
+				const user = { ...emailMatches[0], email: input.primaryEmail };
+				users.set(user.id, user);
 				githubAccounts.set(input.providerSubject, {
 					user,
 					providerSubject: input.providerSubject,
 					email: input.primaryEmail,
 					login: input.login,
 					accessToken: input.accessToken,
+					tokenVersion: 0,
 					tokenType: input.tokenType,
 					scope: input.scope,
 					accessTokenExpiresAt: input.accessTokenExpiresAt,
@@ -178,16 +180,16 @@ export function createDashboardTestHarness(
 
 			const user: DashboardUser = {
 				id: `user-${nextUserID++}`,
-				subject: `user_${nextUserID}`,
 				email: input.primaryEmail,
 			};
-			users.set(user.subject, user);
+			users.set(user.id, user);
 			githubAccounts.set(input.providerSubject, {
 				user,
 				providerSubject: input.providerSubject,
 				email: input.primaryEmail,
 				login: input.login,
 				accessToken: input.accessToken,
+				tokenVersion: 0,
 				tokenType: input.tokenType,
 				scope: input.scope,
 				accessTokenExpiresAt: input.accessTokenExpiresAt,
@@ -197,7 +199,9 @@ export function createDashboardTestHarness(
 			onboardingDrafts.set(user.id, defaultOnboardingDraft());
 			return { user, disposition: "signup" as const };
 		},
-		async getGitHubAccount(userID): Promise<DashboardGitHubAccount | null> {
+		async getGitHubAccount(
+			userID,
+		): Promise<StoredDashboardGitHubAccount | null> {
 			const account = [...githubAccounts.values()].find(
 				(entry) => entry.user.id === userID,
 			);
@@ -209,12 +213,66 @@ export function createDashboardTestHarness(
 				login: account.login,
 				primaryEmail: account.email,
 				accessToken: account.accessToken,
+				tokenVersion: account.tokenVersion,
 				tokenType: account.tokenType,
 				scope: account.scope,
 				accessTokenExpiresAt: account.accessTokenExpiresAt,
 				refreshToken: account.refreshToken,
 				refreshTokenExpiresAt: account.refreshTokenExpiresAt,
 			};
+		},
+		async tryAcquireGitHubTokenRefresh(input) {
+			const account = [...githubAccounts.values()].find(
+				(entry) => entry.user.id === input.userID,
+			);
+			if (
+				!account ||
+				account.tokenVersion !== input.expectedTokenVersion ||
+				(account.refreshLeaseID &&
+					account.refreshLeaseExpiresAt &&
+					account.refreshLeaseExpiresAt > input.now)
+			) {
+				return false;
+			}
+			account.refreshLeaseID = input.leaseID;
+			account.refreshLeaseExpiresAt = input.leaseExpiresAt;
+			return true;
+		},
+		async completeGitHubTokenRefresh(input) {
+			const account = githubAccounts.get(input.providerSubject);
+			if (
+				!account ||
+				account.user.id !== input.userID ||
+				account.tokenVersion !== input.expectedTokenVersion ||
+				account.refreshLeaseID !== input.leaseID
+			) {
+				return null;
+			}
+			account.accessToken = input.token.accessToken;
+			account.accessTokenExpiresAt = input.token.accessTokenExpiresAt;
+			account.refreshToken =
+				input.token.refreshToken ?? input.fallbackRefreshToken;
+			account.refreshTokenExpiresAt =
+				input.token.refreshTokenExpiresAt ??
+				input.fallbackRefreshTokenExpiresAt;
+			account.tokenType = input.token.tokenType;
+			account.scope = input.token.scope;
+			account.tokenVersion += 1;
+			account.refreshLeaseID = undefined;
+			account.refreshLeaseExpiresAt = undefined;
+			return store.getGitHubAccount(input.userID);
+		},
+		async releaseGitHubTokenRefresh(input) {
+			const account = [...githubAccounts.values()].find(
+				(entry) => entry.user.id === input.userID,
+			);
+			if (
+				account?.tokenVersion === input.expectedTokenVersion &&
+				account.refreshLeaseID === input.leaseID
+			) {
+				account.refreshLeaseID = undefined;
+				account.refreshLeaseExpiresAt = undefined;
+			}
 		},
 		async getOnboardingDraft(userID): Promise<DashboardOnboardingDraft> {
 			const user = [...users.values()].find((entry) => entry.id === userID);
@@ -236,9 +294,9 @@ export function createDashboardTestHarness(
 			onboardingDrafts.set(userID, draft);
 			return draft;
 		},
-		async listServicePositions(userID, projectId) {
+		async listServicePositions(userID, environmentId) {
 			const positions: Record<string, { x: number; y: number }> = {};
-			const prefix = `${userID}:${projectId}:`;
+			const prefix = `${userID}:${environmentId}:`;
 			for (const [key, position] of servicePositions.entries()) {
 				if (key.startsWith(prefix)) {
 					positions[key.slice(prefix.length)] = position;
@@ -252,7 +310,7 @@ export function createDashboardTestHarness(
 				y: input.position.y,
 			};
 			servicePositions.set(
-				`${userID}:${input.projectId}:${input.serviceId}`,
+				`${userID}:${input.environmentId}:${input.serviceId}`,
 				position,
 			);
 			return position;
@@ -323,7 +381,6 @@ export function createDashboardTestHarness(
 		cookies,
 		users,
 		storeEnsureInitializedCalls,
-		storeEnsureSessionUserCalls,
 	};
 }
 
@@ -331,6 +388,7 @@ function defaultOnboardingDraft(): DashboardOnboardingDraft {
 	return {
 		currentStep: "account",
 		projectId: "",
+		environmentId: "",
 		serviceId: "",
 		repositorySelector: "",
 		trackedRef: "",
