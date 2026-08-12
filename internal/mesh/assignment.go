@@ -9,8 +9,10 @@ import (
 // the addresses this node answers for and the peers it tunnels to.
 type Assignment struct {
 	WorkloadIPv6Subnet string
+	WorkloadIPv6Pool   string
 	WireGuardAddresses []string
 	Peers              []config.PeerConfig
+	IdentitySeeds      []config.IdentitySeed
 }
 
 // AssignmentFrom reads the control plane's node config into an Assignment.
@@ -18,7 +20,15 @@ type Assignment struct {
 func AssignmentFrom(assigned *agentv1.AssignedNodeConfig) Assignment {
 	assignment := Assignment{
 		WorkloadIPv6Subnet: assigned.GetWorkloadIpv6Subnet(),
+		WorkloadIPv6Pool:   assigned.GetWorkloadIpv6Pool(),
 		WireGuardAddresses: append([]string(nil), assigned.GetWireguardAddresses()...),
+	}
+	for _, identity := range assigned.GetWorkloadIdentities() {
+		assignment.IdentitySeeds = append(assignment.IdentitySeeds, config.IdentitySeed{
+			IPv6:            identity.GetWorkloadIpv6(),
+			HostIPv6:        identity.GetHostIpv6(),
+			NetworkIdentity: identity.GetNetworkIdentity(),
+		})
 	}
 	for _, peer := range assigned.GetPeers() {
 		assignment.Peers = append(assignment.Peers, config.PeerConfig{
@@ -39,11 +49,14 @@ func RuntimeConfig(cfg config.AgentConfig, assignment Assignment) config.MeshRun
 	wireGuard := cfg.Mesh.WireGuard
 	wireGuard.Addresses = append([]string(nil), assignment.WireGuardAddresses...)
 	wireGuard.Peers = append([]config.PeerConfig(nil), assignment.Peers...)
+	containerd := cfg.Containerd
+	containerd.IdentitySeeds = append(append([]config.IdentitySeed(nil), cfg.Containerd.IdentitySeeds...), assignment.IdentitySeeds...)
 	return config.MeshRuntimeConfig{
-		NodeName:   cfg.Node.Name,
-		Host:       cfg.Mesh.Host,
-		Containerd: cfg.Containerd,
-		WireGuard:  wireGuard,
-		Firewall:   cfg.Mesh.Firewall,
+		NodeName:         cfg.Node.Name,
+		Host:             cfg.Mesh.Host,
+		Containerd:       containerd,
+		WireGuard:        wireGuard,
+		Firewall:         cfg.Mesh.Firewall,
+		WorkloadPoolCIDR: assignment.WorkloadIPv6Pool,
 	}
 }

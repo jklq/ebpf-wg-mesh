@@ -8,12 +8,20 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-func TestAssignmentFromMapsPeers(t *testing.T) {
+func TestAssignmentFromMapsPeersAndHandlesNil(t *testing.T) {
 	t.Parallel()
 
 	got := AssignmentFrom(&agentv1.AssignedNodeConfig{
 		WorkloadIpv6Subnet: "fd00:44:1::/80",
+		WorkloadIpv6Pool:   "fd00:200::/48",
 		WireguardAddresses: []string{"fd00:44::1/128"},
+		WorkloadIdentities: []*agentv1.WorkloadIdentity{{
+			WorkloadIpv6:    "fd00:200:1::10",
+			EnvironmentId:   "project-1",
+			NetworkIdentity: 7,
+			HostAgentId:     "node-b",
+			HostIpv6:        "2001:db8::2",
+		}},
 		Peers: []*agentv1.WireGuardPeer{{
 			Name:                       "node-b",
 			PublicKey:                  "peer-public-key",
@@ -25,7 +33,13 @@ func TestAssignmentFromMapsPeers(t *testing.T) {
 
 	want := Assignment{
 		WorkloadIPv6Subnet: "fd00:44:1::/80",
+		WorkloadIPv6Pool:   "fd00:200::/48",
 		WireGuardAddresses: []string{"fd00:44::1/128"},
+		IdentitySeeds: []config.IdentitySeed{{
+			IPv6:            "fd00:200:1::10",
+			HostIPv6:        "2001:db8::2",
+			NetworkIdentity: 7,
+		}},
 		Peers: []config.PeerConfig{{
 			Name:                 "node-b",
 			PublicKey:            "peer-public-key",
@@ -37,13 +51,8 @@ func TestAssignmentFromMapsPeers(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected assignment:\n got %+v\nwant %+v", got, want)
 	}
-}
-
-func TestAssignmentFromNilIsEmpty(t *testing.T) {
-	t.Parallel()
-
-	if got := AssignmentFrom(nil); !reflect.DeepEqual(got, Assignment{}) {
-		t.Fatalf("expected zero assignment, got %+v", got)
+	if empty := AssignmentFrom(nil); !reflect.DeepEqual(empty, Assignment{}) {
+		t.Fatalf("expected zero assignment, got %+v", empty)
 	}
 }
 
@@ -66,8 +75,10 @@ func TestRuntimeConfigOverlaysAssignment(t *testing.T) {
 		},
 	}
 	assignment := Assignment{
+		WorkloadIPv6Pool:   "fd00:200::/48",
 		WireGuardAddresses: []string{"fd00:44::1/128"},
 		Peers:              []config.PeerConfig{{Name: "node-b", PublicKey: "peer-public-key"}},
+		IdentitySeeds:      []config.IdentitySeed{{IPv6: "fd00:200:1::10", HostIPv6: "2001:db8::2", NetworkIdentity: 7}},
 	}
 
 	got := RuntimeConfig(cfg, assignment)
@@ -83,6 +94,9 @@ func TestRuntimeConfigOverlaysAssignment(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.WireGuard.Peers, assignment.Peers) {
 		t.Fatalf("assignment peers not applied: %+v", got.WireGuard.Peers)
+	}
+	if got.WorkloadPoolCIDR != assignment.WorkloadIPv6Pool || !reflect.DeepEqual(got.Containerd.IdentitySeeds, assignment.IdentitySeeds) {
+		t.Fatalf("cluster identity assignment not applied: %+v", got)
 	}
 
 	// The caller's config must survive being overlaid repeatedly.

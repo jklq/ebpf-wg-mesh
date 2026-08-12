@@ -1,0 +1,309 @@
+//go:build integration
+
+package controlplane
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
+)
+
+type countingFailoverIngress struct {
+	requests atomic.Int32
+}
+
+func (i *countingFailoverIngress) RequestSync() {
+	i.requests.Add(1)
+}
+
+func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	projectID := bootstrapFailoverProject(t, store)
+
+	for _, id := range []string{"old-node", "new-node", "reserved-node"} {
+		hello := agentHello(id)
+		hello.CpuMillisCapacity = 1_000
+		hello.MemoryMebibytesCapacity = 1_024
+		if _, err := store.upsertAgent(ctx, hello); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.reserveAgents("reserved-node")
+	service, err := store.createService(ctx, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{
+		CpuMillis: 100, MemoryMebibytes: 128, Ports: runtimePortsFromInts([]int32{8080}),
+	}), "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE allocations
+		    SET applied_spec_revision = desired_spec_revision,
+		        applied_rollout_generation = desired_rollout_generation,
+		        phase = 'Running', message = '', allocation_ip = 'fd00:200::10', healthy_ports = $1, healthy = TRUE
+		  WHERE service_id = $2`, []byte("[8080]"), service.ID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
+
+	notifier := NewNotifier()
+	watches := make(map[string]<-chan struct{})
+	for _, id := range []string{"old-node", "new-node", "reserved-node"} {
+		ch, stop := notifier.Watch(id)
+		defer stop()
+		watches[id] = ch
+	}
+	ingress := &countingFailoverIngress{}
+	reconciler := NewServiceFailoverReconciler(store, notifier, ingress, time.Second, 30*time.Second)
+	reconciler.now = func() time.Time { return now }
+
+	result, err := reconciler.Reconcile(ctx)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(result.MovedServiceIDs) != 1 || result.MovedServiceIDs[0] != service.ID {
+		t.Fatalf("unexpected moved services %#v", result.MovedServiceIDs)
+	}
+	for id, ch := range watches {
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			t.Fatalf("agent %s was not notified", id)
+		}
+	}
+	if got := ingress.requests.Load(); got != 1 {
+		t.Fatalf("expected one ingress resync, got %d", got)
+	}
+
+	allocation, err := store.allocationByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocation.AgentID != "new-node" || allocation.Phase != "Pending" || allocation.Healthy || allocation.AllocationIP != "" || len(allocation.HealthyPorts) != 0 {
+		t.Fatalf("allocation was not reset after failover: %+v", allocation)
+	}
+	if allocation.AppliedSpecRevision != 0 || allocation.AppliedRolloutGeneration != 0 {
+		t.Fatalf("applied allocation state was not reset: %+v", allocation)
+	}
+	oldState, err := store.desiredStateForAgent(ctx, "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState, err := store.desiredStateForAgent(ctx, "new-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldState.GetServices()) != 0 || len(newState.GetServices()) != 1 || newState.GetServices()[0].GetServiceId() != service.ID {
+		t.Fatalf("unexpected old/new desired state: old=%d new=%d", len(oldState.GetServices()), len(newState.GetServices()))
+	}
+
+	second, err := reconciler.Reconcile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.MovedServiceIDs) != 0 || len(second.BlockedServiceIDs) != 0 || ingress.requests.Load() != 1 {
+		t.Fatalf("second reconcile was not idempotent: %+v ingress=%d", second, ingress.requests.Load())
+	}
+}
+
+func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	projectID := bootstrapFailoverProject(t, store)
+
+	old := agentHello("old-node")
+	old.CpuMillisCapacity = 1_000
+	old.MemoryMebibytesCapacity = 1_024
+	if _, err := store.upsertAgent(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	target := agentHello("small-node")
+	target.CpuMillisCapacity = 50
+	target.MemoryMebibytesCapacity = 64
+	if _, err := store.upsertAgent(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.createVolume(ctx, "user-1", projectID, "data", 64<<20, "old-node"); err != nil {
+		t.Fatal(err)
+	}
+	volumeService, err := store.createService(ctx, "user-1", projectID, "stateful", directImageServiceSpec("example.test/stateful:1", &platformv1.ServiceRuntime{
+		CpuMillis: 10, MemoryMebibytes: 16, VolumeName: "data",
+	}), "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeService, err := store.createService(ctx, "user-1", projectID, "large", directImageServiceSpec("example.test/large:1", &platformv1.ServiceRuntime{
+		CpuMillis: 100, MemoryMebibytes: 128,
+	}), "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
+	ingress := &countingFailoverIngress{}
+	reconciler := NewServiceFailoverReconciler(store, nil, ingress, time.Second, 30*time.Second)
+	reconciler.now = func() time.Time { return now }
+
+	result, err := reconciler.Reconcile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.MovedServiceIDs) != 0 || len(result.BlockedServiceIDs) != 2 {
+		t.Fatalf("unexpected failover result %+v", result)
+	}
+	volumeAllocation, err := store.allocationByServiceID(ctx, volumeService.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != allocationPhaseUnavailable || !strings.Contains(volumeAllocation.Message, "replicated storage") {
+		t.Fatalf("volume allocation did not surface a pinned-storage reason: %+v", volumeAllocation)
+	}
+	largeAllocation, err := store.allocationByServiceID(ctx, largeService.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != allocationPhaseUnavailable || !strings.Contains(largeAllocation.Message, "sufficient capacity") {
+		t.Fatalf("capacity allocation did not surface a no-capacity reason: %+v", largeAllocation)
+	}
+	if ingress.requests.Load() != 1 {
+		t.Fatalf("expected one coalesced ingress request, got %d", ingress.requests.Load())
+	}
+	if _, err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ingress.requests.Load() != 1 {
+		t.Fatalf("idempotent blocked reconcile requested ingress again: %d", ingress.requests.Load())
+	}
+}
+
+func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	trusted := agentHello("trusted-node")
+	pool := agentHello("pool-node")
+	if _, err := store.upsertAgent(ctx, trusted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.upsertAgent(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store.reserveAgents(trusted.AgentId)
+	project, err := store.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	makeAgentUnhealthy(t, store, trusted.AgentId, now.Add(-2*time.Minute))
+	reconciler := NewServiceFailoverReconciler(store, nil, &countingFailoverIngress{}, time.Second, 30*time.Second)
+	reconciler.now = func() time.Time { return now }
+	if _, err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	allocation, err := store.allocationByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocation.AgentID != trusted.AgentId || allocation.Phase != allocationPhaseUnavailable || !strings.Contains(allocation.Message, "trusted") {
+		t.Fatalf("managed allocation migrated or lacked a trust failure: %+v", allocation)
+	}
+}
+
+func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	projectID := bootstrapFailoverProject(t, store)
+	for _, id := range []string{"old-node", "new-node"} {
+		if _, err := store.upsertAgent(ctx, agentHello(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service, err := store.createService(ctx, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", nil), "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
+	before, err := store.currentDesiredRevisionForAgent(ctx, "new-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan serviceFailoverResult, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := store.failoverUnhealthyServices(ctx, now, 30*time.Second)
+			results <- result
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent reconcile: %v", err)
+		}
+	}
+	moves := 0
+	for result := range results {
+		moves += len(result.MovedServiceIDs)
+	}
+	if moves != 1 {
+		t.Fatalf("expected exactly one move, got %d", moves)
+	}
+	after, err := store.currentDesiredRevisionForAgent(ctx, "new-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before+1 {
+		t.Fatalf("expected one desired revision bump, before=%d after=%d", before, after)
+	}
+	allocation, err := store.allocationByServiceID(ctx, service.ID)
+	if err != nil || allocation.AgentID != "new-node" {
+		t.Fatalf("unexpected final allocation %+v err=%v", allocation, err)
+	}
+}
+
+func bootstrapFailoverProject(t *testing.T, store *Store) string {
+	t.Helper()
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{{
+		ID: "user-1", Email: "user@example.test", Projects: []string{"demo"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("list projects: %v (%d)", err, len(projects))
+	}
+	return productionEnvironmentID(t, store, projects[0].ID)
+}
+
+func makeAgentUnhealthy(t *testing.T, store *Store, agentID string, lastSeen time.Time) {
+	t.Helper()
+	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, lastSeen.UTC(), agentID); err != nil {
+		t.Fatal(err)
+	}
+}

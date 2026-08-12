@@ -8,6 +8,7 @@ import (
 )
 
 type MeshHandle interface {
+	Update(config.MeshRuntimeConfig) error
 	Close() error
 }
 
@@ -69,6 +70,10 @@ func WithMeshDisabled() Option {
 }
 
 type noopMeshHandle struct{}
+
+func (noopMeshHandle) Update(config.MeshRuntimeConfig) error {
+	return nil
+}
 
 func (noopMeshHandle) Close() error {
 	return nil
