@@ -53,6 +53,10 @@ export interface FakePlatformGateway extends PlatformGateway {
 		changeIds?: Array<string>;
 		discardAll?: boolean;
 	}>;
+	deleteServiceCalls: Array<{
+		user: DashboardUser;
+		serviceId: string;
+	}>;
 	getServiceCalls: Array<{
 		user: DashboardUser;
 		serviceId: string;
@@ -104,6 +108,7 @@ export interface FakePlatformGateway extends PlatformGateway {
 		updateService?: Error;
 		redeployService?: Error;
 		discardServiceChanges?: Error;
+		deleteService?: Error;
 		getService?: Error;
 		getServiceStatus?: Error;
 		listServiceLogs?: Error;
@@ -125,6 +130,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		updateServiceCalls: [],
 		redeployServiceCalls: [],
 		discardServiceChangesCalls: [],
+		deleteServiceCalls: [],
 		getServiceCalls: [],
 		getServiceStatusCalls: [],
 		listServiceLogsCalls: [],
@@ -441,6 +447,16 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				service.id === updated.id ? updated : service,
 			);
 			return updated;
+		},
+		async deleteService(user, input): Promise<void> {
+			platform.deleteServiceCalls.push({ user, ...input });
+			if (platform.errors.deleteService) {
+				throw platform.errors.deleteService;
+			}
+			platform.services = platform.services.filter(
+				(service) => service.id !== input.serviceId,
+			);
+			platform.serviceStatuses.delete(input.serviceId);
 		},
 		async getService(user, input): Promise<DashboardServiceRecord> {
 			platform.getServiceCalls.push({ user, ...input });

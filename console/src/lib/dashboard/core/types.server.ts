@@ -619,6 +619,10 @@ export interface PlatformGateway {
 			discardAll?: boolean;
 		},
 	): Promise<DashboardServiceRecord>;
+	deleteService(
+		user: DashboardUser,
+		input: { serviceId: string },
+	): Promise<void>;
 	getService(
 		user: DashboardUser,
 		input: { serviceId: string },
@@ -852,6 +856,7 @@ export interface DashboardService {
 		changeIds?: Array<string>;
 		discardAll?: boolean;
 	}): Promise<DashboardServiceRecord>;
+	deleteServiceFromSession(input: { serviceId: string }): Promise<void>;
 	saveServicePositionFromSession(input: {
 		environmentId: string;
 		serviceId: string;

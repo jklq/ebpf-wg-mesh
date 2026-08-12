@@ -13,6 +13,7 @@ import {
 	createServiceFastFromSession,
 	deleteDomainBindingFromSession,
 	deleteEnvironmentFromSession,
+	deleteServiceFromSession,
 	deployEnvironmentFromSession,
 	discardServiceChangesFromSession,
 	duplicateEnvironmentFromSession,
@@ -143,6 +144,9 @@ export function createDashboardService(
 		},
 		discardServiceChangesFromSession(input) {
 			return discardServiceChangesFromSession(runtime, input);
+		},
+		deleteServiceFromSession(input) {
+			return deleteServiceFromSession(runtime, input);
 		},
 		saveServicePositionFromSession(input) {
 			return saveServicePositionFromSession(runtime, input);

@@ -32,6 +32,11 @@ export function PanelDomains({
 		null,
 	);
 	const [generating, setGenerating] = useState(false);
+	// A domain that has been requested but is not confirmed live yet. It is shown
+	// in the list straight away with a spinner so the flow never blocks on a modal.
+	const [pendingDomain, setPendingDomain] = useState<{
+		hostname?: string;
+	} | null>(null);
 	const [publishing, setPublishing] = useState(false);
 	const [error, setError] = useState<string>();
 	const [success, setSuccess] = useState<string>();
@@ -72,10 +77,19 @@ export function PanelDomains({
 		setSuccess(undefined);
 	};
 
-	const handleGenerate = async () => {
+	const handleGenerate = async ({
+		keepFlowOpen,
+	}: {
+		keepFlowOpen: boolean;
+	}) => {
 		setError(undefined);
 		setSuccess(undefined);
 		setGenerating(true);
+		if (!keepFlowOpen) {
+			// Close immediately — the pending row in the list carries the progress.
+			setDomainFlow(null);
+			setPendingDomain({});
+		}
 		try {
 			const binding = await doGenerateDomainBinding({
 				data: {
@@ -87,8 +101,18 @@ export function PanelDomains({
 				...previous.filter((item) => !item.platformGenerated),
 				binding,
 			]);
+			if (!keepFlowOpen) {
+				// Keep the spinner on the row until the platform lists the binding —
+				// that is when routing for it is actually in place.
+				setPendingDomain({ hostname: binding.hostname });
+				await fetchDomainBindings({ data: { serviceId: service.id } })
+					.then(setBindings)
+					.catch(() => undefined);
+				setPendingDomain(null);
+			}
 			setSuccess(`${binding.hostname} is ready.`);
 		} catch (e) {
+			setPendingDomain(null);
 			setError(formatError(e));
 		} finally {
 			setGenerating(false);
@@ -305,7 +329,11 @@ export function PanelDomains({
 								<button
 									type="button"
 									className="btn-primary"
-									onClick={handleGenerate}
+									onClick={() =>
+										void handleGenerate({
+											keepFlowOpen: domainFlow === "custom",
+										})
+									}
 									disabled={generating}
 								>
 									{generating && (
@@ -545,13 +573,13 @@ export function PanelDomains({
 						Loading…
 					</div>
 				)}
-				{!loadingBindings && bindings.length === 0 && (
+				{!loadingBindings && bindings.length === 0 && !pendingDomain && (
 					<p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
 						No domains yet.
 					</p>
 				)}
-				{bindings.map((binding) => (
-					<div key={binding.hostname} className="domain-item">
+				{pendingDomain && !pendingDomain.hostname && (
+					<div className="domain-item domain-item-pending">
 						<div
 							style={{
 								display: "flex",
@@ -560,62 +588,104 @@ export function PanelDomains({
 								overflow: "hidden",
 							}}
 						>
-							<Globe size={12} color="var(--healthy)" />
+							<Loader2
+								size={12}
+								style={{ animation: "spin 1s linear infinite" }}
+							/>
 							<span
 								style={{
 									fontSize: 13,
 									fontFamily: "var(--font-mono)",
-									color: "var(--text)",
-									overflow: "hidden",
-									textOverflow: "ellipsis",
-									whiteSpace: "nowrap",
+									color: "var(--text-muted)",
 								}}
 							>
-								{binding.hostname}
-								<span style={{ color: "var(--text-muted)" }}>
-									{" "}
-									-&gt; :{binding.targetPort}
-								</span>
+								Generating domain…
 							</span>
 						</div>
-						<div
-							style={{
-								display: "flex",
-								alignItems: "center",
-								gap: 4,
-								flexShrink: 0,
-							}}
-						>
-							<a
-								href={buildServiceURL(state, binding.hostname)}
-								target="_blank"
-								rel="noreferrer"
-								className="btn-ghost"
-								style={{ fontSize: 11 }}
-							>
-								Open ↗
-							</a>
-							<button
-								type="button"
-								className="btn-ghost"
-								style={{ padding: "4px 6px" }}
-								onClick={() => openEdit(binding)}
-								title="Edit"
-							>
-								<Pencil size={12} />
-							</button>
-							<button
-								type="button"
-								className="btn-ghost"
-								style={{ padding: "4px 6px", color: "var(--danger, #e05252)" }}
-								onClick={() => setDeleteConfirm(binding.hostname)}
-								title="Remove"
-							>
-								<Trash2 size={12} />
-							</button>
-						</div>
 					</div>
-				))}
+				)}
+				{bindings.map((binding) => {
+					const pending = pendingDomain?.hostname === binding.hostname;
+					return (
+						<div
+							key={binding.hostname}
+							className={`domain-item ${pending ? "domain-item-pending" : ""}`}
+						>
+							<div
+								style={{
+									display: "flex",
+									alignItems: "center",
+									gap: 6,
+									overflow: "hidden",
+								}}
+							>
+								{pending ? (
+									<Loader2
+										size={12}
+										style={{ animation: "spin 1s linear infinite" }}
+									/>
+								) : (
+									<Globe size={12} color="var(--healthy)" />
+								)}
+								<span
+									style={{
+										fontSize: 13,
+										fontFamily: "var(--font-mono)",
+										color: "var(--text)",
+										overflow: "hidden",
+										textOverflow: "ellipsis",
+										whiteSpace: "nowrap",
+									}}
+								>
+									{binding.hostname}
+									<span style={{ color: "var(--text-muted)" }}>
+										{" "}
+										-&gt; :{binding.targetPort}
+									</span>
+								</span>
+							</div>
+							<div
+								style={{
+									display: "flex",
+									alignItems: "center",
+									gap: 4,
+									flexShrink: 0,
+								}}
+							>
+								<a
+									href={buildServiceURL(state, binding.hostname)}
+									target="_blank"
+									rel="noreferrer"
+									className="btn-ghost"
+									style={{ fontSize: 11 }}
+								>
+									Open ↗
+								</a>
+								<button
+									type="button"
+									className="btn-ghost"
+									style={{ padding: "4px 6px" }}
+									onClick={() => openEdit(binding)}
+									title="Edit"
+								>
+									<Pencil size={12} />
+								</button>
+								<button
+									type="button"
+									className="btn-ghost"
+									style={{
+										padding: "4px 6px",
+										color: "var(--danger, #e05252)",
+									}}
+									onClick={() => setDeleteConfirm(binding.hostname)}
+									title="Remove"
+								>
+									<Trash2 size={12} />
+								</button>
+							</div>
+						</div>
+					);
+				})}
 				{!domainFlow && error && <p className="error-msg">{error}</p>}
 				{!domainFlow && success && <p className="success-msg">{success}</p>}
 			</div>

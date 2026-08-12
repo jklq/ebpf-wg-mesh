@@ -156,6 +156,9 @@ export function createPlatformGateway(
 			);
 			return decodeServiceMessage(response);
 		},
+		async deleteService(user, input) {
+			await unaryCall(runtime, "DeleteService", input, user);
+		},
 		async getService(user, input) {
 			const response = await unaryCall(runtime, "GetService", input, user);
 			return decodeServiceMessage(response);
