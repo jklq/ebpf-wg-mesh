@@ -1,17 +1,16 @@
-import { Globe, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { CircleCheck, Globe, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type {
 	DashboardDomainBinding,
 	DashboardHomeState,
-	DashboardProject,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
 
 import {
 	doCreateDomainBinding,
 	doDeleteDomainBinding,
-	doRequestDomainOwnershipChallenge,
+	doGenerateDomainBinding,
 	doUpdateDomainBinding,
 	fetchDomainBindings,
 } from "./server-fns";
@@ -19,11 +18,9 @@ import { buildServiceURL, formatError } from "./service-utils";
 
 export function PanelDomains({
 	service,
-	project,
 	state,
 }: {
 	service: DashboardServiceRecord;
-	project: DashboardProject;
 	state: DashboardHomeState;
 }) {
 	const recommendedPort = recommendedTargetPort(service, state);
@@ -31,11 +28,10 @@ export function PanelDomains({
 	const [loadingBindings, setLoadingBindings] = useState(true);
 	const [hostname, setHostname] = useState("");
 	const [targetPort, setTargetPort] = useState("");
-	const [dnsResult, setDnsResult] = useState<{
-		state: string;
-		instruction: string;
-	} | null>(null);
-	const [checking, setChecking] = useState(false);
+	const [domainFlow, setDomainFlow] = useState<"generate" | "custom" | null>(
+		null,
+	);
+	const [generating, setGenerating] = useState(false);
 	const [publishing, setPublishing] = useState(false);
 	const [error, setError] = useState<string>();
 	const [success, setSuccess] = useState<string>();
@@ -51,38 +47,51 @@ export function PanelDomains({
 
 	const hostnameId = `domain-hostname-${service.id}`;
 	const targetPortId = `domain-target-port-${service.id}`;
+	const platformBinding = bindings.find((binding) => binding.platformGenerated);
+	const internalHostname =
+		service.internalHostname ?? `${service.name}.mesh.internal`;
+	const internalShortName = internalHostname.replace(/\.mesh\.internal$/, "");
 
 	useEffect(() => {
 		setLoadingBindings(true);
+		setTargetPort("");
+		setHostname("");
+		setDomainFlow(null);
 		fetchDomainBindings({
-			data: { projectId: project.id, serviceId: service.id },
+			data: { serviceId: service.id },
 		})
 			.then(setBindings)
 			.catch(() => setBindings([]))
 			.finally(() => setLoadingBindings(false));
-	}, [project.id, service.id]);
-
-	useEffect(() => {
-		setTargetPort("");
 	}, [service.id]);
 
-	const handleCheckDNS = async () => {
-		if (!hostname.trim()) return;
+	const openDomainFlow = (flow: "generate" | "custom") => {
+		setDomainFlow(flow);
+		setTargetPort(platformBinding ? String(platformBinding.targetPort) : "");
 		setError(undefined);
-		setDnsResult(null);
-		setChecking(true);
+		setSuccess(undefined);
+	};
+
+	const handleGenerate = async () => {
+		setError(undefined);
+		setSuccess(undefined);
+		setGenerating(true);
 		try {
-			const result = await doRequestDomainOwnershipChallenge({
-				data: { projectId: project.id, hostname: hostname.trim() },
+			const binding = await doGenerateDomainBinding({
+				data: {
+					serviceId: service.id,
+					targetPort: targetPort.trim() || String(recommendedPort),
+				},
 			});
-			setDnsResult({
-				state: "pending",
-				instruction: `Create TXT record ${result.recordName} with value ${result.recordValue}. The control plane will verify it when you publish.`,
-			});
+			setBindings((previous) => [
+				...previous.filter((item) => !item.platformGenerated),
+				binding,
+			]);
+			setSuccess(`${binding.hostname} is ready.`);
 		} catch (e) {
 			setError(formatError(e));
 		} finally {
-			setChecking(false);
+			setGenerating(false);
 		}
 	};
 
@@ -93,16 +102,15 @@ export function PanelDomains({
 		try {
 			const binding = await doCreateDomainBinding({
 				data: {
-					projectId: project.id,
 					serviceId: service.id,
 					hostname: hostname.trim(),
-					targetPort: targetPort.trim() || String(recommendedPort),
+					targetPort: String(platformBinding?.targetPort ?? recommendedPort),
 				},
 			});
 			setBindings((prev) => [...prev, binding]);
 			setHostname("");
-			setDnsResult(null);
 			setSuccess(`${binding.hostname} is now live.`);
+			setDomainFlow(null);
 		} catch (e) {
 			setError(formatError(e));
 		} finally {
@@ -123,7 +131,6 @@ export function PanelDomains({
 		try {
 			const updated = await doUpdateDomainBinding({
 				data: {
-					projectId: editingBinding.projectId,
 					serviceId: editingBinding.serviceId,
 					hostname: editingBinding.hostname,
 					targetPort: editPort,
@@ -144,7 +151,7 @@ export function PanelDomains({
 		setDeletingHostname(h);
 		try {
 			await doDeleteDomainBinding({
-				data: { projectId: project.id, hostname: h },
+				data: { hostname: h },
 			});
 			setBindings((prev) => prev.filter((b) => b.hostname !== h));
 		} catch (e) {
@@ -157,15 +164,215 @@ export function PanelDomains({
 
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-			{editingBinding && (
-				<div className="modal-overlay" onClick={() => setEditingBinding(null)}>
+			{domainFlow && (
+				<div
+					className="modal-overlay"
+					role="dialog"
+					aria-modal="true"
+					aria-label={
+						domainFlow === "generate" ? "Generate domain" : "Custom domain"
+					}
+					tabIndex={-1}
+					onClick={(event) => {
+						if (event.target === event.currentTarget) setDomainFlow(null);
+					}}
+					onKeyDown={(event) => {
+						if (event.key === "Escape") setDomainFlow(null);
+					}}
+				>
 					<div
 						className="modal-card"
-						style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}
-						onClick={(e) => e.stopPropagation()}
+						style={{
+							padding: 24,
+							display: "flex",
+							flexDirection: "column",
+							gap: 16,
+						}}
 					>
-						<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-							<span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+						<div
+							style={{
+								display: "flex",
+								alignItems: "center",
+								justifyContent: "space-between",
+							}}
+						>
+							<span
+								style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+							>
+								{domainFlow === "generate"
+									? "Generate Domain"
+									: "Custom Domain"}
+							</span>
+							<button
+								type="button"
+								className="btn-ghost"
+								style={{ padding: "4px 6px" }}
+								onClick={() => setDomainFlow(null)}
+								aria-label="Close"
+							>
+								<X size={14} />
+							</button>
+						</div>
+
+						{(domainFlow === "generate" || !platformBinding) && (
+							<div>
+								<label className="field-label" htmlFor={targetPortId}>
+									App port
+								</label>
+								<input
+									id={targetPortId}
+									className="field-input"
+									value={targetPort}
+									onChange={(event) => {
+										setTargetPort(event.target.value);
+										setError(undefined);
+									}}
+									placeholder={String(
+										platformBinding?.targetPort ?? recommendedPort,
+									)}
+									inputMode="numeric"
+								/>
+								<p
+									style={{
+										fontSize: 11,
+										color: "var(--text-muted)",
+										margin: "6px 0 0",
+									}}
+								>
+									The port your app listens on inside the service.
+								</p>
+							</div>
+						)}
+
+						{domainFlow === "generate" && platformBinding && (
+							<div
+								className="success-msg"
+								style={{ fontFamily: "var(--font-mono)" }}
+							>
+								{platformBinding.hostname}
+							</div>
+						)}
+
+						{domainFlow === "custom" && platformBinding && (
+							<>
+								<div>
+									<label className="field-label" htmlFor={hostnameId}>
+										Custom hostname
+									</label>
+									<input
+										id={hostnameId}
+										className="field-input"
+										value={hostname}
+										onChange={(event) => {
+											setHostname(event.target.value);
+											setError(undefined);
+										}}
+										placeholder="app.customer.com"
+									/>
+								</div>
+								<div
+									style={{
+										fontSize: 11,
+										color: "var(--text-muted)",
+										padding: "10px 12px",
+										background: "var(--surface-raised)",
+										fontFamily: "var(--font-mono)",
+										lineHeight: 1.6,
+									}}
+								>
+									Create this DNS record:
+									<br />
+									{hostname || "app.customer.com"} CNAME{" "}
+									{platformBinding.hostname}
+								</div>
+							</>
+						)}
+
+						{error && <p className="error-msg">{error}</p>}
+						{success && <p className="success-msg">{success}</p>}
+
+						<div
+							style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
+						>
+							<button
+								type="button"
+								className="btn-secondary"
+								onClick={() => setDomainFlow(null)}
+							>
+								Cancel
+							</button>
+							{(domainFlow === "generate" || !platformBinding) && (
+								<button
+									type="button"
+									className="btn-primary"
+									onClick={handleGenerate}
+									disabled={generating}
+								>
+									{generating && (
+										<Loader2
+											size={12}
+											style={{ animation: "spin 1s linear infinite" }}
+										/>
+									)}
+									{domainFlow === "custom"
+										? "Generate & continue"
+										: "Generate Domain"}
+								</button>
+							)}
+							{domainFlow === "custom" && platformBinding && (
+								<button
+									type="button"
+									className="btn-primary"
+									onClick={handlePublish}
+									disabled={publishing || hostname.trim() === ""}
+								>
+									{publishing && (
+										<Loader2
+											size={12}
+											style={{ animation: "spin 1s linear infinite" }}
+										/>
+									)}
+									Verify CNAME & add domain
+								</button>
+							)}
+						</div>
+					</div>
+				</div>
+			)}
+
+			{editingBinding && (
+				<div
+					className="modal-overlay"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Edit domain"
+					tabIndex={-1}
+					onClick={(event) => {
+						if (event.target === event.currentTarget) setEditingBinding(null);
+					}}
+					onKeyDown={(event) => {
+						if (event.key === "Escape") setEditingBinding(null);
+					}}
+				>
+					<div
+						className="modal-card"
+						style={{
+							padding: 24,
+							display: "flex",
+							flexDirection: "column",
+							gap: 16,
+						}}
+					>
+						<div
+							style={{
+								display: "flex",
+								alignItems: "center",
+								justifyContent: "space-between",
+							}}
+						>
+							<span
+								style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+							>
 								Edit domain
 							</span>
 							<button
@@ -178,8 +385,16 @@ export function PanelDomains({
 							</button>
 						</div>
 						<div>
-							<p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>
-								<span style={{ fontFamily: "var(--font-mono)" }}>{editingBinding.hostname}</span>
+							<p
+								style={{
+									fontSize: 12,
+									color: "var(--text-muted)",
+									margin: "0 0 12px",
+								}}
+							>
+								<span style={{ fontFamily: "var(--font-mono)" }}>
+									{editingBinding.hostname}
+								</span>
 							</p>
 							<label className="field-label" htmlFor="edit-port">
 								App port
@@ -188,13 +403,18 @@ export function PanelDomains({
 								id="edit-port"
 								className="field-input"
 								value={editPort}
-								onChange={(e) => { setEditPort(e.target.value); setEditError(undefined); }}
+								onChange={(e) => {
+									setEditPort(e.target.value);
+									setEditError(undefined);
+								}}
 								placeholder="8080"
 								inputMode="numeric"
 							/>
 						</div>
 						{editError && <p className="error-msg">{editError}</p>}
-						<div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+						<div
+							style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
+						>
 							<button
 								type="button"
 								className="btn-secondary"
@@ -209,7 +429,10 @@ export function PanelDomains({
 								disabled={editSaving || editPort.trim() === ""}
 							>
 								{editSaving && (
-									<Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+									<Loader2
+										size={12}
+										style={{ animation: "spin 1s linear infinite" }}
+									/>
 								)}
 								Save
 							</button>
@@ -219,20 +442,42 @@ export function PanelDomains({
 			)}
 
 			{deleteConfirm && (
-				<div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+				<div
+					className="modal-overlay"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Remove domain"
+					tabIndex={-1}
+					onClick={(event) => {
+						if (event.target === event.currentTarget) setDeleteConfirm(null);
+					}}
+					onKeyDown={(event) => {
+						if (event.key === "Escape") setDeleteConfirm(null);
+					}}
+				>
 					<div
 						className="modal-card"
-						style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}
-						onClick={(e) => e.stopPropagation()}
+						style={{
+							padding: 24,
+							display: "flex",
+							flexDirection: "column",
+							gap: 16,
+						}}
 					>
-						<span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+						<span
+							style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}
+						>
 							Remove domain?
 						</span>
 						<p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
-							<span style={{ fontFamily: "var(--font-mono)" }}>{deleteConfirm}</span>
-							{" "}will stop routing traffic immediately.
+							<span style={{ fontFamily: "var(--font-mono)" }}>
+								{deleteConfirm}
+							</span>{" "}
+							will stop routing traffic immediately.
 						</p>
-						<div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+						<div
+							style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
+						>
 							<button
 								type="button"
 								className="btn-secondary"
@@ -248,7 +493,10 @@ export function PanelDomains({
 								disabled={deletingHostname === deleteConfirm}
 							>
 								{deletingHostname === deleteConfirm && (
-									<Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+									<Loader2
+										size={12}
+										style={{ animation: "spin 1s linear infinite" }}
+									/>
 								)}
 								Remove
 							</button>
@@ -256,6 +504,28 @@ export function PanelDomains({
 					</div>
 				</div>
 			)}
+
+			<div>
+				<p className="section-header">Private networking</p>
+				<p className="domain-internal-description">
+					Communicate with this service from within the current environment.
+				</p>
+				<div className="domain-internal-card">
+					<CircleCheck size={20} aria-hidden="true" />
+					<div className="domain-internal-content">
+						<div className="domain-internal-hostline">
+							<span>{internalHostname}</span>
+							<span className="domain-internal-protocol">IPv6</span>
+						</div>
+						<p>
+							Ready to talk privately · You can also simply call me{" "}
+							<code>{internalShortName}</code>
+						</p>
+					</div>
+				</div>
+			</div>
+
+			<hr className="divider" />
 
 			<div>
 				<p className="section-header">Active domains</p>
@@ -308,7 +578,14 @@ export function PanelDomains({
 								</span>
 							</span>
 						</div>
-						<div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+						<div
+							style={{
+								display: "flex",
+								alignItems: "center",
+								gap: 4,
+								flexShrink: 0,
+							}}
+						>
 							<a
 								href={buildServiceURL(state, binding.hostname)}
 								target="_blank"
@@ -339,105 +616,29 @@ export function PanelDomains({
 						</div>
 					</div>
 				))}
+				{!domainFlow && error && <p className="error-msg">{error}</p>}
+				{!domainFlow && success && <p className="success-msg">{success}</p>}
 			</div>
 
 			<hr className="divider" />
 
 			<div>
 				<p className="section-header">Add domain</p>
-
-				<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-					<div>
-						<label className="field-label" htmlFor={hostnameId}>
-							Hostname
-						</label>
-						<input
-							id={hostnameId}
-							className="field-input"
-							value={hostname}
-							onChange={(e) => {
-								setHostname(e.target.value);
-								setDnsResult(null);
-								setError(undefined);
-							}}
-							placeholder="app.example.com"
-						/>
-					</div>
-
-					<div>
-						<label className="field-label" htmlFor={targetPortId}>
-							App port
-						</label>
-						<input
-							id={targetPortId}
-							className="field-input"
-							value={targetPort}
-							onChange={(e) => {
-								setTargetPort(e.target.value);
-								setError(undefined);
-							}}
-							placeholder={String(recommendedPort)}
-							inputMode="numeric"
-						/>
-					</div>
-
-					{state.ingressTargetHost && (
-						<div
-							style={{
-								fontSize: 11,
-								color: "var(--text-muted)",
-								padding: "8px 10px",
-								background: "var(--surface-raised)",
-								borderRadius: 0,
-								fontFamily: "var(--font-mono)",
-								lineHeight: 1.5,
-							}}
-						>
-							Set a CNAME record: {hostname || "<hostname>"} →{" "}
-							{state.ingressTargetHost}
-						</div>
-					)}
-
-					{dnsResult && (
-						<div className="success-msg">{dnsResult.instruction}</div>
-					)}
-
-					{error && <p className="error-msg">{error}</p>}
-					{success && <p className="success-msg">{success}</p>}
-
-					<div style={{ display: "flex", gap: 8 }}>
-						<button
-							type="button"
-							className="btn-secondary"
-							onClick={handleCheckDNS}
-							disabled={checking || hostname.trim() === ""}
-						>
-							{checking && (
-								<Loader2
-									size={12}
-									style={{ animation: "spin 1s linear infinite" }}
-								/>
-							)}
-							Generate TXT proof
-						</button>
-
-						{dnsResult && (
-							<button
-								type="button"
-								className="btn-primary"
-								onClick={handlePublish}
-								disabled={publishing}
-							>
-								{publishing && (
-									<Loader2
-										size={12}
-										style={{ animation: "spin 1s linear infinite" }}
-									/>
-								)}
-								Publish domain
-							</button>
-						)}
-					</div>
+				<div style={{ display: "flex", gap: 8 }}>
+					<button
+						type="button"
+						className="btn-primary"
+						onClick={() => openDomainFlow("generate")}
+					>
+						Generate Domain
+					</button>
+					<button
+						type="button"
+						className="btn-secondary"
+						onClick={() => openDomainFlow("custom")}
+					>
+						Custom Domain
+					</button>
 				</div>
 			</div>
 		</div>
