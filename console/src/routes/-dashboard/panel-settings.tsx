@@ -1,38 +1,36 @@
-import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { Github, Loader2, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
-import {
-	DEFAULT_SERVICE_CPU_MILLIS,
-	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
-} from "#/lib/dashboard/core/defaults";
 
-import { doUpdateService } from "./server-fns";
+import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
+import { RepositoryPicker } from "./repository-picker";
+import { doDeleteService, doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
+
+const MANUAL_SELECTOR = /^[\w.-]+\/[\w.-]+$/;
 
 export function PanelSettings({
 	service,
 	state,
 	onSaved,
+	onDeleted,
 }: {
 	service: DashboardServiceRecord;
 	state: DashboardHomeState;
 	onSaved: (service: DashboardServiceRecord) => void;
+	onDeleted: (serviceId: string) => void;
 }) {
 	const source = service.spec?.source;
 	const changedFields = new Set(
 		(service.unappliedChanges ?? []).map((change) => change.id),
 	);
-	const repoSelectId = `service-repo-select-${service.id}`;
-	const repoInputId = `service-repo-input-${service.id}`;
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
-	const cpuMillisId = `service-cpu-millis-${service.id}`;
-	const memoryMebibytesId = `service-memory-mebibytes-${service.id}`;
 	const [repoSelector, setRepoSelector] = useState(
 		source?.repositorySelector ?? "",
 	);
@@ -43,15 +41,13 @@ export function PanelSettings({
 	const [contextDir, setContextDir] = useState(
 		source?.buildRecipe?.contextDir ?? ".",
 	);
-	const [cpuMillis, setCpuMillis] = useState(
-		service.spec?.runtime.cpuMillis ?? DEFAULT_SERVICE_CPU_MILLIS,
-	);
-	const [memoryMebibytes, setMemoryMebibytes] = useState(
-		service.spec?.runtime.memoryMebibytes ?? DEFAULT_SERVICE_MEMORY_MEBIBYTES,
-	);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string>();
 	const [success, setSuccess] = useState(false);
+	const [pickingRepo, setPickingRepo] = useState(false);
+	const [confirmingDelete, setConfirmingDelete] = useState(false);
+	const [deleting, setDeleting] = useState(false);
+	const [deleteError, setDeleteError] = useState<string>();
 
 	const handleSave = async () => {
 		setError(undefined);
@@ -65,8 +61,6 @@ export function PanelSettings({
 					trackedRef,
 					dockerfilePath,
 					contextDir,
-					cpuMillis,
-					memoryMebibytes,
 				},
 			});
 			setSuccess(true);
@@ -78,49 +72,43 @@ export function PanelSettings({
 		}
 	};
 
+	const handleDelete = async () => {
+		setDeleting(true);
+		setDeleteError(undefined);
+		try {
+			await doDeleteService({ data: { serviceId: service.id } });
+			setConfirmingDelete(false);
+			onDeleted(service.id);
+		} catch (e) {
+			setDeleteError(formatError(e));
+			setDeleting(false);
+		}
+	};
+
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 			<div>
 				<p className="section-header">Source</p>
 				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-					{state.repositories.length > 0 && (
-						<div>
-							<label className="field-label" htmlFor={repoSelectId}>
-								Repository (from GitHub)
-							</label>
-							<select
-								id={repoSelectId}
-								className={`field-input ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
-								value={
-									state.repositories.some((r) => r.fullName === repoSelector)
-										? repoSelector
-										: ""
-								}
-								onChange={(e) => {
-									if (e.target.value) setRepoSelector(e.target.value);
-								}}
-							>
-								<option value="">Choose a repo…</option>
-								{state.repositories.map((r) => (
-									<option key={r.fullName} value={r.fullName}>
-										{r.fullName}
-									</option>
-								))}
-							</select>
-						</div>
-					)}
-
 					<div>
-						<label className="field-label" htmlFor={repoInputId}>
-							Repository (owner/repo)
-						</label>
-						<input
-							id={repoInputId}
-							className={`field-input ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
-							value={repoSelector}
-							onChange={(e) => setRepoSelector(e.target.value)}
-							placeholder="owner/repo"
-						/>
+						<p className="field-label">Source Repo</p>
+						<div
+							className={`source-repo-card ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
+						>
+							<Github size={16} aria-hidden="true" />
+							<span className="source-repo-name">
+								{repoSelector || "No repository selected"}
+							</span>
+							<button
+								type="button"
+								className="source-repo-edit"
+								aria-label="Change source repository"
+								title="Change source repository"
+								onClick={() => setPickingRepo(true)}
+							>
+								<Pencil size={14} />
+							</button>
+						</div>
 					</div>
 
 					<div>
@@ -169,44 +157,6 @@ export function PanelSettings({
 				</div>
 			</div>
 
-			<div>
-				<p className="section-header">Resources</p>
-				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-					<div>
-						<label className="field-label" htmlFor={cpuMillisId}>
-							CPU request (millicores)
-						</label>
-						<input
-							id={cpuMillisId}
-							type="number"
-							min={DEFAULT_SERVICE_CPU_MILLIS}
-							step={1}
-							className={`field-input ${changedFields.has("runtime.cpuMillis") ? "unapplied-field" : ""}`}
-							value={cpuMillis}
-							onChange={(event) =>
-								setCpuMillis(event.currentTarget.valueAsNumber)
-							}
-						/>
-					</div>
-					<div>
-						<label className="field-label" htmlFor={memoryMebibytesId}>
-							Memory request (MiB)
-						</label>
-						<input
-							id={memoryMebibytesId}
-							type="number"
-							min={DEFAULT_SERVICE_MEMORY_MEBIBYTES}
-							step={1}
-							className={`field-input ${changedFields.has("runtime.memoryMebibytes") ? "unapplied-field" : ""}`}
-							value={memoryMebibytes}
-							onChange={(event) =>
-								setMemoryMebibytes(event.currentTarget.valueAsNumber)
-							}
-						/>
-					</div>
-				</div>
-			</div>
-
 			{error && <p className="error-msg">{error}</p>}
 			{success && (
 				<p className="success-msg">
@@ -218,14 +168,7 @@ export function PanelSettings({
 				type="button"
 				className="btn-primary"
 				onClick={handleSave}
-				disabled={
-					saving ||
-					repoSelector.trim() === "" ||
-					!Number.isSafeInteger(cpuMillis) ||
-					cpuMillis < DEFAULT_SERVICE_CPU_MILLIS ||
-					!Number.isSafeInteger(memoryMebibytes) ||
-					memoryMebibytes < DEFAULT_SERVICE_MEMORY_MEBIBYTES
-				}
+				disabled={saving || repoSelector.trim() === ""}
 				style={{ alignSelf: "flex-start" }}
 			>
 				{saving ? (
@@ -233,6 +176,143 @@ export function PanelSettings({
 				) : null}
 				{saving ? "Saving…" : "Save changes"}
 			</button>
+
+			<div className="danger-zone">
+				<p className="section-header danger">Danger zone</p>
+				<div className="danger-zone-row">
+					<div>
+						<strong>Delete this service</strong>
+						<span>
+							Removes {service.name} and its deployments from this environment.
+							This cannot be undone.
+						</span>
+					</div>
+					<button
+						type="button"
+						className="btn-danger-outline"
+						onClick={() => {
+							setDeleteError(undefined);
+							setConfirmingDelete(true);
+						}}
+					>
+						<Trash2 size={13} />
+						Delete service
+					</button>
+				</div>
+			</div>
+
+			{confirmingDelete && (
+				<ConfirmDeleteDialog
+					title="Delete Service"
+					name={service.name}
+					busy={deleting}
+					error={deleteError}
+					description={
+						<>
+							You are <span className="danger-word">deleting</span> the service{" "}
+							<strong>{service.name}</strong> from this environment.
+						</>
+					}
+					onCancel={() => {
+						if (deleting) return;
+						setConfirmingDelete(false);
+						setDeleteError(undefined);
+					}}
+					onConfirm={() => void handleDelete()}
+				/>
+			)}
+
+			{pickingRepo && (
+				<SourceRepositoryDialog
+					repositories={state.repositories}
+					repoSelector={repoSelector}
+					onClose={() => setPickingRepo(false)}
+					onSelect={(selector) => {
+						setRepoSelector(selector);
+						setPickingRepo(false);
+					}}
+				/>
+			)}
+		</div>
+	);
+}
+
+function SourceRepositoryDialog({
+	repositories,
+	repoSelector,
+	onClose,
+	onSelect,
+}: {
+	repositories: DashboardHomeState["repositories"];
+	repoSelector: string;
+	onClose: () => void;
+	onSelect: (selector: string) => void;
+}) {
+	const [repoSearch, setRepoSearch] = useState("");
+	const [highlightedIndex, setHighlightedIndex] = useState(0);
+	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+	const repoListRef = useRef<HTMLDivElement>(null);
+	const matches = repositories.filter((repository) =>
+		repository.fullName.toLowerCase().includes(repoSearch.toLowerCase()),
+	);
+	// A repo can be set by hand — e.g. before the GitHub App has been installed,
+	// when the catalog is empty. A well-formed owner/repo is offered as a row.
+	const typed = repoSearch.trim();
+	const manualEntry =
+		MANUAL_SELECTOR.test(typed) &&
+		!matches.some((repository) => repository.fullName === typed)
+			? { fullName: typed }
+			: undefined;
+	const filteredRepositories = manualEntry
+		? [manualEntry, ...matches]
+		: matches;
+
+	useEffect(() => {
+		const index = hoveredIndex ?? highlightedIndex;
+		const row = repoListRef.current?.querySelector<HTMLElement>(
+			`[data-picker-index="${index}"]`,
+		);
+		row?.scrollIntoView?.({ block: "nearest" });
+	}, [highlightedIndex, hoveredIndex]);
+
+	return (
+		<div
+			className="modal-overlay"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Select source repository"
+			tabIndex={-1}
+			onClick={(event) => {
+				if (event.target === event.currentTarget) onClose();
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Escape") onClose();
+			}}
+		>
+			<div className="modal-card">
+				<RepositoryPicker
+					actions={[]}
+					filteredRepositories={filteredRepositories}
+					highlightedIndex={highlightedIndex}
+					hoveredIndex={hoveredIndex}
+					loading={false}
+					onActivateIndex={(index) => {
+						const repository = filteredRepositories[index];
+						if (repository) onSelect(repository.fullName);
+					}}
+					onClose={onClose}
+					onConfirm={onSelect}
+					onRepositorySelect={() => {}}
+					onSearchChange={() => {}}
+					repoListRef={repoListRef}
+					repoSearch={repoSearch}
+					repoSelector={repoSelector}
+					setHighlightedIndex={setHighlightedIndex}
+					setHoveredIndex={setHoveredIndex}
+					setRepoSearch={setRepoSearch}
+					showEmptyState={filteredRepositories.length === 0}
+				/>
+			</div>
 		</div>
 	);
 }

@@ -149,6 +149,10 @@ export interface RedeployServiceRequest {
 	serviceId: string;
 }
 
+export interface DeleteServiceRequest {
+	serviceId: string;
+}
+
 export interface DiscardServiceChangesRequest {
 	serviceId: string;
 	changeIds?: Array<string>;
@@ -231,6 +235,7 @@ export type PlatformMethod =
 	| "UpdateService"
 	| "RedeployService"
 	| "DiscardServiceChanges"
+	| "DeleteService"
 	| "GetService"
 	| "GetServiceStatus"
 	| "ListServiceLogs"
@@ -258,6 +263,7 @@ export type PlatformRequestMap = {
 	UpdateService: UpdateServiceRequest;
 	RedeployService: RedeployServiceRequest;
 	DiscardServiceChanges: DiscardServiceChangesRequest;
+	DeleteService: DeleteServiceRequest;
 	GetService: GetServiceRequest;
 	GetServiceStatus: GetServiceStatusRequest;
 	ListServiceLogs: ListServiceLogsRequest;
@@ -352,6 +358,11 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	DiscardServiceChanges: (
 		request: DiscardServiceChangesRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	DeleteService: (
+		request: DeleteServiceRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;

@@ -1,5 +1,5 @@
 import { Github, Loader2, X } from "lucide-react";
-import type { CSSProperties } from "react";
+import { type CSSProperties, useEffect, useRef } from "react";
 
 import type { RepositoryPickerProps } from "./types";
 
@@ -37,6 +37,11 @@ export function RepositoryPicker({
 }: RepositoryPickerProps) {
 	const selectableCount = actions.length + filteredRepositories.length;
 	const activeIndex = hoveredIndex ?? highlightedIndex;
+	const searchRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		searchRef.current?.focus();
+	}, []);
 
 	return (
 		<>
@@ -50,6 +55,9 @@ export function RepositoryPicker({
 				}}
 			>
 				<input
+					ref={searchRef}
+					autoComplete="off"
+					spellCheck={false}
 					placeholder="Search repositories…"
 					value={repoSearch}
 					onChange={(event) => {
