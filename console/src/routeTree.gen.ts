@@ -16,6 +16,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
 import { Route as EventsProjectServicesRouteImport } from './routes/events/project-services'
+import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/environment-services'
+import { Route as EnvironmentsEnvironmentIdRouteImport } from './routes/environments/$environmentId'
 import { Route as AuthStartRouteImport } from './routes/auth/start'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 
@@ -54,6 +56,18 @@ const EventsProjectServicesRoute = EventsProjectServicesRouteImport.update({
   path: '/events/project-services',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EventsEnvironmentServicesRoute =
+  EventsEnvironmentServicesRouteImport.update({
+    id: '/events/environment-services',
+    path: '/events/environment-services',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const EnvironmentsEnvironmentIdRoute =
+  EnvironmentsEnvironmentIdRouteImport.update({
+    id: '/environments/$environmentId',
+    path: '/environments/$environmentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AuthStartRoute = AuthStartRouteImport.update({
   id: '/auth/start',
   path: '/auth/start',
@@ -72,6 +86,8 @@ export interface FileRoutesByFullPath {
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
+  '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
+  '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
@@ -83,6 +99,8 @@ export interface FileRoutesByTo {
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
+  '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
+  '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
@@ -95,6 +113,8 @@ export interface FileRoutesById {
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
+  '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
+  '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
@@ -108,6 +128,8 @@ export interface FileRouteTypes {
     | '/logout'
     | '/auth/callback'
     | '/auth/start'
+    | '/environments/$environmentId'
+    | '/events/environment-services'
     | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
@@ -119,6 +141,8 @@ export interface FileRouteTypes {
     | '/logout'
     | '/auth/callback'
     | '/auth/start'
+    | '/environments/$environmentId'
+    | '/events/environment-services'
     | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
@@ -130,6 +154,8 @@ export interface FileRouteTypes {
     | '/logout'
     | '/auth/callback'
     | '/auth/start'
+    | '/environments/$environmentId'
+    | '/events/environment-services'
     | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
@@ -142,6 +168,8 @@ export interface RootRouteChildren {
   LogoutRoute: typeof LogoutRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthStartRoute: typeof AuthStartRoute
+  EnvironmentsEnvironmentIdRoute: typeof EnvironmentsEnvironmentIdRoute
+  EventsEnvironmentServicesRoute: typeof EventsEnvironmentServicesRoute
   EventsProjectServicesRoute: typeof EventsProjectServicesRoute
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
@@ -198,6 +226,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EventsProjectServicesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/events/environment-services': {
+      id: '/events/environment-services'
+      path: '/events/environment-services'
+      fullPath: '/events/environment-services'
+      preLoaderRoute: typeof EventsEnvironmentServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/environments/$environmentId': {
+      id: '/environments/$environmentId'
+      path: '/environments/$environmentId'
+      fullPath: '/environments/$environmentId'
+      preLoaderRoute: typeof EnvironmentsEnvironmentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth/start': {
       id: '/auth/start'
       path: '/auth/start'
@@ -222,6 +264,8 @@ const rootRouteChildren: RootRouteChildren = {
   LogoutRoute: LogoutRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthStartRoute: AuthStartRoute,
+  EnvironmentsEnvironmentIdRoute: EnvironmentsEnvironmentIdRoute,
+  EventsEnvironmentServicesRoute: EventsEnvironmentServicesRoute,
   EventsProjectServicesRoute: EventsProjectServicesRoute,
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,

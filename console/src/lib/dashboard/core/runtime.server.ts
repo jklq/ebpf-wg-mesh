@@ -3,7 +3,6 @@ import {
 	type DashboardConfig,
 	type DashboardDependencies,
 	type DashboardDomainBinding,
-	type DashboardGitHubAccount,
 	type DashboardOnboardingDraft,
 	type DashboardOnboardingStep,
 	type DashboardProject,
@@ -14,13 +13,13 @@ import {
 	type DashboardStore,
 	DashboardValidationError,
 	DatabaseError,
-	type GitHubAccountLoginInput,
 	GitHubApiError,
 	type GitHubAppUserClient,
 	type GitHubUserRepository,
 	type PlatformGateway,
 	PlatformGatewayError,
 	type SessionCookies,
+	type StoredDashboardGitHubAccount,
 } from "#/lib/dashboard/core/types.server";
 import { formatError } from "#/lib/dashboard/core/utils.server";
 import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
@@ -94,8 +93,9 @@ export async function listGitHubRepositories(
 
 export async function refreshGitHubAccount(
 	runtime: DashboardRuntime,
-	account: DashboardGitHubAccount,
-): Promise<DashboardGitHubAccount> {
+	userID: string,
+	account: StoredDashboardGitHubAccount,
+): Promise<StoredDashboardGitHubAccount> {
 	const github = runtime.github;
 	if (!github || !account.refreshToken) {
 		throw new GitHubApiError({
@@ -104,31 +104,97 @@ export async function refreshGitHubAccount(
 			cause: new Error("missing GitHub client or refresh token"),
 		});
 	}
-	const token = await github.refreshToken(account.refreshToken);
-	const refreshed: GitHubAccountLoginInput = {
-		providerSubject: account.providerSubject,
-		login: account.login,
-		primaryEmail: account.primaryEmail,
-		accessToken: token.accessToken,
-		tokenType: token.tokenType,
-		scope: token.scope,
-		accessTokenExpiresAt: token.accessTokenExpiresAt,
-		refreshToken: token.refreshToken ?? account.refreshToken,
-		refreshTokenExpiresAt:
-			token.refreshTokenExpiresAt ?? account.refreshTokenExpiresAt,
-	};
-	await storeCall(runtime, "completeGitHubLogin", (store) =>
-		store.completeGitHubLogin(refreshed),
+	const expectedTokenVersion = account.tokenVersion;
+	const leaseID = runtime.randomUUID();
+	for (let attempt = 0; attempt < 80; attempt += 1) {
+		const current =
+			attempt === 0
+				? account
+				: await storeCall(runtime, "getGitHubAccount", (store) =>
+						store.getGitHubAccount(userID),
+					);
+		if (!current) {
+			throw new GitHubApiError({
+				operation: "refreshToken",
+				message: "GitHub account is no longer available",
+				cause: new Error("GitHub account missing during token refresh"),
+			});
+		}
+		if (current.tokenVersion !== expectedTokenVersion) return current;
+
+		const now = runtime.now();
+		const acquired = await storeCall(
+			runtime,
+			"tryAcquireGitHubTokenRefresh",
+			(store) =>
+				store.tryAcquireGitHubTokenRefresh({
+					userID,
+					expectedTokenVersion,
+					leaseID,
+					now,
+					leaseExpiresAt: new Date(now.getTime() + 60_000),
+				}),
+		);
+		if (!acquired) {
+			await waitForTokenRefresh();
+			continue;
+		}
+
+		try {
+			const token = await github.refreshToken(account.refreshToken);
+			const updated = await storeCall(
+				runtime,
+				"completeGitHubTokenRefresh",
+				(store) =>
+					store.completeGitHubTokenRefresh({
+						userID,
+						providerSubject: account.providerSubject,
+						expectedTokenVersion,
+						leaseID,
+						token,
+						fallbackRefreshToken: account.refreshToken ?? "",
+						fallbackRefreshTokenExpiresAt: account.refreshTokenExpiresAt,
+					}),
+			);
+			if (updated) return updated;
+			const winner = await storeCall(runtime, "getGitHubAccount", (store) =>
+				store.getGitHubAccount(userID),
+			);
+			if (winner && winner.tokenVersion !== expectedTokenVersion) return winner;
+			throw new GitHubApiError({
+				operation: "refreshToken",
+				message: "GitHub token refresh was superseded",
+				cause: new Error("stale GitHub token refresh result"),
+			});
+		} catch (cause) {
+			await storeCall(runtime, "releaseGitHubTokenRefresh", (store) =>
+				store.releaseGitHubTokenRefresh({
+					userID,
+					expectedTokenVersion,
+					leaseID,
+				}),
+			);
+			const winner = await storeCall(runtime, "getGitHubAccount", (store) =>
+				store.getGitHubAccount(userID),
+			);
+			if (winner && winner.tokenVersion !== expectedTokenVersion) return winner;
+			throw cause;
+		}
+	}
+
+	const winner = await storeCall(runtime, "getGitHubAccount", (store) =>
+		store.getGitHubAccount(userID),
 	);
-	return {
-		...account,
-		accessToken: refreshed.accessToken,
-		tokenType: refreshed.tokenType,
-		scope: refreshed.scope,
-		accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
-		refreshToken: refreshed.refreshToken,
-		refreshTokenExpiresAt: refreshed.refreshTokenExpiresAt,
-	};
+	if (winner && winner.tokenVersion !== expectedTokenVersion) return winner;
+	throw new GitHubApiError({
+		operation: "refreshToken",
+		message: "GitHub token refresh is already in progress",
+		cause: new Error("GitHub token refresh lease wait timed out"),
+	});
+}
+
+function waitForTokenRefresh(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 25));
 }
 
 export function reconcileOnboardingDraft(
@@ -204,6 +270,7 @@ export function onboardingDraftEquals(
 	return (
 		left.currentStep === right.currentStep &&
 		left.projectId === right.projectId &&
+		left.environmentId === right.environmentId &&
 		left.serviceId === right.serviceId &&
 		left.repositorySelector === right.repositorySelector &&
 		left.trackedRef === right.trackedRef &&

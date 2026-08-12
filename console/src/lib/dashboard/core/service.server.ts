@@ -8,26 +8,34 @@ import {
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
+	createEnvironmentFromSession,
 	createProjectFromSession,
 	createServiceFastFromSession,
 	deleteDomainBindingFromSession,
+	deleteEnvironmentFromSession,
+	deployEnvironmentFromSession,
 	discardServiceChangesFromSession,
+	duplicateEnvironmentFromSession,
+	generateDomainBindingFromSession,
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
 	inspectRepositorySourceFromSession,
 	listDomainBindingsFromSession,
-	listProjectServicesFromSession,
+	listEnvironmentServicesFromSession,
 	listServiceDeploymentsFromSession,
 	listServiceLogsFromSession,
 	loadDashboardHome,
 	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
-	requestDomainOwnershipChallengeFromSession,
 	redeployServiceFromSession,
+	renameEnvironmentFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
 	updateDomainBindingFromSession,
 	updateServiceFromSession,
+	waitForEnvironmentServicesFromSession,
+	waitForProjectServicesFromSession,
+	waitForServiceStatusFromSession,
 } from "#/lib/dashboard/core/operations.server";
 import { createDashboardRuntime } from "#/lib/dashboard/core/runtime.server";
 import type {
@@ -58,8 +66,8 @@ export function createDashboardService(
 		completeAuthCallback(input) {
 			return completeAuthCallback(runtime, input);
 		},
-		loadDashboardHome() {
-			return loadDashboardHome(runtime);
+		loadDashboardHome(environmentId) {
+			return loadDashboardHome(runtime, environmentId);
 		},
 		loadGitHubCatalogFromSession() {
 			return loadGitHubCatalogFromSession(runtime);
@@ -69,6 +77,21 @@ export function createDashboardService(
 		},
 		createProjectFromSession(name) {
 			return createProjectFromSession(runtime, name);
+		},
+		createEnvironmentFromSession(input) {
+			return createEnvironmentFromSession(runtime, input);
+		},
+		duplicateEnvironmentFromSession(input) {
+			return duplicateEnvironmentFromSession(runtime, input);
+		},
+		renameEnvironmentFromSession(input) {
+			return renameEnvironmentFromSession(runtime, input);
+		},
+		deleteEnvironmentFromSession(environmentId) {
+			return deleteEnvironmentFromSession(runtime, environmentId);
+		},
+		deployEnvironmentFromSession(environmentId) {
+			return deployEnvironmentFromSession(runtime, environmentId);
 		},
 		inspectRepositoryFromSession(input) {
 			return inspectRepositoryFromSession(runtime, input);
@@ -94,8 +117,17 @@ export function createDashboardService(
 		getServiceStatusFromSession(input) {
 			return getServiceStatusFromSession(runtime, input);
 		},
-		listProjectServicesFromSession(input) {
-			return listProjectServicesFromSession(runtime, input);
+		listEnvironmentServicesFromSession(input) {
+			return listEnvironmentServicesFromSession(runtime, input);
+		},
+		waitForEnvironmentServicesFromSession(input) {
+			return waitForEnvironmentServicesFromSession(runtime, input);
+		},
+		waitForProjectServicesFromSession(input) {
+			return waitForProjectServicesFromSession(runtime, input);
+		},
+		waitForServiceStatusFromSession(input) {
+			return waitForServiceStatusFromSession(runtime, input);
 		},
 		listServiceLogsFromSession(input) {
 			return listServiceLogsFromSession(runtime, input);
@@ -118,8 +150,8 @@ export function createDashboardService(
 		listDomainBindingsFromSession(input) {
 			return listDomainBindingsFromSession(runtime, input);
 		},
-		requestDomainOwnershipChallengeFromSession(input) {
-			return requestDomainOwnershipChallengeFromSession(runtime, input);
+		generateDomainBindingFromSession(input) {
+			return generateDomainBindingFromSession(runtime, input);
 		},
 		createDomainBindingFromSession(input) {
 			return createDomainBindingFromSession(runtime, input);

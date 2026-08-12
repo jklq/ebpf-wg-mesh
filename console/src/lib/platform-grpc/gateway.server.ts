@@ -8,9 +8,12 @@ import {
 } from "#/lib/platform-grpc/client.server";
 import {
 	decodeDomainBindingMessage,
-	decodeDomainOwnershipChallengeMessage,
+	decodeEnvironmentMessage,
+	decodeIndexedServiceStatusResponse,
+	decodeIndexedServicesResponse,
 	decodeInspectSourceResponse,
 	decodeListDomainBindingsResponse,
+	decodeListEnvironmentsResponse,
 	decodeListProjectsResponse,
 	decodeListServiceDeploymentsResponse,
 	decodeListServiceLogsResponse,
@@ -32,12 +35,6 @@ export function createPlatformGateway(
 	runtime: PlatformRuntimeConfig,
 ): PlatformGateway {
 	return {
-		async ensurePrincipal(user) {
-			await unaryCall(runtime, "EnsurePrincipal", {
-				subject: user.subject,
-				email: user.email,
-			});
-		},
 		async listProjects(user) {
 			const response = await unaryCall(runtime, "ListProjects", {}, user);
 			return decodeListProjectsResponse(response).projects;
@@ -51,23 +48,79 @@ export function createPlatformGateway(
 			);
 			return decodeProjectMessage(response);
 		},
-		async listServices(user, projectId) {
+		async listEnvironments(user, projectId) {
 			const response = await unaryCall(
 				runtime,
-				"ListServices",
+				"ListEnvironments",
 				{ projectId },
 				user,
 			);
+			return decodeListEnvironmentsResponse(response).environments;
+		},
+		async getEnvironment(user, environmentId) {
+			return decodeEnvironmentMessage(
+				await unaryCall(runtime, "GetEnvironment", { environmentId }, user),
+			);
+		},
+		async createEnvironment(user, input) {
+			return decodeEnvironmentMessage(
+				await unaryCall(runtime, "CreateEnvironment", input, user),
+			);
+		},
+		async duplicateEnvironment(user, input) {
+			return decodeEnvironmentMessage(
+				await unaryCall(runtime, "DuplicateEnvironment", input, user),
+			);
+		},
+		async renameEnvironment(user, input) {
+			return decodeEnvironmentMessage(
+				await unaryCall(runtime, "RenameEnvironment", input, user),
+			);
+		},
+		async deleteEnvironment(user, environmentId) {
+			await unaryCall(runtime, "DeleteEnvironment", { environmentId }, user);
+		},
+		async deployEnvironment(user, environmentId) {
+			const response = (await unaryCall(
+				runtime,
+				"DeployEnvironment",
+				{ environmentId },
+				user,
+			)) as { services?: unknown[] };
+			return (response.services ?? []).map(decodeServiceStatusMessage);
+		},
+		async listServices(user, environmentId) {
+			const response = await unaryCall(
+				runtime,
+				"ListServices",
+				{ environmentId },
+				user,
+			);
 			return decodeListServicesResponse(response);
+		},
+		async waitForServices(user, input) {
+			const response = await unaryCall(runtime, "ListServices", input, user);
+			return decodeIndexedServicesResponse(response);
 		},
 		async inspectRepositorySource(user, input) {
 			const response = await unaryCall(
 				runtime,
 				"InspectSource",
 				{
+					projectId: input.projectId,
 					provider: input.provider,
 					repositorySelector: input.repositorySelector,
+					githubUserAccessToken: input.githubUserAccessToken,
 				},
+				user,
+			);
+			return decodeInspectSourceResponse(response);
+		},
+		async linkGitHubRepository(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"LinkGitHubRepository",
+				input,
 				user,
 			);
 			return decodeInspectSourceResponse(response);
@@ -116,6 +169,15 @@ export function createPlatformGateway(
 			);
 			return decodeServiceStatusMessage(response);
 		},
+		async waitForServiceStatus(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"GetServiceStatus",
+				input,
+				user,
+			);
+			return decodeIndexedServiceStatusResponse(response);
+		},
 		async listServiceLogs(user, input) {
 			const response = await unaryCall(
 				runtime,
@@ -124,7 +186,7 @@ export function createPlatformGateway(
 				user,
 			);
 			return decodeListServiceLogsResponse(response).lines.map(
-				({ projectId: _projectId, ...line }) => line,
+				({ environmentId: _environmentId, ...line }) => line,
 			);
 		},
 		async listServiceDeployments(user, input) {
@@ -145,21 +207,20 @@ export function createPlatformGateway(
 			);
 			return decodeListDomainBindingsResponse(response);
 		},
-		async requestDomainOwnershipChallenge(user, input) {
+		async generateDomainBinding(user, input) {
 			const response = await unaryCall(
 				runtime,
-				"RequestDomainOwnershipChallenge",
+				"GenerateDomainBinding",
 				input,
 				user,
 			);
-			return decodeDomainOwnershipChallengeMessage(response);
+			return decodeDomainBindingMessage(response);
 		},
 		async createDomainBinding(user, input) {
 			const response = await unaryCall(
 				runtime,
 				"CreateDomainBinding",
 				{
-					projectId: input.projectId,
 					binding: {
 						hostname: input.hostname,
 						serviceId: input.serviceId,
@@ -175,7 +236,6 @@ export function createPlatformGateway(
 				runtime,
 				"UpdateDomainBinding",
 				{
-					projectId: input.projectId,
 					hostname: input.hostname,
 					binding: {
 						serviceId: input.serviceId,
@@ -190,7 +250,7 @@ export function createPlatformGateway(
 			await unaryCall(
 				runtime,
 				"DeleteDomainBinding",
-				{ projectId: input.projectId, hostname: input.hostname },
+				{ hostname: input.hostname },
 				user,
 			);
 		},

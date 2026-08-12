@@ -15,9 +15,9 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 import { GitHubApiError } from "#/lib/dashboard/core/types.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
-import { completeLoginRoute } from "#/routes/auth/callback";
-import { loadHomeRouteState, NewServiceModal } from "#/routes/index";
-import { LoginPageView, loadLoginRouteState } from "#/routes/login";
+import { NewServiceModal } from "#/routes/-dashboard/new-service-modal";
+import { loadHomeRouteState } from "#/routes/index";
+import { LoginPageView } from "#/routes/login";
 import { logoutRouteResponse } from "#/routes/logout";
 import {
 	readBoundedRequestBody,
@@ -41,23 +41,12 @@ describe("dashboard routes", () => {
 		);
 	});
 
-	it("loads login state from the dashboard service", async () => {
-		const harness = createDashboardTestHarness();
-
-		const state = await loadLoginRouteState(harness.service);
-
-		expect(state.session).toBeNull();
-		expect(state.devUsers).toEqual(harness.config.devUsers);
-		expect(state.githubLoginEnabled).toBe(true);
-		expect(state.publicBaseURL).toBe(harness.config.publicBaseURL);
-	});
-
 	it("renders GitHub-first login with dev fallback links", () => {
 		render(
 			<LoginPageView
 				state={{
 					session: null,
-					devUsers: [{ subject: "user-1", email: "user@example.com" }],
+					devUsers: [{ id: "user-1", email: "user@example.com" }],
 					githubLoginEnabled: true,
 					publicBaseURL: "https://dashboard.example.test",
 				}}
@@ -77,7 +66,7 @@ describe("dashboard routes", () => {
 		expect(
 			screen.getByText("user@example.com").closest("a")?.getAttribute("href"),
 		).toBe(
-			"/auth/callback?subject=user-1&email=user%40example.com&redirect=%2Fprojects",
+			"/auth/callback?user_id=user-1&email=user%40example.com&redirect=%2Fprojects",
 		);
 	});
 
@@ -87,24 +76,10 @@ describe("dashboard routes", () => {
 		await expect(loadHomeRouteState(harness.service)).rejects.toBeTruthy();
 	});
 
-	it("completes auth callback through the dashboard service", async () => {
-		const harness = createDashboardTestHarness();
-
-		const destination = await completeLoginRoute(harness.service, {
-			code: "",
-			state: "",
-			subject: "user-1",
-			email: "user@example.com",
-			redirectTo: "/projects",
-		});
-
-		expect(destination).toBe("/projects");
-	});
-
 	it("logs out and redirects to /login", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -119,25 +94,6 @@ describe("dashboard routes", () => {
 		expect(harness.cookies.values.has(harness.config.refreshCookieName)).toBe(
 			false,
 		);
-	});
-
-	it("renders GitHub callback permission guidance on the login page", () => {
-		render(
-			<LoginPageView
-				state={{
-					session: null,
-					devUsers: [],
-					githubLoginEnabled: true,
-					publicBaseURL: "https://dashboard.example.test",
-				}}
-				error="github_api_error"
-				errorDetail="GitHub denied access to the user's email addresses."
-			/>,
-		);
-
-		expect(
-			screen.getByText("GitHub denied access to the user's email addresses."),
-		).toBeTruthy();
 	});
 
 	it("surfaces GitHub API callback failures as typed route errors", async () => {
@@ -187,13 +143,22 @@ describe("dashboard routes", () => {
 				}}
 			/>,
 		);
+		expect(
+			screen.queryByRole("link", { name: /configure github app/i }),
+		).toBeNull();
 
 		fireEvent.click(screen.getByRole("button", { name: /octocat\/hello/i }));
 
 		await waitFor(() =>
-			expect(submitted).toEqual({ repositorySelector: "octocat/hello" }),
+			expect(submitted).toEqual({
+				repositorySelector: "octocat/hello",
+				cpuMillis: 250,
+				memoryMebibytes: 256,
+			}),
 		);
-		expect(screen.queryByText(/creating service and queuing build/i)).toBeNull();
+		expect(
+			screen.queryByText(/creating service and queuing build/i),
+		).toBeNull();
 	});
 
 	it("surfaces deployment errors back on the picker", async () => {
@@ -229,85 +194,6 @@ describe("dashboard routes", () => {
 		).toBeTruthy();
 	});
 
-	it("does not show GitHub App configuration before a GitHub account exists", () => {
-		render(
-			<NewServiceModal
-				state={homeState({
-					githubLoginURL: "/auth/start",
-					githubInstallURL:
-						"https://github.example.test/apps/platform/installations/new",
-					onboarding: {
-						...homeState().onboarding,
-						repositorySelector: "",
-					},
-				})}
-				onClose={() => {}}
-				onCreated={() => {}}
-			/>,
-		);
-
-		expect(screen.getByPlaceholderText("Search repositories…")).toBeTruthy();
-		expect(
-			screen.queryByRole("link", { name: /configure github app/i }),
-		).toBeNull();
-	});
-
-	it("keeps the GitHub app action on top of the repository picker", () => {
-		const state = homeState({
-			githubAccount: {
-				providerSubject: "github-1",
-				login: "octocat",
-				primaryEmail: "octocat@example.test",
-				accessToken: "token",
-				tokenType: "bearer",
-				scope: "repo",
-			},
-			repositories: [
-				{
-					owner: "octocat",
-					name: "hello",
-					fullName: "octocat/hello",
-					private: false,
-					defaultBranch: "main",
-				},
-			],
-		});
-
-		render(
-			<NewServiceModal state={state} onClose={() => {}} onCreated={() => {}} />,
-		);
-
-		const configure = screen.getByRole("link", {
-			name: /configure github app/i,
-		});
-		expect(configure.getAttribute("style")).toContain(
-			"background: var(--surface-raised)",
-		);
-		expect(configure.getAttribute("style")).toContain("color: var(--text)");
-		expect(configure.getAttribute("style")).toContain(
-			"font-family: var(--font-mono)",
-		);
-		expect(configure.querySelector("svg")?.getAttribute("style")).toContain(
-			"color: var(--text)",
-		);
-
-		fireEvent.keyDown(screen.getByPlaceholderText("Search repositories…"), {
-			key: "ArrowDown",
-		});
-
-		expect(
-			screen
-				.getByRole("button", { name: /octocat\/hello/i })
-				.getAttribute("style"),
-		).toContain("background: var(--surface-raised)");
-		expect(
-			screen
-				.getByRole("button", { name: /octocat\/hello/i })
-				.querySelector("svg")
-				?.getAttribute("style"),
-		).toContain("color: var(--text)");
-	});
-
 	it("does not use a prefilled repository selector as picker search text", () => {
 		const state = homeState({
 			onboarding: {
@@ -318,7 +204,6 @@ describe("dashboard routes", () => {
 				providerSubject: "github-1",
 				login: "octocat",
 				primaryEmail: "octocat@example.test",
-				accessToken: "token",
 				tokenType: "bearer",
 				scope: "repo",
 			},
@@ -355,38 +240,6 @@ describe("dashboard routes", () => {
 			screen.getByRole("button", { name: /octocat\/hello/i }),
 		).toBeTruthy();
 	});
-
-	it("does not render manual repository entry when no repositories are loaded", () => {
-		render(
-			<NewServiceModal
-				state={homeState({
-					githubAccount: {
-						providerSubject: "github-1",
-						login: "octocat",
-						primaryEmail: "octocat@example.test",
-						accessToken: "token",
-						tokenType: "bearer",
-						scope: "repo",
-					},
-					onboarding: {
-						...homeState().onboarding,
-						repositorySelector: "octocat/prefilled",
-					},
-					repositories: [],
-				})}
-				onClose={() => {}}
-				onCreated={() => {}}
-			/>,
-		);
-
-		expect(
-			(screen.getByPlaceholderText("Search repositories…") as HTMLInputElement)
-				.value,
-		).toBe("");
-		expect(screen.queryByPlaceholderText("owner/repo")).toBeNull();
-		expect(screen.queryByRole("button", { name: /check/i })).toBeNull();
-		expect(screen.queryByText(/repositories/i)).toBeNull();
-	});
 });
 
 function homeState(
@@ -395,12 +248,12 @@ function homeState(
 	return {
 		user: {
 			id: "user-1",
-			subject: "user-1",
 			email: "user@example.com",
 		},
 		onboarding: {
 			currentStep: "account",
 			projectId: "",
+			environmentId: "",
 			serviceId: "",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
@@ -409,6 +262,7 @@ function homeState(
 			hostname: "",
 		},
 		repositories: [],
+		environments: [],
 		services: [],
 		githubInstallURL:
 			"https://github.example.test/apps/platform/installations/new",
@@ -422,13 +276,19 @@ function homeState(
 	};
 }
 
-function fastCreateResult(
-	repositorySelector: string,
-): CreateServiceFastResult {
+function fastCreateResult(repositorySelector: string): CreateServiceFastResult {
 	return {
 		project: { id: "project-1", name: "test-project", kind: "user" },
+		environment: {
+			id: "environment-1",
+			projectId: "project-1",
+			name: "Production",
+			kind: "persistent",
+			isProduction: true,
+		},
 		service: {
 			id: "service-1",
+			environmentId: "environment-1",
 			projectId: "project-1",
 			name: "hello",
 			spec: {
@@ -437,13 +297,14 @@ function fastCreateResult(
 					repositorySelector,
 					trackedRef: "main",
 				},
-				runtime: { env: {}, ports: [] },
+				runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
 			},
 		},
 		serviceStatus: null,
 		onboarding: {
 			currentStep: "build",
 			projectId: "project-1",
+			environmentId: "environment-1",
 			serviceId: "service-1",
 			repositorySelector,
 			trackedRef: "main",

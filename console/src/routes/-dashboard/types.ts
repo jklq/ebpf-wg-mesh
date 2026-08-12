@@ -26,6 +26,8 @@ export type ConfirmRepositoryFn = (input: {
 		trackedRef?: string;
 		dockerfilePath?: string;
 		contextDir?: string;
+		cpuMillis?: number;
+		memoryMebibytes?: number;
 	};
 }) => Promise<CreateServiceFastResult>;
 

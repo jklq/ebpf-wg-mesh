@@ -3,10 +3,11 @@ package config
 import "ebof-wg-mesh/internal/meshlabels"
 
 type ServerTLSConfig struct {
-	ServerNames             []string
-	BootstrapTokens         []AgentBootstrapToken
-	ServerCertValidityHours int
-	ClientCertValidityHours int
+	ServerNames                  []string
+	BootstrapTokens              []AgentBootstrapToken
+	ServerCertValidityHours      int
+	ClientCertValidityHours      int
+	RevokedClientCertSerialsFile string
 }
 
 type AgentBootstrapToken struct {
@@ -43,19 +44,12 @@ type LogCaptureConfig struct {
 	RetentionDays int
 }
 
-type OIDCConfig struct {
-	Issuer             string
-	Audience           string
-	JWKSURL            string
-	AllowedEmailDomain string
-}
-
 type BootstrapConfig struct {
 	Users []BootstrapUser
 }
 
 type BootstrapUser struct {
-	Subject  string
+	ID       string
 	Email    string
 	Projects []string
 }
@@ -63,11 +57,17 @@ type BootstrapUser struct {
 type IngressConfig struct {
 	AdminURL                 string
 	AdminListen              string
+	AllowNonLoopbackAdmin    bool
 	ListenAddrs              []string
 	DisableAutomaticHTTPS    bool
 	StaticRoutes             []StaticIngressRouteConfig
 	PublicAddr               string
 	ControlPlaneHTTPUpstream string
+	// UseReportedAllocationIP is for runtimes whose workload address is
+	// reachable directly by the ingress network (for example local Docker).
+	// Production mesh deployments should keep the default false so ingress
+	// uses the control-plane-derived workload IPv6 address.
+	UseReportedAllocationIP bool
 }
 
 type StaticIngressRouteConfig struct {
@@ -81,6 +81,7 @@ type ManagedDashboardConfig struct {
 	ProjectSystemKey  string
 	ServiceName       string
 	ServiceCallerID   string
+	TrustedAgentID    string
 	PublicDomain      string
 	GitHubInstallURL  string
 	IngressTargetHost string
@@ -96,8 +97,11 @@ type ManagedDashboardConfig struct {
 	MemoryMebibytes   int64
 	DatabaseSchema    string
 	SessionCookieName string
-	JWTSecret         string
 	DevUsers          []BootstrapUser
+}
+
+type UserAssertionConfig struct {
+	HMACSecret string
 }
 
 type GitHubAppConfig struct {
@@ -111,29 +115,43 @@ type GitHubAppConfig struct {
 }
 
 type RegistryConfig struct {
-	Host            string
-	NamespacePrefix string
-	Username        string
-	Password        string
+	Host                 string
+	NamespacePrefix      string
+	AuthListen           string
+	TokenIssuer          string
+	TokenService         string
+	CredentialTTLSeconds int
 }
 
 type ControlPlaneBuilderConfig struct {
 	HeartbeatTimeoutSeconds int
 }
 
+type ControlPlaneFailoverConfig struct {
+	ReconcileIntervalSeconds  int
+	UnhealthyThresholdSeconds int
+}
+
+type SourceArchiveConfig struct {
+	Directory     string
+	RetentionDays int
+}
+
 type ControlPlaneConfig struct {
-	InternalGRPC ListenerConfig
-	Database     DatabaseConfig
-	Logs         LogCaptureConfig
-	StateDir     string
-	OIDC         OIDCConfig
-	Ingress      IngressConfig
-	Dashboard    ManagedDashboardConfig
-	Bootstrap    BootstrapConfig
-	GitHub       GitHubAppConfig
-	Registry     RegistryConfig
-	Builder      ControlPlaneBuilderConfig
-	Mesh         ControlPlaneMeshConfig
+	InternalGRPC   ListenerConfig
+	UserAssertions UserAssertionConfig
+	Database       DatabaseConfig
+	Logs           LogCaptureConfig
+	StateDir       string
+	SourceArchives SourceArchiveConfig
+	Ingress        IngressConfig
+	Dashboard      ManagedDashboardConfig
+	Bootstrap      BootstrapConfig
+	GitHub         GitHubAppConfig
+	Registry       RegistryConfig
+	Builder        ControlPlaneBuilderConfig
+	Failover       ControlPlaneFailoverConfig
+	Mesh           ControlPlaneMeshConfig
 }
 
 type ControlPlaneMeshConfig struct {
@@ -152,8 +170,18 @@ type NodeConfig struct {
 }
 
 type NodeResourcesConfig struct {
-	CPUMillis       int64
-	MemoryMebibytes int64
+	CPUMillis               int64
+	MemoryMebibytes         int64
+	ReservedCPUMillis       int64
+	ReservedMemoryMebibytes int64
+}
+
+func (r NodeResourcesConfig) AdvertisedCPUMillis() int64 {
+	return r.CPUMillis - r.ReservedCPUMillis
+}
+
+func (r NodeResourcesConfig) AdvertisedMemoryMebibytes() int64 {
+	return r.MemoryMebibytes - r.ReservedMemoryMebibytes
 }
 
 type ControlPlaneClientConfig struct {
@@ -169,10 +197,11 @@ type InternalClientTLSConfig struct {
 }
 
 type RuntimeConfig struct {
-	DataDir        string
-	VolumesDir     string
-	Snapshotter    string
-	DisableCgroups bool
+	DataDir                    string
+	VolumesDir                 string
+	ManagedDashboardSecretsDir string
+	Snapshotter                string
+	DisableCgroups             bool
 }
 
 type MeshConfig struct {
@@ -208,11 +237,12 @@ type BuilderConfig struct {
 }
 
 type MeshRuntimeConfig struct {
-	NodeName   string
-	Host       HostConfig
-	Containerd ContainerdConfig
-	WireGuard  WireGuard
-	Firewall   FirewallConfig
+	NodeName         string
+	Host             HostConfig
+	Containerd       ContainerdConfig
+	WireGuard        WireGuard
+	Firewall         FirewallConfig
+	WorkloadPoolCIDR string
 }
 
 type HostConfig struct {
@@ -222,7 +252,7 @@ type HostConfig struct {
 type ContainerdConfig struct {
 	Socket            string
 	Namespace         string
-	ProjectLabel      string
+	EnvironmentLabel  string
 	IPv6Label         string
 	IdentitySeeds     []IdentitySeed
 	StaticAssignments []ContainerAssignment
@@ -231,19 +261,19 @@ type ContainerdConfig struct {
 // LabelKeys resolves the identity label keys shared by the agent, which stamps
 // them, and the firewall, which reads them back.
 func (cfg ContainerdConfig) LabelKeys() meshlabels.Keys {
-	return meshlabels.NewKeys(cfg.ProjectLabel, cfg.IPv6Label)
+	return meshlabels.NewKeys(cfg.EnvironmentLabel, cfg.IPv6Label)
 }
 
 type IdentitySeed struct {
-	IPv6      string
-	HostIPv6  string
-	ProjectID uint32
+	IPv6            string
+	HostIPv6        string
+	NetworkIdentity uint32
 }
 
 type ContainerAssignment struct {
-	ContainerID string
-	ProjectID   uint32
-	IPv6        string
+	ContainerID     string
+	NetworkIdentity uint32
+	IPv6            string
 }
 
 type WireGuard struct {

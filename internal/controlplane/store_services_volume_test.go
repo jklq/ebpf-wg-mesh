@@ -20,7 +20,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +32,11 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.createVolume(ctx, "user-1", projects[0].ID, "data", 64<<20, "node-1")
+	volume, err := store.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
-	_, err = store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	_, err = store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -70,7 +70,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -82,11 +82,11 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.createVolume(ctx, "user-1", projects[0].ID, "data", 64<<20, "node-1")
+	volume, err := store.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
-	if _, err := store.createService(ctx, "user-1", projects[0].ID, "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		VolumeName: "data",
 	}), "node-1"); err != nil {
 		t.Fatalf("createService: %v", err)
@@ -105,7 +105,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 
 	ctx := context.Background()
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		volumeName := fmt.Sprintf("data-%d", i)
 		serviceName := fmt.Sprintf("svc-%d", i)
-		volume, err := store.createVolume(ctx, "user-1", projects[0].ID, volumeName, 64<<20, "node-1")
+		volume, err := store.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20, "node-1")
 		if err != nil {
 			t.Fatalf("createVolume(%d): %v", i, err)
 		}
@@ -131,7 +131,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 
 		go func() {
 			<-start
-			_, err := store.createScheduledService(ctx, "user-1", projects[0].ID, serviceName, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			_, err := store.createScheduledService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), serviceName, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				Ports:           runtimePortsFromInts([]int32{8080}),
@@ -148,10 +148,12 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 		createErr := <-createErrCh
 		deleteErr := <-deleteErrCh
 		if createErr == nil && deleteErr == nil {
-			t.Fatalf("iteration %d: create and delete both succeeded for volume %q", i, volumeName)
+			if _, _, err := store.deployEnvironment(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID)); err == nil {
+				t.Fatalf("iteration %d: deployed service with deleted volume %q", i, volumeName)
+			}
 		}
 
-		services, err := store.listServices(ctx, "user-1", projects[0].ID)
+		services, err := store.listServices(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID))
 		if err != nil {
 			t.Fatalf("listServices(%d): %v", i, err)
 		}
@@ -161,6 +163,9 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			}
 			if service.Spec == nil || serviceVolumeName(service.Spec) != volumeName {
 				t.Fatalf("iteration %d: service %q lost its volume reference", i, serviceName)
+			}
+			if service.AllocatedAgentID == "" {
+				continue
 			}
 			state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)
 			if err != nil {

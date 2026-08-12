@@ -41,12 +41,12 @@ export function parseDevUsers(raw: string): Array<DevLoginIdentity> {
 		.map((entry) => entry.trim())
 		.filter((entry) => entry !== "")
 		.flatMap((entry) => {
-			const [subject, email] = entry.split(":", 2);
+			const [id, email] = entry.split(":", 2);
 			const parsed = {
-				subject: (subject ?? "").trim(),
+				id: (id ?? "").trim(),
 				email: (email ?? "").trim(),
 			};
-			if (parsed.subject === "" || parsed.email === "") {
+			if (parsed.id === "" || parsed.email === "") {
 				return [];
 			}
 			return [parsed];

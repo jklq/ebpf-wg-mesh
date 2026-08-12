@@ -21,7 +21,7 @@ describe("dashboard service", () => {
 		const harness = createDashboardTestHarness();
 
 		const destination = await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "https://evil.example.test",
 		});
@@ -43,7 +43,6 @@ describe("dashboard service", () => {
 			).user,
 		).toMatchObject({
 			id: "user-1",
-			subject: "user-1",
 			email: "user@example.com",
 		});
 		expect(
@@ -54,7 +53,6 @@ describe("dashboard service", () => {
 			).sessionId,
 		).toBe("session-1");
 		expect(harness.storeEnsureInitializedCalls).toHaveLength(1);
-		expect(harness.platform.ensurePrincipalCalls).toHaveLength(1);
 	});
 
 	it("keeps cookies secure for public https deployments but not localteststack domains", () => {
@@ -85,11 +83,11 @@ describe("dashboard service", () => {
 	it("returns degraded home state when the control plane is unavailable", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
-		harness.platform.errors.ensurePrincipal = new Error("control plane down");
+		harness.platform.errors.listProjects = new Error("control plane down");
 
 		const state = await harness.service.loadDashboardHome();
 
@@ -101,7 +99,7 @@ describe("dashboard service", () => {
 	it("includes saved service positions in home state", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -111,14 +109,17 @@ describe("dashboard service", () => {
 		harness.platform.services = [
 			{
 				id: "service-1",
-				projectId: "project-1",
+				environmentId: "environment-project-1",
 				name: "hello",
-				spec: { runtime: { env: {}, ports: [] } },
+				spec: {
+					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+				},
 			},
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
 			currentStep: "build",
 			projectId: "project-1",
+			environmentId: "environment-project-1",
 			serviceId: "service-1",
 			repositorySelector: "",
 			trackedRef: "",
@@ -128,7 +129,7 @@ describe("dashboard service", () => {
 		});
 
 		await harness.service.saveServicePositionFromSession({
-			projectId: "project-1",
+			environmentId: "environment-project-1",
 			serviceId: "service-1",
 			position: { x: 320, y: 256 },
 		});
@@ -138,10 +139,79 @@ describe("dashboard service", () => {
 		expect(state?.service?.layoutPosition).toEqual({ x: 320, y: 256 });
 	});
 
+	it("uses the URL environment to select its project and services", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.projects = [
+			{ id: "project-1", name: "one", kind: "user" },
+			{ id: "project-2", name: "two", kind: "user" },
+		];
+		harness.platform.environments = [
+			{
+				id: "environment-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: "persistent",
+				isProduction: true,
+			},
+			{
+				id: "environment-2",
+				projectId: "project-2",
+				name: "Staging",
+				kind: "persistent",
+				isProduction: false,
+			},
+		];
+		harness.platform.services = [
+			{
+				id: "service-1",
+				environmentId: "environment-1",
+				name: "one-service",
+				spec: {
+					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+				},
+			},
+			{
+				id: "service-2",
+				environmentId: "environment-2",
+				name: "two-service",
+				spec: {
+					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+				},
+			},
+		];
+		await harness.store.saveOnboardingDraft("user-1", {
+			currentStep: "build",
+			projectId: "project-1",
+			environmentId: "environment-1",
+			serviceId: "service-1",
+			repositorySelector: "",
+			trackedRef: "",
+			dockerfilePath: "",
+			contextDir: ".",
+			hostname: "",
+		});
+
+		const state = await harness.service.loadDashboardHome("environment-2");
+
+		expect(state?.project?.id).toBe("project-2");
+		expect(state?.environment?.id).toBe("environment-2");
+		expect(state?.services.map((service) => service.id)).toEqual(["service-2"]);
+		expect(state?.onboarding).toMatchObject({
+			projectId: "project-2",
+			environmentId: "environment-2",
+			serviceId: "",
+		});
+	});
+
 	it("creates projects from the active session", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -153,7 +223,6 @@ describe("dashboard service", () => {
 			{
 				user: {
 					id: "user-1",
-					subject: "user-1",
 					email: "user@example.com",
 				},
 				name: "demo-app",
@@ -164,7 +233,7 @@ describe("dashboard service", () => {
 	it("clears the current session", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -183,7 +252,7 @@ describe("dashboard service", () => {
 	it("rotates refresh tokens and issues a new access token on refresh", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -239,7 +308,6 @@ describe("dashboard service", () => {
 		});
 
 		expect(destination).toBe("/");
-		expect(harness.platform.ensurePrincipalCalls).toHaveLength(1);
 	});
 
 	it("stores GitHub token metadata and initializes onboarding state after callback", async () => {
@@ -257,10 +325,13 @@ describe("dashboard service", () => {
 		expect(home?.githubAccount).toMatchObject({
 			login: "octocat",
 			primaryEmail: "user@example.com",
-			accessToken: "github-access-token",
 			tokenType: "bearer",
 			scope: "read:user,user:email,repo",
 		});
+		expect(home?.githubAccount).not.toHaveProperty("accessToken");
+		expect(home?.githubAccount).not.toHaveProperty("refreshToken");
+		expect(JSON.stringify(home)).not.toContain("github-access-token");
+		expect(JSON.stringify(home)).not.toContain("github-refresh-token");
 		expect(home?.onboarding).toMatchObject({
 			currentStep: "account",
 			projectId: "",
@@ -319,6 +390,119 @@ describe("dashboard service", () => {
 		expect(account?.refreshToken).toBe("next-github-refresh-token");
 	});
 
+	it("serializes simultaneous rotating GitHub refreshes across store users", async () => {
+		const harness = createDashboardTestHarness();
+		harness.github.nextToken = {
+			accessToken: "expired-github-token",
+			tokenType: "bearer",
+			scope: "",
+			refreshToken: "single-use-refresh-token",
+		} as GitHubAppUserToken;
+		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await harness.service.completeAuthCallback({
+			code: "github-code",
+			state: "session-1",
+		});
+
+		harness.github.nextToken = {
+			accessToken: "winning-access-token",
+			tokenType: "bearer",
+			scope: "repo",
+			refreshToken: "rotated-refresh-token",
+		} as GitHubAppUserToken;
+		for (let index = 0; index < 2; index += 1) {
+			harness.github.listRepositoriesErrors.push(
+				new GitHubApiError({
+					operation: "listRepositories",
+					message: "GitHub request failed: 401",
+					cause: new Response(null, { status: 401 }),
+					status: 401,
+				}),
+			);
+		}
+
+		const catalogs = await Promise.all([
+			harness.service.loadGitHubCatalogFromSession(),
+			harness.service.loadGitHubCatalogFromSession(),
+		]);
+
+		expect(catalogs[0]?.repositories).toEqual(harness.github.nextRepositories);
+		expect(catalogs[1]?.repositories).toEqual(harness.github.nextRepositories);
+		expect(harness.github.refreshedTokens).toEqual([
+			"single-use-refresh-token",
+		]);
+		const account = await harness.store.getGitHubAccount("user-1");
+		expect(account?.accessToken).toBe("winning-access-token");
+		expect(account?.refreshToken).toBe("rotated-refresh-token");
+	});
+
+	it("does not let a stale successful refresh overwrite the lease winner", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await harness.service.completeAuthCallback({
+			code: "github-code",
+			state: "session-1",
+		});
+		const initial = await harness.store.getGitHubAccount("user-1");
+		if (!initial) throw new Error("missing GitHub account");
+		const startedAt = new Date("2026-03-18T12:00:00Z");
+		await expect(
+			harness.store.tryAcquireGitHubTokenRefresh({
+				userID: "user-1",
+				expectedTokenVersion: initial.tokenVersion,
+				leaseID: "stale-lease",
+				now: startedAt,
+				leaseExpiresAt: new Date(startedAt.getTime() + 60_000),
+			}),
+		).resolves.toBe(true);
+		await expect(
+			harness.store.tryAcquireGitHubTokenRefresh({
+				userID: "user-1",
+				expectedTokenVersion: initial.tokenVersion,
+				leaseID: "winning-lease",
+				now: new Date(startedAt.getTime() + 60_001),
+				leaseExpiresAt: new Date(startedAt.getTime() + 120_000),
+			}),
+		).resolves.toBe(true);
+
+		await expect(
+			harness.store.completeGitHubTokenRefresh({
+				userID: "user-1",
+				providerSubject: initial.providerSubject,
+				expectedTokenVersion: initial.tokenVersion,
+				leaseID: "winning-lease",
+				token: {
+					accessToken: "winning-access",
+					refreshToken: "winning-refresh",
+					tokenType: "bearer",
+					scope: "repo",
+				},
+				fallbackRefreshToken: initial.refreshToken ?? "",
+			}),
+		).resolves.toMatchObject({ accessToken: "winning-access" });
+		await expect(
+			harness.store.completeGitHubTokenRefresh({
+				userID: "user-1",
+				providerSubject: initial.providerSubject,
+				expectedTokenVersion: initial.tokenVersion,
+				leaseID: "stale-lease",
+				token: {
+					accessToken: "stale-access",
+					refreshToken: "stale-refresh",
+					tokenType: "bearer",
+					scope: "repo",
+				},
+				fallbackRefreshToken: initial.refreshToken ?? "",
+			}),
+		).resolves.toBeNull();
+		await expect(
+			harness.store.getGitHubAccount("user-1"),
+		).resolves.toMatchObject({
+			accessToken: "winning-access",
+			refreshToken: "winning-refresh",
+		});
+	});
+
 	it("does not list GitHub repositories on initial home load", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.beginGitHubLogin({ redirectTo: "/" });
@@ -337,7 +521,7 @@ describe("dashboard service", () => {
 	it("returns project and services without loading status or domain bindings", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -347,14 +531,18 @@ describe("dashboard service", () => {
 		harness.platform.services = [
 			{
 				id: "service-1",
+				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "hello",
-				spec: { runtime: { env: {}, ports: [] } },
+				spec: {
+					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+				},
 			},
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
 			currentStep: "build",
 			projectId: "project-1",
+			environmentId: "environment-project-1",
 			serviceId: "service-1",
 			repositorySelector: "",
 			trackedRef: "",
@@ -381,12 +569,12 @@ describe("dashboard service", () => {
 			harness.config,
 			{
 				id: "user-1",
-				subject: "user-1",
 				email: "user@example.com",
 			},
 			"session-1",
 			new Date("2026-03-18T12:00:00Z"),
 		);
+		await harness.store.upsertDevUser("user-1", "user@example.com");
 		harness.cookies.values.set(
 			harness.config.sessionCookieName,
 			session.accessToken,
@@ -396,13 +584,12 @@ describe("dashboard service", () => {
 
 		expect(home).not.toBeNull();
 		expect(harness.storeEnsureInitializedCalls).toHaveLength(1);
-		expect(harness.storeEnsureSessionUserCalls).toHaveLength(1);
 	});
 
 	it("creates another service when deploying the same repository again", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -416,6 +603,7 @@ describe("dashboard service", () => {
 		harness.platform.services = [
 			{
 				id: "service-1",
+				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "hello",
 				spec: {
@@ -428,7 +616,12 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { env: {}, ports: [{ port: 8080, primary: true }] },
+					runtime: {
+						env: {},
+						cpuMillis: 250,
+						memoryMebibytes: 256,
+						ports: [{ port: 8080, primary: true }],
+					},
 				},
 			},
 		];
@@ -436,6 +629,7 @@ describe("dashboard service", () => {
 		await harness.store.saveOnboardingDraft("user-1", {
 			currentStep: "build",
 			projectId: "project-1",
+			environmentId: "environment-project-1",
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
@@ -454,10 +648,9 @@ describe("dashboard service", () => {
 			{
 				user: {
 					id: "user-1",
-					subject: "user-1",
 					email: "user@example.com",
 				},
-				projectId: "project-1",
+				environmentId: "environment-project-1",
 				name: "talented-harmony",
 				spec: {
 					source: {
@@ -469,7 +662,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { env: {}, ports: [] },
+					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
 				},
 			},
 		]);
@@ -479,7 +672,7 @@ describe("dashboard service", () => {
 	it("seeds service runtime ports from repository inspection", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -508,7 +701,7 @@ describe("dashboard service", () => {
 	it("returns fast-created service details for immediate rendering", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -521,22 +714,47 @@ describe("dashboard service", () => {
 		expect(result.project.id).toBe("project-1");
 		expect(result.service).toMatchObject({
 			id: "service-1",
-			projectId: "project-1",
+			environmentId: "environment-1",
 			name: "talented-harmony",
 		});
 		expect(result.serviceStatus?.service.id).toBe("service-1");
 		expect(result.onboarding).toMatchObject({
 			currentStep: "build",
 			projectId: "project-1",
+			environmentId: "environment-1",
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 		});
+		expect(harness.platform.createServiceCalls[0].spec.runtime).toMatchObject({
+			cpuMillis: 250,
+			memoryMebibytes: 256,
+		});
+	});
+
+	it("rejects repositories the signed-in GitHub account cannot access", async () => {
+		const harness = createDashboardTestHarness({ devUsers: [] });
+		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await harness.service.completeAuthCallback({
+			code: "github-code",
+			state: "session-1",
+		});
+
+		await expect(
+			harness.service.createServiceFastFromSession({
+				repositorySelector: "someone/private-repository",
+			}),
+		).rejects.toThrow(
+			"The signed-in GitHub account cannot access this repository.",
+		);
+		expect(harness.platform.createProjectCalls).toEqual([]);
+		expect(harness.platform.linkGitHubRepositoryCalls).toEqual([]);
+		expect(harness.platform.createServiceCalls).toEqual([]);
 	});
 
 	it("forwards rich service log filters to the platform", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
@@ -555,7 +773,6 @@ describe("dashboard service", () => {
 		];
 
 		const logs = await harness.service.listServiceLogsFromSession({
-			projectId: "project-1",
 			serviceId: "service-1",
 			limit: 500,
 			logType: "deploy",
@@ -565,7 +782,6 @@ describe("dashboard service", () => {
 
 		expect(logs).toHaveLength(1);
 		expect(harness.platform.listServiceLogsCalls[0]).toMatchObject({
-			projectId: "project-1",
 			serviceId: "service-1",
 			limit: 500,
 			logType: "deploy",
@@ -577,13 +793,14 @@ describe("dashboard service", () => {
 	it("updates a service display name with settings changes", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.service.completeAuthCallback({
-			subject: "user-1",
+			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 		harness.platform.services = [
 			{
 				id: "service-1",
+				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "old-name",
 				spec: {
@@ -596,13 +813,27 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
-					runtime: { env: {}, ports: [{ port: 8080, primary: true }] },
+					runtime: {
+						env: {},
+						cpuMillis: 250,
+						memoryMebibytes: 256,
+						ports: [{ port: 8080, primary: true }],
+						healthCheck: { path: "/ready", port: 8080, timeoutSeconds: 3 },
+					},
 				},
+			},
+		];
+		harness.platform.environments = [
+			{
+				id: "environment-project-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: "persistent",
+				isProduction: true,
 			},
 		];
 
 		const updated = await harness.service.updateServiceFromSession({
-			projectId: "project-1",
 			serviceId: "service-1",
 			serviceName: "talented-harmony",
 			repositorySelector: "octocat/hello",
@@ -613,9 +844,17 @@ describe("dashboard service", () => {
 
 		expect(updated.name).toBe("talented-harmony");
 		expect(harness.platform.updateServiceCalls[0]).toMatchObject({
-			projectId: "project-1",
 			serviceId: "service-1",
 			name: "talented-harmony",
+			spec: {
+				runtime: {
+					healthCheck: {
+						path: "/ready",
+						port: 8080,
+						timeoutSeconds: 3,
+					},
+				},
+			},
 		});
 	});
 
@@ -629,9 +868,8 @@ describe("dashboard service", () => {
 			state: "session-1",
 		});
 
-		expect(harness.platform.ensurePrincipalCalls[0]?.email).toBe(
-			"user@example.com",
-		);
+		const account = await harness.store.getGitHubAccount("user-1");
+		expect(account?.primaryEmail).toBe("user@example.com");
 	});
 
 	it("rejects GitHub callback when there is no verified email", async () => {

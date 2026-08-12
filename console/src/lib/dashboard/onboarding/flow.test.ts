@@ -9,19 +9,16 @@ import {
 } from "#/lib/dashboard/onboarding/flow";
 
 describe("onboarding flow helpers", () => {
-	it("normalizes repository selectors", () => {
+	it("normalizes and validates repository selectors", () => {
 		expect(normalizeRepositorySelector(" OctoCat / Hello ")).toBe(
 			"octocat/hello",
 		);
-	});
-
-	it("rejects invalid repository selectors", () => {
 		expect(() => normalizeRepositorySelector("octocat")).toThrow(
 			"Repository must be in owner/repo form.",
 		);
 	});
 
-	it("prefers a root Dockerfile when multiple candidates are present", () => {
+	it("recommends a build recipe from Dockerfile candidates", () => {
 		expect(
 			recommendedBuildRecipeFromCandidates([
 				"deploy/Dockerfile",
@@ -32,9 +29,6 @@ describe("onboarding flow helpers", () => {
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 		});
-	});
-
-	it("falls back to the first lexical Dockerfile candidate", () => {
 		expect(
 			recommendedBuildRecipeFromCandidates([
 				"zeta/Dockerfile",
@@ -44,24 +38,15 @@ describe("onboarding flow helpers", () => {
 			dockerfilePath: "apps/api/Dockerfile",
 			contextDir: "apps/api",
 		});
-	});
-
-	it("returns undefined when no Dockerfiles are detected", () => {
 		expect(recommendedBuildRecipeFromCandidates([])).toBeUndefined();
 	});
 
-	it("slugifies service names from repository basenames", () => {
+	it("generates usable and unique service names", () => {
 		expect(slugifyServiceName("Hello World")).toBe("hello-world");
-	});
-
-	it("generates stable friendly service names from a seed", () => {
 		expect(generatedServiceNameFromSeed("seed-1")).toMatch(/^[a-z]+-[a-z]+$/);
 		expect(generatedServiceNameFromSeed("seed-1")).toBe(
 			generatedServiceNameFromSeed("seed-1"),
 		);
-	});
-
-	it("deduplicates service names", () => {
 		expect(uniqueServiceName(["talented-harmony"], "talented-harmony")).toBe(
 			"talented-harmony-2",
 		);

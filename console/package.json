@@ -13,11 +13,13 @@
     "start": "bun run .output/server/index.mjs",
     "test": "bun run test:unit",
     "test:unit": "bunx vitest run --config vitest.unit.config.ts",
-    "test:integration": "bun run test:e2e:local",
+    "test:integration": "bun run test:db-integration",
+    "test:db-integration": "bunx vitest run --config vitest.integration.config.ts",
     "test:e2e:local": "bunx playwright test -c playwright.local.config.ts",
     "format": "bunx biome format",
     "lint": "bunx biome lint",
-    "check": "bunx biome check"
+    "check": "bunx biome check",
+    "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.4",
@@ -52,7 +54,6 @@
     "nitro": "^3.0.260610-beta",
     "typescript": "^5.7.2",
     "vite": "^8.1.4",
-    "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.10"
   }
 }

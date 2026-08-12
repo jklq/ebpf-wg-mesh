@@ -121,7 +121,30 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 			next:    portPresenceValue(current, port),
 		})
 	}
+	fields = append(fields, unappliedChangeField{
+		id:      "runtime.healthCheck",
+		section: "Health check",
+		field:   "HTTP readiness check",
+		path:    "runtime.healthCheck",
+		current: healthCheckValue(serviceRuntime(deployed).GetHealthCheck()),
+		next:    healthCheckValue(serviceRuntime(current).GetHealthCheck()),
+	})
 	return fields
+}
+
+func healthCheckValue(check *platformv1.HealthCheck) string {
+	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
+		return ""
+	}
+	port := "primary port"
+	if check.GetPort() > 0 {
+		port = "port " + strconv.Itoa(int(check.GetPort()))
+	}
+	timeout := ""
+	if check.GetTimeoutSeconds() > 0 {
+		timeout = ", timeout " + strconv.Itoa(int(check.GetTimeoutSeconds())) + "s"
+	}
+	return "GET " + check.GetPath() + " on " + port + timeout
 }
 
 func sortedStringUnion(a, b map[string]string) []string {
@@ -206,6 +229,13 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 				Image: &platformv1.DirectImageSource{Image: directImageRef(deployed)},
 			},
 		}
+	case "runtime.healthCheck":
+		deployedCheck := serviceRuntime(deployed).GetHealthCheck()
+		if deployedCheck == nil {
+			currentRuntime(current).HealthCheck = nil
+		} else {
+			currentRuntime(current).HealthCheck = proto.Clone(deployedCheck).(*platformv1.HealthCheck)
+		}
 	default:
 		const envPrefix = "runtime.env."
 		const portPrefix = "runtime.ports."
@@ -283,6 +313,9 @@ func (s *Store) loadServiceUnappliedChangesQuerier(ctx context.Context, q servic
 }
 
 func (s *Store) loadDeployedServiceSpecQuerier(ctx context.Context, q serviceQueryer, serviceID string, rolloutGeneration int64) (*platformv1.ServiceSpec, error) {
+	if rolloutGeneration == 0 {
+		return canonicalServiceSpec(nil), nil
+	}
 	var rawSpec []byte
 	if err := q.QueryRowContext(
 		ctx,
@@ -304,10 +337,10 @@ func (s *Store) loadDeployedServiceSpecQuerier(ctx context.Context, q serviceQue
 	return canonicalServiceSpec(spec), nil
 }
 
-func (s *Store) discardServiceChanges(ctx context.Context, subject, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
+func (s *Store) discardServiceChanges(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
 	var rec serviceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
+		current, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
 		if err != nil {
 			return err
 		}
@@ -380,7 +413,7 @@ func (s *Store) discardServiceChanges(ctx context.Context, subject, projectID, s
 	if err != nil {
 		return serviceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}
-	rec, err = s.serviceByID(ctx, subject, projectID, serviceID)
+	rec, err = s.serviceByID(ctx, userID, projectID, serviceID)
 	if err != nil {
 		return serviceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}

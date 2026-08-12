@@ -9,6 +9,7 @@ export function defaultOnboardingDraft(): DashboardOnboardingDraft {
 	return {
 		currentStep: "account",
 		projectId: "",
+		environmentId: "",
 		serviceId: "",
 		repositorySelector: "",
 		trackedRef: "",

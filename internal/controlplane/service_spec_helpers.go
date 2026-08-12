@@ -1,6 +1,15 @@
 package controlplane
 
-import platformv1 "ebof-wg-mesh/api/proto/platformv1"
+import (
+	"errors"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+)
+
+const (
+	defaultServiceCPUMillis       int64 = 250
+	defaultServiceMemoryMebibytes int64 = 256
+)
 
 func validatePort(port int32) error {
 	if port < 1 || port > 65535 {
@@ -30,7 +39,7 @@ func runtimePortsFromInts(ports []int32) []*platformv1.ServiceRuntimePort {
 
 func directImageServiceSpec(image string, runtime *platformv1.ServiceRuntime) *platformv1.ServiceSpec {
 	if runtime == nil {
-		runtime = &platformv1.ServiceRuntime{}
+		runtime = defaultServiceRuntime()
 	}
 	return &platformv1.ServiceSpec{
 		Runtime: runtime,
@@ -44,7 +53,7 @@ func directImageServiceSpec(image string, runtime *platformv1.ServiceRuntime) *p
 
 func repositoryServiceSpec(runtime *platformv1.ServiceRuntime, source *platformv1.ServiceSourceSpec) *platformv1.ServiceSpec {
 	if runtime == nil {
-		runtime = &platformv1.ServiceRuntime{}
+		runtime = defaultServiceRuntime()
 	}
 	if source == nil {
 		source = &platformv1.ServiceSourceSpec{}
@@ -57,4 +66,25 @@ func repositoryServiceSpec(runtime *platformv1.ServiceRuntime, source *platformv
 			},
 		},
 	}
+}
+
+func defaultServiceRuntime() *platformv1.ServiceRuntime {
+	return &platformv1.ServiceRuntime{
+		CpuMillis:       defaultServiceCPUMillis,
+		MemoryMebibytes: defaultServiceMemoryMebibytes,
+	}
+}
+
+func validateServiceSpecResources(spec *platformv1.ServiceSpec) error {
+	if spec == nil || spec.GetRuntime() == nil {
+		return errors.New("runtime resources are required")
+	}
+	runtime := spec.GetRuntime()
+	if runtime.GetCpuMillis() < defaultServiceCPUMillis {
+		return errors.New("cpu_millis must be at least 250")
+	}
+	if runtime.GetMemoryMebibytes() < defaultServiceMemoryMebibytes {
+		return errors.New("memory_mebibytes must be at least 256")
+	}
+	return nil
 }

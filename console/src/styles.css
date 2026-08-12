@@ -2262,6 +2262,62 @@ select.field-input {
 }
 
 /* Domain list item */
+.domain-internal-description {
+  margin: -4px 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.domain-internal-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+
+.domain-internal-card > svg {
+  flex-shrink: 0;
+  color: var(--healthy);
+}
+
+.domain-internal-content {
+  min-width: 0;
+}
+
+.domain-internal-hostline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.domain-internal-protocol {
+  padding: 2px 5px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.domain-internal-content p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.domain-internal-content code {
+  padding: 1px 4px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  font-family: var(--font-mono);
+}
+
 .domain-item {
   display: flex;
   align-items: center;

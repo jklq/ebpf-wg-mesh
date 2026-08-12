@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,6 +16,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	}
 	if err := validateServerTLS("controlplane.internalGrpc.tls", cfg.InternalGRPC.TLS); err != nil {
 		return err
+	}
+	if len(cfg.UserAssertions.HMACSecret) < 32 {
+		return errors.New("controlplane.userAssertions.hmacSecret must be at least 32 bytes")
 	}
 	if cfg.Database.URL == "" {
 		return errors.New("controlplane.database.url is required")
@@ -42,8 +46,17 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.StateDir == "" {
 		return errors.New("controlplane.stateDir is required")
 	}
+	if strings.TrimSpace(cfg.SourceArchives.Directory) == "" {
+		return errors.New("controlplane.sourceArchives.directory is required")
+	}
+	if cfg.SourceArchives.RetentionDays <= 0 {
+		return errors.New("controlplane.sourceArchives.retentionDays must be greater than 0")
+	}
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
+	}
+	if err := validateCaddyAdmin(cfg.Ingress); err != nil {
+		return err
 	}
 	for _, addr := range cfg.Ingress.ListenAddrs {
 		if strings.TrimSpace(addr) == "" {
@@ -68,14 +81,20 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 		if cfg.Dashboard.ServiceName == "" {
 			return errors.New("controlplane.dashboard.serviceName is required when dashboard is enabled")
 		}
+		if strings.TrimSpace(cfg.Dashboard.ServiceCallerID) == "" {
+			return errors.New("controlplane.dashboard.serviceCallerId is required when dashboard is enabled")
+		}
+		if strings.TrimSpace(cfg.Dashboard.TrustedAgentID) == "" {
+			return errors.New("controlplane.dashboard.trustedAgentId is required when dashboard is enabled")
+		}
 		if cfg.Dashboard.PublicDomain == "" {
 			return errors.New("controlplane.dashboard.publicDomain is required when dashboard is enabled")
 		}
 		if cfg.Dashboard.ControlPlaneAddr == "" {
 			return errors.New("controlplane.dashboard.controlPlaneAddr is required when dashboard is enabled")
 		}
-		if strings.TrimSpace(cfg.Dashboard.JWTSecret) == "" {
-			return errors.New("controlplane.dashboard.jwtSecret is required when dashboard is enabled")
+		if len(cfg.Dashboard.DevUsers) != 0 {
+			return errors.New("controlplane.dashboard.devUsers are not allowed when dashboard is enabled")
 		}
 	}
 	if cfg.GitHub.Enabled {
@@ -103,15 +122,32 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 		if cfg.Registry.Host == "" {
 			return errors.New("controlplane.registry.host is required when GitHub is enabled")
 		}
-		if cfg.Registry.Username == "" {
-			return errors.New("controlplane.registry.username is required when GitHub is enabled")
+	}
+	if cfg.Registry.Host != "" {
+		if strings.ContainsAny(cfg.Registry.Host, "/ ") {
+			return errors.New("controlplane.registry.host must be a host[:port] without a path")
 		}
-		if cfg.Registry.Password == "" {
-			return errors.New("controlplane.registry.password is required when GitHub is enabled")
+		if _, err := net.ResolveTCPAddr("tcp", cfg.Registry.AuthListen); err != nil {
+			return fmt.Errorf("controlplane.registry.authListen: %w", err)
+		}
+		if strings.TrimSpace(cfg.Registry.TokenIssuer) == "" {
+			return errors.New("controlplane.registry.tokenIssuer is required")
+		}
+		if strings.TrimSpace(cfg.Registry.TokenService) == "" {
+			return errors.New("controlplane.registry.tokenService is required")
+		}
+		if cfg.Registry.CredentialTTLSeconds < 60 || cfg.Registry.CredentialTTLSeconds > 900 {
+			return errors.New("controlplane.registry.credentialTTLSeconds must be between 60 and 900")
 		}
 	}
 	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
 		return errors.New("controlplane.builder.heartbeatTimeoutSeconds must be greater than 0")
+	}
+	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
+		return errors.New("controlplane.failover.reconcileIntervalSeconds must be greater than 0")
+	}
+	if cfg.Failover.UnhealthyThresholdSeconds <= 0 {
+		return errors.New("controlplane.failover.unhealthyThresholdSeconds must be greater than 0")
 	}
 	if cfg.Mesh.InterfaceName == "" {
 		return errors.New("controlplane.mesh.interfaceName is required")
@@ -147,11 +183,26 @@ func validateAgent(cfg AgentConfig) error {
 	if cfg.Node.Resources.MemoryMebibytes <= 0 {
 		return errors.New("agent.node.resources.memoryMebibytes must be greater than 0")
 	}
+	if cfg.Node.Resources.ReservedCPUMillis < 0 {
+		return errors.New("agent.node.resources.reservedCpuMillis must not be negative")
+	}
+	if cfg.Node.Resources.ReservedMemoryMebibytes < 0 {
+		return errors.New("agent.node.resources.reservedMemoryMebibytes must not be negative")
+	}
+	if cfg.Node.Resources.AdvertisedCPUMillis() <= 0 {
+		return errors.New("agent.node.resources.reservedCpuMillis must be less than cpuMillis")
+	}
+	if cfg.Node.Resources.AdvertisedMemoryMebibytes() <= 0 {
+		return errors.New("agent.node.resources.reservedMemoryMebibytes must be less than memoryMebibytes")
+	}
 	if cfg.ControlPlane.Address == "" {
 		return errors.New("agent.controlPlane.address is required")
 	}
 	if err := validateClientTLS("agent.controlPlane.tls", cfg.ControlPlane.TLS); err != nil {
 		return err
+	}
+	if cfg.Runtime.ManagedDashboardSecretsDir != "" && !filepath.IsAbs(cfg.Runtime.ManagedDashboardSecretsDir) {
+		return errors.New("agent.runtime.managedDashboardSecretsDir must be absolute")
 	}
 	if cfg.Mesh.Host.IPv6 == "" {
 		return errors.New("agent.mesh.host.ipv6 is required")
@@ -311,6 +362,9 @@ func validateServerTLS(prefix string, cfg ServerTLSConfig) error {
 	if cfg.ClientCertValidityHours <= 0 {
 		return fmt.Errorf("%s.clientCertValidityHours must be greater than 0", prefix)
 	}
+	if strings.TrimSpace(cfg.RevokedClientCertSerialsFile) == "" {
+		return fmt.Errorf("%s.revokedClientCertSerialsFile is required", prefix)
+	}
 	return nil
 }
 
@@ -339,4 +393,54 @@ func validateAbsoluteURL(field string, raw string) error {
 		return fmt.Errorf("%s must be a valid absolute URL: %q", field, raw)
 	}
 	return nil
+}
+
+func validateAbsoluteHTTPSURL(field string, raw string) error {
+	if err := validateAbsoluteURL(field, raw); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return fmt.Errorf("%s must use https", field)
+	}
+	return nil
+}
+
+func validateCaddyAdmin(cfg IngressConfig) error {
+	if err := validateAbsoluteURL("controlplane.ingress.adminUrl", cfg.AdminURL); err != nil {
+		return err
+	}
+	adminURL, err := url.Parse(cfg.AdminURL)
+	if err != nil {
+		return err
+	}
+	if adminURL.Scheme != "http" && adminURL.Scheme != "https" {
+		return errors.New("controlplane.ingress.adminUrl must use http or https")
+	}
+	if cfg.AllowNonLoopbackAdmin {
+		return nil
+	}
+	if !isLoopbackHost(adminURL.Hostname()) {
+		return errors.New("controlplane.ingress.adminUrl must target loopback unless allowNonLoopbackAdmin is enabled")
+	}
+	host, _, err := net.SplitHostPort(cfg.AdminListen)
+	if err != nil {
+		return fmt.Errorf("controlplane.ingress.adminListen must be host:port: %w", err)
+	}
+	if !isLoopbackHost(host) {
+		return errors.New("controlplane.ingress.adminListen must bind loopback unless allowNonLoopbackAdmin is enabled")
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

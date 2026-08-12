@@ -3,21 +3,22 @@ import { useState } from "react";
 
 import type {
 	DashboardHomeState,
-	DashboardProject,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import {
+	DEFAULT_SERVICE_CPU_MILLIS,
+	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+} from "#/lib/dashboard/core/defaults";
 
 import { doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
 
 export function PanelSettings({
 	service,
-	project,
 	state,
 	onSaved,
 }: {
 	service: DashboardServiceRecord;
-	project: DashboardProject;
 	state: DashboardHomeState;
 	onSaved: (service: DashboardServiceRecord) => void;
 }) {
@@ -30,6 +31,8 @@ export function PanelSettings({
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
+	const cpuMillisId = `service-cpu-millis-${service.id}`;
+	const memoryMebibytesId = `service-memory-mebibytes-${service.id}`;
 	const [repoSelector, setRepoSelector] = useState(
 		source?.repositorySelector ?? "",
 	);
@@ -39,6 +42,12 @@ export function PanelSettings({
 	);
 	const [contextDir, setContextDir] = useState(
 		source?.buildRecipe?.contextDir ?? ".",
+	);
+	const [cpuMillis, setCpuMillis] = useState(
+		service.spec?.runtime.cpuMillis ?? DEFAULT_SERVICE_CPU_MILLIS,
+	);
+	const [memoryMebibytes, setMemoryMebibytes] = useState(
+		service.spec?.runtime.memoryMebibytes ?? DEFAULT_SERVICE_MEMORY_MEBIBYTES,
 	);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string>();
@@ -51,12 +60,13 @@ export function PanelSettings({
 		try {
 			const updated = await doUpdateService({
 				data: {
-					projectId: project.id,
 					serviceId: service.id,
 					repositorySelector: repoSelector,
 					trackedRef,
 					dockerfilePath,
 					contextDir,
+					cpuMillis,
+					memoryMebibytes,
 				},
 			});
 			setSuccess(true);
@@ -159,6 +169,44 @@ export function PanelSettings({
 				</div>
 			</div>
 
+			<div>
+				<p className="section-header">Resources</p>
+				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+					<div>
+						<label className="field-label" htmlFor={cpuMillisId}>
+							CPU request (millicores)
+						</label>
+						<input
+							id={cpuMillisId}
+							type="number"
+							min={DEFAULT_SERVICE_CPU_MILLIS}
+							step={1}
+							className={`field-input ${changedFields.has("runtime.cpuMillis") ? "unapplied-field" : ""}`}
+							value={cpuMillis}
+							onChange={(event) =>
+								setCpuMillis(event.currentTarget.valueAsNumber)
+							}
+						/>
+					</div>
+					<div>
+						<label className="field-label" htmlFor={memoryMebibytesId}>
+							Memory request (MiB)
+						</label>
+						<input
+							id={memoryMebibytesId}
+							type="number"
+							min={DEFAULT_SERVICE_MEMORY_MEBIBYTES}
+							step={1}
+							className={`field-input ${changedFields.has("runtime.memoryMebibytes") ? "unapplied-field" : ""}`}
+							value={memoryMebibytes}
+							onChange={(event) =>
+								setMemoryMebibytes(event.currentTarget.valueAsNumber)
+							}
+						/>
+					</div>
+				</div>
+			</div>
+
 			{error && <p className="error-msg">{error}</p>}
 			{success && (
 				<p className="success-msg">
@@ -170,7 +218,14 @@ export function PanelSettings({
 				type="button"
 				className="btn-primary"
 				onClick={handleSave}
-				disabled={saving || repoSelector.trim() === ""}
+				disabled={
+					saving ||
+					repoSelector.trim() === "" ||
+					!Number.isSafeInteger(cpuMillis) ||
+					cpuMillis < DEFAULT_SERVICE_CPU_MILLIS ||
+					!Number.isSafeInteger(memoryMebibytes) ||
+					memoryMebibytes < DEFAULT_SERVICE_MEMORY_MEBIBYTES
+				}
 				style={{ alignSelf: "flex-start" }}
 			>
 				{saving ? (

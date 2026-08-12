@@ -8,12 +8,7 @@ import {
 	Settings,
 	X,
 } from "lucide-react";
-import {
-	type FormEvent,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import type {
 	DashboardHomeState,
@@ -21,14 +16,9 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
-
-import { doUpdateService } from "./server-fns";
 import { PanelDeployments } from "./panel-deployments";
-import {
-	formatError,
-	healthLabel,
-	serviceHealth,
-} from "./service-utils";
+import { doUpdateService } from "./server-fns";
+import { formatError, healthLabel, serviceHealth } from "./service-utils";
 import type { DashboardTab } from "./types";
 
 type PanelModules = {
@@ -254,60 +244,54 @@ export function ServicePanel({
 
 					return (
 						<>
-				{activeTab === "deployments" && (
-					<PanelDeployments
-						key={service.id}
-						service={service}
-						status={status}
-						project={project}
-					/>
-				)}
-					{activeTab === "variables" && project && (
-						VariablesPanel ? (
-							<div className="service-panel-scroll">
-								<VariablesPanel
+							{activeTab === "deployments" && (
+								<PanelDeployments
+									key={service.id}
 									service={service}
+									status={status}
 									project={project}
-									onSaved={(updated) => {
-										onServiceUpdated(updated);
-										onRefresh();
-									}}
 								/>
-							</div>
-						) : (
-							<PanelTabFallback />
-						)
-					)}
-					{activeTab === "settings" && project && (
-						SettingsPanel ? (
-							<div className="service-panel-scroll">
-								<SettingsPanel
-									service={service}
-									project={project}
-									state={state}
-									onSaved={(updated) => {
-										onServiceUpdated(updated);
-										onRefresh();
-									}}
-								/>
-							</div>
-						) : (
-							<PanelTabFallback />
-						)
-					)}
-					{activeTab === "domains" && project && (
-						DomainsPanel ? (
-							<div className="service-panel-scroll">
-								<DomainsPanel
-									service={service}
-									project={project}
-									state={state}
-								/>
-							</div>
-						) : (
-							<PanelTabFallback />
-						)
-					)}
+							)}
+							{activeTab === "variables" &&
+								project &&
+								(VariablesPanel ? (
+									<div className="service-panel-scroll">
+										<VariablesPanel
+											service={service}
+											onSaved={(updated) => {
+												onServiceUpdated(updated);
+												onRefresh();
+											}}
+										/>
+									</div>
+								) : (
+									<PanelTabFallback />
+								))}
+							{activeTab === "settings" &&
+								project &&
+								(SettingsPanel ? (
+									<div className="service-panel-scroll">
+										<SettingsPanel
+											service={service}
+											state={state}
+											onSaved={(updated) => {
+												onServiceUpdated(updated);
+												onRefresh();
+											}}
+										/>
+									</div>
+								) : (
+									<PanelTabFallback />
+								))}
+							{activeTab === "domains" &&
+								project &&
+								(DomainsPanel ? (
+									<div className="service-panel-scroll">
+										<DomainsPanel service={service} state={state} />
+									</div>
+								) : (
+									<PanelTabFallback />
+								))}
 						</>
 					);
 				})()}
@@ -388,7 +372,6 @@ function EditableServiceHeaderName({
 		try {
 			const updated = await doUpdateService({
 				data: {
-					projectId: project.id,
 					serviceId: service.id,
 					serviceName: nextName,
 				},

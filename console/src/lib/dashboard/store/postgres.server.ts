@@ -44,31 +44,15 @@ export function createPostgresDashboardStore(
 	return {
 		ensureInitialized,
 
-		async ensureSessionUser(user) {
-			await queryVoid(
-				db,
-				"ensureSessionUser",
-				`INSERT INTO ${tableName(runtime, "users")} (
-					id, subject, email, created_at, updated_at
-				) VALUES ($1, $2, $3, NOW(), NOW())
-				ON CONFLICT (id) DO UPDATE SET
-				   subject = excluded.subject,
-				   email = excluded.email,
-				   updated_at = NOW()`,
-				[user.id, user.subject, user.email],
-			);
-		},
-
-		async upsertDevUser(subject, email) {
-			const id = randomUUID();
+		async upsertDevUser(userID, email) {
 			const result = await query<UserRow>(
 				db,
 				"upsertDevUser.user",
-				`INSERT INTO ${tableName(runtime, "users")} (id, subject, email, created_at, updated_at)
-				 VALUES ($1, $2, $3, NOW(), NOW())
-				 ON CONFLICT (subject) DO UPDATE SET email = excluded.email, updated_at = NOW()
-				 RETURNING id, subject, email`,
-				[id, subject, email],
+				`INSERT INTO ${tableName(runtime, "users")} (id, email, created_at, updated_at)
+				 VALUES ($1, $2, NOW(), NOW())
+				 ON CONFLICT (id) DO UPDATE SET email = excluded.email, updated_at = NOW()
+				 RETURNING id, email`,
+				[userID, email],
 			);
 			const user = rowAt(result.rows, 0, "upsertDevUser.user");
 			await queryVoid(
@@ -82,7 +66,7 @@ export function createPostgresDashboardStore(
 				       provider_login = excluded.provider_login,
 				       updated_at = NOW(),
 				       last_login_at = NOW()`,
-				[randomUUID(), user.id, "dev", user.subject, user.email, user.subject],
+				[randomUUID(), user.id, "dev", user.id, user.email, user.id],
 			);
 			await ensureOnboarding(runtime, db, user.id);
 			return user;
@@ -104,6 +88,14 @@ export function createPostgresDashboardStore(
 						0,
 						"completeGitHubLogin.existingAccount",
 					).user_id;
+					await queryVoid(
+						client,
+						"completeGitHubLogin.updateCanonicalEmail",
+						`UPDATE ${tableName(runtime, "users")}
+						    SET email = $2, updated_at = NOW()
+						  WHERE id = $1`,
+						[userID, input.primaryEmail],
+					);
 					await updateGitHubAccount(runtime, client, userID, input);
 					const user = await userByID(runtime, client, userID);
 					return { user, disposition: "login" as const };
@@ -112,7 +104,7 @@ export function createPostgresDashboardStore(
 				const exactEmailUsers = await query<UserRow>(
 					client,
 					"completeGitHubLogin.exactEmailUsers",
-					`SELECT id, subject, email
+					`SELECT id, email
 					   FROM ${tableName(runtime, "users")}
 					  WHERE lower(email) = lower($1)
 					  ORDER BY id ASC`,
@@ -184,14 +176,13 @@ export function createPostgresDashboardStore(
 				}
 
 				const userID = randomUUID();
-				const subject = `user_${userID.replace(/-/g, "")}`;
 				const created = await query<UserRow>(
 					client,
 					"completeGitHubLogin.createUser",
-					`INSERT INTO ${tableName(runtime, "users")} (id, subject, email, created_at, updated_at)
-					 VALUES ($1, $2, $3, NOW(), NOW())
-					 RETURNING id, subject, email`,
-					[userID, subject, input.primaryEmail],
+					`INSERT INTO ${tableName(runtime, "users")} (id, email, created_at, updated_at)
+					 VALUES ($1, $2, NOW(), NOW())
+					 RETURNING id, email`,
+					[userID, input.primaryEmail],
 				);
 				const user = rowAt(created.rows, 0, "completeGitHubLogin.createUser");
 				await updateGitHubAccount(runtime, client, user.id, input);
@@ -204,7 +195,8 @@ export function createPostgresDashboardStore(
 			const result = await query<GitHubAccountRow>(
 				db,
 				"getGitHubAccount",
-				`SELECT provider_subject,
+				`SELECT user_id,
+				        provider_subject,
 				        verified_email_snapshot,
 				        provider_login,
 				        access_token,
@@ -212,7 +204,8 @@ export function createPostgresDashboardStore(
 				        refresh_token,
 				        refresh_token_expires_at,
 				        token_type,
-				        scope
+				        scope,
+				        oauth_token_version
 				   FROM ${tableName(runtime, "accounts")}
 				  WHERE user_id = $1 AND provider = 'github'`,
 				[userID],
@@ -220,18 +213,121 @@ export function createPostgresDashboardStore(
 			if (result.rowCount !== 1) {
 				return null;
 			}
-			const row = rowAt(result.rows, 0, "getGitHubAccount");
-			return {
-				providerSubject: row.provider_subject,
-				login: row.provider_login,
-				primaryEmail: row.verified_email_snapshot,
-				accessToken: row.access_token,
-				tokenType: row.token_type,
-				scope: row.scope,
-				accessTokenExpiresAt: row.access_token_expires_at ?? undefined,
-				refreshToken: row.refresh_token || undefined,
-				refreshTokenExpiresAt: row.refresh_token_expires_at ?? undefined,
-			};
+			return githubAccountFromRow(
+				runtime,
+				rowAt(result.rows, 0, "getGitHubAccount"),
+			);
+		},
+
+		async tryAcquireGitHubTokenRefresh(input) {
+			const result = await query<{ id: string }>(
+				db,
+				"tryAcquireGitHubTokenRefresh",
+				`UPDATE ${tableName(runtime, "accounts")}
+				    SET oauth_refresh_lease_id = $3,
+				        oauth_refresh_lease_expires_at = $5,
+				        updated_at = NOW()
+				  WHERE user_id = $1
+				    AND provider = 'github'
+				    AND oauth_token_version = $2
+				    AND (oauth_refresh_lease_id IS NULL OR oauth_refresh_lease_expires_at <= $4)
+				RETURNING id`,
+				[
+					input.userID,
+					input.expectedTokenVersion,
+					input.leaseID,
+					input.now,
+					input.leaseExpiresAt,
+				],
+			);
+			return result.rowCount === 1;
+		},
+
+		async completeGitHubTokenRefresh(input) {
+			const refreshToken =
+				input.token.refreshToken ?? input.fallbackRefreshToken;
+			const accessTokenCiphertext = runtime.githubTokenCipher.encrypt(
+				input.token.accessToken,
+				{
+					userID: input.userID,
+					providerSubject: input.providerSubject,
+					kind: "access",
+				},
+			);
+			const refreshTokenCiphertext = runtime.githubTokenCipher.encrypt(
+				refreshToken,
+				{
+					userID: input.userID,
+					providerSubject: input.providerSubject,
+					kind: "refresh",
+				},
+			);
+			const result = await query<GitHubAccountRow>(
+				db,
+				"completeGitHubTokenRefresh",
+				`UPDATE ${tableName(runtime, "accounts")}
+				    SET access_token = $5,
+				        access_token_expires_at = $6,
+				        refresh_token = $7,
+				        refresh_token_expires_at = $8,
+				        token_type = $9,
+				        scope = $10,
+				        oauth_token_version = oauth_token_version + 1,
+				        oauth_refresh_lease_id = NULL,
+				        oauth_refresh_lease_expires_at = NULL,
+				        updated_at = NOW()
+				  WHERE user_id = $1
+				    AND provider = 'github'
+				    AND provider_subject = $2
+				    AND oauth_token_version = $3
+				    AND oauth_refresh_lease_id = $4
+				RETURNING user_id,
+				          provider_subject,
+				          verified_email_snapshot,
+				          provider_login,
+				          access_token,
+				          access_token_expires_at,
+				          refresh_token,
+				          refresh_token_expires_at,
+				          token_type,
+				          scope,
+				          oauth_token_version`,
+				[
+					input.userID,
+					input.providerSubject,
+					input.expectedTokenVersion,
+					input.leaseID,
+					accessTokenCiphertext,
+					input.token.accessTokenExpiresAt ?? null,
+					refreshTokenCiphertext,
+					input.token.refreshTokenExpiresAt ??
+						input.fallbackRefreshTokenExpiresAt ??
+						null,
+					input.token.tokenType,
+					input.token.scope,
+				],
+			);
+			if (result.rowCount !== 1) return null;
+			return githubAccountFromRow(
+				runtime,
+				rowAt(result.rows, 0, "completeGitHubTokenRefresh"),
+			);
+		},
+
+		async releaseGitHubTokenRefresh(input) {
+			await queryVoid(
+				db,
+				"releaseGitHubTokenRefresh",
+				`UPDATE ${tableName(runtime, "accounts")}
+				    SET oauth_refresh_lease_id = NULL,
+				        oauth_refresh_lease_expires_at = NULL,
+				        updated_at = NOW()
+				  WHERE user_id = $1
+				    AND provider = 'github'
+				    AND oauth_token_version = $2
+				    AND oauth_refresh_lease_id = $3`,
+				[input.userID, input.expectedTokenVersion, input.leaseID],
+			);
 		},
 
 		async getOnboardingDraft(userID) {
@@ -241,6 +337,7 @@ export function createPostgresDashboardStore(
 				"getOnboardingDraft",
 				`SELECT current_step,
 				        project_id,
+				        environment_id,
 				        service_id,
 				        repository_selector,
 				        tracked_ref,
@@ -264,16 +361,18 @@ export function createPostgresDashboardStore(
 				`UPDATE ${tableName(runtime, "onboarding")}
 				    SET current_step = $2,
 				        project_id = $3,
-				        service_id = $4,
-				        repository_selector = $5,
-				        tracked_ref = $6,
-				        dockerfile_path = $7,
-				        context_dir = $8,
-				        hostname = $9,
+				        environment_id = $4,
+				        service_id = $5,
+				        repository_selector = $6,
+				        tracked_ref = $7,
+				        dockerfile_path = $8,
+				        context_dir = $9,
+				        hostname = $10,
 				        updated_at = NOW()
 				  WHERE user_id = $1
 				RETURNING current_step,
-				          project_id,
+			          project_id,
+			          environment_id,
 				          service_id,
 				          repository_selector,
 				          tracked_ref,
@@ -284,6 +383,7 @@ export function createPostgresDashboardStore(
 					userID,
 					draft.currentStep,
 					draft.projectId,
+					draft.environmentId,
 					draft.serviceId,
 					draft.repositorySelector,
 					draft.trackedRef,
@@ -297,7 +397,7 @@ export function createPostgresDashboardStore(
 			);
 		},
 
-		async listServicePositions(userID, projectId) {
+		async listServicePositions(userID, environmentId) {
 			const result = await query<{
 				service_id: string;
 				x: string | number;
@@ -307,8 +407,8 @@ export function createPostgresDashboardStore(
 				"listServicePositions",
 				`SELECT service_id, x, y
 				   FROM ${tableName(runtime, "service_positions")}
-				  WHERE user_id = $1 AND project_id = $2`,
-				[userID, projectId],
+				  WHERE user_id = $1 AND environment_id = $2`,
+				[userID, environmentId],
 			);
 			const positions: Record<string, { x: number; y: number }> = {};
 			for (const row of result.rows) {
@@ -325,16 +425,16 @@ export function createPostgresDashboardStore(
 				db,
 				"saveServicePosition",
 				`INSERT INTO ${tableName(runtime, "service_positions")} (
-					user_id, project_id, service_id, x, y, created_at, updated_at
+					user_id, environment_id, service_id, x, y, created_at, updated_at
 				) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-				ON CONFLICT (user_id, project_id, service_id) DO UPDATE SET
+				ON CONFLICT (user_id, environment_id, service_id) DO UPDATE SET
 					x = excluded.x,
 					y = excluded.y,
 					updated_at = NOW()
 				RETURNING x, y`,
 				[
 					userID,
-					input.projectId,
+					input.environmentId,
 					input.serviceId,
 					input.position.x,
 					input.position.y,
@@ -371,7 +471,7 @@ export function createPostgresDashboardStore(
 				const result = await query<UserRow>(
 					client,
 					"rotateRefreshSession.select",
-					`SELECT u.id, u.subject, u.email
+					`SELECT u.id, u.email
 					   FROM ${tableName(runtime, "refresh_sessions")} rs
 					   JOIN ${tableName(runtime, "users")} u ON u.id = rs.user_id
 					  WHERE rs.id = $1
@@ -399,5 +499,34 @@ export function createPostgresDashboardStore(
 				return user;
 			});
 		},
+	};
+}
+
+function githubAccountFromRow(
+	runtime: DashboardStoreRuntimeConfig,
+	row: GitHubAccountRow,
+) {
+	const binding = {
+		userID: row.user_id,
+		providerSubject: row.provider_subject,
+	};
+	const refreshToken = runtime.githubTokenCipher.decrypt(row.refresh_token, {
+		...binding,
+		kind: "refresh",
+	});
+	return {
+		providerSubject: row.provider_subject,
+		login: row.provider_login,
+		primaryEmail: row.verified_email_snapshot,
+		accessToken: runtime.githubTokenCipher.decrypt(row.access_token, {
+			...binding,
+			kind: "access",
+		}),
+		tokenVersion: Number(row.oauth_token_version),
+		tokenType: row.token_type,
+		scope: row.scope,
+		accessTokenExpiresAt: row.access_token_expires_at ?? undefined,
+		refreshToken: refreshToken || undefined,
+		refreshTokenExpiresAt: row.refresh_token_expires_at ?? undefined,
 	};
 }

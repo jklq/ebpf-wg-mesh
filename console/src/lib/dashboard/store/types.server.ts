@@ -1,14 +1,15 @@
 import type { QueryResult, QueryResultRow } from "pg";
 
 import type { DashboardOnboardingDraft } from "#/lib/dashboard/core/types.server";
+import type { GitHubTokenCipher } from "#/lib/dashboard/store/token-crypto.server";
 
 export interface UserRow {
 	id: string;
-	subject: string;
 	email: string;
 }
 
 export interface GitHubAccountRow {
+	user_id: string;
 	provider_subject: string;
 	verified_email_snapshot: string;
 	provider_login: string;
@@ -18,11 +19,13 @@ export interface GitHubAccountRow {
 	refresh_token_expires_at: Date | null;
 	token_type: string;
 	scope: string;
+	oauth_token_version: string | number;
 }
 
 export interface OnboardingRow {
 	current_step: string;
 	project_id: string;
+	environment_id: string;
 	service_id: string;
 	repository_selector: string;
 	tracked_ref: string;
@@ -40,6 +43,7 @@ export interface Queryable {
 
 export interface DashboardStoreRuntimeConfig {
 	databaseSchema: string;
+	githubTokenCipher: GitHubTokenCipher;
 }
 
 export interface DashboardMigration {
@@ -60,6 +64,7 @@ export function onboardingDraftFromRow(
 	return {
 		currentStep: decodeOnboardingStep(row.current_step),
 		projectId: row.project_id,
+		environmentId: row.environment_id,
 		serviceId: row.service_id,
 		repositorySelector: row.repository_selector,
 		trackedRef: row.tracked_ref,

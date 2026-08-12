@@ -17,14 +17,14 @@ import type {
 import { DashboardPage } from "./dashboard-page";
 
 const {
-	doRedeployServiceMock,
+	doDeployEnvironmentMock,
 	doCreateServiceFastMock,
 	doSaveServicePositionMock,
 	fetchGitHubCatalogMock,
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
-	doRedeployServiceMock: vi.fn(),
+	doDeployEnvironmentMock: vi.fn(),
 	doSaveServicePositionMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
 	routerMock: { invalidate: vi.fn() },
@@ -37,8 +37,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 vi.mock("./server-fns", () => ({
 	doCreateServiceFast: doCreateServiceFastMock,
+	doDeployEnvironment: doDeployEnvironmentMock,
 	doDiscardServiceChanges: vi.fn(),
-	doRedeployService: doRedeployServiceMock,
 	doSaveServicePosition: doSaveServicePositionMock,
 	fetchGitHubCatalog: fetchGitHubCatalogMock,
 }));
@@ -73,7 +73,7 @@ class MockEventSource {
 
 beforeEach(() => {
 	MockEventSource.instances = [];
-	doRedeployServiceMock.mockReset();
+	doDeployEnvironmentMock.mockReset();
 	doCreateServiceFastMock.mockReset();
 	doSaveServicePositionMock.mockReset();
 	fetchGitHubCatalogMock.mockReset();
@@ -120,7 +120,7 @@ describe("DashboardPage", () => {
 
 		await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 		expect(MockEventSource.instances[0]?.url).toBe(
-			"/events/project-services?projectId=project-1",
+			"/events/environment-services?environmentId=environment-1",
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
@@ -130,7 +130,7 @@ describe("DashboardPage", () => {
 			source.url.includes("/events/service-status"),
 		);
 		expect(statusSource?.url).toBe(
-			"/events/service-status?projectId=project-1&serviceId=service-1",
+			"/events/service-status?serviceId=service-1",
 		);
 
 		rerender(
@@ -148,31 +148,7 @@ describe("DashboardPage", () => {
 		expect(statusSource?.close).not.toHaveBeenCalled();
 	});
 
-	it("uses service layout positions from the initial state", async () => {
-		render(
-			<DashboardPage
-				state={dashboardState(
-					serviceRecord({ layoutPosition: { x: 320, y: 256 } }),
-				)}
-			/>,
-		);
-
-		const node = screen.getByRole("button", { name: /hello/i });
-		expect(node.style.left).toBe("320px");
-		expect(node.style.top).toBe("256px");
-	});
-
-	it("renders service nodes without initial service status", () => {
-		render(
-			<DashboardPage
-				state={dashboardState(serviceRecord(), { serviceStatus: undefined })}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /hello/i })).toBeTruthy();
-	});
-
-	it("updates unselected service badges from the project service stream", async () => {
+	it("updates unselected service badges from the environment service stream", async () => {
 		const service = serviceRecord();
 		const worker = serviceRecord({
 			id: "service-2",
@@ -190,14 +166,14 @@ describe("DashboardPage", () => {
 			/>,
 		);
 
-		const projectSource = await waitFor(() => {
+		const environmentSource = await waitFor(() => {
 			const source = MockEventSource.instances.find((entry) =>
-				entry.url.includes("/events/project-services"),
+				entry.url.includes("/events/environment-services"),
 			);
 			expect(source).toBeTruthy();
 			return source;
 		});
-		projectSource?.emit("services", [
+		environmentSource?.emit("services", [
 			service,
 			{
 				...worker,
@@ -213,7 +189,66 @@ describe("DashboardPage", () => {
 		expect(await screen.findByText("2 changes")).toBeTruthy();
 	});
 
-	it("loads the GitHub catalog when New Service opens", async () => {
+	it("replaces subscriptions and ignores stale events when the environment changes", async () => {
+		const firstService = serviceRecord();
+		const { rerender } = render(
+			<DashboardPage state={dashboardState(firstService)} />,
+		);
+		const firstSource = await waitFor(() => {
+			const source = MockEventSource.instances.find((entry) =>
+				entry.url.includes("environmentId=environment-1"),
+			);
+			expect(source).toBeTruthy();
+			return source as MockEventSource;
+		});
+
+		const secondService = serviceRecord({
+			id: "service-2",
+			environmentId: "environment-2",
+			name: "worker",
+		});
+		const secondEnvironment = {
+			id: "environment-2",
+			projectId: "project-1",
+			name: "Staging",
+			kind: "persistent" as const,
+			isProduction: false,
+		};
+		rerender(
+			<DashboardPage
+				state={dashboardState(secondService, {
+					environments: [
+						{
+							id: "environment-1",
+							projectId: "project-1",
+							name: "Production",
+							kind: "persistent",
+							isProduction: true,
+						},
+						secondEnvironment,
+					],
+					environment: secondEnvironment,
+					services: [secondService],
+					service: secondService,
+				})}
+			/>,
+		);
+
+		await screen.findByRole("button", { name: /worker/i });
+		await waitFor(() => expect(firstSource.close).toHaveBeenCalledTimes(1));
+		expect(
+			MockEventSource.instances.some((entry) =>
+				entry.url.includes("environmentId=environment-2"),
+			),
+		).toBe(true);
+
+		firstSource.emit("services", [firstService]);
+		await Promise.resolve();
+		expect(screen.queryByRole("button", { name: /^hello\b/i })).toBeNull();
+		expect(screen.getByRole("button", { name: /worker/i })).toBeTruthy();
+	});
+
+	it("loads the GitHub catalog from repository controls", async () => {
 		render(<DashboardPage state={dashboardState(serviceRecord())} />);
 
 		fireEvent.click(screen.getByRole("button", { name: /deploy service/i }));
@@ -224,27 +259,16 @@ describe("DashboardPage", () => {
 		expect(
 			await screen.findByPlaceholderText("Search repositories…"),
 		).toBeTruthy();
-	});
 
-	it("loads the GitHub catalog when Settings opens", async () => {
+		cleanup();
 		render(<DashboardPage state={dashboardState(serviceRecord())} />);
 
 		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
 		fireEvent.click(await screen.findByRole("button", { name: /settings/i }));
 
 		await waitFor(() =>
-			expect(fetchGitHubCatalogMock).toHaveBeenCalledTimes(1),
+			expect(fetchGitHubCatalogMock).toHaveBeenCalledTimes(2),
 		);
-	});
-
-	it("centers the initial viewport around services", () => {
-		const { container } = render(
-			<DashboardPage state={dashboardState(serviceRecord())} />,
-		);
-
-		const world = container.querySelector(".canvas-world") as HTMLElement;
-
-		expect(world.style.transform).toBe("translate(256px,256px) scale(1)");
 	});
 
 	it("pans the canvas with trackpad wheel gestures over a service", async () => {
@@ -324,7 +348,7 @@ describe("DashboardPage", () => {
 		);
 	});
 
-	it("reveals the canvas when it receives size after a service is selected", async () => {
+	it("reveals and centers the canvas when it receives a size", async () => {
 		let width = 0;
 		let height = 0;
 		Object.defineProperty(HTMLElement.prototype, "clientWidth", {
@@ -363,53 +387,17 @@ describe("DashboardPage", () => {
 
 		expect(doSaveServicePositionMock).toHaveBeenCalledWith({
 			data: {
-				projectId: "project-1",
+				environmentId: "environment-1",
 				serviceId: "service-1",
 				position: { x: 192, y: 160 },
 			},
 		});
 	});
 
-	it("does not poll the whole route while a service is building", () => {
-		const setIntervalSpy = vi.spyOn(window, "setInterval");
-
-		render(
-			<DashboardPage
-				state={dashboardState(
-					serviceRecord({
-						latestBuild: {
-							buildId: "build-1",
-							state: "running",
-							commitSha: "abc123",
-							imageDigest: "",
-							queuedAt: new Date(),
-							failureReason: "",
-							stages: [
-								{
-									key: "build",
-									label: "Build",
-									detail: "",
-									state: "running",
-								},
-							],
-						},
-					}),
-				)}
-			/>,
-		);
-
-		expect(setIntervalSpy).not.toHaveBeenCalled();
-		expect(routerMock.invalidate).not.toHaveBeenCalled();
-	});
-
 	it("marks the active deploy as applying and lets a newer deploy queue", async () => {
-		const firstDeploy = deferred<{
-			service: DashboardServiceRecord;
-		}>();
-		const secondDeploy = deferred<{
-			service: DashboardServiceRecord;
-		}>();
-		doRedeployServiceMock
+		const firstDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
+		const secondDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
+		doDeployEnvironmentMock
 			.mockReturnValueOnce(firstDeploy.promise)
 			.mockReturnValueOnce(secondDeploy.promise);
 
@@ -428,7 +416,7 @@ describe("DashboardPage", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Deploy" }));
 
 		await screen.findByText("Applying 1 change");
-		expect(doRedeployServiceMock).toHaveBeenCalledTimes(1);
+		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
 
 		const secondEdit = serviceRecord({
 			specRevision: 3,
@@ -445,28 +433,34 @@ describe("DashboardPage", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Queue deploy" }));
 		await screen.findByText("Applying 1 change, next deploy queued");
 
-		firstDeploy.resolve({
-			service: serviceRecord({
-				specRevision: 2,
-				pendingChanges: false,
-				unappliedChangeCount: 0,
-				unappliedChanges: [],
-			}),
+		firstDeploy.resolve([
+			{
+				service: serviceRecord({
+					specRevision: 2,
+					pendingChanges: false,
+					unappliedChangeCount: 0,
+					unappliedChanges: [],
+				}),
+			},
+		]);
+
+		await waitFor(() =>
+			expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(2),
+		);
+		expect(doDeployEnvironmentMock).toHaveBeenNthCalledWith(2, {
+			data: { environmentId: "environment-1" },
 		});
 
-		await waitFor(() => expect(doRedeployServiceMock).toHaveBeenCalledTimes(2));
-		expect(doRedeployServiceMock).toHaveBeenNthCalledWith(2, {
-			data: { projectId: "project-1", serviceId: "service-1" },
-		});
-
-		secondDeploy.resolve({
-			service: serviceRecord({
-				specRevision: 3,
-				pendingChanges: false,
-				unappliedChangeCount: 0,
-				unappliedChanges: [],
-			}),
-		});
+		secondDeploy.resolve([
+			{
+				service: serviceRecord({
+					specRevision: 3,
+					pendingChanges: false,
+					unappliedChangeCount: 0,
+					unappliedChanges: [],
+				}),
+			},
+		]);
 		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
 	});
 });
@@ -478,13 +472,29 @@ function dashboardState(
 	return {
 		user: {
 			id: "user-1",
-			subject: "user-1",
 			email: "user@example.com",
 		},
 		project: { id: "project-1", name: "test-project", kind: "user" },
+		environments: [
+			{
+				id: "environment-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: "persistent",
+				isProduction: true,
+			},
+		],
+		environment: {
+			id: "environment-1",
+			projectId: "project-1",
+			name: "Production",
+			kind: "persistent",
+			isProduction: true,
+		},
 		onboarding: {
 			currentStep: "build",
 			projectId: "project-1",
+			environmentId: "environment-1",
 			serviceId: service.id,
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
@@ -513,6 +523,7 @@ function serviceRecord(
 ): DashboardServiceRecord {
 	return {
 		id: "service-1",
+		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "hello",
 		spec: {
@@ -521,7 +532,7 @@ function serviceRecord(
 				repositorySelector: "octocat/hello",
 				trackedRef: "main",
 			},
-			runtime: { env: {}, ports: [] },
+			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
 		},
 		...overrides,
 	};

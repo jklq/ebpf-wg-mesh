@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-const SERVICES_POLL_INTERVAL_MS = 500;
-const SERVICES_HEARTBEAT_INTERVAL_MS = 15_000;
+// Keep under Bun.serve's default 10s idleTimeout so quiet SSE streams stay open.
+const SERVICES_HEARTBEAT_INTERVAL_MS = 5_000;
+const SERVICES_WAIT_TIMEOUT_SECONDS = 300;
+const SERVICES_RETRY_DELAY_MS = 1_000;
 
 export const Route = createFileRoute("/events/project-services")({
 	server: {
@@ -20,9 +22,11 @@ export const Route = createFileRoute("/events/project-services")({
 					const svc = await import("#/lib/dashboard/server");
 					return new Response(
 						createProjectServicesEventStream({
-							loadServices: () =>
-								svc.listProjectServicesFromSession({
+							loadServices: (waitIndex) =>
+								svc.waitForProjectServicesFromSession({
 									projectId,
+									waitIndex,
+									waitTimeoutSeconds: SERVICES_WAIT_TIMEOUT_SECONDS,
 								}),
 							signal: request.signal,
 						}),
@@ -52,20 +56,29 @@ function createProjectServicesEventStream({
 	loadServices,
 	signal,
 }: {
-	loadServices: () => Promise<unknown>;
+	loadServices: (waitIndex: number) => Promise<{
+		index: number;
+		notModified: boolean;
+		services?: unknown;
+	}>;
 	signal: AbortSignal;
 }): ReadableStream<Uint8Array> {
 	const encoder = new TextEncoder();
 	let closed = false;
-	let lastPayload = "";
-	let lastHeartbeat = Date.now();
+	let lastIndex = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let heartbeat: ReturnType<typeof setInterval> | undefined;
 	let closeStream: (() => void) | undefined;
 
 	const clearTimer = () => {
 		if (!timer) return;
 		clearTimeout(timer);
 		timer = undefined;
+	};
+	const clearHeartbeat = () => {
+		if (!heartbeat) return;
+		clearInterval(heartbeat);
+		heartbeat = undefined;
 	};
 
 	return new ReadableStream<Uint8Array>({
@@ -74,6 +87,7 @@ function createProjectServicesEventStream({
 				if (closed) return;
 				closed = true;
 				clearTimer();
+				clearHeartbeat();
 				signal.removeEventListener("abort", close);
 				try {
 					controller.close();
@@ -88,12 +102,12 @@ function createProjectServicesEventStream({
 				controller.enqueue(encoder.encode(chunk));
 			};
 
-			const schedule = () => {
+			const scheduleRetry = () => {
 				if (closed) return;
 				clearTimer();
 				timer = setTimeout(() => {
 					void publish();
-				}, SERVICES_POLL_INTERVAL_MS);
+				}, SERVICES_RETRY_DELAY_MS);
 			};
 
 			const publish = async () => {
@@ -102,30 +116,29 @@ function createProjectServicesEventStream({
 					return;
 				}
 				try {
-					const services = await loadServices();
-					const payload = JSON.stringify(services);
-					const now = Date.now();
-					if (payload !== lastPayload) {
-						enqueue(`event: services\ndata: ${payload}\n\n`);
-						lastPayload = payload;
-						lastHeartbeat = now;
-					} else if (now - lastHeartbeat >= SERVICES_HEARTBEAT_INTERVAL_MS) {
-						enqueue("event: ping\ndata: {}\n\n");
-						lastHeartbeat = now;
+					const result = await loadServices(lastIndex);
+					lastIndex = result.index;
+					if (!result.notModified && result.services !== undefined) {
+						enqueue(
+							`id: ${result.index}\nevent: services\ndata: ${JSON.stringify(result.services)}\n\n`,
+						);
 					}
+					if (!closed) void publish();
 				} catch (error) {
 					enqueue(
 						`event: services-error\ndata: ${JSON.stringify({
 							message: error instanceof Error ? error.message : "stream failed",
 						})}\n\n`,
 					);
-				} finally {
-					if (!closed) schedule();
+					if (!closed) scheduleRetry();
 				}
 			};
 
 			signal.addEventListener("abort", close, { once: true });
-			enqueue("retry: 500\n\n");
+			enqueue(`retry: ${SERVICES_RETRY_DELAY_MS}\n\n`);
+			heartbeat = setInterval(() => {
+				enqueue("event: ping\ndata: {}\n\n");
+			}, SERVICES_HEARTBEAT_INTERVAL_MS);
 			void publish();
 		},
 		cancel() {

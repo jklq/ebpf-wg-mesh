@@ -26,10 +26,10 @@ var (
 	errNoPlacementAvailable = errors.New("no healthy agent satisfies placement")
 )
 
-func volumeKey(projectID, name string) string {
+func volumeKey(environmentID, name string) string {
 	var b strings.Builder
-	b.Grow(len(projectID) + 1 + len(name))
-	b.WriteString(projectID)
+	b.Grow(len(environmentID) + 1 + len(name))
+	b.WriteString(environmentID)
 	b.WriteByte(0)
 	b.WriteString(name)
 	return b.String()
@@ -409,35 +409,8 @@ func equalRuntimeAfterCanonicalization(a, b *platformv1.ServiceRuntime) bool {
 
 	ahc := a.GetHealthCheck()
 	bhc := b.GetHealthCheck()
-	if (ahc == nil) != (bhc == nil) {
+	if !proto.Equal(ahc, bhc) {
 		return false
-	}
-	if ahc != nil {
-		ahct := ahc.GetType()
-		bhct := bhc.GetType()
-		normalizedAHC := ahct == platformv1.HealthCheck_TYPE_UNSPECIFIED
-		normalizedBHC := bhct == platformv1.HealthCheck_TYPE_UNSPECIFIED
-		ahcp := ahc.GetPath()
-		bhcp := bhc.GetPath()
-		ahcpo := ahc.GetPort()
-		bhcpo := bhc.GetPort()
-		ahcis := ahc.GetIntervalSeconds()
-		bhcis := bhc.GetIntervalSeconds()
-		ahcts := ahc.GetTimeoutSeconds()
-		bhcts := bhc.GetTimeoutSeconds()
-		if normalizedAHC && ahcp == "" && ahcpo == 0 && ahcis == 0 && ahcts == 0 {
-			normalizedAHC = true
-		} else {
-			normalizedAHC = false
-		}
-		if normalizedBHC && bhcp == "" && bhcpo == 0 && bhcis == 0 && bhcts == 0 {
-			normalizedBHC = true
-		} else {
-			normalizedBHC = false
-		}
-		if normalizedAHC != normalizedBHC {
-			return false
-		}
 	}
 	return true
 }
