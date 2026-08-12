@@ -1,33 +1,51 @@
 package controlplane
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"ebof-wg-mesh/internal/config"
 )
 
+var registryPushActions = []string{"pull", "push"}
+
+type registryCredentialMinter interface {
+	MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error)
+}
+
+// RegistryPolicy owns platform image names and asks the embedded registry auth
+// service for credentials bound to one exact repository.
 type RegistryPolicy struct {
 	host            string
 	namespacePrefix string
-	username        string
-	password        string
+	credentialTTL   time.Duration
+	minter          registryCredentialMinter
+	now             func() time.Time
 }
 
-func NewRegistryPolicy(cfg config.RegistryConfig) *RegistryPolicy {
+func NewRegistryPolicy(cfg config.RegistryConfig, minters ...registryCredentialMinter) *RegistryPolicy {
+	var minter registryCredentialMinter
+	if len(minters) > 0 {
+		minter = minters[0]
+	}
 	return &RegistryPolicy{
 		host:            strings.TrimSpace(cfg.Host),
 		namespacePrefix: trimRegistryPath(cfg.NamespacePrefix),
-		username:        cfg.Username,
-		password:        cfg.Password,
+		credentialTTL:   time.Duration(cfg.CredentialTTLSeconds) * time.Second,
+		minter:          minter,
+		now:             time.Now,
 	}
 }
 
 func (p *RegistryPolicy) Enabled() bool {
-	return p != nil && p.host != ""
+	return p != nil && p.host != "" && p.credentialTTL > 0
 }
 
-func (p *RegistryPolicy) PushRef(projectID, serviceID, commitSHA string) string {
+// PushRef places the build ID in the repository path. Registry ACLs are thus
+// unique to a build even when a project rebuilds the same service and commit.
+func (p *RegistryPolicy) PushRef(projectID, environmentID, buildID, serviceID, commitSHA string) string {
 	if !p.Enabled() {
 		return ""
 	}
@@ -35,7 +53,7 @@ func (p *RegistryPolicy) PushRef(projectID, serviceID, commitSHA string) string 
 	if p.namespacePrefix != "" {
 		segments = append(segments, p.namespacePrefix)
 	}
-	segments = append(segments, sanitizeRefSegment(projectID), sanitizeRefSegment(serviceID))
+	segments = append(segments, sanitizeRefSegment(projectID), sanitizeRefSegment(environmentID), sanitizeRefSegment(buildID), sanitizeRefSegment(serviceID))
 	return strings.Join(segments, "/") + ":git-" + sanitizeTag(commitSHA)
 }
 
@@ -50,19 +68,75 @@ func (p *RegistryPolicy) RuntimeDigestRef(pushRef, digest string) string {
 	return base + "@" + digest
 }
 
-func (p *RegistryPolicy) Credentials() (string, string) {
-	if p == nil {
-		return "", ""
+func (p *RegistryPolicy) CredentialsForBuild(_ context.Context, projectID, buildID, pushRef string) (string, string, error) {
+	if !p.Enabled() || p.minter == nil {
+		return "", "", fmt.Errorf("embedded registry auth is not configured")
 	}
-	return p.username, p.password
+	repository, err := p.repositoryForReference(pushRef)
+	if err != nil {
+		return "", "", err
+	}
+	expectedPrefix := ""
+	if p.namespacePrefix != "" {
+		expectedPrefix = p.namespacePrefix + "/"
+	}
+	expectedPrefix += sanitizeRefSegment(projectID) + "/"
+	remainder := strings.TrimPrefix(repository, expectedPrefix)
+	segments := strings.Split(remainder, "/")
+	if remainder == repository || len(segments) != 3 || segments[0] == "" || segments[1] != sanitizeRefSegment(buildID) || segments[2] == "" {
+		return "", "", fmt.Errorf("assigned repository does not match project %q and build %q", projectID, buildID)
+	}
+	expiresAt := p.now().UTC().Add(p.credentialTTL)
+	return p.minter.MintCredential("build-"+buildID, repository, registryPushActions, &expiresAt)
 }
 
-func (p *RegistryPolicy) CredentialsForPushRef(pushRef string) (string, string, error) {
-	_ = pushRef
-	if p == nil {
+// CredentialsForPull returns a durable read-only capability for one platform
+// image repository. The registry access tokens minted from it remain short
+// lived; keeping the capability durable lets an assigned agent cold-pull after
+// a restart without granting access to a sibling repository.
+func (p *RegistryPolicy) CredentialsForPull(subject, environmentID, serviceID, imageRef string) (string, string, error) {
+	if !p.Enabled() || p.minter == nil {
 		return "", "", nil
 	}
-	return p.username, p.password, nil
+	if !strings.HasPrefix(imageRef, p.host+"/") {
+		return "", "", nil
+	}
+	repository, err := p.repositoryForReference(imageRef)
+	if err != nil {
+		return "", "", err
+	}
+	if p.namespacePrefix != "" && !strings.HasPrefix(repository, p.namespacePrefix+"/") {
+		return "", "", fmt.Errorf("image reference is outside platform namespace %q", p.namespacePrefix)
+	}
+	path := repository
+	if p.namespacePrefix != "" {
+		path = strings.TrimPrefix(path, p.namespacePrefix+"/")
+	}
+	segments := strings.Split(path, "/")
+	if len(segments) != 4 || segments[0] == "" || segments[1] != sanitizeRefSegment(environmentID) || segments[2] == "" || segments[3] != sanitizeRefSegment(serviceID) {
+		return "", "", fmt.Errorf("image repository does not match environment %q and service %q", environmentID, serviceID)
+	}
+	return p.minter.MintCredential("pull-"+subject, repository, []string{"pull"}, nil)
+}
+
+func (p *RegistryPolicy) repositoryForReference(ref string) (string, error) {
+	prefix := p.host + "/"
+	if !strings.HasPrefix(ref, prefix) {
+		return "", fmt.Errorf("image reference is outside registry %q", p.host)
+	}
+	repositoryAndVersion := strings.TrimPrefix(ref, prefix)
+	separator := strings.LastIndexByte(repositoryAndVersion, '@')
+	if separator < 0 {
+		separator = strings.LastIndexByte(repositoryAndVersion, ':')
+		if separator <= strings.LastIndexByte(repositoryAndVersion, '/') {
+			return "", fmt.Errorf("image reference has no tag or digest")
+		}
+	}
+	repository := repositoryAndVersion[:separator]
+	if repository == "" {
+		return "", fmt.Errorf("image reference has no repository")
+	}
+	return repository, nil
 }
 
 func trimRegistryPath(raw string) string {
@@ -87,7 +161,11 @@ func sanitizeRefSegment(raw string) string {
 			b.WriteByte('-')
 		}
 	}
-	return strings.Trim(strings.ReplaceAll(b.String(), "--", "-"), "-")
+	segment := strings.Trim(strings.ReplaceAll(b.String(), "--", "-"), "-")
+	if segment == "" {
+		return "unknown"
+	}
+	return segment
 }
 
 func sanitizeTag(commitSHA string) string {

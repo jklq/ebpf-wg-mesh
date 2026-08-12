@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +23,8 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -69,6 +74,7 @@ func TestBuildCommandUsesDockerBuildxWhenDockerBinarySelected(t *testing.T) {
 	wantArgs := []string{
 		"buildx", "build",
 		"--progress=plain",
+		"--add-host", "host.docker.internal:host-gateway",
 		"--file", "/workspace/repo/deploy/Dockerfile",
 		"--tag", "ghcr.io/example/image:tag",
 		"--push",
@@ -314,6 +320,10 @@ func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing
 	}
 	baseConfig := map[string]any{
 		"credsStore": "desktop",
+		"credHelpers": map[string]any{
+			"example.com": "example-helper",
+			"ghcr.io":     "stale-target-helper",
+		},
 		"auths": map[string]any{
 			"example.com": map[string]any{"auth": "existing"},
 		},
@@ -347,6 +357,16 @@ func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing
 	}
 	if got := config["credsStore"]; got != "desktop" {
 		t.Fatalf("unexpected credsStore %v", got)
+	}
+	credentialHelpers, ok := config["credHelpers"].(map[string]any)
+	if !ok {
+		t.Fatalf("credHelpers missing or wrong type: %#v", config["credHelpers"])
+	}
+	if got := credentialHelpers["ghcr.io"]; got != "" {
+		t.Fatalf("target registry helper must be disabled, got %v", got)
+	}
+	if got := credentialHelpers["example.com"]; got != "example-helper" {
+		t.Fatalf("existing registry helper was not preserved, got %v", got)
 	}
 	auths, ok := config["auths"].(map[string]any)
 	if !ok {
@@ -394,6 +414,71 @@ func TestExtractSourceSnapshotStripsArchiveRoot(t *testing.T) {
 	}
 	if string(data) != "hello\n" {
 		t.Fatalf("unexpected extracted content %q", string(data))
+	}
+}
+
+func TestMaterializeSourceSnapshotStreamsAndVerifiesArchive(t *testing.T) {
+	t.Parallel()
+
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/Dockerfile":  "FROM scratch\n",
+		"repo/app/main.go": "package main\n",
+	})
+	digest := sha256.Sum256(archive)
+	digestString := "sha256:" + hex.EncodeToString(digest[:])
+	chunks := make([]*platformv1.SourceSnapshotChunk, 0)
+	for offset := 0; offset < len(archive); {
+		end := min(offset+17, len(archive))
+		chunks = append(chunks, &platformv1.SourceSnapshotChunk{
+			SnapshotId: "snapshot-1",
+			Digest:     digestString,
+			TotalSize:  int64(len(archive)),
+			Offset:     int64(offset),
+			Data:       append([]byte(nil), archive[offset:end]...),
+		})
+		offset = end
+	}
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{client: &recordingBuilderServiceClient{downloadChunks: chunks}}
+	err := app.materializeSourceSnapshot(context.Background(), &platformv1.BuildJob{Source: &platformv1.BuildJobSource{
+		SourceSnapshotId:     "snapshot-1",
+		SourceSnapshotDigest: digestString,
+	}}, repoDir)
+	if err != nil {
+		t.Fatalf("materializeSourceSnapshot: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(repoDir, "app", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "package main\n" {
+		t.Fatalf("unexpected reconstructed source: %q", body)
+	}
+}
+
+func TestMaterializeSourceSnapshotRejectsDigestMismatch(t *testing.T) {
+	t.Parallel()
+
+	archive := makeSnapshotArchive(t, map[string]string{"repo/Dockerfile": "FROM scratch\n"})
+	badDigest := "sha256:" + strings.Repeat("0", sha256.Size*2)
+	app := &App{client: &recordingBuilderServiceClient{downloadChunks: []*platformv1.SourceSnapshotChunk{{
+		SnapshotId: "snapshot-1",
+		Digest:     badDigest,
+		TotalSize:  int64(len(archive)),
+		Data:       archive,
+	}}}}
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := app.materializeSourceSnapshot(context.Background(), &platformv1.BuildJob{Source: &platformv1.BuildJobSource{
+		SourceSnapshotId: "snapshot-1",
+	}}, repoDir)
+	if err == nil || !strings.Contains(err.Error(), "digest verification failed") {
+		t.Fatalf("expected digest verification failure, got %v", err)
 	}
 }
 
@@ -502,18 +587,56 @@ func helperCommandRequest(mode string) commandRequest {
 }
 
 type recordingBuilderServiceClient struct {
-	mu        sync.Mutex
-	requests  []*platformv1.ReportBuildLogsRequest
-	calls     chan struct{}
-	reportErr error
+	mu             sync.Mutex
+	requests       []*platformv1.ReportBuildLogsRequest
+	calls          chan struct{}
+	reportErr      error
+	downloadChunks []*platformv1.SourceSnapshotChunk
+	downloadErr    error
 }
 
 func (c *recordingBuilderServiceClient) ClaimBuild(context.Context, *platformv1.ClaimBuildRequest, ...grpc.CallOption) (*platformv1.BuildJob, error) {
 	return nil, nil
 }
 
-func (c *recordingBuilderServiceClient) DownloadSourceSnapshot(context.Context, *platformv1.DownloadSourceSnapshotRequest, ...grpc.CallOption) (*platformv1.SourceSnapshotArtifact, error) {
-	return nil, nil
+func (c *recordingBuilderServiceClient) DownloadSourceSnapshot(context.Context, *platformv1.DownloadSourceSnapshotRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[platformv1.SourceSnapshotChunk], error) {
+	if c.downloadErr != nil {
+		return nil, c.downloadErr
+	}
+	return &sourceSnapshotTestStream{chunks: c.downloadChunks}, nil
+}
+
+type sourceSnapshotTestStream struct {
+	chunks []*platformv1.SourceSnapshotChunk
+	next   int
+}
+
+func (s *sourceSnapshotTestStream) Recv() (*platformv1.SourceSnapshotChunk, error) {
+	if s.next >= len(s.chunks) {
+		return nil, io.EOF
+	}
+	chunk := s.chunks[s.next]
+	s.next++
+	return chunk, nil
+}
+
+func (s *sourceSnapshotTestStream) Header() (metadata.MD, error) { return nil, nil }
+func (s *sourceSnapshotTestStream) Trailer() metadata.MD         { return nil }
+func (s *sourceSnapshotTestStream) CloseSend() error             { return nil }
+func (s *sourceSnapshotTestStream) Context() context.Context     { return context.Background() }
+func (s *sourceSnapshotTestStream) SendMsg(any) error            { return nil }
+func (s *sourceSnapshotTestStream) RecvMsg(message any) error {
+	chunk, err := s.Recv()
+	if err != nil {
+		return err
+	}
+	target, ok := message.(*platformv1.SourceSnapshotChunk)
+	if !ok {
+		return errors.New("unexpected stream message type")
+	}
+	proto.Reset(target)
+	proto.Merge(target, chunk)
+	return nil
 }
 
 func (c *recordingBuilderServiceClient) ReportBuildHeartbeat(context.Context, *platformv1.BuilderHeartbeatRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
