@@ -434,6 +434,56 @@ func TestPlatformServiceGetServiceStatusProjectsStagesFromReturnedAllocation(t *
 	}
 }
 
+func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	var reads atomic.Int32
+	service := NewPlatformService(&fakePlatformStore{
+		serviceStatusFn: func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
+			// The first read only resolves the environment to watch; by the time
+			// the wait returns, the rollout has completed.
+			applied := int64(1)
+			healthy := false
+			if reads.Add(1) > 1 {
+				applied = 2
+				healthy = true
+			}
+			return serviceRecord{
+					ID:               serviceID,
+					ProjectID:        projectID,
+					AllocatedAgentID: "node-1",
+					CreatedAt:        now.Add(-10 * time.Minute),
+					Spec:             directImageServiceSpec("nginx:1.27", nil),
+					LatestBuild: &platformv1.BuildStatus{
+						BuildId: "build-1",
+					},
+				}, allocationRecord{
+					ID:                       "alloc-status",
+					ServiceID:                serviceID,
+					AgentID:                  "node-1",
+					DesiredRolloutGeneration: 2,
+					AppliedRolloutGeneration: applied,
+					Healthy:                  healthy,
+					UpdatedAt:                now,
+				}, nil
+		},
+	}, noopNotifier{}, noopIngress{})
+
+	resp, err := service.GetServiceStatus(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GetServiceStatusRequest{
+		ServiceId: "service-1",
+	})
+	if err != nil {
+		t.Fatalf("GetServiceStatus: %v", err)
+	}
+	if got := resp.GetAllocation().GetAppliedRolloutGeneration(); got != 2 {
+		t.Fatalf("expected the post-wait snapshot, got applied generation %d", got)
+	}
+	if !resp.GetAllocation().GetHealthy() {
+		t.Fatalf("expected the post-wait snapshot to report healthy")
+	}
+}
+
 func contextWithDelegatedUser(userID, _ string) context.Context {
 	return context.WithValue(context.Background(), delegatedUserContextKey{}, DelegatedUser{
 		UserID: userID,

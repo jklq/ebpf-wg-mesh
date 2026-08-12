@@ -118,6 +118,23 @@ describe("dashboard routes", () => {
 		});
 	});
 
+	it("focuses the repository search on open", () => {
+		render(
+			<NewServiceModal
+				state={homeState({})}
+				onClose={() => {}}
+				onCreated={() => {}}
+				confirmRepository={async ({ data }) =>
+					fastCreateResult(data.repositorySelector)
+				}
+			/>,
+		);
+
+		expect(document.activeElement).toBe(
+			screen.getByPlaceholderText("Search repositories…"),
+		);
+	});
+
 	it("deploys a repository immediately when selected", async () => {
 		const state = homeState({
 			repositories: [
@@ -152,8 +169,6 @@ describe("dashboard routes", () => {
 		await waitFor(() =>
 			expect(submitted).toEqual({
 				repositorySelector: "octocat/hello",
-				cpuMillis: 250,
-				memoryMebibytes: 256,
 			}),
 		);
 		expect(

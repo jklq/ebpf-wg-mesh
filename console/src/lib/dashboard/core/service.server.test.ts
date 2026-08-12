@@ -858,6 +858,30 @@ describe("dashboard service", () => {
 		});
 	});
 
+	it("deletes a service through the platform", async () => {
+		const harness = createDashboardTestHarness();
+		await harness.service.completeAuthCallback({
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.services = [
+			{
+				id: "service-1",
+				environmentId: "environment-project-1",
+				projectId: "project-1",
+				name: "doomed",
+			},
+		];
+
+		await harness.service.deleteServiceFromSession({ serviceId: "service-1" });
+
+		expect(harness.platform.deleteServiceCalls).toMatchObject([
+			{ serviceId: "service-1" },
+		]);
+		expect(harness.platform.services).toEqual([]);
+	});
+
 	it("auto-links a verified email match when there is exactly one existing user", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.store.upsertDevUser("user-1", "user@example.com");

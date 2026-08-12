@@ -888,6 +888,14 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if !changed {
 		return &platformv1.ServiceStatus{Index: index, NotModified: true}, nil
 	}
+	// Re-read after the wait: the first read only resolves the environment to
+	// watch. Returning it here would report the state from *before* the change
+	// that woke us, leaving every watcher one event behind — the final "healthy"
+	// status of a rollout would then never reach the client.
+	service, allocation, err = s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
+	}
 	service, err = s.decorateServiceRecordWithAllocation(ctx, service, &allocation)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
