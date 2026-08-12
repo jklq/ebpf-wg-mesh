@@ -17,14 +17,6 @@ func toProtoProject(rec projectRecord) *platformv1.Project {
 	}
 }
 
-func toProtoPrincipal(rec principalRecord) *platformv1.Principal {
-	return &platformv1.Principal{
-		Subject:   rec.Subject,
-		Email:     rec.Email,
-		CreatedAt: ts(rec.CreatedAt),
-	}
-}
-
 func toProtoProjectKind(kind projectKind) platformv1.ProjectKind {
 	switch kind {
 	case projectKindManaged:
@@ -34,14 +26,26 @@ func toProtoProjectKind(kind projectKind) platformv1.ProjectKind {
 	}
 }
 
-func toProtoService(rec serviceRecord) *platformv1.Service {
-	return &platformv1.Service{
+func toProtoEnvironment(rec environmentRecord) *platformv1.Environment {
+	return &platformv1.Environment{
 		Id:                      rec.ID,
 		ProjectId:               rec.ProjectID,
 		Name:                    rec.Name,
+		Kind:                    platformv1.EnvironmentKind_ENVIRONMENT_KIND_PERSISTENT,
+		IsProduction:            rec.IsProduction,
+		CopiedFromEnvironmentId: rec.CopiedFromEnvironmentID,
+		CreatedAt:               ts(rec.CreatedAt),
+		UpdatedAt:               ts(rec.UpdatedAt),
+	}
+}
+
+func toProtoService(rec serviceRecord) *platformv1.Service {
+	return &platformv1.Service{
+		Id:                      rec.ID,
+		EnvironmentId:           rec.EnvironmentID,
+		Name:                    rec.Name,
 		Spec:                    rec.Spec,
 		SpecRevision:            rec.SpecRevision,
-		AllocatedAgentId:        rec.AllocatedAgentID,
 		CreatedAt:               ts(rec.CreatedAt),
 		UpdatedAt:               ts(rec.UpdatedAt),
 		RolloutGeneration:       rec.RolloutGeneration,
@@ -52,28 +56,28 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 		PendingChanges:          rec.PendingChanges,
 		UnappliedChangeCount:    int32(len(rec.UnappliedChanges)),
 		UnappliedChanges:        rec.UnappliedChanges,
+		InternalHostname:        internalServiceHostname(rec.Name, rec.ID),
 	}
 }
 
 func toProtoDomainBinding(rec domainBindingRecord) *platformv1.DomainBinding {
 	return &platformv1.DomainBinding{
-		Hostname:   rec.Hostname,
-		ProjectId:  rec.ProjectID,
-		ServiceId:  rec.ServiceID,
-		TargetPort: rec.TargetPort,
-		CreatedAt:  ts(rec.CreatedAt),
-		UpdatedAt:  ts(rec.UpdatedAt),
+		Hostname:          rec.Hostname,
+		ServiceId:         rec.ServiceID,
+		TargetPort:        rec.TargetPort,
+		PlatformGenerated: rec.PlatformGenerated,
+		CreatedAt:         ts(rec.CreatedAt),
+		UpdatedAt:         ts(rec.UpdatedAt),
 	}
 }
 
 func toProtoVolume(rec volumeRecord) *platformv1.Volume {
 	return &platformv1.Volume{
-		Id:           rec.ID,
-		ProjectId:    rec.ProjectID,
-		Name:         rec.Name,
-		SizeBytes:    rec.SizeBytes,
-		BoundAgentId: rec.BoundAgentID,
-		CreatedAt:    ts(rec.CreatedAt),
+		Id:            rec.ID,
+		EnvironmentId: rec.EnvironmentID,
+		Name:          rec.Name,
+		SizeBytes:     rec.SizeBytes,
+		CreatedAt:     ts(rec.CreatedAt),
 	}
 }
 
@@ -110,7 +114,7 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
 	return &platformv1.ServiceLogLine{
 		ObservedAt:        ts(rec.ObservedAt),
-		ProjectId:         rec.ProjectID,
+		EnvironmentId:     rec.EnvironmentID,
 		ServiceId:         rec.ServiceID,
 		AllocationId:      rec.AllocationID,
 		AgentId:           rec.AgentID,
@@ -149,16 +153,15 @@ func toProtoBuildStatus(rec buildRunRecord) *platformv1.BuildStatus {
 
 func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord {
 	return &platformv1.DeploymentRecord{
-		Id:                 rec.ID,
-		ServiceId:          rec.ServiceID,
-		RolloutGeneration:  rec.RolloutGeneration,
-		SpecRevision:       rec.SpecRevision,
-		Reason:             rec.Reason,
-		CreatedAt:          ts(rec.CreatedAt),
-		Build:              toProtoMaybeBuildStatus(rec.Build),
-		IsCurrent:          rec.IsCurrent,
-		RequestedBySubject: rec.RequestedBySubject,
-		RequestedByEmail:   rec.RequestedByEmail,
+		Id:                rec.ID,
+		ServiceId:         rec.ServiceID,
+		RolloutGeneration: rec.RolloutGeneration,
+		SpecRevision:      rec.SpecRevision,
+		Reason:            rec.Reason,
+		CreatedAt:         ts(rec.CreatedAt),
+		Build:             toProtoMaybeBuildStatus(rec.Build),
+		IsCurrent:         rec.IsCurrent,
+		RequestedByUserId: rec.RequestedByUserID,
 	}
 }
 
