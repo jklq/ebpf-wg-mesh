@@ -31,7 +31,7 @@ func (s *Store) builderOwnsSourceSnapshot(ctx context.Context, builderID, snapsh
 	return count > 0, err
 }
 
-const buildRunSelectColumns = `id, service_id, project_id, commit_sha, commit_message, commit_author, state, builder_id, image_digest, failure_reason,
+const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, builder_id, image_digest, failure_reason,
 	        source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
 	        queued_at, started_at, finished_at`
 
@@ -50,18 +50,25 @@ func (s *Store) latestBuildForServiceQuerier(ctx context.Context, q serviceQuery
 }
 
 func (s *Store) buildRunByIDQuerier(ctx context.Context, q serviceQueryer, buildID string) (buildRunRecord, error) {
-	return scanBuildRunRow(q.QueryRowContext(ctx,
+	rec, err := scanBuildRunRow(q.QueryRowContext(ctx,
 		`SELECT `+buildRunSelectColumns+`
 		   FROM build_runs
 		  WHERE id = $1`,
 		buildID,
 	))
+	if err != nil {
+		return buildRunRecord{}, err
+	}
+	err = q.QueryRowContext(ctx, `SELECT e.project_id, s.environment_id FROM services s
+		JOIN environments e ON e.id = s.environment_id WHERE s.id = $1`, rec.ServiceID).
+		Scan(&rec.ProjectID, &rec.EnvironmentID)
+	return rec, err
 }
 
-func (s *Store) enqueueBuildForService(ctx context.Context, subject, projectID, serviceID, commitSHA string) (buildRunRecord, error) {
+func (s *Store) enqueueBuildForService(ctx context.Context, userID, projectID, serviceID, commitSHA string) (buildRunRecord, error) {
 	var rec buildRunRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, subject, projectID, serviceID)
+		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
 		if err != nil {
 			return err
 		}
@@ -137,6 +144,7 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 		ID:                      mustID(),
 		ServiceID:               service.ID,
 		ProjectID:               service.ProjectID,
+		EnvironmentID:           service.EnvironmentID,
 		CommitSHA:               revision.CommitSHA,
 		CommitMessage:           revision.CommitMessage,
 		CommitAuthor:            revision.CommitAuthor,
@@ -154,11 +162,11 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO build_runs(
-			id, service_id, project_id, commit_sha, commit_message, commit_author, state,
+			id, service_id, commit_sha, commit_message, commit_author, state,
 			source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
 			builder_id, queued_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '', $13)`,
-		rec.ID, rec.ServiceID, rec.ProjectID, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.State,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', $12)`,
+		rec.ID, rec.ServiceID, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.State,
 		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, rec.TargetRolloutGeneration, recipeJSON, rec.QueuedAt,
 	); err != nil {
 		return buildRunRecord{}, err
@@ -218,6 +226,11 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT e.project_id, s.environment_id FROM services s
+			JOIN environments e ON e.id = s.environment_id WHERE s.id = $1`, rec.ServiceID).
+			Scan(&rec.ProjectID, &rec.EnvironmentID); err != nil {
 			return err
 		}
 		rec.State = buildStateRunning
@@ -447,7 +460,7 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		); err != nil {
 			return err
 		}
-		if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", "", now); err != nil {
+		if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -475,7 +488,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (buildRunRecord, e
 	if err := scanner.Scan(
 		&rec.ID,
 		&rec.ServiceID,
-		&rec.ProjectID,
 		&rec.CommitSHA,
 		&rec.CommitMessage,
 		&rec.CommitAuthor,
@@ -504,9 +516,11 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (buildRunRecord, e
 
 func (s *Store) serviceByIDInternalQuerier(ctx context.Context, q serviceQueryer, serviceID string) (serviceRecord, error) {
 	row := q.QueryRowContext(ctx,
-		`SELECT id, project_id, name, current_spec_revision, current_rollout_generation, allocated_agent_id, current_resolved_image, last_successful_commit_sha, latest_build_id, created_at, updated_at
-		   FROM services
-		  WHERE id = $1`,
+		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
+		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
+		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
+		   FROM services s JOIN environments e ON e.id = s.environment_id
+		   LEFT JOIN allocations a ON a.service_id = s.id WHERE s.id = $1`,
 		serviceID,
 	)
 	rec, err := scanServiceRow(row)

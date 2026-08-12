@@ -29,7 +29,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -63,9 +63,13 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	registry := NewRegistryPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform"})
+	registry := NewRegistryPolicy(config.RegistryConfig{
+		Host:                 "registry.example.test",
+		NamespacePrefix:      "platform",
+		CredentialTTLSeconds: 300,
+	})
 	builderService := NewBuilderService(store, notifier, registry, 0)
-	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
+	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -92,7 +96,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +108,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -153,7 +157,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +168,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -221,7 +225,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 persisted lines, got %d", len(lines))
 	}
-	if lines[0].ProjectID != service.ProjectID || lines[0].ServiceID != service.ID {
+	if lines[0].EnvironmentID != service.EnvironmentID || lines[0].ServiceID != service.ID {
 		t.Fatalf("unexpected service scoping %+v", lines[0])
 	}
 	if lines[0].AgentID != "builder-1" {
@@ -238,14 +242,14 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	}
 }
 
-func TestBuilderServiceReportBuildLogsReturnsSuccessWhenEmitterDisabled(t *testing.T) {
+func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
 	ctx := context.Background()
 
 	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +260,7 @@ func TestBuilderServiceReportBuildLogsReturnsSuccessWhenEmitterDisabled(t *testi
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -277,7 +281,8 @@ func TestBuilderServiceReportBuildLogsReturnsSuccessWhenEmitterDisabled(t *testi
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
-	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: &recordingLogWriter{enabled: false}}))
+	disabledWriter := &recordingLogWriter{enabled: false}
+	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: disabledWriter}))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
@@ -287,49 +292,9 @@ func TestBuilderServiceReportBuildLogsReturnsSuccessWhenEmitterDisabled(t *testi
 	); err != nil {
 		t.Fatalf("ReportBuildLogs with disabled emitter: %v", err)
 	}
-}
-
-func TestBuilderServiceReportBuildLogsEmptyBatchIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	store := openTestStore(t)
-	ctx := context.Background()
-
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{Subject: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	projects, err := store.listProjects(ctx, "user-1")
-	if err != nil || len(projects) != 1 {
-		t.Fatalf("listProjects: %v", err)
-	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
-		t.Fatal(err)
-	}
-	service, err := store.createService(ctx, "user-1", projects[0].ID, "web", repositoryServiceSpec(
-		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
-		&platformv1.ServiceSourceSpec{
-			Provider:           "github",
-			RepositorySelector: "octocat/hello",
-			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
-		},
-	), "node-1")
-	if err != nil {
-		t.Fatalf("createService: %v", err)
-	}
-	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
-		t.Fatalf("seedReadySourceState: %v", err)
-	}
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
-	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
-	}
-	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
+	builderService = NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{BuildId: build.ID},
