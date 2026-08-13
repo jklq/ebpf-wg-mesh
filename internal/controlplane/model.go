@@ -60,6 +60,7 @@ type serviceRecord struct {
 	ResolvedImage           string
 	LatestBuildID           string
 	LatestBuild             *platformv1.BuildStatus
+	LatestDeployment        *deploymentRecord
 	PendingChanges          bool
 	UnappliedChanges        []*platformv1.ServiceUnappliedChange
 	DesiredReplicaCount     int32
@@ -114,19 +115,10 @@ type allocationRecord struct {
 	AllocationIP             string
 	Healthy                  bool
 	HealthyPorts             []int32
-	RestartCount             int32
-	LastRestartedAt          sql.NullTime
-	Restarts                 []allocationRestartEvent
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
-}
-
-type allocationRestartEvent struct {
-	RestartedAt       time.Time `json:"restartedAt"`
-	Reason            string    `json:"reason"`
-	FromAgentID       string    `json:"fromAgentId,omitempty"`
-	ToAgentID         string    `json:"toAgentId,omitempty"`
-	RolloutGeneration int64     `json:"rolloutGeneration"`
+	Restart                  *platformv1.RestartObservation
+	OperatorRestartNonce     int64
 }
 
 type buildRunRecord struct {
@@ -315,7 +307,31 @@ type deploymentRecord struct {
 	SpecRevision      int64
 	Reason            string
 	CreatedAt         time.Time
+	UpdatedAt         time.Time
 	Build             *buildRunRecord
 	IsCurrent         bool
 	RequestedByUserID string
+	BuildID           string
+	ImageDigest       string
+	State             string
+	CauseKind         string
+	CauseID           string
+	ReasonCode        string
+	Detail            string
+	Transitions       []deploymentTransitionRecord
+}
+
+type deploymentTransitionRecord struct {
+	ID                string
+	DeploymentID      string
+	FromState         string
+	ToState           string
+	CauseKind         string
+	CauseID           string
+	ReasonCode        string
+	Detail            string
+	SpecRevision      int64
+	ImageDigest       string
+	RolloutGeneration int64
+	OccurredAt        time.Time
 }

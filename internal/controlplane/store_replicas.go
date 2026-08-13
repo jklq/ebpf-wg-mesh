@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -224,10 +223,10 @@ func (s *Store) insertAllocationTx(ctx context.Context, tx *sql.Tx, service serv
 	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
 		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
 		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ip, healthy_ports, healthy, restart_count, restart_history, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, 0, $7, $8, $8)`,
+		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, $7)`,
 		alloc.ID, alloc.ServiceID, alloc.AgentID, alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration,
-		[]byte("[]"), []byte("[]"), now,
+		[]byte("[]"), now,
 	); err != nil {
 		return allocationRecord{}, err
 	}
@@ -355,16 +354,16 @@ func (s *Store) listAllocationsByServiceIDQuerier(ctx context.Context, q service
 const allocationSelectSQL = `SELECT a.id, a.service_id, e.project_id, s.environment_id, a.agent_id,
 		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
 		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
-		        a.applied_rollout_generation, a.healthy_ports, a.restart_count,
-		        a.last_restarted_at, a.restart_history, a.created_at
+		        a.applied_rollout_generation, a.healthy_ports, a.restart_observation_json,
+		        a.operator_restart_nonce, a.created_at
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id`
 
 func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecord, error) {
 	var (
-		rec     allocationRecord
-		history []byte
+		rec        allocationRecord
+		restartRaw []byte
 	)
 	if err := scanner.Scan(
 		&rec.ID,
@@ -382,76 +381,18 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecor
 		&rec.DesiredRolloutGeneration,
 		&rec.AppliedRolloutGeneration,
 		(*jsonInt32Slice)(&rec.HealthyPorts),
-		&rec.RestartCount,
-		&rec.LastRestartedAt,
-		&history,
+		&restartRaw,
+		&rec.OperatorRestartNonce,
 		&rec.CreatedAt,
 	); err != nil {
 		return allocationRecord{}, err
 	}
-	if len(history) > 0 && string(history) != "null" {
-		if err := json.Unmarshal(history, &rec.Restarts); err != nil {
-			return allocationRecord{}, fmt.Errorf("decode restart history: %w", err)
-		}
-	}
-	return rec, nil
-}
-
-func encodeRestartHistory(events []allocationRestartEvent) ([]byte, error) {
-	if events == nil {
-		events = []allocationRestartEvent{}
-	}
-	return json.Marshal(events)
-}
-
-func appendAllocationRestart(current []allocationRestartEvent, event allocationRestartEvent) []allocationRestartEvent {
-	out := append(append([]allocationRestartEvent(nil), current...), event)
-	if len(out) > maxAllocationRestartEvents {
-		out = out[len(out)-maxAllocationRestartEvents:]
-	}
-	return out
-}
-
-func (s *Store) recordAllocationRestartTx(ctx context.Context, tx *sql.Tx, alloc allocationRecord, reason, fromAgentID, toAgentID string, now time.Time) error {
-	current := alloc
-	if current.ID != "" && current.Restarts == nil {
-		var history []byte
-		if err := tx.QueryRowContext(ctx,
-			`SELECT restart_count, last_restarted_at, restart_history, desired_rollout_generation
-			   FROM allocations WHERE id = $1`,
-			current.ID,
-		).Scan(&current.RestartCount, &current.LastRestartedAt, &history, &current.DesiredRolloutGeneration); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		} else if err == nil && len(history) > 0 && string(history) != "null" {
-			if err := json.Unmarshal(history, &current.Restarts); err != nil {
-				return err
-			}
-		}
-	}
-	if alloc.DesiredRolloutGeneration > 0 {
-		current.DesiredRolloutGeneration = alloc.DesiredRolloutGeneration
-	}
-	history := appendAllocationRestart(current.Restarts, allocationRestartEvent{
-		RestartedAt:       now,
-		Reason:            reason,
-		FromAgentID:       fromAgentID,
-		ToAgentID:         toAgentID,
-		RolloutGeneration: current.DesiredRolloutGeneration,
-	})
-	encoded, err := encodeRestartHistory(history)
+	obs, err := decodeRestartObservation(restartRaw)
 	if err != nil {
-		return err
+		return allocationRecord{}, err
 	}
-	_, err = tx.ExecContext(ctx,
-		`UPDATE allocations
-		    SET restart_count = restart_count + 1,
-		        last_restarted_at = $1,
-		        restart_history = $2,
-		        updated_at = $1
-		  WHERE id = $3`,
-		now, encoded, alloc.ID,
-	)
-	return err
+	rec.Restart = obs
+	return rec, nil
 }
 
 func (s *Store) agentIDsForServiceQuerier(ctx context.Context, q serviceQueryer, serviceID string) ([]string, error) {
@@ -471,29 +412,4 @@ func (s *Store) agentIDsForServiceQuerier(ctx context.Context, q serviceQueryer,
 		}
 	}
 	return ids, rows.Err()
-}
-
-func allocationRestartObserved(prevPhase string, prevApplied int64, nextPhase string, nextApplied int64) bool {
-	if prevApplied > 0 && nextApplied == 0 {
-		return true
-	}
-	return allocationWasServing(prevPhase) && allocationIsStarting(nextPhase)
-}
-
-func allocationWasServing(phase string) bool {
-	switch strings.TrimSpace(phase) {
-	case "Running", "Healthy":
-		return true
-	default:
-		return false
-	}
-}
-
-func allocationIsStarting(phase string) bool {
-	switch strings.TrimSpace(phase) {
-	case "Pending", "Starting":
-		return true
-	default:
-		return false
-	}
 }

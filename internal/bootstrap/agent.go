@@ -18,10 +18,13 @@ import (
 
 func Agent(args []string) (config.AgentConfig, error) {
 	var cfg config.AgentConfig
+	var profile string
 	var underlayInterface string
 	var advertiseAddr string
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
+	stringFlag(fs, &profile, "profile", "AGENT_PROFILE", "", "development or production; empty defaults to production")
+	stringFlag(fs, &cfg.Health.Listen, "health-listen", "AGENT_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.Node.ID, "node-id", "AGENT_NODE_ID", "", "")
 	stringFlag(fs, &cfg.Node.Name, "node-name", "AGENT_NODE_NAME", "", "")
 	stringFlag(fs, &advertiseAddr, "advertise-addr", "AGENT_ADVERTISE_ADDR", "", "")
@@ -53,6 +56,11 @@ func Agent(args []string) (config.AgentConfig, error) {
 	if err := fs.Parse(args); err != nil {
 		return config.AgentConfig{}, err
 	}
+	normalized, err := config.NormalizeProfile(profile)
+	if err != nil {
+		return config.AgentConfig{}, err
+	}
+	cfg.Profile = normalized
 
 	hostName, err := os.Hostname()
 	if err != nil {

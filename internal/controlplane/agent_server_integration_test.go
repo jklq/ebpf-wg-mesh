@@ -34,6 +34,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		bootstrapToken = "e2e-single-use-bootstrap-token"
 	)
 	cfg := config.ControlPlaneConfig{
+		Profile: config.ProfileDevelopment,
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{

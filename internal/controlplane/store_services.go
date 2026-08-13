@@ -11,6 +11,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -32,7 +33,6 @@ var (
 const (
 	defaultDesiredReplicaCount = 1
 	maxDesiredReplicaCount     = 64
-	maxAllocationRestartEvents = 20
 )
 
 func volumeKey(environmentID, name string) string {
@@ -76,6 +76,28 @@ func encodeHealthyPorts(ports []int32) ([]byte, error) {
 	return json.Marshal(ports)
 }
 
+func encodeRestartObservation(obs *platformv1.RestartObservation) ([]byte, error) {
+	if obs == nil {
+		return []byte("{}"), nil
+	}
+	raw, err := protojson.Marshal(obs)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func decodeRestartObservation(raw []byte) (*platformv1.RestartObservation, error) {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil, nil
+	}
+	obs := &platformv1.RestartObservation{}
+	if err := protojson.Unmarshal(raw, obs); err != nil {
+		return nil, err
+	}
+	return obs, nil
+}
+
 func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec {
 	if spec == nil {
 		return nil
@@ -98,6 +120,16 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 			hc.GetPort() == 0 &&
 			hc.GetTimeoutSeconds() == 0 {
 			runtime.HealthCheck = nil
+		}
+		if lc := runtime.GetLivenessCheck(); lc != nil &&
+			lc.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED &&
+			lc.GetPath() == "" &&
+			lc.GetPort() == 0 &&
+			lc.GetTimeoutSeconds() == 0 {
+			runtime.LivenessCheck = nil
+		}
+		if err := restartpolicy.ValidateRestart(runtime.GetRestart()); err == nil {
+			runtime.Restart = restartpolicy.CanonicalRestart(runtime.GetRestart())
 		}
 	}
 	if source := out.GetSource(); source != nil {
@@ -428,7 +460,10 @@ func equalRuntimeAfterCanonicalization(a, b *platformv1.ServiceRuntime) bool {
 	if !proto.Equal(ahc, bhc) {
 		return false
 	}
-	return true
+	if !proto.Equal(a.GetLivenessCheck(), b.GetLivenessCheck()) {
+		return false
+	}
+	return proto.Equal(a.GetRestart(), b.GetRestart())
 }
 
 func loadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
@@ -444,18 +479,33 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE allocations
-		    SET healthy = TRUE,
-		        allocation_ip = $1,
-		        healthy_ports = $2,
-		        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-		        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-		        updated_at = $3
-		  WHERE service_id = $4`,
-		allocationIP, encodedPorts, time.Now().UTC(), serviceID,
-	)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE allocations
+			    SET healthy = TRUE,
+			        allocation_ip = $1,
+			        healthy_ports = $2,
+			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
+			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        updated_at = $3
+			  WHERE service_id = $4`,
+			allocationIP, encodedPorts, time.Now().UTC(), serviceID,
+		); err != nil {
+			return err
+		}
+		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
+		if err != nil || !ok {
+			return err
+		}
+		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
+			ToState:          deploymentStateActive,
+			Actor:            deploymentActor{Kind: deploymentCauseSystem},
+			ReasonCode:       reasonDeploymentActive,
+			Detail:           "Marked healthy for test",
+			IgnoreIfTerminal: false,
+		})
+		return err
+	})
 }
 
 func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
@@ -463,18 +513,36 @@ func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE allocations
-		    SET healthy = TRUE,
-		        allocation_ip = $1,
-		        healthy_ports = $2,
-		        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-		        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-		        updated_at = $3
-		  WHERE id = $4`,
-		allocationIP, encodedPorts, time.Now().UTC(), allocationID,
-	)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		var serviceID string
+		var desiredRollout int64
+		if err := tx.QueryRowContext(ctx,
+			`UPDATE allocations
+			    SET healthy = TRUE,
+			        allocation_ip = $1,
+			        healthy_ports = $2,
+			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
+			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        updated_at = $3
+			  WHERE id = $4
+			  RETURNING service_id, desired_rollout_generation`,
+			allocationIP, encodedPorts, time.Now().UTC(), allocationID,
+		).Scan(&serviceID, &desiredRollout); err != nil {
+			return err
+		}
+		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
+		if err != nil || !ok {
+			return err
+		}
+		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
+			ToState:          deploymentStateActive,
+			Actor:            deploymentActor{Kind: deploymentCauseSystem},
+			ReasonCode:       reasonDeploymentActive,
+			Detail:           "Marked healthy for test",
+			IgnoreIfTerminal: true,
+		})
+		return err
+	})
 }
 
 func (s *Store) countServiceRevisionsForTest(ctx context.Context, serviceID string) (int, error) {

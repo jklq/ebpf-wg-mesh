@@ -14,6 +14,7 @@ const managedDashboardSecretsMount = "/run/secrets/dashboard"
 
 type ManagedDashboardReconciler struct {
 	cfg      config.ManagedDashboardConfig
+	profile  config.Profile
 	store    *Store
 	ingress  *IngressSyncer
 	notifier *Notifier
@@ -21,6 +22,7 @@ type ManagedDashboardReconciler struct {
 
 func NewManagedDashboardReconciler(
 	cfg config.ManagedDashboardConfig,
+	profile config.Profile,
 	store *Store,
 	ingress *IngressSyncer,
 	notifier *Notifier,
@@ -30,6 +32,7 @@ func NewManagedDashboardReconciler(
 	}
 	return &ManagedDashboardReconciler{
 		cfg:      cfg,
+		profile:  profile,
 		store:    store,
 		ingress:  ingress,
 		notifier: notifier,
@@ -109,6 +112,13 @@ func (r *ManagedDashboardReconciler) dashboardEnv() (map[string]string, error) {
 	env["DASHBOARD_INGRESS_TARGET_HOST"] = r.cfg.IngressTargetHost
 	env["DASHBOARD_CONTROLPLANE_ADDRESS"] = r.cfg.ControlPlaneAddr
 	env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.cfg.ControlPlaneSNI
+	if _, ok := env["DASHBOARD_PROFILE"]; !ok {
+		profile := r.profile
+		if profile == "" {
+			profile = config.ProfileProduction
+		}
+		env["DASHBOARD_PROFILE"] = string(profile)
+	}
 	return env, nil
 }
 

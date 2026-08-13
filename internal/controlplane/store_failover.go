@@ -8,6 +8,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -140,6 +141,10 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			if destination == agentID {
 				return fmt.Errorf("expired agent %s selected for service %s", agentID, service.serviceID)
 			}
+			nodeLoss, err := encodeRestartObservation(restartpolicy.NodeLossObservation(now, 0, 0))
+			if err != nil {
+				return err
+			}
 			result, err := tx.ExecContext(ctx,
 				`UPDATE allocations
 				    SET agent_id = $1,
@@ -150,10 +155,12 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 				        allocation_ip = '',
 				        healthy_ports = '[]',
 				        healthy = FALSE,
-				        updated_at = $3
-				  WHERE id = $4 AND agent_id = $5`,
+				        restart_observation_json = $3,
+				        updated_at = $4
+				  WHERE id = $5 AND agent_id = $6`,
 				destination,
 				fmt.Sprintf("rescheduled from expired agent %s to %s", agentID, destination),
+				nodeLoss,
 				now,
 				service.allocationID,
 				agentID,
@@ -168,11 +175,20 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			if affected != 1 {
 				return errConcurrentUpdate
 			}
-			if err := s.recordAllocationRestartTx(ctx, tx, allocationRecord{ID: service.allocationID}, "rescheduled after node expiry", agentID, destination, now); err != nil {
-				return err
-			}
 			moved = true
 			changedEnvironments[service.environmentID] = struct{}{}
+			if current, ok, err := s.currentDeploymentTx(ctx, tx, service.serviceID); err != nil {
+				return err
+			} else if ok {
+				if _, err := s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
+					ToState:    deploymentStateScheduling,
+					Actor:      deploymentActor{Kind: deploymentCauseSystem},
+					ReasonCode: reasonFailoverRescheduled,
+					Detail:     fmt.Sprintf("Rescheduled from expired agent %s to %s", agentID, destination),
+				}); err != nil {
+					return err
+				}
+			}
 		}
 
 		if moved {

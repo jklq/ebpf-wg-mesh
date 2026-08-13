@@ -1939,6 +1939,12 @@ function hydrateServiceSnapshot(
 						})) ?? [],
 				}
 			: undefined,
+		latestDeployment: service.latestDeployment
+			? {
+					...service.latestDeployment,
+					transitionedAt: hydrateDate(service.latestDeployment.transitionedAt),
+				}
+			: undefined,
 	};
 }
 

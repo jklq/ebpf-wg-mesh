@@ -9,6 +9,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -129,7 +130,30 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		current: healthCheckValue(serviceRuntime(deployed).GetHealthCheck()),
 		next:    healthCheckValue(serviceRuntime(current).GetHealthCheck()),
 	})
+	fields = append(fields, unappliedChangeField{
+		id:      "runtime.restart",
+		section: "Restart",
+		field:   "Process restart",
+		path:    "runtime.restart",
+		current: restartValue(serviceRuntime(deployed).GetRestart()),
+		next:    restartValue(serviceRuntime(current).GetRestart()),
+	})
+	fields = append(fields, unappliedChangeField{
+		id:      "runtime.livenessCheck",
+		section: "Health check",
+		field:   "HTTP liveness check",
+		path:    "runtime.livenessCheck",
+		current: healthCheckValue(serviceRuntime(deployed).GetLivenessCheck()),
+		next:    healthCheckValue(serviceRuntime(current).GetLivenessCheck()),
+	})
 	return fields
+}
+
+func restartValue(restart *platformv1.ServiceRestart) string {
+	if restart == nil {
+		return ""
+	}
+	return restartpolicy.FormatRestart(restart)
 }
 
 func healthCheckValue(check *platformv1.HealthCheck) string {
@@ -235,6 +259,20 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 			currentRuntime(current).HealthCheck = nil
 		} else {
 			currentRuntime(current).HealthCheck = proto.Clone(deployedCheck).(*platformv1.HealthCheck)
+		}
+	case "runtime.livenessCheck":
+		deployedCheck := serviceRuntime(deployed).GetLivenessCheck()
+		if deployedCheck == nil {
+			currentRuntime(current).LivenessCheck = nil
+		} else {
+			currentRuntime(current).LivenessCheck = proto.Clone(deployedCheck).(*platformv1.HealthCheck)
+		}
+	case "runtime.restart":
+		deployedRestart := serviceRuntime(deployed).GetRestart()
+		if deployedRestart == nil {
+			currentRuntime(current).Restart = nil
+		} else {
+			currentRuntime(current).Restart = proto.Clone(deployedRestart).(*platformv1.ServiceRestart)
 		}
 	default:
 		const envPrefix = "runtime.env."

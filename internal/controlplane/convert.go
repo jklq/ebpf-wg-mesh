@@ -57,6 +57,7 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 		UnappliedChangeCount:    int32(len(rec.UnappliedChanges)),
 		UnappliedChanges:        rec.UnappliedChanges,
 		InternalHostname:        internalServiceHostname(rec.Name, rec.ID),
+		LatestDeployment:        toProtoDeploymentStatus(rec.LatestDeployment),
 		DesiredReplicaCount:     rec.DesiredReplicaCount,
 		ReadyReplicaCount:       rec.ReadyReplicaCount,
 		PlacementMessage:        rec.PlacementMessage,
@@ -128,22 +129,8 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
-		RestartCount:             rec.RestartCount,
-	}
-	if rec.LastRestartedAt.Valid {
-		out.LastRestartedAt = ts(rec.LastRestartedAt.Time)
-	}
-	if len(rec.Restarts) > 0 {
-		out.Restarts = make([]*platformv1.AllocationRestart, 0, len(rec.Restarts))
-		for _, event := range rec.Restarts {
-			out.Restarts = append(out.Restarts, &platformv1.AllocationRestart{
-				RestartedAt:       ts(event.RestartedAt),
-				Reason:            event.Reason,
-				FromAgentId:       event.FromAgentID,
-				ToAgentId:         event.ToAgentID,
-				RolloutGeneration: event.RolloutGeneration,
-			})
-		}
+		Restart:                  rec.Restart,
+		OperatorRestartNonce:     rec.OperatorRestartNonce,
 	}
 	return out
 }
@@ -207,7 +194,8 @@ func toProtoBuildStatus(rec buildRunRecord) *platformv1.BuildStatus {
 }
 
 func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord {
-	return &platformv1.DeploymentRecord{
+	status := toProtoDeploymentStatus(&rec)
+	protoRec := &platformv1.DeploymentRecord{
 		Id:                rec.ID,
 		ServiceId:         rec.ServiceID,
 		RolloutGeneration: rec.RolloutGeneration,
@@ -217,6 +205,32 @@ func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord 
 		Build:             toProtoMaybeBuildStatus(rec.Build),
 		IsCurrent:         rec.IsCurrent,
 		RequestedByUserId: rec.RequestedByUserID,
+		Status:            status,
+		ImageDigest:       rec.ImageDigest,
+	}
+	if rec.Build != nil {
+		protoRec.Stages = deploymentStagesFromLifecycle(rec, serviceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision, AllocatedAgentID: ""}, rec.Build)
+	} else {
+		protoRec.Stages = deploymentStagesFromLifecycle(rec, serviceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision}, nil)
+	}
+	return protoRec
+}
+
+func toProtoDeploymentStatus(rec *deploymentRecord) *platformv1.DeploymentStatus {
+	if rec == nil || rec.ID == "" && rec.State == "" {
+		return nil
+	}
+	return &platformv1.DeploymentStatus{
+		DeploymentId:      rec.ID,
+		State:             toProtoDeploymentState(rec.State),
+		TransitionedAt:    ts(rec.UpdatedAt),
+		CauseKind:         toProtoDeploymentCauseKind(rec.CauseKind),
+		CauseId:           rec.CauseID,
+		ReasonCode:        rec.ReasonCode,
+		Detail:            rec.Detail,
+		SpecRevision:      rec.SpecRevision,
+		ImageDigest:       rec.ImageDigest,
+		RolloutGeneration: rec.RolloutGeneration,
 	}
 }
 

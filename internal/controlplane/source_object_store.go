@@ -35,6 +35,14 @@ func NewFileSourceArchiveStore(root string) (*FileSourceArchiveStore, error) {
 	return &FileSourceArchiveStore{root: root}, nil
 }
 
+func (s *FileSourceArchiveStore) Ready() bool {
+	if s == nil || strings.TrimSpace(s.root) == "" {
+		return false
+	}
+	info, err := os.Stat(s.root)
+	return err == nil && info.IsDir()
+}
+
 func sourceArchiveObjectKey(digest string) (string, error) {
 	digest = strings.TrimSpace(strings.ToLower(digest))
 	if !sourceArchiveDigestPattern.MatchString(digest) {

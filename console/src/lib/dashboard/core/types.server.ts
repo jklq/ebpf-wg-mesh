@@ -54,6 +54,45 @@ export type DashboardDeploymentStageState =
 	| "skipped"
 	| "unspecified";
 
+export type DashboardDeploymentState =
+	| "staged"
+	| "queued_build"
+	| "building"
+	| "scheduling"
+	| "image_pull"
+	| "starting"
+	| "readiness"
+	| "active"
+	| "draining"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "crashed"
+	| "removed"
+	| "superseded"
+	| "unspecified";
+
+export type DashboardDeploymentCauseKind =
+	| "user"
+	| "system"
+	| "agent"
+	| "builder"
+	| "webhook"
+	| "unspecified";
+
+export interface DashboardDeploymentStatus {
+	deploymentId: string;
+	state: DashboardDeploymentState;
+	transitionedAt?: Date;
+	causeKind: DashboardDeploymentCauseKind;
+	causeId: string;
+	reasonCode: string;
+	detail: string;
+	specRevision: number;
+	imageDigest: string;
+	rolloutGeneration: number;
+}
+
 export type DashboardServiceLogType =
 	| "runtime"
 	| "build"
@@ -129,6 +168,19 @@ export interface DashboardHTTPHealthCheck {
 	timeoutSeconds?: number;
 }
 
+export type DashboardRestartPolicy = "always" | "on-failure" | "never";
+
+export interface DashboardRestartSpec {
+	policy: DashboardRestartPolicy;
+	maxRestarts?: number;
+	windowSeconds?: number;
+	initialDelayMs?: number;
+	maxDelayMs?: number;
+	backoffMultiplier?: number;
+	jitter?: number;
+	stableAfterSeconds?: number;
+}
+
 export {
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
@@ -140,6 +192,8 @@ export interface DashboardRuntimeSpec {
 	memoryMebibytes: number;
 	ports: DashboardRuntimePort[];
 	healthCheck?: DashboardHTTPHealthCheck;
+	livenessCheck?: DashboardHTTPHealthCheck;
+	restart?: DashboardRestartSpec;
 	volumeName?: string;
 }
 
@@ -221,6 +275,7 @@ export interface DashboardServiceRecord {
 	lastSuccessfulCommitSha?: string;
 	resolvedImage?: string;
 	latestBuild?: DashboardBuildStatus;
+	latestDeployment?: DashboardDeploymentStatus;
 	pendingChanges?: boolean;
 	unappliedChangeCount?: number;
 	unappliedChanges?: Array<DashboardUnappliedChange>;
@@ -244,17 +299,13 @@ export interface DashboardAllocationStatus {
 	desiredRolloutGeneration: number;
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
-	restartCount?: number;
-	lastRestartedAt?: Date;
-	restarts?: Array<DashboardAllocationRestart>;
-}
-
-export interface DashboardAllocationRestart {
-	restartedAt?: Date;
-	reason: string;
-	fromAgentId?: string;
-	toAgentId?: string;
-	rolloutGeneration?: number;
+	operatorRestartNonce?: number;
+	restart?: {
+		restartCount: number;
+		crashLoop: boolean;
+		lastCause: string;
+		message: string;
+	};
 }
 
 export interface DashboardServiceStatus {
@@ -298,6 +349,9 @@ export interface DashboardDeploymentRecord {
 	build?: DashboardBuildStatus;
 	allocation?: DashboardAllocationStatus;
 	isCurrent: boolean;
+	status?: DashboardDeploymentStatus;
+	stages?: Array<DashboardDeploymentStage>;
+	imageDigest?: string;
 }
 
 export interface CreateServiceFastResult {
@@ -361,7 +415,10 @@ export interface GitHubAppUserAuthConfig {
 	apiBaseURL: string;
 }
 
+export type DashboardRuntimeProfile = "development" | "production";
+
 export interface DashboardConfig {
+	profile: DashboardRuntimeProfile;
 	sessionCookieName: string;
 	refreshCookieName: string;
 	authStateCookieName: string;
@@ -642,6 +699,10 @@ export interface PlatformGateway {
 			confirmScaleToZero?: boolean;
 		},
 	): Promise<DashboardServiceStatus>;
+	restartService(
+		user: DashboardUser,
+		input: { serviceId: string },
+	): Promise<DashboardServiceStatus>;
 	discardServiceChanges(
 		user: DashboardUser,
 		input: {
@@ -776,6 +837,7 @@ export interface UpdateServiceInput {
 	trackedRef?: string;
 	dockerfilePath?: string;
 	contextDir?: string;
+	restart?: DashboardRestartSpec;
 }
 
 export interface DashboardService {
@@ -886,6 +948,9 @@ export interface DashboardService {
 		serviceId: string;
 		desiredReplicaCount: number;
 		confirmScaleToZero?: boolean;
+	}): Promise<DashboardServiceStatus>;
+	restartServiceFromSession(input: {
+		serviceId: string;
 	}): Promise<DashboardServiceStatus>;
 	discardServiceChangesFromSession(input: {
 		serviceId: string;

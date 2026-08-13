@@ -151,6 +151,10 @@ export function createPlatformGateway(
 			const response = await unaryCall(runtime, "ScaleService", input, user);
 			return decodeServiceStatusMessage(response);
 		},
+		async restartService(user, input) {
+			const response = await unaryCall(runtime, "RestartService", input, user);
+			return decodeServiceStatusMessage(response);
+		},
 		async discardServiceChanges(user, input) {
 			const response = await unaryCall(
 				runtime,

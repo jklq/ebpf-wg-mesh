@@ -73,7 +73,17 @@ func NewRegistryAuth(cfg config.RegistryConfig, stateDir string) (*RegistryAuth,
 	if strings.TrimSpace(cfg.Host) == "" {
 		return nil, nil
 	}
-	key, cert, certPath, err := loadOrCreateRegistrySigningIdentity(stateDir, cfg.TokenIssuer)
+	var (
+		key      *ecdsa.PrivateKey
+		cert     *x509.Certificate
+		certPath string
+		err      error
+	)
+	if strings.TrimSpace(cfg.SigningCertFile) != "" || strings.TrimSpace(cfg.SigningKeyFile) != "" {
+		key, cert, certPath, err = loadRegistrySigningIdentityFiles(cfg.SigningKeyFile, cfg.SigningCertFile)
+	} else {
+		key, cert, certPath, err = loadOrCreateRegistrySigningIdentity(stateDir, cfg.TokenIssuer)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +268,27 @@ func normalizedRegistryActions(actions []string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+func loadRegistrySigningIdentityFiles(keyPath, certPath string) (*ecdsa.PrivateKey, *x509.Certificate, string, error) {
+	keyPath = strings.TrimSpace(keyPath)
+	certPath = strings.TrimSpace(certPath)
+	if keyPath == "" || certPath == "" {
+		return nil, nil, "", errors.New("registry signing certificate and key files are both required")
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("read registry signing key: %w", err)
+	}
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("read registry signing certificate: %w", err)
+	}
+	key, cert, err := parseRegistrySigningIdentity(keyPEM, certPEM)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return key, cert, certPath, nil
 }
 
 func loadOrCreateRegistrySigningIdentity(stateDir, issuer string) (*ecdsa.PrivateKey, *x509.Certificate, string, error) {

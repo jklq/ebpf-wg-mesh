@@ -1,6 +1,21 @@
 package controlplane
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 3
+
+var schemaUpgrades = map[int][]string{
+	2: {
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS restart_observation_json JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS operator_restart_nonce INT8 NOT NULL DEFAULT 0`,
+	},
+	3: {
+		`ALTER TABLE services ADD COLUMN IF NOT EXISTS desired_replica_count INT8 NOT NULL DEFAULT 1`,
+		`ALTER TABLE services ADD COLUMN IF NOT EXISTS placement_message STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+		`ALTER TABLE allocations ALTER COLUMN created_at DROP DEFAULT`,
+		`ALTER TABLE allocations DROP CONSTRAINT IF EXISTS allocations_service_id_key`,
+		`CREATE INDEX IF NOT EXISTS idx_allocations_service ON allocations(service_id, id)`,
+	},
+}
 
 var currentSchema = []string{
 	`CREATE TABLE projects (
@@ -122,9 +137,8 @@ var currentSchema = []string{
 			allocation_ip STRING NOT NULL DEFAULT '',
 			healthy_ports JSONB NOT NULL DEFAULT '[]',
 			healthy BOOL NOT NULL,
-			restart_count INT8 NOT NULL DEFAULT 0,
-			last_restarted_at TIMESTAMPTZ NULL,
-			restart_history JSONB NOT NULL DEFAULT '[]',
+			restart_observation_json JSONB NOT NULL DEFAULT '{}',
+			operator_restart_nonce INT8 NOT NULL DEFAULT 0,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
@@ -140,6 +154,47 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, rollout_generation)
 		)`,
+	`CREATE TABLE deployments (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			spec_revision INT8 NOT NULL,
+			rollout_generation INT8 NOT NULL DEFAULT 0,
+			build_id STRING NOT NULL DEFAULT '',
+			image_digest STRING NOT NULL DEFAULT '',
+			state STRING NOT NULL,
+			cause_kind STRING NOT NULL,
+			cause_id STRING NOT NULL DEFAULT '',
+			reason_code STRING NOT NULL,
+			detail STRING NOT NULL DEFAULT '',
+			is_current BOOL NOT NULL DEFAULT FALSE,
+			requested_by_user_id STRING NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE UNIQUE INDEX idx_deployments_service_current
+			ON deployments(service_id) WHERE is_current = TRUE`,
+	`CREATE UNIQUE INDEX idx_deployments_service_build
+			ON deployments(service_id, build_id) WHERE build_id != ''`,
+	`CREATE INDEX idx_deployments_service_rollout
+			ON deployments(service_id, rollout_generation DESC, created_at DESC, id)`,
+	`CREATE INDEX idx_deployments_service_updated
+			ON deployments(service_id, updated_at DESC, id)`,
+	`CREATE TABLE deployment_transitions (
+			id STRING PRIMARY KEY,
+			deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			from_state STRING NOT NULL,
+			to_state STRING NOT NULL,
+			cause_kind STRING NOT NULL,
+			cause_id STRING NOT NULL DEFAULT '',
+			reason_code STRING NOT NULL,
+			detail STRING NOT NULL DEFAULT '',
+			spec_revision INT8 NOT NULL,
+			image_digest STRING NOT NULL DEFAULT '',
+			rollout_generation INT8 NOT NULL DEFAULT 0,
+			occurred_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_deployment_transitions_deployment
+			ON deployment_transitions(deployment_id, occurred_at ASC, id)`,
 	`CREATE TABLE builder_workers (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,

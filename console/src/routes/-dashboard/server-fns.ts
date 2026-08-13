@@ -171,6 +171,13 @@ export const doScaleService = createServerFn({ method: "POST" })
 		return svc.scaleServiceFromSession(data);
 	});
 
+export const doRestartService = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) => input as { serviceId: string })
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/entry.server");
+		return svc.restartServiceFromSession(data);
+	});
+
 export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>

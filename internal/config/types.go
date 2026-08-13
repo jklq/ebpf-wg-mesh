@@ -2,6 +2,21 @@ package config
 
 import "ebof-wg-mesh/internal/meshlabels"
 
+type Profile string
+
+const (
+	ProfileDevelopment Profile = "development"
+	ProfileProduction  Profile = "production"
+)
+
+func (p Profile) IsProduction() bool {
+	return p == ProfileProduction || p == ""
+}
+
+type HealthConfig struct {
+	Listen string
+}
+
 type ServerTLSConfig struct {
 	ServerNames                  []string
 	BootstrapTokens              []AgentBootstrapToken
@@ -121,6 +136,8 @@ type RegistryConfig struct {
 	TokenIssuer          string
 	TokenService         string
 	CredentialTTLSeconds int
+	SigningCertFile      string
+	SigningKeyFile       string
 }
 
 type ControlPlaneBuilderConfig struct {
@@ -138,6 +155,8 @@ type SourceArchiveConfig struct {
 }
 
 type ControlPlaneConfig struct {
+	Profile        Profile
+	Health         HealthConfig
 	InternalGRPC   ListenerConfig
 	UserAssertions UserAssertionConfig
 	Database       DatabaseConfig
@@ -211,6 +230,8 @@ type MeshConfig struct {
 }
 
 type AgentConfig struct {
+	Profile      Profile
+	Health       HealthConfig
 	Node         NodeConfig
 	ControlPlane ControlPlaneClientConfig
 	Runtime      RuntimeConfig
@@ -224,6 +245,8 @@ type BuilderControlPlaneConfig struct {
 }
 
 type BuilderConfig struct {
+	Profile                  Profile
+	Health                   HealthConfig
 	ID                       string
 	Name                     string
 	ControlPlane             BuilderControlPlaneConfig

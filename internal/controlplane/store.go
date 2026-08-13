@@ -65,6 +65,20 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
+	if s == nil || s.db == nil {
+		return false, false
+	}
+	if err := s.db.PingContext(ctx); err != nil {
+		return false, false
+	}
+	var version int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return true, false
+	}
+	return true, version >= currentSchemaVersion
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
@@ -89,8 +103,17 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("iterate schema versions: %w", err)
 		}
 		if len(applied) > 0 {
-			if _, ok := applied[currentSchemaVersion]; !ok || len(applied) != 1 {
-				return fmt.Errorf("database schema is stale; recreate the database")
+			current := 0
+			for version := range applied {
+				if version > current {
+					current = version
+				}
+			}
+			if current == currentSchemaVersion && len(applied) == 1 {
+				return nil
+			}
+			if err := applySchemaUpgrades(ctx, tx, current); err != nil {
+				return err
 			}
 			return nil
 		}
@@ -105,6 +128,30 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+func applySchemaUpgrades(ctx context.Context, tx *sql.Tx, fromVersion int) error {
+	if fromVersion <= 0 {
+		return fmt.Errorf("database schema is stale; recreate the database")
+	}
+	for version := fromVersion + 1; version <= currentSchemaVersion; version++ {
+		stmts, ok := schemaUpgrades[version]
+		if !ok {
+			return fmt.Errorf("database schema is stale; recreate the database")
+		}
+		for _, stmt := range stmts {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("upgrade schema to %d: %w", version, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version-1); err != nil {
+			return fmt.Errorf("replace schema version %d: %w", version-1, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES ($1, $2)`, version, time.Now().UTC()); err != nil {
+			return fmt.Errorf("record schema version %d: %w", version, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
