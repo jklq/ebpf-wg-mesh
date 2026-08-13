@@ -1020,12 +1020,13 @@ func (s *PlatformService) decorateServiceRecordWithAllocation(ctx context.Contex
 		rec := buildRunRecordFromProto(service.LatestBuild)
 		buildRec = &rec
 	}
+	if service.LatestDeployment == nil {
+		inferred := inferDeploymentFromLegacy(service, buildRec, allocValue)
+		service.LatestDeployment = &inferred
+	}
 	stages := deploymentStages(service, buildRec, allocValue)
 	if service.LatestBuild == nil && len(stages) > 0 {
-		// We need a vehicle to carry the stages back to the client. The
-		// proto encodes them on BuildStatus today; for services that have
-		// never been built we synthesize a minimal BuildStatus so stages
-		// still round-trip without leaking a new top-level field.
+		// Stages still travel on BuildStatus for older console clients.
 		service.LatestBuild = &platformv1.BuildStatus{Stages: stages}
 	} else if service.LatestBuild != nil {
 		service.LatestBuild.Stages = stages

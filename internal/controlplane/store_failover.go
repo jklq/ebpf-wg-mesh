@@ -154,6 +154,18 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			}
 			moved = true
 			changedEnvironments[service.environmentID] = struct{}{}
+			if current, ok, err := s.currentDeploymentTx(ctx, tx, service.serviceID); err != nil {
+				return err
+			} else if ok {
+				if _, err := s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
+					ToState:    deploymentStateScheduling,
+					Actor:      deploymentActor{Kind: deploymentCauseSystem},
+					ReasonCode: reasonFailoverRescheduled,
+					Detail:     fmt.Sprintf("Rescheduled from expired agent %s to %s", agentID, destination),
+				}); err != nil {
+					return err
+				}
+			}
 		}
 
 		if moved {
