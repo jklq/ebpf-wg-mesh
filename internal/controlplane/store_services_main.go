@@ -215,6 +215,9 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 			return serviceRecord{}, false, false, err
 		}
 	}
+	if err := validateVolumeReplicaCompatibility(spec, current.DesiredReplicaCount); err != nil {
+		return serviceRecord{}, false, false, err
+	}
 	spec = canonicalServiceSpec(spec)
 	nameChanged := nextName != current.Name
 	if sameServiceSpec(current.Spec, spec) {
@@ -339,13 +342,11 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 	if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
 		return serviceRecord{}, false, err
 	}
-	identityCatalogChanged := current.AllocatedAgentID == ""
-	if identityCatalogChanged {
-		current.AllocatedAgentID, err = s.chooseAgentForServiceTx(ctx, tx, current.EnvironmentID, current.Spec)
-		if err != nil {
-			return serviceRecord{}, false, err
-		}
+	if current.DesiredReplicaCount <= 0 {
+		current.DesiredReplicaCount = defaultDesiredReplicaCount
 	}
+	identityCatalogChanged := current.AllocatedAgentID == ""
+	preferredAgentID := current.AllocatedAgentID
 
 	now := time.Now().UTC()
 	nextRolloutGeneration := current.RolloutGeneration + 1
@@ -377,16 +378,14 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 		return serviceRecord{}, false, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO allocations(id, service_id, agent_id, desired_spec_revision,
-		        applied_spec_revision, desired_rollout_generation, applied_rollout_generation,
-		        phase, message, allocation_ip, healthy_ports, healthy, updated_at)
-		 VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, $7)
-		 ON CONFLICT (service_id) DO UPDATE
-		    SET desired_spec_revision = $4,
-		        desired_rollout_generation = $5,
-		        agent_id = $3,
-		        phase = 'Pending', message = '', healthy = FALSE, updated_at = $7`,
-		mustID(), serviceID, current.AllocatedAgentID, current.SpecRevision, nextRolloutGeneration, []byte("[]"), now,
+		`UPDATE allocations
+		    SET desired_spec_revision = $1,
+		        desired_rollout_generation = $2,
+		        phase = 'Pending',
+		        message = '',
+		        updated_at = $3
+		  WHERE service_id = $4`,
+		current.SpecRevision, nextRolloutGeneration, now, serviceID,
 	); err != nil {
 		return serviceRecord{}, false, err
 	}
@@ -395,6 +394,12 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 	current.ResolvedImage = resolvedImage
 	current.PendingChanges = false
 	current.UpdatedAt = now
+	if _, err := s.reconcileServiceReplicasTx(ctx, tx, current, preferredAgentID, now); err != nil {
+		return serviceRecord{}, false, err
+	}
+	if current.AllocatedAgentID == "" {
+		identityCatalogChanged = true
+	}
 	return current, identityCatalogChanged, nil
 }
 
@@ -427,12 +432,7 @@ func (s *Store) listServices(ctx context.Context, userID, environmentID string) 
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
-		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
-		   FROM services s
-		   JOIN environments e ON e.id = s.environment_id
-		   LEFT JOIN allocations a ON a.service_id = s.id
+		serviceSelectSQL+`
 		  WHERE s.environment_id = $1
 		  ORDER BY s.created_at ASC`,
 		environmentID,
@@ -485,13 +485,8 @@ func (s *Store) serviceByID(ctx context.Context, userID, projectID, serviceID st
 
 func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, userID, _ string, serviceID string) (serviceRecord, error) {
 	row := q.QueryRowContext(ctx,
-		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
-		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
-		   FROM services s
-		   JOIN environments e ON e.id = s.environment_id
+		serviceSelectSQL+`
 		   JOIN project_memberships m ON m.project_id = e.project_id
-		   LEFT JOIN allocations a ON a.service_id = s.id
 		  WHERE s.id = $1 AND m.user_id = $2 AND m.role IN ('owner', 'editor', 'viewer')`,
 		serviceID, userID,
 	)
@@ -525,11 +520,7 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, userID
 func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, environmentID, name string) (serviceRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
-		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
-		   FROM services s JOIN environments e ON e.id = s.environment_id
-		   LEFT JOIN allocations a ON a.service_id = s.id
+		serviceSelectSQL+`
 		  WHERE s.environment_id = $1 AND s.name = $2`,
 		environmentID,
 		name,
@@ -549,6 +540,14 @@ func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, envi
 	}
 }
 
+const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
+		        s.current_rollout_generation,
+		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id ORDER BY a.id LIMIT 1), ''),
+		        s.current_resolved_image, s.last_successful_commit_sha, s.latest_build_id,
+		        s.desired_replica_count, s.placement_message, s.created_at, s.updated_at
+		   FROM services s
+		   JOIN environments e ON e.id = s.environment_id`
+
 func scanServiceRow(scanner interface{ Scan(...any) error }) (serviceRecord, error) {
 	var rec serviceRecord
 	if err := scanner.Scan(
@@ -562,10 +561,15 @@ func scanServiceRow(scanner interface{ Scan(...any) error }) (serviceRecord, err
 		&rec.ResolvedImage,
 		&rec.LastSuccessfulCommitSHA,
 		&rec.LatestBuildID,
+		&rec.DesiredReplicaCount,
+		&rec.PlacementMessage,
 		&rec.CreatedAt,
 		&rec.UpdatedAt,
 	); err != nil {
 		return serviceRecord{}, err
+	}
+	if rec.DesiredReplicaCount <= 0 {
+		rec.DesiredReplicaCount = defaultDesiredReplicaCount
 	}
 	rec.LatestBuild = nil
 	return rec, nil

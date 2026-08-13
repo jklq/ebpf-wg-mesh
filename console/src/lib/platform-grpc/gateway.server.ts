@@ -147,6 +147,10 @@ export function createPlatformGateway(
 			const response = await unaryCall(runtime, "RedeployService", input, user);
 			return decodeServiceStatusMessage(response);
 		},
+		async scaleService(user, input) {
+			const response = await unaryCall(runtime, "ScaleService", input, user);
+			return decodeServiceStatusMessage(response);
+		},
 		async discardServiceChanges(user, input) {
 			const response = await unaryCall(
 				runtime,

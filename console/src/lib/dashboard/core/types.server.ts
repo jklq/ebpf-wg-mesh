@@ -140,6 +140,7 @@ export interface DashboardRuntimeSpec {
 	memoryMebibytes: number;
 	ports: DashboardRuntimePort[];
 	healthCheck?: DashboardHTTPHealthCheck;
+	volumeName?: string;
 }
 
 export interface DashboardServiceSpec {
@@ -224,6 +225,9 @@ export interface DashboardServiceRecord {
 	unappliedChangeCount?: number;
 	unappliedChanges?: Array<DashboardUnappliedChange>;
 	layoutPosition?: DashboardServicePosition;
+	desiredReplicaCount?: number;
+	readyReplicaCount?: number;
+	placementMessage?: string;
 }
 
 export interface DashboardAllocationStatus {
@@ -240,11 +244,23 @@ export interface DashboardAllocationStatus {
 	desiredRolloutGeneration: number;
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
+	restartCount?: number;
+	lastRestartedAt?: Date;
+	restarts?: Array<DashboardAllocationRestart>;
+}
+
+export interface DashboardAllocationRestart {
+	restartedAt?: Date;
+	reason: string;
+	fromAgentId?: string;
+	toAgentId?: string;
+	rolloutGeneration?: number;
 }
 
 export interface DashboardServiceStatus {
 	service: DashboardServiceRecord;
 	allocation?: DashboardAllocationStatus;
+	allocations?: Array<DashboardAllocationStatus>;
 }
 
 export interface DashboardIndexedServices {
@@ -618,6 +634,14 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { serviceId: string },
 	): Promise<DashboardServiceStatus>;
+	scaleService(
+		user: DashboardUser,
+		input: {
+			serviceId: string;
+			desiredReplicaCount: number;
+			confirmScaleToZero?: boolean;
+		},
+	): Promise<DashboardServiceStatus>;
 	discardServiceChanges(
 		user: DashboardUser,
 		input: {
@@ -857,6 +881,11 @@ export interface DashboardService {
 	): Promise<DashboardServiceRecord>;
 	redeployServiceFromSession(input: {
 		serviceId: string;
+	}): Promise<DashboardServiceStatus>;
+	scaleServiceFromSession(input: {
+		serviceId: string;
+		desiredReplicaCount: number;
+		confirmScaleToZero?: boolean;
 	}): Promise<DashboardServiceStatus>;
 	discardServiceChangesFromSession(input: {
 		serviceId: string;

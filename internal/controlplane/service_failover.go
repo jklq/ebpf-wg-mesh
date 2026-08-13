@@ -87,27 +87,38 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 				healthyAgents[agent.ID] = agent
 			}
 		}
-		for _, service := range services {
+		servicesByID := make(map[string]*serviceRecord, len(services))
+		occupiedByService := make(map[string]map[string]struct{}, len(services))
+		for i := range services {
+			servicesByID[services[i].ID] = &services[i]
+			occupiedByService[services[i].ID] = map[string]struct{}{}
+		}
+		for _, allocation := range allocations {
+			service := servicesByID[allocation.ServiceID]
+			if service == nil {
+				continue
+			}
 			runtime := serviceRuntime(service.Spec)
-			used := usage[service.AllocatedAgentID]
+			used := usage[allocation.AgentID]
 			if used == nil {
 				used = &agentWorkloadUsage{}
-				usage[service.AllocatedAgentID] = used
+				usage[allocation.AgentID] = used
 			}
 			used.services++
 			used.cpu += runtime.GetCpuMillis()
 			used.memory += runtime.GetMemoryMebibytes()
+			occupiedByService[allocation.ServiceID][allocation.AgentID] = struct{}{}
 		}
 
 		moved := false
-		for i := range services {
-			service := &services[i]
-			if _, healthy := healthyAgents[service.AllocatedAgentID]; healthy {
-				continue
+		for i := range allocations {
+			allocation := allocations[i]
+			service := servicesByID[allocation.ServiceID]
+			if service == nil {
+				return fmt.Errorf("allocation %s has no service", allocation.ID)
 			}
-			allocation, ok := allocations[service.ID]
-			if !ok {
-				return fmt.Errorf("service %s has no allocation", service.ID)
+			if _, healthy := healthyAgents[allocation.AgentID]; healthy {
+				continue
 			}
 
 			var blockedMessage string
@@ -120,14 +131,17 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 
 			var destination string
 			if blockedMessage == "" {
-				destination = chooseFailoverDestination(agents, healthyAgents, usage, s.reservedAgentIDs, service)
+				destination = chooseFailoverDestination(agents, healthyAgents, usage, s.reservedAgentIDs, service, allocation.AgentID, occupiedByService[service.ID])
 				if destination == "" {
 					blockedMessage = "agent unhealthy; automatic failover blocked because no healthy non-reserved agent has sufficient capacity"
 				}
 			}
 
 			if blockedMessage != "" {
-				changed, err := markAllocationUnavailableForFailover(ctx, tx, service.ID, allocation, blockedMessage, now.UTC())
+				changed, err := markAllocationUnavailableForFailover(ctx, tx, allocation.ID, allocationFailoverState{
+					phase: allocation.Phase, message: allocation.Message, allocationIP: allocation.AllocationIP,
+					healthyPorts: allocation.HealthyPorts, healthy: allocation.Healthy,
+				}, blockedMessage, now.UTC())
 				if err != nil {
 					return err
 				}
@@ -138,7 +152,7 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 				continue
 			}
 
-			oldAgentID := service.AllocatedAgentID
+			oldAgentID := allocation.AgentID
 			allocationUpdate, err := tx.ExecContext(ctx,
 				`UPDATE allocations
 				    SET agent_id = $1,
@@ -150,12 +164,12 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 				        healthy_ports = $3,
 				        healthy = FALSE,
 				        updated_at = $4
-				  WHERE service_id = $5 AND agent_id = $6`,
+				  WHERE id = $5 AND agent_id = $6`,
 				destination,
 				fmt.Sprintf("rescheduled from unhealthy agent %s to %s", oldAgentID, destination),
 				[]byte("[]"),
 				now.UTC(),
-				service.ID,
+				allocation.ID,
 				oldAgentID,
 			)
 			if err != nil {
@@ -168,6 +182,9 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			if allocationAffected != 1 {
 				return errConcurrentUpdate
 			}
+			if err := s.recordAllocationRestartTx(ctx, tx, allocation, "rescheduled after node loss", oldAgentID, destination, now.UTC()); err != nil {
+				return err
+			}
 
 			runtime := serviceRuntime(service.Spec)
 			if oldUsage := usage[oldAgentID]; oldUsage != nil {
@@ -179,6 +196,8 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			newUsage.services++
 			newUsage.cpu += runtime.GetCpuMillis()
 			newUsage.memory += runtime.GetMemoryMebibytes()
+			delete(occupiedByService[service.ID], oldAgentID)
+			occupiedByService[service.ID][destination] = struct{}{}
 			service.AllocatedAgentID = destination
 			result.MovedServiceIDs = append(result.MovedServiceIDs, service.ID)
 			result.IngressChanged = true
@@ -221,29 +240,51 @@ func projectKindsForFailover(ctx context.Context, q serviceQueryer) (map[string]
 	return out, rows.Err()
 }
 
-func allocationStatesForFailover(ctx context.Context, q serviceQueryer) (map[string]allocationFailoverState, error) {
-	rows, err := q.QueryContext(ctx, `SELECT service_id, phase, message, allocation_ip, healthy_ports, healthy FROM allocations`)
+func allocationStatesForFailover(ctx context.Context, q serviceQueryer) ([]allocationRecord, error) {
+	return listAllocationsForFailover(ctx, q, "")
+}
+
+func listAllocationsForFailover(ctx context.Context, q serviceQueryer, agentID string) ([]allocationRecord, error) {
+	query := allocationSelectSQL
+	args := []any{}
+	if agentID != "" {
+		query += ` WHERE a.agent_id = $1`
+		args = append(args, agentID)
+	}
+	query += ` ORDER BY s.created_at ASC, a.id ASC`
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[string]allocationFailoverState)
+	var out []allocationRecord
 	for rows.Next() {
-		var serviceID string
-		var state allocationFailoverState
-		if err := rows.Scan(&serviceID, &state.phase, &state.message, &state.allocationIP, &state.healthyPorts, &state.healthy); err != nil {
+		rec, err := scanAllocationRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		out[serviceID] = state
+		out = append(out, rec)
 	}
 	return out, rows.Err()
 }
 
-func chooseFailoverDestination(agents []agentRecord, healthy map[string]agentRecord, usage map[string]*agentWorkloadUsage, reserved []string, service *serviceRecord) string {
+func chooseFailoverDestination(agents []agentRecord, healthy map[string]agentRecord, usage map[string]*agentWorkloadUsage, reserved []string, service *serviceRecord, currentAgentID string, occupied map[string]struct{}) string {
+	if dest := firstFailoverCandidate(agents, healthy, usage, reserved, service, currentAgentID, occupied, true); dest != "" {
+		return dest
+	}
+	return firstFailoverCandidate(agents, healthy, usage, reserved, service, currentAgentID, occupied, false)
+}
+
+func firstFailoverCandidate(agents []agentRecord, healthy map[string]agentRecord, usage map[string]*agentWorkloadUsage, reserved []string, service *serviceRecord, currentAgentID string, occupied map[string]struct{}, avoidOccupied bool) string {
 	candidates := make([]agentRecord, 0, len(agents))
 	for _, agent := range agents {
-		if _, ok := healthy[agent.ID]; !ok || agent.ID == service.AllocatedAgentID || slices.Contains(reserved, agent.ID) {
+		if _, ok := healthy[agent.ID]; !ok || agent.ID == currentAgentID || slices.Contains(reserved, agent.ID) {
 			continue
+		}
+		if avoidOccupied {
+			if _, taken := occupied[agent.ID]; taken {
+				continue
+			}
 		}
 		candidates = append(candidates, agent)
 	}
@@ -268,15 +309,15 @@ func chooseFailoverDestination(agents []agentRecord, healthy map[string]agentRec
 	return ""
 }
 
-func markAllocationUnavailableForFailover(ctx context.Context, q serviceQueryer, serviceID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
+func markAllocationUnavailableForFailover(ctx context.Context, q serviceQueryer, allocationID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
 	if current.phase == allocationPhaseUnavailable && current.message == message && current.allocationIP == "" && len(current.healthyPorts) == 0 && !current.healthy {
 		return false, nil
 	}
 	_, err := q.ExecContext(ctx,
 		`UPDATE allocations
 		    SET phase = $1, message = $2, allocation_ip = '', healthy_ports = $3, healthy = FALSE, updated_at = $4
-		  WHERE service_id = $5`,
-		allocationPhaseUnavailable, message, []byte("[]"), now, serviceID,
+		  WHERE id = $5`,
+		allocationPhaseUnavailable, message, []byte("[]"), now, allocationID,
 	)
 	return err == nil, err
 }

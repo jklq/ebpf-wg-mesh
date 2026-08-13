@@ -516,11 +516,7 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (buildRunRecord, e
 
 func (s *Store) serviceByIDInternalQuerier(ctx context.Context, q serviceQueryer, serviceID string) (serviceRecord, error) {
 	row := q.QueryRowContext(ctx,
-		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
-		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
-		   FROM services s JOIN environments e ON e.id = s.environment_id
-		   LEFT JOIN allocations a ON a.service_id = s.id WHERE s.id = $1`,
+		serviceSelectSQL+` WHERE s.id = $1`,
 		serviceID,
 	)
 	rec, err := scanServiceRow(row)

@@ -215,20 +215,30 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 					return fmt.Errorf("reported allocation ip %q is invalid", allocationIP)
 				}
 			} else {
-				allocationIP, err = privateIPv6(workloadSubnet, environmentID, serviceID)
+				allocationIP, err = privateIPv6(workloadSubnet, environmentID, cond.GetAllocationId())
 				if err != nil {
 					return fmt.Errorf("derive allocation ip: %w", err)
 				}
 			}
+			restarted := allocationRestartObserved(prevPhase, prevAppliedRolloutGeneration, cond.GetPhase(), cond.GetAppliedRolloutGeneration())
 			statusChanged := prevAppliedSpecRevision != cond.GetAppliedSpecRevision() ||
 				prevAppliedRolloutGeneration != cond.GetAppliedRolloutGeneration() ||
 				prevPhase != cond.GetPhase() ||
 				prevMessage != cond.GetMessage() ||
 				prevAllocationIP != allocationIP ||
 				!equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) ||
-				prevHealthy != cond.GetHealthy()
+				prevHealthy != cond.GetHealthy() ||
+				restarted
 			if !statusChanged {
 				continue
+			}
+			if restarted {
+				if err := s.recordAllocationRestartTx(ctx, tx, allocationRecord{
+					ID:                       cond.GetAllocationId(),
+					DesiredRolloutGeneration: cond.GetDesiredRolloutGeneration(),
+				}, "workload restarted", agentID, agentID, now); err != nil {
+					return fmt.Errorf("record allocation restart: %w", err)
+				}
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
@@ -363,12 +373,12 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 
 func (s *Store) listWorkloadIdentities(ctx context.Context) ([]*agentv1.WorkloadIdentity, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.environment_id, e.network_identity, a.agent_id, ag.advertise_addr, ag.workload_ipv6_subnet
+		`SELECT a.id, s.environment_id, e.network_identity, a.agent_id, ag.advertise_addr, ag.workload_ipv6_subnet
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id
 		   JOIN agents ag ON ag.id = a.agent_id
-		  ORDER BY s.created_at ASC`,
+		  ORDER BY s.created_at ASC, a.id ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -378,20 +388,20 @@ func (s *Store) listWorkloadIdentities(ctx context.Context) ([]*agentv1.Workload
 	var identities []*agentv1.WorkloadIdentity
 	for rows.Next() {
 		var (
-			serviceID       string
+			allocationID    string
 			environmentID   string
 			networkIdentity int64
 			hostAgentID     string
 			hostIPv6        string
 			workloadSubnet  string
 		)
-		if err := rows.Scan(&serviceID, &environmentID, &networkIdentity, &hostAgentID, &hostIPv6, &workloadSubnet); err != nil {
+		if err := rows.Scan(&allocationID, &environmentID, &networkIdentity, &hostAgentID, &hostIPv6, &workloadSubnet); err != nil {
 			return nil, err
 		}
 		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
 			return nil, fmt.Errorf("environment %s has invalid network identity %d", environmentID, networkIdentity)
 		}
-		workloadIPv6, err := privateIPv6(workloadSubnet, environmentID, serviceID)
+		workloadIPv6, err := privateIPv6(workloadSubnet, environmentID, allocationID)
 		if err != nil {
 			return nil, err
 		}
@@ -458,11 +468,7 @@ func (s *Store) schedulerSnapshotTx(ctx context.Context, q serviceQueryer) ([]ag
 		return nil, nil, err
 	}
 	rows, err := q.QueryContext(ctx,
-		`SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation, COALESCE(a.agent_id, ''), s.current_resolved_image,
-		        s.last_successful_commit_sha, s.latest_build_id, s.created_at, s.updated_at
-		   FROM services s JOIN environments e ON e.id = s.environment_id
-		   LEFT JOIN allocations a ON a.service_id = s.id
+		serviceSelectSQL+`
 		  ORDER BY s.created_at ASC`,
 	)
 	if err != nil {

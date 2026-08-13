@@ -54,9 +54,11 @@ type platformStore interface {
 	domainBindingByHostname(ctx context.Context, userID, projectID, hostname string) (domainBindingRecord, error)
 	listDomainBindings(ctx context.Context, userID, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, userID, projectID, hostname string) (bool, error)
-	serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error)
+	scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error)
 	listServiceDeployments(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error)
+	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error)
 	listAgents(ctx context.Context) ([]agentRecord, error)
 }
 
@@ -289,11 +291,11 @@ func (s *PlatformService) DeployEnvironment(ctx context.Context, req *platformv1
 	}
 	resp := &platformv1.DeployEnvironmentResponse{Services: make([]*platformv1.ServiceStatus, 0, len(services))}
 	for _, service := range services {
-		allocation, err := s.store.allocationByServiceID(ctx, service.ID)
+		allocations, err := s.store.listAllocationsByServiceID(ctx, service.ID)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "load deployed allocation: %v", err)
+			return nil, status.Errorf(codes.Internal, "load deployed allocations: %v", err)
 		}
-		resp.Services = append(resp.Services, &platformv1.ServiceStatus{Service: toProtoService(service), Allocation: toProtoAllocation(allocation)})
+		resp.Services = append(resp.Services, toProtoServiceStatus(service, allocations, 0))
 	}
 	s.events.Publish(req.GetEnvironmentId())
 	return resp, nil
@@ -468,7 +470,7 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		if errors.Is(err, errConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "update service: %v", err)
 		}
-		if errors.Is(err, errVolumeNotFound) || errors.Is(err, errVolumeAgentMismatch) {
+		if errors.Is(err, errVolumeNotFound) || errors.Is(err, errVolumeAgentMismatch) || errors.Is(err, errVolumeReplicaUnsupported) {
 			return nil, status.Errorf(codes.FailedPrecondition, "update service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "update service: %v", err)
@@ -517,22 +519,58 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 			}
 			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
 		}
-		if currentService.AllocatedAgentID == "" {
-			s.notifyAllAgents(ctx)
-		} else {
-			s.notifier.Notify(service.AllocatedAgentID)
-		}
+		s.notifyServiceAgents(ctx, service.ID, currentService.AllocatedAgentID == "")
 	}
-	currentService, allocation, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	currentService, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "redeploy service status: %v", err)
 	}
-	currentService, err = s.decorateServiceRecordWithAllocation(ctx, currentService, &allocation)
+	currentService, err = s.decorateServiceRecordWithAllocations(ctx, currentService, allocations)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
 	}
 	index := s.events.Publish(currentService.EnvironmentID)
-	return &platformv1.ServiceStatus{Service: toProtoService(currentService), Allocation: toProtoAllocation(allocation), Index: index}, nil
+	return toProtoServiceStatus(currentService, allocations, index), nil
+}
+
+func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.ScaleServiceRequest) (*platformv1.ServiceStatus, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetServiceId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_id is required")
+	}
+	current, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
+	}
+	if err := s.requireProjectWriteAccess(ctx, identity.UserID, current.ProjectID); err != nil {
+		return nil, err
+	}
+	service, allocations, err := s.store.scaleService(ctx, identity.UserID, "", req.GetServiceId(), req.GetDesiredReplicaCount(), req.GetConfirmScaleToZero())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		if errors.Is(err, errConcurrentUpdate) {
+			return nil, status.Errorf(codes.Aborted, "scale service: %v", err)
+		}
+		if errors.Is(err, errInvalidReplicaCount) || errors.Is(err, errScaleToZeroUnconfirmed) || errors.Is(err, errVolumeReplicaUnsupported) {
+			return nil, status.Errorf(codes.FailedPrecondition, "scale service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "scale service: %v", err)
+	}
+	service, err = s.decorateServiceRecordWithAllocations(ctx, service, allocations)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate scaled service: %v", err)
+	}
+	s.notifyAllAgents(ctx)
+	index := s.events.Publish(service.EnvironmentID)
+	return toProtoServiceStatus(service, allocations, index), nil
 }
 
 func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {
@@ -897,7 +935,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, err
 	}
-	service, allocation, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	service, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
@@ -912,15 +950,15 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	// watch. Returning it here would report the state from *before* the change
 	// that woke us, leaving every watcher one event behind — the final "healthy"
 	// status of a rollout would then never reach the client.
-	service, allocation, err = s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	service, allocations, err = s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
-	service, err = s.decorateServiceRecordWithAllocation(ctx, service, &allocation)
+	service, err = s.decorateServiceRecordWithAllocations(ctx, service, allocations)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
 	}
-	return &platformv1.ServiceStatus{Service: toProtoService(service), Allocation: toProtoAllocation(allocation), Index: index}, nil
+	return toProtoServiceStatus(service, allocations, index), nil
 }
 
 func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (*platformv1.ListServiceLogsResponse, error) {
@@ -994,23 +1032,20 @@ func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*pl
 }
 
 func (s *PlatformService) decorateServiceRecord(ctx context.Context, service serviceRecord) (serviceRecord, error) {
-	return s.decorateServiceRecordWithAllocation(ctx, service, nil)
+	return s.decorateServiceRecordWithAllocations(ctx, service, nil)
 }
 
-func (s *PlatformService) decorateServiceRecordWithAllocation(ctx context.Context, service serviceRecord, alloc *allocationRecord) (serviceRecord, error) {
+func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Context, service serviceRecord, allocs []allocationRecord) (serviceRecord, error) {
 	if service.SourceSummary == nil {
 		service.SourceSummary = buildSourceSummary(service.Spec)
 	}
-	// Stages are projected from the allocation + latest build; if we cannot
-	// load the allocation we still return the stages derived from just the
+	// Stages are projected from the allocations + latest build; if we cannot
+	// load allocations we still return the stages derived from just the
 	// service+build so the UI gets something to render (showing a "waiting"
 	// deploy stage rather than a hard error).
-	allocValue := allocationRecord{}
-	if alloc != nil {
-		allocValue = *alloc
-	} else {
+	if allocs == nil {
 		var err error
-		allocValue, err = s.store.allocationByServiceID(ctx, service.ID)
+		allocs, err = s.store.listAllocationsByServiceID(ctx, service.ID)
 		if err != nil {
 			return serviceRecord{}, err
 		}
@@ -1020,7 +1055,8 @@ func (s *PlatformService) decorateServiceRecordWithAllocation(ctx context.Contex
 		rec := buildRunRecordFromProto(service.LatestBuild)
 		buildRec = &rec
 	}
-	stages := deploymentStages(service, buildRec, allocValue)
+	service.ReadyReplicaCount = countReadyAllocations(allocs)
+	stages := deploymentStages(service, buildRec, summarizeAllocations(allocs, service.DesiredReplicaCount))
 	if service.LatestBuild == nil && len(stages) > 0 {
 		// We need a vehicle to carry the stages back to the client. The
 		// proto encodes them on BuildStatus today; for services that have
@@ -1031,6 +1067,32 @@ func (s *PlatformService) decorateServiceRecordWithAllocation(ctx context.Contex
 		service.LatestBuild.Stages = stages
 	}
 	return service, nil
+}
+
+func (s *PlatformService) notifyServiceAgents(ctx context.Context, serviceID string, identityCatalogChanged bool) {
+	if identityCatalogChanged || s.notifier == nil {
+		s.notifyAllAgents(ctx)
+		return
+	}
+	ids, err := s.store.listAllocationsByServiceID(ctx, serviceID)
+	if err != nil {
+		s.notifyAllAgents(ctx)
+		return
+	}
+	seen := map[string]struct{}{}
+	for _, alloc := range ids {
+		if alloc.AgentID == "" {
+			continue
+		}
+		if _, ok := seen[alloc.AgentID]; ok {
+			continue
+		}
+		seen[alloc.AgentID] = struct{}{}
+		s.notifier.Notify(alloc.AgentID)
+	}
+	if len(seen) == 0 {
+		s.notifyAllAgents(ctx)
+	}
 }
 
 // buildRunRecordFromProto rebuilds the (minimal) in-memory buildRunRecord we
@@ -1132,7 +1194,7 @@ func (s *PlatformService) notifyServices(ctx context.Context, userID, projectID 
 			slog.Warn("failed to load service for domain notification", "service_id", serviceID, "error", err)
 			continue
 		}
-		s.notifier.Notify(service.AllocatedAgentID)
+		s.notifyServiceAgents(ctx, service.ID, false)
 	}
 }
 

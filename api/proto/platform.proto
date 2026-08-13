@@ -235,6 +235,9 @@ message Service {
   int32 unapplied_change_count = 14;
   repeated ServiceUnappliedChange unapplied_changes = 15;
   string internal_hostname = 16;
+  int32 desired_replica_count = 17;
+  int32 ready_replica_count = 18;
+  string placement_message = 19;
 }
 
 enum DomainOwnershipState {
@@ -272,6 +275,14 @@ message Agent {
   google.protobuf.Timestamp last_seen_at = 7;
 }
 
+message AllocationRestart {
+  google.protobuf.Timestamp restarted_at = 1;
+  string reason = 2;
+  string from_agent_id = 3;
+  string to_agent_id = 4;
+  int64 rollout_generation = 5;
+}
+
 message AllocationStatus {
   string allocation_id = 1;
   string service_id = 2;
@@ -286,6 +297,9 @@ message AllocationStatus {
   int64 desired_rollout_generation = 11;
   int64 applied_rollout_generation = 12;
   repeated int32 healthy_ports = 13;
+  int32 restart_count = 14;
+  google.protobuf.Timestamp last_restarted_at = 15;
+  repeated AllocationRestart restarts = 16;
 }
 
 message ServiceStatus {
@@ -293,6 +307,7 @@ message ServiceStatus {
   AllocationStatus allocation = 2;
   int64 index = 3;
   bool not_modified = 4;
+  repeated AllocationStatus allocations = 5;
 }
 
 message CreateProjectRequest {
@@ -376,6 +391,12 @@ message UpdateServiceRequest {
 
 message RedeployServiceRequest {
   string service_id = 1;
+}
+
+message ScaleServiceRequest {
+  string service_id = 1;
+  int32 desired_replica_count = 2;
+  bool confirm_scale_to_zero = 3;
 }
 
 message DiscardServiceChangesRequest {
@@ -636,6 +657,7 @@ service PlatformService {
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
   rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus);
+  rpc ScaleService(ScaleServiceRequest) returns (ServiceStatus);
   rpc DiscardServiceChanges(DiscardServiceChangesRequest) returns (Service);
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
   rpc GetService(GetServiceRequest) returns (Service);

@@ -62,6 +62,9 @@ type serviceRecord struct {
 	LatestBuild             *platformv1.BuildStatus
 	PendingChanges          bool
 	UnappliedChanges        []*platformv1.ServiceUnappliedChange
+	DesiredReplicaCount     int32
+	ReadyReplicaCount       int32
+	PlacementMessage        string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -111,7 +114,19 @@ type allocationRecord struct {
 	AllocationIP             string
 	Healthy                  bool
 	HealthyPorts             []int32
+	RestartCount             int32
+	LastRestartedAt          sql.NullTime
+	Restarts                 []allocationRestartEvent
+	CreatedAt                time.Time
 	UpdatedAt                time.Time
+}
+
+type allocationRestartEvent struct {
+	RestartedAt       time.Time `json:"restartedAt"`
+	Reason            string    `json:"reason"`
+	FromAgentID       string    `json:"fromAgentId,omitempty"`
+	ToAgentID         string    `json:"toAgentId,omitempty"`
+	RolloutGeneration int64     `json:"rolloutGeneration"`
 }
 
 type buildRunRecord struct {

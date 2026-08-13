@@ -279,8 +279,8 @@ func (i *IngressSyncer) render(ctx context.Context) (*caddyConfig, error) {
 		}
 		routes = append(routes, route)
 	}
-	for _, backend := range backends {
-		route, ok := ingressRoute([]string{backend.Domain}, backend.Upstream)
+	for _, backend := range groupIngressBackends(backends) {
+		route, ok := ingressRoute(backend.Hosts, backend.Upstreams...)
 		if !ok {
 			continue
 		}
@@ -308,23 +308,63 @@ func (i *IngressSyncer) render(ctx context.Context) (*caddyConfig, error) {
 	return cfg, nil
 }
 
-func ingressRoute(hosts []string, upstream string) (caddyRoute, bool) {
-	upstream = strings.TrimSpace(upstream)
-	if upstream == "" {
-		return caddyRoute{}, false
-	}
+func ingressRoute(hosts []string, upstreams ...string) (caddyRoute, bool) {
 	normalizedHosts := normalizeIngressHosts(hosts)
 	if len(normalizedHosts) == 0 {
+		return caddyRoute{}, false
+	}
+	dials := make([]caddyUpstream, 0, len(upstreams))
+	seen := make(map[string]struct{}, len(upstreams))
+	for _, upstream := range upstreams {
+		upstream = strings.TrimSpace(upstream)
+		if upstream == "" {
+			continue
+		}
+		if _, exists := seen[upstream]; exists {
+			continue
+		}
+		seen[upstream] = struct{}{}
+		dials = append(dials, caddyUpstream{Dial: upstream})
+	}
+	if len(dials) == 0 {
 		return caddyRoute{}, false
 	}
 	return caddyRoute{
 		Match: []caddyRouteMatch{{Host: normalizedHosts}},
 		Handle: []caddyRouteHandle{{
 			Handler:   "reverse_proxy",
-			Upstreams: []caddyUpstream{{Dial: upstream}},
+			Upstreams: dials,
 		}},
 		Terminal: true,
 	}, true
+}
+
+func groupIngressBackends(backends []ingressBackend) []groupedIngressBackend {
+	order := make([]string, 0, len(backends))
+	grouped := make(map[string]*groupedIngressBackend, len(backends))
+	for _, backend := range backends {
+		domain := strings.ToLower(strings.TrimSpace(backend.Domain))
+		if domain == "" {
+			continue
+		}
+		entry, ok := grouped[domain]
+		if !ok {
+			entry = &groupedIngressBackend{Hosts: []string{domain}}
+			grouped[domain] = entry
+			order = append(order, domain)
+		}
+		entry.Upstreams = append(entry.Upstreams, backend.Upstream)
+	}
+	out := make([]groupedIngressBackend, 0, len(order))
+	for _, domain := range order {
+		out = append(out, *grouped[domain])
+	}
+	return out
+}
+
+type groupedIngressBackend struct {
+	Hosts     []string
+	Upstreams []string
 }
 
 func normalizeIngressHosts(hosts []string) []string {

@@ -17,13 +17,22 @@ import (
 )
 
 var (
-	errVolumeInUse          = errors.New("volume still referenced by service")
-	errVolumeNotFound       = errors.New("volume not found")
-	errVolumeAgentMismatch  = errors.New("volume bound to different agent")
-	errConcurrentUpdate     = errors.New("concurrent service update")
-	errDomainAlreadyExists  = errors.New("domain binding already exists")
-	errInvalidPort          = errors.New("port must be an integer between 1 and 65535")
-	errNoPlacementAvailable = errors.New("no healthy agent satisfies placement")
+	errVolumeInUse              = errors.New("volume still referenced by service")
+	errVolumeNotFound           = errors.New("volume not found")
+	errVolumeAgentMismatch      = errors.New("volume bound to different agent")
+	errConcurrentUpdate         = errors.New("concurrent service update")
+	errDomainAlreadyExists      = errors.New("domain binding already exists")
+	errInvalidPort              = errors.New("port must be an integer between 1 and 65535")
+	errNoPlacementAvailable     = errors.New("no healthy agent satisfies placement")
+	errInvalidReplicaCount      = errors.New("desired replica count is invalid")
+	errScaleToZeroUnconfirmed   = errors.New("scaling a production service to zero requires confirmation")
+	errVolumeReplicaUnsupported = errors.New("volume-backed services support a single replica")
+)
+
+const (
+	defaultDesiredReplicaCount = 1
+	maxDesiredReplicaCount     = 64
+	maxAllocationRestartEvents = 20
 )
 
 func volumeKey(environmentID, name string) string {
@@ -122,6 +131,14 @@ func serviceRuntime(spec *platformv1.ServiceSpec) *platformv1.ServiceRuntime {
 
 func serviceVolumeName(spec *platformv1.ServiceSpec) string {
 	return serviceRuntime(spec).GetVolumeName()
+}
+
+func validateVolumeReplicaCompatibility(spec *platformv1.ServiceSpec, desiredReplicaCount int32) error {
+	volumeName := strings.TrimSpace(serviceVolumeName(spec))
+	if volumeName == "" || desiredReplicaCount <= 1 {
+		return nil
+	}
+	return fmt.Errorf("%w: %q", errVolumeReplicaUnsupported, volumeName)
 }
 
 func directImageRef(spec *platformv1.ServiceSpec) string {
@@ -428,8 +445,34 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE allocations SET healthy = TRUE, allocation_ip = $1, healthy_ports = $2, updated_at = $3 WHERE service_id = $4`,
+		`UPDATE allocations
+		    SET healthy = TRUE,
+		        allocation_ip = $1,
+		        healthy_ports = $2,
+		        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
+		        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+		        updated_at = $3
+		  WHERE service_id = $4`,
 		allocationIP, encodedPorts, time.Now().UTC(), serviceID,
+	)
+	return err
+}
+
+func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
+	encodedPorts, err := encodeHealthyPorts(healthyPorts)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE allocations
+		    SET healthy = TRUE,
+		        allocation_ip = $1,
+		        healthy_ports = $2,
+		        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
+		        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+		        updated_at = $3
+		  WHERE id = $4`,
+		allocationIP, encodedPorts, time.Now().UTC(), allocationID,
 	)
 	return err
 }
