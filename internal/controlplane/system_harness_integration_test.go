@@ -47,13 +47,17 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	stateDir := t.TempDir()
+	bootstrapTokens := opts.bootstrapTokens
+	if len(bootstrapTokens) == 0 {
+		bootstrapTokens = []config.AgentBootstrapToken{{AgentID: "system-test-agent", Token: "system-test-bootstrap"}}
+	}
 	cfg := config.ControlPlaneConfig{
 		Profile: config.ProfileDevelopment,
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
 				ServerNames:             []string{"localhost"},
-				BootstrapTokens:         opts.bootstrapTokens,
+				BootstrapTokens:         bootstrapTokens,
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},
@@ -284,8 +288,8 @@ func userContext(t *testing.T, ctx context.Context, userID string) context.Conte
 
 func dockerfileMarkerArchive(marker string) []byte {
 	files := map[string]string{
-		"Dockerfile": "FROM scratch\nCOPY marker.txt /marker.txt\n",
-		"marker.txt": marker + "\n",
+		"repo/Dockerfile": "FROM scratch\nCOPY marker.txt /marker.txt\n",
+		"repo/marker.txt": marker + "\n",
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)

@@ -264,7 +264,12 @@ func registryManifestStatus(t *testing.T, authAddr string, cfg config.RegistryCo
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+	req.Header.Set("Accept", strings.Join([]string{
+		"application/vnd.oci.image.index.v1+json",
+		"application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.docker.distribution.manifest.list.v2+json",
+		"application/vnd.docker.distribution.manifest.v2+json",
+	}, ", "))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
