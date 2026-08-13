@@ -151,6 +151,18 @@ export async function migrateDashboardStore(
 		const appliedVersions = new Set(
 			result.rows.map((row) => Number.parseInt(row.version, 10)),
 		);
+		const currentVersions = new Set(
+			dashboardStoreMigrations(runtime).map((migration) => migration.version),
+		);
+		for (const version of appliedVersions) {
+			if (!currentVersions.has(version)) {
+				throw new DatabaseError({
+					operation: "migrateDashboardStore",
+					message: "database schema is stale; recreate the database",
+					cause: version,
+				});
+			}
+		}
 
 		for (const migration of dashboardStoreMigrations(runtime)) {
 			if (appliedVersions.has(migration.version)) {
@@ -171,82 +183,6 @@ export async function migrateDashboardStore(
 				[migration.version],
 			);
 		}
-	});
-
-	while (await reencryptLegacyGitHubTokensBatch(runtime, db)) {
-		// Keep each transaction bounded so startup does not hold a table-wide lock.
-	}
-}
-
-export async function reencryptLegacyGitHubTokensBatch(
-	runtime: DashboardStoreRuntimeConfig,
-	db: Pool,
-	batchSize = 100,
-): Promise<boolean> {
-	return withTransaction(db, "reencryptLegacyGitHubTokens", async (client) => {
-		const result = await query<{
-			id: string;
-			user_id: string;
-			provider_subject: string;
-			access_token: string;
-			refresh_token: string;
-		}>(
-			client,
-			"reencryptLegacyGitHubTokens.select",
-			`SELECT id, user_id, provider_subject, access_token, refresh_token
-			   FROM ${tableName(runtime, "accounts")}
-			  WHERE provider = 'github'
-			    AND ((access_token <> '' AND access_token NOT LIKE 'ghe1.%')
-			      OR (refresh_token <> '' AND refresh_token NOT LIKE 'ghe1.%'))
-			  ORDER BY id
-			  LIMIT $1
-			  FOR UPDATE`,
-			[batchSize],
-		);
-		if (result.rows.length === 0) return false;
-
-		for (const row of result.rows) {
-			const accessToken = runtime.githubTokenCipher.isEncrypted(
-				row.access_token,
-			)
-				? row.access_token
-				: runtime.githubTokenCipher.encrypt(row.access_token, {
-						userID: row.user_id,
-						providerSubject: row.provider_subject,
-						kind: "access",
-					});
-			const refreshToken = runtime.githubTokenCipher.isEncrypted(
-				row.refresh_token,
-			)
-				? row.refresh_token
-				: runtime.githubTokenCipher.encrypt(row.refresh_token, {
-						userID: row.user_id,
-						providerSubject: row.provider_subject,
-						kind: "refresh",
-					});
-			await queryVoid(
-				client,
-				"reencryptLegacyGitHubTokens.update",
-				`UPDATE ${tableName(runtime, "accounts")}
-				    SET access_token = $2,
-				        refresh_token = $3,
-				        oauth_token_version = oauth_token_version + 1,
-				        oauth_refresh_lease_id = NULL,
-				        oauth_refresh_lease_expires_at = NULL,
-				        updated_at = NOW()
-				  WHERE id = $1
-				    AND access_token = $4
-				    AND refresh_token = $5`,
-				[
-					row.id,
-					accessToken,
-					refreshToken,
-					row.access_token,
-					row.refresh_token,
-				],
-			);
-		}
-		return true;
 	});
 }
 

@@ -5,6 +5,7 @@ import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 
 import { doCreateEnvironment, doDuplicateEnvironment } from "./server-fns";
 import { formatError } from "./service-utils";
+import { ModalOverlay } from "./ui";
 
 export function EnvironmentDialog({
 	state,
@@ -59,16 +60,10 @@ export function EnvironmentDialog({
 	};
 
 	return (
-		<div
-			className="modal-overlay"
-			role="dialog"
-			aria-modal="true"
-			aria-label="New environment"
-			onClick={(event) => {
-				if (event.target === event.currentTarget && !busy) onClose();
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Escape" && !busy) onClose();
+		<ModalOverlay
+			ariaLabel="New environment"
+			onClose={() => {
+				if (!busy) onClose();
 			}}
 		>
 			<form
@@ -191,6 +186,6 @@ export function EnvironmentDialog({
 					{busy ? "Creating…" : "Create Environment"}
 				</button>
 			</form>
-		</div>
+		</ModalOverlay>
 	);
 }

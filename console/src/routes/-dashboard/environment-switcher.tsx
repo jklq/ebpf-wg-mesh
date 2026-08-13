@@ -87,10 +87,8 @@ export function EnvironmentSwitcher({
 		if (!renamingId) return;
 		const input = renameInputRef.current;
 		if (!input) return;
-		// Normal text-field behaviour: place the caret at the end instead of
-		// selecting the whole name.
 		input.focus();
-		input.setSelectionRange(input.value.length, input.value.length);
+		input.select();
 	}, [renamingId]);
 
 	if (!environment) return null;

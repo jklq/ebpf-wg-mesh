@@ -324,6 +324,7 @@ function EditableServiceHeaderName({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string>();
 	const inputRef = useRef<HTMLInputElement>(null);
+	const formRef = useRef<HTMLFormElement>(null);
 
 	useEffect(() => {
 		if (!editing) {
@@ -338,6 +339,19 @@ function EditableServiceHeaderName({
 			inputRef.current?.select();
 		}
 	}, [editing]);
+
+	useEffect(() => {
+		if (!editing) return;
+		const onPointerDown = (event: MouseEvent) => {
+			const root = formRef.current;
+			if (!root || root.contains(event.target as Node)) return;
+			setDraftName(service.name);
+			setError(undefined);
+			setEditing(false);
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		return () => document.removeEventListener("mousedown", onPointerDown);
+	}, [editing, service.name]);
 
 	const startEditing = () => {
 		setDraftName(service.name);
@@ -389,7 +403,7 @@ function EditableServiceHeaderName({
 
 	if (editing) {
 		return (
-			<form className="panel-title-edit" onSubmit={saveName}>
+			<form ref={formRef} className="panel-title-edit" onSubmit={saveName}>
 				<input
 					ref={inputRef}
 					className="panel-title-input"

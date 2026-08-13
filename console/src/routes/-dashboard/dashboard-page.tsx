@@ -34,6 +34,7 @@ import { ServiceNode } from "./service-node";
 import { formatError } from "./service-utils";
 import { Topbar } from "./topbar";
 import type { DashboardTab } from "./types";
+import { ModalOverlay } from "./ui";
 
 const loadNewServiceModal = () =>
 	import("./new-service-modal").then((module) => ({
@@ -51,6 +52,84 @@ const CANVAS_MAJOR_GRID = 128;
 const MIN_CANVAS_ZOOM = 0.3;
 const MAX_CANVAS_ZOOM = 2;
 const CANVAS_WHEEL_ZOOM_SENSITIVITY = 0.006;
+const PENDING_CREATED_SERVICE_TTL_MS = 60_000;
+
+type PendingCreatedService = {
+	service: DashboardServiceRecord;
+	environment: DashboardEnvironment;
+	expiresAt: number;
+};
+
+// Survives the `/` → `/environments/:id` remount that happens when the first
+// service materialises an environment. A component ref is wiped by that
+// remount, which would close the service panel we just opened.
+let pendingCreatedService: PendingCreatedService | null = null;
+
+function rememberPendingCreatedService(
+	service: DashboardServiceRecord,
+	environment: DashboardEnvironment,
+) {
+	pendingCreatedService = {
+		service,
+		environment,
+		expiresAt: Date.now() + PENDING_CREATED_SERVICE_TTL_MS,
+	};
+}
+
+function clearPendingCreatedService(serviceId?: string) {
+	if (!pendingCreatedService) return;
+	if (serviceId && pendingCreatedService.service.id !== serviceId) return;
+	pendingCreatedService = null;
+}
+
+function readPendingCreatedService(): PendingCreatedService | null {
+	const pending = pendingCreatedService;
+	if (!pending) return null;
+	if (Date.now() > pending.expiresAt) {
+		pendingCreatedService = null;
+		return null;
+	}
+	return pending;
+}
+
+function withPendingCreatedService(
+	list: Array<DashboardServiceRecord>,
+): Array<DashboardServiceRecord> {
+	const pending = readPendingCreatedService();
+	if (!pending) return list;
+	// Keep pending until the user closes the panel. A live snapshot that
+	// already includes the service used to consume it, then `/` redirected
+	// and remounted DashboardPage with nothing selected.
+	if (list.some((service) => service.id === pending.service.id)) {
+		return list;
+	}
+	return [...list, pending.service];
+}
+
+function hydrateStateWithPendingCreated(
+	state: DashboardHomeState,
+): DashboardHomeState {
+	const pending = readPendingCreatedService();
+	if (!pending) return state;
+	const pendingEnvironment = !state.environment
+		? pending.environment
+		: undefined;
+	const pendingEnvironments = pendingEnvironment
+		? state.environments.some((entry) => entry.id === pendingEnvironment.id)
+			? state.environments
+			: [...state.environments, pendingEnvironment]
+		: state.environments;
+	return {
+		...state,
+		environment: state.environment ?? pendingEnvironment,
+		environments: pendingEnvironments,
+		services: withPendingCreatedService(state.services),
+	};
+}
+
+export function resetDashboardPageTestState() {
+	pendingCreatedService = null;
+}
 
 type Point = { x: number; y: number };
 type ApplyingServiceChanges = {
@@ -63,9 +142,13 @@ type ApplyingServiceChanges = {
 
 export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const router = useRouter();
-	const [localState, setLocalState] = useState(state);
+	const [selectedId, setSelectedId] = useState<string | null>(
+		() => readPendingCreatedService()?.service.id ?? null,
+	);
+	const [localState, setLocalState] = useState(() =>
+		hydrateStateWithPendingCreated(state),
+	);
 	const services = localState.services;
-	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
 	const [liveStatus, setLiveStatus] = useState<DashboardServiceStatus | null>(
 		null,
@@ -94,7 +177,8 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const [zoom, setZoom] = useState(1);
 	const zoomRef = useRef(zoom);
 	const [nodePositions, setNodePositions] = useState<Record<string, Point>>(
-		() => serviceLayoutPositions(state.services),
+		() =>
+			serviceLayoutPositions(hydrateStateWithPendingCreated(state).services),
 	);
 	const [, startTransition] = useTransition();
 	const environmentId = localState.environment?.id ?? null;
@@ -110,11 +194,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	// the "Edited" badge / highlights back. Cleared once the server confirms
 	// the service is clean or a newer spec has been saved.
 	const deployedRevisionsRef = useRef<Map<string, number>>(new Map());
-	const pendingCreatedServiceRef = useRef<{
-		service: DashboardServiceRecord;
-		environment: DashboardEnvironment;
-		expiresAt: number;
-	} | null>(null);
 	const panStart = useRef<{
 		mx: number;
 		my: number;
@@ -259,9 +338,16 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	useEffect(() => {
 		if (previousEnvironmentIdRef.current === environmentId) return;
+		const pending = readPendingCreatedService();
+		const keepCreatedSelection =
+			Boolean(pending) && environmentId === (pending?.environment.id ?? null);
 		previousEnvironmentIdRef.current = environmentId;
-		setSelectedId(null);
-		setLiveStatus(null);
+		if (keepCreatedSelection && pending) {
+			setSelectedId(pending.service.id);
+		} else {
+			setSelectedId(null);
+			setLiveStatus(null);
+		}
 		setNodePositions(serviceLayoutPositions(localState.services));
 		nodePositionsRef.current = serviceLayoutPositions(localState.services);
 	}, [environmentId, localState.services]);
@@ -394,6 +480,9 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Escape" || event.defaultPrevented) return;
+			if ((event.target as Element | null)?.closest?.('[role="dialog"]')) {
+				return;
+			}
 			if (showNewService) {
 				setShowNewService(false);
 				return;
@@ -403,6 +492,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				return;
 			}
 			if (selectedId) {
+				clearPendingCreatedService(selectedId);
 				setSelectedId(null);
 				setLiveStatus(null);
 			}
@@ -516,25 +606,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		[suppressJustDeployedChanges],
 	);
 
-	// A freshly created service is known to us before the server snapshot (SSE or
-	// router.invalidate()) catches up. Keep it in the list until the server
-	// reports it, otherwise the just-opened service panel closes again.
-	const withPendingCreatedService = useCallback(
-		(list: Array<DashboardServiceRecord>) => {
-			const pending = pendingCreatedServiceRef.current;
-			if (!pending) return list;
-			if (
-				list.some((service) => service.id === pending.service.id) ||
-				Date.now() > pending.expiresAt
-			) {
-				pendingCreatedServiceRef.current = null;
-				return list;
-			}
-			return [...list, pending.service];
-		},
-		[],
-	);
-
 	const mergeEnvironmentServices = useCallback(
 		(nextServices: Array<DashboardServiceRecord>) => {
 			setLocalState((current) => {
@@ -567,7 +638,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				return service ? { ...current, service } : current;
 			});
 		},
-		[suppressJustDeployedChanges, withPendingCreatedService],
+		[suppressJustDeployedChanges],
 	);
 
 	const mergeAppliedStatusService = useCallback(
@@ -632,14 +703,13 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		// A just-created service can also be the first one to materialise its
 		// environment; keep that environment until the server snapshot has it,
 		// otherwise the environment flips back to none and the selection resets.
+		const pending = readPendingCreatedService();
 		const pendingEnvironment =
-			!state.environment &&
-			pendingCreatedServiceRef.current &&
-			Date.now() <= pendingCreatedServiceRef.current.expiresAt
-				? pendingCreatedServiceRef.current.environment
-				: undefined;
+			!state.environment && pending ? pending.environment : undefined;
 		const pendingEnvironments = pendingEnvironment
-			? [...state.environments, pendingEnvironment]
+			? state.environments.some((entry) => entry.id === pendingEnvironment.id)
+				? state.environments
+				: [...state.environments, pendingEnvironment]
 			: state.environments;
 		if (deployedMap.size === 0) {
 			setLocalState((current) => ({
@@ -696,12 +766,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			}));
 		}
 		setStatusLoading(false);
-	}, [
-		state,
-		githubCatalogLoaded,
-		githubCatalogLoading,
-		withPendingCreatedService,
-	]);
+	}, [state, githubCatalogLoaded, githubCatalogLoading]);
 
 	useEffect(() => {
 		if (totalUnappliedChanges === 0) {
@@ -881,6 +946,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			return;
 		}
 		if (!el.closest(".service-node")) {
+			clearPendingCreatedService(selectedId ?? undefined);
 			setSelectedId(null);
 			setLiveStatus(null);
 		}
@@ -989,11 +1055,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		// environment-change effect doesn't immediately clear the selection and
 		// close the panel we are about to open for the new service.
 		previousEnvironmentIdRef.current = result.environment.id ?? null;
-		pendingCreatedServiceRef.current = {
-			service: result.service,
-			environment: result.environment,
-			expiresAt: Date.now() + 60_000,
-		};
+		rememberPendingCreatedService(result.service, result.environment);
 
 		setLocalState((current) => {
 			const nextServices = current.services.some(
@@ -1003,6 +1065,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						service.id === result.service.id ? result.service : service,
 					)
 				: [...current.services, result.service];
+			const nextEnvironments = current.environments.some(
+				(entry) => entry.id === result.environment.id,
+			)
+				? current.environments
+				: [...current.environments, result.environment];
 			return {
 				...current,
 				project:
@@ -1010,6 +1077,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						? current.project
 						: result.project,
 				environment: result.environment,
+				environments: nextEnvironments,
 				services: nextServices,
 				service: result.service,
 				serviceStatus: result.serviceStatus ?? current.serviceStatus,
@@ -1023,13 +1091,17 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		setActiveTab("deployments");
 		setLiveStatus(result.serviceStatus);
 		setShowNewService(false);
-		startTransition(() => void router.invalidate());
+		// Creating the first service also creates the environment. Invalidating
+		// `/` redirects to `/environments/:id` and remounts this page, which
+		// closed the panel. Stay on the current route until the next explicit
+		// navigation; pending state keeps the panel open if a remount happens.
+		if (environmentId && environmentId === result.environment.id) {
+			startTransition(() => void router.invalidate());
+		}
 	};
 
 	const handleServiceDeleted = (serviceId: string) => {
-		if (pendingCreatedServiceRef.current?.service.id === serviceId) {
-			pendingCreatedServiceRef.current = null;
-		}
+		clearPendingCreatedService(serviceId);
 		deployedRevisionsRef.current.delete(serviceId);
 		setSelectedId((current) => (current === serviceId ? null : current));
 		setLiveStatus(null);
@@ -1221,6 +1293,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				onClick={onCanvasClick}
 				onKeyDown={(event) => {
 					if (event.key === "Escape") {
+						clearPendingCreatedService(selectedId ?? undefined);
 						setSelectedId(null);
 						setLiveStatus(null);
 					}
@@ -1358,6 +1431,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							activeTab={activeTab}
 							onTabChange={handleTabChange}
 							onClose={() => {
+								clearPendingCreatedService(selectedId ?? undefined);
 								setSelectedId(null);
 								setLiveStatus(null);
 							}}
@@ -1531,7 +1605,7 @@ function UnappliedChangesDialog({
 	onDiscardService: (serviceId: string) => void;
 }) {
 	return (
-		<div className="modal-overlay" role="dialog" aria-modal="true">
+		<ModalOverlay onClose={onClose}>
 			<div className="modal-card unapplied-dialog">
 				<div className="unapplied-dialog-header">
 					<h2>{totalChanges} changes to apply</h2>
@@ -1638,7 +1712,7 @@ function UnappliedChangesDialog({
 					</button>
 				</div>
 			</div>
-		</div>
+		</ModalOverlay>
 	);
 }
 

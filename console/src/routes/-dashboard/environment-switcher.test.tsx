@@ -49,6 +49,9 @@ describe("EnvironmentSwitcher", () => {
 		fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
 
 		const input = screen.getByRole("textbox", { name: /rename staging/i });
+		expect(document.activeElement).toBe(input);
+		expect((input as HTMLInputElement).selectionStart).toBe(0);
+		expect((input as HTMLInputElement).selectionEnd).toBe("staging".length);
 		fireEvent.change(input, { target: { value: "preview" } });
 		fireEvent.submit(input);
 
@@ -76,6 +79,9 @@ describe("EnvironmentSwitcher", () => {
 		);
 		fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
+		expect(document.activeElement).toBe(
+			screen.getByLabelText("Type staging to confirm"),
+		);
 		const confirm = screen.getByRole("button", { name: "Delete" });
 		expect((confirm as HTMLButtonElement).disabled).toBe(true);
 
@@ -90,6 +96,31 @@ describe("EnvironmentSwitcher", () => {
 				data: { environmentId: "environment-2" },
 			}),
 		);
+	});
+
+	it("renders the delete dialog above the whole viewport and closes only it", () => {
+		render(
+			<EnvironmentSwitcher
+				state={state()}
+				onCreateEnvironment={() => {}}
+				onChanged={() => {}}
+				onNavigateEnvironment={() => {}}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Environment" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: /environment actions for staging/i }),
+		);
+		fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+		const dialog = screen.getByRole("dialog", { name: "Delete Environment" });
+		expect(dialog.parentElement).toBe(document.body);
+		fireEvent.keyDown(dialog, { key: "Escape" });
+
+		expect(
+			screen.queryByRole("dialog", { name: "Delete Environment" }),
+		).toBeNull();
 	});
 
 	it("does not offer deleting the production environment", () => {

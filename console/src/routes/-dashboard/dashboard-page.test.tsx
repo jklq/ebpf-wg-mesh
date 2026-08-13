@@ -14,7 +14,7 @@ import type {
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
 
-import { DashboardPage } from "./dashboard-page";
+import { DashboardPage, resetDashboardPageTestState } from "./dashboard-page";
 
 const {
 	doDeployEnvironmentMock,
@@ -108,6 +108,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	resetDashboardPageTestState();
 	vi.unstubAllGlobals();
 });
 
@@ -498,7 +499,123 @@ describe("DashboardPage", () => {
 		// The server snapshot still predates the created service.
 		rerender(<DashboardPage state={emptyState()} />);
 
-		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
+		expect(routerMock.invalidate).not.toHaveBeenCalled();
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+	});
+
+	it("keeps the panel open after remounting when the first service creates an environment", async () => {
+		const created = serviceRecord();
+		const environment = {
+			id: "environment-1",
+			projectId: "project-1",
+			name: "Production",
+			kind: "persistent" as const,
+			isProduction: true,
+		};
+		doCreateServiceFastMock.mockResolvedValue({
+			project: { id: "project-1", name: "test-project", kind: "user" },
+			environment,
+			service: created,
+			serviceStatus: null,
+			onboarding: emptyState().onboarding,
+		});
+
+		const { unmount } = render(<DashboardPage state={emptyState()} />);
+
+		fireEvent.click(
+			screen.getAllByRole("button", {
+				name: /deploy service/i,
+			})[0] as HTMLElement,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /octocat\/hello/i }),
+		);
+
+		expect(
+			await screen.findByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+
+		unmount();
+
+		// `/` redirects to `/environments/:id` after invalidate, remounting
+		// DashboardPage. Selection must survive that remount.
+		render(<DashboardPage state={emptyState()} />);
+
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+
+		cleanup();
+		render(
+			<DashboardPage
+				state={dashboardState(created, {
+					environment,
+					environments: [environment],
+				})}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+	});
+
+	it("keeps the panel open after a live snapshot and remount for the first service", async () => {
+		const created = serviceRecord();
+		const environment = {
+			id: "environment-1",
+			projectId: "project-1",
+			name: "Production",
+			kind: "persistent" as const,
+			isProduction: true,
+		};
+		doCreateServiceFastMock.mockResolvedValue({
+			project: { id: "project-1", name: "test-project", kind: "user" },
+			environment,
+			service: created,
+			serviceStatus: null,
+			onboarding: emptyState().onboarding,
+		});
+
+		const { unmount } = render(<DashboardPage state={emptyState()} />);
+
+		fireEvent.click(
+			screen.getAllByRole("button", {
+				name: /deploy service/i,
+			})[0] as HTMLElement,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /octocat\/hello/i }),
+		);
+		expect(
+			await screen.findByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+
+		const environmentSource = await waitFor(() => {
+			const source = MockEventSource.instances.find((entry) =>
+				entry.url.includes("environmentId=environment-1"),
+			);
+			expect(source).toBeTruthy();
+			return source as MockEventSource;
+		});
+		environmentSource.emit("services", [created]);
+
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+
+		unmount();
+		render(
+			<DashboardPage
+				state={dashboardState(created, {
+					environment,
+					environments: [environment],
+				})}
+			/>,
+		);
+
 		expect(
 			screen.getByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();

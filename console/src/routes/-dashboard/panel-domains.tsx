@@ -1,5 +1,13 @@
-import { CircleCheck, Globe, Loader2, Pencil, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+	CircleAlert,
+	CircleCheck,
+	Globe,
+	Loader2,
+	Pencil,
+	Trash2,
+	X,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
 	DashboardDomainBinding,
@@ -15,6 +23,7 @@ import {
 	fetchDomainBindings,
 } from "./server-fns";
 import { buildServiceURL, formatError } from "./service-utils";
+import { ModalOverlay } from "./ui";
 
 export function PanelDomains({
 	service,
@@ -52,7 +61,16 @@ export function PanelDomains({
 
 	const hostnameId = `domain-hostname-${service.id}`;
 	const targetPortId = `domain-target-port-${service.id}`;
+	const targetPortRef = useRef<HTMLInputElement>(null);
+	const hostnameRef = useRef<HTMLInputElement>(null);
+	const primaryDomainActionRef = useRef<HTMLButtonElement>(null);
+	const editPortRef = useRef<HTMLInputElement>(null);
+	const removeDomainRef = useRef<HTMLButtonElement>(null);
 	const platformBinding = bindings.find((binding) => binding.platformGenerated);
+	const customBindings = bindings.filter(
+		(binding) => !binding.platformGenerated,
+	);
+	const visibleBindings = customBindings.length > 0 ? customBindings : bindings;
 	const internalHostname =
 		service.internalHostname ?? `${service.name}.mesh.internal`;
 	const internalShortName = internalHostname.replace(/\.mesh\.internal$/, "");
@@ -69,6 +87,38 @@ export function PanelDomains({
 			.catch(() => setBindings([]))
 			.finally(() => setLoadingBindings(false));
 	}, [service.id]);
+
+	useEffect(() => {
+		if (!domainFlow) return;
+		if (domainFlow === "custom" && platformBinding) {
+			hostnameRef.current?.focus();
+			return;
+		}
+		(targetPortRef.current ?? primaryDomainActionRef.current)?.focus();
+	}, [domainFlow, platformBinding]);
+
+	useEffect(() => {
+		if (editingBinding) editPortRef.current?.focus();
+	}, [editingBinding]);
+
+	useEffect(() => {
+		if (deleteConfirm) removeDomainRef.current?.focus();
+	}, [deleteConfirm]);
+
+	const needsOwnershipPoll = bindings.some(
+		(binding) =>
+			!binding.platformGenerated && binding.ownershipState !== "verified",
+	);
+
+	useEffect(() => {
+		if (!needsOwnershipPoll) return;
+		const id = window.setInterval(() => {
+			fetchDomainBindings({ data: { serviceId: service.id } })
+				.then(setBindings)
+				.catch(() => undefined);
+		}, 5000);
+		return () => window.clearInterval(id);
+	}, [needsOwnershipPoll, service.id]);
 
 	const openDomainFlow = (flow: "generate" | "custom") => {
 		setDomainFlow(flow);
@@ -133,7 +183,11 @@ export function PanelDomains({
 			});
 			setBindings((prev) => [...prev, binding]);
 			setHostname("");
-			setSuccess(`${binding.hostname} is now live.`);
+			setSuccess(
+				binding.ownershipState === "verified"
+					? `${binding.hostname} is now live.`
+					: `${binding.hostname} added. Waiting for DNS to point at the platform hostname.`,
+			);
 			setDomainFlow(null);
 		} catch (e) {
 			setError(formatError(e));
@@ -149,7 +203,7 @@ export function PanelDomains({
 	};
 
 	const handleEditSave = async () => {
-		if (!editingBinding) return;
+		if (!editingBinding || editSaving || editPort.trim() === "") return;
 		setEditError(undefined);
 		setEditSaving(true);
 		try {
@@ -177,7 +231,16 @@ export function PanelDomains({
 			await doDeleteDomainBinding({
 				data: { hostname: h },
 			});
-			setBindings((prev) => prev.filter((b) => b.hostname !== h));
+			setBindings((prev) => {
+				const remaining = prev.filter((item) => item.hostname !== h);
+				if (remaining.some((item) => !item.platformGenerated)) {
+					return remaining;
+				}
+				return remaining.filter((item) => !item.platformGenerated);
+			});
+			await fetchDomainBindings({ data: { serviceId: service.id } })
+				.then(setBindings)
+				.catch(() => undefined);
 		} catch (e) {
 			setError(formatError(e));
 		} finally {
@@ -189,23 +252,24 @@ export function PanelDomains({
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 			{domainFlow && (
-				<div
-					className="modal-overlay"
-					role="dialog"
-					aria-modal="true"
-					aria-label={
+				<ModalOverlay
+					ariaLabel={
 						domainFlow === "generate" ? "Generate domain" : "Custom domain"
 					}
-					tabIndex={-1}
-					onClick={(event) => {
-						if (event.target === event.currentTarget) setDomainFlow(null);
-					}}
-					onKeyDown={(event) => {
-						if (event.key === "Escape") setDomainFlow(null);
-					}}
+					onClose={() => setDomainFlow(null)}
 				>
-					<div
+					<form
 						className="modal-card"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (domainFlow === "custom" && platformBinding) {
+								if (!publishing && hostname.trim()) void handlePublish();
+								return;
+							}
+							if (!generating) {
+								void handleGenerate({ keepFlowOpen: domainFlow === "custom" });
+							}
+						}}
 						style={{
 							padding: 24,
 							display: "flex",
@@ -245,6 +309,7 @@ export function PanelDomains({
 								</label>
 								<input
 									id={targetPortId}
+									ref={targetPortRef}
 									className="field-input"
 									value={targetPort}
 									onChange={(event) => {
@@ -285,6 +350,7 @@ export function PanelDomains({
 									</label>
 									<input
 										id={hostnameId}
+										ref={hostnameRef}
 										className="field-input"
 										value={hostname}
 										onChange={(event) => {
@@ -327,13 +393,9 @@ export function PanelDomains({
 							</button>
 							{(domainFlow === "generate" || !platformBinding) && (
 								<button
-									type="button"
+									type="submit"
+									ref={primaryDomainActionRef}
 									className="btn-primary"
-									onClick={() =>
-										void handleGenerate({
-											keepFlowOpen: domainFlow === "custom",
-										})
-									}
 									disabled={generating}
 								>
 									{generating && (
@@ -349,9 +411,8 @@ export function PanelDomains({
 							)}
 							{domainFlow === "custom" && platformBinding && (
 								<button
-									type="button"
+									type="submit"
 									className="btn-primary"
-									onClick={handlePublish}
 									disabled={publishing || hostname.trim() === ""}
 								>
 									{publishing && (
@@ -360,30 +421,25 @@ export function PanelDomains({
 											style={{ animation: "spin 1s linear infinite" }}
 										/>
 									)}
-									Verify CNAME & add domain
+									Add domain
 								</button>
 							)}
 						</div>
-					</div>
-				</div>
+					</form>
+				</ModalOverlay>
 			)}
 
 			{editingBinding && (
-				<div
-					className="modal-overlay"
-					role="dialog"
-					aria-modal="true"
-					aria-label="Edit domain"
-					tabIndex={-1}
-					onClick={(event) => {
-						if (event.target === event.currentTarget) setEditingBinding(null);
-					}}
-					onKeyDown={(event) => {
-						if (event.key === "Escape") setEditingBinding(null);
-					}}
+				<ModalOverlay
+					ariaLabel="Edit domain"
+					onClose={() => setEditingBinding(null)}
 				>
-					<div
+					<form
 						className="modal-card"
+						onSubmit={(event) => {
+							event.preventDefault();
+							void handleEditSave();
+						}}
 						style={{
 							padding: 24,
 							display: "flex",
@@ -429,6 +485,7 @@ export function PanelDomains({
 							</label>
 							<input
 								id="edit-port"
+								ref={editPortRef}
 								className="field-input"
 								value={editPort}
 								onChange={(e) => {
@@ -451,9 +508,8 @@ export function PanelDomains({
 								Cancel
 							</button>
 							<button
-								type="button"
+								type="submit"
 								className="btn-primary"
-								onClick={handleEditSave}
 								disabled={editSaving || editPort.trim() === ""}
 							>
 								{editSaving && (
@@ -465,26 +521,21 @@ export function PanelDomains({
 								Save
 							</button>
 						</div>
-					</div>
-				</div>
+					</form>
+				</ModalOverlay>
 			)}
 
 			{deleteConfirm && (
-				<div
-					className="modal-overlay"
-					role="dialog"
-					aria-modal="true"
-					aria-label="Remove domain"
-					tabIndex={-1}
-					onClick={(event) => {
-						if (event.target === event.currentTarget) setDeleteConfirm(null);
-					}}
-					onKeyDown={(event) => {
-						if (event.key === "Escape") setDeleteConfirm(null);
-					}}
+				<ModalOverlay
+					ariaLabel="Remove domain"
+					onClose={() => setDeleteConfirm(null)}
 				>
-					<div
+					<form
 						className="modal-card"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (!deletingHostname) void handleDelete(deleteConfirm);
+						}}
 						style={{
 							padding: 24,
 							display: "flex",
@@ -515,9 +566,9 @@ export function PanelDomains({
 								Cancel
 							</button>
 							<button
-								type="button"
+								type="submit"
+								ref={removeDomainRef}
 								className="btn-danger"
-								onClick={() => handleDelete(deleteConfirm)}
 								disabled={deletingHostname === deleteConfirm}
 							>
 								{deletingHostname === deleteConfirm && (
@@ -529,8 +580,8 @@ export function PanelDomains({
 								Remove
 							</button>
 						</div>
-					</div>
-				</div>
+					</form>
+				</ModalOverlay>
 			)}
 
 			<div>
@@ -573,7 +624,7 @@ export function PanelDomains({
 						Loading…
 					</div>
 				)}
-				{!loadingBindings && bindings.length === 0 && !pendingDomain && (
+				{!loadingBindings && visibleBindings.length === 0 && !pendingDomain && (
 					<p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
 						No domains yet.
 					</p>
@@ -604,84 +655,113 @@ export function PanelDomains({
 						</div>
 					</div>
 				)}
-				{bindings.map((binding) => {
+				{visibleBindings.map((binding) => {
 					const pending = pendingDomain?.hostname === binding.hostname;
+					const unverified =
+						!binding.platformGenerated && binding.ownershipState !== "verified";
 					return (
 						<div
 							key={binding.hostname}
-							className={`domain-item ${pending ? "domain-item-pending" : ""}`}
+							className={`domain-item ${pending ? "domain-item-pending" : ""} ${unverified ? "domain-item-unverified" : ""}`}
 						>
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									gap: 6,
-									overflow: "hidden",
-								}}
-							>
-								{pending ? (
-									<Loader2
-										size={12}
-										style={{ animation: "spin 1s linear infinite" }}
-									/>
-								) : (
-									<Globe size={12} color="var(--healthy)" />
+							<div className="domain-item-body">
+								<div className="domain-item-row">
+									<div
+										style={{
+											display: "flex",
+											alignItems: "center",
+											gap: 6,
+											overflow: "hidden",
+										}}
+									>
+										{pending || unverified ? (
+											<Loader2
+												size={12}
+												style={{ animation: "spin 1s linear infinite" }}
+											/>
+										) : (
+											<Globe size={12} color="var(--healthy)" />
+										)}
+										<span
+											style={{
+												fontSize: 13,
+												fontFamily: "var(--font-mono)",
+												color: "var(--text)",
+												overflow: "hidden",
+												textOverflow: "ellipsis",
+												whiteSpace: "nowrap",
+											}}
+										>
+											{binding.hostname}
+											<span style={{ color: "var(--text-muted)" }}>
+												{" "}
+												-&gt; :{binding.targetPort}
+											</span>
+										</span>
+									</div>
+									<div
+										style={{
+											display: "flex",
+											alignItems: "center",
+											gap: 4,
+											flexShrink: 0,
+										}}
+									>
+										{!pending && (
+											<span
+												className={`domain-ownership-badge ${unverified ? "unverified" : "verified"}`}
+											>
+												{unverified ? "Waiting for CNAME" : "Live"}
+											</span>
+										)}
+										<a
+											href={buildServiceURL(state, binding.hostname)}
+											target="_blank"
+											rel="noreferrer"
+											className="btn-ghost"
+											style={{ fontSize: 11 }}
+										>
+											Open ↗
+										</a>
+										<button
+											type="button"
+											className="btn-ghost"
+											style={{ padding: "4px 6px" }}
+											onClick={() => openEdit(binding)}
+											title="Edit"
+										>
+											<Pencil size={12} />
+										</button>
+										<button
+											type="button"
+											className="btn-ghost"
+											style={{
+												padding: "4px 6px",
+												color: "var(--danger, #e05252)",
+											}}
+											onClick={() => setDeleteConfirm(binding.hostname)}
+											title="Remove"
+										>
+											<Trash2 size={12} />
+										</button>
+									</div>
+								</div>
+								{unverified && (
+									<div className="domain-ownership-detail">
+										<p>
+											<CircleAlert size={12} aria-hidden="true" />
+											{formatOwnershipMessage(
+												binding.ownershipMessage,
+												platformBinding?.hostname,
+											)}
+										</p>
+										{platformBinding && (
+											<p className="domain-cname-hint">
+												{binding.hostname} CNAME {platformBinding.hostname}
+											</p>
+										)}
+									</div>
 								)}
-								<span
-									style={{
-										fontSize: 13,
-										fontFamily: "var(--font-mono)",
-										color: "var(--text)",
-										overflow: "hidden",
-										textOverflow: "ellipsis",
-										whiteSpace: "nowrap",
-									}}
-								>
-									{binding.hostname}
-									<span style={{ color: "var(--text-muted)" }}>
-										{" "}
-										-&gt; :{binding.targetPort}
-									</span>
-								</span>
-							</div>
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									gap: 4,
-									flexShrink: 0,
-								}}
-							>
-								<a
-									href={buildServiceURL(state, binding.hostname)}
-									target="_blank"
-									rel="noreferrer"
-									className="btn-ghost"
-									style={{ fontSize: 11 }}
-								>
-									Open ↗
-								</a>
-								<button
-									type="button"
-									className="btn-ghost"
-									style={{ padding: "4px 6px" }}
-									onClick={() => openEdit(binding)}
-									title="Edit"
-								>
-									<Pencil size={12} />
-								</button>
-								<button
-									type="button"
-									className="btn-ghost"
-									style={{
-										padding: "4px 6px",
-										color: "var(--danger, #e05252)",
-									}}
-									onClick={() => setDeleteConfirm(binding.hostname)}
-									title="Remove"
-								>
-									<Trash2 size={12} />
-								</button>
 							</div>
 						</div>
 					);
@@ -713,6 +793,26 @@ export function PanelDomains({
 			</div>
 		</div>
 	);
+}
+
+function formatOwnershipMessage(
+	message: string | undefined,
+	platformHostname: string | undefined,
+): string {
+	const expected = platformHostname
+		? `Point a CNAME at ${platformHostname}.`
+		: "Point a CNAME at the generated platform hostname.";
+	if (!message) {
+		return expected;
+	}
+	if (message.includes("no such host") || message.includes("lookup ")) {
+		return `DNS does not resolve yet. ${expected}`;
+	}
+	const mismatch = /expected ([^,]+), got (.+)$/.exec(message);
+	if (mismatch) {
+		return `CNAME currently points to ${mismatch[2]}. Expected ${mismatch[1]}.`;
+	}
+	return message;
 }
 
 function recommendedTargetPort(

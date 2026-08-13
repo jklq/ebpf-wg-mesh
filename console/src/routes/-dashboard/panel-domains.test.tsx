@@ -47,6 +47,7 @@ describe("domains panel", () => {
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: true,
+			ownershipState: "verified",
 		};
 		let resolveGenerate: (binding: DashboardDomainBinding) => void = () => {};
 		serverFns.generate.mockReturnValue(
@@ -61,9 +62,9 @@ describe("domains panel", () => {
 			await screen.findByRole("button", { name: "Generate Domain" }),
 		);
 		const dialog = screen.getByRole("dialog", { name: "Generate domain" });
-		fireEvent.click(
-			within(dialog).getByRole("button", { name: "Generate Domain" }),
-		);
+		const portInput = within(dialog).getByLabelText("App port");
+		expect(document.activeElement).toBe(portInput);
+		fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
 
 		// The dialog is gone right away and the list carries the progress.
 		await waitFor(() =>
@@ -83,16 +84,43 @@ describe("domains panel", () => {
 		);
 	});
 
-	it("offers separate generated and custom domain flows and keeps CNAME instructions pending", async () => {
+	it("renders domain dialogs at the viewport level and consumes Escape", async () => {
+		render(<PanelDomains service={domainService()} state={domainState()} />);
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Generate Domain" }),
+		);
+		const dialog = screen.getByRole("dialog", { name: "Generate domain" });
+
+		expect(dialog.parentElement).toBe(document.body);
+		fireEvent.keyDown(dialog, { key: "Escape" });
+
+		expect(
+			screen.queryByRole("dialog", { name: "Generate domain" }),
+		).toBeNull();
+	});
+
+	it("adds a custom domain without blocking on CNAME and shows ownership status", async () => {
 		const platformBinding: DashboardDomainBinding = {
 			hostname: "violet-7k3.platform.example",
 			projectId: "project-1",
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: true,
+			ownershipState: "verified",
+		};
+		const customBinding: DashboardDomainBinding = {
+			hostname: "app.customer.com",
+			projectId: "project-1",
+			serviceId: "service-1",
+			targetPort: 8080,
+			platformGenerated: false,
+			ownershipState: "unverified",
+			ownershipMessage:
+				"domain CNAME does not point to the service platform hostname: lookup app.customer.com: no such host",
 		};
 		serverFns.generate.mockResolvedValue(platformBinding);
-		serverFns.create.mockRejectedValue(new Error("CNAME has not verified yet"));
+		serverFns.create.mockResolvedValue(customBinding);
 
 		render(
 			<PanelDomains
@@ -125,35 +153,74 @@ describe("domains panel", () => {
 			screen.getByText("accurate-reflection", { selector: "code" }),
 		).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "Custom Domain" }));
-		expect(screen.getByRole("dialog", { name: "Custom domain" })).toBeTruthy();
+		const dialog = screen.getByRole("dialog", { name: "Custom domain" });
+		expect(dialog).toBeTruthy();
 		expect(
 			screen.getByRole("button", { name: "Generate & continue" }),
 		).toBeTruthy();
 
-		fireEvent.click(
-			screen.getByRole("button", { name: "Generate & continue" }),
-		);
+		fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
 		fireEvent.change(await screen.findByLabelText("Custom hostname"), {
 			target: { value: "app.customer.com" },
 		});
+		expect(document.activeElement).toBe(
+			screen.getByLabelText("Custom hostname"),
+		);
 
 		expect(
 			screen.getByText(
 				/app\.customer\.com CNAME violet-7k3\.platform\.example/,
 			),
 		).toBeTruthy();
-		fireEvent.click(
-			screen.getByRole("button", { name: "Verify CNAME & add domain" }),
+		fireEvent.submit(
+			screen
+				.getByRole("dialog", { name: "Custom domain" })
+				.querySelector("form") as HTMLFormElement,
 		);
 
 		await waitFor(() =>
-			expect(screen.getByText("CNAME has not verified yet")).toBeTruthy(),
+			expect(
+				screen.queryByRole("dialog", { name: "Custom domain" }),
+			).toBeNull(),
 		);
+		expect(screen.getByText("Waiting for CNAME")).toBeTruthy();
+		expect(
+			screen.getByText(
+				/DNS does not resolve yet.*violet-7k3\.platform\.example/,
+			),
+		).toBeTruthy();
 		expect(
 			screen.getByText(
 				/app\.customer\.com CNAME violet-7k3\.platform\.example/,
 			),
 		).toBeTruthy();
+		expect(screen.queryByText(/violet-7k3\.platform\.example\s+->/)).toBeNull();
+	});
+
+	it("hides the generated domain once a custom domain exists", async () => {
+		const platformBinding: DashboardDomainBinding = {
+			hostname: "violet-7k3.platform.example",
+			projectId: "project-1",
+			serviceId: "service-1",
+			targetPort: 8080,
+			platformGenerated: true,
+			ownershipState: "verified",
+		};
+		const customBinding: DashboardDomainBinding = {
+			hostname: "app.customer.com",
+			projectId: "project-1",
+			serviceId: "service-1",
+			targetPort: 8080,
+			platformGenerated: false,
+			ownershipState: "verified",
+		};
+		serverFns.list.mockResolvedValue([platformBinding, customBinding]);
+
+		render(<PanelDomains service={domainService()} state={domainState()} />);
+
+		expect(await screen.findByText(/app\.customer\.com/)).toBeTruthy();
+		expect(screen.getByText("Live")).toBeTruthy();
+		expect(screen.queryByText(/violet-7k3\.platform\.example/)).toBeNull();
 	});
 });
 

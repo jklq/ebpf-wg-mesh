@@ -534,6 +534,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				serviceId: input.serviceId,
 				targetPort: input.targetPort,
 				platformGenerated: true,
+				ownershipState: "verified",
 			};
 			platform.domainBindings = [
 				...platform.domainBindings.filter(
@@ -554,6 +555,9 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				serviceId: input.serviceId,
 				targetPort: input.targetPort,
 				platformGenerated: false,
+				ownershipState: "unverified",
+				ownershipMessage:
+					"domain CNAME does not point to the service platform hostname",
 			};
 			platform.domainBindings = [
 				...platform.domainBindings.filter(

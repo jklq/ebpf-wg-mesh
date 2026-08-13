@@ -2372,9 +2372,65 @@ select.field-input {
   gap: 8px;
 }
 
-.domain-item-pending {
+.domain-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.domain-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.domain-item-pending,
+.domain-item-unverified {
   border-style: dashed;
   color: var(--text-muted);
+}
+
+.domain-ownership-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.domain-ownership-badge.verified {
+  color: var(--healthy);
+}
+
+.domain-ownership-badge.unverified {
+  color: var(--accent);
+}
+
+.domain-ownership-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.domain-ownership-detail p {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.domain-cname-hint {
+  font-family: var(--font-mono);
+  color: var(--text) !important;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 /* Breadcrumb + environment switcher */
@@ -2808,7 +2864,6 @@ select.field-input {
 
 .danger-card-name {
   font-family: var(--font-mono);
-  user-select: all;
 }
 
 .danger-card-input {

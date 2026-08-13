@@ -292,6 +292,11 @@ export interface CreateServiceFastResult {
 	onboarding: DashboardOnboardingDraft;
 }
 
+export type DashboardDomainOwnershipState =
+	| "unspecified"
+	| "verified"
+	| "unverified";
+
 export interface DashboardDomainBinding {
 	hostname: string;
 	/** Derived dashboard ancestry; never sent as domain authority. */
@@ -299,6 +304,8 @@ export interface DashboardDomainBinding {
 	serviceId: string;
 	targetPort: number;
 	platformGenerated: boolean;
+	ownershipState: DashboardDomainOwnershipState;
+	ownershipMessage?: string;
 }
 
 export interface DashboardHomeState {
