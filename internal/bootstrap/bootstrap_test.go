@@ -11,6 +11,7 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := ControlPlane([]string{
+		"-profile", "development",
 		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
 		"-internal-server-names", "controlplane,controlplane-internal",
 		"-agent-bootstrap-tokens", "node-a=token-a,node-b=token-b",
@@ -61,6 +62,23 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 }
 
+func TestControlPlaneBootstrapDefaultsToProductionAndRejectsLoopbackDatabase(t *testing.T) {
+	t.Parallel()
+
+	_, err := ControlPlane([]string{
+		"-user-assertion-secret", "production-user-assertion-secret-at-least-32",
+		"-internal-server-names", "controlplane.example.test",
+		"-agent-bootstrap-tokens", "node-a=token-a",
+		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+		"-health-listen", "127.0.0.1:18080",
+		"-source-archives-dir", "/var/lib/ebpf-wg-mesh/controlplane/source-archives",
+		"-ingress-public-addr", "platform.example.test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "loopback host") {
+		t.Fatalf("expected production to reject loopback database, got %v", err)
+	}
+}
+
 func TestControlPlaneBootstrapRejectsUnboundAgentToken(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +95,7 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 
 	dataDir := t.TempDir()
 	cfg, err := Agent([]string{
+		"-profile", "development",
 		"-node-id", "node-1",
 		"-node-name", "node-1",
 		"-advertise-addr", "fd00:30::10",

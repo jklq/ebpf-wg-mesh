@@ -59,6 +59,7 @@ export function createDashboardTestHarness(
 	overrides: Partial<DashboardConfig> = {},
 ): DashboardTestHarness {
 	const config: DashboardConfig = {
+		profile: "development",
 		sessionCookieName: "dashboard_session",
 		refreshCookieName: "dashboard_session_refresh",
 		authStateCookieName: "dashboard_auth_state",

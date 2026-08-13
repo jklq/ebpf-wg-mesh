@@ -161,6 +161,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateCIDR("controlplane.mesh.workloadPoolCidr", cfg.Mesh.WorkloadPoolCIDR, 48); err != nil {
 		return err
 	}
+	if cfg.Profile.IsProduction() {
+		return validateProductionControlPlane(cfg)
+	}
 	return nil
 }
 
@@ -252,6 +255,9 @@ func validateAgent(cfg AgentConfig) error {
 			}
 		}
 	}
+	if cfg.Profile.IsProduction() {
+		return validateProductionAgent(cfg)
+	}
 	return nil
 }
 
@@ -294,6 +300,9 @@ func validateBuilder(cfg BuilderConfig) error {
 	}
 	if cfg.BuildkitAddress == "" {
 		return errors.New("builder.buildkitAddress is required")
+	}
+	if cfg.Profile.IsProduction() {
+		return validateProductionBuilder(cfg)
 	}
 	return nil
 }

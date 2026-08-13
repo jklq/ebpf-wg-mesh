@@ -9,6 +9,7 @@ import (
 
 	"ebof-wg-mesh/internal/bootstrap"
 	"ebof-wg-mesh/internal/builder"
+	"ebof-wg-mesh/internal/config"
 )
 
 func main() {
@@ -17,6 +18,7 @@ func main() {
 		slog.Error("bootstrap builder", "error", err)
 		os.Exit(1)
 	}
+	slog.Info(config.BuilderStartupContract(cfg).String())
 	app, err := builder.New(cfg)
 	if err != nil {
 		slog.Error("create builder", "error", err)

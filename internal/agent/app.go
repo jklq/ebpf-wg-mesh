@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/mesh"
 
 	"google.golang.org/grpc"
@@ -23,6 +26,8 @@ type App struct {
 	mesh           MeshHandle
 	meshFactory    MeshFactory
 	meshAssignment mesh.Assignment
+	ready          atomic.Bool
+	healthStop     func(context.Context) error
 }
 
 const (
@@ -53,6 +58,9 @@ func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
 }
 
 func (a *App) Close() error {
+	if a.healthStop != nil {
+		_ = a.healthStop(context.Background())
+	}
 	if a.runtime != nil {
 		_ = a.runtime.Close()
 	}
@@ -63,6 +71,13 @@ func (a *App) Close() error {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
+		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
+		if err != nil {
+			return fmt.Errorf("listen health: %w", err)
+		}
+		a.healthStop = shutdown
+	}
 	delay := initialReconnectDelay
 	for {
 		err := a.runSession(ctx)
@@ -96,7 +111,15 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+func (a *App) readyReport(context.Context) health.Report {
+	if a.ready.Load() {
+		return health.Report{Status: health.StatusReady}
+	}
+	return health.Report{Status: health.StatusNotReady, Failed: []string{"control_plane"}}
+}
+
 func (a *App) runSession(ctx context.Context) error {
+	defer a.ready.Store(false)
 	slog.Info("starting agent session", "agent_id", a.cfg.Node.ID)
 	creds, certNotAfter, err := a.clientCredentials(ctx)
 	if err != nil {
@@ -118,6 +141,7 @@ func (a *App) runSession(ctx context.Context) error {
 	client := agentv1.NewAgentControlClient(conn)
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
+		a.ready.Store(false)
 		return fmt.Errorf("open sync stream: %w", err)
 	}
 	slog.Info("opened sync stream", "agent_id", a.cfg.Node.ID)
@@ -251,6 +275,7 @@ func (a *App) runSession(ctx context.Context) error {
 		workloadsChanged := !desiredWorkloadsEqual(latestDesired, state)
 		latestDesired = proto.Clone(state).(*agentv1.DesiredNodeState)
 		desiredStateMu.Unlock()
+		a.ready.Store(true)
 		slog.Info("received desired state", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
 		if !workloadsChanged {
 			continue

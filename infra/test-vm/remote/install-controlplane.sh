@@ -46,7 +46,7 @@ Requires=ebpf-wg-mesh-cockroach.service
 
 [Service]
 Type=simple
-ExecStart=${CONTROLPLANE_BIN} -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
+ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
 Restart=always
 RestartSec=3
 

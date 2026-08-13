@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HealthzRouteImport } from './routes/healthz'
+import { Route as LivezRouteImport } from './routes/livez'
+import { Route as ReadyzRouteImport } from './routes/readyz'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
@@ -34,6 +36,16 @@ const LoginRoute = LoginRouteImport.update({
 const HealthzRoute = HealthzRouteImport.update({
   id: '/healthz',
   path: '/healthz',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LivezRoute = LivezRouteImport.update({
+  id: '/livez',
+  path: '/livez',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReadyzRoute = ReadyzRouteImport.update({
+  id: '/readyz',
+  path: '/readyz',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -82,6 +94,8 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/healthz': typeof HealthzRoute
+  '/livez': typeof LivezRoute
+  '/readyz': typeof ReadyzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -95,6 +109,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/healthz': typeof HealthzRoute
+  '/livez': typeof LivezRoute
+  '/readyz': typeof ReadyzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -109,6 +125,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/healthz': typeof HealthzRoute
+  '/livez': typeof LivezRoute
+  '/readyz': typeof ReadyzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -124,6 +142,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/healthz'
+    | '/livez'
+    | '/readyz'
     | '/login'
     | '/logout'
     | '/auth/callback'
@@ -137,6 +157,8 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/healthz'
+    | '/livez'
+    | '/readyz'
     | '/login'
     | '/logout'
     | '/auth/callback'
@@ -150,6 +172,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/healthz'
+    | '/livez'
+    | '/readyz'
     | '/login'
     | '/logout'
     | '/auth/callback'
@@ -164,6 +188,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthzRoute: typeof HealthzRoute
+  LivezRoute: typeof LivezRoute
+  ReadyzRoute: typeof ReadyzRoute
   LoginRoute: typeof LoginRoute
   LogoutRoute: typeof LogoutRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
@@ -196,6 +222,20 @@ declare module '@tanstack/react-router' {
       path: '/healthz'
       fullPath: '/healthz'
       preLoaderRoute: typeof HealthzRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/livez': {
+      id: '/livez'
+      path: '/livez'
+      fullPath: '/livez'
+      preLoaderRoute: typeof LivezRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/readyz': {
+      id: '/readyz'
+      path: '/readyz'
+      fullPath: '/readyz'
+      preLoaderRoute: typeof ReadyzRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -260,6 +300,8 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthzRoute: HealthzRoute,
+  LivezRoute: LivezRoute,
+  ReadyzRoute: ReadyzRoute,
   LoginRoute: LoginRoute,
   LogoutRoute: LogoutRoute,
   AuthCallbackRoute: AuthCallbackRoute,

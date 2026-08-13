@@ -372,7 +372,10 @@ export interface GitHubAppUserAuthConfig {
 	apiBaseURL: string;
 }
 
+export type DashboardRuntimeProfile = "development" | "production";
+
 export interface DashboardConfig {
+	profile: DashboardRuntimeProfile;
 	sessionCookieName: string;
 	refreshCookieName: string;
 	authStateCookieName: string;

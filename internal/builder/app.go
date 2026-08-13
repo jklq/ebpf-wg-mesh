@@ -22,8 +22,10 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/health"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -77,10 +79,11 @@ type jobWorkspace struct {
 }
 
 type App struct {
-	cfg    config.BuilderConfig
-	conn   *grpc.ClientConn
-	client platformv1.BuilderServiceClient
-	runner commandRunner
+	cfg        config.BuilderConfig
+	conn       *grpc.ClientConn
+	client     platformv1.BuilderServiceClient
+	runner     commandRunner
+	healthStop func(context.Context) error
 }
 
 func New(cfg config.BuilderConfig) (*App, error) {
@@ -106,13 +109,33 @@ func New(cfg config.BuilderConfig) (*App, error) {
 }
 
 func (a *App) Close() error {
-	if a == nil || a.conn == nil {
+	if a == nil {
+		return nil
+	}
+	if a.healthStop != nil {
+		_ = a.healthStop(context.Background())
+	}
+	if a.conn == nil {
 		return nil
 	}
 	return a.conn.Close()
 }
 
+func (a *App) readyReport(context.Context) health.Report {
+	if a != nil && a.conn != nil && a.conn.GetState() == connectivity.Ready {
+		return health.Report{Status: health.StatusReady}
+	}
+	return health.Report{Status: health.StatusNotReady, Failed: []string{"control_plane"}}
+}
+
 func (a *App) Run(ctx context.Context) error {
+	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
+		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
+		if err != nil {
+			return fmt.Errorf("listen health: %w", err)
+		}
+		a.healthStop = shutdown
+	}
 	pollInterval := time.Duration(a.cfg.PollIntervalSeconds) * time.Second
 	for {
 		select {

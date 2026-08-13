@@ -54,6 +54,9 @@ export function parseDevUsers(raw: string): Array<DevLoginIdentity> {
 }
 
 export function shouldUseSecureCookies(config: DashboardConfig): boolean {
+	if (config.profile === "production") {
+		return true;
+	}
 	return (
 		config.publicBaseURL.startsWith("https://") &&
 		!config.localDomainSuffix?.trim()

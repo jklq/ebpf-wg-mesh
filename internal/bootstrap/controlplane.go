@@ -11,6 +11,7 @@ import (
 
 func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var cfg config.ControlPlaneConfig
+	var profile string
 	var bootstrapUsers []bootstrapUserSpec
 	var dashboardUsers []bootstrapUserSpec
 	var internalServerNames string
@@ -23,6 +24,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var userAssertionSecretFile string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
+	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
+	stringFlag(fs, &cfg.Health.Listen, "health-listen", "CONTROLPLANE_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.InternalGRPC.Listen, "internal-listen", "CONTROLPLANE_INTERNAL_LISTEN", "0.0.0.0:9443", "")
 	stringFlag(fs, &internalServerNames, "internal-server-names", "CONTROLPLANE_INTERNAL_SERVER_NAMES", "controlplane,controlplane-internal,localhost", "")
 	stringFlag(fs, &agentBootstrapTokens, "agent-bootstrap-tokens", "CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS", "", "")
@@ -75,6 +78,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.Registry.AuthListen, "registry-auth-listen", "CONTROLPLANE_REGISTRY_AUTH_LISTEN", "127.0.0.1:9444", "embedded registry token service listen address")
 	stringFlag(fs, &cfg.Registry.TokenIssuer, "registry-token-issuer", "CONTROLPLANE_REGISTRY_TOKEN_ISSUER", "ebpf-wg-mesh", "issuer configured on the registry token verifier")
 	stringFlag(fs, &cfg.Registry.TokenService, "registry-token-service", "CONTROLPLANE_REGISTRY_TOKEN_SERVICE", "", "registry token audience; defaults to registry-host")
+	stringFlag(fs, &cfg.Registry.SigningCertFile, "registry-signing-cert-file", "CONTROLPLANE_REGISTRY_SIGNING_CERT_FILE", "", "PEM certificate for the embedded registry token signer")
+	stringFlag(fs, &cfg.Registry.SigningKeyFile, "registry-signing-key-file", "CONTROLPLANE_REGISTRY_SIGNING_KEY_FILE", "", "PEM private key for the embedded registry token signer")
 	intFlag(fs, &cfg.Registry.CredentialTTLSeconds, "registry-credential-ttl-seconds", "CONTROLPLANE_REGISTRY_CREDENTIAL_TTL_SECONDS", 300, "")
 	intFlag(fs, &cfg.Builder.HeartbeatTimeoutSeconds, "builder-heartbeat-timeout-seconds", "CONTROLPLANE_BUILDER_HEARTBEAT_TIMEOUT_SECONDS", 120, "")
 	intFlag(fs, &cfg.Failover.ReconcileIntervalSeconds, "failover-reconcile-interval-seconds", "CONTROLPLANE_FAILOVER_RECONCILE_INTERVAL_SECONDS", 5, "")
@@ -90,6 +95,11 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	if err := fs.Parse(args); err != nil {
 		return config.ControlPlaneConfig{}, err
 	}
+	normalized, err := config.NormalizeProfile(profile)
+	if err != nil {
+		return config.ControlPlaneConfig{}, err
+	}
+	cfg.Profile = normalized
 	if cfg.UserAssertions.HMACSecret != "" && userAssertionSecretFile != "" {
 		return config.ControlPlaneConfig{}, fmt.Errorf("only one of user assertion secret or secret file may be configured")
 	}
@@ -101,7 +111,6 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 		cfg.UserAssertions.HMACSecret = strings.TrimSpace(string(secret))
 	}
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
-	var err error
 	cfg.InternalGRPC.TLS.BootstrapTokens, err = parseAgentBootstrapTokens(agentBootstrapTokens)
 	if err != nil {
 		return config.ControlPlaneConfig{}, err

@@ -246,16 +246,31 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 }
 
 func FinalizeControlPlane(cfg *ControlPlaneConfig) error {
+	profile, err := applyProfile(cfg.Profile)
+	if err != nil {
+		return err
+	}
+	cfg.Profile = profile
 	applyControlPlaneDefaults(cfg)
 	return validateControlPlane(*cfg)
 }
 
 func FinalizeAgent(cfg *AgentConfig) error {
+	profile, err := applyProfile(cfg.Profile)
+	if err != nil {
+		return err
+	}
+	cfg.Profile = profile
 	applyAgentDefaults(cfg)
 	return validateAgent(*cfg)
 }
 
 func FinalizeBuilder(cfg *BuilderConfig) error {
+	profile, err := applyProfile(cfg.Profile)
+	if err != nil {
+		return err
+	}
+	cfg.Profile = profile
 	applyBuilderDefaults(cfg)
 	return validateBuilder(*cfg)
 }

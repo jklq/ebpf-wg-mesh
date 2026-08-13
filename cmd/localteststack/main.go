@@ -162,6 +162,7 @@ func main() {
 	}
 
 	cfg := config.ControlPlaneConfig{
+		Profile: config.ProfileDevelopment,
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
@@ -213,6 +214,7 @@ func main() {
 		},
 	}
 	consoleEnv := map[string]string{
+		"DASHBOARD_PROFILE":                            "development",
 		"DASHBOARD_DATABASE_URL":                       dbURL,
 		"DASHBOARD_DATABASE_SCHEMA":                    "dashboard_local_e2e",
 		"DASHBOARD_SESSION_COOKIE_NAME":                "dashboard_local_e2e_session",
@@ -374,6 +376,7 @@ func main() {
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		log.Fatalf("finalize controlplane config: %v", err)
 	}
+	log.Print(config.ControlPlaneStartupContract(cfg).String())
 
 	server, err := controlplane.NewServer(ctx, cfg)
 	if err != nil {

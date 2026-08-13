@@ -9,8 +9,11 @@ import (
 
 func Builder(args []string) (config.BuilderConfig, error) {
 	var cfg config.BuilderConfig
+	var profile string
 
 	fs := flag.NewFlagSet("builder", flag.ContinueOnError)
+	stringFlag(fs, &profile, "profile", "BUILDER_PROFILE", "", "development or production; empty defaults to production")
+	stringFlag(fs, &cfg.Health.Listen, "health-listen", "BUILDER_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.ID, "builder-id", "BUILDER_ID", "", "")
 	stringFlag(fs, &cfg.Name, "builder-name", "BUILDER_NAME", "", "")
 	stringFlag(fs, &cfg.ControlPlane.Address, "controlplane-address", "BUILDER_CONTROLPLANE_ADDRESS", "", "")
@@ -29,6 +32,11 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	if err := fs.Parse(args); err != nil {
 		return config.BuilderConfig{}, err
 	}
+	normalized, err := config.NormalizeProfile(profile)
+	if err != nil {
+		return config.BuilderConfig{}, err
+	}
+	cfg.Profile = normalized
 	if err := config.FinalizeBuilder(&cfg); err != nil {
 		return config.BuilderConfig{}, fmt.Errorf("bootstrap builder: %w", err)
 	}
