@@ -473,8 +473,8 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if imageDeployments[0].Build != nil {
 		t.Fatalf("expected direct-image redeploy to have no build row, got %+v", imageDeployments[0].Build)
 	}
-	if imageDeployments[0].Reason != "redeploy" {
-		t.Fatalf("expected latest direct-image deployment reason redeploy, got %q", imageDeployments[0].Reason)
+	if imageDeployments[0].ReasonCode != reasonUserRedeploy && imageDeployments[0].Reason != reasonUserRedeploy {
+		t.Fatalf("expected latest direct-image deployment reason %q, got %q", reasonUserRedeploy, imageDeployments[0].Reason)
 	}
 }
 

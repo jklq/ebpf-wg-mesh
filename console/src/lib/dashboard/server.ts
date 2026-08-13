@@ -31,6 +31,12 @@ import {
 	type UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 import {
+	assertProductionDashboardConfig,
+	formatDashboardStartupContract,
+	parseRuntimeProfile,
+	usesSecureCookies,
+} from "#/lib/dashboard/core/profile.server";
+import {
 	parseDevUsers,
 	parseIdentifier,
 } from "#/lib/dashboard/core/utils.server";
@@ -66,9 +72,8 @@ let dashboardService: DashboardService | undefined;
 
 function getDashboardService(): DashboardService {
 	const config = getConfig();
-	pool ??= new Pool({ connectionString: config.databaseURL });
 	dashboardService ??= createDashboardService(config, {
-		store: createPostgresDashboardStore(config, pool),
+		store: createPostgresDashboardStore(config, getPool()),
 		platform: createPlatformGateway(config),
 		github: config.github
 			? createGitHubAppUserClient(config.github)
@@ -87,6 +92,34 @@ function getDashboardService(): DashboardService {
 function getConfig(): RuntimeConfig {
 	config ??= readConfig();
 	return config;
+}
+
+function getPool(): Pool {
+	const current = getConfig();
+	pool ??= new Pool({ connectionString: current.databaseURL });
+	return pool;
+}
+
+export async function checkDashboardReadiness(): Promise<{
+	status: "ready" | "not_ready";
+	failed?: Array<string>;
+}> {
+	try {
+		getConfig();
+	} catch {
+		return { status: "not_ready", failed: ["configuration"] };
+	}
+	try {
+		await getPool().query("SELECT 1");
+	} catch {
+		return { status: "not_ready", failed: ["database"] };
+	}
+	try {
+		await createPostgresDashboardStore(getConfig(), getPool()).ensureInitialized();
+	} catch {
+		return { status: "not_ready", failed: ["migrations"] };
+	}
+	return { status: "ready" };
 }
 
 export function listDevLogins(): Array<DevLoginIdentity> {
@@ -407,6 +440,7 @@ function readConfig(): RuntimeConfig {
 				"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY must be distinct from dashboard JWT and user-assertion secrets",
 		});
 	}
+	const profile = parseRuntimeProfile(process.env.DASHBOARD_PROFILE);
 	const databaseSchema = parseIdentifier(
 		process.env.DASHBOARD_DATABASE_SCHEMA ?? "dashboard",
 	);
@@ -415,11 +449,30 @@ function readConfig(): RuntimeConfig {
 	const refreshCookieName =
 		process.env.DASHBOARD_REFRESH_COOKIE_NAME ?? `${sessionCookieName}_refresh`;
 	const publicBaseURL =
-		process.env.DASHBOARD_PUBLIC_BASE_URL ?? "http://localhost:3000";
+		process.env.DASHBOARD_PUBLIC_BASE_URL?.trim() ||
+		(profile === "development" ? "http://localhost:3000" : "");
 	const localIngressBaseURL =
 		process.env.DASHBOARD_LOCAL_INGRESS_BASE_URL?.trim() || undefined;
+	const controlPlaneAddress = mustEnv("DASHBOARD_CONTROLPLANE_ADDRESS");
+	const controlPlaneServerName =
+		process.env.DASHBOARD_CONTROLPLANE_SERVER_NAME ?? "controlplane";
+	const devUsers = parseDevUsers(process.env.DASHBOARD_DEV_USERS ?? "");
+	if (profile === "production") {
+		assertProductionDashboardConfig({
+			devUsers,
+			publicBaseURL,
+			localDomainSuffix: process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim(),
+			localIngressBaseURL,
+			jwtSecret,
+			userAssertionSecret,
+			databaseURL,
+			controlPlaneAddress,
+			controlPlaneServerName,
+		});
+	}
 
-	return {
+	const loaded = {
+		profile,
 		databaseURL,
 		databaseSchema,
 		sessionCookieName,
@@ -435,9 +488,8 @@ function readConfig(): RuntimeConfig {
 		ingressTargetHost: mustEnv("DASHBOARD_INGRESS_TARGET_HOST"),
 		localDomainSuffix:
 			process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim() || undefined,
-		controlPlaneAddress: mustEnv("DASHBOARD_CONTROLPLANE_ADDRESS"),
-		controlPlaneServerName:
-			process.env.DASHBOARD_CONTROLPLANE_SERVER_NAME ?? "controlplane",
+		controlPlaneAddress,
+		controlPlaneServerName,
 		jwtSecret,
 		userAssertionSecret,
 		githubTokenCipher: createGitHubTokenCipher(githubTokenEncryptionKey),
@@ -453,7 +505,7 @@ function readConfig(): RuntimeConfig {
 			"DASHBOARD_CONTROLPLANE_KEY_PEM_B64",
 			"DASHBOARD_CONTROLPLANE_KEY_FILE",
 		),
-		devUsers: parseDevUsers(process.env.DASHBOARD_DEV_USERS ?? ""),
+		devUsers,
 		sessionMaxAgeSeconds: 30 * 24 * 60 * 60,
 		github:
 			process.env.DASHBOARD_GITHUB_CLIENT_ID &&
@@ -472,6 +524,16 @@ function readConfig(): RuntimeConfig {
 					}
 				: undefined,
 	};
+	console.info(
+		formatDashboardStartupContract({
+			profile: loaded.profile,
+			githubEnabled: Boolean(loaded.github),
+			secureCookies: usesSecureCookies(loaded.publicBaseURL),
+			databaseURL: loaded.databaseURL,
+			controlPlaneAddress: loaded.controlPlaneAddress,
+		}),
+	);
+	return loaded;
 }
 
 function keyMatchesSecret(key: Buffer, secret: string): boolean {

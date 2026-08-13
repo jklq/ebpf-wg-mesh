@@ -12,6 +12,7 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
 		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		Database: DatabaseConfig{
 			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
@@ -56,6 +57,7 @@ func TestFinalizeControlPlaneRejectsNonLoopbackCaddyAdminWithoutOptIn(t *testing
 	t.Parallel()
 
 	base := ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
 		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
@@ -80,6 +82,7 @@ func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
 		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
@@ -121,6 +124,7 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
 		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
@@ -179,6 +183,7 @@ func TestFinalizeAgentRejectsInvalidWireGuardPeerEndpoint(t *testing.T) {
 	t.Parallel()
 
 	cfg := AgentConfig{
+		Profile: ProfileDevelopment,
 		Node: NodeConfig{
 			ID:            "node-1",
 			Name:          "node-1",
@@ -221,6 +226,7 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
 		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
@@ -283,6 +289,7 @@ func TestFinalizeControlPlaneRejectsLongLivedRegistryCredentials(t *testing.T) {
 
 func validControlPlaneConfigForRegistryTest() ControlPlaneConfig {
 	return ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
 		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
@@ -321,8 +328,9 @@ func TestFinalizeBuilderAppliesDefaults(t *testing.T) {
 	t.Parallel()
 
 	cfg := BuilderConfig{
-		ID:   "builder-1",
-		Name: "builder-1",
+		Profile: ProfileDevelopment,
+		ID:      "builder-1",
+		Name:    "builder-1",
 		ControlPlane: BuilderControlPlaneConfig{
 			Address: "127.0.0.1:9443",
 			TLS: InternalClientTLSConfig{

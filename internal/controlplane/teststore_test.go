@@ -103,6 +103,8 @@ func resetTestStore(t *testing.T, store *Store) {
 		"github_work_items",
 		"build_runs",
 		"builder_workers",
+		"deployment_transitions",
+		"deployments",
 		"service_rollouts",
 		"allocations",
 		"domain_bindings",

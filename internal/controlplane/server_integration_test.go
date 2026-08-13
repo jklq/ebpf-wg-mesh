@@ -28,6 +28,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	defer cancel()
 
 	cfg := config.ControlPlaneConfig{
+		Profile: config.ProfileDevelopment,
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{

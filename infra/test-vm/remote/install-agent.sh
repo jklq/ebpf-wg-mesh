@@ -81,7 +81,7 @@ Requires=containerd.service
 
 [Service]
 Type=simple
-ExecStart=${AGENT_BIN} -node-id ${NODE_ID} -node-name ${NODE_NAME} -advertise-addr ${ADVERTISE_ADDR} -controlplane-address ${CONTROLPLANE_ADDRESS} -ca-file ${CA_FILE} -bootstrap-token ${BOOTSTRAP_TOKEN} -data-dir ${STATE_DIR}
+ExecStart=${AGENT_BIN} -profile development -node-id ${NODE_ID} -node-name ${NODE_NAME} -advertise-addr ${ADVERTISE_ADDR} -controlplane-address ${CONTROLPLANE_ADDRESS} -ca-file ${CA_FILE} -bootstrap-token ${BOOTSTRAP_TOKEN} -data-dir ${STATE_DIR}
 Restart=always
 RestartSec=3
 

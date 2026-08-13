@@ -54,6 +54,45 @@ export type DashboardDeploymentStageState =
 	| "skipped"
 	| "unspecified";
 
+export type DashboardDeploymentState =
+	| "staged"
+	| "queued_build"
+	| "building"
+	| "scheduling"
+	| "image_pull"
+	| "starting"
+	| "readiness"
+	| "active"
+	| "draining"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "crashed"
+	| "removed"
+	| "superseded"
+	| "unspecified";
+
+export type DashboardDeploymentCauseKind =
+	| "user"
+	| "system"
+	| "agent"
+	| "builder"
+	| "webhook"
+	| "unspecified";
+
+export interface DashboardDeploymentStatus {
+	deploymentId: string;
+	state: DashboardDeploymentState;
+	transitionedAt?: Date;
+	causeKind: DashboardDeploymentCauseKind;
+	causeId: string;
+	reasonCode: string;
+	detail: string;
+	specRevision: number;
+	imageDigest: string;
+	rolloutGeneration: number;
+}
+
 export type DashboardServiceLogType =
 	| "runtime"
 	| "build"
@@ -235,6 +274,7 @@ export interface DashboardServiceRecord {
 	lastSuccessfulCommitSha?: string;
 	resolvedImage?: string;
 	latestBuild?: DashboardBuildStatus;
+	latestDeployment?: DashboardDeploymentStatus;
 	pendingChanges?: boolean;
 	unappliedChangeCount?: number;
 	unappliedChanges?: Array<DashboardUnappliedChange>;
@@ -304,6 +344,9 @@ export interface DashboardDeploymentRecord {
 	build?: DashboardBuildStatus;
 	allocation?: DashboardAllocationStatus;
 	isCurrent: boolean;
+	status?: DashboardDeploymentStatus;
+	stages?: Array<DashboardDeploymentStage>;
+	imageDigest?: string;
 }
 
 export interface CreateServiceFastResult {
@@ -367,7 +410,10 @@ export interface GitHubAppUserAuthConfig {
 	apiBaseURL: string;
 }
 
+export type DashboardRuntimeProfile = "development" | "production";
+
 export interface DashboardConfig {
+	profile: DashboardRuntimeProfile;
 	sessionCookieName: string;
 	refreshCookieName: string;
 	authStateCookieName: string;

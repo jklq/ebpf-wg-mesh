@@ -262,6 +262,9 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				return fmt.Errorf("update allocation status: %w", err)
 			}
 			changedEnvironments[environmentID] = struct{}{}
+			if err := s.applyAgentDeploymentObservationTx(ctx, tx, serviceID, cond.GetDesiredRolloutGeneration(), phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), agentID); err != nil {
+				return fmt.Errorf("apply deployment observation: %w", err)
+			}
 			if hasDomain && (prevHealthy != healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) || prevPhase != phase) {
 				ingressChanged = true
 			}

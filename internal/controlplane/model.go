@@ -60,6 +60,7 @@ type serviceRecord struct {
 	ResolvedImage           string
 	LatestBuildID           string
 	LatestBuild             *platformv1.BuildStatus
+	LatestDeployment        *deploymentRecord
 	PendingChanges          bool
 	UnappliedChanges        []*platformv1.ServiceUnappliedChange
 	CreatedAt               time.Time
@@ -302,7 +303,31 @@ type deploymentRecord struct {
 	SpecRevision      int64
 	Reason            string
 	CreatedAt         time.Time
+	UpdatedAt         time.Time
 	Build             *buildRunRecord
 	IsCurrent         bool
 	RequestedByUserID string
+	BuildID           string
+	ImageDigest       string
+	State             string
+	CauseKind         string
+	CauseID           string
+	ReasonCode        string
+	Detail            string
+	Transitions       []deploymentTransitionRecord
+}
+
+type deploymentTransitionRecord struct {
+	ID                string
+	DeploymentID      string
+	FromState         string
+	ToState           string
+	CauseKind         string
+	CauseID           string
+	ReasonCode        string
+	Detail            string
+	SpecRevision      int64
+	ImageDigest       string
+	RolloutGeneration int64
+	OccurredAt        time.Time
 }

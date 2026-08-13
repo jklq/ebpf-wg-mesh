@@ -463,11 +463,26 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE allocations SET healthy = TRUE, allocation_ip = $1, healthy_ports = $2, updated_at = $3 WHERE service_id = $4`,
-		allocationIP, encodedPorts, time.Now().UTC(), serviceID,
-	)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE allocations SET healthy = TRUE, allocation_ip = $1, healthy_ports = $2, updated_at = $3 WHERE service_id = $4`,
+			allocationIP, encodedPorts, time.Now().UTC(), serviceID,
+		); err != nil {
+			return err
+		}
+		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
+		if err != nil || !ok {
+			return err
+		}
+		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
+			ToState:          deploymentStateActive,
+			Actor:            deploymentActor{Kind: deploymentCauseSystem},
+			ReasonCode:       reasonDeploymentActive,
+			Detail:           "Marked healthy for test",
+			IgnoreIfTerminal: false,
+		})
+		return err
+	})
 }
 
 func (s *Store) countServiceRevisionsForTest(ctx context.Context, serviceID string) (int, error) {

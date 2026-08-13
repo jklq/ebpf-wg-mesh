@@ -39,6 +39,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 	}
 
 	cfg := config.AgentConfig{
+		Profile: config.ProfileDevelopment,
 		Node: config.NodeConfig{
 			ID:            localAgentID,
 			Name:          "Local Teststack Agent",
@@ -74,6 +75,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 	if err := config.FinalizeAgent(&cfg); err != nil {
 		return nil, nil, fmt.Errorf("finalize local agent config: %w", err)
 	}
+	fmt.Println(config.AgentStartupContract(cfg).String())
 
 	app, err := agent.New(cfg, agent.WithRuntime(runtimeImpl), agent.WithMeshDisabled())
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"ebof-wg-mesh/internal/bootstrap"
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
 )
 
@@ -17,6 +18,7 @@ func main() {
 		slog.Error("bootstrap control plane", "error", err)
 		os.Exit(1)
 	}
+	slog.Info(config.ControlPlaneStartupContract(cfg).String())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	server, err := controlplane.NewServer(ctx, cfg)
