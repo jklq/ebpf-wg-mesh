@@ -1,9 +1,9 @@
 package controlplane
 
-var storeMigrations = []migration{{
-	version: initialSchemaVersion,
-	stmts: []string{
-		`CREATE TABLE projects (
+const currentSchemaVersion = 1
+
+var currentSchema = []string{
+	`CREATE TABLE projects (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
 			kind STRING NOT NULL,
@@ -11,23 +11,23 @@ var storeMigrations = []migration{{
 			owner_user_id STRING NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE UNIQUE INDEX idx_projects_owner_name
+	`CREATE UNIQUE INDEX idx_projects_owner_name
 			ON projects(owner_user_id, name) WHERE kind = 'user'`,
-		`CREATE UNIQUE INDEX idx_projects_system_key
+	`CREATE UNIQUE INDEX idx_projects_system_key
 			ON projects(system_key) WHERE system_key IS NOT NULL`,
-		`CREATE TABLE project_memberships (
+	`CREATE TABLE project_memberships (
 			user_id STRING NOT NULL,
 			project_id STRING NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
 			role STRING NOT NULL,
 			PRIMARY KEY (user_id, project_id)
 		)`,
-		`CREATE INDEX idx_project_memberships_user ON project_memberships(user_id, project_id)`,
-		`CREATE TABLE environment_network_identity_counter (
+	`CREATE INDEX idx_project_memberships_user ON project_memberships(user_id, project_id)`,
+	`CREATE TABLE environment_network_identity_counter (
 			id BOOL PRIMARY KEY,
 			next_identity INT8 NOT NULL
 		)`,
-		`INSERT INTO environment_network_identity_counter(id, next_identity) VALUES (TRUE, 1)`,
-		`CREATE TABLE environments (
+	`INSERT INTO environment_network_identity_counter(id, next_identity) VALUES (TRUE, 1)`,
+	`CREATE TABLE environments (
 			id STRING PRIMARY KEY,
 			project_id STRING NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
 			name STRING NOT NULL,
@@ -39,10 +39,10 @@ var storeMigrations = []migration{{
 			updated_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (project_id, name)
 		)`,
-		`CREATE UNIQUE INDEX idx_environments_one_production
+	`CREATE UNIQUE INDEX idx_environments_one_production
 			ON environments(project_id) WHERE is_production = TRUE`,
-		`CREATE INDEX idx_environments_project_created ON environments(project_id, created_at, id)`,
-		`CREATE TABLE agents (
+	`CREATE INDEX idx_environments_project_created ON environments(project_id, created_at, id)`,
+	`CREATE TABLE agents (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
 			advertise_addr STRING NOT NULL,
@@ -57,16 +57,16 @@ var storeMigrations = []migration{{
 			updated_at TIMESTAMPTZ NOT NULL,
 			desired_revision INT8 NOT NULL DEFAULT 0
 		)`,
-		`CREATE INDEX idx_agents_last_seen_id ON agents(last_seen_at DESC, id)
+	`CREATE INDEX idx_agents_last_seen_id ON agents(last_seen_at DESC, id)
 			STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
-		`CREATE TABLE agent_bootstrap_tokens (
+	`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			consumed_at TIMESTAMPTZ NULL
 		)`,
-		`CREATE INDEX idx_agent_bootstrap_tokens_agent ON agent_bootstrap_tokens(agent_id, consumed_at)`,
-		`CREATE TABLE volumes (
+	`CREATE INDEX idx_agent_bootstrap_tokens_agent ON agent_bootstrap_tokens(agent_id, consumed_at)`,
+	`CREATE TABLE volumes (
 			id STRING PRIMARY KEY,
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
 			name STRING NOT NULL,
@@ -74,8 +74,8 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (environment_id, name)
 		)`,
-		`CREATE INDEX idx_volumes_environment_created ON volumes(environment_id, created_at, id)`,
-		`CREATE TABLE services (
+	`CREATE INDEX idx_volumes_environment_created ON volumes(environment_id, created_at, id)`,
+	`CREATE TABLE services (
 			id STRING PRIMARY KEY,
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
 			name STRING NOT NULL,
@@ -88,15 +88,15 @@ var storeMigrations = []migration{{
 			updated_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (environment_id, name)
 		)`,
-		`CREATE INDEX idx_services_environment_created ON services(environment_id, created_at, id)`,
-		`CREATE TABLE service_revisions (
+	`CREATE INDEX idx_services_environment_created ON services(environment_id, created_at, id)`,
+	`CREATE TABLE service_revisions (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			spec_revision INT8 NOT NULL,
 			spec_json JSONB NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, spec_revision)
 		)`,
-		`CREATE TABLE domain_bindings (
+	`CREATE TABLE domain_bindings (
 			hostname STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			target_port INT8 NOT NULL DEFAULT 8080,
@@ -104,10 +104,10 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE INDEX idx_domain_bindings_service ON domain_bindings(service_id, hostname)`,
-		`CREATE UNIQUE INDEX idx_domain_bindings_generated_service
+	`CREATE INDEX idx_domain_bindings_service ON domain_bindings(service_id, hostname)`,
+	`CREATE UNIQUE INDEX idx_domain_bindings_generated_service
 			ON domain_bindings(service_id) WHERE platform_generated = TRUE`,
-		`CREATE TABLE allocations (
+	`CREATE TABLE allocations (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL UNIQUE REFERENCES services(id) ON DELETE CASCADE,
 			agent_id STRING NOT NULL REFERENCES agents(id),
@@ -122,8 +122,8 @@ var storeMigrations = []migration{{
 			healthy BOOL NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE INDEX idx_allocations_agent ON allocations(agent_id, updated_at, id)`,
-		`CREATE TABLE service_rollouts (
+	`CREATE INDEX idx_allocations_agent ON allocations(agent_id, updated_at, id)`,
+	`CREATE TABLE service_rollouts (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			rollout_generation INT8 NOT NULL,
 			spec_revision INT8 NOT NULL,
@@ -133,7 +133,7 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, rollout_generation)
 		)`,
-		`CREATE TABLE builder_workers (
+	`CREATE TABLE builder_workers (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
 			current_build_id STRING NOT NULL DEFAULT '',
@@ -141,7 +141,7 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE TABLE build_runs (
+	`CREATE TABLE build_runs (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			commit_sha STRING NOT NULL,
@@ -160,10 +160,10 @@ var storeMigrations = []migration{{
 			started_at TIMESTAMPTZ NULL,
 			finished_at TIMESTAMPTZ NULL
 		)`,
-		`CREATE INDEX idx_build_runs_service_queued ON build_runs(service_id, queued_at DESC, id)`,
-		`CREATE INDEX idx_build_runs_service_commit ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
-		`CREATE INDEX idx_build_runs_state_queued ON build_runs(state, queued_at ASC, id)`,
-		`CREATE TABLE github_installations (
+	`CREATE INDEX idx_build_runs_service_queued ON build_runs(service_id, queued_at DESC, id)`,
+	`CREATE INDEX idx_build_runs_service_commit ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
+	`CREATE INDEX idx_build_runs_state_queued ON build_runs(state, queued_at ASC, id)`,
+	`CREATE TABLE github_installations (
 			installation_id INT8 PRIMARY KEY,
 			account_login STRING NOT NULL,
 			account_type STRING NOT NULL,
@@ -172,7 +172,7 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE TABLE github_installation_repositories (
+	`CREATE TABLE github_installation_repositories (
 			installation_id INT8 NOT NULL REFERENCES github_installations(installation_id) ON DELETE CASCADE,
 			repository_id INT8 NOT NULL,
 			owner STRING NOT NULL,
@@ -185,9 +185,9 @@ var storeMigrations = []migration{{
 			PRIMARY KEY (installation_id, repository_id),
 			UNIQUE (installation_id, full_name)
 		)`,
-		`CREATE INDEX idx_github_installation_repositories_name
+	`CREATE INDEX idx_github_installation_repositories_name
 			ON github_installation_repositories(full_name, installation_id)`,
-		`CREATE TABLE project_github_repositories (
+	`CREATE TABLE project_github_repositories (
 			project_id STRING NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
 			installation_id INT8 NOT NULL,
 			repository_id INT8 NOT NULL,
@@ -198,9 +198,9 @@ var storeMigrations = []migration{{
 			PRIMARY KEY (project_id, repository_id),
 			UNIQUE (project_id, full_name)
 		)`,
-		`CREATE INDEX idx_project_github_repositories_installation
+	`CREATE INDEX idx_project_github_repositories_installation
 			ON project_github_repositories(installation_id, repository_id, project_id)`,
-		`CREATE TABLE github_repository_snapshots (
+	`CREATE TABLE github_repository_snapshots (
 			full_name STRING PRIMARY KEY,
 			repository_id INT8 NOT NULL DEFAULT 0,
 			owner STRING NOT NULL,
@@ -211,9 +211,9 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE INDEX idx_github_repository_snapshots_owner_repo
+	`CREATE INDEX idx_github_repository_snapshots_owner_repo
 			ON github_repository_snapshots(owner, repo)`,
-		`CREATE TABLE github_webhook_deliveries (
+	`CREATE TABLE github_webhook_deliveries (
 			id STRING PRIMARY KEY,
 			delivery_id STRING NOT NULL UNIQUE,
 			event_type STRING NOT NULL,
@@ -225,9 +225,9 @@ var storeMigrations = []migration{{
 			updated_at TIMESTAMPTZ NOT NULL,
 			processed_at TIMESTAMPTZ NULL
 		)`,
-		`CREATE INDEX idx_github_webhook_deliveries_state
+	`CREATE INDEX idx_github_webhook_deliveries_state
 			ON github_webhook_deliveries(state, received_at ASC, id)`,
-		`CREATE TABLE github_work_items (
+	`CREATE TABLE github_work_items (
 			id STRING PRIMARY KEY,
 			kind STRING NOT NULL,
 			state STRING NOT NULL,
@@ -243,8 +243,8 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE INDEX idx_github_work_items_state ON github_work_items(state, available_at ASC, created_at ASC, id)`,
-		`CREATE TABLE source_bindings (
+	`CREATE INDEX idx_github_work_items_state ON github_work_items(state, available_at ASC, created_at ASC, id)`,
+	`CREATE TABLE source_bindings (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL UNIQUE REFERENCES services(id) ON DELETE CASCADE,
 			provider STRING NOT NULL,
@@ -259,11 +259,11 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE INDEX idx_source_bindings_provider_repo_ref
+	`CREATE INDEX idx_source_bindings_provider_repo_ref
 			ON source_bindings(provider, provider_repository_external_id, tracked_ref, service_id)`,
-		`CREATE INDEX idx_source_bindings_provider_scope
+	`CREATE INDEX idx_source_bindings_provider_scope
 			ON source_bindings(provider, provider_scope_external_id, service_id)`,
-		`CREATE TABLE source_revisions (
+	`CREATE TABLE source_revisions (
 			id STRING PRIMARY KEY,
 			source_binding_id STRING NOT NULL REFERENCES source_bindings(id) ON DELETE CASCADE,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -277,10 +277,10 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (source_binding_id, commit_sha)
 		)`,
-		`CREATE INDEX idx_source_revisions_service_observed ON source_revisions(service_id, observed_at DESC, id)`,
-		`CREATE INDEX idx_source_revisions_provider_repo_commit
+	`CREATE INDEX idx_source_revisions_service_observed ON source_revisions(service_id, observed_at DESC, id)`,
+	`CREATE INDEX idx_source_revisions_provider_repo_commit
 			ON source_revisions(provider, provider_repository_external_id, commit_sha, id)`,
-		`CREATE TABLE source_snapshots (
+	`CREATE TABLE source_snapshots (
 			id STRING PRIMARY KEY,
 			source_revision_id STRING NOT NULL DEFAULT '' UNIQUE,
 			provider STRING NOT NULL,
@@ -289,14 +289,14 @@ var storeMigrations = []migration{{
 			digest STRING NOT NULL DEFAULT '',
 			object_key STRING NOT NULL DEFAULT '',
 			archive_size_bytes INT8 NOT NULL DEFAULT 0,
-			archive_tgz BYTES NOT NULL DEFAULT b'',
 			ready BOOL NOT NULL DEFAULT FALSE,
 			fetched_at TIMESTAMPTZ NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (provider, provider_repository_external_id, commit_sha)
 		)`,
-		`CREATE TABLE source_work_items (
+	`CREATE INDEX idx_source_snapshots_created ON source_snapshots(created_at, id)`,
+	`CREATE TABLE source_work_items (
 			id STRING PRIMARY KEY,
 			kind STRING NOT NULL,
 			state STRING NOT NULL,
@@ -317,13 +317,5 @@ var storeMigrations = []migration{{
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-		`CREATE INDEX idx_source_work_items_state ON source_work_items(state, available_at ASC, created_at ASC, id)`,
-	},
-}, {
-	version: 2,
-	stmts: []string{
-		`ALTER TABLE source_snapshots ADD COLUMN IF NOT EXISTS object_key STRING NOT NULL DEFAULT ''`,
-		`ALTER TABLE source_snapshots ADD COLUMN IF NOT EXISTS archive_size_bytes INT8 NOT NULL DEFAULT 0`,
-		`CREATE INDEX IF NOT EXISTS idx_source_snapshots_created ON source_snapshots(created_at, id)`,
-	},
-}}
+	`CREATE INDEX idx_source_work_items_state ON source_work_items(state, available_at ASC, created_at ASC, id)`,
+}

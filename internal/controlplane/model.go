@@ -255,8 +255,6 @@ type sourceSnapshotRecord struct {
 	Digest                       string
 	ObjectKey                    string
 	ArchiveSizeBytes             int64
-	ArchiveTGZ                   []byte
-	ArchiveSize                  int64
 	Ready                        bool
 	FetchedAt                    sql.NullTime
 	CreatedAt                    time.Time

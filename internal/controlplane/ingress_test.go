@@ -252,11 +252,17 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if transport.overlap.Load() != 0 {
 		t.Fatal("expected ingress pushes to be serialized")
 	}
-	if len(transport.bodies) != 2 {
-		t.Fatalf("expected 2 ingress pushes, got %d", len(transport.bodies))
+	if len(transport.requests) != 2 {
+		t.Fatalf("expected 2 ingress pushes, got %d", len(transport.requests))
 	}
-	firstRoutes := ingressRouteCount(t, transport.bodies[0])
-	secondRoutes := ingressRouteCount(t, transport.bodies[1])
+	if transport.requests[0].method != http.MethodPost || !strings.HasSuffix(transport.requests[0].url, "/load") {
+		t.Fatalf("expected first push to POST /load, got %s %s", transport.requests[0].method, transport.requests[0].url)
+	}
+	if transport.requests[1].method != http.MethodPatch || !strings.HasSuffix(transport.requests[1].url, "/config/apps/http/servers/srv0/routes") {
+		t.Fatalf("expected second push to PATCH routes, got %s %s", transport.requests[1].method, transport.requests[1].url)
+	}
+	firstRoutes := ingressRouteCount(t, transport.requests[0].body)
+	secondRoutes := ingressRouteCount(t, transport.requests[1].body)
 	if firstRoutes != 1 {
 		t.Fatalf("expected first push to contain 1 route, got %d", firstRoutes)
 	}
@@ -287,7 +293,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10:8080"); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,6 +307,9 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 
 	syncer.RequestSync()
 	<-transport.firstStarted
+	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID, 8080); err != nil {
+		t.Fatalf("createDomainBinding: %v", err)
+	}
 	syncer.RequestSync()
 	syncer.RequestSync()
 	syncer.RequestSync()
@@ -317,6 +326,42 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	}
 }
 
+func TestIngressSyncSkipsUnchangedConfig(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	syncer := NewIngressSyncer("http://caddy.invalid/load", store)
+	transport := &blockingIngressTransport{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	syncer.client = &http.Client{Transport: transport}
+	close(transport.releaseFirst)
+
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	if got := transport.calls.Load(); got != 1 {
+		t.Fatalf("expected unchanged config to skip the second push, got %d", got)
+	}
+}
+
+type recordedIngressPush struct {
+	method string
+	url    string
+	body   []byte
+}
+
 type blockingIngressTransport struct {
 	firstStarted chan struct{}
 	releaseFirst chan struct{}
@@ -324,7 +369,7 @@ type blockingIngressTransport struct {
 	inFlight     atomic.Int32
 	overlap      atomic.Int32
 	mu           sync.Mutex
-	bodies       [][]byte
+	requests     []recordedIngressPush
 }
 
 func (t *blockingIngressTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -338,7 +383,11 @@ func (t *blockingIngressTransport) RoundTrip(req *http.Request) (*http.Response,
 		return nil, err
 	}
 	t.mu.Lock()
-	t.bodies = append(t.bodies, append([]byte(nil), body...))
+	t.requests = append(t.requests, recordedIngressPush{
+		method: req.Method,
+		url:    req.URL.String(),
+		body:   append([]byte(nil), body...),
+	})
 	t.mu.Unlock()
 
 	if t.calls.Add(1) == 1 {
@@ -355,6 +404,11 @@ func (t *blockingIngressTransport) RoundTrip(req *http.Request) (*http.Response,
 
 func ingressRouteCount(t *testing.T, body []byte) int {
 	t.Helper()
+
+	var routes []caddyRoute
+	if err := json.Unmarshal(body, &routes); err == nil && json.Valid(body) && len(body) > 0 && body[0] == '[' {
+		return len(routes)
+	}
 
 	var cfg caddyConfig
 	if err := json.Unmarshal(body, &cfg); err != nil {

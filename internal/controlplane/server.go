@@ -51,10 +51,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	store.ConfigureSourceArchives(archiveStore)
-	if err := store.migrateLegacySourceArchives(ctx); err != nil {
-		_ = store.Close()
-		return nil, fmt.Errorf("migrate source archives: %w", err)
-	}
 	if err := store.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
 		_ = store.Close()
 		return nil, err

@@ -68,7 +68,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	}
 	if _, err := store.db.ExecContext(ctx,
 		`UPDATE source_snapshots
-		    SET object_key = $2, archive_size_bytes = $3, archive_tgz = b'', digest = $4, updated_at = $5
+		    SET object_key = $2, archive_size_bytes = $3, digest = $4, updated_at = $5
 		  WHERE id = $1`,
 		snapshot.ID, objectKey, len(archive), digest, time.Now().UTC(),
 	); err != nil {
@@ -86,11 +86,8 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadataOnly.ArchiveTGZ != nil {
-		t.Fatalf("metadata query loaded %d archive bytes", len(metadataOnly.ArchiveTGZ))
-	}
-	if metadataOnly.ArchiveSize != int64(len(archive)) {
-		t.Fatalf("archive size = %d, want %d", metadataOnly.ArchiveSize, len(archive))
+	if metadataOnly.ArchiveSizeBytes != int64(len(archive)) {
+		t.Fatalf("archive size = %d, want %d", metadataOnly.ArchiveSizeBytes, len(archive))
 	}
 
 	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")

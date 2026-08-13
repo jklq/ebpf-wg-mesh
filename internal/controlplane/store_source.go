@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -323,26 +324,15 @@ func (s *Store) upsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec sour
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = now
 	}
-	archiveSize := rec.ArchiveSizeBytes
-	if archiveSize <= 0 {
-		archiveSize = rec.ArchiveSize
-	}
-	if archiveSize <= 0 && rec.ArchiveTGZ != nil {
-		archiveSize = int64(len(rec.ArchiveTGZ))
-	}
-	archivePayload := rec.ArchiveTGZ
-	if archivePayload == nil {
-		archivePayload = []byte{}
-	}
 	rec.UpdatedAt = now
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO source_snapshots(
 			id, source_revision_id, provider, provider_repository_external_id, commit_sha,
-			digest, object_key, archive_size_bytes, archive_tgz, ready, fetched_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			digest, object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT(source_revision_id) DO NOTHING`,
 		rec.ID, rec.SourceRevisionID, rec.Provider, rec.ProviderRepositoryExternalID, rec.CommitSHA,
-		rec.Digest, rec.ObjectKey, archiveSize, archivePayload, rec.Ready, nullableTime(rec.FetchedAt), rec.CreatedAt, rec.UpdatedAt,
+		rec.Digest, rec.ObjectKey, rec.ArchiveSizeBytes, rec.Ready, nullableTime(rec.FetchedAt), rec.CreatedAt, rec.UpdatedAt,
 	)
 	if err != nil {
 		return sourceSnapshotRecord{}, err
@@ -372,7 +362,7 @@ func (s *Store) sourceSnapshotByProviderRepoAndCommitTx(ctx context.Context, q s
 	var rec sourceSnapshotRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
-		        object_key, GREATEST(archive_size_bytes, octet_length(archive_tgz)), ready, fetched_at, created_at, updated_at
+		        object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE provider = $1
 		    AND provider_repository_external_id = $2
@@ -395,7 +385,6 @@ func (s *Store) sourceSnapshotByProviderRepoAndCommitTx(ctx context.Context, q s
 	if err != nil {
 		return sourceSnapshotRecord{}, err
 	}
-	rec.ArchiveSize = rec.ArchiveSizeBytes
 	return rec, nil
 }
 
@@ -407,7 +396,7 @@ func (s *Store) sourceSnapshotByRevisionIDTx(ctx context.Context, q serviceQuery
 	var rec sourceSnapshotRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
-		        object_key, GREATEST(archive_size_bytes, octet_length(archive_tgz)), ready, fetched_at, created_at, updated_at
+		        object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE source_revision_id = $1`,
 		sourceRevisionID,
@@ -438,7 +427,6 @@ func (s *Store) sourceSnapshotByRevisionIDTx(ctx context.Context, q serviceQuery
 		}
 		return s.sourceSnapshotByProviderRepoAndCommitTx(ctx, q, revision.Provider, revision.ProviderRepositoryExternalID, revision.CommitSHA)
 	}
-	rec.ArchiveSize = rec.ArchiveSizeBytes
 	return rec, nil
 }
 
@@ -473,7 +461,7 @@ func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (sour
 	var rec sourceSnapshotRecord
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
-		        object_key, GREATEST(archive_size_bytes, octet_length(archive_tgz)), ready, fetched_at, created_at, updated_at
+		        object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE id = $1`,
 		snapshotID,
@@ -494,12 +482,9 @@ func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (sour
 	if err != nil {
 		return sourceSnapshotRecord{}, err
 	}
-	rec.ArchiveSize = rec.ArchiveSizeBytes
 	return rec, nil
 }
 
-// sourceSnapshotArchiveChunk streams from the archive store for migrated
-// snapshots and retains a CockroachDB fallback for legacy rows.
 func (s *Store) sourceSnapshotArchiveChunk(ctx context.Context, snapshotID string, offset int64, limit int) ([]byte, error) {
 	if offset < 0 || limit <= 0 {
 		return nil, errors.New("invalid source snapshot archive range")
@@ -508,21 +493,11 @@ func (s *Store) sourceSnapshotArchiveChunk(ctx context.Context, snapshotID strin
 	if err != nil {
 		return nil, err
 	}
-	if snapshot.ObjectKey != "" {
-		if s.sourceArchives == nil {
-			return nil, errors.New("source archive store is not configured")
-		}
-		return s.sourceArchives.ReadRange(ctx, snapshot.ObjectKey, offset, limit)
+	if snapshot.ObjectKey == "" {
+		return nil, fmt.Errorf("snapshot %s has no source archive object", snapshot.ID)
 	}
-	var chunk []byte
-	err = s.db.QueryRowContext(ctx,
-		`SELECT substring(archive_tgz, $2, $3)
-		   FROM source_snapshots
-		  WHERE id = $1`,
-		snapshotID, offset+1, limit,
-	).Scan(&chunk)
-	if err != nil {
-		return nil, err
+	if s.sourceArchives == nil {
+		return nil, errors.New("source archive store is not configured")
 	}
-	return chunk, nil
+	return s.sourceArchives.ReadRange(ctx, snapshot.ObjectKey, offset, limit)
 }

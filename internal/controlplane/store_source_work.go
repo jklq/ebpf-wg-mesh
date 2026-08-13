@@ -259,7 +259,7 @@ func ensureReadySnapshot(snapshot sourceSnapshotRecord) error {
 	if snapshot.ID == "" {
 		return sql.ErrNoRows
 	}
-	if !snapshot.Ready || snapshot.ArchiveSize <= 0 {
+	if !snapshot.Ready || snapshot.ArchiveSizeBytes <= 0 {
 		return fmt.Errorf("snapshot %s is not ready", snapshot.ID)
 	}
 	return nil

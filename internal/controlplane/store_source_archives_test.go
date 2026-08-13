@@ -13,46 +13,6 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-func TestMigrateLegacySourceArchivesClearsDatabasePayload(t *testing.T) {
-	t.Parallel()
-
-	store := openTestStore(t)
-	ctx := context.Background()
-	archive := []byte("legacy archive")
-	if _, err := store.db.ExecContext(ctx,
-		`INSERT INTO source_snapshots(
-			id, source_revision_id, provider, provider_repository_external_id, commit_sha,
-			digest, archive_tgz, ready, fetched_at, created_at, updated_at
-		) VALUES ('snapshot-legacy', 'revision-legacy', 'github', 'repo-1', 'commit-1', $1, $2, TRUE, $3, $3, $3)`,
-		snapshotDigest(archive), archive, time.Now().UTC(),
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.migrateLegacySourceArchives(ctx); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := store.sourceSnapshotByID(ctx, "snapshot-legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.loadSourceArchive(ctx, snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(archive) {
-		t.Fatalf("migrated archive = %q, want %q", got, archive)
-	}
-	var databaseBytes int
-	if err := store.db.QueryRowContext(ctx,
-		`SELECT length(archive_tgz) FROM source_snapshots WHERE id = 'snapshot-legacy'`,
-	).Scan(&databaseBytes); err != nil {
-		t.Fatal(err)
-	}
-	if databaseBytes != 0 {
-		t.Fatalf("CockroachDB archive payload has %d bytes after migration", databaseBytes)
-	}
-}
-
 func TestPruneSourceArchivesDeletesExpiredUnreferencedObjects(t *testing.T) {
 	t.Parallel()
 

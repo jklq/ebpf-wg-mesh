@@ -134,21 +134,6 @@ func TestInternalAuthRejectsUnpinnedDashboard(t *testing.T) {
 	}
 }
 
-func TestInternalAuthRejectsLegacyRawUserID(t *testing.T) {
-	t.Parallel()
-
-	authz := newTestInternalAuth()
-	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
-	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
-		legacyDelegatedUserIDHeader, "user-1",
-		userAssertionHeader, signedUserAssertion(t, "user-1", nil),
-	))
-	_, err := authz.authorize(ctx, "/platform.v1.PlatformService/ListProjects", false)
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("expected legacy delegated user ID to be rejected, got %v", err)
-	}
-}
-
 func TestInternalAuthRejectsInvalidUserAssertions(t *testing.T) {
 	t.Parallel()
 
