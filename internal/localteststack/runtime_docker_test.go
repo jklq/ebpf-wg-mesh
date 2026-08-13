@@ -34,9 +34,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	runner.onRun = func(args []string) {
 		if len(args) >= 2 && args[0] == "run" && args[1] == "--detach" {
 			runner.containers["localteststack-svc-alloc-1"] = dockerContainerInspect{
-				State: struct {
-					Running bool `json:"Running"`
-				}{Running: true},
+				State: dockerContainerState{Running: true},
 				Config: struct {
 					Image  string            `json:"Image"`
 					Labels map[string]string `json:"Labels"`
@@ -171,9 +169,7 @@ func TestDockerRuntimeReconcileWithoutHealthCheckIsReadyAfterStart(t *testing.T)
 	runner.onRun = func(args []string) {
 		if len(args) >= 2 && args[0] == "run" && args[1] == "--detach" {
 			runner.containers["localteststack-svc-alloc-1"] = dockerContainerInspect{
-				State: struct {
-					Running bool `json:"Running"`
-				}{Running: true},
+				State: dockerContainerState{Running: true},
 				Config: struct {
 					Image  string            `json:"Image"`
 					Labels map[string]string `json:"Labels"`

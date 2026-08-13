@@ -288,6 +288,12 @@ export function scaleServiceFromSession(input: {
 	return getDashboardService().scaleServiceFromSession(input);
 }
 
+export function restartServiceFromSession(input: {
+	serviceId: string;
+}): Promise<DashboardServiceStatus> {
+	return getDashboardService().restartServiceFromSession(input);
+}
+
 export function discardServiceChangesFromSession(input: {
 	serviceId: string;
 	changeIds?: Array<string>;

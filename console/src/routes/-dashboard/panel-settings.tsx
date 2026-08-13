@@ -42,6 +42,15 @@ export function PanelSettings({
 	const [contextDir, setContextDir] = useState(
 		source?.buildRecipe?.contextDir ?? ".",
 	);
+	const [restartPolicy, setRestartPolicy] = useState(
+		service.spec?.runtime.restart?.policy ?? "on-failure",
+	);
+	const [maxRestarts, setMaxRestarts] = useState(
+		String(service.spec?.runtime.restart?.maxRestarts ?? 5),
+	);
+	const [windowSeconds, setWindowSeconds] = useState(
+		String(service.spec?.runtime.restart?.windowSeconds ?? 300),
+	);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string>();
 	const [success, setSuccess] = useState(false);
@@ -62,6 +71,11 @@ export function PanelSettings({
 					trackedRef,
 					dockerfilePath,
 					contextDir,
+					restart: {
+						policy: restartPolicy,
+						maxRestarts: Number(maxRestarts) || 0,
+						windowSeconds: Number(windowSeconds) || 0,
+					},
 				},
 			});
 			setSuccess(true);
@@ -153,6 +167,66 @@ export function PanelSettings({
 							value={contextDir}
 							onChange={(e) => setContextDir(e.target.value)}
 							placeholder="."
+						/>
+					</div>
+				</div>
+			</div>
+
+			<div>
+				<p className="section-header">Process restart</p>
+				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+					<fieldset className={changedFields.has("runtime.restart") ? "unapplied-field" : ""}>
+						<legend className="field-label">Policy</legend>
+						<label>
+							<input
+								type="radio"
+								name={`service-restart-policy-${service.id}`}
+								checked={restartPolicy === "on-failure"}
+								onChange={() => setRestartPolicy("on-failure")}
+							/>
+							On failure
+						</label>
+						<label>
+							<input
+								type="radio"
+								name={`service-restart-policy-${service.id}`}
+								checked={restartPolicy === "always"}
+								onChange={() => setRestartPolicy("always")}
+							/>
+							Always
+						</label>
+						<label>
+							<input
+								type="radio"
+								name={`service-restart-policy-${service.id}`}
+								checked={restartPolicy === "never"}
+								onChange={() => setRestartPolicy("never")}
+							/>
+							Never
+						</label>
+					</fieldset>
+					<div>
+						<label className="field-label" htmlFor={`service-restart-max-${service.id}`}>
+							Max restarts
+						</label>
+						<input
+							id={`service-restart-max-${service.id}`}
+							className="field-input"
+							value={maxRestarts}
+							onChange={(e) => setMaxRestarts(e.target.value)}
+							inputMode="numeric"
+						/>
+					</div>
+					<div>
+						<label className="field-label" htmlFor={`service-restart-window-${service.id}`}>
+							Retry window (seconds)
+						</label>
+						<input
+							id={`service-restart-window-${service.id}`}
+							className="field-input"
+							value={windowSeconds}
+							onChange={(e) => setWindowSeconds(e.target.value)}
+							inputMode="numeric"
 						/>
 					</div>
 				</div>

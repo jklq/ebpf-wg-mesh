@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 // deploymentStages synthesizes the deployment timeline that
@@ -183,7 +184,7 @@ func deployStage(service serviceRecord, build *buildRunRecord, alloc allocationR
 		return stage
 	}
 	switch alloc.Phase {
-	case "Error", "Failed", "Unhealthy":
+	case "Error", "Failed", "Unhealthy", restartpolicy.PhaseCrashLoop:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = firstNonEmpty(alloc.Message, "Deploy failed")
 	default:
@@ -219,9 +220,12 @@ func postDeployStage(service serviceRecord, build *buildRunRecord, alloc allocat
 	// An explicit HTTP check gates readiness during rollout. Once it passes,
 	// the agent latches the result and does not continuously monitor it.
 	switch alloc.Phase {
-	case "Error", "Failed", "Unhealthy":
+	case "Error", "Failed", "Unhealthy", restartpolicy.PhaseCrashLoop:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = firstNonEmpty(alloc.Message, "Workload unhealthy")
+	case restartpolicy.PhaseStopped, restartpolicy.PhaseBackoff:
+		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
+		stage.Detail = firstNonEmpty(alloc.Message, alloc.Phase)
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING
 		stage.Detail = "Waiting for HTTP readiness check"
