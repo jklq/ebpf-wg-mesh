@@ -32,6 +32,8 @@ import type {
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
 	RedeployServiceRequest,
+	RestartServiceRequest,
+	ScaleServiceRequest,
 	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
 } from "#/lib/platform-grpc/types.server";
@@ -142,6 +144,20 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "RedeployService":
 					client.RedeployService(
 						request as RedeployServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "ScaleService":
+					client.ScaleService(
+						request as ScaleServiceRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "RestartService":
+					client.RestartService(
+						request as RestartServiceRequest,
 						metadata,
 						handleResponse,
 					);

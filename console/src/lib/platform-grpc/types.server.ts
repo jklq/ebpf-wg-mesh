@@ -189,6 +189,10 @@ export interface ScaleServiceRequest {
 	confirmScaleToZero?: boolean;
 }
 
+export interface RestartServiceRequest {
+	serviceId: string;
+}
+
 export interface DeleteServiceRequest {
 	serviceId: string;
 }
@@ -274,6 +278,8 @@ export type PlatformMethod =
 	| "CreateService"
 	| "UpdateService"
 	| "RedeployService"
+	| "ScaleService"
+	| "RestartService"
 	| "DiscardServiceChanges"
 	| "DeleteService"
 	| "GetService"
@@ -302,6 +308,8 @@ export type PlatformRequestMap = {
 	CreateService: CreateServiceRequest;
 	UpdateService: UpdateServiceRequest;
 	RedeployService: RedeployServiceRequest;
+	ScaleService: ScaleServiceRequest;
+	RestartService: RestartServiceRequest;
 	DiscardServiceChanges: DiscardServiceChangesRequest;
 	DeleteService: DeleteServiceRequest;
 	GetService: GetServiceRequest;
@@ -393,6 +401,16 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	RedeployService: (
 		request: RedeployServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	ScaleService: (
+		request: ScaleServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	RestartService: (
+		request: RestartServiceRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
