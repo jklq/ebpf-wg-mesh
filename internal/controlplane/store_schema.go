@@ -146,6 +146,47 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, rollout_generation)
 		)`,
+	`CREATE TABLE deployments (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			spec_revision INT8 NOT NULL,
+			rollout_generation INT8 NOT NULL DEFAULT 0,
+			build_id STRING NOT NULL DEFAULT '',
+			image_digest STRING NOT NULL DEFAULT '',
+			state STRING NOT NULL,
+			cause_kind STRING NOT NULL,
+			cause_id STRING NOT NULL DEFAULT '',
+			reason_code STRING NOT NULL,
+			detail STRING NOT NULL DEFAULT '',
+			is_current BOOL NOT NULL DEFAULT FALSE,
+			requested_by_user_id STRING NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE UNIQUE INDEX idx_deployments_service_current
+			ON deployments(service_id) WHERE is_current = TRUE`,
+	`CREATE UNIQUE INDEX idx_deployments_service_build
+			ON deployments(service_id, build_id) WHERE build_id != ''`,
+	`CREATE INDEX idx_deployments_service_rollout
+			ON deployments(service_id, rollout_generation DESC, created_at DESC, id)`,
+	`CREATE INDEX idx_deployments_service_updated
+			ON deployments(service_id, updated_at DESC, id)`,
+	`CREATE TABLE deployment_transitions (
+			id STRING PRIMARY KEY,
+			deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			from_state STRING NOT NULL,
+			to_state STRING NOT NULL,
+			cause_kind STRING NOT NULL,
+			cause_id STRING NOT NULL DEFAULT '',
+			reason_code STRING NOT NULL,
+			detail STRING NOT NULL DEFAULT '',
+			spec_revision INT8 NOT NULL,
+			image_digest STRING NOT NULL DEFAULT '',
+			rollout_generation INT8 NOT NULL DEFAULT 0,
+			occurred_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_deployment_transitions_deployment
+			ON deployment_transitions(deployment_id, occurred_at ASC, id)`,
 	`CREATE TABLE builder_workers (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,

@@ -8,6 +8,24 @@ import type {
 import type { ServiceHealth } from "./types";
 
 export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
+	const deployment = service.latestDeployment;
+	if (deployment) {
+		switch (deployment.state) {
+			case "active":
+			case "draining":
+			case "completed":
+				return "healthy";
+			case "failed":
+			case "crashed":
+			case "cancelled":
+				return "failed";
+			case "removed":
+			case "superseded":
+				return "offline";
+			default:
+				return "building";
+		}
+	}
 	const build = service.latestBuild;
 	if (!build) return "offline";
 	const stageState = deploymentStageHealth(build.stages ?? []);
