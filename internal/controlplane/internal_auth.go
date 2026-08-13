@@ -29,13 +29,12 @@ const (
 )
 
 const (
-	legacyDelegatedUserIDHeader = "x-platform-user-id"
-	userAssertionHeader         = "x-platform-user-assertion"
-	userAssertionIssuer         = "managed-dashboard"
-	userAssertionAudience       = "controlplane"
-	userAssertionMaxAge         = 30 * time.Second
-	userAssertionClockSkew      = 5 * time.Second
-	maxUserAssertionLength      = 4096
+	userAssertionHeader    = "x-platform-user-assertion"
+	userAssertionIssuer    = "managed-dashboard"
+	userAssertionAudience  = "controlplane"
+	userAssertionMaxAge    = 30 * time.Second
+	userAssertionClockSkew = 5 * time.Second
+	maxUserAssertionLength = 4096
 )
 
 type ServiceCaller struct {
@@ -235,9 +234,6 @@ func (a *InternalAuth) delegatedUserFromMetadata(ctx context.Context) (Delegated
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return DelegatedUser{}, false, nil
-	}
-	if len(md.Get(legacyDelegatedUserIDHeader)) != 0 {
-		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "legacy delegated user metadata is not accepted")
 	}
 	assertions := md.Get(userAssertionHeader)
 	if len(assertions) == 0 {

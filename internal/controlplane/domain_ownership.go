@@ -3,17 +3,25 @@ package controlplane
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"time"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
 var (
 	errInvalidDomainHostname      = errors.New("hostname must be a valid DNS name")
 	errDomainOwnershipNotProven   = errors.New("domain CNAME does not point to the service platform hostname")
 	errPlatformDomainNotGenerated = errors.New("generate a platform domain for the service first")
+	errPlatformDomainInUse        = errors.New("generated platform domain cannot be deleted while a custom domain is attached")
 )
+
+const domainOwnershipLookupTimeout = 3 * time.Second
 
 var platformDomainAdjectives = [...]string{
 	"amber", "azure", "coral", "crimson", "golden", "indigo", "jade", "lilac",
@@ -53,18 +61,122 @@ func isPlatformHostname(hostname, suffix string) bool {
 	return hostname == suffix || strings.HasSuffix(hostname, "."+suffix)
 }
 
-func (s *PlatformService) verifyDomainOwnership(ctx context.Context, userID, projectID, serviceID, hostname string) error {
+func (s *PlatformService) annotateDomainBinding(ctx context.Context, userID, projectID string, rec domainBindingRecord) *platformv1.DomainBinding {
+	binding := toProtoDomainBinding(rec)
+	if rec.PlatformGenerated {
+		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED
+		return binding
+	}
+	state, err := s.inspectDomainOwnership(ctx, userID, projectID, rec.ServiceID, rec.Hostname, rec.PlatformGenerated)
+	if err != nil {
+		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED
+		binding.OwnershipMessage = err.Error()
+		return binding
+	}
+	binding.OwnershipState = state
+	return binding
+}
+
+func (s *PlatformService) inspectDomainOwnership(ctx context.Context, userID, projectID, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
+	if platformGenerated {
+		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
+	}
 	platformBinding, err := s.store.platformDomainBindingForService(ctx, userID, projectID, serviceID)
 	if err != nil {
-		return err
+		if errors.Is(err, sql.ErrNoRows) {
+			return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED, errPlatformDomainNotGenerated
+		}
+		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNSPECIFIED, err
 	}
-	target, err := s.dnsResolver.LookupCNAME(ctx, hostname)
-	if err != nil {
-		return fmt.Errorf("%w: lookup %s: %v", errDomainOwnershipNotProven, hostname, err)
+	lookupCtx, cancel := context.WithTimeout(ctx, domainOwnershipLookupTimeout)
+	defer cancel()
+	if err := s.proveDomainOwnership(lookupCtx, hostname, platformBinding.Hostname); err != nil {
+		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED, err
 	}
-	target = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(target), "."))
-	if target != platformBinding.Hostname {
-		return fmt.Errorf("%w: expected %s, got %s", errDomainOwnershipNotProven, platformBinding.Hostname, target)
+	return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
+}
+
+func (s *PlatformService) proveDomainOwnership(ctx context.Context, hostname, platformHostname string) error {
+	hostname = normalizeDNSName(hostname)
+	platformHostname = normalizeDNSName(platformHostname)
+	target, cnameErr := s.dnsResolver.LookupCNAME(ctx, hostname)
+	target = normalizeDNSName(target)
+	if cnameErr == nil && target != "" && target != hostname {
+		if target == platformHostname {
+			return nil
+		}
+		platformCanon, err := s.dnsResolver.LookupCNAME(ctx, platformHostname)
+		if err == nil && normalizeDNSName(platformCanon) == target {
+			return nil
+		}
 	}
-	return nil
+
+	customAddrs, customAddrErr := s.dnsResolver.LookupHost(ctx, hostname)
+	platformAddrs, platformAddrErr := s.dnsResolver.LookupHost(ctx, platformHostname)
+	if customAddrErr == nil && platformAddrErr == nil && addressSetsOverlap(customAddrs, platformAddrs) {
+		return nil
+	}
+
+	if cnameErr != nil {
+		return fmt.Errorf("%w: lookup %s: %v", errDomainOwnershipNotProven, hostname, cnameErr)
+	}
+	if target == "" || target == hostname {
+		return fmt.Errorf("%w: expected CNAME %s", errDomainOwnershipNotProven, platformHostname)
+	}
+	return fmt.Errorf("%w: expected %s, got %s", errDomainOwnershipNotProven, platformHostname, target)
+}
+
+func leftoverPlatformHostname(items []domainBindingRecord) string {
+	var generated string
+	for _, item := range items {
+		if item.PlatformGenerated {
+			generated = item.Hostname
+			continue
+		}
+		return ""
+	}
+	return generated
+}
+
+func hasCustomDomainBinding(items []domainBindingRecord) bool {
+	for _, item := range items {
+		if !item.PlatformGenerated {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeDNSName(raw string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+}
+
+func addressSetsOverlap(left, right []string) bool {
+	seen := make(map[string]struct{}, len(left))
+	for _, addr := range left {
+		if ip := net.ParseIP(strings.TrimSpace(addr)); ip != nil {
+			seen[ip.String()] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return false
+	}
+	for _, addr := range right {
+		if ip := net.ParseIP(strings.TrimSpace(addr)); ip != nil {
+			if _, ok := seen[ip.String()]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func newPublicDNSResolver() *net.Resolver {
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, network, net.JoinHostPort("1.1.1.1", "53"))
+		},
+	}
 }

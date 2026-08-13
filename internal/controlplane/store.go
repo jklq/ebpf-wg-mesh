@@ -19,8 +19,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-const initialSchemaVersion = 1
-
 type Store struct {
 	db                      *sql.DB
 	mesh                    config.ControlPlaneMeshConfig
@@ -36,11 +34,6 @@ func (s *Store) reserveAgents(agentIDs ...string) {
 			s.reservedAgentIDs = append(s.reservedAgentIDs, agentID)
 		}
 	}
-}
-
-type migration struct {
-	version int
-	stmts   []string
 }
 
 func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
@@ -78,36 +71,37 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("create schema_migrations: %w", err)
 		}
 
-		applied := make(map[int]struct{}, len(storeMigrations))
+		applied := make(map[int]struct{})
 		rows, err := tx.QueryContext(ctx, `SELECT version FROM schema_migrations`)
 		if err != nil {
-			return fmt.Errorf("list schema migrations: %w", err)
+			return fmt.Errorf("list schema versions: %w", err)
 		}
 		defer rows.Close()
 
 		for rows.Next() {
 			var version int
 			if err := rows.Scan(&version); err != nil {
-				return fmt.Errorf("scan schema migration version: %w", err)
+				return fmt.Errorf("scan schema version: %w", err)
 			}
 			applied[version] = struct{}{}
 		}
 		if err := rows.Err(); err != nil {
-			return fmt.Errorf("iterate schema migrations: %w", err)
+			return fmt.Errorf("iterate schema versions: %w", err)
+		}
+		if len(applied) > 0 {
+			if _, ok := applied[currentSchemaVersion]; !ok || len(applied) != 1 {
+				return fmt.Errorf("database schema is stale; recreate the database")
+			}
+			return nil
 		}
 
-		for _, migration := range storeMigrations {
-			if _, ok := applied[migration.version]; ok {
-				continue
+		for _, stmt := range currentSchema {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("apply schema: %w", err)
 			}
-			for _, stmt := range migration.stmts {
-				if _, err := tx.ExecContext(ctx, stmt); err != nil {
-					return fmt.Errorf("apply schema migration %d: %w", migration.version, err)
-				}
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES ($1, $2)`, migration.version, time.Now().UTC()); err != nil {
-				return fmt.Errorf("record schema migration %d: %w", migration.version, err)
-			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES ($1, $2)`, currentSchemaVersion, time.Now().UTC()); err != nil {
+			return fmt.Errorf("record schema version: %w", err)
 		}
 		return nil
 	})

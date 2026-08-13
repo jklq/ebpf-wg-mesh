@@ -87,7 +87,6 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 			hc.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED &&
 			hc.GetPath() == "" &&
 			hc.GetPort() == 0 &&
-			hc.GetIntervalSeconds() == 0 &&
 			hc.GetTimeoutSeconds() == 0 {
 			runtime.HealthCheck = nil
 		}
