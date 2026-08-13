@@ -14,6 +14,7 @@ export function ConfirmDeleteDialog({
 	name,
 	description,
 	confirmLabel = "Delete",
+	busyLabel,
 	busy = false,
 	error,
 	onCancel,
@@ -23,6 +24,7 @@ export function ConfirmDeleteDialog({
 	name: string;
 	description: ReactNode;
 	confirmLabel?: string;
+	busyLabel?: string;
 	busy?: boolean;
 	error?: string;
 	onCancel: () => void;
@@ -95,7 +97,7 @@ export function ConfirmDeleteDialog({
 								style={{ animation: "spin 1s linear infinite" }}
 							/>
 						)}
-						{busy ? "Deleting…" : confirmLabel}
+						{busy ? (busyLabel ?? "Deleting…") : confirmLabel}
 					</button>
 				</div>
 			</form>

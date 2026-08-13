@@ -71,6 +71,9 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 			return serviceRecord{}, err
 		}
 	}
+	if err := validateVolumeReplicaCompatibility(spec, defaultDesiredReplicaCount); err != nil {
+		return serviceRecord{}, err
+	}
 	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, agentID)
 	if err != nil {
 		return serviceRecord{}, err
@@ -85,13 +88,8 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, 1, 1, "create", "", "", now); err != nil {
 		return serviceRecord{}, err
 	}
-	allocationID := mustID()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
-		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
-		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ip, healthy_ports, healthy, updated_at
-	) VALUES ($1, $2, $3, 1, 0, 1, 0, 'Pending', '', '', $4, FALSE, $5)`,
-		allocationID, rec.ID, agentID, []byte("[]"), now); err != nil {
+	rec.DesiredReplicaCount = defaultDesiredReplicaCount
+	if _, err := s.reconcileServiceReplicasTx(ctx, tx, rec, agentID, now); err != nil {
 		return serviceRecord{}, err
 	}
 	if desiredSourceSpec(spec) != nil {
@@ -112,16 +110,17 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 	now := time.Now().UTC()
 	spec = canonicalServiceSpec(spec)
 	rec := serviceRecord{
-		ID:               mustID(),
-		EnvironmentID:    environment.ID,
-		ProjectID:        environment.ProjectID,
-		Name:             strings.TrimSpace(name),
-		Spec:             spec,
-		SpecRevision:     1,
-		AllocatedAgentID: agentID,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		PendingChanges:   true,
+		ID:                  mustID(),
+		EnvironmentID:       environment.ID,
+		ProjectID:           environment.ProjectID,
+		Name:                strings.TrimSpace(name),
+		Spec:                spec,
+		SpecRevision:        1,
+		AllocatedAgentID:    agentID,
+		DesiredReplicaCount: defaultDesiredReplicaCount,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		PendingChanges:      true,
 	}
 	if source := desiredSourceSpec(spec); source != nil {
 		rec.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
@@ -135,9 +134,10 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO services(
 			id, environment_id, name, current_spec_revision, current_rollout_generation,
-			current_resolved_image, last_successful_commit_sha, latest_build_id, created_at, updated_at
-		) VALUES ($1, $2, $3, 1, 0, '', '', '', $4, $4)`,
-		rec.ID, rec.EnvironmentID, rec.Name, now,
+			current_resolved_image, last_successful_commit_sha, latest_build_id,
+			desired_replica_count, placement_message, created_at, updated_at
+		) VALUES ($1, $2, $3, 1, 0, '', '', '', $4, '', $5, $5)`,
+		rec.ID, rec.EnvironmentID, rec.Name, rec.DesiredReplicaCount, now,
 	); err != nil {
 		return serviceRecord{}, err
 	}
@@ -342,11 +342,11 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 		default:
 			agentIDs := []string{agentID}
 			if binding.ServiceID != serviceID {
-				var previousAgentID string
-				if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM allocations WHERE service_id = $1`, binding.ServiceID).Scan(&previousAgentID); err != nil {
+				previousIDs, err := s.agentIDsForServiceQuerier(ctx, tx, binding.ServiceID)
+				if err != nil {
 					return err
 				}
-				agentIDs = append(agentIDs, previousAgentID)
+				agentIDs = append(agentIDs, previousIDs...)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE domain_bindings
@@ -380,29 +380,6 @@ func (s *Store) chooseAgentForServiceTx(ctx context.Context, tx *sql.Tx, environ
 		}
 	}
 	return s.chooseAgentForPlacementQuerier(ctx, tx, spec)
-}
-
-func (s *Store) chooseAgentForPlacementQuerier(ctx context.Context, q serviceQueryer, spec *platformv1.ServiceSpec) (string, error) {
-	candidates, err := s.placementCandidatesQuerier(ctx, q)
-	if err != nil {
-		return "", err
-	}
-	for _, candidate := range candidates {
-		if slices.Contains(s.reservedAgentIDs, candidate.ID) {
-			continue
-		}
-		if spec != nil {
-			runtime := serviceRuntime(spec)
-			if candidate.CPUMillisCapacity > 0 && candidate.UsedCPUMillis+runtime.GetCpuMillis() > candidate.CPUMillisCapacity {
-				continue
-			}
-			if candidate.MemoryMebibytesCapcity > 0 && candidate.UsedMemoryMebibytes+runtime.GetMemoryMebibytes() > candidate.MemoryMebibytesCapcity {
-				continue
-			}
-		}
-		return candidate.ID, nil
-	}
-	return "", errNoPlacementAvailable
 }
 
 func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer) ([]placementCandidate, error) {
@@ -564,7 +541,7 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		if volumeName := serviceVolumeName(spec); volumeName != "" {
 			svc.VolumeId = volumeIDs[volumeKey(svc.EnvironmentId, volumeName)]
 		}
-		svc.PrivateIpv6, err = privateIPv6(agent.WorkloadIPv6Subnet, svc.EnvironmentId, svc.ServiceId)
+		svc.PrivateIpv6, err = privateIPv6(agent.WorkloadIPv6Subnet, svc.EnvironmentId, svc.AllocationId)
 		if err != nil {
 			return nil, err
 		}
@@ -580,12 +557,15 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 
 func (s *Store) internalHostsForEnvironment(ctx context.Context, environmentID string) ([]*agentv1.InternalHost, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.name, ag.workload_ipv6_subnet
+		`SELECT s.id, s.name, a.id, ag.workload_ipv6_subnet, a.allocation_ip
 		   FROM services s
 		   JOIN allocations a ON a.service_id = s.id
 		   JOIN agents ag ON ag.id = a.agent_id
 		  WHERE s.environment_id = $1
-		  ORDER BY s.created_at ASC`,
+		    AND a.healthy = TRUE
+		    AND a.applied_spec_revision >= s.current_spec_revision
+		    AND a.applied_rollout_generation >= s.current_rollout_generation
+		  ORDER BY s.created_at ASC, a.id ASC`,
 		environmentID,
 	)
 	if err != nil {
@@ -595,13 +575,17 @@ func (s *Store) internalHostsForEnvironment(ctx context.Context, environmentID s
 
 	var hosts []*agentv1.InternalHost
 	for rows.Next() {
-		var serviceID, name, workloadSubnet string
-		if err := rows.Scan(&serviceID, &name, &workloadSubnet); err != nil {
+		var serviceID, name, allocationID, workloadSubnet, reportedIP string
+		if err := rows.Scan(&serviceID, &name, &allocationID, &workloadSubnet, &reportedIP); err != nil {
 			return nil, err
 		}
-		ipv6, err := privateIPv6(workloadSubnet, environmentID, serviceID)
-		if err != nil {
-			return nil, err
+		ipv6 := strings.TrimSpace(reportedIP)
+		if !s.useReportedAllocationIP || net.ParseIP(ipv6) == nil {
+			derived, err := privateIPv6(workloadSubnet, environmentID, allocationID)
+			if err != nil {
+				return nil, err
+			}
+			ipv6 = derived
 		}
 		hosts = append(hosts, &agentv1.InternalHost{
 			Hostname: internalServiceHostname(name, serviceID),
@@ -636,13 +620,15 @@ func (s *Store) domainTargetPortsForService(ctx context.Context, serviceID strin
 
 func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT d.hostname, d.target_port, a.healthy_ports, a.allocation_ip, ag.workload_ipv6_subnet, s.environment_id, a.service_id
+		`SELECT d.hostname, d.target_port, a.healthy_ports, a.allocation_ip, ag.workload_ipv6_subnet, s.environment_id, a.id
 		   FROM domain_bindings d
 		   JOIN allocations a ON a.service_id = d.service_id
 		   JOIN services s ON s.id = a.service_id
 		   JOIN agents ag ON ag.id = a.agent_id
 		  WHERE a.healthy = TRUE
-		  ORDER BY d.hostname ASC`,
+		    AND a.applied_spec_revision >= s.current_spec_revision
+		    AND a.applied_rollout_generation >= s.current_rollout_generation
+		  ORDER BY d.hostname ASC, a.id ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -658,9 +644,9 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 			reportedIP     string
 			workloadSubnet string
 			environmentID  string
-			serviceID      string
+			allocationID   string
 		)
-		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyPorts), &reportedIP, &workloadSubnet, &environmentID, &serviceID); err != nil {
+		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyPorts), &reportedIP, &workloadSubnet, &environmentID, &allocationID); err != nil {
 			return nil, err
 		}
 		if !slices.Contains(healthyPorts, targetPort) {
@@ -673,7 +659,7 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 			}
 		} else {
 			var err error
-			allocationIP, err = privateIPv6(workloadSubnet, environmentID, serviceID)
+			allocationIP, err = privateIPv6(workloadSubnet, environmentID, allocationID)
 			if err != nil {
 				return nil, fmt.Errorf("derive ingress allocation ip: %w", err)
 			}

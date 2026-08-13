@@ -84,6 +84,8 @@ var currentSchema = []string{
 			current_resolved_image STRING NOT NULL DEFAULT '',
 			last_successful_commit_sha STRING NOT NULL DEFAULT '',
 			latest_build_id STRING NOT NULL DEFAULT '',
+			desired_replica_count INT8 NOT NULL DEFAULT 1,
+			placement_message STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (environment_id, name)
@@ -109,7 +111,7 @@ var currentSchema = []string{
 			ON domain_bindings(service_id) WHERE platform_generated = TRUE`,
 	`CREATE TABLE allocations (
 			id STRING PRIMARY KEY,
-			service_id STRING NOT NULL UNIQUE REFERENCES services(id) ON DELETE CASCADE,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			agent_id STRING NOT NULL REFERENCES agents(id),
 			desired_spec_revision INT8 NOT NULL,
 			applied_spec_revision INT8 NOT NULL,
@@ -120,9 +122,14 @@ var currentSchema = []string{
 			allocation_ip STRING NOT NULL DEFAULT '',
 			healthy_ports JSONB NOT NULL DEFAULT '[]',
 			healthy BOOL NOT NULL,
+			restart_count INT8 NOT NULL DEFAULT 0,
+			last_restarted_at TIMESTAMPTZ NULL,
+			restart_history JSONB NOT NULL DEFAULT '[]',
+			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE INDEX idx_allocations_agent ON allocations(agent_id, updated_at, id)`,
+	`CREATE INDEX idx_allocations_service ON allocations(service_id, id)`,
 	`CREATE TABLE service_rollouts (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			rollout_generation INT8 NOT NULL,

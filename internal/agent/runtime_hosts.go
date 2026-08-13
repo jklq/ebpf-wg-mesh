@@ -15,7 +15,10 @@ const internalDomainSuffix = ".mesh.internal"
 func renderServiceHostsFile(hosts []*agentv1.InternalHost) ([]byte, error) {
 	sorted := append([]*agentv1.InternalHost(nil), hosts...)
 	slices.SortFunc(sorted, func(left, right *agentv1.InternalHost) int {
-		return strings.Compare(left.GetHostname(), right.GetHostname())
+		if cmp := strings.Compare(left.GetHostname(), right.GetHostname()); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(left.GetIpv6(), right.GetIpv6())
 	})
 
 	var out bytes.Buffer

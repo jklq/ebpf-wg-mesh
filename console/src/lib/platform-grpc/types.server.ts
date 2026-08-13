@@ -84,6 +84,7 @@ export interface CreateServiceRequest {
 					port?: number;
 					timeoutSeconds?: number;
 				};
+				volumeName?: string;
 			};
 			source: {
 				sourceSpec: {
@@ -119,6 +120,7 @@ export interface UpdateServiceRequest {
 					port?: number;
 					timeoutSeconds?: number;
 				};
+				volumeName?: string;
 			};
 			source: {
 				sourceSpec: {
@@ -147,6 +149,12 @@ export interface GetServiceStatusRequest {
 
 export interface RedeployServiceRequest {
 	serviceId: string;
+}
+
+export interface ScaleServiceRequest {
+	serviceId: string;
+	desiredReplicaCount: number;
+	confirmScaleToZero?: boolean;
 }
 
 export interface DeleteServiceRequest {

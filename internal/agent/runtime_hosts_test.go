@@ -28,6 +28,27 @@ func TestRenderServiceHostsFileProvidesFullAndShortInternalNames(t *testing.T) {
 	}
 }
 
+func TestRenderServiceHostsFilePublishesMultipleAddressesForOneService(t *testing.T) {
+	t.Parallel()
+
+	contents, err := renderServiceHostsFile([]*agentv1.InternalHost{
+		{Hostname: "web.mesh.internal", Ipv6: "fd00:20::11"},
+		{Hostname: "web.mesh.internal", Ipv6: "fd00:20::10"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, line := range []string{
+		"fd00:20::10 web.mesh.internal web",
+		"fd00:20::11 web.mesh.internal web",
+	} {
+		if !strings.Contains(text, line+"\n") {
+			t.Fatalf("hosts file %q does not contain %q", text, line)
+		}
+	}
+}
+
 func TestRenderServiceHostsFileRejectsNonMeshHosts(t *testing.T) {
 	t.Parallel()
 

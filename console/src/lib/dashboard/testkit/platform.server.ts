@@ -47,6 +47,12 @@ export interface FakePlatformGateway extends PlatformGateway {
 		user: DashboardUser;
 		serviceId: string;
 	}>;
+	scaleServiceCalls: Array<{
+		user: DashboardUser;
+		serviceId: string;
+		desiredReplicaCount: number;
+		confirmScaleToZero?: boolean;
+	}>;
 	discardServiceChangesCalls: Array<{
 		user: DashboardUser;
 		serviceId: string;
@@ -107,6 +113,7 @@ export interface FakePlatformGateway extends PlatformGateway {
 		createService?: Error;
 		updateService?: Error;
 		redeployService?: Error;
+		scaleService?: Error;
 		discardServiceChanges?: Error;
 		deleteService?: Error;
 		getService?: Error;
@@ -129,6 +136,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		createServiceCalls: [],
 		updateServiceCalls: [],
 		redeployServiceCalls: [],
+		scaleServiceCalls: [],
 		discardServiceChangesCalls: [],
 		deleteServiceCalls: [],
 		getServiceCalls: [],
@@ -401,6 +409,28 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				});
 			}
 			return updated;
+		},
+		async scaleService(user, input): Promise<DashboardServiceStatus> {
+			platform.scaleServiceCalls.push({ user, ...input });
+			if (platform.errors.scaleService) {
+				throw platform.errors.scaleService;
+			}
+			const current = platform.services.find(
+				(service) => service.id === input.serviceId,
+			);
+			if (!current) {
+				throw new Error("service not found");
+			}
+			const updated = {
+				...current,
+				desiredReplicaCount: input.desiredReplicaCount,
+			};
+			platform.services = platform.services.map((service) =>
+				service.id === updated.id ? updated : service,
+			);
+			return (
+				platform.serviceStatuses.get(input.serviceId) ?? { service: updated }
+			);
 		},
 		async redeployService(user, input): Promise<DashboardServiceStatus> {
 			platform.redeployServiceCalls.push({ user, ...input });
