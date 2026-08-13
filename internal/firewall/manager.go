@@ -224,8 +224,10 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 }
 
 // UpdateIdentityCatalog changes the configured identity catalog in the
-// existing BPF map. Local container entries take precedence and are restored
-// to the latest configured value when their container exits.
+// existing BPF map without reloading programs. Removed /128 identities are
+// deleted even when a local container still owns the address, so catalog
+// shrink is fail-closed. Remaining local containers keep their live veth
+// redirect and pick up the catalog's network identity.
 func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	if m == nil {
 		return errors.New("firewall manager is not running")
@@ -251,20 +253,9 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	local := make(map[[16]byte]struct{}, len(m.containers))
-	for _, runtime := range m.containers {
-		if runtime != nil && runtime.ipv6.IsValid() && runtime.ipv6.Is6() {
-			local[addrAs16(runtime.ipv6)] = struct{}{}
-		}
-	}
 	for key := range m.configuredByKey {
 		if _, retained := next[key]; retained {
 			continue
-		}
-		if key.Prefixlen == 128 {
-			if _, overridden := local[key.IpAddress]; overridden {
-				continue
-			}
 		}
 		if err := m.objs.ClusterIdentityTrie.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			return fmt.Errorf("delete identity trie entry for %s: %w", netip.AddrFrom16(key.IpAddress), err)
@@ -272,8 +263,11 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	}
 	for key, value := range next {
 		if key.Prefixlen == 128 {
-			if _, overridden := local[key.IpAddress]; overridden {
-				continue
+			if runtime := localRuntimeByIP(m.containers, key.IpAddress); runtime != nil {
+				// Keep the live veth redirect, but take the catalog identity so a
+				// shrink/restore changes policy without recreating the container.
+				value.HostIp = m.localHostIP
+				value.VethIfindex = runtime.ifindex
 			}
 		}
 		if current, exists := m.configuredByKey[key]; exists && current == value {
@@ -685,8 +679,26 @@ func resolveHostVethIfindexWithRetry(ctx context.Context, pid uint32, attempts i
 	return 0, lastErr
 }
 
+func localRuntimeByIP(containers map[string]*containerRuntime, ip [16]byte) *containerRuntime {
+	for _, runtime := range containers {
+		if runtime != nil && runtime.ipv6.IsValid() && runtime.ipv6.Is6() && addrAs16(runtime.ipv6) == ip {
+			return runtime
+		}
+	}
+	return nil
+}
+
 func addrAs16(addr netip.Addr) [16]byte {
 	return addr.As16()
+}
+
+func (m *Manager) AttachedCount() int {
+	if m == nil {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.containers)
 }
 
 func (m *Manager) Close() error {

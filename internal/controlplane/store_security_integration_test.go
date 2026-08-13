@@ -68,6 +68,12 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		t.Fatalf("deploy staging environment: %#v: %v", stagingDeployed, err)
 	}
 	stagingService = stagingDeployed[0]
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, ""); err != nil {
+		t.Fatalf("mark production healthy: %v", err)
+	}
+	if err := store.markAllocationHealthyForTest(ctx, stagingService.ID, ""); err != nil {
+		t.Fatalf("mark staging healthy: %v", err)
+	}
 	state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)
 	if err != nil {
 		t.Fatalf("desiredStateForAgent: %v", err)

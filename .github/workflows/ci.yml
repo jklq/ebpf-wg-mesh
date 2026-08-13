@@ -46,6 +46,60 @@ jobs:
       - name: Run console unit tests
         run: make test-unit-console
 
+  linux-runtime:
+    name: Privileged containerd and eBPF tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install containerd, CNI, and privileged dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes containerd containernetworking-plugins iproute2 iptables
+          sudo mkdir -p /usr/lib/cni /etc/cni/net.d
+          if [ -d /opt/cni/bin ] && [ ! -e /usr/lib/cni/bridge ]; then
+            sudo ln -sfn /opt/cni/bin/* /usr/lib/cni/
+          fi
+          sudo tee /etc/cni/net.d/10-mesh-cni.conflist >/dev/null <<'EOF'
+          {
+            "cniVersion": "1.0.0",
+            "name": "mesh-cni",
+            "plugins": [
+              {
+                "type": "bridge",
+                "bridge": "mesh0",
+                "isGateway": true,
+                "ipMasq": false,
+                "promiscMode": true,
+                "ipam": {
+                  "type": "host-local",
+                  "ranges": [[{ "subnet": "fd00:200::/48" }]],
+                  "routes": [{ "dst": "::/0" }]
+                }
+              },
+              { "type": "loopback" }
+            ]
+          }
+          EOF
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+          sudo sysctl -w net.ipv6.conf.all.forwarding=1
+          sudo sysctl -w net.ipv6.conf.default.forwarding=1
+          sudo systemctl enable --now containerd
+          sudo ctr images pull docker.io/library/busybox:1.36.1
+      - name: Run containerd engine and eBPF policy tests
+        run: |
+          set -euo pipefail
+          export PATH="$(go env GOPATH)/bin:/usr/local/go/bin:$PATH"
+          sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
+            "$(command -v go)" test -count=1 -timeout 10m -v ./internal/agent
+          sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
+            "$(command -v go)" test -count=1 -timeout 10m -v ./internal/firewall
+
   integration:
     name: CockroachDB integration tests
     runs-on: ubuntu-24.04
