@@ -16,10 +16,12 @@ if (( ${#integration_files} == 0 )); then
 fi
 
 for file in $integration_files; do
-	test_names=("${(@f)$(rg -o 'func (Test[^ (]+)\(' -r '$1' -- "$file")}")
+	# Helper files (harnesses, fixtures) are integration-tagged but have no Test*.
+	# rg exits 1 on no match; keep going instead of aborting the suite.
+	test_names=("${(@f)$(rg -o 'func (Test[^ (]+)\(' -r '$1' -- "$file" || true)}")
+	test_names=(${test_names:#})
 	if (( ${#test_names} == 0 )); then
-		print -u2 "no Test* functions found in $file"
-		exit 1
+		continue
 	fi
 
 	for test_name in $test_names; do

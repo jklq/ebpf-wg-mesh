@@ -1,7 +1,11 @@
-.PHONY: test-unit-go test-unit-console test-integration test-integration-go test-integration-console test-e2e-local test-e2e-vm dev-ephemeral
+.PHONY: test-unit-go test-unit-console test-integration test-integration-go test-integration-console test-linux-runtime test-e2e-local test-e2e-vm dev-ephemeral
 
 test-unit-go:
 	go test ./...
+
+test-linux-runtime:
+	go test -count=1 -timeout 10m ./internal/agent
+	go test -count=1 -timeout 10m ./internal/firewall
 
 test-unit-console:
 	bun --cwd=console run test:unit
