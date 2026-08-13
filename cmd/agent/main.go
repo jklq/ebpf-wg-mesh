@@ -9,6 +9,7 @@ import (
 
 	"ebof-wg-mesh/internal/agent"
 	"ebof-wg-mesh/internal/bootstrap"
+	"ebof-wg-mesh/internal/config"
 )
 
 func main() {
@@ -17,6 +18,7 @@ func main() {
 		slog.Error("bootstrap agent", "error", err)
 		os.Exit(1)
 	}
+	slog.Info(config.AgentStartupContract(cfg).String())
 	app, err := agent.New(cfg)
 	if err != nil {
 		slog.Error("create agent", "error", err)

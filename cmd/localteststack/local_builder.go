@@ -43,8 +43,9 @@ func startLocalBuilder(ctx context.Context, stateDir string, controlPlaneAddr st
 		return nil, nil, err
 	}
 	cfg := config.BuilderConfig{
-		ID:   localBuilderID,
-		Name: "Local Teststack Builder",
+		Profile: config.ProfileDevelopment,
+		ID:      localBuilderID,
+		Name:    "Local Teststack Builder",
 		ControlPlane: config.BuilderControlPlaneConfig{
 			Address: controlPlaneAddr,
 			TLS: config.InternalClientTLSConfig{
@@ -65,6 +66,7 @@ func startLocalBuilder(ctx context.Context, stateDir string, controlPlaneAddr st
 	if err := config.FinalizeBuilder(&cfg); err != nil {
 		return nil, nil, fmt.Errorf("finalize local builder config: %w", err)
 	}
+	fmt.Println(config.BuilderStartupContract(cfg).String())
 	if _, err := exec.LookPath(cfg.GitBinary); err != nil {
 		return nil, nil, fmt.Errorf("find %s: %w", cfg.GitBinary, err)
 	}

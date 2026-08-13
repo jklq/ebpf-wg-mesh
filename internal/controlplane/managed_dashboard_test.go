@@ -31,6 +31,9 @@ func TestManagedDashboardDesiredEnvironmentContainsOnlySecretFileReferences(t *t
 			t.Fatalf("secret %s was included in desired state", key)
 		}
 	}
+	if env["DASHBOARD_PROFILE"] != string(config.ProfileProduction) {
+		t.Fatalf("expected production dashboard profile, got %q", env["DASHBOARD_PROFILE"])
+	}
 	for _, key := range []string{
 		"DASHBOARD_DATABASE_URL_FILE",
 		"DASHBOARD_JWT_SECRET_FILE",
