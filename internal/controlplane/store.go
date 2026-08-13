@@ -65,6 +65,20 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
+	if s == nil || s.db == nil {
+		return false, false
+	}
+	if err := s.db.PingContext(ctx); err != nil {
+		return false, false
+	}
+	var version int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return true, false
+	}
+	return true, version >= currentSchemaVersion
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {

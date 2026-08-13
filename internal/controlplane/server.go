@@ -8,35 +8,38 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/health"
 
 	"google.golang.org/grpc"
 )
 
 type Server struct {
-	cfg          config.ControlPlaneConfig
-	store        *Store
-	logStore     *LogStore
-	logEmitter   *LogEmitter
-	notifier     *Notifier
-	authority    *TLSAuthority
-	internalGRPC *grpc.Server
-	ingress      *IngressSyncer
-	dashboard    *ManagedDashboardReconciler
-	registry     *RegistryPolicy
-	registryAuth *RegistryAuth
-	registryHTTP *http.Server
-	github       *GitHubCatalog
-	webhooks     *GitHubWebhookProcessor
-	coordinator  *GitHubCoordinator
-	reconciler   *GitHubReconciler
-	expiry       *AgentExpiryTracker
-	internalLn   net.Listener
-	registryLn   net.Listener
+	cfg            config.ControlPlaneConfig
+	store          *Store
+	logStore       *LogStore
+	logEmitter     *LogEmitter
+	notifier       *Notifier
+	authority      *TLSAuthority
+	internalGRPC   *grpc.Server
+	ingress        *IngressSyncer
+	dashboard      *ManagedDashboardReconciler
+	registry       *RegistryPolicy
+	registryAuth   *RegistryAuth
+	registryHTTP   *http.Server
+	github         *GitHubCatalog
+	webhooks       *GitHubWebhookProcessor
+	coordinator    *GitHubCoordinator
+	reconciler     *GitHubReconciler
+	expiry         *AgentExpiryTracker
+	internalLn     net.Listener
+	registryLn     net.Listener
+	healthShutdown func(context.Context) error
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
@@ -143,7 +146,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithPlatformEvents(platformEvents),
 	)
 	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
-	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, store, ingress, notifier)
+	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store, ingress, notifier)
 	internal := grpc.NewServer(
 		grpc.Creds(internalCreds),
 		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
@@ -176,7 +179,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		}
 	}
 
-	return &Server{
+	server := &Server{
 		cfg:          cfg,
 		store:        store,
 		logStore:     logStore,
@@ -196,7 +199,51 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		expiry:       expiry,
 		internalLn:   internalLn,
 		registryLn:   registryLn,
-	}, nil
+	}
+	if listen := strings.TrimSpace(cfg.Health.Listen); listen != "" {
+		_, shutdown, err := health.ListenAndServe(ctx, listen, server.readyReport)
+		if err != nil {
+			_ = internalLn.Close()
+			if registryLn != nil {
+				_ = registryLn.Close()
+			}
+			return nil, fmt.Errorf("listen health: %w", err)
+		}
+		server.healthShutdown = shutdown
+	}
+	return server, nil
+}
+
+func (s *Server) readyReport(ctx context.Context) health.Report {
+	var failed []string
+	databaseOK, migrationsOK := false, false
+	if s != nil && s.store != nil {
+		databaseOK, migrationsOK = s.store.Ready(ctx)
+	}
+	if !databaseOK {
+		failed = append(failed, "database")
+	}
+	if !migrationsOK {
+		failed = append(failed, "migrations")
+	}
+	if s != nil && s.logStore != nil && !s.logStore.Ready(ctx) {
+		failed = append(failed, "logs")
+	}
+	if archive, ok := s.sourceArchiveStore(); !ok || !archive.Ready() {
+		failed = append(failed, "source_storage")
+	}
+	if len(failed) > 0 {
+		return health.Report{Status: health.StatusNotReady, Failed: failed}
+	}
+	return health.Report{Status: health.StatusReady}
+}
+
+func (s *Server) sourceArchiveStore() (*FileSourceArchiveStore, bool) {
+	if s == nil || s.store == nil {
+		return nil, false
+	}
+	archive, ok := s.store.sourceArchives.(*FileSourceArchiveStore)
+	return archive, ok
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -291,6 +338,14 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 
 func (s *Server) Close() error {
 	var errs []error
+	if s.healthShutdown != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := s.healthShutdown(shutdownCtx)
+		cancel()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errs = append(errs, err)
+		}
+	}
 	if s.expiry != nil {
 		s.expiry.Close()
 	}

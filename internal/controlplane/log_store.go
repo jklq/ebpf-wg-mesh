@@ -160,6 +160,13 @@ func (s *LogStore) Enabled() bool {
 	return s != nil && s.db != nil
 }
 
+func (s *LogStore) Ready(ctx context.Context) bool {
+	if !s.Enabled() {
+		return true
+	}
+	return s.db.PingContext(ctx) == nil
+}
+
 func (s *LogStore) ensureSchema(ctx context.Context, retentionDays int) error {
 	if !s.Enabled() {
 		return nil
