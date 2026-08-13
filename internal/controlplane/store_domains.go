@@ -241,11 +241,13 @@ func (s *Store) serviceStatus(ctx context.Context, userID, projectID, serviceID 
 // going without special-casing the not-yet-scheduled path.
 func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error) {
 	var alloc allocationRecord
+	var restartRaw []byte
 	err := s.db.QueryRowContext(ctx,
 		`SELECT a.id, a.service_id, e.project_id, s.environment_id, a.agent_id,
 		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
 		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
-		        a.applied_rollout_generation, a.healthy_ports
+		        a.applied_rollout_generation, a.healthy_ports, a.restart_observation_json,
+		        a.operator_restart_nonce
 		   FROM allocations a JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id WHERE a.service_id = $1`,
 		serviceID,
@@ -265,6 +267,8 @@ func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (al
 		&alloc.DesiredRolloutGeneration,
 		&alloc.AppliedRolloutGeneration,
 		(*jsonInt32Slice)(&alloc.HealthyPorts),
+		&restartRaw,
+		&alloc.OperatorRestartNonce,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return allocationRecord{}, nil
@@ -272,5 +276,10 @@ func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (al
 	if err != nil {
 		return allocationRecord{}, err
 	}
+	obs, err := decodeRestartObservation(restartRaw)
+	if err != nil {
+		return allocationRecord{}, err
+	}
+	alloc.Restart = obs
 	return alloc, nil
 }

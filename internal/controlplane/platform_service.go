@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -38,6 +39,7 @@ type platformStore interface {
 	createScheduledService(ctx context.Context, userID, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
 	updateService(ctx context.Context, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
+	restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
 	discardServiceChanges(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
 	requestServiceSourceSync(ctx context.Context, userID, projectID, serviceID string) error
 	enqueueBuildForService(ctx context.Context, userID, projectID, serviceID, commitSHA string) (buildRunRecord, error)
@@ -387,6 +389,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := validateServiceSpecPorts(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service ports: %v", err)
 	}
+	if err := validateServiceSpecRestart(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
+	}
 	environment, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
@@ -449,6 +454,9 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	}
 	if err := validateServiceSpecPorts(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service ports: %v", err)
+	}
+	if err := validateServiceSpecRestart(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
 	current, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
@@ -530,6 +538,43 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 	currentService, err = s.decorateServiceRecordWithAllocation(ctx, currentService, &allocation)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
+	}
+	index := s.events.Publish(currentService.EnvironmentID)
+	return &platformv1.ServiceStatus{Service: toProtoService(currentService), Allocation: toProtoAllocation(allocation), Index: index}, nil
+}
+
+func (s *PlatformService) RestartService(ctx context.Context, req *platformv1.RestartServiceRequest) (*platformv1.ServiceStatus, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	currentService, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
+	}
+	if err := s.requireProjectWriteAccess(ctx, identity.UserID, currentService.ProjectID); err != nil {
+		return nil, err
+	}
+	service, err := s.store.restartService(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.FailedPrecondition, "restart service: %v", err)
+	}
+	if service.AllocatedAgentID != "" {
+		s.notifier.Notify(service.AllocatedAgentID)
+	}
+	currentService, allocation, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "restart service status: %v", err)
+	}
+	currentService, err = s.decorateServiceRecordWithAllocation(ctx, currentService, &allocation)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate restart status: %v", err)
 	}
 	index := s.events.Publish(currentService.EnvironmentID)
 	return &platformv1.ServiceStatus{Service: toProtoService(currentService), Allocation: toProtoAllocation(allocation), Index: index}, nil
@@ -1069,6 +1114,36 @@ func buildRunRecordFromProto(status *platformv1.BuildStatus) buildRunRecord {
 		rec.FinishedAt = sql.NullTime{Time: finished.AsTime(), Valid: true}
 	}
 	return rec
+}
+
+func validateServiceSpecRestart(spec *platformv1.ServiceSpec) error {
+	runtime := spec.GetRuntime()
+	if err := restartpolicy.ValidateRestart(runtime.GetRestart()); err != nil {
+		return err
+	}
+	if check := runtime.GetLivenessCheck(); check != nil {
+		if check.GetPort() > 0 {
+			if err := validatePort(check.GetPort()); err != nil {
+				return err
+			}
+		}
+		if check.GetTimeoutSeconds() < 0 {
+			return errors.New("liveness check timeout must be non-negative")
+		}
+		switch check.GetType() {
+		case platformv1.HealthCheck_TYPE_UNSPECIFIED:
+			if check.GetPath() != "" || check.GetPort() != 0 || check.GetTimeoutSeconds() != 0 {
+				return errors.New("only explicit HTTP liveness checks are supported")
+			}
+		case platformv1.HealthCheck_TYPE_HTTP:
+			if !validHealthCheckPath(check.GetPath()) {
+				return errors.New("HTTP liveness check path must be an absolute request path beginning with one slash")
+			}
+		default:
+			return errors.New("unsupported liveness check type")
+		}
+	}
+	return nil
 }
 
 func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {

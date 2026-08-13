@@ -66,6 +66,60 @@ message HealthCheck {
   int32 timeout_seconds = 4;
 }
 
+enum RestartPolicy {
+  RESTART_POLICY_UNSPECIFIED = 0;
+  RESTART_POLICY_ALWAYS = 1;
+  RESTART_POLICY_ON_FAILURE = 2;
+  RESTART_POLICY_NEVER = 3;
+}
+
+enum RestartCause {
+  RESTART_CAUSE_UNSPECIFIED = 0;
+  RESTART_CAUSE_EXIT_ZERO = 1;
+  RESTART_CAUSE_EXIT_NONZERO = 2;
+  RESTART_CAUSE_SIGNAL = 3;
+  RESTART_CAUSE_OOM_KILL = 4;
+  RESTART_CAUSE_LIVENESS = 5;
+  RESTART_CAUSE_OPERATOR = 6;
+  RESTART_CAUSE_NODE_LOSS = 7;
+}
+
+// ServiceRestart is the explicit process restart setting for a service.
+// Unspecified fields receive platform defaults at canonicalization time.
+message ServiceRestart {
+  RestartPolicy policy = 1;
+  // Maximum number of restarts in the current crash window. Zero means no
+  // count bound; the window, if set, is then the only budget.
+  int32 max_restarts = 2;
+  // Crash window measured from the first restart in the current streak.
+  // Zero means no time bound; max_restarts, if set, is then the only budget.
+  int32 window_seconds = 3;
+  int32 initial_delay_ms = 4;
+  int32 max_delay_ms = 5;
+  double backoff_multiplier = 6;
+  // Fractional jitter applied to the backoff delay, in [0, 1].
+  double jitter = 7;
+  // Running this long without a crash resets the crash history.
+  int32 stable_after_seconds = 8;
+}
+
+// RestartObservation is the durable restart view shared by agent and control plane.
+message RestartObservation {
+  int32 restart_count = 1;
+  google.protobuf.Timestamp window_started_at = 2;
+  google.protobuf.Timestamp last_restart_at = 3;
+  google.protobuf.Timestamp next_restart_at = 4;
+  google.protobuf.Timestamp started_at = 5;
+  RestartCause last_cause = 6;
+  int32 last_exit_code = 7;
+  int32 last_signal = 8;
+  bool crash_loop = 9;
+  int64 applied_rollout_generation = 10;
+  int64 applied_operator_restart_nonce = 11;
+  string message = 12;
+  bool awaiting_restart = 13;
+}
+
 message ServiceRuntimePort {
   int32 port = 1;
   bool primary = 2;
@@ -80,6 +134,8 @@ message ServiceRuntime {
   repeated ServiceRuntimePort ports = 6;
   HealthCheck health_check = 7;
   string volume_name = 8;
+  ServiceRestart restart = 9;
+  HealthCheck liveness_check = 10;
 }
 
 message DirectImageSource {
@@ -286,6 +342,8 @@ message AllocationStatus {
   int64 desired_rollout_generation = 11;
   int64 applied_rollout_generation = 12;
   repeated int32 healthy_ports = 13;
+  RestartObservation restart = 14;
+  int64 operator_restart_nonce = 15;
 }
 
 message ServiceStatus {
@@ -375,6 +433,10 @@ message UpdateServiceRequest {
 }
 
 message RedeployServiceRequest {
+  string service_id = 1;
+}
+
+message RestartServiceRequest {
   string service_id = 1;
 }
 
@@ -636,6 +698,7 @@ service PlatformService {
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
   rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus);
+  rpc RestartService(RestartServiceRequest) returns (ServiceStatus);
   rpc DiscardServiceChanges(DiscardServiceChangesRequest) returns (Service);
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
   rpc GetService(GetServiceRequest) returns (Service);

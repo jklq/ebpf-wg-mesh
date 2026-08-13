@@ -129,6 +129,19 @@ export interface DashboardHTTPHealthCheck {
 	timeoutSeconds?: number;
 }
 
+export type DashboardRestartPolicy = "always" | "on-failure" | "never";
+
+export interface DashboardRestartSpec {
+	policy: DashboardRestartPolicy;
+	maxRestarts?: number;
+	windowSeconds?: number;
+	initialDelayMs?: number;
+	maxDelayMs?: number;
+	backoffMultiplier?: number;
+	jitter?: number;
+	stableAfterSeconds?: number;
+}
+
 export {
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
@@ -140,6 +153,8 @@ export interface DashboardRuntimeSpec {
 	memoryMebibytes: number;
 	ports: DashboardRuntimePort[];
 	healthCheck?: DashboardHTTPHealthCheck;
+	livenessCheck?: DashboardHTTPHealthCheck;
+	restart?: DashboardRestartSpec;
 }
 
 export interface DashboardServiceSpec {
@@ -240,6 +255,13 @@ export interface DashboardAllocationStatus {
 	desiredRolloutGeneration: number;
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
+	operatorRestartNonce?: number;
+	restart?: {
+		restartCount: number;
+		crashLoop: boolean;
+		lastCause: string;
+		message: string;
+	};
 }
 
 export interface DashboardServiceStatus {
@@ -618,6 +640,10 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { serviceId: string },
 	): Promise<DashboardServiceStatus>;
+	restartService(
+		user: DashboardUser,
+		input: { serviceId: string },
+	): Promise<DashboardServiceStatus>;
 	discardServiceChanges(
 		user: DashboardUser,
 		input: {
@@ -752,6 +778,7 @@ export interface UpdateServiceInput {
 	trackedRef?: string;
 	dockerfilePath?: string;
 	contextDir?: string;
+	restart?: DashboardRestartSpec;
 }
 
 export interface DashboardService {
@@ -856,6 +883,9 @@ export interface DashboardService {
 		input: UpdateServiceInput,
 	): Promise<DashboardServiceRecord>;
 	redeployServiceFromSession(input: {
+		serviceId: string;
+	}): Promise<DashboardServiceStatus>;
+	restartServiceFromSession(input: {
 		serviceId: string;
 	}): Promise<DashboardServiceStatus>;
 	discardServiceChangesFromSession(input: {

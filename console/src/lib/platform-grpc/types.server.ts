@@ -84,6 +84,22 @@ export interface CreateServiceRequest {
 					port?: number;
 					timeoutSeconds?: number;
 				};
+				livenessCheck?: {
+					type: "TYPE_HTTP";
+					path: string;
+					port?: number;
+					timeoutSeconds?: number;
+				};
+				restart?: {
+					policy: string;
+					maxRestarts?: number;
+					windowSeconds?: number;
+					initialDelayMs?: number;
+					maxDelayMs?: number;
+					backoffMultiplier?: number;
+					jitter?: number;
+					stableAfterSeconds?: number;
+				};
 			};
 			source: {
 				sourceSpec: {
@@ -118,6 +134,22 @@ export interface UpdateServiceRequest {
 					path: string;
 					port?: number;
 					timeoutSeconds?: number;
+				};
+				livenessCheck?: {
+					type: "TYPE_HTTP";
+					path: string;
+					port?: number;
+					timeoutSeconds?: number;
+				};
+				restart?: {
+					policy: string;
+					maxRestarts?: number;
+					windowSeconds?: number;
+					initialDelayMs?: number;
+					maxDelayMs?: number;
+					backoffMultiplier?: number;
+					jitter?: number;
+					stableAfterSeconds?: number;
 				};
 			};
 			source: {

@@ -280,6 +280,12 @@ export function redeployServiceFromSession(input: {
 	return getDashboardService().redeployServiceFromSession(input);
 }
 
+export function restartServiceFromSession(input: {
+	serviceId: string;
+}): Promise<DashboardServiceStatus> {
+	return getDashboardService().restartServiceFromSession(input);
+}
+
 export function discardServiceChangesFromSession(input: {
 	serviceId: string;
 	changeIds?: Array<string>;

@@ -1,6 +1,13 @@
 package controlplane
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
+
+var schemaUpgrades = map[int][]string{
+	2: {
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS restart_observation_json JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS operator_restart_nonce INT8 NOT NULL DEFAULT 0`,
+	},
+}
 
 var currentSchema = []string{
 	`CREATE TABLE projects (
@@ -120,7 +127,9 @@ var currentSchema = []string{
 			allocation_ip STRING NOT NULL DEFAULT '',
 			healthy_ports JSONB NOT NULL DEFAULT '[]',
 			healthy BOOL NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
+			updated_at TIMESTAMPTZ NOT NULL,
+			restart_observation_json JSONB NOT NULL DEFAULT '{}',
+			operator_restart_nonce INT8 NOT NULL DEFAULT 0
 		)`,
 	`CREATE INDEX idx_allocations_agent ON allocations(agent_id, updated_at, id)`,
 	`CREATE TABLE service_rollouts (

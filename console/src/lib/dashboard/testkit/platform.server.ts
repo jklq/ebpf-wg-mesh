@@ -47,6 +47,10 @@ export interface FakePlatformGateway extends PlatformGateway {
 		user: DashboardUser;
 		serviceId: string;
 	}>;
+	restartServiceCalls: Array<{
+		user: DashboardUser;
+		serviceId: string;
+	}>;
 	discardServiceChangesCalls: Array<{
 		user: DashboardUser;
 		serviceId: string;
@@ -107,6 +111,7 @@ export interface FakePlatformGateway extends PlatformGateway {
 		createService?: Error;
 		updateService?: Error;
 		redeployService?: Error;
+		restartService?: Error;
 		discardServiceChanges?: Error;
 		deleteService?: Error;
 		getService?: Error;
@@ -129,6 +134,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		createServiceCalls: [],
 		updateServiceCalls: [],
 		redeployServiceCalls: [],
+		restartServiceCalls: [],
 		discardServiceChangesCalls: [],
 		deleteServiceCalls: [],
 		getServiceCalls: [],
@@ -401,6 +407,21 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				});
 			}
 			return updated;
+		},
+		async restartService(user, input): Promise<DashboardServiceStatus> {
+			platform.restartServiceCalls.push({ user, ...input });
+			if (platform.errors.restartService) {
+				throw platform.errors.restartService;
+			}
+			const current = platform.services.find(
+				(service) => service.id === input.serviceId,
+			);
+			if (!current) {
+				throw new Error("service not found");
+			}
+			return (
+				platform.serviceStatuses.get(input.serviceId) ?? { service: current }
+			);
 		},
 		async redeployService(user, input): Promise<DashboardServiceStatus> {
 			platform.redeployServiceCalls.push({ user, ...input });

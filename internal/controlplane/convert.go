@@ -108,6 +108,8 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
+		Restart:                  rec.Restart,
+		OperatorRestartNonce:     rec.OperatorRestartNonce,
 	}
 }
 

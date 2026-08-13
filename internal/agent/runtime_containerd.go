@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 const defaultVolumeMount = "/data"
@@ -41,6 +43,10 @@ type serviceStatus struct {
 	AppliedRolloutGeneration int64
 	AllocationIP             string
 	NetworkNamespacePath     string
+	Running                  bool
+	ExitCode                 int32
+	Signal                   int32
+	OOMKilled                bool
 }
 
 type ContainerdRuntime struct {
@@ -48,6 +54,10 @@ type ContainerdRuntime struct {
 	engine      serviceEngine
 	probeHealth func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe
 	ready       map[string]rolloutReadiness
+	clock       restartpolicy.Clock
+	rng         *rand.Rand
+	rngMu       sync.Mutex
+	forceStart  map[string]bool
 }
 
 type rolloutReadiness struct {
@@ -75,7 +85,26 @@ func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ContainerdRuntime{cfg: cfg, engine: engine}, nil
+	return &ContainerdRuntime{
+		cfg:    cfg,
+		engine: engine,
+		clock:  restartpolicy.SystemClock{},
+		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
+	}, nil
+}
+
+func (r *ContainerdRuntime) now() time.Time {
+	if r != nil && r.clock != nil {
+		return r.clock.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (r *ContainerdRuntime) randSource() *rand.Rand {
+	if r != nil && r.rng != nil {
+		return r.rng
+	}
+	return rand.New(rand.NewSource(r.now().UnixNano()))
 }
 
 func (r *ContainerdRuntime) Close() error {
@@ -107,6 +136,10 @@ func (r *ContainerdRuntime) RestartManagedDashboard(ctx context.Context, state *
 		if !isManagedDashboardService(svc) {
 			continue
 		}
+		if r.forceStart == nil {
+			r.forceStart = make(map[string]bool)
+		}
+		r.forceStart[svc.GetAllocationId()] = true
 		if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			return fmt.Errorf("restart managed dashboard: %w", err)
 		}
@@ -152,88 +185,222 @@ func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.Desire
 	}
 
 	for _, svc := range state.GetServices() {
-		cond := &agentv1.ServiceCondition{
-			AllocationId:             svc.GetAllocationId(),
-			ServiceId:                svc.GetServiceId(),
-			DesiredSpecRevision:      svc.GetDesiredSpecRevision(),
-			DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-			Phase:                    "Pending",
-		}
-		if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
-			cond.Phase = "Error"
-			cond.Message = err.Error()
-			report.Services = append(report.Services, cond)
-			continue
-		}
-		if volumeID := svc.GetVolumeId(); volumeID != "" {
-			if _, err := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", volumeID); err != nil {
-				cond.Phase = "Error"
-				cond.Message = err.Error()
-				report.Services = append(report.Services, cond)
-				continue
-			}
-		}
-		if err := r.persistDesiredService(svc); err != nil {
-			cond.Phase = "Error"
-			cond.Message = err.Error()
-			report.Services = append(report.Services, cond)
-			continue
-		}
-		status, created, err := r.engine.EnsureService(ctx, svc)
-		if err != nil {
-			cond.Phase = "Error"
-			cond.Message = err.Error()
-			report.Services = append(report.Services, cond)
-			continue
-		}
-		cond.AppliedSpecRevision = status.AppliedSpecRevision
-		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-		cond.AllocationIp = status.AllocationIP
-		check := explicitHTTPHealthCheck(svc)
-		if check == nil {
-			cond.Healthy = true
-			cond.HealthyPorts = readinessPorts(svc)
-			cond.Phase = "Healthy"
-			cond.Message = "process running; no health check configured"
-			report.Services = append(report.Services, cond)
-			continue
-		}
-		if created {
-			delete(r.ready, svc.GetAllocationId())
-		}
-		if ready, ok := r.ready[svc.GetAllocationId()]; ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
-			cond.Healthy = true
-			cond.HealthyPorts = append([]int32(nil), ready.healthyPorts...)
-			cond.Phase = "Healthy"
-			cond.Message = "HTTP readiness check passed"
-			report.Services = append(report.Services, cond)
-			continue
-		}
-		probeHealth := r.probeHealth
-		if probeHealth == nil {
-			probeHealth = probeServiceHealthInNamespace
-		}
-		probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIP, svc)
-		if probe.healthy {
-			ports := readinessPorts(svc)
-			if r.ready == nil {
-				r.ready = make(map[string]rolloutReadiness)
-			}
-			r.ready[svc.GetAllocationId()] = rolloutReadiness{
-				rolloutGeneration: svc.GetDesiredRolloutGeneration(),
-				healthyPorts:      append([]int32(nil), ports...),
-			}
-			cond.Healthy = true
-			cond.HealthyPorts = ports
-			cond.Phase = "Healthy"
-			cond.Message = "HTTP readiness check passed"
-		} else {
-			cond.Phase = "Starting"
-			cond.Message = "HTTP readiness check not ready: " + probe.failureReason
-		}
+		cond := r.reconcileService(ctx, svc)
 		report.Services = append(report.Services, cond)
 	}
 	return report, nil
+}
+
+func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.DesiredService) *agentv1.ServiceCondition {
+	cond := &agentv1.ServiceCondition{
+		AllocationId:             svc.GetAllocationId(),
+		ServiceId:                svc.GetServiceId(),
+		DesiredSpecRevision:      svc.GetDesiredSpecRevision(),
+		DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		Phase:                    "Pending",
+	}
+	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
+		cond.Phase = "Error"
+		cond.Message = err.Error()
+		return cond
+	}
+	if volumeID := svc.GetVolumeId(); volumeID != "" {
+		if _, err := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", volumeID); err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			return cond
+		}
+	}
+	if err := r.persistDesiredService(svc); err != nil {
+		cond.Phase = "Error"
+		cond.Message = err.Error()
+		return cond
+	}
+	status, created, err := r.engine.EnsureService(ctx, svc)
+	if err != nil {
+		cond.Phase = "Error"
+		cond.Message = err.Error()
+		return cond
+	}
+	if created {
+		status.Running = true
+		delete(r.ready, svc.GetAllocationId())
+	}
+	livenessFailed := false
+	if status.Running {
+		if reason, failed := r.livenessFailed(ctx, status, svc); failed {
+			livenessFailed = true
+			if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+				cond.Phase = "Error"
+				cond.Message = err.Error()
+				return cond
+			}
+			delete(r.ready, svc.GetAllocationId())
+			status.Running = false
+			_ = reason
+		}
+	}
+	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
+	operatorNonce := svc.GetOperatorRestartNonce()
+	if r.forceStart[svc.GetAllocationId()] {
+		if obs.GetAppliedOperatorRestartNonce() >= operatorNonce {
+			operatorNonce = obs.GetAppliedOperatorRestartNonce() + 1
+		}
+		delete(r.forceStart, svc.GetAllocationId())
+	}
+	r.rngMu.Lock()
+	decision := restartpolicy.Evaluate(r.now(), r.randSource(), svc.GetSpec().GetRuntime().GetRestart(), obs, restartpolicy.Input{
+		State: restartpolicy.ProcessState{
+			Running:   status.Running,
+			ExitCode:  status.ExitCode,
+			Signal:    status.Signal,
+			OOMKilled: status.OOMKilled,
+		},
+		LivenessFailed:           livenessFailed,
+		DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		OperatorRestartNonce:     operatorNonce,
+	})
+	r.rngMu.Unlock()
+	if err := r.saveObservation(svc.GetAllocationId(), decision.Observation); err != nil {
+		cond.Phase = "Error"
+		cond.Message = err.Error()
+		return cond
+	}
+	cond.Restart = decision.Observation
+	switch decision.Action {
+	case restartpolicy.ActionCrashLoop, restartpolicy.ActionStop, restartpolicy.ActionWait:
+		cond.AppliedSpecRevision = status.AppliedSpecRevision
+		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
+		cond.AllocationIp = status.AllocationIP
+		cond.Healthy = false
+		cond.Phase = decision.Phase
+		cond.Message = decision.Message
+		return cond
+	case restartpolicy.ActionStart:
+		if !status.Running || livenessFailed {
+			if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+				cond.Phase = "Error"
+				cond.Message = err.Error()
+				return cond
+			}
+			delete(r.ready, svc.GetAllocationId())
+			status, created, err = r.engine.EnsureService(ctx, svc)
+			if err != nil {
+				cond.Phase = "Error"
+				cond.Message = err.Error()
+				return cond
+			}
+			if created {
+				status.Running = true
+			}
+			if !status.Running && decision.Observation != nil {
+				decision.Observation.AwaitingRestart = false
+				if err := r.saveObservation(svc.GetAllocationId(), decision.Observation); err != nil {
+					cond.Phase = "Error"
+					cond.Message = err.Error()
+					return cond
+				}
+			}
+		}
+	}
+	return r.finishRunningCondition(ctx, cond, svc, status, created)
+}
+
+func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *agentv1.ServiceCondition, svc *agentv1.DesiredService, status serviceStatus, created bool) *agentv1.ServiceCondition {
+	cond.AppliedSpecRevision = status.AppliedSpecRevision
+	cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
+	cond.AllocationIp = status.AllocationIP
+	check := explicitHTTPHealthCheck(svc)
+	if check == nil {
+		cond.Healthy = true
+		cond.HealthyPorts = readinessPorts(svc)
+		cond.Phase = "Healthy"
+		cond.Message = "process running; no health check configured"
+		return cond
+	}
+	if created {
+		delete(r.ready, svc.GetAllocationId())
+	}
+	if ready, ok := r.ready[svc.GetAllocationId()]; ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
+		cond.Healthy = true
+		cond.HealthyPorts = append([]int32(nil), ready.healthyPorts...)
+		cond.Phase = "Healthy"
+		cond.Message = "HTTP readiness check passed"
+		return cond
+	}
+	probeHealth := r.probeHealth
+	if probeHealth == nil {
+		probeHealth = probeServiceHealthInNamespace
+	}
+	probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIP, svc)
+	if probe.healthy {
+		ports := readinessPorts(svc)
+		if r.ready == nil {
+			r.ready = make(map[string]rolloutReadiness)
+		}
+		r.ready[svc.GetAllocationId()] = rolloutReadiness{
+			rolloutGeneration: svc.GetDesiredRolloutGeneration(),
+			healthyPorts:      append([]int32(nil), ports...),
+		}
+		cond.Healthy = true
+		cond.HealthyPorts = ports
+		cond.Phase = "Healthy"
+		cond.Message = "HTTP readiness check passed"
+	} else {
+		cond.Phase = "Starting"
+		cond.Message = "HTTP readiness check not ready: " + probe.failureReason
+	}
+	return cond
+}
+
+func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceStatus, svc *agentv1.DesiredService) (string, bool) {
+	check := explicitHTTPLivenessCheck(svc)
+	if check == nil {
+		return "", false
+	}
+	ready, ok := r.ready[svc.GetAllocationId()]
+	if !ok || ready.rolloutGeneration != svc.GetDesiredRolloutGeneration() {
+		if explicitHTTPHealthCheck(svc) != nil {
+			return "", false
+		}
+	}
+	probeHealth := r.probeHealth
+	if probeHealth == nil {
+		probeHealth = probeServiceHealthInNamespace
+	}
+	livenessSvc := protoCloneDesiredWithHealth(svc, check)
+	probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIP, livenessSvc)
+	if probe.healthy {
+		return "", false
+	}
+	reason := probe.failureReason
+	if reason == "" {
+		reason = "liveness check failed"
+	}
+	return reason, true
+}
+
+func protoCloneDesiredWithHealth(svc *agentv1.DesiredService, check *platformv1.HealthCheck) *agentv1.DesiredService {
+	clone := &agentv1.DesiredService{
+		AllocationId: svc.GetAllocationId(),
+		ServiceId:    svc.GetServiceId(),
+		Spec: &platformv1.ResolvedServiceSpec{
+			Image: svc.GetSpec().GetImage(),
+			Runtime: &platformv1.ServiceRuntime{
+				Ports:       svc.GetSpec().GetRuntime().GetPorts(),
+				HealthCheck: check,
+			},
+		},
+	}
+	return clone
+}
+
+func explicitHTTPLivenessCheck(svc *agentv1.DesiredService) *platformv1.HealthCheck {
+	check := svc.GetSpec().GetRuntime().GetLivenessCheck()
+	if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
+		return nil
+	}
+	return check
 }
 
 func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[string]*agentv1.DesiredService) error {
@@ -250,6 +417,9 @@ func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[
 			return err
 		}
 		delete(r.ready, allocationID)
+		if err := r.removeObservation(allocationID); err != nil {
+			return err
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove desired file %s: %w", path, err)
 		}

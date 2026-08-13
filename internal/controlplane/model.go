@@ -112,6 +112,8 @@ type allocationRecord struct {
 	Healthy                  bool
 	HealthyPorts             []int32
 	UpdatedAt                time.Time
+	Restart                  *platformv1.RestartObservation
+	OperatorRestartNonce     int64
 }
 
 type buildRunRecord struct {

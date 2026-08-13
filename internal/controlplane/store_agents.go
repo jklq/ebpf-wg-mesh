@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
@@ -168,6 +169,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				workloadSubnet               string
 				environmentID                string
 				serviceID                    string
+				prevRestartRaw               []byte
 			)
 			err := tx.QueryRowContext(ctx,
 				`SELECT a.applied_spec_revision,
@@ -177,6 +179,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				        a.healthy,
 				        a.allocation_ip,
 				        a.healthy_ports,
+				        a.restart_observation_json,
 				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id),
 				        ag.workload_ipv6_subnet,
 				        s.environment_id,
@@ -194,6 +197,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				&prevHealthy,
 				&prevAllocationIP,
 				(*jsonInt32Slice)(&prevHealthyPorts),
+				&prevRestartRaw,
 				&hasDomain,
 				&workloadSubnet,
 				&environmentID,
@@ -220,15 +224,26 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 					return fmt.Errorf("derive allocation ip: %w", err)
 				}
 			}
+			restartRaw, err := encodeRestartObservation(cond.GetRestart())
+			if err != nil {
+				return fmt.Errorf("encode restart observation: %w", err)
+			}
 			statusChanged := prevAppliedSpecRevision != cond.GetAppliedSpecRevision() ||
 				prevAppliedRolloutGeneration != cond.GetAppliedRolloutGeneration() ||
 				prevPhase != cond.GetPhase() ||
 				prevMessage != cond.GetMessage() ||
 				prevAllocationIP != allocationIP ||
 				!equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) ||
-				prevHealthy != cond.GetHealthy()
+				prevHealthy != cond.GetHealthy() ||
+				string(prevRestartRaw) != string(restartRaw)
 			if !statusChanged {
 				continue
+			}
+			phase := cond.Phase
+			healthy := cond.Healthy
+			if cond.GetRestart().GetCrashLoop() || phase == restartpolicy.PhaseCrashLoop {
+				phase = restartpolicy.PhaseCrashLoop
+				healthy = false
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
@@ -239,14 +254,15 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				        allocation_ip = $5,
 				        healthy_ports = $6,
 				        healthy = $7,
-				        updated_at = $8
-				  WHERE id = $9 AND agent_id = $10`,
-				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, cond.Phase, cond.Message, allocationIP, healthyPorts, cond.Healthy, now, cond.AllocationId, agentID,
+				        restart_observation_json = $8,
+				        updated_at = $9
+				  WHERE id = $10 AND agent_id = $11`,
+				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, phase, cond.Message, allocationIP, healthyPorts, healthy, restartRaw, now, cond.AllocationId, agentID,
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
 			changedEnvironments[environmentID] = struct{}{}
-			if hasDomain && (prevHealthy != cond.Healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts())) {
+			if hasDomain && (prevHealthy != healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) || prevPhase != phase) {
 				ingressChanged = true
 			}
 		}

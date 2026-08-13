@@ -519,6 +519,26 @@ function decodeAllocationStatus(
 		appliedRolloutGeneration:
 			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
+		operatorRestartNonce: readOptionalNumberLike(
+			value,
+			"operatorRestartNonce",
+		),
+		restart: decodeRestartObservation(value.restart),
+	};
+}
+
+function decodeRestartObservation(
+	raw: unknown,
+): DashboardAllocationStatus["restart"] {
+	const value = readOptionalRecord(raw);
+	if (!value) {
+		return undefined;
+	}
+	return {
+		restartCount: readOptionalNumberLike(value, "restartCount") ?? 0,
+		crashLoop: readBoolean(value, "crashLoop"),
+		lastCause: readOptionalString(value, "lastCause") ?? "",
+		message: readOptionalString(value, "message") ?? "",
 	};
 }
 
@@ -647,6 +667,39 @@ function encodeRuntimeSpec(
 					timeoutSeconds: runtime.healthCheck.timeoutSeconds,
 				}
 			: undefined,
+		livenessCheck: runtime.livenessCheck
+			? {
+					type: "TYPE_HTTP",
+					path: runtime.livenessCheck.path,
+					port: runtime.livenessCheck.port,
+					timeoutSeconds: runtime.livenessCheck.timeoutSeconds,
+				}
+			: undefined,
+		restart: encodeRestartSpec(runtime.restart),
+	};
+}
+
+function encodeRestartSpec(
+	restart: DashboardServiceSpec["runtime"]["restart"],
+): CreateServiceRequest["service"]["spec"]["runtime"]["restart"] {
+	if (!restart) {
+		return undefined;
+	}
+	const policy =
+		restart.policy === "always"
+			? "RESTART_POLICY_ALWAYS"
+			: restart.policy === "never"
+				? "RESTART_POLICY_NEVER"
+				: "RESTART_POLICY_ON_FAILURE";
+	return {
+		policy,
+		maxRestarts: restart.maxRestarts,
+		windowSeconds: restart.windowSeconds,
+		initialDelayMs: restart.initialDelayMs,
+		maxDelayMs: restart.maxDelayMs,
+		backoffMultiplier: restart.backoffMultiplier,
+		jitter: restart.jitter,
+		stableAfterSeconds: restart.stableAfterSeconds,
 	};
 }
 
@@ -681,6 +734,32 @@ function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
 			.map((item) => decodeRuntimePort(item))
 			.filter((item): item is DashboardRuntimePort => item !== undefined),
 		healthCheck: decodeHTTPHealthCheck(value?.healthCheck),
+		livenessCheck: decodeHTTPHealthCheck(value?.livenessCheck),
+		restart: decodeRestartSpec(value?.restart),
+	};
+}
+
+function decodeRestartSpec(raw: unknown): DashboardServiceSpec["runtime"]["restart"] {
+	const value = readOptionalRecord(raw);
+	if (!value) {
+		return undefined;
+	}
+	const policyRaw = readOptionalString(value, "policy") ?? "";
+	const policy =
+		policyRaw === "RESTART_POLICY_ALWAYS" || policyRaw === "always"
+			? "always"
+			: policyRaw === "RESTART_POLICY_NEVER" || policyRaw === "never"
+				? "never"
+				: "on-failure";
+	return {
+		policy,
+		maxRestarts: readOptionalNumber(value, "maxRestarts"),
+		windowSeconds: readOptionalNumber(value, "windowSeconds"),
+		initialDelayMs: readOptionalNumber(value, "initialDelayMs"),
+		maxDelayMs: readOptionalNumber(value, "maxDelayMs"),
+		backoffMultiplier: readOptionalNumber(value, "backoffMultiplier"),
+		jitter: readOptionalNumber(value, "jitter"),
+		stableAfterSeconds: readOptionalNumber(value, "stableAfterSeconds"),
 	};
 }
 

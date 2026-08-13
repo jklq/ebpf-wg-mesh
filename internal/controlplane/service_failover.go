@@ -8,6 +8,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 const allocationPhaseUnavailable = "Unavailable"
@@ -139,6 +141,10 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			}
 
 			oldAgentID := service.AllocatedAgentID
+			nodeLoss, err := encodeRestartObservation(restartpolicy.NodeLossObservation(now.UTC(), 0, 0))
+			if err != nil {
+				return err
+			}
 			allocationUpdate, err := tx.ExecContext(ctx,
 				`UPDATE allocations
 				    SET agent_id = $1,
@@ -149,11 +155,13 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 				        allocation_ip = '',
 				        healthy_ports = $3,
 				        healthy = FALSE,
-				        updated_at = $4
-				  WHERE service_id = $5 AND agent_id = $6`,
+				        restart_observation_json = $4,
+				        updated_at = $5
+				  WHERE service_id = $6 AND agent_id = $7`,
 				destination,
 				fmt.Sprintf("rescheduled from unhealthy agent %s to %s", oldAgentID, destination),
 				[]byte("[]"),
+				nodeLoss,
 				now.UTC(),
 				service.ID,
 				oldAgentID,

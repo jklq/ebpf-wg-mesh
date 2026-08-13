@@ -19,6 +19,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/meshlabels"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -53,10 +54,15 @@ type dockerRolloutReadiness struct {
 	healthyPorts      []int32
 }
 
+type dockerContainerState struct {
+	Running   bool   `json:"Running"`
+	ExitCode  int    `json:"ExitCode"`
+	OOMKilled bool   `json:"OOMKilled"`
+	Error     string `json:"Error"`
+}
+
 type dockerContainerInspect struct {
-	State struct {
-		Running bool `json:"Running"`
-	} `json:"State"`
+	State  dockerContainerState `json:"State"`
 	Config struct {
 		Image  string            `json:"Image"`
 		Labels map[string]string `json:"Labels"`
@@ -196,6 +202,45 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 			report.Services = append(report.Services, cond)
 			continue
 		}
+		if created {
+			status.Running = true
+			delete(r.ready, svc.GetAllocationId())
+		}
+		decision := restartpolicy.Evaluate(time.Now().UTC(), nil, svc.GetSpec().GetRuntime().GetRestart(), svc.GetRestartObservation(), restartpolicy.Input{
+			State: restartpolicy.ProcessState{
+				Running:   status.Running,
+				ExitCode:  int32(status.inspect.State.ExitCode),
+				OOMKilled: status.inspect.State.OOMKilled,
+			},
+			DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+			OperatorRestartNonce:     svc.GetOperatorRestartNonce(),
+		})
+		cond.Restart = decision.Observation
+		switch decision.Action {
+		case restartpolicy.ActionCrashLoop, restartpolicy.ActionStop, restartpolicy.ActionWait:
+			cond.AppliedSpecRevision = status.AppliedSpecRevision
+			cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
+			cond.AllocationIp = status.AllocationIP
+			cond.Healthy = false
+			cond.Phase = decision.Phase
+			cond.Message = decision.Message
+			report.Services = append(report.Services, cond)
+			continue
+		case restartpolicy.ActionStart:
+			if !status.Running {
+				if err := r.removeService(ctx, svc.GetAllocationId()); err != nil {
+					cond.Phase, cond.Message = "Error", err.Error()
+					report.Services = append(report.Services, cond)
+					continue
+				}
+				status, created, err = r.ensureService(ctx, svc)
+				if err != nil {
+					cond.Phase, cond.Message = "Error", err.Error()
+					report.Services = append(report.Services, cond)
+					continue
+				}
+			}
+		}
 		cond.AppliedSpecRevision = status.AppliedSpecRevision
 		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
 		cond.AllocationIp = status.AllocationIP
@@ -246,6 +291,7 @@ type dockerServiceStatus struct {
 	AppliedSpecRevision      int64
 	AppliedRolloutGeneration int64
 	AllocationIP             string
+	Running                  bool
 	inspect                  dockerContainerInspect
 }
 
@@ -255,7 +301,7 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 	if inspect, exists, err := r.inspectContainer(ctx, containerName); err != nil {
 		return dockerServiceStatus{}, false, err
 	} else if exists {
-		if labelsMatchDesired(inspect.Config.Labels, svc) && inspect.State.Running {
+		if labelsMatchDesired(inspect.Config.Labels, svc) {
 			return dockerServiceStatusFor(inspect, svc, r.cfg.DockerNetwork), false, nil
 		}
 		if err := r.removeService(ctx, svc.GetAllocationId()); err != nil {
@@ -308,6 +354,7 @@ func dockerServiceStatusFor(inspect dockerContainerInspect, svc *agentv1.Desired
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
 		AllocationIP:             dockerAllocationIP(inspect, networkName),
+		Running:                  inspect.State.Running,
 		inspect:                  inspect,
 	}
 }

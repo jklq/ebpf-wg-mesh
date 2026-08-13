@@ -901,6 +901,12 @@ export async function updateServiceFromSession(
 					...(current.spec?.runtime.healthCheck
 						? { healthCheck: current.spec.runtime.healthCheck }
 						: {}),
+					...(current.spec?.runtime.livenessCheck
+						? { livenessCheck: current.spec.runtime.livenessCheck }
+						: {}),
+					...(input.restart ?? current.spec?.runtime.restart
+						? { restart: input.restart ?? current.spec?.runtime.restart }
+						: {}),
 				},
 			},
 		}),
@@ -914,6 +920,16 @@ export async function redeployServiceFromSession(
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "redeployService", (platform) =>
 		platform.redeployService(session.user, { serviceId: input.serviceId }),
+	);
+}
+
+export async function restartServiceFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string },
+): Promise<DashboardServiceStatus> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "restartService", (platform) =>
+		platform.restartService(session.user, { serviceId: input.serviceId }),
 	);
 }
 
