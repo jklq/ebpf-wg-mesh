@@ -553,7 +553,24 @@ export function decodeDomainBindingMessage(
 		serviceId: readRequiredString(value, "serviceId", "domain binding"),
 		targetPort: readRequiredNumber(value, "targetPort", "domain binding"),
 		platformGenerated: readBoolean(value, "platformGenerated"),
+		ownershipState: decodeDomainOwnershipState(value.ownershipState),
+		ownershipMessage: readOptionalString(value, "ownershipMessage"),
 	};
+}
+
+function decodeDomainOwnershipState(
+	raw: unknown,
+): DashboardDomainBinding["ownershipState"] {
+	switch (raw) {
+		case "DOMAIN_OWNERSHIP_STATE_VERIFIED":
+		case "verified":
+			return "verified";
+		case "DOMAIN_OWNERSHIP_STATE_UNVERIFIED":
+		case "unverified":
+			return "unverified";
+		default:
+			return "unspecified";
+	}
 }
 
 function decodeServiceLogLine(raw: unknown): ServiceLogLineMessage {

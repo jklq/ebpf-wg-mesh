@@ -16,7 +16,6 @@ export interface GitHubTokenCipher {
 		ciphertext: string,
 		binding: { userID: string; providerSubject: string; kind: GitHubTokenKind },
 	): string;
-	isEncrypted(value: string): boolean;
 }
 
 export function decodeGitHubTokenEncryptionKey(value: string): Buffer {
@@ -90,9 +89,6 @@ export function createGitHubTokenCipher(key: Uint8Array): GitHubTokenCipher {
 			} catch {
 				throw new Error("GitHub OAuth token decryption failed");
 			}
-		},
-		isEncrypted(value) {
-			return value === "" || value.startsWith(ciphertextPrefix);
 		},
 	};
 }

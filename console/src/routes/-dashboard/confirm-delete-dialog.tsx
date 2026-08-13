@@ -7,6 +7,8 @@ import {
 	useState,
 } from "react";
 
+import { ModalOverlay } from "./ui";
+
 export function ConfirmDeleteDialog({
 	title,
 	name,
@@ -41,16 +43,11 @@ export function ConfirmDeleteDialog({
 	};
 
 	return (
-		<div
-			className="modal-overlay danger-overlay"
-			role="dialog"
-			aria-modal="true"
-			aria-label={title}
-			onClick={(event) => {
-				if (event.target === event.currentTarget && !busy) onCancel();
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Escape" && !busy) onCancel();
+		<ModalOverlay
+			className="danger-overlay"
+			ariaLabel={title}
+			onClose={() => {
+				if (!busy) onCancel();
 			}}
 		>
 			<form className="modal-card danger-card" onSubmit={submit}>
@@ -102,6 +99,6 @@ export function ConfirmDeleteDialog({
 					</button>
 				</div>
 			</form>
-		</div>
+		</ModalOverlay>
 	);
 }

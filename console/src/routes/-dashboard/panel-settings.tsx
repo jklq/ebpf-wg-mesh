@@ -10,6 +10,7 @@ import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
 import { RepositoryPicker } from "./repository-picker";
 import { doDeleteService, doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
+import { ModalOverlay } from "./ui";
 
 const MANUAL_SELECTOR = /^[\w.-]+\/[\w.-]+$/;
 
@@ -276,19 +277,7 @@ function SourceRepositoryDialog({
 	}, [highlightedIndex, hoveredIndex]);
 
 	return (
-		<div
-			className="modal-overlay"
-			role="dialog"
-			aria-modal="true"
-			aria-label="Select source repository"
-			tabIndex={-1}
-			onClick={(event) => {
-				if (event.target === event.currentTarget) onClose();
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Escape") onClose();
-			}}
-		>
+		<ModalOverlay ariaLabel="Select source repository" onClose={onClose}>
 			<div className="modal-card">
 				<RepositoryPicker
 					actions={[]}
@@ -313,6 +302,6 @@ function SourceRepositoryDialog({
 					showEmptyState={filteredRepositories.length === 0}
 				/>
 			</div>
-		</div>
+		</ModalOverlay>
 	);
 }
