@@ -16,6 +16,7 @@ import type {
 	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
 	DashboardDeploymentStageState,
+	DashboardDeploymentStatus,
 	DashboardProject,
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
@@ -47,11 +48,15 @@ export function PanelDeployments({
 	project: DashboardProject | undefined;
 }) {
 	const currentService = status?.service ?? service;
+	const deploymentStatus =
+		currentService.latestDeployment ?? service.latestDeployment;
 	const build = currentService.latestBuild ?? service.latestBuild;
 	const allocation = status?.allocation;
 	const rolloutGeneration =
-		allocation?.desiredRolloutGeneration ?? currentService.rolloutGeneration;
-	const activeRollout = hasActiveRollout(build, allocation);
+		deploymentStatus?.rolloutGeneration ||
+		allocation?.desiredRolloutGeneration ||
+		currentService.rolloutGeneration;
+	const activeRollout = hasActiveDeployment(deploymentStatus, build);
 	const [deployments, setDeployments] = useState<
 		Array<DashboardDeploymentRecord>
 	>([]);
@@ -124,6 +129,7 @@ export function PanelDeployments({
 			allocation,
 			rolloutGeneration,
 			isCurrent: true,
+			status: deploymentStatus,
 		});
 		const previousDeployment = lastObservedDeployment.current;
 
@@ -144,7 +150,7 @@ export function PanelDeployments({
 		}
 
 		lastObservedDeployment.current = currentDeployment;
-	}, [service.id, build, allocation, rolloutGeneration]);
+	}, [service.id, build, allocation, rolloutGeneration, deploymentStatus]);
 
 	const previousDeployments = useMemo(
 		() =>
@@ -168,6 +174,7 @@ export function PanelDeployments({
 				<CurrentDeploymentCard
 					build={build}
 					allocation={allocation}
+					status={deploymentStatus}
 					logsEnabled={Boolean(project)}
 					nowMs={nowMs}
 					onOpenLogs={() =>
@@ -192,6 +199,7 @@ export function PanelDeployments({
 									key={deploymentRecordKey(entry)}
 									build={entry.build}
 									allocation={entry.allocation}
+									status={entry.status}
 									logsEnabled={Boolean(project)}
 									nowMs={nowMs}
 									onOpenLogs={() =>
@@ -206,7 +214,10 @@ export function PanelDeployments({
 											build: entry.build,
 											allocation: entry.allocation,
 											rolloutGeneration: entry.rolloutGeneration,
-											active: hasActiveRollout(entry.build, entry.allocation),
+											active: hasActiveDeployment(
+												entry.status,
+												entry.build,
+											),
 										})
 									}
 								/>
@@ -259,19 +270,22 @@ export function PanelDeployments({
 function CurrentDeploymentCard({
 	build,
 	allocation,
+	status,
 	logsEnabled,
 	nowMs,
 	onOpenLogs,
 }: {
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
+	status?: DashboardDeploymentStatus;
 	logsEnabled: boolean;
 	nowMs: number;
 	onOpenLogs: () => void;
 }) {
 	const stages = build?.stages ?? [];
-	const active = hasActiveRollout(build, allocation);
+	const active = hasActiveDeployment(status, build);
 	const timestamp =
+		status?.transitionedAt ??
 		build?.startedAt ??
 		build?.queuedAt ??
 		build?.finishedAt ??
@@ -281,6 +295,7 @@ function CurrentDeploymentCard({
 		allocation,
 		active,
 		isCurrent: true,
+		status,
 	});
 	const meta = deploymentMeta(build);
 
@@ -360,12 +375,14 @@ function CurrentDeploymentCard({
 function DeploymentHistoryRow({
 	build,
 	allocation,
+	status,
 	logsEnabled,
 	nowMs,
 	onOpenLogs,
 }: {
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
+	status?: DashboardDeploymentStatus;
 	logsEnabled: boolean;
 	nowMs: number;
 	onOpenLogs: () => void;
@@ -374,8 +391,9 @@ function DeploymentHistoryRow({
 		getDeploymentCardTone({
 			build,
 			allocation,
-			active: hasActiveRollout(build, allocation),
+			active: hasActiveDeployment(status, build),
 			isCurrent: false,
+			status,
 		}) ?? "failed";
 	const timestamp =
 		build?.startedAt ??
@@ -595,12 +613,33 @@ function getDeploymentCardTone({
 	allocation,
 	active,
 	isCurrent,
+	status,
 }: {
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
 	active: boolean;
 	isCurrent: boolean;
+	status?: DashboardDeploymentStatus;
 }): "running" | "succeeded" | "failed" | undefined {
+	if (
+		status?.state === "failed" ||
+		status?.state === "crashed" ||
+		status?.state === "cancelled"
+	) {
+		return "failed";
+	}
+	if (status?.state === "active" || status?.state === "completed") {
+		return "succeeded";
+	}
+	if (
+		status &&
+		status.state !== "superseded" &&
+		status.state !== "removed" &&
+		status.state !== "unspecified"
+	) {
+		return "running";
+	}
+
 	const failedStage = build?.stages?.find((stage) => stage.state === "failed");
 	const failed =
 		Boolean(failedStage) ||
@@ -648,22 +687,25 @@ function stageStatusText(stage: DashboardDeploymentStage): string {
 	}
 }
 
-function hasActiveRollout(
+function hasActiveDeployment(
+	status: DashboardDeploymentStatus | undefined,
 	build: DashboardBuildStatus | undefined,
-	allocation: DashboardAllocationStatus | undefined,
 ): boolean {
-	const activeStage = build?.stages?.some(
-		(stage) => stage.state === "running" || stage.state === "pending",
-	);
-	const rolloutMismatch =
-		allocation &&
-		allocation.desiredRolloutGeneration !== allocation.appliedRolloutGeneration;
-	return Boolean(
-		activeStage ||
-			rolloutMismatch ||
-			build?.state === "queued" ||
-			build?.state === "running",
-	);
+	if (status) {
+		switch (status.state) {
+			case "completed":
+			case "failed":
+			case "cancelled":
+			case "crashed":
+			case "removed":
+			case "superseded":
+			case "active":
+				return false;
+			default:
+				return true;
+		}
+	}
+	return Boolean(build?.state === "queued" || build?.state === "running");
 }
 
 function deploymentRecordKey(entry: DashboardDeploymentRecord): string {
@@ -737,17 +779,20 @@ function createDeploymentRecord({
 	allocation,
 	rolloutGeneration,
 	isCurrent,
+	status,
 }: {
 	serviceId: string;
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
 	rolloutGeneration?: number;
 	isCurrent: boolean;
+	status?: DashboardDeploymentStatus;
 }): DashboardDeploymentRecord {
 	return {
-		id: serviceId,
-		rolloutGeneration: rolloutGeneration ?? 0,
+		id: status?.deploymentId || serviceId,
+		rolloutGeneration: status?.rolloutGeneration || rolloutGeneration || 0,
 		createdAt:
+			status?.transitionedAt ??
 			build?.startedAt ??
 			build?.queuedAt ??
 			build?.finishedAt ??
@@ -755,6 +800,8 @@ function createDeploymentRecord({
 		build,
 		allocation,
 		isCurrent,
+		status,
+		imageDigest: status?.imageDigest,
 	};
 }
 
@@ -902,6 +949,18 @@ function hydrateDeploymentRecord(
 		createdAt: hydrateDate(record.createdAt),
 		build: hydrateBuildStatus(record.build),
 		allocation: hydrateAllocationStatus(record.allocation),
+		status: record.status
+			? {
+					...record.status,
+					transitionedAt: hydrateDate(record.status.transitionedAt),
+				}
+			: undefined,
+		stages:
+			record.stages?.map((stage) => ({
+				...stage,
+				startedAt: hydrateDate(stage.startedAt),
+				finishedAt: hydrateDate(stage.finishedAt),
+			})) ?? record.stages,
 	};
 }
 

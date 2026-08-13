@@ -376,7 +376,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		if err != nil {
 			return err
 		}
-		build, err := c.store.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe)
+		build, err := c.store.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: deploymentCauseWebhook})
 		if err != nil {
 			return err
 		}

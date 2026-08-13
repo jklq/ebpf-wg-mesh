@@ -53,6 +53,16 @@ describe("platform grpc codec", () => {
 					reason: "build-success",
 					createdAt: "2026-04-24T11:00:00Z",
 					isCurrent: true,
+					status: {
+						deploymentId: "deploy-1",
+						state: "DEPLOYMENT_STATE_ACTIVE",
+						reasonCode: "DEPLOYMENT_ACTIVE",
+						detail: "Serving traffic",
+						specRevision: "3",
+						imageDigest: "sha256:111",
+						rolloutGeneration: "2",
+						causeKind: "DEPLOYMENT_CAUSE_KIND_AGENT",
+					},
 					build: {
 						buildId: "build-1",
 						state: "BUILD_STATE_SUCCEEDED",
@@ -73,6 +83,11 @@ describe("platform grpc codec", () => {
 				rolloutGeneration: 2,
 				specRevision: 3,
 				isCurrent: true,
+				status: expect.objectContaining({
+					deploymentId: "deploy-1",
+					state: "active",
+					reasonCode: "DEPLOYMENT_ACTIVE",
+				}),
 				build: expect.objectContaining({
 					buildId: "build-1",
 					commitMessage: "Persist dashboard deployment history",

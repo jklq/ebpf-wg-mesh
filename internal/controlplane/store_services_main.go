@@ -420,6 +420,17 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", "", userID, now); err != nil {
 		return serviceRecord{}, false, err
 	}
+	redeployState := deploymentStateScheduling
+	redeployDetail := "Redeploy scheduled"
+	if desiredSourceSpec(current.Spec) != nil && resolvedImage == "" {
+		redeployState = deploymentStateStaged
+		redeployDetail = "Redeploy staged; waiting for source build"
+	}
+	dep, err := s.insertDeploymentTx(ctx, tx, serviceID, redeployState, deploymentActor{Kind: deploymentCauseUser, ID: userID}, reasonUserRedeploy, redeployDetail, current.SpecRevision, nextRolloutGeneration, "", resolvedImage, userID, now)
+	if err != nil {
+		return serviceRecord{}, false, err
+	}
+	current.LatestDeployment = &dep
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE allocations
 		    SET desired_spec_revision = $1,
@@ -454,6 +465,9 @@ func (s *Store) deleteService(ctx context.Context, userID, projectID, serviceID 
 			return err
 		}
 		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
+			return err
+		}
+		if err := s.markCurrentDeploymentRemovedTx(ctx, tx, serviceID, deploymentActor{Kind: deploymentCauseUser, ID: userID}); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM services WHERE id = $1`, serviceID)
@@ -514,6 +528,9 @@ func (s *Store) listServices(ctx context.Context, userID, environmentID string) 
 		if err != nil {
 			return nil, err
 		}
+		if err := s.attachLatestDeploymentQuerier(ctx, s.db, &out[i]); err != nil {
+			return nil, err
+		}
 		out[i].UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, s.db, out[i].ID, out[i].Spec, out[i].RolloutGeneration)
 		if err != nil {
 			return nil, err
@@ -551,6 +568,9 @@ func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, userID
 	}
 	rec.LatestBuild, err = s.latestBuildForServiceQuerier(ctx, q, rec.LatestBuildID)
 	if err != nil {
+		return serviceRecord{}, err
+	}
+	if err := s.attachLatestDeploymentQuerier(ctx, q, &rec); err != nil {
 		return serviceRecord{}, err
 	}
 	rec.UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, q, rec.ID, rec.Spec, rec.RolloutGeneration)
