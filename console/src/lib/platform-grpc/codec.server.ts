@@ -3,9 +3,12 @@ import type {
 	DashboardBuildRecipe,
 	DashboardBuildState,
 	DashboardBuildStatus,
+	DashboardDeploymentCauseKind,
 	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
 	DashboardDeploymentStageState,
+	DashboardDeploymentState,
+	DashboardDeploymentStatus,
 	DashboardDomainBinding,
 	DashboardEnvironment,
 	DashboardIndexedServiceStatus,
@@ -329,6 +332,7 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 			readOptionalString(value, "lastSuccessfulCommitSha") ?? undefined,
 		resolvedImage: readOptionalString(value, "resolvedImage") ?? undefined,
 		latestBuild: decodeBuildStatus(value.latestBuild),
+		latestDeployment: decodeDeploymentStatus(value.latestDeployment),
 		pendingChanges: readBoolean(value, "pendingChanges"),
 		unappliedChangeCount:
 			readOptionalNumberLike(value, "unappliedChangeCount") ?? 0,
@@ -532,7 +536,109 @@ function decodeDeploymentRecord(raw: unknown): DashboardDeploymentRecord {
 		createdAt: readOptionalDate(value, "createdAt"),
 		build: decodeBuildStatus(value.build),
 		isCurrent: readBoolean(value, "isCurrent"),
+		status: decodeDeploymentStatus(value.status),
+		stages: readArray(value, "stages").map((stage) =>
+			decodeDeploymentStage(stage),
+		),
+		imageDigest: readOptionalString(value, "imageDigest"),
 	};
+}
+
+function decodeDeploymentStatus(
+	raw: unknown,
+): DashboardDeploymentStatus | undefined {
+	const value = readOptionalRecord(raw);
+	if (!value) {
+		return undefined;
+	}
+	return {
+		deploymentId: readOptionalString(value, "deploymentId") ?? "",
+		state: decodeDeploymentState(value.state),
+		transitionedAt: readOptionalDate(value, "transitionedAt"),
+		causeKind: decodeDeploymentCauseKind(value.causeKind),
+		causeId: readOptionalString(value, "causeId") ?? "",
+		reasonCode: readOptionalString(value, "reasonCode") ?? "",
+		detail: readOptionalString(value, "detail") ?? "",
+		specRevision: readOptionalNumberLike(value, "specRevision") ?? 0,
+		imageDigest: readOptionalString(value, "imageDigest") ?? "",
+		rolloutGeneration: readOptionalNumberLike(value, "rolloutGeneration") ?? 0,
+	};
+}
+
+export function decodeDeploymentState(raw: unknown): DashboardDeploymentState {
+	switch (raw) {
+		case "DEPLOYMENT_STATE_STAGED":
+		case "staged":
+			return "staged";
+		case "DEPLOYMENT_STATE_QUEUED_BUILD":
+		case "queued_build":
+			return "queued_build";
+		case "DEPLOYMENT_STATE_BUILDING":
+		case "building":
+			return "building";
+		case "DEPLOYMENT_STATE_SCHEDULING":
+		case "scheduling":
+			return "scheduling";
+		case "DEPLOYMENT_STATE_IMAGE_PULL":
+		case "image_pull":
+			return "image_pull";
+		case "DEPLOYMENT_STATE_STARTING":
+		case "starting":
+			return "starting";
+		case "DEPLOYMENT_STATE_READINESS":
+		case "readiness":
+			return "readiness";
+		case "DEPLOYMENT_STATE_ACTIVE":
+		case "active":
+			return "active";
+		case "DEPLOYMENT_STATE_DRAINING":
+		case "draining":
+			return "draining";
+		case "DEPLOYMENT_STATE_COMPLETED":
+		case "completed":
+			return "completed";
+		case "DEPLOYMENT_STATE_FAILED":
+		case "failed":
+			return "failed";
+		case "DEPLOYMENT_STATE_CANCELLED":
+		case "cancelled":
+			return "cancelled";
+		case "DEPLOYMENT_STATE_CRASHED":
+		case "crashed":
+			return "crashed";
+		case "DEPLOYMENT_STATE_REMOVED":
+		case "removed":
+			return "removed";
+		case "DEPLOYMENT_STATE_SUPERSEDED":
+		case "superseded":
+			return "superseded";
+		default:
+			return "unspecified";
+	}
+}
+
+export function decodeDeploymentCauseKind(
+	raw: unknown,
+): DashboardDeploymentCauseKind {
+	switch (raw) {
+		case "DEPLOYMENT_CAUSE_KIND_USER":
+		case "user":
+			return "user";
+		case "DEPLOYMENT_CAUSE_KIND_SYSTEM":
+		case "system":
+			return "system";
+		case "DEPLOYMENT_CAUSE_KIND_AGENT":
+		case "agent":
+			return "agent";
+		case "DEPLOYMENT_CAUSE_KIND_BUILDER":
+		case "builder":
+			return "builder";
+		case "DEPLOYMENT_CAUSE_KIND_WEBHOOK":
+		case "webhook":
+			return "webhook";
+		default:
+			return "unspecified";
+	}
 }
 
 export function decodeListDomainBindingsResponse(

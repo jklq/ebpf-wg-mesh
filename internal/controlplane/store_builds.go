@@ -72,7 +72,7 @@ func (s *Store) enqueueBuildForService(ctx context.Context, userID, projectID, s
 		if err != nil {
 			return err
 		}
-		rec, err = s.enqueueBuildTx(ctx, tx, service, commitSHA)
+		rec, err = s.enqueueBuildTx(ctx, tx, service, commitSHA, deploymentActor{Kind: deploymentCauseUser, ID: userID})
 		return err
 	})
 	if err != nil {
@@ -81,7 +81,7 @@ func (s *Store) enqueueBuildForService(ctx context.Context, userID, projectID, s
 	return rec, nil
 }
 
-func (s *Store) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service serviceRecord, commitSHA string) (buildRunRecord, error) {
+func (s *Store) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service serviceRecord, commitSHA string, actor deploymentActor) (buildRunRecord, error) {
 	spec := desiredSourceSpec(service.Spec)
 	if spec == nil {
 		return buildRunRecord{}, errServiceNotBuildable
@@ -116,10 +116,13 @@ func (s *Store) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service serviceR
 		}
 		return buildRunRecord{}, err
 	}
-	return s.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe)
+	if actor.Kind == "" {
+		actor.Kind = deploymentCauseUser
+	}
+	return s.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, actor)
 }
 
-func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service serviceRecord, revision sourceRevisionRecord, snapshot sourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe) (buildRunRecord, error) {
+func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service serviceRecord, revision sourceRevisionRecord, snapshot sourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (buildRunRecord, error) {
 	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
 		return buildRunRecord{}, errSourceStateNotReady
 	}
@@ -178,6 +181,18 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 		  WHERE id = $3`,
 		rec.ID, now, service.ID,
 	); err != nil {
+		return buildRunRecord{}, err
+	}
+	if actor.Kind == "" {
+		actor.Kind = deploymentCauseSystem
+	}
+	reasonCode := reasonBuildQueued
+	detail := "Build queued"
+	if actor.Kind == deploymentCauseWebhook {
+		reasonCode = reasonWebhookPush
+		detail = "Build queued from webhook"
+	}
+	if _, err := s.insertDeploymentTx(ctx, tx, service.ID, deploymentStateQueuedBuild, actor, reasonCode, detail, service.SpecRevision, rec.TargetRolloutGeneration, rec.ID, "", "", now); err != nil {
 		return buildRunRecord{}, err
 	}
 	return rec, nil
@@ -254,6 +269,14 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 			  WHERE id = $3`,
 			rec.ID, now, builderID,
 		); err != nil {
+			return err
+		}
+		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, deploymentTransitionInput{
+			ToState:    deploymentStateBuilding,
+			Actor:      deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+			ReasonCode: reasonBuildStarted,
+			Detail:     "Builder claimed the build",
+		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		return nil
@@ -335,6 +358,20 @@ func (s *Store) recoverExpiredBuildsTx(ctx context.Context, tx *sql.Tx, cutoff t
 			  WHERE id = $6`,
 			nextState, startedAt, buildStateSuperseded, now, failureReason, rec.ID,
 		); err != nil {
+			return err
+		}
+		transition := deploymentTransitionInput{
+			ToState:    deploymentStateQueuedBuild,
+			Actor:      deploymentActor{Kind: deploymentCauseSystem},
+			ReasonCode: reasonBuildRequeued,
+			Detail:     "Builder heartbeat expired; build requeued",
+		}
+		if nextState == buildStateSuperseded {
+			transition.ToState = deploymentStateSuperseded
+			transition.ReasonCode = reasonBuildSuperseded
+			transition.Detail = failureReason
+		}
+		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, transition); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 	}
@@ -423,6 +460,22 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		}
 
 		if stateValue != buildStateSucceeded {
+			toState := deploymentStateFailed
+			reasonCode := reasonBuildFailed
+			detail := firstNonEmpty(failureReason, "Build failed")
+			if stateValue == buildStateSuperseded {
+				toState = deploymentStateSuperseded
+				reasonCode = reasonBuildSuperseded
+				detail = firstNonEmpty(failureReason, "Build superseded")
+			}
+			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
+				ToState:    toState,
+				Actor:      deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+				ReasonCode: reasonCode,
+				Detail:     detail,
+			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
 			return nil
 		}
 		if build.SourceRevisionID == "" || build.SourceSnapshotID == "" || build.SourceSnapshotDigest == "" {
@@ -440,6 +493,16 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 			return err
 		}
 		if newerCount > 0 {
+			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
+				ToState:        deploymentStateSuperseded,
+				Actor:          deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+				ReasonCode:     reasonBuildSuperseded,
+				Detail:         "A newer build superseded this image",
+				ImageDigest:    imageDigest,
+				HasImageDigest: true,
+			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
 			return nil
 		}
 
@@ -461,6 +524,20 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 			return err
 		}
 		if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", now); err != nil {
+			return err
+		}
+		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
+			ToState:           deploymentStateScheduling,
+			Actor:             deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+			ReasonCode:        reasonBuildSucceeded,
+			Detail:            "Image ready; scheduling rollout",
+			ImageDigest:       imageDigest,
+			HasImageDigest:    true,
+			RolloutGeneration: nextRolloutGeneration,
+			HasRollout:        true,
+			SpecRevision:      service.SpecRevision,
+			HasSpecRevision:   true,
+		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -537,6 +614,9 @@ func (s *Store) serviceByIDInternalQuerier(ctx context.Context, q serviceQueryer
 	}
 	rec.LatestBuild, err = s.latestBuildForServiceQuerier(ctx, q, rec.LatestBuildID)
 	if err != nil {
+		return serviceRecord{}, err
+	}
+	if err := s.attachLatestDeploymentQuerier(ctx, q, &rec); err != nil {
 		return serviceRecord{}, err
 	}
 	return rec, nil

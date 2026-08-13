@@ -178,6 +178,47 @@ enum DeploymentStageState {
   DEPLOYMENT_STAGE_STATE_SKIPPED = 5;
 }
 
+enum DeploymentState {
+  DEPLOYMENT_STATE_UNSPECIFIED = 0;
+  DEPLOYMENT_STATE_STAGED = 1;
+  DEPLOYMENT_STATE_QUEUED_BUILD = 2;
+  DEPLOYMENT_STATE_BUILDING = 3;
+  DEPLOYMENT_STATE_SCHEDULING = 4;
+  DEPLOYMENT_STATE_IMAGE_PULL = 5;
+  DEPLOYMENT_STATE_STARTING = 6;
+  DEPLOYMENT_STATE_READINESS = 7;
+  DEPLOYMENT_STATE_ACTIVE = 8;
+  DEPLOYMENT_STATE_DRAINING = 9;
+  DEPLOYMENT_STATE_COMPLETED = 10;
+  DEPLOYMENT_STATE_FAILED = 11;
+  DEPLOYMENT_STATE_CANCELLED = 12;
+  DEPLOYMENT_STATE_CRASHED = 13;
+  DEPLOYMENT_STATE_REMOVED = 14;
+  DEPLOYMENT_STATE_SUPERSEDED = 15;
+}
+
+enum DeploymentCauseKind {
+  DEPLOYMENT_CAUSE_KIND_UNSPECIFIED = 0;
+  DEPLOYMENT_CAUSE_KIND_USER = 1;
+  DEPLOYMENT_CAUSE_KIND_SYSTEM = 2;
+  DEPLOYMENT_CAUSE_KIND_AGENT = 3;
+  DEPLOYMENT_CAUSE_KIND_BUILDER = 4;
+  DEPLOYMENT_CAUSE_KIND_WEBHOOK = 5;
+}
+
+message DeploymentStatus {
+  string deployment_id = 1;
+  DeploymentState state = 2;
+  google.protobuf.Timestamp transitioned_at = 3;
+  DeploymentCauseKind cause_kind = 4;
+  string cause_id = 5;
+  string reason_code = 6;
+  string detail = 7;
+  int64 spec_revision = 8;
+  string image_digest = 9;
+  int64 rollout_generation = 10;
+}
+
 message DeploymentStage {
   string key = 1;
   string label = 2;
@@ -235,6 +276,7 @@ message Service {
   int32 unapplied_change_count = 14;
   repeated ServiceUnappliedChange unapplied_changes = 15;
   string internal_hostname = 16;
+  DeploymentStatus latest_deployment = 17;
 }
 
 enum DomainOwnershipState {
@@ -533,6 +575,9 @@ message DeploymentRecord {
   BuildStatus build = 7;
   bool is_current = 8;
   string requested_by_user_id = 9;
+  DeploymentStatus status = 10;
+  repeated DeploymentStage stages = 11;
+  string image_digest = 12;
 }
 
 message ListServiceDeploymentsResponse {

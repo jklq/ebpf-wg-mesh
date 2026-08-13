@@ -59,7 +59,16 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 }
 
 func (s *Store) createStagedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
-	return s.insertServiceTx(ctx, tx, environment, name, spec, "")
+	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, "")
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	dep, err := s.insertDeploymentTx(ctx, tx, rec.ID, deploymentStateStaged, deploymentActor{Kind: deploymentCauseUser}, reasonServiceStaged, "Configuration staged", rec.SpecRevision, 0, "", "", "", rec.CreatedAt)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	rec.LatestDeployment = &dep
+	return rec, nil
 }
 
 func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
@@ -85,6 +94,19 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, 1, 1, "create", "", "", now); err != nil {
 		return serviceRecord{}, err
 	}
+	initialState := deploymentStateScheduling
+	reasonCode := reasonServiceCreated
+	detail := "Service created and scheduled"
+	if desiredSourceSpec(spec) != nil {
+		initialState = deploymentStateStaged
+		reasonCode = reasonServiceStaged
+		detail = "Service created; waiting for source build"
+	}
+	dep, err := s.insertDeploymentTx(ctx, tx, rec.ID, initialState, deploymentActor{Kind: deploymentCauseSystem}, reasonCode, detail, rec.SpecRevision, 1, "", rec.ResolvedImage, "", now)
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	rec.LatestDeployment = &dep
 	allocationID := mustID()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
 		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
@@ -231,6 +253,9 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 			return err
 		}
 		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {
+			return err
+		}
+		if _, err := s.insertDeploymentTx(ctx, tx, current.ID, deploymentStateScheduling, deploymentActor{Kind: deploymentCauseSystem}, reasonManagedSync, "Managed service synchronized", nextSpecRevision, nextRolloutGeneration, "", directImageRef(spec), "", now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(
@@ -641,8 +666,11 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 		   JOIN allocations a ON a.service_id = d.service_id
 		   JOIN services s ON s.id = a.service_id
 		   JOIN agents ag ON ag.id = a.agent_id
+		   JOIN deployments dep ON dep.service_id = a.service_id AND dep.is_current = TRUE
 		  WHERE a.healthy = TRUE
+		    AND dep.state = $1
 		  ORDER BY d.hostname ASC`,
+		deploymentStateActive,
 	)
 	if err != nil {
 		return nil, err
