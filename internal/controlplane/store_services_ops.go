@@ -13,6 +13,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -487,7 +488,8 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT a.id, s.id, s.environment_id, s.name, s.current_spec_revision, s.current_rollout_generation,
-		        s.current_resolved_image, r.spec_json, e.network_identity, e.name, p.id, p.name
+		        s.current_resolved_image, r.spec_json, e.network_identity, e.name, p.id, p.name,
+		        a.restart_observation_json, a.operator_restart_nonce
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id
@@ -510,7 +512,8 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		var rawSpec []byte
 		var networkIdentity int64
 		var environmentName, projectID, projectName string
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName); err != nil {
+		var restartRaw []byte
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce); err != nil {
 			return nil, err
 		}
 		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
@@ -525,6 +528,11 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		if err != nil {
 			return nil, err
 		}
+		obs, err := decodeRestartObservation(restartRaw)
+		if err != nil {
+			return nil, err
+		}
+		svc.RestartObservation = obs
 		svc.Spec = resolvedDesiredServiceSpec(spec, resolvedImage, targetPorts)
 		if svc.Spec.Runtime.Env == nil {
 			svc.Spec.Runtime.Env = make(map[string]string)
@@ -628,7 +636,9 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 		  WHERE a.healthy = TRUE
 		    AND a.applied_spec_revision >= s.current_spec_revision
 		    AND a.applied_rollout_generation >= s.current_rollout_generation
+		    AND a.phase <> $1
 		  ORDER BY d.hostname ASC, a.id ASC`,
+		restartpolicy.PhaseCrashLoop,
 	)
 	if err != nil {
 		return nil, err

@@ -129,6 +129,19 @@ export interface DashboardHTTPHealthCheck {
 	timeoutSeconds?: number;
 }
 
+export type DashboardRestartPolicy = "always" | "on-failure" | "never";
+
+export interface DashboardRestartSpec {
+	policy: DashboardRestartPolicy;
+	maxRestarts?: number;
+	windowSeconds?: number;
+	initialDelayMs?: number;
+	maxDelayMs?: number;
+	backoffMultiplier?: number;
+	jitter?: number;
+	stableAfterSeconds?: number;
+}
+
 export {
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
@@ -140,6 +153,8 @@ export interface DashboardRuntimeSpec {
 	memoryMebibytes: number;
 	ports: DashboardRuntimePort[];
 	healthCheck?: DashboardHTTPHealthCheck;
+	livenessCheck?: DashboardHTTPHealthCheck;
+	restart?: DashboardRestartSpec;
 	volumeName?: string;
 }
 
@@ -244,17 +259,13 @@ export interface DashboardAllocationStatus {
 	desiredRolloutGeneration: number;
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
-	restartCount?: number;
-	lastRestartedAt?: Date;
-	restarts?: Array<DashboardAllocationRestart>;
-}
-
-export interface DashboardAllocationRestart {
-	restartedAt?: Date;
-	reason: string;
-	fromAgentId?: string;
-	toAgentId?: string;
-	rolloutGeneration?: number;
+	operatorRestartNonce?: number;
+	restart?: {
+		restartCount: number;
+		crashLoop: boolean;
+		lastCause: string;
+		message: string;
+	};
 }
 
 export interface DashboardServiceStatus {
@@ -642,6 +653,10 @@ export interface PlatformGateway {
 			confirmScaleToZero?: boolean;
 		},
 	): Promise<DashboardServiceStatus>;
+	restartService(
+		user: DashboardUser,
+		input: { serviceId: string },
+	): Promise<DashboardServiceStatus>;
 	discardServiceChanges(
 		user: DashboardUser,
 		input: {
@@ -776,6 +791,7 @@ export interface UpdateServiceInput {
 	trackedRef?: string;
 	dockerfilePath?: string;
 	contextDir?: string;
+	restart?: DashboardRestartSpec;
 }
 
 export interface DashboardService {
@@ -886,6 +902,9 @@ export interface DashboardService {
 		serviceId: string;
 		desiredReplicaCount: number;
 		confirmScaleToZero?: boolean;
+	}): Promise<DashboardServiceStatus>;
+	restartServiceFromSession(input: {
+		serviceId: string;
 	}): Promise<DashboardServiceStatus>;
 	discardServiceChangesFromSession(input: {
 		serviceId: string;

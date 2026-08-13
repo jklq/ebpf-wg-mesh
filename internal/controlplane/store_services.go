@@ -11,6 +11,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -76,6 +77,28 @@ func encodeHealthyPorts(ports []int32) ([]byte, error) {
 	return json.Marshal(ports)
 }
 
+func encodeRestartObservation(obs *platformv1.RestartObservation) ([]byte, error) {
+	if obs == nil {
+		return []byte("{}"), nil
+	}
+	raw, err := protojson.Marshal(obs)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func decodeRestartObservation(raw []byte) (*platformv1.RestartObservation, error) {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil, nil
+	}
+	obs := &platformv1.RestartObservation{}
+	if err := protojson.Unmarshal(raw, obs); err != nil {
+		return nil, err
+	}
+	return obs, nil
+}
+
 func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec {
 	if spec == nil {
 		return nil
@@ -98,6 +121,16 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 			hc.GetPort() == 0 &&
 			hc.GetTimeoutSeconds() == 0 {
 			runtime.HealthCheck = nil
+		}
+		if lc := runtime.GetLivenessCheck(); lc != nil &&
+			lc.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED &&
+			lc.GetPath() == "" &&
+			lc.GetPort() == 0 &&
+			lc.GetTimeoutSeconds() == 0 {
+			runtime.LivenessCheck = nil
+		}
+		if err := restartpolicy.ValidateRestart(runtime.GetRestart()); err == nil {
+			runtime.Restart = restartpolicy.CanonicalRestart(runtime.GetRestart())
 		}
 	}
 	if source := out.GetSource(); source != nil {
@@ -428,7 +461,10 @@ func equalRuntimeAfterCanonicalization(a, b *platformv1.ServiceRuntime) bool {
 	if !proto.Equal(ahc, bhc) {
 		return false
 	}
-	return true
+	if !proto.Equal(a.GetLivenessCheck(), b.GetLivenessCheck()) {
+		return false
+	}
+	return proto.Equal(a.GetRestart(), b.GetRestart())
 }
 
 func loadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {

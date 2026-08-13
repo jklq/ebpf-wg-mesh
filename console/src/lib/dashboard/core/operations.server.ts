@@ -901,6 +901,12 @@ export async function updateServiceFromSession(
 					...(current.spec?.runtime.healthCheck
 						? { healthCheck: current.spec.runtime.healthCheck }
 						: {}),
+					...(current.spec?.runtime.livenessCheck
+						? { livenessCheck: current.spec.runtime.livenessCheck }
+						: {}),
+					...(input.restart ?? current.spec?.runtime.restart
+						? { restart: input.restart ?? current.spec?.runtime.restart }
+						: {}),
 				},
 			},
 		}),
@@ -932,6 +938,16 @@ export async function scaleServiceFromSession(
 			desiredReplicaCount: input.desiredReplicaCount,
 			confirmScaleToZero: input.confirmScaleToZero,
 		}),
+	);
+}
+
+export async function restartServiceFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string },
+): Promise<DashboardServiceStatus> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "restartService", (platform) =>
+		platform.restartService(session.user, { serviceId: input.serviceId }),
 	);
 }
 

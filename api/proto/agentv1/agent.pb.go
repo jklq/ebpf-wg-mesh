@@ -668,8 +668,12 @@ type DesiredService struct {
 	RegistryPassword string          `protobuf:"bytes,12,opt,name=registry_password,json=registryPassword,proto3" json:"registry_password,omitempty"`
 	InternalHostname string          `protobuf:"bytes,13,opt,name=internal_hostname,json=internalHostname,proto3" json:"internal_hostname,omitempty"`
 	InternalHosts    []*InternalHost `protobuf:"bytes,14,rep,name=internal_hosts,json=internalHosts,proto3" json:"internal_hosts,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Last persisted restart observation from the control plane. The agent
+	// uses this after a local data-dir loss; local files still win when newer.
+	RestartObservation   *platformv1.RestartObservation `protobuf:"bytes,15,opt,name=restart_observation,json=restartObservation,proto3" json:"restart_observation,omitempty"`
+	OperatorRestartNonce int64                          `protobuf:"varint,16,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *DesiredService) Reset() {
@@ -798,6 +802,20 @@ func (x *DesiredService) GetInternalHosts() []*InternalHost {
 		return x.InternalHosts
 	}
 	return nil
+}
+
+func (x *DesiredService) GetRestartObservation() *platformv1.RestartObservation {
+	if x != nil {
+		return x.RestartObservation
+	}
+	return nil
+}
+
+func (x *DesiredService) GetOperatorRestartNonce() int64 {
+	if x != nil {
+		return x.OperatorRestartNonce
+	}
+	return 0
 }
 
 type InternalHost struct {
@@ -997,18 +1015,19 @@ func (x *VolumeCondition) GetMessage() string {
 }
 
 type ServiceCondition struct {
-	state                    protoimpl.MessageState `protogen:"open.v1"`
-	AllocationId             string                 `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
-	ServiceId                string                 `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	DesiredSpecRevision      int64                  `protobuf:"varint,3,opt,name=desired_spec_revision,json=desiredSpecRevision,proto3" json:"desired_spec_revision,omitempty"`
-	AppliedSpecRevision      int64                  `protobuf:"varint,4,opt,name=applied_spec_revision,json=appliedSpecRevision,proto3" json:"applied_spec_revision,omitempty"`
-	Phase                    string                 `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
-	Message                  string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
-	AllocationIp             string                 `protobuf:"bytes,7,opt,name=allocation_ip,json=allocationIp,proto3" json:"allocation_ip,omitempty"`
-	Healthy                  bool                   `protobuf:"varint,8,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	DesiredRolloutGeneration int64                  `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
-	AppliedRolloutGeneration int64                  `protobuf:"varint,10,opt,name=applied_rollout_generation,json=appliedRolloutGeneration,proto3" json:"applied_rollout_generation,omitempty"`
-	HealthyPorts             []int32                `protobuf:"varint,11,rep,packed,name=healthy_ports,json=healthyPorts,proto3" json:"healthy_ports,omitempty"`
+	state                    protoimpl.MessageState         `protogen:"open.v1"`
+	AllocationId             string                         `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	ServiceId                string                         `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	DesiredSpecRevision      int64                          `protobuf:"varint,3,opt,name=desired_spec_revision,json=desiredSpecRevision,proto3" json:"desired_spec_revision,omitempty"`
+	AppliedSpecRevision      int64                          `protobuf:"varint,4,opt,name=applied_spec_revision,json=appliedSpecRevision,proto3" json:"applied_spec_revision,omitempty"`
+	Phase                    string                         `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
+	Message                  string                         `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
+	AllocationIp             string                         `protobuf:"bytes,7,opt,name=allocation_ip,json=allocationIp,proto3" json:"allocation_ip,omitempty"`
+	Healthy                  bool                           `protobuf:"varint,8,opt,name=healthy,proto3" json:"healthy,omitempty"`
+	DesiredRolloutGeneration int64                          `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
+	AppliedRolloutGeneration int64                          `protobuf:"varint,10,opt,name=applied_rollout_generation,json=appliedRolloutGeneration,proto3" json:"applied_rollout_generation,omitempty"`
+	HealthyPorts             []int32                        `protobuf:"varint,11,rep,packed,name=healthy_ports,json=healthyPorts,proto3" json:"healthy_ports,omitempty"`
+	Restart                  *platformv1.RestartObservation `protobuf:"bytes,12,opt,name=restart,proto3" json:"restart,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -1116,6 +1135,13 @@ func (x *ServiceCondition) GetAppliedRolloutGeneration() int64 {
 func (x *ServiceCondition) GetHealthyPorts() []int32 {
 	if x != nil {
 		return x.HealthyPorts
+	}
+	return nil
+}
+
+func (x *ServiceCondition) GetRestart() *platformv1.RestartObservation {
+	if x != nil {
+		return x.Restart
 	}
 	return nil
 }
@@ -1591,7 +1617,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xe8\x04\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xf0\x05\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1608,7 +1634,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x11registry_username\x18\v \x01(\tR\x10registryUsername\x12+\n" +
 	"\x11registry_password\x18\f \x01(\tR\x10registryPassword\x12+\n" +
 	"\x11internal_hostname\x18\r \x01(\tR\x10internalHostname\x12=\n" +
-	"\x0einternal_hosts\x18\x0e \x03(\v2\x16.agent.v1.InternalHostR\rinternalHosts\">\n" +
+	"\x0einternal_hosts\x18\x0e \x03(\v2\x16.agent.v1.InternalHostR\rinternalHosts\x12P\n" +
+	"\x13restart_observation\x18\x0f \x01(\v2\x1f.platform.v1.RestartObservationR\x12restartObservation\x124\n" +
+	"\x16operator_restart_nonce\x18\x10 \x01(\x03R\x14operatorRestartNonce\">\n" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\"\xb0\x02\n" +
@@ -1623,7 +1651,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0fVolumeCondition\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xce\x03\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\x89\x04\n" +
 	"\x10ServiceCondition\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1637,7 +1665,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\x12<\n" +
 	"\x1aapplied_rollout_generation\x18\n" +
 	" \x01(\x03R\x18appliedRolloutGeneration\x12#\n" +
-	"\rhealthy_ports\x18\v \x03(\x05R\fhealthyPorts\"\x96\x01\n" +
+	"\rhealthy_ports\x18\v \x03(\x05R\fhealthyPorts\x129\n" +
+	"\arestart\x18\f \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\"\x96\x01\n" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
@@ -1709,7 +1738,8 @@ var file_agent_proto_goTypes = []any{
 	(*AgentServerMessage)(nil),                 // 18: agent.v1.AgentServerMessage
 	(*timestamppb.Timestamp)(nil),              // 19: google.protobuf.Timestamp
 	(*platformv1.ResolvedServiceSpec)(nil),     // 20: platform.v1.ResolvedServiceSpec
-	(platformv1.ServiceLogType)(0),             // 21: platform.v1.ServiceLogType
+	(*platformv1.RestartObservation)(nil),      // 21: platform.v1.RestartObservation
+	(platformv1.ServiceLogType)(0),             // 22: platform.v1.ServiceLogType
 }
 var file_agent_proto_depIdxs = []int32{
 	19, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
@@ -1717,31 +1747,33 @@ var file_agent_proto_depIdxs = []int32{
 	6,  // 2: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
 	20, // 3: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
 	10, // 4: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
-	8,  // 5: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
-	9,  // 6: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	19, // 7: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
-	5,  // 8: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
-	12, // 9: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	13, // 10: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	19, // 11: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	21, // 12: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	15, // 13: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	0,  // 14: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	7,  // 15: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	14, // 16: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	16, // 17: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	11, // 18: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	1,  // 19: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	3,  // 20: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	17, // 21: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	2,  // 22: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	2,  // 23: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	18, // 24: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	22, // [22:25] is the sub-list for method output_type
-	19, // [19:22] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	21, // 5: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
+	8,  // 6: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
+	9,  // 7: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
+	19, // 8: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	5,  // 9: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
+	21, // 10: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	12, // 11: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	13, // 12: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	19, // 13: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	22, // 14: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	15, // 15: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	0,  // 16: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	7,  // 17: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	14, // 18: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	16, // 19: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	11, // 20: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	1,  // 21: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	3,  // 22: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	17, // 23: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	2,  // 24: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	2,  // 25: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	18, // 26: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	24, // [24:27] is the sub-list for method output_type
+	21, // [21:24] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }

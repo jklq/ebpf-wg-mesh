@@ -51,6 +51,8 @@ type containerdEngine struct {
 	logSinkMu   sync.RWMutex
 	logSink     LogSink
 	logSequence atomic.Uint64
+	oomMu       sync.Mutex
+	oom         map[string]bool
 }
 
 func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
@@ -105,6 +107,7 @@ func (e *containerdEngine) ReconcileEvents(ctx context.Context) (<-chan struct{}
 	events, subscriptionErrors := e.client.Subscribe(
 		e.namespaced(ctx),
 		`topic=="/tasks/exit",event.container_id~="^platform-"`,
+		`topic=="/tasks/oom",event.container_id~="^platform-"`,
 	)
 	out := make(chan struct{}, 1)
 	errs := make(chan error, 1)
@@ -121,6 +124,9 @@ func (e *containerdEngine) ReconcileEvents(ctx context.Context) (<-chan struct{}
 				}
 				if event == nil {
 					continue
+				}
+				if strings.Contains(event.Topic, "/tasks/oom") {
+					e.noteOOMTopic(event.Topic, event.Event)
 				}
 				select {
 				case out <- struct{}{}:
@@ -169,13 +175,17 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		return serviceStatus{}, false, err
 	} else if exists {
 		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() &&
-			rec.networkIdentity == svc.GetNetworkIdentity() && rec.running {
+			rec.networkIdentity == svc.GetNetworkIdentity() {
 			netnsPath, _ := e.netnsPath(svc.GetAllocationId())
 			return serviceStatus{
 				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 				AppliedRolloutGeneration: rec.rolloutGeneration,
 				AllocationIP:             allocationIPForService(svc),
 				NetworkNamespacePath:     netnsPath,
+				Running:                  rec.running,
+				ExitCode:                 rec.exitCode,
+				Signal:                   rec.signal,
+				OOMKilled:                rec.oomKilled,
 			}, false, nil
 		}
 		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
@@ -239,6 +249,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
 		AllocationIP:             allocationIPForService(svc),
 		NetworkNamespacePath:     netnsPath,
+		Running:                  true,
 	}, true, nil
 }
 
@@ -280,6 +291,7 @@ func (e *containerdEngine) currentLogSink() LogSink {
 func (e *containerdEngine) RemoveService(ctx context.Context, allocationID string) error {
 	ctx = e.namespaced(ctx)
 	containerID := containerName(allocationID)
+	e.clearOOM(containerID)
 	var errs []error
 	container, err := e.client.LoadContainer(ctx, containerID)
 	if err == nil {
@@ -338,6 +350,9 @@ type inspectRecord struct {
 	rolloutGeneration int64
 	networkIdentity   uint32
 	running           bool
+	exitCode          int32
+	signal            int32
+	oomKilled         bool
 }
 
 func (e *containerdEngine) inspect(ctx context.Context, containerID string) (inspectRecord, bool, error) {
@@ -365,7 +380,80 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 	if err != nil {
 		return inspectRecord{}, false, err
 	}
-	return inspectRecord{rolloutGeneration: rolloutGeneration, networkIdentity: networkIdentity, running: status.Status == containerd.Running}, true, nil
+	rec := inspectRecord{rolloutGeneration: rolloutGeneration, networkIdentity: networkIdentity, running: status.Status == containerd.Running}
+	if !rec.running {
+		rec.exitCode, rec.signal = classifyContainerExit(status.ExitStatus)
+		rec.oomKilled = e.containerOOMKilled(containerID)
+	}
+	return rec, true, nil
+}
+
+func classifyContainerExit(exitStatus uint32) (int32, int32) {
+	if exitStatus > 128 && exitStatus <= 128+255 {
+		return int32(exitStatus), int32(exitStatus - 128)
+	}
+	return int32(exitStatus), 0
+}
+
+func (e *containerdEngine) containerOOMKilled(containerID string) bool {
+	if e == nil {
+		return false
+	}
+	e.oomMu.Lock()
+	defer e.oomMu.Unlock()
+	return e.oom[containerID]
+}
+
+func (e *containerdEngine) clearOOM(containerID string) {
+	if e == nil {
+		return
+	}
+	e.oomMu.Lock()
+	defer e.oomMu.Unlock()
+	delete(e.oom, containerID)
+}
+
+func (e *containerdEngine) noteOOM(containerID string) {
+	containerID = strings.TrimSpace(containerID)
+	if e == nil || containerID == "" {
+		return
+	}
+	e.oomMu.Lock()
+	defer e.oomMu.Unlock()
+	if e.oom == nil {
+		e.oom = make(map[string]bool)
+	}
+	e.oom[containerID] = true
+}
+
+func (e *containerdEngine) noteOOMTopic(topic string, payload any) {
+	if payload == nil {
+		return
+	}
+	raw := fmt.Sprint(payload)
+	if id := containerIDFromEventText(raw); id != "" {
+		e.noteOOM(id)
+		return
+	}
+	if id := containerIDFromEventText(topic); id != "" {
+		e.noteOOM(id)
+	}
+}
+
+func containerIDFromEventText(text string) string {
+	const prefix = "platform-"
+	idx := strings.Index(text, prefix)
+	if idx < 0 {
+		return ""
+	}
+	id := text[idx:]
+	for i, r := range id {
+		if r == '"' || r == ' ' || r == ',' || r == '}' {
+			id = id[:i]
+			break
+		}
+	}
+	return id
 }
 
 func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, password string) (containerd.Image, error) {

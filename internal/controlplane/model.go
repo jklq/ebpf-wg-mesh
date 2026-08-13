@@ -119,6 +119,8 @@ type allocationRecord struct {
 	Restarts                 []allocationRestartEvent
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
+	Restart                  *platformv1.RestartObservation
+	OperatorRestartNonce     int64
 }
 
 type allocationRestartEvent struct {

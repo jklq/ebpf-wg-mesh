@@ -726,6 +726,7 @@ type fakePlatformStore struct {
 	createScheduledServiceFn          func(ctx context.Context, userID, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
 	updateServiceFn                   func(ctx context.Context, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployServiceFn                 func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
+	restartServiceFn                  func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
 	discardServiceChangesFn           func(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
 	requestServiceSourceSyncFn        func(ctx context.Context, userID, projectID, serviceID string) error
 	enqueueBuildForServiceFn          func(ctx context.Context, userID, projectID, serviceID, commitSHA string) (buildRunRecord, error)
@@ -823,6 +824,13 @@ func (f *fakePlatformStore) updateService(ctx context.Context, userID, projectID
 func (f *fakePlatformStore) redeployService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
 	if f.redeployServiceFn != nil {
 		return f.redeployServiceFn(ctx, userID, projectID, serviceID)
+	}
+	return serviceRecord{ID: serviceID, EnvironmentID: projectID, AllocatedAgentID: "node-1"}, nil
+}
+
+func (f *fakePlatformStore) restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
+	if f.restartServiceFn != nil {
+		return f.restartServiceFn(ctx, userID, projectID, serviceID)
 	}
 	return serviceRecord{ID: serviceID, EnvironmentID: projectID, AllocatedAgentID: "node-1"}, nil
 }

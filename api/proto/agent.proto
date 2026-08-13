@@ -88,6 +88,10 @@ message DesiredService {
   string registry_password = 12;
   string internal_hostname = 13;
   repeated InternalHost internal_hosts = 14;
+  // Last persisted restart observation from the control plane. The agent
+  // uses this after a local data-dir loss; local files still win when newer.
+  platform.v1.RestartObservation restart_observation = 15;
+  int64 operator_restart_nonce = 16;
 }
 
 message InternalHost {
@@ -122,6 +126,7 @@ message ServiceCondition {
   int64 desired_rollout_generation = 9;
   int64 applied_rollout_generation = 10;
   repeated int32 healthy_ports = 11;
+  platform.v1.RestartObservation restart = 12;
 }
 
 message StatusReport {

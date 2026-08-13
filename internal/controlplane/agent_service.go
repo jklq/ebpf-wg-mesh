@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -208,6 +210,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			for _, environmentID := range changedEnvironmentIDs {
 				s.events.Publish(environmentID)
 			}
+			s.emitCrashLoopEvents(ctx, hello.GetAgentId(), payload.StatusReport)
 			if ingressChanged {
 				s.ingress.RequestSync()
 			}
@@ -263,6 +266,54 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			}
 			lastRevision = nextRevision
 		}
+	}
+}
+
+func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, report *agentv1.StatusReport) {
+	if s == nil || report == nil || s.logStore == nil || !s.logStore.Enabled() {
+		return
+	}
+	var lines []LogLineInput
+	for _, cond := range report.GetServices() {
+		if cond.GetPhase() != restartpolicy.PhaseCrashLoop && !cond.GetRestart().GetCrashLoop() {
+			continue
+		}
+		alloc, err := s.store.allocationByServiceID(ctx, cond.GetServiceId())
+		if err != nil {
+			continue
+		}
+		message := cond.GetMessage()
+		if message == "" {
+			message = cond.GetRestart().GetMessage()
+		}
+		if message == "" {
+			message = "allocation entered crash loop; authorized restart or new rollout required"
+		}
+		slog.Warn("allocation entered crash loop",
+			"agent_id", agentID,
+			"service_id", cond.GetServiceId(),
+			"allocation_id", cond.GetAllocationId(),
+			"message", message,
+		)
+		lines = append(lines, LogLineInput{
+			ObservedAt:        time.Now().UTC(),
+			EnvironmentID:     alloc.EnvironmentID,
+			ServiceID:         cond.GetServiceId(),
+			AllocationID:      cond.GetAllocationId(),
+			AgentID:           agentID,
+			Stream:            "combined",
+			LogType:           LogTypeDeploy,
+			Stage:             "restart",
+			RolloutGeneration: cond.GetDesiredRolloutGeneration(),
+			Sequence:          nextSynthSequence(),
+			Line:              message,
+		})
+	}
+	if len(lines) == 0 {
+		return
+	}
+	if err := s.logStore.WriteLogLines(ctx, lines); err != nil {
+		slog.Warn("write crash-loop event", "error", err, "agent_id", agentID)
 	}
 }
 

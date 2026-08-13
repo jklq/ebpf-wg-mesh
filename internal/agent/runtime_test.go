@@ -23,6 +23,7 @@ type fakeEngine struct {
 	removed []string
 	status  map[string]serviceStatus
 	created map[string]bool
+	stopped map[string]bool
 }
 
 func TestPersistDesiredServiceDoesNotRewriteUnchangedState(t *testing.T) {
@@ -60,7 +61,13 @@ func TestPersistDesiredServiceDoesNotRewriteUnchangedState(t *testing.T) {
 
 func (f *fakeEngine) EnsureService(_ context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
 	f.ensured = append(f.ensured, svc.GetAllocationId())
-	return f.status[svc.GetAllocationId()], f.created[svc.GetAllocationId()], nil
+	status := f.status[svc.GetAllocationId()]
+	if f.stopped[svc.GetAllocationId()] {
+		status.Running = false
+	} else {
+		status.Running = true
+	}
+	return status, f.created[svc.GetAllocationId()], nil
 }
 
 func (f *fakeEngine) RemoveService(_ context.Context, allocationID string) error {

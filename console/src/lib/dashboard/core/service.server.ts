@@ -30,6 +30,7 @@ import {
 	publishDomainFromSession,
 	redeployServiceFromSession,
 	scaleServiceFromSession,
+	restartServiceFromSession,
 	renameEnvironmentFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
@@ -145,6 +146,9 @@ export function createDashboardService(
 		},
 		scaleServiceFromSession(input) {
 			return scaleServiceFromSession(runtime, input);
+		},
+		restartServiceFromSession(input) {
+			return restartServiceFromSession(runtime, input);
 		},
 		discardServiceChangesFromSession(input) {
 			return discardServiceChangesFromSession(runtime, input);

@@ -128,22 +128,8 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
-		RestartCount:             rec.RestartCount,
-	}
-	if rec.LastRestartedAt.Valid {
-		out.LastRestartedAt = ts(rec.LastRestartedAt.Time)
-	}
-	if len(rec.Restarts) > 0 {
-		out.Restarts = make([]*platformv1.AllocationRestart, 0, len(rec.Restarts))
-		for _, event := range rec.Restarts {
-			out.Restarts = append(out.Restarts, &platformv1.AllocationRestart{
-				RestartedAt:       ts(event.RestartedAt),
-				Reason:            event.Reason,
-				FromAgentId:       event.FromAgentID,
-				ToAgentId:         event.ToAgentID,
-				RolloutGeneration: event.RolloutGeneration,
-			})
-		}
+		Restart:                  rec.Restart,
+		OperatorRestartNonce:     rec.OperatorRestartNonce,
 	}
 	return out
 }
