@@ -44,47 +44,6 @@ func (s *Store) loadSourceArchive(ctx context.Context, snapshot sourceSnapshotRe
 	return archive, nil
 }
 
-// migrateLegacySourceArchives drains historical CockroachDB BYTES payloads
-// into object storage. Each row is copied before its database payload is
-// cleared, so interruption is safely resumable.
-func (s *Store) migrateLegacySourceArchives(ctx context.Context) error {
-	if s.sourceArchives == nil {
-		return errors.New("source archive store is not configured")
-	}
-	for {
-		var id, recordedDigest string
-		var archive []byte
-		err := s.db.QueryRowContext(ctx,
-			`SELECT id, digest, archive_tgz
-			   FROM source_snapshots
-			  WHERE length(archive_tgz) > 0
-			  ORDER BY created_at, id
-			  LIMIT 1`,
-		).Scan(&id, &recordedDigest, &archive)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		digest, key, err := s.storeSourceArchive(ctx, archive)
-		if err != nil {
-			return err
-		}
-		if recordedDigest != "" && recordedDigest != digest {
-			return fmt.Errorf("legacy snapshot %s digest mismatch", id)
-		}
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE source_snapshots
-			    SET digest = $1, object_key = $2, archive_size_bytes = $3, archive_tgz = b'', updated_at = $4
-			  WHERE id = $5 AND length(archive_tgz) > 0`,
-			digest, key, len(archive), time.Now().UTC(), id,
-		); err != nil {
-			return err
-		}
-	}
-}
-
 func (s *Store) pruneSourceArchives(ctx context.Context, cutoff time.Time) (int, error) {
 	if s.sourceArchives == nil {
 		return 0, errors.New("source archive store is not configured")

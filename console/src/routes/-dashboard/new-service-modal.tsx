@@ -10,6 +10,7 @@ import { RepositoryPicker } from "./repository-picker";
 import { doCreateServiceFast } from "./server-fns";
 import { formatError } from "./service-utils";
 import type { ConfirmRepositoryFn, PickerAction } from "./types";
+import { ModalOverlay } from "./ui";
 
 export function NewServiceModal({
 	state,
@@ -113,18 +114,7 @@ export function NewServiceModal({
 	};
 
 	return (
-		<div
-			className="modal-overlay"
-			role="dialog"
-			aria-modal="true"
-			tabIndex={-1}
-			onClick={(event) => {
-				if (event.target === event.currentTarget) onClose();
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Escape") onClose();
-			}}
-		>
+		<ModalOverlay onClose={onClose}>
 			<div className="modal-card">
 				<RepositoryPicker
 					actions={pickerActions}
@@ -150,7 +140,7 @@ export function NewServiceModal({
 					}
 				/>
 			</div>
-		</div>
+		</ModalOverlay>
 	);
 }
 

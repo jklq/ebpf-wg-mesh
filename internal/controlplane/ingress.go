@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -87,6 +88,8 @@ type IngressSyncer struct {
 	mu               sync.Mutex
 	timer            *time.Timer
 	dirty            bool
+	loaded           bool
+	lastPayload      []byte
 }
 
 func WithIngressStaticRoutes(routes []IngressStaticRoute) IngressSyncerOption {
@@ -187,7 +190,52 @@ func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, i.adminURL, bytes.NewReader(body))
+	if bytes.Equal(body, i.lastPayload) {
+		return nil
+	}
+
+	// POST /load replaces Caddy's HTTP server and drops live connections,
+	// including the dashboard Vite HMR websocket. After the initial load,
+	// only swap the route list.
+	if i.loaded {
+		if err := i.pushRoutes(ctx, cfg); err != nil {
+			slog.Warn("ingress route patch failed; falling back to full load", "error", err)
+			if err := i.pushJSON(ctx, http.MethodPost, i.adminURL, body); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err := i.pushJSON(ctx, http.MethodPost, i.adminURL, body); err != nil {
+			return err
+		}
+		i.loaded = true
+	}
+	i.lastPayload = bytes.Clone(body)
+	return nil
+}
+
+func (i *IngressSyncer) pushRoutes(ctx context.Context, cfg *caddyConfig) error {
+	server, ok := cfg.Apps.HTTP.Servers["srv0"]
+	if !ok {
+		return fmt.Errorf("missing srv0 in rendered ingress config")
+	}
+	routes := server.Routes
+	if routes == nil {
+		routes = []caddyRoute{}
+	}
+	body, err := json.Marshal(routes)
+	if err != nil {
+		return err
+	}
+	endpoint := ingressConfigAPIURL(i.adminURL, "/config/apps/http/servers/srv0/routes")
+	if endpoint == "" {
+		return fmt.Errorf("invalid ingress admin url %q", i.adminURL)
+	}
+	return i.pushJSON(ctx, http.MethodPatch, endpoint, body)
+}
+
+func (i *IngressSyncer) pushJSON(ctx context.Context, method, endpoint string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -201,6 +249,17 @@ func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 		return fmt.Errorf("caddy admin returned %s", resp.Status)
 	}
 	return nil
+}
+
+func ingressConfigAPIURL(adminURL, path string) string {
+	parsed, err := url.Parse(adminURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.Path = path
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func (i *IngressSyncer) render(ctx context.Context) (*caddyConfig, error) {

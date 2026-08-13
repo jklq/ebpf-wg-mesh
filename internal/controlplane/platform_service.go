@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"net"
 	"net/url"
 	"strings"
 
@@ -100,6 +99,7 @@ type PlatformServiceOption func(*PlatformService)
 
 type domainCNAMEResolver interface {
 	LookupCNAME(context.Context, string) (string, error)
+	LookupHost(context.Context, string) ([]string, error)
 }
 
 func WithDomainCNAMEResolver(resolver domainCNAMEResolver) PlatformServiceOption {
@@ -142,7 +142,7 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 }
 
 func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, opts ...PlatformServiceOption) *PlatformService {
-	service := &PlatformService{store: store, environmentStore: store, notifier: notifier, ingress: ingress, dnsResolver: net.DefaultResolver}
+	service := &PlatformService{store: store, environmentStore: store, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
@@ -712,14 +712,11 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 	if isPlatformHostname(hostname, s.platformDomainSuffix) {
 		return nil, status.Error(codes.InvalidArgument, "hostname is reserved for generated platform domains")
 	}
-	if err := s.verifyDomainOwnership(ctx, identity.UserID, service.ProjectID, req.GetBinding().GetServiceId(), hostname); err != nil {
-		if errors.Is(err, errDomainOwnershipNotProven) {
-			return nil, status.Errorf(codes.FailedPrecondition, "domain ownership: %v", err)
-		}
+	if _, err := s.store.platformDomainBindingForService(ctx, identity.UserID, service.ProjectID, req.GetBinding().GetServiceId()); err != nil {
 		if errors.Is(err, errPlatformDomainNotGenerated) || errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.FailedPrecondition, "domain ownership: %v", errPlatformDomainNotGenerated)
 		}
-		return nil, status.Errorf(codes.Internal, "verify domain ownership: %v", err)
+		return nil, status.Errorf(codes.Internal, "load platform domain: %v", err)
 	}
 	binding, changed, err := s.store.createDomainBinding(ctx, identity.UserID, service.ProjectID, hostname, req.GetBinding().GetServiceId(), targetPort)
 	if err != nil {
@@ -739,7 +736,7 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 		s.ingress.RequestSync()
 		s.events.Publish(service.EnvironmentID)
 	}
-	return toProtoDomainBinding(binding), nil
+	return s.annotateDomainBinding(ctx, identity.UserID, service.ProjectID, binding), nil
 }
 
 func (s *PlatformService) GenerateDomainBinding(ctx context.Context, req *platformv1.GenerateDomainBindingRequest) (*platformv1.DomainBinding, error) {
@@ -774,7 +771,7 @@ func (s *PlatformService) GenerateDomainBinding(ctx context.Context, req *platfo
 		s.ingress.RequestSync()
 		s.events.Publish(service.EnvironmentID)
 	}
-	return toProtoDomainBinding(binding), nil
+	return s.annotateDomainBinding(ctx, identity.UserID, service.ProjectID, binding), nil
 }
 
 func (s *PlatformService) GetDomainBinding(ctx context.Context, req *platformv1.GetDomainBindingRequest) (*platformv1.DomainBinding, error) {
@@ -789,7 +786,7 @@ func (s *PlatformService) GetDomainBinding(ctx context.Context, req *platformv1.
 		}
 		return nil, status.Errorf(codes.Internal, "get domain binding: %v", err)
 	}
-	return toProtoDomainBinding(binding), nil
+	return s.annotateDomainBinding(ctx, identity.UserID, binding.ProjectID, binding), nil
 }
 
 func (s *PlatformService) ListDomainBindings(ctx context.Context, req *platformv1.ListDomainBindingsRequest) (*platformv1.ListDomainBindingsResponse, error) {
@@ -803,7 +800,7 @@ func (s *PlatformService) ListDomainBindings(ctx context.Context, req *platformv
 	}
 	resp := &platformv1.ListDomainBindingsResponse{Bindings: make([]*platformv1.DomainBinding, 0, len(items))}
 	for _, item := range items {
-		resp.Bindings = append(resp.Bindings, toProtoDomainBinding(item))
+		resp.Bindings = append(resp.Bindings, s.annotateDomainBinding(ctx, identity.UserID, item.ProjectID, item))
 	}
 	return resp, nil
 }
@@ -841,7 +838,7 @@ func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platform
 			s.events.Publish(updated.EnvironmentID)
 		}
 	}
-	return toProtoDomainBinding(binding), nil
+	return s.annotateDomainBinding(ctx, identity.UserID, binding.ProjectID, binding), nil
 }
 
 func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platformv1.DeleteDomainBindingRequest) (*emptypb.Empty, error) {
@@ -849,9 +846,21 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 	if err != nil {
 		return nil, err
 	}
-	var previousServiceID string
-	if previous, err := s.store.domainBindingByHostname(ctx, identity.UserID, "", req.GetHostname()); err == nil {
-		previousServiceID = previous.ServiceID
+	binding, err := s.store.domainBindingByHostname(ctx, identity.UserID, "", req.GetHostname())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "get domain binding: %v", err)
+	}
+	if binding.PlatformGenerated {
+		items, listErr := s.store.listDomainBindings(ctx, identity.UserID, "", binding.ServiceID)
+		if listErr != nil {
+			return nil, status.Errorf(codes.Internal, "list domain bindings: %v", listErr)
+		}
+		if hasCustomDomainBinding(items) {
+			return nil, status.Errorf(codes.FailedPrecondition, "delete domain binding: %v", errPlatformDomainInUse)
+		}
 	}
 	changed, err := s.store.deleteDomainBinding(ctx, identity.UserID, "", req.GetHostname())
 	if err != nil {
@@ -860,13 +869,24 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 		}
 		return nil, status.Errorf(codes.Internal, "delete domain binding: %v", err)
 	}
-	if changed {
-		s.notifyServices(ctx, identity.UserID, "", previousServiceID)
-		s.ingress.RequestSync()
-		if previousServiceID != "" {
-			if updated, err := s.store.serviceByID(ctx, identity.UserID, "", previousServiceID); err == nil {
-				s.events.Publish(updated.EnvironmentID)
+	if !binding.PlatformGenerated {
+		items, listErr := s.store.listDomainBindings(ctx, identity.UserID, "", binding.ServiceID)
+		if listErr != nil {
+			return nil, status.Errorf(codes.Internal, "list domain bindings: %v", listErr)
+		}
+		if leftover := leftoverPlatformHostname(items); leftover != "" {
+			extra, deleteErr := s.store.deleteDomainBinding(ctx, identity.UserID, "", leftover)
+			if deleteErr != nil && !errors.Is(deleteErr, sql.ErrNoRows) {
+				return nil, status.Errorf(codes.Internal, "delete generated domain binding: %v", deleteErr)
 			}
+			changed = changed || extra
+		}
+	}
+	if changed {
+		s.notifyServices(ctx, identity.UserID, "", binding.ServiceID)
+		s.ingress.RequestSync()
+		if updated, err := s.store.serviceByID(ctx, identity.UserID, "", binding.ServiceID); err == nil {
+			s.events.Publish(updated.EnvironmentID)
 		}
 	}
 	return &emptypb.Empty{}, nil
@@ -1070,9 +1090,6 @@ func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {
 	if check.GetPort() == 0 && len(runtime.GetPorts()) == 0 && check.GetType() != platformv1.HealthCheck_TYPE_UNSPECIFIED {
 		return errors.New("health check requires a port or at least one runtime port")
 	}
-	if check.GetIntervalSeconds() != 0 {
-		return errors.New("health check interval is not supported; checks only run during rollout")
-	}
 	if check.GetTimeoutSeconds() < 0 {
 		return errors.New("health check timeout must be non-negative")
 	}
@@ -1085,8 +1102,6 @@ func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {
 		if !validHealthCheckPath(check.GetPath()) {
 			return errors.New("HTTP health check path must be an absolute request path beginning with one slash")
 		}
-	case platformv1.HealthCheck_TYPE_TCP:
-		return errors.New("only HTTP health checks are supported")
 	default:
 		return errors.New("unsupported health check type")
 	}

@@ -153,7 +153,7 @@ func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSn
 	if err := ensureReadySnapshot(snapshot); err != nil {
 		return status.Errorf(codes.FailedPrecondition, "source snapshot not ready: %v", err)
 	}
-	if snapshot.ArchiveSize > maxSourceArchiveCompressedBytes {
+	if snapshot.ArchiveSizeBytes > maxSourceArchiveCompressedBytes {
 		return status.Error(codes.ResourceExhausted, "source snapshot exceeds compressed size limit")
 	}
 	if !strings.HasPrefix(snapshot.Digest, "sha256:") || len(snapshot.Digest) != len("sha256:")+sha256.Size*2 {
@@ -161,8 +161,8 @@ func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSn
 	}
 
 	hash := sha256.New()
-	for offset := int64(0); offset < snapshot.ArchiveSize; {
-		remaining := snapshot.ArchiveSize - offset
+	for offset := int64(0); offset < snapshot.ArchiveSizeBytes; {
+		remaining := snapshot.ArchiveSizeBytes - offset
 		limit := sourceSnapshotChunkBytes
 		if remaining < int64(limit) {
 			limit = int(remaining)
@@ -180,7 +180,7 @@ func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSn
 		if err := stream.Send(&platformv1.SourceSnapshotChunk{
 			SnapshotId: snapshot.ID,
 			Digest:     snapshot.Digest,
-			TotalSize:  snapshot.ArchiveSize,
+			TotalSize:  snapshot.ArchiveSizeBytes,
 			Offset:     offset,
 			Data:       chunk,
 		}); err != nil {
