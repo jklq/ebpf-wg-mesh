@@ -588,7 +588,7 @@ func TestPlatformServiceGetServiceStatusProjectsStagesFromReturnedAllocation(t *
 
 	now := time.Now().UTC()
 	service := NewPlatformService(&fakePlatformStore{
-		serviceStatusFn: func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
+		serviceStatusFn: func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error) {
 			return serviceRecord{
 					ID:               serviceID,
 					ProjectID:        projectID,
@@ -598,7 +598,7 @@ func TestPlatformServiceGetServiceStatusProjectsStagesFromReturnedAllocation(t *
 					LatestBuild: &platformv1.BuildStatus{
 						BuildId: "build-1",
 					},
-				}, allocationRecord{
+				}, []allocationRecord{{
 					ID:                       "alloc-status",
 					ServiceID:                serviceID,
 					AgentID:                  "node-1",
@@ -606,7 +606,7 @@ func TestPlatformServiceGetServiceStatusProjectsStagesFromReturnedAllocation(t *
 					AppliedRolloutGeneration: 1,
 					Healthy:                  false,
 					UpdatedAt:                now,
-				}, nil
+				}}, nil
 		},
 		allocationByServiceIDFn: func(ctx context.Context, serviceID string) (allocationRecord, error) {
 			return allocationRecord{
@@ -649,7 +649,7 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 	now := time.Now().UTC()
 	var reads atomic.Int32
 	service := NewPlatformService(&fakePlatformStore{
-		serviceStatusFn: func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
+		serviceStatusFn: func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error) {
 			// The first read only resolves the environment to watch; by the time
 			// the wait returns, the rollout has completed.
 			applied := int64(1)
@@ -667,7 +667,7 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 					LatestBuild: &platformv1.BuildStatus{
 						BuildId: "build-1",
 					},
-				}, allocationRecord{
+				}, []allocationRecord{{
 					ID:                       "alloc-status",
 					ServiceID:                serviceID,
 					AgentID:                  "node-1",
@@ -675,7 +675,7 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 					AppliedRolloutGeneration: applied,
 					Healthy:                  healthy,
 					UpdatedAt:                now,
-				}, nil
+				}}, nil
 		},
 	}, noopNotifier{}, noopIngress{})
 
@@ -742,9 +742,11 @@ type fakePlatformStore struct {
 	domainBindingByHostFn             func(ctx context.Context, userID, projectID, hostname string) (domainBindingRecord, error)
 	listDomainBindingsFn              func(ctx context.Context, userID, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBindingFn             func(ctx context.Context, userID, projectID, hostname string) (bool, error)
-	serviceStatusFn                   func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error)
+	serviceStatusFn                   func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error)
+	scaleServiceFn                    func(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error)
 	listServiceDeploymentsFn          func(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceIDFn           func(ctx context.Context, serviceID string) (allocationRecord, error)
+	listAllocationsByServiceIDFn      func(ctx context.Context, serviceID string) ([]allocationRecord, error)
 	listAgentsFn                      func(ctx context.Context) ([]agentRecord, error)
 }
 
@@ -937,11 +939,18 @@ func (f *fakePlatformStore) deleteDomainBinding(ctx context.Context, userID, pro
 	return true, nil
 }
 
-func (f *fakePlatformStore) serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
+func (f *fakePlatformStore) serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error) {
 	if f.serviceStatusFn != nil {
 		return f.serviceStatusFn(ctx, userID, projectID, serviceID)
 	}
-	return serviceRecord{}, allocationRecord{}, nil
+	return serviceRecord{}, nil, nil
+}
+
+func (f *fakePlatformStore) scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error) {
+	if f.scaleServiceFn != nil {
+		return f.scaleServiceFn(ctx, userID, projectID, serviceID, desired, confirmScaleToZero)
+	}
+	return serviceRecord{}, nil, nil
 }
 
 func (f *fakePlatformStore) listServiceDeployments(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error) {
@@ -956,6 +965,20 @@ func (f *fakePlatformStore) allocationByServiceID(ctx context.Context, serviceID
 		return f.allocationByServiceIDFn(ctx, serviceID)
 	}
 	return allocationRecord{}, nil
+}
+
+func (f *fakePlatformStore) listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error) {
+	if f.listAllocationsByServiceIDFn != nil {
+		return f.listAllocationsByServiceIDFn(ctx, serviceID)
+	}
+	if f.allocationByServiceIDFn != nil {
+		alloc, err := f.allocationByServiceIDFn(ctx, serviceID)
+		if err != nil || alloc.ID == "" {
+			return nil, err
+		}
+		return []allocationRecord{alloc}, nil
+	}
+	return nil, nil
 }
 
 func (f *fakePlatformStore) listAgents(ctx context.Context) ([]agentRecord, error) {

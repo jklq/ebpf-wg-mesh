@@ -58,13 +58,16 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, projectID, hostnam
 			if existing.ServiceID == serviceID && existing.TargetPort == targetPort && existing.PlatformGenerated == platformGenerated {
 				return nil
 			}
-			agentIDs := []string{service.AllocatedAgentID}
+			agentIDs, err := s.agentIDsForServiceQuerier(ctx, tx, serviceID)
+			if err != nil {
+				return err
+			}
 			if existing.ServiceID != serviceID {
-				var previousAgentID string
-				if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM allocations WHERE service_id = $1`, existing.ServiceID).Scan(&previousAgentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				previousIDs, err := s.agentIDsForServiceQuerier(ctx, tx, existing.ServiceID)
+				if err != nil {
 					return err
 				}
-				agentIDs = append(agentIDs, previousAgentID)
+				agentIDs = append(agentIDs, previousIDs...)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE domain_bindings
@@ -98,7 +101,11 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, projectID, hostnam
 		); err != nil {
 			return err
 		}
-		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{service.AllocatedAgentID}); err != nil {
+		createAgentIDs, err := s.agentIDsForServiceQuerier(ctx, tx, serviceID)
+		if err != nil {
+			return err
+		}
+		if err := s.bumpDesiredRevisionsTx(ctx, tx, createAgentIDs); err != nil {
 			return err
 		}
 		binding = domainBindingRecord{
@@ -189,15 +196,17 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, projectID, host
 		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, binding.EnvironmentID); err != nil {
 			return err
 		}
-		var agentID string
+		var serviceID string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COALESCE(a.agent_id, '')
+			`SELECT d.service_id
 			   FROM domain_bindings d
-			   JOIN services s ON s.id = d.service_id
-			   LEFT JOIN allocations a ON a.service_id = s.id
 			  WHERE d.hostname = $1`,
 			hostname,
-		).Scan(&agentID); err != nil {
+		).Scan(&serviceID); err != nil {
+			return err
+		}
+		agentIDs, err := s.agentIDsForServiceQuerier(ctx, tx, serviceID)
+		if err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE hostname = $1`, hostname)
@@ -211,7 +220,7 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, projectID, host
 		if rows == 0 {
 			return sql.ErrNoRows
 		}
-		if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{agentID}); err != nil {
+		if err := s.bumpDesiredRevisionsTx(ctx, tx, agentIDs); err != nil {
 			return err
 		}
 		changed = true
@@ -223,54 +232,26 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, projectID, host
 	return changed, nil
 }
 
-func (s *Store) serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, allocationRecord, error) {
+func (s *Store) serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error) {
 	service, err := s.serviceByID(ctx, userID, projectID, serviceID)
 	if err != nil {
-		return serviceRecord{}, allocationRecord{}, err
+		return serviceRecord{}, nil, err
 	}
-	alloc, err := s.allocationByServiceID(ctx, serviceID)
+	allocs, err := s.listAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
-		return serviceRecord{}, allocationRecord{}, err
+		return serviceRecord{}, nil, err
 	}
-	return service, alloc, nil
+	return service, allocs, nil
 }
 
-// allocationByServiceID returns the single allocation row associated with a
-// service, if any. A missing allocation (sql.ErrNoRows) is treated as a
-// non-error empty record so callers that just want stage projections can keep
-// going without special-casing the not-yet-scheduled path.
+// allocationByServiceID returns the first allocation row associated with a
+// service, if any. A missing allocation is treated as a non-error empty record
+// so callers that just want stage projections can keep going without
+// special-casing the not-yet-scheduled path.
 func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error) {
-	var alloc allocationRecord
-	err := s.db.QueryRowContext(ctx,
-		`SELECT a.id, a.service_id, e.project_id, s.environment_id, a.agent_id,
-		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
-		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
-		        a.applied_rollout_generation, a.healthy_ports
-		   FROM allocations a JOIN services s ON s.id = a.service_id
-		   JOIN environments e ON e.id = s.environment_id WHERE a.service_id = $1`,
-		serviceID,
-	).Scan(
-		&alloc.ID,
-		&alloc.ServiceID,
-		&alloc.ProjectID,
-		&alloc.EnvironmentID,
-		&alloc.AgentID,
-		&alloc.DesiredSpecRevision,
-		&alloc.AppliedSpecRevision,
-		&alloc.Phase,
-		&alloc.Message,
-		&alloc.AllocationIP,
-		&alloc.Healthy,
-		&alloc.UpdatedAt,
-		&alloc.DesiredRolloutGeneration,
-		&alloc.AppliedRolloutGeneration,
-		(*jsonInt32Slice)(&alloc.HealthyPorts),
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return allocationRecord{}, nil
-	}
+	allocs, err := s.listAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		return allocationRecord{}, err
 	}
-	return alloc, nil
+	return primaryAllocation(allocs), nil
 }

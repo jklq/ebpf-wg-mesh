@@ -280,6 +280,14 @@ export function redeployServiceFromSession(input: {
 	return getDashboardService().redeployServiceFromSession(input);
 }
 
+export function scaleServiceFromSession(input: {
+	serviceId: string;
+	desiredReplicaCount: number;
+	confirmScaleToZero?: boolean;
+}): Promise<DashboardServiceStatus> {
+	return getDashboardService().scaleServiceFromSession(input);
+}
+
 export function discardServiceChangesFromSession(input: {
 	serviceId: string;
 	changeIds?: Array<string>;

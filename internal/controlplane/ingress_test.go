@@ -65,7 +65,11 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedIP, err := privateIPv6(agent.WorkloadIPv6Subnet, service.EnvironmentID, service.ID)
+	allocation, err := store.allocationByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedIP, err := privateIPv6(agent.WorkloadIPv6Subnet, service.EnvironmentID, allocation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

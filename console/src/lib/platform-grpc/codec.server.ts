@@ -335,6 +335,10 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 		unappliedChanges: readArray(value, "unappliedChanges").map(
 			decodeUnappliedChange,
 		),
+		desiredReplicaCount:
+			readOptionalNumberLike(value, "desiredReplicaCount") ?? 1,
+		readyReplicaCount: readOptionalNumberLike(value, "readyReplicaCount") ?? 0,
+		placementMessage: readOptionalString(value, "placementMessage") ?? undefined,
 	};
 }
 
@@ -479,6 +483,9 @@ export function decodeServiceStatusMessage(
 	return {
 		service: decodeServiceMessage(value.service),
 		allocation: decodeAllocationStatus(value.allocation),
+		allocations: readArray(value, "allocations")
+			.map((item) => decodeAllocationStatus(item))
+			.filter((item): item is DashboardAllocationStatus => Boolean(item)),
 	};
 }
 
@@ -519,6 +526,21 @@ function decodeAllocationStatus(
 		appliedRolloutGeneration:
 			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
+		restartCount: readOptionalNumberLike(value, "restartCount") ?? 0,
+		lastRestartedAt: readOptionalDate(value, "lastRestartedAt"),
+		restarts: readArray(value, "restarts").map(decodeAllocationRestart),
+	};
+}
+
+function decodeAllocationRestart(raw: unknown) {
+	const value = readRecord(raw, "allocation restart");
+	return {
+		restartedAt: readOptionalDate(value, "restartedAt"),
+		reason: readOptionalString(value, "reason") ?? "",
+		fromAgentId: readOptionalString(value, "fromAgentId") ?? undefined,
+		toAgentId: readOptionalString(value, "toAgentId") ?? undefined,
+		rolloutGeneration:
+			readOptionalNumberLike(value, "rolloutGeneration") ?? undefined,
 	};
 }
 
@@ -647,6 +669,7 @@ function encodeRuntimeSpec(
 					timeoutSeconds: runtime.healthCheck.timeoutSeconds,
 				}
 			: undefined,
+		volumeName: runtime.volumeName,
 	};
 }
 
@@ -681,6 +704,7 @@ function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
 			.map((item) => decodeRuntimePort(item))
 			.filter((item): item is DashboardRuntimePort => item !== undefined),
 		healthCheck: decodeHTTPHealthCheck(value?.healthCheck),
+		volumeName: readOptionalString(value, "volumeName") ?? undefined,
 	};
 }
 

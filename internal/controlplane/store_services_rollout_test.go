@@ -366,10 +366,7 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 	if rollouts != 2 {
 		t.Fatalf("expected 2 stored rollouts after redeploy, got %d", rollouts)
 	}
-	_, allocation, err := store.serviceStatus(ctx, "user-1", projects[0].ID, service.ID)
-	if err != nil {
-		t.Fatalf("serviceStatus: %v", err)
-	}
+	allocation := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, service.ID)
 	if allocation.DesiredSpecRevision != 1 || allocation.DesiredRolloutGeneration != 2 {
 		t.Fatalf("unexpected desired allocation state: %+v", allocation)
 	}
@@ -571,14 +568,8 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatalf("createService(internal): %v", err)
 	}
 
-	_, routedAlloc, err := store.serviceStatus(ctx, "user-1", projects[0].ID, routedService.ID)
-	if err != nil {
-		t.Fatalf("serviceStatus(routed): %v", err)
-	}
-	_, internalAlloc, err := store.serviceStatus(ctx, "user-1", projects[0].ID, internalService.ID)
-	if err != nil {
-		t.Fatalf("serviceStatus(internal): %v", err)
-	}
+	routedAlloc := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, routedService.ID)
+	internalAlloc := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, internalService.ID)
 
 	changed, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
@@ -611,15 +602,12 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if changed {
 		t.Fatal("expected foreign agent report to leave ingress unchanged")
 	}
-	_, routedAllocAfterForeignReport, err := store.serviceStatus(ctx, "user-1", projects[0].ID, routedService.ID)
-	if err != nil {
-		t.Fatalf("serviceStatus(after foreign report): %v", err)
-	}
+	routedAllocAfterForeignReport := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, routedService.ID)
 	agent, err := store.agentByID(ctx, "node-1")
 	if err != nil {
 		t.Fatalf("agentByID: %v", err)
 	}
-	expectedAllocationIP, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.EnvironmentID, routedService.ID)
+	expectedAllocationIP, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.EnvironmentID, routedAlloc.ID)
 	if err != nil {
 		t.Fatalf("privateIPv6: %v", err)
 	}
@@ -648,10 +636,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if changed {
 		t.Fatal("expected unchanged routed status to skip ingress update")
 	}
-	_, routedAllocAfterUnchangedReport, err := store.serviceStatus(ctx, "user-1", projects[0].ID, routedService.ID)
-	if err != nil {
-		t.Fatalf("serviceStatus(after unchanged report): %v", err)
-	}
+	routedAllocAfterUnchangedReport := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, routedService.ID)
 	if !routedAllocAfterUnchangedReport.UpdatedAt.Equal(sentinelUpdatedAt) {
 		t.Fatalf("unchanged status rewrote allocation: updated_at = %v, want %v", routedAllocAfterUnchangedReport.UpdatedAt, sentinelUpdatedAt)
 	}
@@ -754,6 +739,15 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 	if !errors.Is(err, errNoPlacementAvailable) {
 		t.Fatalf("expected errNoPlacementAvailable, got %v", err)
 	}
+}
+
+func mustPrimaryAllocation(t *testing.T, store *Store, ctx context.Context, userID, projectID, serviceID string) allocationRecord {
+	t.Helper()
+	_, allocations, err := store.serviceStatus(ctx, userID, projectID, serviceID)
+	if err != nil {
+		t.Fatalf("serviceStatus(%s): %v", serviceID, err)
+	}
+	return primaryAllocation(allocations)
 }
 
 func mustDesiredRevision(t *testing.T, store *Store, ctx context.Context, agentID string) int64 {

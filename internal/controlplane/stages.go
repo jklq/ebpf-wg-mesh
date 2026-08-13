@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"fmt"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
@@ -31,6 +33,49 @@ func deploymentStages(service serviceRecord, build *buildRunRecord, alloc alloca
 	stages = append(stages, deployStage(service, build, alloc))
 	stages = append(stages, postDeployStage(service, build, alloc))
 	return stages
+}
+
+func summarizeAllocations(allocs []allocationRecord, desired int32) allocationRecord {
+	if len(allocs) == 0 {
+		return allocationRecord{}
+	}
+	summary := allocs[0]
+	ready := 0
+	unapplied := 0
+	failed := 0
+	for _, alloc := range allocs {
+		if allocationReady(alloc) {
+			ready++
+		}
+		if alloc.AppliedRolloutGeneration < alloc.DesiredRolloutGeneration || alloc.AppliedSpecRevision < alloc.DesiredSpecRevision {
+			unapplied++
+			if summary.AppliedRolloutGeneration >= summary.DesiredRolloutGeneration {
+				summary = alloc
+			}
+		}
+		switch alloc.Phase {
+		case "Error", "Failed", "Unhealthy", allocationPhaseUnavailable:
+			failed++
+			if allocationReady(summary) {
+				summary = alloc
+			}
+		}
+	}
+	if desired <= 0 {
+		desired = int32(len(allocs))
+	}
+	switch {
+	case unapplied > 0:
+		summary.Message = firstNonEmpty(summary.Message, fmt.Sprintf("Rolling out %d of %d replicas", int32(len(allocs))-int32(unapplied), desired))
+	case ready == int(desired) && desired > 0:
+		summary.Healthy = true
+		summary.Message = firstNonEmpty(summary.Message, fmt.Sprintf("%d of %d replicas ready", ready, desired))
+	case failed > 0:
+		summary.Message = firstNonEmpty(summary.Message, fmt.Sprintf("%d of %d replicas ready", ready, desired))
+	default:
+		summary.Message = firstNonEmpty(summary.Message, fmt.Sprintf("%d of %d replicas ready", ready, desired))
+	}
+	return summary
 }
 
 func includeInitializationStage(service serviceRecord, build *buildRunRecord) bool {

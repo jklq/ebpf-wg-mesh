@@ -57,6 +57,26 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 		UnappliedChangeCount:    int32(len(rec.UnappliedChanges)),
 		UnappliedChanges:        rec.UnappliedChanges,
 		InternalHostname:        internalServiceHostname(rec.Name, rec.ID),
+		DesiredReplicaCount:     rec.DesiredReplicaCount,
+		ReadyReplicaCount:       rec.ReadyReplicaCount,
+		PlacementMessage:        rec.PlacementMessage,
+	}
+}
+
+func toProtoServiceWithAllocations(rec serviceRecord, allocations []allocationRecord) *platformv1.Service {
+	rec.ReadyReplicaCount = countReadyAllocations(allocations)
+	if rec.DesiredReplicaCount <= 0 && rec.RolloutGeneration > 0 {
+		rec.DesiredReplicaCount = defaultDesiredReplicaCount
+	}
+	return toProtoService(rec)
+}
+
+func toProtoServiceStatus(rec serviceRecord, allocations []allocationRecord, index int64) *platformv1.ServiceStatus {
+	return &platformv1.ServiceStatus{
+		Service:     toProtoServiceWithAllocations(rec, allocations),
+		Allocation:  toProtoAllocation(primaryAllocation(allocations)),
+		Allocations: toProtoAllocations(allocations),
+		Index:       index,
 	}
 }
 
@@ -94,7 +114,7 @@ func toProtoAgent(rec agentRecord) *platformv1.Agent {
 }
 
 func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
-	return &platformv1.AllocationStatus{
+	out := &platformv1.AllocationStatus{
 		AllocationId:             rec.ID,
 		ServiceId:                rec.ServiceID,
 		AgentId:                  rec.AgentID,
@@ -108,7 +128,42 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
+		RestartCount:             rec.RestartCount,
 	}
+	if rec.LastRestartedAt.Valid {
+		out.LastRestartedAt = ts(rec.LastRestartedAt.Time)
+	}
+	if len(rec.Restarts) > 0 {
+		out.Restarts = make([]*platformv1.AllocationRestart, 0, len(rec.Restarts))
+		for _, event := range rec.Restarts {
+			out.Restarts = append(out.Restarts, &platformv1.AllocationRestart{
+				RestartedAt:       ts(event.RestartedAt),
+				Reason:            event.Reason,
+				FromAgentId:       event.FromAgentID,
+				ToAgentId:         event.ToAgentID,
+				RolloutGeneration: event.RolloutGeneration,
+			})
+		}
+	}
+	return out
+}
+
+func toProtoAllocations(recs []allocationRecord) []*platformv1.AllocationStatus {
+	if len(recs) == 0 {
+		return nil
+	}
+	out := make([]*platformv1.AllocationStatus, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, toProtoAllocation(rec))
+	}
+	return out
+}
+
+func primaryAllocation(recs []allocationRecord) allocationRecord {
+	if len(recs) == 0 {
+		return allocationRecord{}
+	}
+	return recs[0]
 }
 
 func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {

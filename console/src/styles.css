@@ -1266,6 +1266,67 @@ select.field-input {
   cursor: not-allowed;
 }
 
+.replica-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+  min-height: 24px;
+}
+
+.replica-scale-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.replica-scale-btn,
+.replica-scale-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: "Barlow Condensed", var(--font-sans);
+}
+
+.replica-scale-btn {
+  cursor: pointer;
+}
+
+.replica-scale-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.replica-scale-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.replica-scale-count {
+  min-width: 28px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.replica-scale-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.replica-scale-message {
+  max-width: 280px;
+  color: var(--warning, #c9862a);
+}
+
 .btn-ghost {
   display: inline-flex;
   align-items: center;

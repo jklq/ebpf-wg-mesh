@@ -104,7 +104,23 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 
 			destination := ""
 			if blockedMessage == "" {
-				destination, err = s.chooseAgentForPlacementQuerier(ctx, tx, service.spec)
+				occupied := map[string]struct{}{}
+				otherRows, err := tx.QueryContext(ctx, `SELECT agent_id FROM allocations WHERE service_id = $1 AND id <> $2`, service.serviceID, service.allocationID)
+				if err != nil {
+					return err
+				}
+				for otherRows.Next() {
+					var agentID string
+					if err := otherRows.Scan(&agentID); err != nil {
+						otherRows.Close()
+						return err
+					}
+					occupied[agentID] = struct{}{}
+				}
+				if err := otherRows.Close(); err != nil {
+					return err
+				}
+				destination, err = s.chooseAgentForReplicaQuerier(ctx, tx, service.spec, occupied)
 				if errors.Is(err, errNoPlacementAvailable) {
 					blockedMessage = "agent unhealthy; automatic failover blocked because no healthy non-reserved agent has sufficient capacity"
 				} else if err != nil {
@@ -112,7 +128,7 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 				}
 			}
 			if blockedMessage != "" {
-				changed, err := markAllocationUnavailableForFailover(ctx, tx, service.serviceID, service.state, blockedMessage, now)
+				changed, err := markAllocationUnavailableForFailover(ctx, tx, service.allocationID, service.state, blockedMessage, now)
 				if err != nil {
 					return err
 				}
@@ -151,6 +167,9 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			}
 			if affected != 1 {
 				return errConcurrentUpdate
+			}
+			if err := s.recordAllocationRestartTx(ctx, tx, allocationRecord{ID: service.allocationID}, "rescheduled after node expiry", agentID, destination, now); err != nil {
+				return err
 			}
 			moved = true
 			changedEnvironments[service.environmentID] = struct{}{}

@@ -157,6 +157,20 @@ export const doRedeployService = createServerFn({ method: "POST" })
 		return svc.redeployServiceFromSession(data);
 	});
 
+export const doScaleService = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				serviceId: string;
+				desiredReplicaCount: number;
+				confirmScaleToZero?: boolean;
+			},
+	)
+	.handler(async ({ data }) => {
+		const svc = await import("#/lib/dashboard/entry.server");
+		return svc.scaleServiceFromSession(data);
+	});
+
 export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 	.inputValidator(
 		(input: unknown) =>

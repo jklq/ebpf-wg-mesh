@@ -917,6 +917,24 @@ export async function redeployServiceFromSession(
 	);
 }
 
+export async function scaleServiceFromSession(
+	runtime: DashboardRuntime,
+	input: {
+		serviceId: string;
+		desiredReplicaCount: number;
+		confirmScaleToZero?: boolean;
+	},
+): Promise<DashboardServiceStatus> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "scaleService", (platform) =>
+		platform.scaleService(session.user, {
+			serviceId: input.serviceId,
+			desiredReplicaCount: input.desiredReplicaCount,
+			confirmScaleToZero: input.confirmScaleToZero,
+		}),
+	);
+}
+
 export async function discardServiceChangesFromSession(
 	runtime: DashboardRuntime,
 	input: {
