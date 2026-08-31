@@ -16,6 +16,7 @@ import {
 	decodeListEnvironmentsResponse,
 	decodeListProjectsResponse,
 	decodeListServiceDeploymentsResponse,
+	decodeListSandboxProfilesResponse,
 	decodeListServiceLogsResponse,
 	decodeListServicesResponse,
 	decodeProjectMessage,
@@ -38,6 +39,15 @@ export function createPlatformGateway(
 		async listProjects(user) {
 			const response = await unaryCall(runtime, "ListProjects", {}, user);
 			return decodeListProjectsResponse(response).projects;
+		},
+		async listSandboxProfiles(user) {
+			const response = await unaryCall(
+				runtime,
+				"ListSandboxProfiles",
+				{},
+				user,
+			);
+			return decodeListSandboxProfilesResponse(response);
 		},
 		async createProject(user, name) {
 			const response = await unaryCall(

@@ -10,6 +10,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func (s *Store) insertServiceRolloutTx(
@@ -171,7 +172,7 @@ func (s *Store) createScheduledService(ctx context.Context, userID, environmentI
 		if err != nil {
 			return err
 		}
-		rec, err = s.createStagedServiceTx(ctx, tx, environment, name, spec)
+		rec, err = s.createStagedServiceTx(ctx, tx, environment, name, spec, userID)
 		return err
 	})
 	if err != nil {
@@ -289,6 +290,13 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 	); err != nil {
 		return serviceRecord{}, false, false, err
 	}
+	previousProfile := current.Spec.GetRuntime().GetSandboxProfile()
+	nextProfile := spec.GetRuntime().GetSandboxProfile()
+	if !proto.Equal(previousProfile, nextProfile) && (len(previousProfile.GetRelaxations()) > 0 || len(nextProfile.GetRelaxations()) > 0) {
+		if err := s.insertSandboxProfileAuditTx(ctx, tx, serviceID, userID, "changed", sandboxProfileName(current.Spec), nextProfile, nextSpecRevision, now); err != nil {
+			return serviceRecord{}, false, false, err
+		}
+	}
 	nextRecord := current
 	nextRecord.Name = nextName
 	nextRecord.Spec = spec
@@ -300,7 +308,7 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 	nextRecord.SpecRevision = nextSpecRevision
 	nextRecord.UpdatedAt = now
 	nextRecord.PendingChanges = true
-	return nextRecord, false, sourceChanged, nil
+	return nextRecord, true, sourceChanged, nil
 }
 
 func (s *Store) redeployService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {

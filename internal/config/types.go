@@ -154,6 +154,16 @@ type SourceArchiveConfig struct {
 	RetentionDays int
 }
 
+type SandboxProfileConfig struct {
+	Name        string   `json:"name"`
+	Risk        string   `json:"risk"`
+	Relaxations []string `json:"relaxations"`
+}
+
+type SandboxConfig struct {
+	CompatibilityProfiles []SandboxProfileConfig
+}
+
 type ControlPlaneConfig struct {
 	Profile        Profile
 	Health         HealthConfig
@@ -170,6 +180,7 @@ type ControlPlaneConfig struct {
 	Registry       RegistryConfig
 	Builder        ControlPlaneBuilderConfig
 	Failover       ControlPlaneFailoverConfig
+	Sandbox        SandboxConfig
 	Mesh           ControlPlaneMeshConfig
 }
 

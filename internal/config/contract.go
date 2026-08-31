@@ -62,6 +62,11 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 	if strings.TrimSpace(cfg.Logs.ClickHouse.URL) != "" {
 		features = append(features, "logs")
 	}
+	if len(cfg.Sandbox.CompatibilityProfiles) > 0 {
+		features = append(features, fmt.Sprintf("sandbox_compat_profiles=%d", len(cfg.Sandbox.CompatibilityProfiles)))
+	} else {
+		features = append(features, "sandbox_production")
+	}
 	return StartupContract{
 		Component: "controlplane",
 		Profile:   cfg.Profile,
@@ -82,6 +87,7 @@ func AgentStartupContract(cfg AgentConfig) StartupContract {
 	} else {
 		features = append(features, "cgroups")
 	}
+	features = append(features, "workload_sandbox")
 	return StartupContract{
 		Component: "agent",
 		Profile:   cfg.Profile,

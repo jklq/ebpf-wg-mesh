@@ -144,6 +144,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithGitHubSourceInspection(githubCatalog, githubClient),
 		WithPlatformDomainSuffix(cfg.Ingress.PublicAddr),
 		WithPlatformEvents(platformEvents),
+		WithSandboxProfiles(cfg.Sandbox),
 	)
 	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store, ingress, notifier)

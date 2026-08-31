@@ -55,6 +55,15 @@ HTTP health-check paths must be absolute request paths beginning with a single `
 
 `runtime.cpu_millis` is enforced with Linux CFS quota using a 100 ms period (for example, `500` millicpu becomes a `50 ms / 100 ms` quota). It is not interpreted as a cpuset.
 
+Customer workloads always run under the production OCI sandbox: non-root when
+the image would otherwise be UID 0, read-only rootfs, empty capabilities,
+`no_new_privileges`, seccomp, AppArmor or SELinux when the host supports them,
+isolated namespaces, masked proc/sys paths, PID limits, and hard cgroup v2
+CPU/memory/swap/OOM controls. The customer API has no privileged, host-network,
+host-PID, sysctl, device, or bind-mount fields. Compatibility relaxations are
+operator-defined named profiles with a visible risk statement and audit history.
+See [docs/workload-isolation.md](docs/workload-isolation.md).
+
 Each service can generate a stable platform hostname under `CONTROLPLANE_INGRESS_PUBLIC_ADDR`, such as `violet-7k3.platform.example`. The Domains panel exposes separate **Generate Domain** and **Custom Domain** actions. The custom flow creates the platform hostname when needed, then keeps the required record (`app.customer.com CNAME violet-7k3.platform.example`) visible until verification succeeds. The control plane resolves and verifies the CNAME itself before routing the custom hostname; no TXT challenge is required.
 
 Services also receive an environment-private hostname derived from their unique service name, such as `accurate-reflection.mesh.internal`. Workloads in the same environment can use either the full hostname or the short `accurate-reflection` alias; these names resolve directly to the service's private address and are not published externally.

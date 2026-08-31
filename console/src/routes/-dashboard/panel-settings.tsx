@@ -24,6 +24,7 @@ type SettingsDraft = {
 	restartPolicy: "on-failure" | "always" | "never";
 	maxRestarts: string;
 	windowSeconds: string;
+	sandboxProfileName: string;
 };
 
 export function PanelSettings({
@@ -73,6 +74,7 @@ export function PanelSettings({
 						maxRestarts: Number(next.maxRestarts) || 0,
 						windowSeconds: Number(next.windowSeconds) || 0,
 					},
+					sandboxProfileName: next.sandboxProfileName,
 				},
 			});
 			onSaved(updated);
@@ -189,6 +191,82 @@ export function PanelSettings({
 				onQueued={onSaved}
 				onSavingChange={reportReplicaSaving}
 			/>
+
+			<PanelSection
+				title="Workload isolation"
+				lede="The operator-controlled OCI sandbox applied to this service."
+			>
+				<div>
+					<label className="field-label" htmlFor={`sandbox-profile-${service.id}`}>
+						Profile
+					</label>
+					{state.sandboxProfiles.length > 1 ? (
+						<select
+							id={`sandbox-profile-${service.id}`}
+							className={`field-input ${
+								changedFields.has("runtime.sandboxProfile")
+									? "unapplied-field"
+									: ""
+							}`}
+							aria-label="Sandbox profile"
+							value={draft.sandboxProfileName}
+							onChange={(e) =>
+								setDraft((current) => ({
+									...current,
+									sandboxProfileName: e.target.value,
+								}))
+							}
+						>
+							{state.sandboxProfiles.map((profile) => (
+								<option key={profile.name} value={profile.name}>
+									{profile.name}
+								</option>
+							))}
+						</select>
+					) : (
+						<output
+							id={`sandbox-profile-${service.id}`}
+							className="field-input"
+							aria-label="Sandbox profile"
+						>
+							{service.spec?.runtime.sandboxProfile?.name ?? "production"}
+						</output>
+					)}
+				</div>
+				{service.spec?.runtime.sandboxProfile?.risk ? (
+					<div className="notice error" role="alert">
+						<strong>Compatibility risk:</strong>{" "}
+						{service.spec.runtime.sandboxProfile.risk}
+						{service.spec.runtime.sandboxProfile.relaxations.length > 0 ? (
+							<div>
+								Relaxed controls:{" "}
+								{service.spec.runtime.sandboxProfile.relaxations.join(", ")}
+							</div>
+						) : null}
+					</div>
+				) : (
+					<p className="field-note">
+						Read-only root filesystem, non-root execution, seccomp, empty
+						capabilities, isolated namespaces, and hard resource limits.
+					</p>
+				)}
+				{(service.sandboxProfileAudit?.length ?? 0) > 0 ? (
+					<div>
+						<div className="field-label">Audit history</div>
+						<ol className="field-note">
+							{service.sandboxProfileAudit?.map((event, index) => (
+								<li key={`${event.specRevision}-${event.action}-${index}`}>
+									{event.action} {event.profile.name}
+									{event.previousProfileName
+										? ` (from ${event.previousProfileName})`
+										: ""}{" "}
+									by {event.actorUserId}
+								</li>
+							))}
+						</ol>
+					</div>
+				) : null}
+			</PanelSection>
 
 			<PanelSection
 				title="Process restart"
@@ -371,6 +449,8 @@ function settingsDraftFromService(
 		restartPolicy: service.spec?.runtime.restart?.policy ?? "on-failure",
 		maxRestarts: String(service.spec?.runtime.restart?.maxRestarts ?? 5),
 		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
+		sandboxProfileName:
+			service.spec?.runtime.sandboxProfile?.name ?? "production",
 	};
 }
 
