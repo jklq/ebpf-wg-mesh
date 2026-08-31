@@ -123,6 +123,37 @@ describe("replicaSlots", () => {
 		).toEqual(["old"]);
 	});
 
+	it("marks overlapping predecessors as draining from rollout state", () => {
+		const slots = replicaSlots({
+			desired: 1,
+			desiredGeneration: 2,
+			allocations: [
+				allocation({
+					allocationId: "old",
+					healthy: true,
+					appliedRolloutGeneration: 1,
+					desiredRolloutGeneration: 1,
+					rolloutState: "draining",
+					phase: "Draining",
+				}),
+				allocation({
+					allocationId: "new",
+					healthy: true,
+					appliedRolloutGeneration: 2,
+					desiredRolloutGeneration: 2,
+					rolloutState: "serving",
+				}),
+			],
+		});
+		expect(slots.map((slot) => slot.state)).toEqual(["ready", "draining"]);
+		expect(shouldShowReplicaFleet({
+			desired: 1,
+			allocationCount: 2,
+			buildFailed: false,
+			buildOpen: false,
+		})).toBe(true);
+	});
+
 	it("keeps a single-replica deploy on the shared stage list until a fleet exists", () => {
 		expect(
 			shouldShowReplicaFleet({

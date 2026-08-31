@@ -195,6 +195,36 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 			report.Services = append(report.Services, cond)
 			continue
 		}
+		if svc.GetIntent() == agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN {
+			deadline := svc.GetDrainDeadline()
+			if deadline == nil || !deadline.IsValid() {
+				cond.Phase, cond.Message = "Error", "drain deadline is required"
+				report.Services = append(report.Services, cond)
+				continue
+			}
+			drained, forced, err := r.drainService(ctx, svc.GetAllocationId(), deadline.AsTime())
+			if err != nil {
+				cond.Phase, cond.Message = "Error", err.Error()
+				report.Services = append(report.Services, cond)
+				continue
+			}
+			cond.AppliedSpecRevision = svc.GetDesiredSpecRevision()
+			cond.AppliedRolloutGeneration = svc.GetDesiredRolloutGeneration()
+			cond.Healthy = false
+			if drained {
+				cond.Phase = "Drained"
+				if forced {
+					cond.Message = "drain deadline elapsed; workload was force killed"
+				} else {
+					cond.Message = "workload exited after SIGTERM"
+				}
+			} else {
+				cond.Phase = "Draining"
+				cond.Message = "SIGTERM sent; waiting for graceful shutdown"
+			}
+			report.Services = append(report.Services, cond)
+			continue
+		}
 		status, created, err := r.ensureService(ctx, svc)
 		if err != nil {
 			cond.Phase = "Error"
@@ -500,6 +530,34 @@ func (r *DockerRuntime) inspectContainer(ctx context.Context, name string) (dock
 
 func (r *DockerRuntime) removeService(ctx context.Context, allocationID string) error {
 	return removeContainer(ctx, r.runner, r.containerName(allocationID))
+}
+
+func (r *DockerRuntime) drainService(ctx context.Context, allocationID string, deadline time.Time) (bool, bool, error) {
+	name := r.containerName(allocationID)
+	inspect, exists, err := r.inspectContainer(ctx, name)
+	if err != nil {
+		return false, false, err
+	}
+	if !exists {
+		return true, false, nil
+	}
+	if inspect.State.Running && time.Now().UTC().Before(deadline.UTC()) {
+		if _, err := r.runner.Run(ctx, "kill", "--signal", "TERM", name); err != nil && !isDockerMissingObjectError(err) {
+			return false, false, err
+		}
+		return false, false, nil
+	}
+	forced := inspect.State.Running
+	args := []string{"rm"}
+	if forced {
+		args = append(args, "--force")
+	}
+	args = append(args, name)
+	if _, err := r.runner.Run(ctx, args...); err != nil && !isDockerMissingObjectError(err) {
+		return false, forced, err
+	}
+	delete(r.ready, allocationID)
+	return true, forced, nil
 }
 
 func (r *DockerRuntime) containerName(allocationID string) string {

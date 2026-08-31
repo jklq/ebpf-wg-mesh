@@ -966,6 +966,8 @@ export async function updateServiceFromSession(
 				placementRegion:
 					input.placementRegion?.trim().toLowerCase() ??
 					current.spec?.placementRegion,
+				rollingStrategy:
+					input.rollingStrategy ?? current.spec?.rollingStrategy,
 				runtime: {
 					env: normalizeRuntimeEnv(
 						input.runtimeEnv ?? current.spec?.runtime.env,

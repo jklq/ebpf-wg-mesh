@@ -16,6 +16,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	allocationRolloutStarting    = "starting"
+	allocationRolloutServing     = "serving"
+	allocationRolloutWithdrawing = "withdrawing"
+	allocationRolloutDraining    = "draining"
+)
+
 func validateDesiredReplicaCount(count int32) error {
 	if count < defaultDesiredReplicaCount || count > maxDesiredReplicaCount {
 		return fmt.Errorf("%w: must be between %d and %d", errInvalidReplicaCount, defaultDesiredReplicaCount, maxDesiredReplicaCount)
@@ -24,7 +31,7 @@ func validateDesiredReplicaCount(count int32) error {
 }
 
 func allocationReady(rec allocationRecord) bool {
-	return rec.Healthy &&
+	return rec.RolloutState != allocationRolloutWithdrawing && rec.RolloutState != allocationRolloutDraining && rec.Healthy &&
 		strings.TrimSpace(rec.AllocationIP) != "" &&
 		rec.AppliedSpecRevision >= rec.DesiredSpecRevision &&
 		rec.AppliedRolloutGeneration >= rec.DesiredRolloutGeneration
@@ -183,6 +190,13 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 	return fmt.Sprintf("%d of %d replicas placed; %s", placed, desired, reason)
 }
 
+func pendingCapacityMessage(placed, desired int) string {
+	if placed == 0 {
+		return fmt.Sprintf("0 of %d replicas placed; no healthy non-reserved agent has sufficient CPU or memory", desired)
+	}
+	return fmt.Sprintf("%d of %d replicas placed; no healthy non-reserved agent has sufficient CPU or memory", placed, desired)
+}
+
 func (s *Store) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
 	_, err := tx.ExecContext(ctx,
 		`UPDATE services SET placement_message = $1, updated_at = $2 WHERE id = $3`,
@@ -201,16 +215,18 @@ func (s *Store) insertAllocationTx(ctx context.Context, tx *sql.Tx, service serv
 		DesiredSpecRevision:      service.SpecRevision,
 		DesiredRolloutGeneration: service.RolloutGeneration,
 		Phase:                    "Pending",
+		RolloutState:             allocationRolloutStarting,
 		CreatedAt:                now,
 		UpdatedAt:                now,
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
 		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
 		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ip, healthy_ports, healthy, restart_count, restart_history, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, 0, $7, $8, $8)`,
+		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce,
+		rollout_state, drain_started_at, drain_deadline, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, NULL, NULL, $8, $8)`,
 		alloc.ID, alloc.ServiceID, alloc.AgentID, alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration,
-		[]byte("[]"), []byte("[]"), now,
+		[]byte("[]"), alloc.RolloutState, now,
 	); err != nil {
 		return allocationRecord{}, err
 	}
@@ -416,16 +432,16 @@ func (s *Store) listAllocationsByServiceIDQuerier(ctx context.Context, q service
 const allocationSelectSQL = `SELECT a.id, a.service_id, e.project_id, s.environment_id, a.agent_id,
 		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
 		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
-		        a.applied_rollout_generation, a.healthy_ports, a.restart_count,
-		        a.last_restarted_at, a.restart_history, a.created_at
+		        a.applied_rollout_generation, a.healthy_ports, a.restart_observation_json,
+		        a.operator_restart_nonce, a.created_at, a.rollout_state, a.drain_started_at, a.drain_deadline
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id`
 
 func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecord, error) {
 	var (
-		rec     allocationRecord
-		history []byte
+		rec        allocationRecord
+		restartRaw []byte
 	)
 	if err := scanner.Scan(
 		&rec.ID,
@@ -443,18 +459,20 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecor
 		&rec.DesiredRolloutGeneration,
 		&rec.AppliedRolloutGeneration,
 		(*jsonInt32Slice)(&rec.HealthyPorts),
-		&rec.RestartCount,
-		&rec.LastRestartedAt,
-		&history,
+		&restartRaw,
+		&rec.OperatorRestartNonce,
 		&rec.CreatedAt,
+		&rec.RolloutState,
+		&rec.DrainStartedAt,
+		&rec.DrainDeadline,
 	); err != nil {
 		return allocationRecord{}, err
 	}
-	if len(history) > 0 && string(history) != "null" {
-		if err := json.Unmarshal(history, &rec.Restarts); err != nil {
-			return allocationRecord{}, fmt.Errorf("decode restart history: %w", err)
-		}
+	obs, err := decodeRestartObservation(restartRaw)
+	if err != nil {
+		return allocationRecord{}, err
 	}
+	rec.Restart = obs
 	return rec, nil
 }
 

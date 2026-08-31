@@ -123,6 +123,7 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 	}
 	out := proto.Clone(spec).(*platformv1.ServiceSpec)
 	out.PlacementRegion = strings.ToLower(strings.TrimSpace(out.GetPlacementRegion()))
+	out.RollingStrategy = canonicalRollingStrategy(out.GetRollingStrategy())
 	runtime := out.GetRuntime()
 	if runtime != nil {
 		if runtime.GetSandboxProfile() == nil || strings.TrimSpace(runtime.GetSandboxProfile().GetName()) == "" {
@@ -397,6 +398,9 @@ func sameServiceSpec(a, b *platformv1.ServiceSpec) bool {
 }
 
 func equalServiceSpecAfterCanonicalization(a, b *platformv1.ServiceSpec) bool {
+	if !proto.Equal(canonicalRollingStrategy(a.GetRollingStrategy()), canonicalRollingStrategy(b.GetRollingStrategy())) {
+		return false
+	}
 	ar := a.GetRuntime()
 	br := b.GetRuntime()
 	if (ar == nil) != (br == nil) {
@@ -544,9 +548,10 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 			        healthy_ports = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        rollout_state = $5,
 			        updated_at = $3
 			  WHERE service_id = $4`,
-			allocationIP, encodedPorts, time.Now().UTC(), serviceID,
+			allocationIP, encodedPorts, time.Now().UTC(), serviceID, allocationRolloutServing,
 		); err != nil {
 			return err
 		}
@@ -570,18 +575,37 @@ func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE allocations
-		    SET healthy = TRUE,
-		        allocation_ip = $1,
-		        healthy_ports = $2,
-		        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-		        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-		        updated_at = $3
-		  WHERE id = $4`,
-		allocationIP, encodedPorts, time.Now().UTC(), allocationID,
-	)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		var serviceID string
+		var desiredRollout int64
+		if err := tx.QueryRowContext(ctx,
+			`UPDATE allocations
+			    SET healthy = TRUE,
+			        allocation_ip = $1,
+			        healthy_ports = $2,
+			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
+			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        rollout_state = $5,
+			        updated_at = $3
+			  WHERE id = $4
+			  RETURNING service_id, desired_rollout_generation`,
+			allocationIP, encodedPorts, time.Now().UTC(), allocationID, allocationRolloutServing,
+		).Scan(&serviceID, &desiredRollout); err != nil {
+			return err
+		}
+		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
+		if err != nil || !ok {
+			return err
+		}
+		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
+			ToState:          deploymentStateActive,
+			Actor:            deploymentActor{Kind: deploymentCauseSystem},
+			ReasonCode:       reasonDeploymentActive,
+			Detail:           "Marked healthy for test",
+			IgnoreIfTerminal: true,
+		})
+		return err
+	})
 }
 
 func (s *Store) countServiceRevisionsForTest(ctx context.Context, serviceID string) (int, error) {

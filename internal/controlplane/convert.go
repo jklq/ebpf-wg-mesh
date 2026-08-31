@@ -147,6 +147,13 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
 		Restart:                  rec.Restart,
 		OperatorRestartNonce:     rec.OperatorRestartNonce,
+		RolloutState:             rec.RolloutState,
+	}
+	if rec.DrainStartedAt.Valid {
+		out.DrainStartedAt = ts(rec.DrainStartedAt.Time)
+	}
+	if rec.DrainDeadline.Valid {
+		out.DrainDeadline = ts(rec.DrainDeadline.Time)
 	}
 	return out
 }
