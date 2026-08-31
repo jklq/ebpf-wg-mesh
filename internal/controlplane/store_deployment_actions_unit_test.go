@@ -20,8 +20,8 @@ func TestImmutableImageReference(t *testing.T) {
 
 func TestDeploymentReusableForRollback(t *testing.T) {
 	t.Parallel()
-	if !deploymentReusableForRollback(deploymentStateDraining) || !deploymentReusableForRollback(deploymentStateCompleted) {
-		t.Fatal("expected draining and completed deployments to be rollback sources")
+	if !deploymentReusableForRollback(deploymentStateDraining) || !deploymentReusableForRollback(deploymentStateCompleted) || !deploymentReusableForRollback(deploymentStateRemoved) {
+		t.Fatal("expected previously successful deployments to be rollback sources")
 	}
 	if deploymentReusableForRollback(deploymentStateFailed) || deploymentReusableForRollback(deploymentStateCancelled) {
 		t.Fatal("failed/cancelled deployments must not be rollback sources")

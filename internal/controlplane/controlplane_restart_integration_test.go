@@ -23,15 +23,17 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	defer cancel()
 
 	const (
-		agentID = "restart-agent"
-		token   = "restart-bootstrap"
+		agentID    = "restart-agent"
+		token      = "restart-bootstrap"
+		surgeID    = "restart-surge"
+		surgeToken = "restart-surge-bootstrap"
 	)
 	dbURL := createTestDatabase(t)
 	stateDir := t.TempDir()
 	opts := systemControlPlaneOptions{
 		databaseURL:     dbURL,
 		stateDir:        stateDir,
-		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}},
+		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}, {AgentID: surgeID, Token: surgeToken}},
 		withDashboard:   true,
 	}
 	first := startSystemControlPlane(t, opts)
@@ -92,11 +94,30 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if fromStore.GetServices()[0].GetAllocationId() != restored.GetServices()[0].GetAllocationId() {
 		t.Fatalf("stream state does not match store: stream=%+v store=%+v", restored, fromStore)
 	}
-
-	if _, err := second.dashboard.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: envs.GetEnvironments()[0].GetId()}); err != nil {
-		t.Fatalf("DeployEnvironment: %v", err)
+	surgeCert := enrollAgentTLS(t, second.server, surgeID, surgeToken)
+	surgeStream, surgeCancel := openAgentSync(t, second.server, surgeCert, restartAgentHello(surgeID, "fd00:30::22"))
+	defer surgeCancel()
+	if initialSurge := recvDesiredState(t, surgeStream); len(initialSurge.GetServices()) != 0 {
+		t.Fatalf("surge agent unexpectedly had allocations before redeploy: %+v", initialSurge)
 	}
-	mutated := recvDesiredState(t, restream)
+
+	if _, err := second.dashboard.RedeployService(userCtx, &platformv1.RedeployServiceRequest{ServiceId: service.GetId()}); err != nil {
+		t.Fatalf("RedeployService: %v", err)
+	}
+	var mutated *agentv1.DesiredNodeState
+	for _, candidateID := range []string{agentID, surgeID} {
+		candidate, err := second.server.store.desiredStateForAgent(ctx, candidateID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(candidate.GetServices()) > 0 && candidate.GetServices()[0].GetDesiredRolloutGeneration() > deployed.GetServices()[0].GetDesiredRolloutGeneration() {
+			mutated = candidate
+			break
+		}
+	}
+	if mutated == nil {
+		t.Fatal("redeploy did not persist a newer desired rollout on either eligible agent")
+	}
 	if mutated.GetRevision() <= beforeRev {
 		t.Fatalf("expected a newer revision after redeploy, before=%d after=%d", beforeRev, mutated.GetRevision())
 	}

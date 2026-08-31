@@ -23,6 +23,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type AllocationIntent int32
+
+const (
+	AllocationIntent_ALLOCATION_INTENT_UNSPECIFIED AllocationIntent = 0
+	AllocationIntent_ALLOCATION_INTENT_RUN         AllocationIntent = 1
+	AllocationIntent_ALLOCATION_INTENT_DRAIN       AllocationIntent = 2
+)
+
+// Enum value maps for AllocationIntent.
+var (
+	AllocationIntent_name = map[int32]string{
+		0: "ALLOCATION_INTENT_UNSPECIFIED",
+		1: "ALLOCATION_INTENT_RUN",
+		2: "ALLOCATION_INTENT_DRAIN",
+	}
+	AllocationIntent_value = map[string]int32{
+		"ALLOCATION_INTENT_UNSPECIFIED": 0,
+		"ALLOCATION_INTENT_RUN":         1,
+		"ALLOCATION_INTENT_DRAIN":       2,
+	}
+)
+
+func (x AllocationIntent) Enum() *AllocationIntent {
+	p := new(AllocationIntent)
+	*p = x
+	return p
+}
+
+func (x AllocationIntent) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AllocationIntent) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_proto_enumTypes[0].Descriptor()
+}
+
+func (AllocationIntent) Type() protoreflect.EnumType {
+	return &file_agent_proto_enumTypes[0]
+}
+
+func (x AllocationIntent) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AllocationIntent.Descriptor instead.
+func (AllocationIntent) EnumDescriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{0}
+}
+
 type AgentHello struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
 	AgentId                 string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -672,6 +721,8 @@ type DesiredService struct {
 	// uses this after a local data-dir loss; local files still win when newer.
 	RestartObservation   *platformv1.RestartObservation `protobuf:"bytes,15,opt,name=restart_observation,json=restartObservation,proto3" json:"restart_observation,omitempty"`
 	OperatorRestartNonce int64                          `protobuf:"varint,16,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
+	Intent               AllocationIntent               `protobuf:"varint,17,opt,name=intent,proto3,enum=agent.v1.AllocationIntent" json:"intent,omitempty"`
+	DrainDeadline        *timestamppb.Timestamp         `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -816,6 +867,20 @@ func (x *DesiredService) GetOperatorRestartNonce() int64 {
 		return x.OperatorRestartNonce
 	}
 	return 0
+}
+
+func (x *DesiredService) GetIntent() AllocationIntent {
+	if x != nil {
+		return x.Intent
+	}
+	return AllocationIntent_ALLOCATION_INTENT_UNSPECIFIED
+}
+
+func (x *DesiredService) GetDrainDeadline() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DrainDeadline
+	}
+	return nil
 }
 
 type InternalHost struct {
@@ -1617,7 +1682,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xf0\x05\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xe7\x06\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1636,7 +1701,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x11internal_hostname\x18\r \x01(\tR\x10internalHostname\x12=\n" +
 	"\x0einternal_hosts\x18\x0e \x03(\v2\x16.agent.v1.InternalHostR\rinternalHosts\x12P\n" +
 	"\x13restart_observation\x18\x0f \x01(\v2\x1f.platform.v1.RestartObservationR\x12restartObservation\x124\n" +
-	"\x16operator_restart_nonce\x18\x10 \x01(\x03R\x14operatorRestartNonce\">\n" +
+	"\x16operator_restart_nonce\x18\x10 \x01(\x03R\x14operatorRestartNonce\x122\n" +
+	"\x06intent\x18\x11 \x01(\x0e2\x1a.agent.v1.AllocationIntentR\x06intent\x12A\n" +
+	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\">\n" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\"\xb0\x02\n" +
@@ -1697,7 +1764,11 @@ const file_agent_proto_rawDesc = "" +
 	"\apayload\"b\n" +
 	"\x12AgentServerMessage\x12A\n" +
 	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredStateB\t\n" +
-	"\apayload2\xff\x01\n" +
+	"\apayload*m\n" +
+	"\x10AllocationIntent\x12!\n" +
+	"\x1dALLOCATION_INTENT_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15ALLOCATION_INTENT_RUN\x10\x01\x12\x1b\n" +
+	"\x17ALLOCATION_INTENT_DRAIN\x10\x022\xff\x01\n" +
 	"\fAgentControl\x12;\n" +
 	"\x06Enroll\x12\x17.agent.v1.EnrollRequest\x1a\x18.agent.v1.EnrollResponse\x12j\n" +
 	" IssueManagedDashboardCertificate\x12,.agent.v1.ManagedDashboardCertificateRequest\x1a\x18.agent.v1.EnrollResponse\x12F\n" +
@@ -1715,65 +1786,69 @@ func file_agent_proto_rawDescGZIP() []byte {
 	return file_agent_proto_rawDescData
 }
 
+var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_agent_proto_goTypes = []any{
-	(*AgentHello)(nil),                         // 0: agent.v1.AgentHello
-	(*EnrollRequest)(nil),                      // 1: agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),                     // 2: agent.v1.EnrollResponse
-	(*ManagedDashboardCertificateRequest)(nil), // 3: agent.v1.ManagedDashboardCertificateRequest
-	(*WireGuardPeer)(nil),                      // 4: agent.v1.WireGuardPeer
-	(*AssignedNodeConfig)(nil),                 // 5: agent.v1.AssignedNodeConfig
-	(*WorkloadIdentity)(nil),                   // 6: agent.v1.WorkloadIdentity
-	(*AgentHeartbeat)(nil),                     // 7: agent.v1.AgentHeartbeat
-	(*DesiredVolume)(nil),                      // 8: agent.v1.DesiredVolume
-	(*DesiredService)(nil),                     // 9: agent.v1.DesiredService
-	(*InternalHost)(nil),                       // 10: agent.v1.InternalHost
-	(*DesiredNodeState)(nil),                   // 11: agent.v1.DesiredNodeState
-	(*VolumeCondition)(nil),                    // 12: agent.v1.VolumeCondition
-	(*ServiceCondition)(nil),                   // 13: agent.v1.ServiceCondition
-	(*StatusReport)(nil),                       // 14: agent.v1.StatusReport
-	(*LogEntry)(nil),                           // 15: agent.v1.LogEntry
-	(*LogBatch)(nil),                           // 16: agent.v1.LogBatch
-	(*AgentClientMessage)(nil),                 // 17: agent.v1.AgentClientMessage
-	(*AgentServerMessage)(nil),                 // 18: agent.v1.AgentServerMessage
-	(*timestamppb.Timestamp)(nil),              // 19: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil),     // 20: platform.v1.ResolvedServiceSpec
-	(*platformv1.RestartObservation)(nil),      // 21: platform.v1.RestartObservation
-	(platformv1.ServiceLogType)(0),             // 22: platform.v1.ServiceLogType
+	(AllocationIntent)(0),                      // 0: agent.v1.AllocationIntent
+	(*AgentHello)(nil),                         // 1: agent.v1.AgentHello
+	(*EnrollRequest)(nil),                      // 2: agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),                     // 3: agent.v1.EnrollResponse
+	(*ManagedDashboardCertificateRequest)(nil), // 4: agent.v1.ManagedDashboardCertificateRequest
+	(*WireGuardPeer)(nil),                      // 5: agent.v1.WireGuardPeer
+	(*AssignedNodeConfig)(nil),                 // 6: agent.v1.AssignedNodeConfig
+	(*WorkloadIdentity)(nil),                   // 7: agent.v1.WorkloadIdentity
+	(*AgentHeartbeat)(nil),                     // 8: agent.v1.AgentHeartbeat
+	(*DesiredVolume)(nil),                      // 9: agent.v1.DesiredVolume
+	(*DesiredService)(nil),                     // 10: agent.v1.DesiredService
+	(*InternalHost)(nil),                       // 11: agent.v1.InternalHost
+	(*DesiredNodeState)(nil),                   // 12: agent.v1.DesiredNodeState
+	(*VolumeCondition)(nil),                    // 13: agent.v1.VolumeCondition
+	(*ServiceCondition)(nil),                   // 14: agent.v1.ServiceCondition
+	(*StatusReport)(nil),                       // 15: agent.v1.StatusReport
+	(*LogEntry)(nil),                           // 16: agent.v1.LogEntry
+	(*LogBatch)(nil),                           // 17: agent.v1.LogBatch
+	(*AgentClientMessage)(nil),                 // 18: agent.v1.AgentClientMessage
+	(*AgentServerMessage)(nil),                 // 19: agent.v1.AgentServerMessage
+	(*timestamppb.Timestamp)(nil),              // 20: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil),     // 21: platform.v1.ResolvedServiceSpec
+	(*platformv1.RestartObservation)(nil),      // 22: platform.v1.RestartObservation
+	(platformv1.ServiceLogType)(0),             // 23: platform.v1.ServiceLogType
 }
 var file_agent_proto_depIdxs = []int32{
-	19, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
-	4,  // 1: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
-	6,  // 2: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
-	20, // 3: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
-	10, // 4: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
-	21, // 5: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
-	8,  // 6: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
-	9,  // 7: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	19, // 8: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
-	5,  // 9: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
-	21, // 10: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
-	12, // 11: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	13, // 12: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	19, // 13: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	22, // 14: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	15, // 15: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	0,  // 16: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	7,  // 17: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	14, // 18: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	16, // 19: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	11, // 20: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	1,  // 21: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	3,  // 22: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	17, // 23: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	2,  // 24: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	2,  // 25: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	18, // 26: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	24, // [24:27] is the sub-list for method output_type
-	21, // [21:24] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	20, // 0: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	5,  // 1: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
+	7,  // 2: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
+	21, // 3: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	11, // 4: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
+	22, // 5: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
+	0,  // 6: agent.v1.DesiredService.intent:type_name -> agent.v1.AllocationIntent
+	20, // 7: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
+	9,  // 8: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
+	10, // 9: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
+	20, // 10: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	6,  // 11: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
+	22, // 12: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	13, // 13: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	14, // 14: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	20, // 15: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	23, // 16: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	16, // 17: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	1,  // 18: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	8,  // 19: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	15, // 20: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	17, // 21: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	12, // 22: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	2,  // 23: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	4,  // 24: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	18, // 25: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	3,  // 26: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	3,  // 27: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	19, // 28: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	26, // [26:29] is the sub-list for method output_type
+	23, // [23:26] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -1795,13 +1870,14 @@ func file_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_agent_proto_goTypes,
 		DependencyIndexes: file_agent_proto_depIdxs,
+		EnumInfos:         file_agent_proto_enumTypes,
 		MessageInfos:      file_agent_proto_msgTypes,
 	}.Build()
 	File_agent_proto = out.File

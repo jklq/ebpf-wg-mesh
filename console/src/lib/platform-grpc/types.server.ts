@@ -114,6 +114,12 @@ export interface CreateServiceRequest {
 				};
 			};
 			desiredReplicaCount?: number;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }
@@ -167,6 +173,12 @@ export interface UpdateServiceRequest {
 				};
 			};
 			desiredReplicaCount?: number;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }
@@ -181,12 +193,20 @@ export interface GetServiceStatusRequest {
 	waitTimeoutSeconds?: number;
 }
 
+export interface RedeployServiceRequest {
+	serviceId: string;
+}
+
 export interface ApplyDeploymentActionRequest {
 	serviceId: string;
 	deploymentId: string;
 	action: string;
 	idempotencyKey: string;
 	allocationId?: string;
+}
+
+export interface RestartServiceRequest {
+	serviceId: string;
 }
 
 export interface ScaleServiceRequest {
@@ -278,8 +298,10 @@ export type PlatformMethod =
 	| "ListServices"
 	| "CreateService"
 	| "UpdateService"
+	| "RedeployService"
 	| "ApplyDeploymentAction"
 	| "ScaleService"
+	| "RestartService"
 	| "DiscardServiceChanges"
 	| "DeleteService"
 	| "GetService"
@@ -307,8 +329,10 @@ export type PlatformRequestMap = {
 	ListServices: ListServicesRequest;
 	CreateService: CreateServiceRequest;
 	UpdateService: UpdateServiceRequest;
+	RedeployService: RedeployServiceRequest;
 	ApplyDeploymentAction: ApplyDeploymentActionRequest;
 	ScaleService: ScaleServiceRequest;
+	RestartService: RestartServiceRequest;
 	DiscardServiceChanges: DiscardServiceChangesRequest;
 	DeleteService: DeleteServiceRequest;
 	GetService: GetServiceRequest;
@@ -398,6 +422,11 @@ export type PlatformClient = grpc.Client & {
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
+	RedeployService: (
+		request: RedeployServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
 	ApplyDeploymentAction: (
 		request: ApplyDeploymentActionRequest,
 		metadata: grpc.Metadata,
@@ -405,6 +434,11 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	ScaleService: (
 		request: ScaleServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	RestartService: (
+		request: RestartServiceRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;

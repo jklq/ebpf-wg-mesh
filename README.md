@@ -51,7 +51,7 @@ The rendered Caddy admin listener and the control-plane admin URL default to `12
 
 The supported deployment actions are:
 
-- `RESTART` restarts one selected allocation, or every replica when `allocation_id` is empty, without building an image or creating a rollout.
+- `RESTART` rolls one selected allocation, or every replica when `allocation_id` is empty, through the same overlap, ingress-withdrawal, and graceful-drain path without building a new image.
 - `EXACT_REDEPLOY` creates a rollout from the selected deployment's persisted resolved spec and digest-pinned image. It does not inspect source or fetch a newer revision.
 - `ROLLBACK` creates a new rollout from a non-current successful deployment, including the environment-variable versions captured with that deployment. Existing deployment rows remain history.
 - `CANCEL` terminates current queued, building, or deploying work. Builders learn cancellation through their heartbeat, and late builder or agent reports cannot move the cancelled deployment out of its terminal state. The control plane restores the last successful digest-pinned deployment when one exists.
@@ -61,6 +61,8 @@ The supported deployment actions are:
 Owners and editors may apply actions; viewers cannot. The console exposes only actions valid for each history row and records each accepted action in that deployment's history. A `NotFound` response means the selected deployment or allocation no longer exists; `FailedPrecondition` means it exists but is stale or is in an incompatible state, so callers should refresh deployment history before deciding whether to issue a new action with a new idempotency key.
 
 Health checks are rollout readiness gates, not continuous monitors. With no health check configured, a deployment becomes ready as soon as its process is running. With an explicit HTTP health check, the agent retries the endpoint while the rollout is starting and marks the deployment ready only after an HTTP `200`. The successful result is latched for that rollout; the endpoint is not queried again during ordinary reconciliation.
+
+Deployments use a persisted rolling strategy. The defaults are `max_unavailable=0`, `max_surge=1`, a 300-second startup deadline, and a 30-second drain deadline. The control plane creates replacement allocations alongside the serving generation, waits for readiness, publishes the healthy replacement and withdraws its predecessor from Caddy, and only sends the predecessor a drain intent after that Caddy update succeeds. Agents send `SIGTERM`, preserve the container and network namespace during the drain window, and use `SIGKILL` only after the absolute deadline. Control-plane and agent restarts resume from the CockroachDB allocation state and desired drain deadline. A readiness or scheduling timeout fails the rollout without removing healthy serving allocations. Setting surge to zero requires a positive unavailable allowance and opts into bounded temporary downtime. Services with a single-writer volume reject replacement rollouts until the Stage 7 attachment handoff and fencing protocol exists.
 
 HTTP health-check paths must be absolute request paths beginning with a single `/`. Checks never follow redirects or use proxy environment variables. Production requests originate in the workload's persisted network namespace and target only the control-plane-assigned workload IP and configured port (or the primary declared port when no check port is set). A missing or stale namespace keeps readiness pending; the agent does not fall back to host-network probing.
 

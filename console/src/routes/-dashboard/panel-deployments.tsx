@@ -1226,7 +1226,10 @@ function availableDeploymentActions(
 	}
 	if (
 		!record.isCurrent &&
-		(state === "active" || state === "completed" || state === "draining") &&
+		(state === "active" ||
+			state === "completed" ||
+			state === "draining" ||
+			state === "removed") &&
 		hasImmutableImage
 	) {
 		actions.push("rollback");

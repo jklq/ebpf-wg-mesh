@@ -28,6 +28,9 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.upsertAgent(ctx, agentHello("node-2")); err != nil {
+		t.Fatal(err)
+	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
@@ -122,8 +125,8 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if err != nil || !ok || current.State != deploymentStateActive {
 		t.Fatalf("current deployment: %+v ok=%v err=%v", current, ok, err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-1", ""); err != nil {
-		t.Fatalf("applyDeploymentAction restart: %v", err)
+	if _, err := store.restartService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
+		t.Fatalf("restartService: %v", err)
 	}
 	afterRestart, err := store.allocationByServiceID(ctx, service.ID)
 	if err != nil {
@@ -158,11 +161,11 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
 		t.Fatalf("redeployService: %v", err)
 	}
-	afterRollout, err := store.allocationByServiceID(ctx, service.ID)
-	if err != nil {
-		t.Fatal(err)
+	afterRollout := allocationForGeneration(t, store, service.ID, afterRestart.DesiredRolloutGeneration+1)
+	if len(afterRollout) != 1 {
+		t.Fatalf("new rollout allocation = %+v", afterRollout)
 	}
-	if afterRollout.Restart.GetCrashLoop() {
+	if afterRollout[0].Restart.GetCrashLoop() {
 		t.Fatal("new rollout left crash-loop observation in place")
 	}
 }

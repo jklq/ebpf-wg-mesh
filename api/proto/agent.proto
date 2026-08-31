@@ -92,6 +92,14 @@ message DesiredService {
   // uses this after a local data-dir loss; local files still win when newer.
   platform.v1.RestartObservation restart_observation = 15;
   int64 operator_restart_nonce = 16;
+  AllocationIntent intent = 17;
+  google.protobuf.Timestamp drain_deadline = 18;
+}
+
+enum AllocationIntent {
+  ALLOCATION_INTENT_UNSPECIFIED = 0;
+  ALLOCATION_INTENT_RUN = 1;
+  ALLOCATION_INTENT_DRAIN = 2;
 }
 
 message InternalHost {

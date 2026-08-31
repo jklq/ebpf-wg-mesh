@@ -38,6 +38,8 @@ type platformStore interface {
 	authorizeProjectWrite(ctx context.Context, userID, projectID string) error
 	createScheduledService(ctx context.Context, userID, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
 	updateService(ctx context.Context, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	redeployService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
+	restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
 	applyDeploymentAction(ctx context.Context, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (serviceRecord, deploymentActionRecord, error)
 	discardServiceChanges(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
 	requestServiceSourceSync(ctx context.Context, userID, projectID, serviceID string) error
@@ -393,6 +395,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := validateServiceSpecRestart(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
+	if err := validateRollingStrategy(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
+	}
 	environment, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
@@ -459,6 +464,9 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := validateServiceSpecRestart(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
+	if err := validateRollingStrategy(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
+	}
 	current, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -490,6 +498,62 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	return toProtoService(service), nil
 }
 
+func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.RedeployServiceRequest) (*platformv1.ServiceStatus, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	currentService, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
+	}
+	if err := s.requireProjectWriteAccess(ctx, identity.UserID, currentService.ProjectID); err != nil {
+		return nil, err
+	}
+	if desiredSourceSpec(currentService.Spec) != nil {
+		if err := s.store.requestServiceSourceSync(ctx, identity.UserID, "", req.GetServiceId()); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, status.Errorf(codes.NotFound, "service: %v", err)
+			}
+			if errors.Is(err, errConcurrentUpdate) {
+				return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
+			}
+			if errors.Is(err, errRolloutInProgress) || errors.Is(err, errVolumeRollingUnsupported) {
+				return nil, status.Errorf(codes.FailedPrecondition, "redeploy service: %v", err)
+			}
+			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
+		}
+	} else {
+		service, err := s.store.redeployService(ctx, identity.UserID, "", req.GetServiceId())
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, status.Errorf(codes.NotFound, "service: %v", err)
+			}
+			if errors.Is(err, errConcurrentUpdate) {
+				return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
+			}
+			if errors.Is(err, errRolloutInProgress) || errors.Is(err, errVolumeRollingUnsupported) {
+				return nil, status.Errorf(codes.FailedPrecondition, "redeploy service: %v", err)
+			}
+			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
+		}
+		s.notifyServiceAgents(ctx, service.ID, currentService.AllocatedAgentID == "")
+	}
+	currentService, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "redeploy service status: %v", err)
+	}
+	currentService, err = s.decorateServiceRecordWithAllocations(ctx, currentService, allocations)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
+	}
+	index := s.events.Publish(currentService.EnvironmentID)
+	return toProtoServiceStatus(currentService, allocations, index), nil
+}
+
 func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platformv1.ApplyDeploymentActionRequest) (*platformv1.ServiceStatus, error) {
 	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {
@@ -517,7 +581,8 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 		case errors.Is(err, errDeploymentActionConflict), errors.Is(err, errConcurrentUpdate):
 			return nil, status.Errorf(codes.Aborted, "deployment action: %v", err)
 		case errors.Is(err, errDeploymentActionInvalid), errors.Is(err, errDeploymentStale),
-			errors.Is(err, errInvalidReplicaCount), errors.Is(err, errVolumeReplicaUnsupported):
+			errors.Is(err, errInvalidReplicaCount), errors.Is(err, errVolumeReplicaUnsupported),
+			errors.Is(err, errRolloutInProgress), errors.Is(err, errVolumeRollingUnsupported):
 			return nil, status.Errorf(codes.FailedPrecondition, "deployment action: %v", err)
 		default:
 			return nil, status.Errorf(codes.Internal, "deployment action: %v", err)
@@ -574,6 +639,41 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	}
 	index := s.events.Publish(service.EnvironmentID)
 	return toProtoServiceStatus(service, allocations, index), nil
+}
+
+func (s *PlatformService) RestartService(ctx context.Context, req *platformv1.RestartServiceRequest) (*platformv1.ServiceStatus, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	currentService, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
+	}
+	if err := s.requireProjectWriteAccess(ctx, identity.UserID, currentService.ProjectID); err != nil {
+		return nil, err
+	}
+	service, err := s.store.restartService(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.FailedPrecondition, "restart service: %v", err)
+	}
+	s.notifyServiceAgents(ctx, service.ID, false)
+	currentService, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "restart service status: %v", err)
+	}
+	currentService, err = s.decorateServiceRecordWithAllocations(ctx, currentService, allocations)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate restart status: %v", err)
+	}
+	index := s.events.Publish(currentService.EnvironmentID)
+	return toProtoServiceStatus(currentService, allocations, index), nil
 }
 
 func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {

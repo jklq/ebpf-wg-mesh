@@ -33,6 +33,7 @@ var jsonEncoderPool = sync.Pool{
 
 type serviceEngine interface {
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
+	DrainService(context.Context, string, time.Time) (bool, bool, error)
 	RemoveService(context.Context, string) error
 	SetLogSink(LogSink)
 	Close() error
@@ -214,6 +215,36 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 	if err := r.persistDesiredService(svc); err != nil {
 		cond.Phase = "Error"
 		cond.Message = err.Error()
+		return cond
+	}
+	if svc.GetIntent() == agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN {
+		deadline := svc.GetDrainDeadline()
+		if deadline == nil || !deadline.IsValid() {
+			cond.Phase = "Error"
+			cond.Message = "drain deadline is required"
+			return cond
+		}
+		drained, forced, err := r.engine.DrainService(ctx, svc.GetAllocationId(), deadline.AsTime())
+		if err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			return cond
+		}
+		cond.AppliedSpecRevision = svc.GetDesiredSpecRevision()
+		cond.AppliedRolloutGeneration = svc.GetDesiredRolloutGeneration()
+		cond.AllocationIp = svc.GetPrivateIpv6()
+		cond.Healthy = false
+		if drained {
+			cond.Phase = "Drained"
+			if forced {
+				cond.Message = "drain deadline elapsed; workload was force killed"
+			} else {
+				cond.Message = "workload exited after SIGTERM"
+			}
+		} else {
+			cond.Phase = "Draining"
+			cond.Message = "SIGTERM sent; waiting for graceful shutdown"
+		}
 		return cond
 	}
 	status, created, err := r.engine.EnsureService(ctx, svc)

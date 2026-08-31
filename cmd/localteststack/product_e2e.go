@@ -159,14 +159,10 @@ func runProductE2EScenario(
 	if err != nil {
 		return productE2ESummary{}, err
 	}
-	redeployedEnvironment, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID})
+	redeployed, err := client.RedeployService(userCtx, &platformv1.RedeployServiceRequest{ServiceId: service.GetId()})
 	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("redeploy fixture service: %w", err)
 	}
-	if len(redeployedEnvironment.GetServices()) != 1 {
-		return productE2ESummary{}, fmt.Errorf("redeploy fixture service: expected one service, got %d", len(redeployedEnvironment.GetServices()))
-	}
-	redeployed := redeployedEnvironment.GetServices()[0]
 	healthy, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
 	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("wait for fixture redeploy: %w", err)
@@ -178,20 +174,25 @@ func runProductE2EScenario(
 	if len(deploymentHistory.GetDeployments()) != 1 {
 		return productE2ESummary{}, fmt.Errorf("list fixture deployment for restart: got %d deployments", len(deploymentHistory.GetDeployments()))
 	}
+	restartAllocation := matchingProductAllocation(healthy, updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
+	if restartAllocation == nil {
+		return productE2ESummary{}, fmt.Errorf("redeployed service has no matching healthy allocation to restart")
+	}
 	restartRequest := &platformv1.ApplyDeploymentActionRequest{
 		ServiceId:      service.GetId(),
 		DeploymentId:   deploymentHistory.GetDeployments()[0].GetId(),
 		Action:         platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART,
 		IdempotencyKey: uuid.NewString(),
-		AllocationId:   healthy.GetAllocation().GetAllocationId(),
+		AllocationId:   restartAllocation.GetAllocationId(),
 	}
-	if _, err := client.ApplyDeploymentAction(userCtx, restartRequest); err != nil {
+	restarted, err := client.ApplyDeploymentAction(userCtx, restartRequest)
+	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("restart fixture allocation: %w", err)
 	}
 	if _, err := client.ApplyDeploymentAction(userCtx, restartRequest); err != nil {
 		return productE2ESummary{}, fmt.Errorf("replay fixture restart: %w", err)
 	}
-	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration()); err != nil {
+	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), restarted.GetService().GetRolloutGeneration()); err != nil {
 		return productE2ESummary{}, fmt.Errorf("wait for fixture restart: %w", err)
 	}
 	if err := waitForProductRoute(ctx, routeURL, productE2EMarkerV2); err != nil {
@@ -486,15 +487,27 @@ func waitForProductService(ctx context.Context, client platformv1.PlatformServic
 			return false, nil
 		}
 		latest = status
-		allocation := status.GetAllocation()
-		return allocation.GetHealthy() &&
-			allocation.GetAppliedSpecRevision() >= specRevision &&
-			allocation.GetAppliedRolloutGeneration() >= rolloutGeneration, nil
+		return matchingProductAllocation(status, specRevision, rolloutGeneration) != nil, nil
 	})
 	if err != nil {
 		return latest, err
 	}
 	return latest, nil
+}
+
+func matchingProductAllocation(status *platformv1.ServiceStatus, specRevision, rolloutGeneration int64) *platformv1.AllocationStatus {
+	if status.GetService().GetLatestDeployment().GetState() != platformv1.DeploymentState_DEPLOYMENT_STATE_ACTIVE {
+		return nil
+	}
+	for _, allocation := range status.GetAllocations() {
+		if allocation.GetHealthy() &&
+			allocation.GetRolloutState() == "serving" &&
+			allocation.GetAppliedSpecRevision() >= specRevision &&
+			allocation.GetAppliedRolloutGeneration() >= rolloutGeneration {
+			return allocation
+		}
+	}
+	return nil
 }
 
 func waitForProductRoute(ctx context.Context, routeURL, marker string) error {

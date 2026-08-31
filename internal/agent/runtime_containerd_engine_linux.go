@@ -323,6 +323,87 @@ func (e *containerdEngine) RemoveService(ctx context.Context, allocationID strin
 	return errors.Join(errs...)
 }
 
+// DrainService asks the workload to exit with SIGTERM and keeps its container
+// and network namespace intact until it exits or the absolute deadline passes.
+// SIGKILL is never used before that deadline.
+func (e *containerdEngine) DrainService(ctx context.Context, allocationID string, deadline time.Time) (bool, bool, error) {
+	ctx = e.namespaced(ctx)
+	containerID := containerName(allocationID)
+	container, err := e.client.LoadContainer(ctx, containerID)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return true, false, nil
+		}
+		return false, false, err
+	}
+	task, err := container.Task(ctx, nil)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			if err := e.cleanupStoppedService(ctx, container, containerID, allocationID); err != nil {
+				return false, false, err
+			}
+			return true, false, nil
+		}
+		return false, false, err
+	}
+	status, err := task.Status(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	if status.Status == containerd.Running && time.Now().UTC().Before(deadline.UTC()) {
+		if err := task.Kill(ctx, syscall.SIGTERM); err != nil && !errdefs.IsNotFound(err) {
+			return false, false, fmt.Errorf("signal task %s with SIGTERM: %w", containerID, err)
+		}
+		return false, false, nil
+	}
+	forced := status.Status == containerd.Running
+	if forced {
+		exitCh, waitErr := task.Wait(ctx)
+		if waitErr != nil && !errdefs.IsNotFound(waitErr) {
+			return false, false, fmt.Errorf("wait for draining task %s: %w", containerID, waitErr)
+		}
+		if err := task.Kill(ctx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) {
+			return false, false, fmt.Errorf("signal task %s with SIGKILL: %w", containerID, err)
+		}
+		if exitCh != nil {
+			select {
+			case <-exitCh:
+			case <-ctx.Done():
+				return false, false, ctx.Err()
+			case <-time.After(10 * time.Second):
+				return false, false, fmt.Errorf("wait for force-killed task %s: timeout", containerID)
+			}
+		}
+	}
+	if _, err := task.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {
+		return false, forced, fmt.Errorf("delete drained task %s: %w", containerID, err)
+	}
+	if err := e.cleanupStoppedService(ctx, container, containerID, allocationID); err != nil {
+		return false, forced, err
+	}
+	return true, forced, nil
+}
+
+func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container containerd.Container, containerID, allocationID string) error {
+	var errs []error
+	if netnsPath, ok := e.netnsPath(allocationID); ok {
+		if err := e.teardownNetwork(ctx, containerID, allocationID, netnsPath); err != nil {
+			errs = append(errs, err)
+		}
+		if err := e.cleanupNetNS(allocationID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil && !errdefs.IsNotFound(err) {
+		errs = append(errs, err)
+	}
+	if err := e.cleanupServiceHostsFile(allocationID); err != nil {
+		errs = append(errs, err)
+	}
+	e.clearOOM(containerID)
+	return errors.Join(errs...)
+}
+
 func (e *containerdEngine) deleteTask(ctx context.Context, task containerd.Task, containerID string) error {
 	exitCh, err := task.Wait(ctx)
 	if err != nil && !errdefs.IsNotFound(err) {

@@ -672,36 +672,10 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	}
 	redeployCtx, cancelRedeploy := context.WithTimeout(userCtx, 30*time.Second)
 	defer cancelRedeploy()
-	redeployedEnvironment, err := client.DeployEnvironment(redeployCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID})
+	redeployed, err := client.RedeployService(redeployCtx, &platformv1.RedeployServiceRequest{
+		ServiceId: service.GetId(),
+	})
 	if err != nil {
-		return err
-	}
-	if len(redeployedEnvironment.GetServices()) != 1 {
-		return fmt.Errorf("expected one redeployed service, got %d", len(redeployedEnvironment.GetServices()))
-	}
-	redeployed := redeployedEnvironment.GetServices()[0]
-	status, err = waitForServiceHealthy(ctx, userCtx, client, service.GetId(), updatedService.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
-	if err != nil {
-		return err
-	}
-	deploymentHistory, err := client.ListServiceDeployments(redeployCtx, &platformv1.ListServiceDeploymentsRequest{ServiceId: service.GetId(), Limit: 1})
-	if err != nil {
-		return err
-	}
-	if len(deploymentHistory.GetDeployments()) != 1 {
-		return fmt.Errorf("expected one deployment to restart, got %d", len(deploymentHistory.GetDeployments()))
-	}
-	restartRequest := &platformv1.ApplyDeploymentActionRequest{
-		ServiceId:      service.GetId(),
-		DeploymentId:   deploymentHistory.GetDeployments()[0].GetId(),
-		Action:         platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART,
-		IdempotencyKey: "vm-restart-" + deploymentHistory.GetDeployments()[0].GetId(),
-		AllocationId:   status.GetAllocation().GetAllocationId(),
-	}
-	if _, err := client.ApplyDeploymentAction(redeployCtx, restartRequest); err != nil {
-		return err
-	}
-	if _, err := client.ApplyDeploymentAction(redeployCtx, restartRequest); err != nil {
 		return err
 	}
 
