@@ -578,6 +578,9 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &drainDeadline); err != nil {
 			return nil, err
 		}
+		if rolloutState == allocationRolloutLost {
+			continue
+		}
 		svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_RUN
 		if rolloutState == allocationRolloutDraining {
 			svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN

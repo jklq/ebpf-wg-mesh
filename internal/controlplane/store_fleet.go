@@ -204,7 +204,7 @@ func (s *Store) setAgentLifecycle(ctx context.Context, userID, agentID string, t
 		now := time.Now().UTC()
 		if target == agentStateRetired {
 			var allocations int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocations WHERE agent_id = $1`, agentID).Scan(&allocations); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocations WHERE agent_id = $1 AND rollout_state <> $2`, agentID, allocationRolloutLost).Scan(&allocations); err != nil {
 				return err
 			}
 			if allocations != 0 {

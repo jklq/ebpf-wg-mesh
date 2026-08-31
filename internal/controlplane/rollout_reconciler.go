@@ -83,12 +83,17 @@ func (r *RolloutReconciler) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		cutoff := r.now().UTC().Add(-agentHealthyTTL)
 		for _, agent := range agents {
-			if agent.LifecycleState != agentStateDraining {
-				continue
-			}
-			if _, err := r.store.reconcileDrainingAgent(ctx, agent.ID); err != nil {
-				return fmt.Errorf("refresh draining agent %s: %w", agent.ID, err)
+			switch agent.LifecycleState {
+			case agentStateDraining:
+				if _, err := r.store.reconcileDrainingAgent(ctx, agent.ID); err != nil {
+					return fmt.Errorf("refresh draining agent %s: %w", agent.ID, err)
+				}
+			case agentStateUnavailable:
+				if _, _, err := r.store.failoverServicesFromAgent(ctx, agent.ID, cutoff); err != nil {
+					return fmt.Errorf("retry node-loss replacement for agent %s: %w", agent.ID, err)
+				}
 			}
 		}
 	}

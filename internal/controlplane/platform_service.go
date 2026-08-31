@@ -683,7 +683,7 @@ func (s *PlatformService) RestartService(ctx context.Context, req *platformv1.Re
 		}
 		return nil, status.Errorf(codes.FailedPrecondition, "restart service: %v", err)
 	}
-	s.notifyServiceAgents(ctx, service.ID, false)
+	s.notifyServiceAgents(ctx, service.ID, true)
 	currentService, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "restart service status: %v", err)

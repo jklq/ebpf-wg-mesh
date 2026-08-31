@@ -118,18 +118,7 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 		return result, nil
 	}
 
-	var target, predecessors, unaffected []allocationRecord
-	for _, alloc := range allocs {
-		if alloc.DesiredRolloutGeneration == rollout.Generation {
-			target = append(target, alloc)
-		} else if alloc.DesiredRolloutGeneration < rollout.Generation {
-			if rollout.TargetAllocationID == "" || alloc.ID == rollout.TargetAllocationID {
-				predecessors = append(predecessors, alloc)
-			} else {
-				unaffected = append(unaffected, alloc)
-			}
-		}
-	}
+	target, predecessors, unaffected := splitRolloutAllocations(allocs, rollout)
 	desiredTargetCount := rollout.DesiredReplicaCount
 	if rollout.TargetAllocationID != "" {
 		desiredTargetCount = 1
@@ -215,20 +204,7 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 	if err != nil {
 		return result, err
 	}
-	target = target[:0]
-	predecessors = predecessors[:0]
-	unaffected = unaffected[:0]
-	for _, alloc := range allocs {
-		if alloc.DesiredRolloutGeneration == rollout.Generation {
-			target = append(target, alloc)
-		} else if alloc.DesiredRolloutGeneration < rollout.Generation {
-			if rollout.TargetAllocationID == "" || alloc.ID == rollout.TargetAllocationID {
-				predecessors = append(predecessors, alloc)
-			} else {
-				unaffected = append(unaffected, alloc)
-			}
-		}
-	}
+	target, predecessors, unaffected = splitRolloutAllocations(allocs, rollout)
 	servingTarget = filterAllocations(target, func(a allocationRecord) bool {
 		return a.RolloutState == allocationRolloutServing && allocationReady(a)
 	})
@@ -670,6 +646,26 @@ func allocationOccupiesRolloutSlot(alloc allocationRecord) bool {
 	}
 }
 
+func splitRolloutAllocations(allocs []allocationRecord, rollout rolloutRecord) (target, predecessors, unaffected []allocationRecord) {
+	for _, alloc := range allocs {
+		if alloc.RolloutState == allocationRolloutLost {
+			continue
+		}
+		if alloc.DesiredRolloutGeneration == rollout.Generation {
+			target = append(target, alloc)
+			continue
+		}
+		if alloc.DesiredRolloutGeneration < rollout.Generation {
+			if rollout.TargetAllocationID == "" || alloc.ID == rollout.TargetAllocationID {
+				predecessors = append(predecessors, alloc)
+			} else {
+				unaffected = append(unaffected, alloc)
+			}
+		}
+	}
+	return target, predecessors, unaffected
+}
+
 func (s *Store) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, existing []allocationRecord, now time.Time) (bool, error) {
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 		return false, err
@@ -699,6 +695,9 @@ func (s *Store) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, ser
 
 func (s *Store) supersedeUnservedRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, existing []allocationRecord, now time.Time) error {
 	for _, alloc := range existing {
+		if alloc.RolloutState == allocationRolloutLost {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE id = $1`, alloc.ID); err != nil {
 			return err
 		}

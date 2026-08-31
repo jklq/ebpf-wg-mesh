@@ -20,6 +20,7 @@ const (
 	allocationRolloutServing     = "serving"
 	allocationRolloutWithdrawing = "withdrawing"
 	allocationRolloutDraining    = "draining"
+	allocationRolloutLost        = "lost"
 )
 
 func validateDesiredReplicaCount(count int32) error {
@@ -128,6 +129,9 @@ func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, serv
 		return existing, nil
 	}
 
+	live, lost := splitLostAllocations(existing)
+	existing = live
+
 	if int32(len(existing)) > desired {
 		removed, remaining := selectAllocationsToRemove(existing, int(desired))
 		for _, alloc := range removed {
@@ -170,7 +174,7 @@ func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, serv
 				return nil, err
 			}
 			service.PlacementMessage = message
-			return existing, nil
+			return append(existing, lost...), nil
 		}
 	}
 
@@ -178,7 +182,18 @@ func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, serv
 		return nil, err
 	}
 	service.PlacementMessage = ""
-	return existing, nil
+	return append(existing, lost...), nil
+}
+
+func splitLostAllocations(existing []allocationRecord) (live, lost []allocationRecord) {
+	for _, alloc := range existing {
+		if alloc.RolloutState == allocationRolloutLost {
+			lost = append(lost, alloc)
+			continue
+		}
+		live = append(live, alloc)
+	}
+	return live, lost
 }
 
 func pendingPlacementMessage(placed, desired int, reason string) string {

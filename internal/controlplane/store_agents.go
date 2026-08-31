@@ -395,7 +395,9 @@ func (s *Store) listWorkloadIdentities(ctx context.Context) ([]*agentv1.Workload
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id
 		   JOIN agents ag ON ag.id = a.agent_id
+		  WHERE a.rollout_state <> $1
 		  ORDER BY s.created_at ASC, a.id ASC`,
+		allocationRolloutLost,
 	)
 	if err != nil {
 		return nil, err

@@ -387,48 +387,24 @@ func (s *Store) restartService(ctx context.Context, userID, projectID, serviceID
 		if err != nil {
 			return err
 		}
-		if len(existing) == 0 {
+		live, _ := splitLostAllocations(existing)
+		if len(live) == 0 {
 			return fmt.Errorf("service %s has no allocation to restart", serviceID)
 		}
-		now := time.Now().UTC()
-		result, err := tx.ExecContext(ctx,
-			`UPDATE allocations
-			    SET operator_restart_nonce = operator_restart_nonce + 1,
-			        phase = 'Pending',
-			        message = 'operator restart requested',
-			        healthy = FALSE,
-			        updated_at = $1
-			  WHERE service_id = $2`,
-			now, serviceID,
-		)
+		target, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
 		if err != nil {
 			return err
 		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
+		if !ok {
+			return errDeploymentStale
 		}
-		if affected == 0 {
-			return sql.ErrNoRows
-		}
-		dep, err := s.insertDeploymentTx(
-			ctx, tx, serviceID, deploymentStateStarting,
-			deploymentActor{Kind: deploymentCauseUser, ID: userID},
-			reasonOperatorRestart,
-			"Operator restart requested",
-			current.SpecRevision, current.RolloutGeneration,
-			current.LatestBuildID, current.ResolvedImage, userID, now,
-		)
-		if err != nil {
-			return err
-		}
-		current.LatestDeployment = &dep
-		return s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID})
+		_, err = s.restartDeploymentTx(ctx, tx, current, target, "", userID)
+		return err
 	})
 	if err != nil {
 		return serviceRecord{}, err
 	}
-	return current, nil
+	return s.serviceByID(ctx, userID, projectID, serviceID)
 }
 
 func (s *Store) requestServiceSourceSync(ctx context.Context, userID, projectID, serviceID string) error {
@@ -683,7 +659,7 @@ func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, envi
 
 const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
 		        s.current_rollout_generation,
-		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id ORDER BY a.id LIMIT 1), ''),
+		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id AND a.rollout_state <> 'lost' ORDER BY CASE a.rollout_state WHEN 'serving' THEN 0 WHEN 'starting' THEN 1 ELSE 2 END, a.id LIMIT 1), ''),
 		        s.current_resolved_image, s.last_successful_commit_sha, s.latest_build_id,
 		        s.desired_replica_count, s.placement_message, s.created_at, s.updated_at
 		   FROM services s

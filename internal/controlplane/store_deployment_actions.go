@@ -383,13 +383,45 @@ func (s *Store) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service serv
 		}
 		return s.copyDeploymentRolloutTx(ctx, tx, service, fallback, userID, reasonUserCancel, "Restoring the last successful deployment after cancellation")
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE service_id = $1`, service.ID); err != nil {
+	allocs, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+	if err != nil {
+		return "", err
+	}
+	if allocationsHaveServedTraffic(allocs) {
+		if err := s.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
+			return "", err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE allocations
+			    SET rollout_state = $1, phase = 'Withdrawing',
+			        message = 'cancelled; waiting for ingress withdrawal', updated_at = $2
+			  WHERE service_id = $3 AND rollout_state NOT IN ($1, $4, $5)`,
+			allocationRolloutWithdrawing, now, service.ID, allocationRolloutDraining, allocationRolloutLost,
+		); err != nil {
+			return "", err
+		}
+		return "", s.bumpAllDesiredRevisionsTx(ctx, tx)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM allocations WHERE service_id = $1 AND rollout_state = $2`,
+		service.ID, allocationRolloutStarting,
+	); err != nil {
 		return "", err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_resolved_image = '', updated_at = $1 WHERE id = $2`, now, service.ID); err != nil {
 		return "", err
 	}
 	return "", s.bumpAllDesiredRevisionsTx(ctx, tx)
+}
+
+func allocationsHaveServedTraffic(allocs []allocationRecord) bool {
+	for _, alloc := range allocs {
+		switch alloc.RolloutState {
+		case allocationRolloutServing, allocationRolloutWithdrawing, allocationRolloutDraining:
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, now time.Time) error {
