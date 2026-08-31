@@ -59,6 +59,7 @@ type platformStore interface {
 	deleteDomainBinding(ctx context.Context, userID, projectID, hostname string) (bool, error)
 	serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error)
 	scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error)
+	restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
 	listServiceDeployments(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error)
@@ -600,6 +601,41 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	}
 	index := s.events.Publish(service.EnvironmentID)
 	return toProtoServiceStatus(service, allocations, index), nil
+}
+
+func (s *PlatformService) RestartService(ctx context.Context, req *platformv1.RestartServiceRequest) (*platformv1.ServiceStatus, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	currentService, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "load service: %v", err)
+	}
+	if err := s.requireProjectWriteAccess(ctx, identity.UserID, currentService.ProjectID); err != nil {
+		return nil, err
+	}
+	service, err := s.store.restartService(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		}
+		return nil, status.Errorf(codes.FailedPrecondition, "restart service: %v", err)
+	}
+	s.notifyServiceAgents(ctx, service.ID, true)
+	currentService, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "restart service status: %v", err)
+	}
+	currentService, err = s.decorateServiceRecordWithAllocations(ctx, currentService, allocations)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "decorate restart status: %v", err)
+	}
+	index := s.events.Publish(currentService.EnvironmentID)
+	return toProtoServiceStatus(currentService, allocations, index), nil
 }
 
 func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {

@@ -201,6 +201,76 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 	}
 }
 
+func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) {
+	store, ctx, userID, projectID, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {
+		t.Fatal(err)
+	}
+	serving := mustRolloutAllocations(t, store, service.ID)[0]
+	updated := directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
+	if _, _, err := store.updateService(ctx, userID, projectID, service.ID, "", updated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.redeployService(ctx, userID, projectID, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	cancelledTarget, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || !deploymentStatePreActive(cancelledTarget.State) {
+		t.Fatalf("deploying target: %+v ok=%v err=%v", cancelledTarget, ok, err)
+	}
+
+	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, cancelledTarget.ID,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-deploying", ""); err != nil {
+		t.Fatalf("cancel deploying rollout: %v", err)
+	} else if action.ResultDeploymentID == "" {
+		t.Fatalf("cancel did not create fallback rollout: %+v", action)
+	}
+	if got := deploymentByIDForTest(t, store, ctx, userID, projectID, service.ID, cancelledTarget.ID); got.State != deploymentStateCancelled {
+		t.Fatalf("cancelled deployment was overwritten: %+v", got)
+	}
+	if got := allocationByID(t, store, service.ID, serving.ID); got.RolloutState != allocationRolloutServing || !got.Healthy {
+		t.Fatalf("cancel stopped the serving predecessor: %+v", got)
+	}
+	restored, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || restored.ImageDigest != pinnedImage("a") {
+		t.Fatalf("fallback deployment: %+v ok=%v err=%v", restored, ok, err)
+	}
+	completeActionRollout(t, store, service.ID)
+}
+
+func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t *testing.T) {
+	store, ctx, userID, projectID, service := setupPinnedImageServiceForDeployment(t, "nginx:latest")
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {
+		t.Fatal(err)
+	}
+	serving := mustRolloutAllocations(t, store, service.ID)[0]
+	updated := directImageServiceSpec("nginx:edge", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
+	if _, _, err := store.updateService(ctx, userID, projectID, service.ID, "", updated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.redeployService(ctx, userID, projectID, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	cancelledTarget, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || !deploymentStatePreActive(cancelledTarget.State) {
+		t.Fatalf("deploying target: %+v ok=%v err=%v", cancelledTarget, ok, err)
+	}
+
+	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, cancelledTarget.ID,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-unpinned", ""); err != nil {
+		t.Fatalf("cancel deploying rollout: %v", err)
+	}
+	got := allocationByID(t, store, service.ID, serving.ID)
+	if got.ID != serving.ID || got.RolloutState != allocationRolloutWithdrawing {
+		t.Fatalf("cancel deleted serving history instead of withdrawing it: %+v", got)
+	}
+	for _, alloc := range mustListAllocations(t, store, ctx, service.ID) {
+		if alloc.DesiredRolloutGeneration == cancelledTarget.RolloutGeneration && alloc.RolloutState == allocationRolloutStarting {
+			t.Fatalf("cancelled starting allocation survived: %+v", alloc)
+		}
+	}
+}
+
 func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	t.Parallel()
 	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)

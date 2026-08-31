@@ -256,21 +256,32 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	}
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	originalAgent := target.AgentID
+	originalTargetID := target.ID
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().Add(-time.Hour), originalAgent); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.failoverUnhealthyServices(ctx, time.Now().UTC(), time.Minute); err != nil {
 		t.Fatalf("failoverUnhealthyServices: %v", err)
 	}
-	target = allocationByID(t, store, service.ID, target.ID)
-	if target.AgentID == originalAgent || target.DesiredRolloutGeneration != 2 || target.RolloutState != allocationRolloutStarting {
-		t.Fatalf("target rollout was not durably rescheduled after node loss: %+v", target)
+	lost := allocationByID(t, store, service.ID, originalTargetID)
+	if lost.AgentID != originalAgent || lost.RolloutState != allocationRolloutLost || lost.Phase != allocationPhaseUnavailable {
+		t.Fatalf("lost target was rewritten instead of marked lost: %+v", lost)
+	}
+	var replacement allocationRecord
+	for _, alloc := range allocationForGeneration(t, store, service.ID, 2) {
+		if alloc.ID != originalTargetID && alloc.RolloutState == allocationRolloutStarting && alloc.AgentID != originalAgent {
+			replacement = alloc
+			break
+		}
+	}
+	if replacement.ID == "" {
+		t.Fatalf("node loss did not create a new gen-2 allocation: %+v", mustRolloutAllocations(t, store, service.ID))
 	}
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
 	if !old.Healthy || old.RolloutState != allocationRolloutServing {
 		t.Fatalf("node loss during rollout disturbed predecessor: %+v", old)
 	}
-	markRolloutAllocationReady(t, store, target)
+	markRolloutAllocationReady(t, store, replacement)
 	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile recovered target: %v", err)

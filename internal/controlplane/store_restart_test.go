@@ -121,34 +121,53 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if err != nil || !ok || current.State != deploymentStateActive {
 		t.Fatalf("current deployment: %+v ok=%v err=%v", current, ok, err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-1", ""); err != nil {
-		t.Fatalf("applyDeploymentAction restart: %v", err)
-	}
-	afterRestart, err := store.allocationByServiceID(ctx, service.ID)
+	original, err := store.allocationByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if afterRestart.OperatorRestartNonce != 1 || afterRestart.Phase != "Pending" {
-		t.Fatalf("operator restart = %+v", afterRestart)
+	if _, err := store.restartService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
+		t.Fatalf("restartService: %v", err)
+	}
+	afterRestart := mustListAllocations(t, store, ctx, service.ID)
+	if len(afterRestart) != 2 {
+		t.Fatalf("rolling restart should overlap a replacement: %+v", afterRestart)
+	}
+	kept := allocationByID(t, store, service.ID, original.ID)
+	if kept.ID != original.ID || kept.OperatorRestartNonce != 0 || kept.RolloutState != allocationRolloutServing || !kept.Healthy {
+		t.Fatalf("restart mutated the serving allocation in place: %+v", kept)
+	}
+	var replacement allocationRecord
+	for _, alloc := range afterRestart {
+		if alloc.ID != original.ID {
+			replacement = alloc
+			break
+		}
+	}
+	if replacement.ID == "" || replacement.RolloutState != allocationRolloutStarting {
+		t.Fatalf("expected a starting replacement allocation, got %+v", afterRestart)
 	}
 
 	desired, err := store.desiredStateForAgent(ctx, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(desired.GetServices()) != 1 || desired.GetServices()[0].GetOperatorRestartNonce() != 1 {
-		t.Fatalf("desired state missing operator nonce: %#v", desired.GetServices())
+	if len(desired.GetServices()) != 2 {
+		t.Fatalf("desired state missing overlapping restart allocations: %#v", desired.GetServices())
 	}
 
-	afterRestart, err = store.allocationByServiceID(ctx, service.ID)
-	if err != nil {
-		t.Fatal(err)
+	completeActionRollout(t, store, service.ID)
+	serving := mustRolloutAllocations(t, store, service.ID)
+	if len(serving) != 1 {
+		t.Fatalf("completed restart allocations = %+v", serving)
+	}
+	if serving[0].ID == original.ID {
+		t.Fatal("original allocation survived rolling restart")
 	}
 	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		Services: []*agentv1.ServiceCondition{{
-			AllocationId: afterRestart.ID, ServiceId: service.ID,
+			AllocationId: serving[0].ID, ServiceId: service.ID,
 			Phase: restartpolicy.PhaseCrashLoop, Message: "crash loop",
-			Restart: &platformv1.RestartObservation{CrashLoop: true, RestartCount: 3, AppliedRolloutGeneration: afterRestart.DesiredRolloutGeneration},
+			Restart: &platformv1.RestartObservation{CrashLoop: true, RestartCount: 3, AppliedRolloutGeneration: serving[0].DesiredRolloutGeneration},
 		}},
 	}); err != nil {
 		t.Fatal(err)
@@ -157,9 +176,9 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
 		t.Fatalf("redeployService: %v", err)
 	}
-	afterRollout, err := store.allocationByServiceID(ctx, service.ID)
-	if err != nil {
-		t.Fatal(err)
+	afterRollout := allocationForGeneration(t, store, service.ID, serving[0].DesiredRolloutGeneration+1)
+	if len(afterRollout) != 1 {
+		t.Fatalf("new rollout allocation = %+v", afterRollout)
 	}
 	if afterRollout.Restart.GetCrashLoop() {
 		t.Fatal("new rollout left crash-loop observation in place")

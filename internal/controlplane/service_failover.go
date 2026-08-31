@@ -5,11 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"slices"
-	"sort"
 	"time"
-
-	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 const allocationPhaseUnavailable = "Unavailable"
@@ -27,12 +23,6 @@ type allocationFailoverState struct {
 	allocationIP string
 	healthyPorts jsonInt32Slice
 	healthy      bool
-}
-
-type agentWorkloadUsage struct {
-	services int
-	cpu      int64
-	memory   int64
 }
 
 func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, unhealthyThreshold time.Duration) (serviceFailoverResult, error) {
@@ -71,10 +61,6 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			return nil
 		}
 
-		projectKinds, err := projectKindsForFailover(ctx, tx)
-		if err != nil {
-			return err
-		}
 		allocations, err := allocationStatesForFailover(ctx, tx)
 		if err != nil {
 			return err
@@ -82,37 +68,18 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 
 		cutoff := now.UTC().Add(-unhealthyThreshold)
 		healthyAgents := make(map[string]agentRecord, len(agents))
-		usage := make(map[string]*agentWorkloadUsage, len(agents))
 		for _, agent := range agents {
-			usage[agent.ID] = &agentWorkloadUsage{}
 			if agent.LastSeenAt.After(cutoff) && agent.LifecycleState == agentStateActive {
 				healthyAgents[agent.ID] = agent
 			}
 		}
 		servicesByID := make(map[string]*serviceRecord, len(services))
-		occupiedByService := make(map[string]map[string]struct{}, len(services))
 		for i := range services {
 			servicesByID[services[i].ID] = &services[i]
-			occupiedByService[services[i].ID] = map[string]struct{}{}
-		}
-		for _, allocation := range allocations {
-			service := servicesByID[allocation.ServiceID]
-			if service == nil {
-				continue
-			}
-			runtime := serviceRuntime(service.Spec)
-			used := usage[allocation.AgentID]
-			if used == nil {
-				used = &agentWorkloadUsage{}
-				usage[allocation.AgentID] = used
-			}
-			used.services++
-			used.cpu += runtime.GetCpuMillis()
-			used.memory += runtime.GetMemoryMebibytes()
-			occupiedByService[allocation.ServiceID][allocation.AgentID] = struct{}{}
 		}
 
 		moved := false
+		alreadyBumped := false
 		for i := range allocations {
 			allocation := allocations[i]
 			service := servicesByID[allocation.ServiceID]
@@ -122,107 +89,33 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			if _, healthy := healthyAgents[allocation.AgentID]; healthy {
 				continue
 			}
-			if allocation.RolloutState == allocationRolloutDraining || allocation.RolloutState == allocationRolloutWithdrawing {
-				if err := finishLostDrainingAllocationTx(ctx, tx, allocation.ID, "node lost while draining; allocation will be removed", now.UTC()); err != nil {
-					return err
-				}
-				result.IngressChanged = true
-				moved = true
+			replacement, err := s.replaceLostNodeAllocationTx(ctx, tx, allocation.AgentID, allocation, now.UTC())
+			if err != nil {
+				return err
+			}
+			if !replacement.Changed {
 				continue
 			}
-
-			var blockedMessage string
-			switch {
-			case projectKinds[service.ProjectID] == projectKindManaged:
-				blockedMessage = "agent unhealthy; managed/trusted workload remains pinned to its trusted agent"
-			case serviceVolumeName(service.Spec) != "":
-				blockedMessage = fmt.Sprintf("agent unhealthy; service remains pinned because node-bound volume %q requires replicated storage before failover", serviceVolumeName(service.Spec))
-			}
-
-			var destination string
-			if blockedMessage == "" {
-				destination = chooseFailoverDestination(agents, healthyAgents, usage, s.reservedAgentIDs, service, allocation.AgentID, occupiedByService[service.ID])
-				if destination == "" {
-					blockedMessage = "agent unhealthy; automatic failover blocked because no healthy non-reserved agent has sufficient capacity"
-				}
-			}
-
-			if blockedMessage != "" {
-				changed, err := markAllocationUnavailableForFailover(ctx, tx, allocation.ID, allocationFailoverState{
-					phase: allocation.Phase, message: allocation.Message, allocationIP: allocation.AllocationIP,
-					healthyPorts: allocation.HealthyPorts, healthy: allocation.Healthy,
-				}, blockedMessage, now.UTC())
-				if err != nil {
-					return err
-				}
-				if changed {
-					result.BlockedServiceIDs = append(result.BlockedServiceIDs, service.ID)
-					result.IngressChanged = true
-				}
-				continue
-			}
-
-			oldAgentID := allocation.AgentID
-			nodeLoss, err := encodeRestartObservation(restartpolicy.NodeLossObservation(now.UTC(), 0, 0))
-			if err != nil {
-				return err
-			}
-			allocationUpdate, err := tx.ExecContext(ctx,
-				`UPDATE allocations
-				    SET agent_id = $1,
-				        applied_spec_revision = 0,
-				        applied_rollout_generation = 0,
-				        phase = 'Pending',
-				        message = $2,
-				        allocation_ip = '',
-				        healthy_ports = $3,
-				        healthy = FALSE,
-				        restart_observation_json = $4,
-				        updated_at = $5
-				  WHERE id = $6 AND agent_id = $7`,
-				destination,
-				fmt.Sprintf("rescheduled from unhealthy agent %s to %s", oldAgentID, destination),
-				[]byte("[]"),
-				nodeLoss,
-				now.UTC(),
-				allocation.ID,
-				oldAgentID,
-			)
-			if err != nil {
-				return err
-			}
-			allocationAffected, err := allocationUpdate.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if allocationAffected != 1 {
-				return errConcurrentUpdate
-			}
-
-			runtime := serviceRuntime(service.Spec)
-			if oldUsage := usage[oldAgentID]; oldUsage != nil {
-				oldUsage.services--
-				oldUsage.cpu -= runtime.GetCpuMillis()
-				oldUsage.memory -= runtime.GetMemoryMebibytes()
-			}
-			newUsage := usage[destination]
-			newUsage.services++
-			newUsage.cpu += runtime.GetCpuMillis()
-			newUsage.memory += runtime.GetMemoryMebibytes()
-			delete(occupiedByService[service.ID], oldAgentID)
-			occupiedByService[service.ID][destination] = struct{}{}
-			service.AllocatedAgentID = destination
-			result.MovedServiceIDs = append(result.MovedServiceIDs, service.ID)
 			result.IngressChanged = true
 			moved = true
+			if replacement.Bumped {
+				alreadyBumped = true
+			}
+			if replacement.Blocked {
+				result.BlockedServiceIDs = append(result.BlockedServiceIDs, service.ID)
+				continue
+			}
+			if replacement.Replaced {
+				result.MovedServiceIDs = append(result.MovedServiceIDs, service.ID)
+			}
 		}
 
-		if moved {
-			// Allocation host identity is cluster-wide mesh state. Bumping all agents
-			// also guarantees a recovered old agent receives removal desired state.
+		if moved && !alreadyBumped {
 			if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
 				return err
 			}
+		}
+		if moved {
 			for _, agent := range agents {
 				result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)
 			}
@@ -233,24 +126,6 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 		return serviceFailoverResult{}, err
 	}
 	return result, nil
-}
-
-func projectKindsForFailover(ctx context.Context, q serviceQueryer) (map[string]projectKind, error) {
-	rows, err := q.QueryContext(ctx, `SELECT id, kind FROM projects`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]projectKind)
-	for rows.Next() {
-		var id string
-		var kind projectKind
-		if err := rows.Scan(&id, &kind); err != nil {
-			return nil, err
-		}
-		out[id] = kind
-	}
-	return out, rows.Err()
 }
 
 func finishLostDrainingAllocationTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
@@ -293,47 +168,6 @@ func listAllocationsForFailover(ctx context.Context, q serviceQueryer, agentID s
 		out = append(out, rec)
 	}
 	return out, rows.Err()
-}
-
-func chooseFailoverDestination(agents []agentRecord, healthy map[string]agentRecord, usage map[string]*agentWorkloadUsage, reserved []string, service *serviceRecord, currentAgentID string, occupied map[string]struct{}) string {
-	if dest := firstFailoverCandidate(agents, healthy, usage, reserved, service, currentAgentID, occupied, true); dest != "" {
-		return dest
-	}
-	return firstFailoverCandidate(agents, healthy, usage, reserved, service, currentAgentID, occupied, false)
-}
-
-func firstFailoverCandidate(agents []agentRecord, healthy map[string]agentRecord, usage map[string]*agentWorkloadUsage, reserved []string, service *serviceRecord, currentAgentID string, occupied map[string]struct{}, avoidOccupied bool) string {
-	candidates := make([]agentRecord, 0, len(agents))
-	for _, agent := range agents {
-		if _, ok := healthy[agent.ID]; !ok || agent.ID == currentAgentID || slices.Contains(reserved, agent.ID) {
-			continue
-		}
-		if avoidOccupied {
-			if _, taken := occupied[agent.ID]; taken {
-				continue
-			}
-		}
-		candidates = append(candidates, agent)
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		left, right := usage[candidates[i].ID], usage[candidates[j].ID]
-		if left.services != right.services {
-			return left.services < right.services
-		}
-		return candidates[i].ID < candidates[j].ID
-	})
-	runtime := serviceRuntime(service.Spec)
-	for _, candidate := range candidates {
-		used := usage[candidate.ID]
-		if candidate.CPUMillisCapacity > 0 && used.cpu+runtime.GetCpuMillis() > candidate.CPUMillisCapacity {
-			continue
-		}
-		if candidate.MemoryMebibytesCapcity > 0 && used.memory+runtime.GetMemoryMebibytes() > candidate.MemoryMebibytesCapcity {
-			continue
-		}
-		return candidate.ID
-	}
-	return ""
 }
 
 func markAllocationUnavailableForFailover(ctx context.Context, q serviceQueryer, allocationID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
