@@ -43,6 +43,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalID := mustAllocationOnAgent(t, store, service.ID, "old-node").ID
 	if _, err := store.db.ExecContext(ctx,
 		`UPDATE allocations
 		    SET applied_spec_revision = desired_spec_revision,
@@ -83,15 +84,12 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		t.Fatalf("expected one ingress resync, got %d", got)
 	}
 
-	allocation, err := store.allocationByServiceID(ctx, service.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if allocation.AgentID != "new-node" || allocation.Phase != "Pending" || allocation.Healthy || allocation.AllocationIP != "" || len(allocation.HealthyPorts) != 0 {
-		t.Fatalf("allocation was not reset after failover: %+v", allocation)
+	allocation := requireNodeLossReplacement(t, store, service.ID, originalID, "old-node", "new-node")
+	if allocation.Phase != "Pending" || allocation.Healthy || allocation.AllocationIP != "" || len(allocation.HealthyPorts) != 0 {
+		t.Fatalf("replacement was not reset after failover: %+v", allocation)
 	}
 	if allocation.AppliedSpecRevision != 0 || allocation.AppliedRolloutGeneration != 0 {
-		t.Fatalf("applied allocation state was not reset: %+v", allocation)
+		t.Fatalf("applied replacement state was not reset: %+v", allocation)
 	}
 	oldState, err := store.desiredStateForAgent(ctx, "old-node")
 	if err != nil {
@@ -171,7 +169,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != allocationPhaseUnavailable || !strings.Contains(largeAllocation.Message, "sufficient capacity") {
+	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != allocationPhaseUnavailable || !strings.Contains(largeAllocation.Message, "blocked") || !(strings.Contains(largeAllocation.Message, "capacity") || strings.Contains(largeAllocation.Message, "CPU") || strings.Contains(largeAllocation.Message, "memory")) {
 		t.Fatalf("capacity allocation did not surface a no-capacity reason: %+v", largeAllocation)
 	}
 	if ingress.requests.Load() != 1 {
@@ -236,6 +234,7 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalID := mustAllocationOnAgent(t, store, service.ID, "old-node").ID
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 	before, err := store.currentDesiredRevisionForAgent(ctx, "new-node")
@@ -280,10 +279,7 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 	if after != before+1 {
 		t.Fatalf("expected one desired revision bump, before=%d after=%d", before, after)
 	}
-	allocation, err := store.allocationByServiceID(ctx, service.ID)
-	if err != nil || allocation.AgentID != "new-node" {
-		t.Fatalf("unexpected final allocation %+v err=%v", allocation, err)
-	}
+	_ = requireNodeLossReplacement(t, store, service.ID, originalID, "old-node", "new-node")
 }
 
 func bootstrapFailoverProject(t *testing.T, store *Store) string {

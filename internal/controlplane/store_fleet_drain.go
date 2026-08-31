@@ -186,9 +186,15 @@ func (s *Store) reconcileFleetCapacity(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	cutoff := time.Now().UTC().Add(-agentHealthyTTL)
 	for _, agent := range agents {
-		if agent.LifecycleState == agentStateDraining {
+		switch agent.LifecycleState {
+		case agentStateDraining:
 			if _, err := s.reconcileDrainingAgent(ctx, agent.ID); err != nil {
+				return err
+			}
+		case agentStateUnavailable:
+			if _, _, err := s.failoverServicesFromAgent(ctx, agent.ID, cutoff); err != nil {
 				return err
 			}
 		}

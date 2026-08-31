@@ -372,6 +372,41 @@ func (s *Store) redeployService(ctx context.Context, userID, projectID, serviceI
 	return current, nil
 }
 
+func (s *Store) restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
+	var current serviceRecord
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		current, err = s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+		if err != nil {
+			return err
+		}
+		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
+			return err
+		}
+		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, true)
+		if err != nil {
+			return err
+		}
+		live, _ := splitLostAllocations(existing)
+		if len(live) == 0 {
+			return fmt.Errorf("service %s has no allocation to restart", serviceID)
+		}
+		target, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errDeploymentStale
+		}
+		_, err = s.restartDeploymentTx(ctx, tx, current, target, "", userID)
+		return err
+	})
+	if err != nil {
+		return serviceRecord{}, err
+	}
+	return s.serviceByID(ctx, userID, projectID, serviceID)
+}
+
 func (s *Store) requestServiceSourceSync(ctx context.Context, userID, projectID, serviceID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
@@ -624,7 +659,7 @@ func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, envi
 
 const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
 		        s.current_rollout_generation,
-		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id ORDER BY a.id LIMIT 1), ''),
+		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id AND a.rollout_state <> 'lost' ORDER BY CASE a.rollout_state WHEN 'serving' THEN 0 WHEN 'starting' THEN 1 ELSE 2 END, a.id LIMIT 1), ''),
 		        s.current_resolved_image, s.last_successful_commit_sha, s.latest_build_id,
 		        s.desired_replica_count, s.placement_message, s.created_at, s.updated_at
 		   FROM services s
