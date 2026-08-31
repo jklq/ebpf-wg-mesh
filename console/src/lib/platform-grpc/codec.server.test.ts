@@ -78,6 +78,62 @@ describe("platform grpc codec", () => {
 		});
 	});
 
+	it("encodes placement region and rolling strategy together", () => {
+		const request = encodeCreateServiceRequest({
+			environmentId: "environment-1",
+			name: "web",
+			spec: {
+				runtime: {
+					env: {},
+					cpuMillis: 250,
+					memoryMebibytes: 256,
+					ports: [],
+				},
+				placementRegion: "eu-west",
+				rollingStrategy: {
+					maxUnavailable: 0,
+					maxSurge: 1,
+					startupTimeoutSeconds: 300,
+					drainTimeoutSeconds: 30,
+				},
+			},
+		});
+		expect(request.service.spec.placementRegion).toBe("eu-west");
+		expect(request.service.spec.rollingStrategy).toEqual({
+			maxUnavailable: 0,
+			maxSurge: 1,
+			startupTimeoutSeconds: 300,
+			drainTimeoutSeconds: 30,
+		});
+	});
+
+	it("encodes an explicit rolling strategy including zero surge", () => {
+		const request = encodeCreateServiceRequest({
+			environmentId: "environment-1",
+			name: "web",
+			spec: {
+				runtime: {
+					env: {},
+					cpuMillis: 250,
+					memoryMebibytes: 256,
+					ports: [],
+				},
+				rollingStrategy: {
+					maxUnavailable: 1,
+					maxSurge: 0,
+					startupTimeoutSeconds: 60,
+					drainTimeoutSeconds: 5,
+				},
+			},
+		});
+		expect(request.service.spec.rollingStrategy).toEqual({
+			maxUnavailable: 1,
+			maxSurge: 0,
+			startupTimeoutSeconds: 60,
+			drainTimeoutSeconds: 5,
+		});
+	});
+
 	it("decodes deployment history with build commit metadata", () => {
 		const response = decodeListServiceDeploymentsResponse({
 			deployments: [

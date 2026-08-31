@@ -128,14 +128,17 @@ func (s *Store) agentByID(ctx context.Context, agentID string) (agentRecord, err
 func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *agentv1.StatusReport) (bool, []string, error) {
 	var ingressChanged bool
 	changedEnvironments := make(map[string]struct{})
+	rolloutServiceIDs := make(map[string]struct{})
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		ingressChanged = false
 		changedEnvironments = make(map[string]struct{})
+		rolloutServiceIDs = make(map[string]struct{})
 		now := time.Now().UTC()
 		for _, cond := range report.Services {
 			var (
 				prevAppliedSpecRevision      int64
 				prevAppliedRolloutGeneration int64
+				desiredSpecRevision          int64
 				prevPhase                    string
 				prevMessage                  string
 				prevHealthy                  bool
@@ -150,6 +153,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 			err := tx.QueryRowContext(ctx,
 				`SELECT a.applied_spec_revision,
 				        a.applied_rollout_generation,
+				        a.desired_spec_revision,
 				        a.phase,
 				        a.message,
 				        a.healthy,
@@ -168,6 +172,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 			).Scan(
 				&prevAppliedSpecRevision,
 				&prevAppliedRolloutGeneration,
+				&desiredSpecRevision,
 				&prevPhase,
 				&prevMessage,
 				&prevHealthy,
@@ -191,7 +196,9 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 			}
 			allocationIP := strings.TrimSpace(cond.GetAllocationIp())
 			if s.useReportedAllocationIP {
-				if net.ParseIP(allocationIP) == nil {
+				if allocationIP == "" {
+					allocationIP = prevAllocationIP
+				} else if net.ParseIP(allocationIP) == nil {
 					return fmt.Errorf("reported allocation ip %q is invalid", allocationIP)
 				}
 			} else {
@@ -221,6 +228,10 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				phase = restartpolicy.PhaseCrashLoop
 				healthy = false
 			}
+			appliedSpec := cond.GetAppliedSpecRevision()
+			if appliedSpec == 0 && healthy && cond.GetAppliedRolloutGeneration() >= cond.GetDesiredRolloutGeneration() {
+				appliedSpec = desiredSpecRevision
+			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
 				    SET applied_spec_revision = $1,
@@ -233,12 +244,22 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				        restart_observation_json = $8,
 				        updated_at = $9
 				  WHERE id = $10 AND agent_id = $11`,
-				cond.AppliedSpecRevision, cond.AppliedRolloutGeneration, phase, cond.Message, allocationIP, healthyPorts, healthy, restartRaw, now, cond.AllocationId, agentID,
+				appliedSpec, cond.AppliedRolloutGeneration, phase, cond.Message, allocationIP, healthyPorts, healthy, restartRaw, now, cond.AllocationId, agentID,
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
 			changedEnvironments[environmentID] = struct{}{}
-			if err := s.applyAgentDeploymentObservationTx(ctx, tx, serviceID, cond.GetDesiredRolloutGeneration(), phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), agentID); err != nil {
+			var rolloutState string
+			err = tx.QueryRowContext(ctx,
+				`SELECT state FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
+				serviceID, cond.GetDesiredRolloutGeneration(),
+			).Scan(&rolloutState)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if rolloutState == rolloutStateInProgress {
+				rolloutServiceIDs[serviceID] = struct{}{}
+			} else if err := s.applyAgentDeploymentObservationTx(ctx, tx, serviceID, cond.GetDesiredRolloutGeneration(), phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), agentID); err != nil {
 				return fmt.Errorf("apply deployment observation: %w", err)
 			}
 			if hasDomain && (prevHealthy != healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) || prevPhase != phase) {
@@ -249,6 +270,17 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 	})
 	if err != nil {
 		return false, nil, err
+	}
+	now := time.Now().UTC()
+	for serviceID := range rolloutServiceIDs {
+		advanced, advanceErr := s.advanceRollout(ctx, serviceID, now)
+		if advanceErr != nil {
+			return false, nil, fmt.Errorf("advance rollout after status: %w", advanceErr)
+		}
+		ingressChanged = ingressChanged || advanced.IngressChanged
+		if advanced.EnvironmentID != "" {
+			changedEnvironments[advanced.EnvironmentID] = struct{}{}
+		}
 	}
 	environmentIDs := make([]string, 0, len(changedEnvironments))
 	for environmentID := range changedEnvironments {

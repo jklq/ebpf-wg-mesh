@@ -44,7 +44,26 @@ export type DashboardBuildState =
 	| "succeeded"
 	| "failed"
 	| "superseded"
+	| "cancelled"
 	| "unspecified";
+
+export type DashboardDeploymentAction =
+	| "restart"
+	| "exact_redeploy"
+	| "rollback"
+	| "cancel"
+	| "remove"
+	| "retry";
+
+export interface DashboardDeploymentActionRecord {
+	id: string;
+	action: DashboardDeploymentAction;
+	targetDeploymentId: string;
+	resultDeploymentId?: string;
+	allocationId?: string;
+	requestedByUserId: string;
+	createdAt?: Date;
+}
 
 export type DashboardDeploymentStageState =
 	| "pending"
@@ -202,6 +221,14 @@ export interface DashboardServiceSpec {
 	runtime: DashboardRuntimeSpec;
 	desiredReplicaCount?: number;
 	placementRegion?: string;
+	rollingStrategy?: DashboardRollingStrategy;
+}
+
+export interface DashboardRollingStrategy {
+	maxUnavailable: number;
+	maxSurge: number;
+	startupTimeoutSeconds: number;
+	drainTimeoutSeconds: number;
 }
 
 export type DashboardAgentLifecycleState =
@@ -368,6 +395,9 @@ export interface DashboardAllocationStatus {
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
 	operatorRestartNonce?: number;
+	rolloutState?: string;
+	drainStartedAt?: Date;
+	drainDeadline?: Date;
 	restart?: {
 		restartCount: number;
 		crashLoop: boolean;
@@ -420,6 +450,8 @@ export interface DashboardDeploymentRecord {
 	status?: DashboardDeploymentStatus;
 	stages?: Array<DashboardDeploymentStage>;
 	imageDigest?: string;
+	actions?: Array<DashboardDeploymentActionRecord>;
+	variableVersions?: Record<string, number>;
 }
 
 export interface CreateServiceFastResult {
@@ -768,9 +800,15 @@ export interface PlatformGateway {
 			spec: DashboardServiceSpec;
 		},
 	): Promise<DashboardServiceRecord>;
-	redeployService(
+	applyDeploymentAction(
 		user: DashboardUser,
-		input: { serviceId: string },
+		input: {
+			serviceId: string;
+			deploymentId: string;
+			action: DashboardDeploymentAction;
+			idempotencyKey: string;
+			allocationId?: string;
+		},
 	): Promise<DashboardServiceStatus>;
 	scaleService(
 		user: DashboardUser,
@@ -778,10 +816,6 @@ export interface PlatformGateway {
 			serviceId: string;
 			desiredReplicaCount: number;
 		},
-	): Promise<DashboardServiceStatus>;
-	restartService(
-		user: DashboardUser,
-		input: { serviceId: string },
 	): Promise<DashboardServiceStatus>;
 	discardServiceChanges(
 		user: DashboardUser,
@@ -920,6 +954,7 @@ export interface UpdateServiceInput {
 	restart?: DashboardRestartSpec;
 	desiredReplicaCount?: number;
 	placementRegion?: string;
+	rollingStrategy?: DashboardRollingStrategy;
 }
 
 export interface DashboardService {
@@ -1034,15 +1069,16 @@ export interface DashboardService {
 	updateServiceFromSession(
 		input: UpdateServiceInput,
 	): Promise<DashboardServiceRecord>;
-	redeployServiceFromSession(input: {
+	applyDeploymentActionFromSession(input: {
 		serviceId: string;
+		deploymentId: string;
+		action: DashboardDeploymentAction;
+		idempotencyKey: string;
+		allocationId?: string;
 	}): Promise<DashboardServiceStatus>;
 	scaleServiceFromSession(input: {
 		serviceId: string;
 		desiredReplicaCount: number;
-	}): Promise<DashboardServiceStatus>;
-	restartServiceFromSession(input: {
-		serviceId: string;
 	}): Promise<DashboardServiceStatus>;
 	discardServiceChangesFromSession(input: {
 		serviceId: string;

@@ -130,6 +130,12 @@ export interface CreateServiceRequest {
 			};
 			desiredReplicaCount?: number;
 			placementRegion?: string;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }
@@ -184,6 +190,12 @@ export interface UpdateServiceRequest {
 			};
 			desiredReplicaCount?: number;
 			placementRegion?: string;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }
@@ -202,13 +214,21 @@ export interface RedeployServiceRequest {
 	serviceId: string;
 }
 
-export interface ScaleServiceRequest {
+export interface ApplyDeploymentActionRequest {
 	serviceId: string;
-	desiredReplicaCount: number;
+	deploymentId: string;
+	action: string;
+	idempotencyKey: string;
+	allocationId?: string;
 }
 
 export interface RestartServiceRequest {
 	serviceId: string;
+}
+
+export interface ScaleServiceRequest {
+	serviceId: string;
+	desiredReplicaCount: number;
 }
 
 export interface DeleteServiceRequest {
@@ -296,6 +316,7 @@ export type PlatformMethod =
 	| "CreateService"
 	| "UpdateService"
 	| "RedeployService"
+	| "ApplyDeploymentAction"
 	| "ScaleService"
 	| "RestartService"
 	| "DiscardServiceChanges"
@@ -326,6 +347,7 @@ export type PlatformRequestMap = {
 	CreateService: CreateServiceRequest;
 	UpdateService: UpdateServiceRequest;
 	RedeployService: RedeployServiceRequest;
+	ApplyDeploymentAction: ApplyDeploymentActionRequest;
 	ScaleService: ScaleServiceRequest;
 	RestartService: RestartServiceRequest;
 	DiscardServiceChanges: DiscardServiceChangesRequest;
@@ -419,6 +441,11 @@ export type PlatformClient = grpc.Client & {
 	) => void;
 	RedeployService: (
 		request: RedeployServiceRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	ApplyDeploymentAction: (
+		request: ApplyDeploymentActionRequest,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;

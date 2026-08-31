@@ -10,7 +10,7 @@ region, zone, failure-domain, reservation, or capability labels.
 | `enrolling` | no | Operator created the node and issued a bootstrap token. Waiting for the first healthy hello. |
 | `active` | yes, if the heartbeat is fresh | Accepts new placement. |
 | `cordoned` | no | Existing allocations keep running. New placement is refused. |
-| `draining` | no | Stateless allocations move through the same fenced failover path used for node loss. Volume-backed allocations stay fenced until Stage 7 storage handoff exists. |
+| `draining` | no | Stateless allocations are replaced through the rolling reconciler: a new allocation is created on another active node, ingress switches, then the old process drains. Volume-backed allocations stay fenced until Stage 7 storage handoff exists. Existing allocation identities are never rewritten onto another node. |
 | `unavailable` | no | Heartbeat expired. Workloads fail over when capacity and policy allow. A later hello restores the previous maintenance state. |
 | `retired` | no | Allocations and attachments must already be gone. Credentials are revoked and the WireGuard/mesh identity is cleared. |
 

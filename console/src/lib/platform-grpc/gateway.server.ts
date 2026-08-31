@@ -173,16 +173,20 @@ export function createPlatformGateway(
 			);
 			return decodeServiceMessage(response);
 		},
-		async redeployService(user, input) {
-			const response = await unaryCall(runtime, "RedeployService", input, user);
+		async applyDeploymentAction(user, input) {
+			const response = await unaryCall(
+				runtime,
+				"ApplyDeploymentAction",
+				{
+					...input,
+					action: `DEPLOYMENT_ACTION_${input.action.toUpperCase()}`,
+				},
+				user,
+			);
 			return decodeServiceStatusMessage(response);
 		},
 		async scaleService(user, input) {
 			const response = await unaryCall(runtime, "ScaleService", input, user);
-			return decodeServiceStatusMessage(response);
-		},
-		async restartService(user, input) {
-			const response = await unaryCall(runtime, "RestartService", input, user);
 			return decodeServiceStatusMessage(response);
 		},
 		async discardServiceChanges(user, input) {

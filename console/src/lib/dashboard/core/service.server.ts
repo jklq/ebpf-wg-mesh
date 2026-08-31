@@ -5,6 +5,7 @@ import {
 	refreshSession,
 } from "#/lib/dashboard/core/auth.server";
 import {
+	applyDeploymentActionFromSession,
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
@@ -29,12 +30,10 @@ import {
 	loadDashboardHome,
 	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
-	redeployServiceFromSession,
-	scaleServiceFromSession,
-	restartServiceFromSession,
 	renameEnvironmentFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
+	scaleServiceFromSession,
 	updateDomainBindingFromSession,
 	createFleetAgentFromSession,
 	updateFleetAgentFromSession,
@@ -157,14 +156,11 @@ export function createDashboardService(
 		updateServiceFromSession(input) {
 			return updateServiceFromSession(runtime, input);
 		},
-		redeployServiceFromSession(input) {
-			return redeployServiceFromSession(runtime, input);
+		applyDeploymentActionFromSession(input) {
+			return applyDeploymentActionFromSession(runtime, input);
 		},
 		scaleServiceFromSession(input) {
 			return scaleServiceFromSession(runtime, input);
-		},
-		restartServiceFromSession(input) {
-			return restartServiceFromSession(runtime, input);
 		},
 		discardServiceChangesFromSession(input) {
 			return discardServiceChangesFromSession(runtime, input);

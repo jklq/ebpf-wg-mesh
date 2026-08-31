@@ -122,6 +122,7 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 	}
 	out := proto.Clone(spec).(*platformv1.ServiceSpec)
 	out.PlacementRegion = strings.ToLower(strings.TrimSpace(out.GetPlacementRegion()))
+	out.RollingStrategy = canonicalRollingStrategy(out.GetRollingStrategy())
 	runtime := out.GetRuntime()
 	if runtime != nil {
 		if len(runtime.Command) == 0 {
@@ -393,6 +394,9 @@ func sameServiceSpec(a, b *platformv1.ServiceSpec) bool {
 }
 
 func equalServiceSpecAfterCanonicalization(a, b *platformv1.ServiceSpec) bool {
+	if !proto.Equal(canonicalRollingStrategy(a.GetRollingStrategy()), canonicalRollingStrategy(b.GetRollingStrategy())) {
+		return false
+	}
 	ar := a.GetRuntime()
 	br := b.GetRuntime()
 	if (ar == nil) != (br == nil) {
@@ -537,9 +541,19 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 			        healthy_ports = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        rollout_state = $5,
 			        updated_at = $3
 			  WHERE service_id = $4`,
-			allocationIP, encodedPorts, time.Now().UTC(), serviceID,
+			allocationIP, encodedPorts, time.Now().UTC(), serviceID, allocationRolloutServing,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE service_rollouts
+			    SET state = $1, failure_reason = '', completed_at = $2, progress_at = $2
+			  WHERE service_id = $3
+			    AND rollout_generation = (SELECT current_rollout_generation FROM services WHERE id = $3)`,
+			rolloutStateSucceeded, time.Now().UTC(), serviceID,
 		); err != nil {
 			return err
 		}
@@ -573,10 +587,11 @@ func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID
 			        healthy_ports = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        rollout_state = $5,
 			        updated_at = $3
 			  WHERE id = $4
 			  RETURNING service_id, desired_rollout_generation`,
-			allocationIP, encodedPorts, time.Now().UTC(), allocationID,
+			allocationIP, encodedPorts, time.Now().UTC(), allocationID, allocationRolloutServing,
 		).Scan(&serviceID, &desiredRollout); err != nil {
 			return err
 		}

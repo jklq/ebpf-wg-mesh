@@ -8,16 +8,16 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"ebof-wg-mesh/internal/restartpolicy"
 )
 
-// reconcileDrainingAgent moves stateless allocations through the same fenced
-// allocation/deployment transition used by node-loss failover. Volume-backed
-// allocations remain fenced in place until the Stage 7 handoff contract exists.
+// reconcileDrainingAgent replaces stateless allocations on a draining node by
+// starting targeted rolling replacements. Volume-backed allocations remain
+// fenced until the Stage 7 handoff contract exists. Existing allocation rows
+// are never rewritten onto another agent.
 func (s *Store) reconcileDrainingAgent(ctx context.Context, agentID string) ([]string, error) {
 	var notify []string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		notify = nil
 		agent, err := agentByIDQuerier(ctx, tx, agentID, true)
 		if err != nil {
 			return err
@@ -30,7 +30,7 @@ func (s *Store) reconcileDrainingAgent(ctx context.Context, agentID string) ([]s
 			return err
 		}
 		blocked := make(map[string]struct{})
-		moved := false
+		started := false
 		now := time.Now().UTC()
 		for _, allocation := range allocations {
 			service, err := s.serviceByIDInternalQuerier(ctx, tx, allocation.ServiceID)
@@ -39,6 +39,16 @@ func (s *Store) reconcileDrainingAgent(ctx context.Context, agentID string) ([]s
 			}
 			if volumeName := serviceVolumeName(service.Spec); volumeName != "" {
 				blocked[fmt.Sprintf("stateful allocation %s is fenced to volume %q until Stage 7 handoff is available", allocation.ID, volumeName)] = struct{}{}
+				continue
+			}
+			if allocation.RolloutState == allocationRolloutWithdrawing || allocation.RolloutState == allocationRolloutDraining {
+				continue
+			}
+			replacing, err := allocationReplacementInProgressTx(ctx, tx, service, allocation)
+			if err != nil {
+				return err
+			}
+			if replacing {
 				continue
 			}
 			occupied := map[string]struct{}{agentID: {}}
@@ -57,72 +67,43 @@ func (s *Store) reconcileDrainingAgent(ctx context.Context, agentID string) ([]s
 			if err := rows.Close(); err != nil {
 				return err
 			}
-			destination, err := s.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied)
-			if errors.Is(err, errNoPlacementAvailable) {
+			if _, err := s.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied); errors.Is(err, errNoPlacementAvailable) {
 				blocked[strings.TrimSpace(strings.TrimPrefix(err.Error(), errNoPlacementAvailable.Error()+": "))] = struct{}{}
 				continue
+			} else if err != nil {
+				return err
 			}
+			current, ok, err := s.currentDeploymentTx(ctx, tx, allocation.ServiceID)
 			if err != nil {
 				return err
 			}
-			nodeLoss, err := encodeRestartObservation(restartpolicy.NodeLossObservation(now, 0, 0))
-			if err != nil {
-				return err
+			if !ok || current.ResolvedSpec == nil || strings.TrimSpace(current.ImageDigest) == "" {
+				blocked["service has no reusable image snapshot for a rolling replacement"] = struct{}{}
+				continue
 			}
-			result, err := tx.ExecContext(ctx, `UPDATE allocations SET agent_id = $1,
-				applied_spec_revision = 0, applied_rollout_generation = 0, phase = 'Pending',
-				message = $2, allocation_ip = '', healthy_ports = '[]', healthy = FALSE,
-				restart_observation_json = $3, updated_at = $4 WHERE id = $5 AND agent_id = $6`,
-				destination, fmt.Sprintf("maintenance drain moved allocation from %s to %s", agentID, destination),
-				nodeLoss, now, allocation.ID, agentID)
-			if err != nil {
-				return err
-			}
-			if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-				if err != nil {
+			detail := fmt.Sprintf("Maintenance drain replacing allocation %s from %s", allocation.ID, agentID)
+			if _, err := s.copyDeploymentRolloutTargetTx(ctx, tx, service, current, "", reasonAgentDrain, detail, allocation.ID); err != nil {
+				switch {
+				case errors.Is(err, errRolloutInProgress):
+					blocked["waiting for an in-progress rollout to finish"] = struct{}{}
+				case errors.Is(err, errVolumeRollingUnsupported):
+					blocked[fmt.Sprintf("stateful allocation %s cannot overlap generations until Stage 7 handoff is available", allocation.ID)] = struct{}{}
+				case errors.Is(err, errDeploymentActionInvalid), errors.Is(err, sql.ErrNoRows):
+					blocked[err.Error()] = struct{}{}
+				default:
 					return err
 				}
-				return errConcurrentUpdate
+				continue
 			}
-			if current, ok, err := s.currentDeploymentTx(ctx, tx, allocation.ServiceID); err != nil {
-				return err
-			} else if ok && deploymentTransitionAllowed(current.State, deploymentStateScheduling) {
-				if _, err := s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
-					ToState: deploymentStateScheduling, Actor: deploymentActor{Kind: deploymentCauseSystem},
-					ReasonCode: reasonFailoverRescheduled,
-					Detail:     fmt.Sprintf("Maintenance drain moved allocation from %s to %s", agentID, destination),
-				}); err != nil {
-					return err
-				}
-			}
-			moved = true
+			started = true
 		}
-		remaining := len(allocations)
-		if moved {
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocations WHERE agent_id = $1`, agentID).Scan(&remaining); err != nil {
-				return err
-			}
-			if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
-				return err
-			}
-			rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE lifecycle_state <> 'retired' ORDER BY id`)
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				var id string
-				if err := rows.Scan(&id); err != nil {
-					rows.Close()
-					return err
-				}
-				notify = append(notify, id)
-			}
-			if err := rows.Close(); err != nil {
-				return err
-			}
+		var remaining int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocations WHERE agent_id = $1`, agentID).Scan(&remaining); err != nil {
+			return err
 		}
 		message := "drain complete; no allocations or attachments remain; safe to retire"
-		if remaining > 0 {
+		switch {
+		case remaining > 0 && len(blocked) > 0:
 			reasons := make([]string, 0, len(blocked))
 			for reason := range blocked {
 				if reason != "" {
@@ -131,11 +112,47 @@ func (s *Store) reconcileDrainingAgent(ctx context.Context, agentID string) ([]s
 			}
 			sort.Strings(reasons)
 			message = fmt.Sprintf("drain paused with %d allocation(s): %s", remaining, strings.Join(reasons, "; "))
+		case remaining > 0:
+			message = fmt.Sprintf("drain in progress: replacing %d allocation(s) through rolling replacement", remaining)
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE agents SET maintenance_message = $1, updated_at = $2 WHERE id = $3 AND lifecycle_state = 'draining'`, message, now, agentID)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE agents SET maintenance_message = $1, updated_at = $2 WHERE id = $3 AND lifecycle_state = 'draining'`, message, now, agentID); err != nil {
+			return err
+		}
+		if !started {
+			return nil
+		}
+		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE lifecycle_state <> 'retired' ORDER BY id`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			notify = append(notify, id)
+		}
+		return rows.Close()
 	})
 	return notify, err
+}
+
+func allocationReplacementInProgressTx(ctx context.Context, tx *sql.Tx, service serviceRecord, allocation allocationRecord) (bool, error) {
+	if allocation.DesiredRolloutGeneration >= service.RolloutGeneration {
+		return false, nil
+	}
+	rollout, ok, err := loadCurrentRolloutTx(ctx, tx, service)
+	if err != nil || !ok {
+		return false, err
+	}
+	if rollout.State != rolloutStateInProgress && rollout.State != rolloutStatePendingBuild {
+		return false, nil
+	}
+	return rollout.TargetAllocationID == "" || rollout.TargetAllocationID == allocation.ID, nil
 }
 
 // reconcileFleetCapacity retries pending replica placement and interrupted

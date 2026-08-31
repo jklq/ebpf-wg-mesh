@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -35,9 +36,12 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 1)
-	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 {
+	completeServingAllocations(t, store, service.ID)
+	original := mustListAllocations(t, store, ctx, service.ID)
+	if agents := allocationAgentIDs(original); agents["node-a"] != 1 || len(original) != 1 {
 		t.Fatalf("expected replica on node-a, got %v", agents)
 	}
+	originalID := original[0].ID
 
 	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
 		t.Fatalf("cordon node-b: %v", err)
@@ -49,7 +53,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if !strings.Contains(draining.MaintenanceMessage, "drain paused") {
 		t.Fatalf("expected drain interruption message, got %q", draining.MaintenanceMessage)
 	}
-	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 {
+	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 || agents["node-b"] != 0 {
 		t.Fatalf("drain without capacity moved the replica: %v", agents)
 	}
 
@@ -59,8 +63,48 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if _, err := store.reconcileDrainingAgent(ctx, "node-a"); err != nil {
 		t.Fatalf("retry drain: %v", err)
 	}
+	afterStart := mustListAllocations(t, store, ctx, service.ID)
+	agents := allocationAgentIDs(afterStart)
+	if agents["node-a"] != 1 || agents["node-b"] != 1 {
+		t.Fatalf("expected overlapping rolling replacement on node-b, got %v", agents)
+	}
+	var replacement allocationRecord
+	keptOriginal := false
+	for _, alloc := range afterStart {
+		if alloc.ID == originalID {
+			keptOriginal = alloc.AgentID == "node-a"
+			continue
+		}
+		if alloc.AgentID == "node-b" {
+			replacement = alloc
+		}
+	}
+	if !keptOriginal {
+		t.Fatalf("drain rewrote the original allocation instead of creating a replacement: %+v", afterStart)
+	}
+	if replacement.ID == "" || replacement.ID == originalID || replacement.RolloutState != allocationRolloutStarting {
+		t.Fatalf("expected a starting replacement allocation on node-b, got %+v", replacement)
+	}
+	inProgress, err := store.agentByID(ctx, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inProgress.MaintenanceMessage, "drain in progress") {
+		t.Fatalf("expected in-progress drain, got %q", inProgress.MaintenanceMessage)
+	}
+
+	markRolloutAllocationReady(t, store, replacement)
+	probe := &rolloutIngressProbe{store: store}
+	reconciler := NewRolloutReconciler(store, nil, probe, nil, time.Second)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("promote replacement: %v", err)
+	}
+	markAllDrainingComplete(t, store, service.ID)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("finish drain: %v", err)
+	}
 	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-b"] != 1 || agents["node-a"] != 0 {
-		t.Fatalf("expected drain to move replica to node-b, got %v", agents)
+		t.Fatalf("expected drain to finish on node-b, got %v", agents)
 	}
 	finished, err := store.agentByID(ctx, "node-a")
 	if err != nil {
@@ -69,6 +113,44 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if !strings.Contains(finished.MaintenanceMessage, "drain complete") {
 		t.Fatalf("expected completed drain, got %q", finished.MaintenanceMessage)
 	}
+}
+
+func completeServingAllocations(t *testing.T, store *Store, serviceID string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for step := 0; step < 8; step++ {
+		for _, alloc := range mustListAllocations(t, store, ctx, serviceID) {
+			if alloc.RolloutState == allocationRolloutStarting {
+				markRolloutAllocationReady(t, store, alloc)
+			}
+		}
+		if _, err := store.advanceRollout(ctx, serviceID, now); err != nil {
+			t.Fatalf("advance rollout: %v", err)
+		}
+		if _, err := store.confirmRolloutIngressConverged(ctx, serviceID, now); err != nil {
+			t.Fatalf("confirm ingress: %v", err)
+		}
+		markAllDrainingComplete(t, store, serviceID)
+		if _, err := store.advanceRollout(ctx, serviceID, now); err != nil {
+			t.Fatalf("remove drained allocations: %v", err)
+		}
+		remaining := mustListAllocations(t, store, ctx, serviceID)
+		if len(remaining) == 0 {
+			continue
+		}
+		allServing := true
+		for _, alloc := range remaining {
+			if alloc.RolloutState != allocationRolloutServing {
+				allServing = false
+				break
+			}
+		}
+		if allServing {
+			return
+		}
+	}
+	t.Fatalf("could not complete a serving rollout: %+v", mustListAllocations(t, store, ctx, serviceID))
 }
 
 func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
@@ -84,11 +166,12 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	spec := replicaSpec(100, 64)
+	spec.DesiredReplicaCount = replicaCountPtr(2)
+	service, err := store.createService(ctx, "user-1", envID, "web", spec, "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 	placed := mustListAllocations(t, store, ctx, service.ID)
 	if len(placed) != 1 {
 		t.Fatalf("expected one placed replica before node return, got %d", len(placed))
