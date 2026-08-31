@@ -47,7 +47,18 @@ The rendered Caddy admin listener and the control-plane admin URL default to `12
 
 ### Deployment and health semantics
 
-`UpdateService` stages a new service revision. `RedeployService` applies that revision by advancing the rollout generation; for direct-image services the same transaction also promotes the new image reference, so an image `A` → `B` update cannot redeploy `A` again.
+`UpdateService` stages a new service revision. `DeployEnvironment` publishes all staged revisions in dependency order. Deployment-history operations use `ApplyDeploymentAction` with a selected `deployment_id` and a caller-generated `idempotency_key`; reusing a key for the same request is a no-op, while reusing it for different parameters is rejected.
+
+The supported deployment actions are:
+
+- `RESTART` restarts one selected allocation, or every replica when `allocation_id` is empty, without building an image or creating a rollout.
+- `EXACT_REDEPLOY` creates a rollout from the selected deployment's persisted resolved spec and digest-pinned image. It does not inspect source or fetch a newer revision.
+- `ROLLBACK` creates a new rollout from a non-current successful deployment, including the environment-variable versions captured with that deployment. Existing deployment rows remain history.
+- `CANCEL` terminates current queued, building, or deploying work. Builders learn cancellation through their heartbeat, and late builder or agent reports cannot move the cancelled deployment out of its terminal state. The control plane restores the last successful digest-pinned deployment when one exists.
+- `REMOVE` withdraws ingress, drains the current allocation set with the runtime's graceful-stop path, and retains the service and deployment history.
+- `RETRY` retries failed, cancelled, or crashed work. Failed builds reuse their immutable source snapshot; runtime failures reuse the persisted resolved spec and image digest.
+
+Owners and editors may apply actions; viewers cannot. The console exposes only actions valid for each history row and records each accepted action in that deployment's history. A `NotFound` response means the selected deployment or allocation no longer exists; `FailedPrecondition` means it exists but is stale or is in an incompatible state, so callers should refresh deployment history before deciding whether to issue a new action with a new idempotency key.
 
 Health checks are rollout readiness gates, not continuous monitors. With no health check configured, a deployment becomes ready as soon as its process is running. With an explicit HTTP health check, the agent retries the endpoint while the rollout is starting and marks the deployment ready only after an HTTP `200`. The successful result is latched for that rollout; the endpoint is not queried again during ordinary reconciliation.
 
