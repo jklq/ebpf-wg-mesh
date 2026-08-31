@@ -271,6 +271,7 @@ export function encodeCreateServiceRequest(input: {
 			spec: {
 				runtime: encodeRuntimeSpec(input.spec.runtime),
 				source: encodeServiceSource(input.spec.source),
+				desiredReplicaCount: input.spec.desiredReplicaCount,
 			},
 		},
 	};
@@ -288,6 +289,7 @@ export function encodeUpdateServiceRequest(input: {
 			spec: {
 				runtime: encodeRuntimeSpec(input.spec.runtime),
 				source: encodeServiceSource(input.spec.source),
+				desiredReplicaCount: input.spec.desiredReplicaCount,
 			},
 		},
 	};
@@ -324,6 +326,11 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 		id: readRequiredString(value, "id", "service"),
 		environmentId: readRequiredString(value, "environmentId", "service"),
 		name: readRequiredString(value, "name", "service"),
+		specRevision: readOptionalNumberLike(value, "specRevision") ?? undefined,
+		rolloutGeneration:
+			readOptionalNumberLike(value, "rolloutGeneration") ?? undefined,
+		createdAt: readOptionalDate(value, "createdAt"),
+		updatedAt: readOptionalDate(value, "updatedAt"),
 		internalHostname:
 			readOptionalString(value, "internalHostname") ?? undefined,
 		spec: decodeServiceSpec(value.spec),
@@ -342,7 +349,8 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 		desiredReplicaCount:
 			readOptionalNumberLike(value, "desiredReplicaCount") ?? 1,
 		readyReplicaCount: readOptionalNumberLike(value, "readyReplicaCount") ?? 0,
-		placementMessage: readOptionalString(value, "placementMessage") ?? undefined,
+		placementMessage:
+			readOptionalString(value, "placementMessage") ?? undefined,
 	};
 }
 
@@ -391,9 +399,14 @@ function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 	) {
 		return undefined;
 	}
+	const desiredReplicaCount = readOptionalNumberLike(
+		value,
+		"desiredReplicaCount",
+	);
 	return {
 		source,
 		runtime,
+		...(desiredReplicaCount === undefined ? {} : { desiredReplicaCount }),
 	};
 }
 
@@ -530,10 +543,7 @@ function decodeAllocationStatus(
 		appliedRolloutGeneration:
 			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
-		operatorRestartNonce: readOptionalNumberLike(
-			value,
-			"operatorRestartNonce",
-		),
+		operatorRestartNonce: readOptionalNumberLike(value, "operatorRestartNonce"),
 		restart: decodeRestartObservation(value.restart),
 	};
 }
@@ -854,7 +864,9 @@ function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
 	};
 }
 
-function decodeRestartSpec(raw: unknown): DashboardServiceSpec["runtime"]["restart"] {
+function decodeRestartSpec(
+	raw: unknown,
+): DashboardServiceSpec["runtime"]["restart"] {
 	const value = readOptionalRecord(raw);
 	if (!value) {
 		return undefined;

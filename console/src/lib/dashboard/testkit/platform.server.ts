@@ -51,7 +51,6 @@ export interface FakePlatformGateway extends PlatformGateway {
 		user: DashboardUser;
 		serviceId: string;
 		desiredReplicaCount: number;
-		confirmScaleToZero?: boolean;
 	}>;
 	restartServiceCalls: Array<{
 		user: DashboardUser;
@@ -260,13 +259,27 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				(entry) => entry.environmentId !== environmentId,
 			);
 		},
-		async deployEnvironment(_, environmentId) {
+		async deployEnvironment(user, environmentId) {
+			void user;
 			const services = platform.services.filter(
 				(entry) => entry.environmentId === environmentId,
 			);
-			return services.map((service) => ({
-				service: { ...service, pendingChanges: false },
-			}));
+			const deployed = services.map((service) => {
+				const nextDesired =
+					service.spec?.desiredReplicaCount ?? service.desiredReplicaCount;
+				return {
+					...service,
+					desiredReplicaCount: nextDesired,
+					pendingChanges: false,
+					unappliedChangeCount: 0,
+					unappliedChanges: [],
+				};
+			});
+			platform.services = platform.services.map((service) => {
+				const next = deployed.find((entry) => entry.id === service.id);
+				return next ?? service;
+			});
+			return deployed.map((service) => ({ service }));
 		},
 		async listServices(
 			user,
@@ -427,13 +440,50 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			if (!current) {
 				throw new Error("service not found");
 			}
+			const liveDesired = current.desiredReplicaCount ?? 1;
+			const replicaChange = {
+				id: "desiredReplicaCount",
+				section: "Replicas",
+				field: "Desired count",
+				path: "desiredReplicaCount",
+				action:
+					input.desiredReplicaCount === liveDesired
+						? ("update" as const)
+						: input.desiredReplicaCount > liveDesired
+							? ("add" as const)
+							: ("update" as const),
+				currentValue: String(liveDesired),
+				newValue: String(input.desiredReplicaCount),
+			};
+			const remainingChanges = (current.unappliedChanges ?? []).filter(
+				(change) => change.id !== "desiredReplicaCount",
+			);
+			const unappliedChanges =
+				input.desiredReplicaCount === liveDesired
+					? remainingChanges
+					: [...remainingChanges, replicaChange];
 			const updated = {
 				...current,
-				desiredReplicaCount: input.desiredReplicaCount,
+				spec: current.spec
+					? {
+							...current.spec,
+							desiredReplicaCount: input.desiredReplicaCount,
+						}
+					: current.spec,
+				pendingChanges: unappliedChanges.length > 0,
+				unappliedChangeCount: unappliedChanges.length,
+				unappliedChanges,
 			};
 			platform.services = platform.services.map((service) =>
 				service.id === updated.id ? updated : service,
 			);
+			const status = platform.serviceStatuses.get(input.serviceId);
+			if (status) {
+				platform.serviceStatuses.set(input.serviceId, {
+					...status,
+					service: updated,
+				});
+			}
 			return (
 				platform.serviceStatuses.get(input.serviceId) ?? { service: updated }
 			);

@@ -662,6 +662,7 @@ describe("dashboard service", () => {
 							contextDir: ".",
 						},
 					},
+					desiredReplicaCount: 1,
 					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
 				},
 			},

@@ -4,13 +4,17 @@ import {
 	KeyRound,
 	Layers,
 	Loader2,
-	Minus,
-	Plus,
 	RefreshCw,
 	Settings,
 	X,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+	type FormEvent,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 
 import type {
 	DashboardHomeState,
@@ -19,10 +23,11 @@ import type {
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 import { PanelDeployments } from "./panel-deployments";
-import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
-import { doScaleService, doUpdateService } from "./server-fns";
+import { doUpdateService } from "./server-fns";
+import { newestServiceRecord } from "./service-record-order";
 import { formatError, healthLabel, serviceHealth } from "./service-utils";
 import type { DashboardTab } from "./types";
+import { usePulseDelay } from "./use-pulse-delay";
 
 type PanelModules = {
 	variables?: typeof import("./panel-variables").PanelVariables;
@@ -73,6 +78,7 @@ export function ServicePanel({
 	onRefresh,
 	onServiceUpdated,
 	onServiceDeleted,
+	onSpecSaveStateChange,
 }: {
 	service: DashboardServiceRecord;
 	status: DashboardServiceStatus | null;
@@ -84,10 +90,17 @@ export function ServicePanel({
 	onRefresh: () => void;
 	onServiceUpdated: (service: DashboardServiceRecord) => void;
 	onServiceDeleted: (serviceId: string) => void;
+	onSpecSaveStateChange?: (key: string, saving: boolean) => void;
 }) {
-	const currentService = status?.service ?? service;
+	const currentService = newestServiceRecord(
+		service,
+		status?.service ?? service,
+	);
 	const build = currentService.latestBuild ?? service.latestBuild;
 	const health = serviceHealth(currentService);
+	const hasUndeployedChanges =
+		(currentService.unappliedChangeCount ??
+			(currentService.pendingChanges ? 1 : 0)) > 0;
 	const stages = build?.stages ?? [];
 	// Deploy badge visibility — hidden when healthy, animated out when transitioning to healthy
 	const prevHealthRef = useRef(health);
@@ -95,6 +108,11 @@ export function ServicePanel({
 	const [heroExiting, setHeroExiting] = useState(false);
 	const [heroCompleting, setHeroCompleting] = useState(false);
 	const [, setPanelModulesVersion] = useState(0);
+	const [seedVariableKey, setSeedVariableKey] = useState<string>();
+	const reportVariablesSaving = useCallback(
+		(saving: boolean) => onSpecSaveStateChange?.("variables", saving),
+		[onSpecSaveStateChange],
+	);
 
 	useEffect(() => {
 		const prevHealth = prevHealthRef.current;
@@ -124,14 +142,7 @@ export function ServicePanel({
 		}
 	}, [health]);
 
-	// Synchronise all pulsing elements rendered in the same pass to the same
-	// wall-clock animation phase so the status dot and running rail segments
-	// always beat together, regardless of when each element first mounted.
-	// -(Date.now() % period) places the element at the correct point in the
-	// cycle right now; if the delay changes on a later render the restart is
-	// seamless because it re-targets the same current phase.
-	const pulseDelay =
-		health === "building" ? `${-(Date.now() % 1400)}ms` : "0ms";
+	const pulseDelay = usePulseDelay(health === "building");
 
 	useEffect(() => {
 		let cancelled = false;
@@ -166,21 +177,8 @@ export function ServicePanel({
 					project={project}
 					onSaved={onServiceUpdated}
 				/>
-				<ReplicaScaleControls
-					service={currentService}
-					status={status}
-					isProduction={Boolean(
-						state.environments.find(
-							(environment) => environment.id === currentService.environmentId,
-						)?.isProduction,
-					)}
-					onScaled={(next) => {
-						onServiceUpdated(next.service);
-						onRefresh();
-					}}
-				/>
 				<span style={{ flex: 1 }} />
-				{heroVisible && (
+				{heroVisible && !hasUndeployedChanges && (
 					<div
 						className={`panel-deploy-badge tone-${health}${heroCompleting ? " completing" : ""}${heroExiting ? " exiting" : ""}`}
 					>
@@ -268,6 +266,15 @@ export function ServicePanel({
 									service={service}
 									status={status}
 									project={project}
+									domains={state.domainBindings}
+									onOpenVariables={(key) => {
+										setSeedVariableKey(key);
+										onTabChange("variables");
+									}}
+									onRedeployed={(next) => {
+										onServiceUpdated(next.service);
+										onRefresh();
+									}}
 								/>
 							)}
 							{activeTab === "variables" &&
@@ -279,7 +286,9 @@ export function ServicePanel({
 										    re-renders the whole dashboard. */}
 										<VariablesPanel
 											service={service}
+											seedKey={seedVariableKey}
 											onSaved={onServiceUpdated}
+											onSavingChange={reportVariablesSaving}
 										/>
 									</div>
 								) : (
@@ -290,10 +299,11 @@ export function ServicePanel({
 								(SettingsPanel ? (
 									<div className="service-panel-scroll">
 										<SettingsPanel
-											service={service}
+											service={currentService}
 											state={state}
 											onSaved={onServiceUpdated}
 											onDeleted={onServiceDeleted}
+											onSavingChange={onSpecSaveStateChange}
 										/>
 									</div>
 								) : (
@@ -472,123 +482,5 @@ function EditableServiceHeaderName({
 		>
 			<span className="panel-title-name">{service.name}</span>
 		</button>
-	);
-}
-
-function ReplicaScaleControls({
-	service,
-	status,
-	isProduction,
-	onScaled,
-}: {
-	service: DashboardServiceRecord;
-	status: DashboardServiceStatus | null;
-	isProduction: boolean;
-	onScaled: (status: DashboardServiceStatus) => void;
-}) {
-	const currentService = status?.service ?? service;
-	const volumeName = currentService.spec?.runtime.volumeName?.trim();
-	const desired = currentService.desiredReplicaCount ?? 1;
-	const ready =
-		currentService.readyReplicaCount ??
-		status?.allocations?.filter((allocation) => allocation.healthy).length ??
-		0;
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string>();
-	const [confirmZero, setConfirmZero] = useState(false);
-
-	const scaleTo = async (next: number, confirmScaleToZero = false) => {
-		if (next < 0 || next > 64 || busy) return;
-		if (next > 1 && volumeName) return;
-		setBusy(true);
-		setError(undefined);
-		try {
-			const updated = await doScaleService({
-				data: {
-					serviceId: currentService.id,
-					desiredReplicaCount: next,
-					confirmScaleToZero,
-				},
-			});
-			setConfirmZero(false);
-			onScaled(updated);
-		} catch (e) {
-			setError(formatError(e));
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	const requestScaleDown = () => {
-		if (desired <= 0) return;
-		if (desired === 1 && isProduction) {
-			setConfirmZero(true);
-			return;
-		}
-		void scaleTo(desired - 1);
-	};
-
-	return (
-		<div className="replica-scale">
-			<div className="replica-scale-stepper" aria-label="Service replica count">
-				<button
-					type="button"
-					className="replica-scale-btn"
-					onClick={requestScaleDown}
-					disabled={busy || desired <= 0}
-					title="Scale down"
-					aria-label="Scale down"
-				>
-					<Minus size={12} />
-				</button>
-				<span className="replica-scale-count" aria-live="polite">
-					{desired}
-				</span>
-				<button
-					type="button"
-					className="replica-scale-btn"
-					onClick={() => void scaleTo(desired + 1)}
-					disabled={busy || desired >= 64 || Boolean(volumeName)}
-					title={
-						volumeName
-							? "Volume-backed services cannot run more than one replica"
-							: "Scale up"
-					}
-					aria-label="Scale up"
-				>
-					{busy ? (
-						<Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
-					) : (
-						<Plus size={12} />
-					)}
-				</button>
-			</div>
-			<span className="replica-scale-meta">
-				{ready}/{desired} ready
-			</span>
-			{currentService.placementMessage ? (
-				<span className="replica-scale-meta replica-scale-message">
-					{currentService.placementMessage}
-				</span>
-			) : null}
-			{error ? <span className="panel-title-error">{error}</span> : null}
-			{confirmZero ? (
-				<ConfirmDeleteDialog
-					title="Scale production to zero"
-					name={currentService.name}
-					confirmLabel="Scale to zero"
-					busyLabel="Scaling…"
-					busy={busy}
-					error={error}
-					description="This production service will stop serving public domains and internal DNS until you scale it back up."
-					onCancel={() => {
-						if (!busy) setConfirmZero(false);
-					}}
-					onConfirm={() => {
-						void scaleTo(0, true);
-					}}
-				/>
-			) : null}
-		</div>
 	);
 }

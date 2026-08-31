@@ -16,9 +16,9 @@ import type {
 
 import { ServicePanel } from "./service-panel";
 
-const { doUpdateServiceMock, doScaleServiceMock } = vi.hoisted(() => ({
-	doUpdateServiceMock: vi.fn(),
+const { doScaleServiceMock, doUpdateServiceMock } = vi.hoisted(() => ({
 	doScaleServiceMock: vi.fn(),
+	doUpdateServiceMock: vi.fn(),
 }));
 
 vi.mock("./server-fns", () => ({
@@ -26,11 +26,12 @@ vi.mock("./server-fns", () => ({
 	doScaleService: doScaleServiceMock,
 	fetchServiceDeployments: vi.fn().mockResolvedValue([]),
 	fetchServiceLogs: vi.fn().mockResolvedValue([]),
+	doRedeployService: vi.fn(),
 }));
 
 beforeEach(() => {
-	doUpdateServiceMock.mockReset();
 	doScaleServiceMock.mockReset();
+	doUpdateServiceMock.mockReset();
 });
 
 afterEach(cleanup);
@@ -65,11 +66,54 @@ describe("ServicePanel rename", () => {
 	});
 });
 
+describe("ServicePanel deployment badge", () => {
+	it("does not pulse Building while the service has undeployed changes", () => {
+		const { container } = render(
+			<ServicePanel
+				service={{
+					...service(),
+					specRevision: 2,
+					pendingChanges: true,
+					unappliedChangeCount: 1,
+					latestBuild: {
+						buildId: "build-1",
+						state: "running",
+						commitSha: "",
+						imageDigest: "",
+						failureReason: "",
+					},
+				}}
+				status={{
+					service: {
+						...service(),
+						specRevision: 1,
+						latestBuild: {
+							buildId: "build-1",
+							state: "running",
+							commitSha: "",
+							imageDigest: "",
+							failureReason: "",
+						},
+					},
+					allocations: [],
+				}}
+				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				state={state()}
+				activeTab="settings"
+				onTabChange={() => {}}
+				onClose={() => {}}
+				onRefresh={() => {}}
+				onServiceUpdated={() => {}}
+				onServiceDeleted={() => {}}
+			/>,
+		);
+
+		expect(container.querySelector(".panel-deploy-badge")).toBeNull();
+	});
+});
+
 describe("ServicePanel replica scaling", () => {
-	it("scales up without confirmation", async () => {
-		doScaleServiceMock.mockResolvedValue({
-			service: { ...service(), desiredReplicaCount: 2, readyReplicaCount: 1 },
-		});
+	it("keeps replica controls off the header", () => {
 		render(
 			<ServicePanel
 				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
@@ -85,30 +129,68 @@ describe("ServicePanel replica scaling", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Scale up" }));
+		expect(screen.queryByRole("button", { name: "Scale up" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Scale down" })).toBeNull();
+	});
+
+	it("queues a replica count without applying it live", async () => {
+		doScaleServiceMock.mockResolvedValue({
+			service: {
+				...service(),
+				desiredReplicaCount: 1,
+				spec: { ...service().spec, desiredReplicaCount: 2 },
+			},
+		});
+		const onServiceUpdated = vi.fn();
+		render(
+			<ServicePanel
+				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
+				status={null}
+				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				state={state()}
+				activeTab="settings"
+				onTabChange={() => {}}
+				onClose={() => {}}
+				onRefresh={() => {}}
+				onServiceUpdated={onServiceUpdated}
+				onServiceDeleted={() => {}}
+			/>,
+		);
+
+		const input = await screen.findByLabelText("Current count");
+		fireEvent.change(input, { target: { value: "2" } });
 		await waitFor(() => {
 			expect(doScaleServiceMock).toHaveBeenCalledWith({
 				data: {
 					serviceId: "service-1",
 					desiredReplicaCount: 2,
-					confirmScaleToZero: false,
 				},
 			});
 		});
-		expect(screen.queryByText("Scale production to zero")).toBeNull();
+		expect(onServiceUpdated).toHaveBeenCalledWith(
+			expect.objectContaining({
+				desiredReplicaCount: 1,
+				spec: expect.objectContaining({ desiredReplicaCount: 2 }),
+			}),
+		);
 	});
 
-	it("disables scale up when the service has a volume", () => {
+	it("rejects a second replica on a volume-backed service", async () => {
+		const current = service();
+		const spec = current.spec;
+		if (!spec) {
+			throw new Error("expected service spec");
+		}
 		render(
 			<ServicePanel
 				service={{
-					...service(),
+					...current,
 					desiredReplicaCount: 1,
 					readyReplicaCount: 1,
 					spec: {
-						...service().spec!,
+						...spec,
 						runtime: {
-							...service().spec!.runtime,
+							...spec.runtime,
 							volumeName: "data",
 						},
 					},
@@ -116,7 +198,7 @@ describe("ServicePanel replica scaling", () => {
 				status={null}
 				project={{ id: "project-1", name: "test-project", kind: "user" }}
 				state={state()}
-				activeTab="deployments"
+				activeTab="settings"
 				onTabChange={() => {}}
 				onClose={() => {}}
 				onRefresh={() => {}}
@@ -125,22 +207,20 @@ describe("ServicePanel replica scaling", () => {
 			/>,
 		);
 
-		expect(
-			(screen.getByRole("button", { name: "Scale up" }) as HTMLButtonElement)
-				.disabled,
-		).toBe(true);
-		fireEvent.click(screen.getByRole("button", { name: "Scale up" }));
-		expect(doScaleServiceMock).not.toHaveBeenCalled();
+		const input = await screen.findByLabelText("Current count");
+		fireEvent.change(input, { target: { value: "2" } });
+		expect(doUpdateServiceMock).not.toHaveBeenCalled();
 	});
 
-	it("asks for production confirmation before scaling to zero", async () => {
+	it("rejects a replica count of zero", async () => {
+		doUpdateServiceMock.mockResolvedValue(service());
 		render(
 			<ServicePanel
 				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
 				status={null}
 				project={{ id: "project-1", name: "test-project", kind: "user" }}
 				state={state()}
-				activeTab="deployments"
+				activeTab="settings"
 				onTabChange={() => {}}
 				onClose={() => {}}
 				onRefresh={() => {}}
@@ -149,23 +229,14 @@ describe("ServicePanel replica scaling", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Scale down" }));
-		expect(screen.getByText("Scale production to zero")).toBeTruthy();
-		expect(doScaleServiceMock).not.toHaveBeenCalled();
+		const input = await screen.findByLabelText("Current count");
+		fireEvent.change(input, { target: { value: "0" } });
+		expect(doUpdateServiceMock).not.toHaveBeenCalled();
+		expect(screen.queryByText("Scale production to zero")).toBeNull();
 
-		fireEvent.change(screen.getByLabelText("Type hello to confirm"), {
-			target: { value: "hello" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Scale to zero" }));
-		await waitFor(() => {
-			expect(doScaleServiceMock).toHaveBeenCalledWith({
-				data: {
-					serviceId: "service-1",
-					desiredReplicaCount: 0,
-					confirmScaleToZero: true,
-				},
-			});
-		});
+		fireEvent.blur(input);
+		expect(screen.getByText("Enter a whole number from 1 to 64")).toBeTruthy();
+		expect(doUpdateServiceMock).not.toHaveBeenCalled();
 	});
 });
 

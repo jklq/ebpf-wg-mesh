@@ -9,6 +9,14 @@ import { buildAllowedDevHosts } from "./src/lib/vite-dev-hosts";
 const config = defineConfig({
 	resolve: { tsconfigPaths: true },
 	plugins: [
+		{
+			name: "extend-bun-dev-idle-timeout",
+			configureServer(server) {
+				// Bun's Node-compatible HTTP server otherwise aborts quiet SSR and SSE
+				// requests after ten seconds, surfacing as a Vite socket failure.
+				server.httpServer?.setTimeout(120_000);
+			},
+		},
 		devtools(),
 		tailwindcss(),
 		tanstackStart(),
@@ -21,6 +29,7 @@ const config = defineConfig({
 	],
 	server: {
 		host: "127.0.0.1",
+		hmr: { overlay: false },
 		port: 3000,
 		strictPort: true,
 		allowedHosts: buildAllowedDevHosts(

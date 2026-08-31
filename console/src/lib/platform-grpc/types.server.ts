@@ -113,6 +113,7 @@ export interface CreateServiceRequest {
 					};
 				};
 			};
+			desiredReplicaCount?: number;
 		};
 	};
 }
@@ -165,6 +166,7 @@ export interface UpdateServiceRequest {
 					};
 				};
 			};
+			desiredReplicaCount?: number;
 		};
 	};
 }
@@ -186,7 +188,6 @@ export interface RedeployServiceRequest {
 export interface ScaleServiceRequest {
 	serviceId: string;
 	desiredReplicaCount: number;
-	confirmScaleToZero?: boolean;
 }
 
 export interface RestartServiceRequest {
