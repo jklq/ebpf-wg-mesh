@@ -2032,11 +2032,12 @@ func (*ServiceSource_Image) isServiceSource_Source() {}
 func (*ServiceSource_SourceSpec) isServiceSource_Source() {}
 
 type ServiceSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Runtime       *ServiceRuntime        `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	Source        *ServiceSource         `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Runtime             *ServiceRuntime        `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	Source              *ServiceSource         `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	DesiredReplicaCount *int32                 `protobuf:"varint,3,opt,name=desired_replica_count,json=desiredReplicaCount,proto3,oneof" json:"desired_replica_count,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ServiceSpec) Reset() {
@@ -2081,6 +2082,13 @@ func (x *ServiceSpec) GetSource() *ServiceSource {
 		return x.Source
 	}
 	return nil
+}
+
+func (x *ServiceSpec) GetDesiredReplicaCount() int32 {
+	if x != nil && x.DesiredReplicaCount != nil {
+		return *x.DesiredReplicaCount
+	}
+	return 0
 }
 
 type ResolvedServiceSpec struct {
@@ -4255,7 +4263,6 @@ type ScaleServiceRequest struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	ServiceId           string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
 	DesiredReplicaCount int32                  `protobuf:"varint,2,opt,name=desired_replica_count,json=desiredReplicaCount,proto3" json:"desired_replica_count,omitempty"`
-	ConfirmScaleToZero  bool                   `protobuf:"varint,3,opt,name=confirm_scale_to_zero,json=confirmScaleToZero,proto3" json:"confirm_scale_to_zero,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -4302,13 +4309,6 @@ func (x *ScaleServiceRequest) GetDesiredReplicaCount() int32 {
 		return x.DesiredReplicaCount
 	}
 	return 0
-}
-
-func (x *ScaleServiceRequest) GetConfirmScaleToZero() bool {
-	if x != nil {
-		return x.ConfirmScaleToZero
-	}
-	return false
 }
 
 type RestartServiceRequest struct {
@@ -6789,10 +6789,12 @@ const file_platform_proto_rawDesc = "" +
 	"\x05image\x18\x01 \x01(\v2\x1e.platform.v1.DirectImageSourceH\x00R\x05image\x12A\n" +
 	"\vsource_spec\x18\x02 \x01(\v2\x1e.platform.v1.ServiceSourceSpecH\x00R\n" +
 	"sourceSpecB\b\n" +
-	"\x06source\"x\n" +
+	"\x06source\"\xcb\x01\n" +
 	"\vServiceSpec\x125\n" +
 	"\aruntime\x18\x01 \x01(\v2\x1b.platform.v1.ServiceRuntimeR\aruntime\x122\n" +
-	"\x06source\x18\x02 \x01(\v2\x1a.platform.v1.ServiceSourceR\x06source\"b\n" +
+	"\x06source\x18\x02 \x01(\v2\x1a.platform.v1.ServiceSourceR\x06source\x127\n" +
+	"\x15desired_replica_count\x18\x03 \x01(\x05H\x00R\x13desiredReplicaCount\x88\x01\x01B\x18\n" +
+	"\x16_desired_replica_count\"b\n" +
 	"\x13ResolvedServiceSpec\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x125\n" +
 	"\aruntime\x18\x02 \x01(\v2\x1b.platform.v1.ServiceRuntimeR\aruntime\"\xb2\x02\n" +
@@ -6985,12 +6987,11 @@ const file_platform_proto_rawDesc = "" +
 	"\aservice\x18\x02 \x01(\v2\x1a.platform.v1.ServiceUpdateR\aservice\"7\n" +
 	"\x16RedeployServiceRequest\x12\x1d\n" +
 	"\n" +
-	"service_id\x18\x01 \x01(\tR\tserviceId\"\x9b\x01\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\"h\n" +
 	"\x13ScaleServiceRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x122\n" +
-	"\x15desired_replica_count\x18\x02 \x01(\x05R\x13desiredReplicaCount\x121\n" +
-	"\x15confirm_scale_to_zero\x18\x03 \x01(\bR\x12confirmScaleToZero\"6\n" +
+	"\x15desired_replica_count\x18\x02 \x01(\x05R\x13desiredReplicaCount\"6\n" +
 	"\x15RestartServiceRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\"}\n" +
@@ -7631,6 +7632,7 @@ func file_platform_proto_init() {
 		(*ServiceSource_Image)(nil),
 		(*ServiceSource_SourceSpec)(nil),
 	}
+	file_platform_proto_msgTypes[15].OneofWrappers = []any{}
 	file_platform_proto_msgTypes[18].OneofWrappers = []any{
 		(*ServiceSourceSummary_Image)(nil),
 		(*ServiceSourceSummary_SourceState)(nil),
