@@ -468,23 +468,23 @@ func TestPlatformServiceUpdateAndRedeployQueueSyncWithoutBranchLookup(t *testing
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
-	statusResp, err := service.RedeployService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.RedeployServiceRequest{
-		ServiceId: serviceID,
+	statusResp, err := service.DeployEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeployEnvironmentRequest{
+		EnvironmentId: productionEnvironmentID(t, store, projectID),
 	})
 	if err != nil {
-		t.Fatalf("RedeployService: %v", err)
+		t.Fatalf("DeployEnvironment: %v", err)
 	}
-	if statusResp.GetService().GetRolloutGeneration() != 1 {
-		t.Fatalf("expected rollout generation to remain unchanged until the queued build succeeds, got %d", statusResp.GetService().GetRolloutGeneration())
+	if len(statusResp.GetServices()) != 1 {
+		t.Fatalf("expected one deployed service, got %d", len(statusResp.GetServices()))
 	}
-	if statusResp.GetService().GetLatestBuild().GetBuildId() != "" {
-		t.Fatalf("expected no synchronous build on redeploy, got %+v", statusResp.GetService().GetLatestBuild())
+	if statusResp.GetServices()[0].GetService().GetLatestBuild().GetBuildId() != "" {
+		t.Fatalf("expected no synchronous build on deploy, got %+v", statusResp.GetServices()[0].GetService().GetLatestBuild())
 	}
 	if got := server.branchHeadHits(); got != branchHitsBeforeMutations {
-		t.Fatalf("expected no branch head lookup in update/redeploy, got %d new calls", got-branchHitsBeforeMutations)
+		t.Fatalf("expected no branch head lookup in update/deploy, got %d new calls", got-branchHitsBeforeMutations)
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 1 {
-		t.Fatalf("expected 1 queued sync item after redeploy, got %d", got)
+		t.Fatalf("expected 1 queued sync item after deploy, got %d", got)
 	}
 }
 

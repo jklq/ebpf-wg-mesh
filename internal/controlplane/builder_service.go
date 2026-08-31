@@ -266,7 +266,13 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
 	}
-	if build.State != buildStateRunning || build.BuilderID != builderID {
+	if build.BuilderID != builderID {
+		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
+	}
+	if buildStateTerminal(build.State) {
+		return &emptypb.Empty{}, nil
+	}
+	if build.State != buildStateRunning {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
 	if req.GetCommitSha() != build.CommitSHA {

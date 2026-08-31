@@ -15,6 +15,7 @@ const (
 	buildStateSucceeded  = "succeeded"
 	buildStateFailed     = "failed"
 	buildStateSuperseded = "superseded"
+	buildStateCancelled  = "cancelled"
 )
 
 var errServiceNotBuildable = errors.New("service does not use a build source")
@@ -251,15 +252,43 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 		rec.State = buildStateRunning
 		rec.BuilderID = builderID
 		rec.StartedAt = sql.NullTime{Time: now, Valid: true}
-		if _, err := tx.ExecContext(ctx,
+		if err := s.lockServiceTx(ctx, tx, rec.ServiceID); err != nil {
+			return err
+		}
+		build, err := s.buildRunByIDQuerier(ctx, tx, rec.ID)
+		if err != nil {
+			return err
+		}
+		if build.State != buildStateQueued {
+			rec = buildRunRecord{}
+			return nil
+		}
+		dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, rec.ServiceID, rec.ID)
+		if err != nil {
+			return err
+		}
+		if ok && (deploymentStateTerminal(dep.State) || !dep.IsCurrent) {
+			rec = buildRunRecord{}
+			return nil
+		}
+		result, err := tx.ExecContext(ctx,
 			`UPDATE build_runs
 			    SET state = $1,
 			        started_at = $2,
 			        builder_id = $3
-			  WHERE id = $4`,
-			buildStateRunning, now, builderID, rec.ID,
-		); err != nil {
+			  WHERE id = $4 AND state = $5`,
+			buildStateRunning, now, builderID, rec.ID, buildStateQueued,
+		)
+		if err != nil {
 			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			rec = buildRunRecord{}
+			return nil
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE builder_workers
@@ -272,10 +301,11 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 			return err
 		}
 		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, deploymentTransitionInput{
-			ToState:    deploymentStateBuilding,
-			Actor:      deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
-			ReasonCode: reasonBuildStarted,
-			Detail:     "Builder claimed the build",
+			ToState:          deploymentStateBuilding,
+			Actor:            deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+			ReasonCode:       reasonBuildStarted,
+			Detail:           "Builder claimed the build",
+			IgnoreIfTerminal: true,
 		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -361,17 +391,18 @@ func (s *Store) recoverExpiredBuildsTx(ctx context.Context, tx *sql.Tx, cutoff t
 			return err
 		}
 		transition := deploymentTransitionInput{
-			ToState:    deploymentStateQueuedBuild,
-			Actor:      deploymentActor{Kind: deploymentCauseSystem},
-			ReasonCode: reasonBuildRequeued,
-			Detail:     "Builder heartbeat expired; build requeued",
+			ToState:          deploymentStateQueuedBuild,
+			Actor:            deploymentActor{Kind: deploymentCauseSystem},
+			ReasonCode:       reasonBuildRequeued,
+			Detail:           "Builder heartbeat expired; build requeued",
+			IgnoreIfTerminal: true,
 		}
 		if nextState == buildStateSuperseded {
 			transition.ToState = deploymentStateSuperseded
 			transition.ReasonCode = reasonBuildSuperseded
 			transition.Detail = failureReason
 		}
-		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, transition); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, transition); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errDeploymentTerminal) && !errors.Is(err, errIllegalDeploymentTransition) {
 			return err
 		}
 	}
@@ -414,14 +445,55 @@ func (s *Store) recordBuilderHeartbeat(ctx context.Context, builderID, buildID s
 	return nil
 }
 
+func buildStateTerminal(state string) bool {
+	switch state {
+	case buildStateSucceeded, buildStateFailed, buildStateSuperseded, buildStateCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		build, err := s.buildRunByIDQuerier(ctx, tx, buildID)
 		if err != nil {
 			return err
 		}
-		if build.State != buildStateRunning || build.BuilderID != builderID {
+		if err := s.lockServiceTx(ctx, tx, build.ServiceID); err != nil {
+			return err
+		}
+		build, err = s.buildRunByIDQuerier(ctx, tx, buildID)
+		if err != nil {
+			return err
+		}
+		if build.BuilderID != builderID {
 			return errBuildNotOwned
+		}
+		if buildStateTerminal(build.State) {
+			return nil
+		}
+		if build.State != buildStateRunning {
+			return errBuildNotOwned
+		}
+		dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, build.ServiceID, build.ID)
+		if err != nil {
+			return err
+		}
+		if ok && (deploymentStateTerminal(dep.State) || !dep.IsCurrent) {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3 WHERE id = $4 AND state = $5`,
+				buildStateCancelled, "cancelled; late builder completion ignored", time.Now().UTC(), buildID, buildStateRunning,
+			); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE builder_workers SET current_build_id = '', last_heartbeat_at = $1, updated_at = $1 WHERE id = $2`,
+				time.Now().UTC(), builderID,
+			); err != nil {
+				return err
+			}
+			return nil
 		}
 		now := time.Now().UTC()
 		stateValue := buildStateFailed
@@ -435,7 +507,7 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		default:
 			return errors.New("invalid terminal build state")
 		}
-		if _, err := tx.ExecContext(ctx,
+		result, err := tx.ExecContext(ctx,
 			`UPDATE build_runs
 			    SET state = $1,
 			        commit_sha = $2,
@@ -443,10 +515,18 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 			        failure_reason = $4,
 			        finished_at = $5,
 			        builder_id = $6
-			  WHERE id = $7`,
-			stateValue, commitSHA, imageDigest, failureReason, now, builderID, buildID,
-		); err != nil {
+			  WHERE id = $7 AND state = $8`,
+			stateValue, commitSHA, imageDigest, failureReason, now, builderID, buildID, buildStateRunning,
+		)
+		if err != nil {
 			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return nil
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE builder_workers
@@ -469,10 +549,11 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 				detail = firstNonEmpty(failureReason, "Build superseded")
 			}
 			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-				ToState:    toState,
-				Actor:      deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
-				ReasonCode: reasonCode,
-				Detail:     detail,
+				ToState:          toState,
+				Actor:            deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+				ReasonCode:       reasonCode,
+				Detail:           detail,
+				IgnoreIfTerminal: true,
 			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
@@ -494,18 +575,26 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		}
 		if newerCount > 0 {
 			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-				ToState:        deploymentStateSuperseded,
-				Actor:          deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
-				ReasonCode:     reasonBuildSuperseded,
-				Detail:         "A newer build superseded this image",
-				ImageDigest:    imageDigest,
-				HasImageDigest: true,
+				ToState:          deploymentStateSuperseded,
+				Actor:            deploymentActor{Kind: deploymentCauseBuilder, ID: builderID},
+				ReasonCode:       reasonBuildSuperseded,
+				Detail:           "A newer build superseded this image",
+				ImageDigest:      imageDigest,
+				HasImageDigest:   true,
+				IgnoreIfTerminal: true,
 			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			return nil
 		}
 
+		currentDep, currentOK, err := s.currentDeploymentTx(ctx, tx, build.ServiceID)
+		if err != nil {
+			return err
+		}
+		if currentOK && (deploymentStateTerminal(currentDep.State) || currentDep.BuildID != build.ID) {
+			return nil
+		}
 		service, err := s.serviceByIDInternalQuerier(ctx, tx, build.ServiceID)
 		if err != nil {
 			return err
@@ -537,6 +626,7 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 			HasRollout:        true,
 			SpecRevision:      service.SpecRevision,
 			HasSpecRevision:   true,
+			IgnoreIfTerminal:  true,
 		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

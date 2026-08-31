@@ -47,6 +47,10 @@ func (s *Store) listServiceDeployments(ctx context.Context, userID, projectID, s
 			return nil, err
 		}
 		records[i].Transitions = transitions
+		records[i].Actions, err = s.loadDeploymentActions(ctx, s.db, records[i].ID)
+		if err != nil {
+			return nil, err
+		}
 		if records[i].BuildID == "" {
 			continue
 		}

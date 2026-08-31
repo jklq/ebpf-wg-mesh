@@ -2,6 +2,7 @@ import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 
 import type {
+	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardGitHubAccount,
 	DashboardRepositoryInspection,
@@ -150,11 +151,20 @@ export const doUpdateService = createServerFn({ method: "POST" })
 		return svc.updateServiceFromSession(data);
 	});
 
-export const doRedeployService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { serviceId: string })
+export const doApplyDeploymentAction = createServerFn({ method: "POST" })
+	.inputValidator(
+		(input: unknown) =>
+			input as {
+				serviceId: string;
+				deploymentId: string;
+				action: DashboardDeploymentAction;
+				idempotencyKey: string;
+				allocationId?: string;
+			},
+	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
-		return svc.redeployServiceFromSession(data);
+		return svc.applyDeploymentActionFromSession(data);
 	});
 
 export const doScaleService = createServerFn({ method: "POST" })
@@ -168,13 +178,6 @@ export const doScaleService = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.scaleServiceFromSession(data);
-	});
-
-export const doRestartService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { serviceId: string })
-	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/entry.server");
-		return svc.restartServiceFromSession(data);
 	});
 
 export const doDiscardServiceChanges = createServerFn({ method: "POST" })

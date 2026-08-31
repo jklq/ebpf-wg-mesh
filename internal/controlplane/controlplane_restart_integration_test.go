@@ -93,8 +93,8 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 		t.Fatalf("stream state does not match store: stream=%+v store=%+v", restored, fromStore)
 	}
 
-	if _, err := second.dashboard.RedeployService(userCtx, &platformv1.RedeployServiceRequest{ServiceId: service.GetId()}); err != nil {
-		t.Fatalf("RedeployService: %v", err)
+	if _, err := second.dashboard.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: envs.GetEnvironments()[0].GetId()}); err != nil {
+		t.Fatalf("DeployEnvironment: %v", err)
 	}
 	mutated := recvDesiredState(t, restream)
 	if mutated.GetRevision() <= beforeRev {

@@ -333,16 +333,31 @@ func (e *containerdEngine) deleteTask(ctx context.Context, task containerd.Task,
 	if err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
-	if err := task.Kill(ctx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) {
+	if err := task.Kill(ctx, syscall.SIGTERM); err != nil && !errdefs.IsNotFound(err) {
 		if !strings.Contains(err.Error(), "not found") {
 			return err
 		}
 	}
 	if exitCh != nil {
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
 		select {
 		case <-exitCh:
-		case <-time.After(10 * time.Second):
-			return fmt.Errorf("wait for task %s exit: timeout", containerID)
+		case <-timer.C:
+			if err := task.Kill(ctx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) && !strings.Contains(err.Error(), "not found") {
+				return err
+			}
+			killTimer := time.NewTimer(10 * time.Second)
+			defer killTimer.Stop()
+			select {
+			case <-exitCh:
+			case <-killTimer.C:
+				return fmt.Errorf("wait for task %s after SIGKILL: timeout", containerID)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 	if _, err := task.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {

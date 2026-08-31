@@ -43,6 +43,55 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 	}
 }
 
+func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("viewer", func(t *testing.T) {
+		service := NewPlatformService(&fakePlatformStore{
+			serviceByIDFn: func(context.Context, string, string, string) (serviceRecord, error) {
+				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil
+			},
+			authorizeProjectWriteFn: func(context.Context, string, string) error {
+				return sql.ErrNoRows
+			},
+		}, noopNotifier{}, noopIngress{})
+		_, err := service.ApplyDeploymentAction(
+			contextWithDelegatedUser("user-1", ""),
+			&platformv1.ApplyDeploymentActionRequest{
+				ServiceId: "service-1", DeploymentId: "deploy-1",
+				Action: platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, IdempotencyKey: "k1",
+			},
+		)
+		if status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("expected PermissionDenied, got %v", err)
+		}
+	})
+
+	t.Run("stale", func(t *testing.T) {
+		service := NewPlatformService(&fakePlatformStore{
+			serviceByIDFn: func(context.Context, string, string, string) (serviceRecord, error) {
+				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil
+			},
+			applyDeploymentActionFn: func(context.Context, string, string, string, platformv1.DeploymentAction, string, string) (serviceRecord, deploymentActionRecord, error) {
+				return serviceRecord{}, deploymentActionRecord{}, errDeploymentStale
+			},
+			serviceStatusFn: func(context.Context, string, string, string) (serviceRecord, []allocationRecord, error) {
+				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil, nil
+			},
+		}, noopNotifier{}, noopIngress{})
+		_, err := service.ApplyDeploymentAction(
+			contextWithDelegatedUser("user-1", ""),
+			&platformv1.ApplyDeploymentActionRequest{
+				ServiceId: "service-1", DeploymentId: "deploy-old",
+				Action: platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, IdempotencyKey: "k2",
+			},
+		)
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("expected FailedPrecondition, got %v", err)
+		}
+	})
+}
+
 func TestPlatformServiceRejectsViewerWrites(t *testing.T) {
 	t.Parallel()
 
@@ -727,6 +776,7 @@ type fakePlatformStore struct {
 	updateServiceFn                   func(ctx context.Context, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
 	redeployServiceFn                 func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
 	restartServiceFn                  func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error)
+	applyDeploymentActionFn           func(ctx context.Context, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (serviceRecord, deploymentActionRecord, error)
 	discardServiceChangesFn           func(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
 	requestServiceSourceSyncFn        func(ctx context.Context, userID, projectID, serviceID string) error
 	enqueueBuildForServiceFn          func(ctx context.Context, userID, projectID, serviceID, commitSHA string) (buildRunRecord, error)
@@ -833,6 +883,13 @@ func (f *fakePlatformStore) restartService(ctx context.Context, userID, projectI
 		return f.restartServiceFn(ctx, userID, projectID, serviceID)
 	}
 	return serviceRecord{ID: serviceID, EnvironmentID: projectID, AllocatedAgentID: "node-1"}, nil
+}
+
+func (f *fakePlatformStore) applyDeploymentAction(ctx context.Context, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (serviceRecord, deploymentActionRecord, error) {
+	if f.applyDeploymentActionFn != nil {
+		return f.applyDeploymentActionFn(ctx, userID, serviceID, deploymentID, action, idempotencyKey, allocationID)
+	}
+	return serviceRecord{ID: serviceID, ProjectID: "project-1", EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, deploymentActionRecord{ID: "action-1", Action: deploymentActionName(action), TargetDeploymentID: deploymentID, IdempotencyKey: idempotencyKey, AllocationID: allocationID}, nil
 }
 
 func (f *fakePlatformStore) discardServiceChanges(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {

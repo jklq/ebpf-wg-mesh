@@ -2544,6 +2544,62 @@ select.field-input {
   color: var(--accent);
 }
 
+.deployment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+  padding: 10px var(--deployment-row-inset) 12px;
+  border-top: 1px dashed rgba(80, 76, 71, 0.55);
+}
+
+.deployment-action-buttons,
+.deployment-history-actions,
+.deployment-action-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.deployment-action-buttons .btn-secondary,
+.deployment-action-buttons .btn-danger,
+.deployment-history-actions .btn-secondary {
+  min-height: 27px;
+  padding: 0 9px;
+}
+
+.deployment-restart-target {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.deployment-restart-target select {
+  min-height: 27px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.deployment-action-history {
+  width: 100%;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.deployment-action-history span {
+  padding: 2px 5px;
+  border: 1px solid rgba(80, 76, 71, 0.45);
+}
+
 @keyframes stage-inline-in {
   from {
     opacity: 0;
@@ -2637,6 +2693,20 @@ select.field-input {
 .deployment-history-row:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.deployment-history-entry {
+  border-top: 1px solid rgba(80, 76, 71, 0.35);
+}
+
+.deployment-history-entry .deployment-history-row {
+  border-top: 0;
+}
+
+.deployment-history-actions,
+.deployment-history-entry > .deployment-action-history,
+.deployment-history-entry > .deployment-error {
+  margin: 0 var(--deployment-row-inset) 8px 34px;
 }
 
 .deployment-history-message {
