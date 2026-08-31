@@ -195,6 +195,22 @@ export interface DashboardRuntimeSpec {
 	livenessCheck?: DashboardHTTPHealthCheck;
 	restart?: DashboardRestartSpec;
 	volumeName?: string;
+	sandboxProfile?: DashboardSandboxProfile;
+}
+
+export interface DashboardSandboxProfile {
+	name: string;
+	risk?: string;
+	relaxations: Array<"run-as-root" | "writable-rootfs">;
+}
+
+export interface DashboardSandboxProfileAuditEvent {
+	actorUserId: string;
+	action: string;
+	previousProfileName?: string;
+	profile: DashboardSandboxProfile;
+	specRevision: number;
+	createdAt?: Date;
 }
 
 export interface DashboardServiceSpec {
@@ -284,6 +300,7 @@ export interface DashboardServiceRecord {
 	desiredReplicaCount?: number;
 	readyReplicaCount?: number;
 	placementMessage?: string;
+	sandboxProfileAudit?: Array<DashboardSandboxProfileAuditEvent>;
 }
 
 export interface DashboardAllocationStatus {
@@ -399,6 +416,7 @@ export interface DashboardHomeState {
 	repositoryInspection?: DashboardRepositoryInspection;
 	domainVerification?: DomainVerificationResult;
 	domainBindings: Array<DashboardDomainBinding>;
+	sandboxProfiles: Array<DashboardSandboxProfile>;
 	controlPlaneReachable: boolean;
 	controlPlaneError?: string;
 }
@@ -613,6 +631,9 @@ export interface DashboardStore {
 
 export interface PlatformGateway {
 	listProjects(user: DashboardUser): Promise<Array<DashboardProject>>;
+	listSandboxProfiles(
+		user: DashboardUser,
+	): Promise<Array<DashboardSandboxProfile>>;
 	createProject(user: DashboardUser, name: string): Promise<DashboardProject>;
 	listEnvironments(
 		user: DashboardUser,
@@ -839,6 +860,7 @@ export interface UpdateServiceInput {
 	contextDir?: string;
 	restart?: DashboardRestartSpec;
 	desiredReplicaCount?: number;
+	sandboxProfileName?: string;
 }
 
 export interface DashboardService {

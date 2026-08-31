@@ -78,6 +78,13 @@ export async function unaryCall<M extends PlatformMethod>(
 						handleResponse,
 					);
 					return;
+				case "ListSandboxProfiles":
+					client.ListSandboxProfiles(
+						request as Record<string, never>,
+						metadata,
+						handleResponse,
+					);
+					return;
 				case "CreateProject":
 					client.CreateProject(
 						request as CreateProjectRequest,

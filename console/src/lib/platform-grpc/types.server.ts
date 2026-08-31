@@ -101,6 +101,11 @@ export interface CreateServiceRequest {
 					stableAfterSeconds?: number;
 				};
 				volumeName?: string;
+				sandboxProfile?: {
+					name: string;
+					risk?: string;
+					relaxations?: string[];
+				};
 			};
 			source: {
 				sourceSpec: {
@@ -154,6 +159,11 @@ export interface UpdateServiceRequest {
 					stableAfterSeconds?: number;
 				};
 				volumeName?: string;
+				sandboxProfile?: {
+					name: string;
+					risk?: string;
+					relaxations?: string[];
+				};
 			};
 			source: {
 				sourceSpec: {
@@ -265,6 +275,7 @@ export interface IngestGitHubWebhookRequest {
 
 export type PlatformMethod =
 	| "ListProjects"
+	| "ListSandboxProfiles"
 	| "CreateProject"
 	| "ListEnvironments"
 	| "GetEnvironment"
@@ -295,6 +306,7 @@ export type PlatformMethod =
 
 export type PlatformRequestMap = {
 	ListProjects: Record<string, never>;
+	ListSandboxProfiles: Record<string, never>;
 	CreateProject: CreateProjectRequest;
 	ListEnvironments: ListEnvironmentsRequest;
 	GetEnvironment: GetEnvironmentRequest;
@@ -331,6 +343,11 @@ export type RawUnaryCallback = (
 
 export type PlatformClient = grpc.Client & {
 	ListProjects: (
+		request: Record<string, never>,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	ListSandboxProfiles: (
 		request: Record<string, never>,
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,

@@ -6,6 +6,7 @@ import type {
 	DashboardRepositoryInspection,
 	DashboardServiceLogLine,
 	DashboardServiceLogType,
+	DashboardSandboxProfile,
 	DashboardServiceRecord,
 	DashboardServiceSpec,
 	DashboardServiceStatus,
@@ -100,6 +101,7 @@ export interface FakePlatformGateway extends PlatformGateway {
 		hostname: string;
 		targetPort: number;
 	}>;
+	sandboxProfiles: Array<DashboardSandboxProfile>;
 	projects: Array<DashboardProject>;
 	environments: Array<DashboardEnvironment>;
 	services: Array<DashboardServiceRecord>;
@@ -150,6 +152,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		listServiceDeploymentsCalls: [],
 		listDomainBindingsCalls: [],
 		createDomainBindingCalls: [],
+		sandboxProfiles: [{ name: "production", relaxations: [] }],
 		projects: [],
 		environments: [],
 		services: [],
@@ -165,6 +168,9 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				throw platform.errors.listProjects;
 			}
 			return platform.projects;
+		},
+		async listSandboxProfiles(): Promise<Array<DashboardSandboxProfile>> {
+			return platform.sandboxProfiles;
 		},
 		async createProject(user, name): Promise<DashboardProject> {
 			platform.createProjectCalls.push({ user, name });

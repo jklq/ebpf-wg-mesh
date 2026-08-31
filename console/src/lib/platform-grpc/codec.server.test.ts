@@ -42,6 +42,43 @@ describe("platform grpc codec", () => {
 		});
 	});
 
+	it("round trips the operator-resolved sandbox profile", () => {
+		const [service] = decodeListServicesResponse({
+			services: [
+				{
+					id: "service-1",
+					environmentId: "environment-1",
+					name: "legacy",
+					spec: {
+						runtime: {
+							env: {},
+							ports: [],
+							sandboxProfile: {
+								name: "legacy-root",
+								risk: "The image runs as root.",
+								relaxations: ["SANDBOX_RELAXATION_RUN_AS_ROOT"],
+							},
+						},
+					},
+				},
+			],
+		});
+		if (!service.spec) throw new Error("decoded service spec is missing");
+		expect(service.spec.runtime.sandboxProfile).toEqual({
+			name: "legacy-root",
+			risk: "The image runs as root.",
+			relaxations: ["run-as-root"],
+		});
+		expect(
+			encodeUpdateServiceRequest({
+				serviceId: service.id,
+				spec: service.spec,
+			}).service.spec.runtime.sandboxProfile,
+		).toEqual({
+			name: "legacy-root",
+		});
+	});
+
 	it("decodes deployment history with build commit metadata", () => {
 		const response = decodeListServiceDeploymentsResponse({
 			deployments: [

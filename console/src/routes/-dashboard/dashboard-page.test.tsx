@@ -804,6 +804,7 @@ function dashboardState(
 		ingressTargetHost: "platform.example.test",
 		localDomainSuffix: undefined,
 		domainBindings: [],
+		sandboxProfiles: [],
 		controlPlaneReachable: true,
 		...overrides,
 	};

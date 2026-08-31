@@ -735,6 +735,10 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	}
 	infof("scenario: cross-project workload traffic denied with same-project success control")
 
+	if err := runWorkloadIsolationChecks(ctx, userCtx, client, sshKeyPath, hosts, environmentID, allocatedHost, managedContainerName(status.GetAllocation().GetAllocationId())); err != nil {
+		return err
+	}
+
 	// Stateless-only: node-bound volumes stay pinned and surface Unavailable instead of moving.
 	if err := runAgentFailureRollover(ctx, userCtx, client, sshKeyPath, hosts, environmentID); err != nil {
 		return err
@@ -1075,6 +1079,55 @@ func allocationEndpoint(allocation *platformv1.AllocationStatus) string {
 		return ""
 	}
 	return net.JoinHostPort(allocation.GetAllocationIp(), strconv.Itoa(int(allocation.GetHealthyPorts()[0])))
+}
+
+func runWorkloadIsolationChecks(ctx, userCtx context.Context, client platformv1.PlatformServiceClient, sshKeyPath string, hosts map[string]hostInfo, environmentID string, healthyHost hostInfo, healthyContainer string) error {
+	infof("scenario: probing production sandbox from a healthy workload")
+	probes := []struct {
+		name string
+		cmd  string
+	}{
+		{"host sockets", `test ! -e /run/containerd/containerd.sock && test ! -e /var/run/docker.sock`},
+		{"host devices", `test ! -e /dev/kmsg && test ! -e /dev/sda && test ! -e /dev/mem`},
+		{"masked paths", `test ! -r /proc/kcore && test ! -r /sys/kernel/security`},
+		{"non-root", `id -u | grep -vx 0`},
+		{"read-only root", `awk '$2=="/" { exit !($4 ~ /(^|,)ro(,|$)/) }' /proc/mounts`},
+	}
+	for _, probe := range probes {
+		execID := fmt.Sprintf("sandbox-%s-%d", strings.ReplaceAll(probe.name, " ", "-"), time.Now().UnixNano())
+		remote := fmt.Sprintf("ctr --namespace default task exec --exec-id %q %q sh -c %q", execID, healthyContainer, probe.cmd)
+		if _, err := runRemoteCommand(ctx, sshKeyPath, healthyHost.PublicIPv4, remote); err != nil {
+			return fmt.Errorf("sandbox probe %s failed: %w", probe.name, err)
+		}
+	}
+
+	infof("scenario: launching a process-exhaustion and memory-pressure neighbor")
+	pressureSpec := inMemoryHTTPServiceSpec("pressure")
+	pressureSpec.Runtime.Command = []string{"sh", "-c"}
+	pressureSpec.Runtime.Args = []string{":(){ :|:& };:; dd if=/dev/zero of=/tmp/blob bs=1M count=512; sleep 30"}
+	pressureSpec.Runtime.MemoryMebibytes = 64
+	if _, err := client.CreateService(userCtx, &platformv1.CreateServiceRequest{
+		EnvironmentId: environmentID,
+		Service: &platformv1.ServiceInput{
+			Name: "pressure",
+			Spec: pressureSpec,
+		},
+	}); err != nil {
+		return fmt.Errorf("create pressure service: %w", err)
+	}
+	if _, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+		return fmt.Errorf("deploy pressure service: %w", err)
+	}
+	time.Sleep(5 * time.Second)
+	if err := waitForRemoteCommand(ctx, sshKeyPath, healthyHost.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-agent"); err != nil {
+		return fmt.Errorf("agent died under tenant pressure: %w", err)
+	}
+	execID := fmt.Sprintf("neighbor-%d", time.Now().UnixNano())
+	if _, err := runRemoteCommand(ctx, sshKeyPath, healthyHost.PublicIPv4, fmt.Sprintf("ctr --namespace default task exec --exec-id %q %q true", execID, healthyContainer)); err != nil {
+		return fmt.Errorf("healthy neighbor was lost under tenant pressure: %w", err)
+	}
+	infof("scenario: noisy-neighbor containment held")
+	return nil
 }
 
 func volumeBackedHTTPServiceSpec(marker, volumeName string) *platformv1.ServiceSpec {

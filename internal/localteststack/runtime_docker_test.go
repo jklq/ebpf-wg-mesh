@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -125,6 +126,17 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	}
 	assertArgContains(t, runArgs, "--mount", "type=bind,src="+filepath.Join(dir, "volumes", "vol-1")+",dst="+localRuntimeVolumeMount)
 	assertArgContains(t, runArgs, "--publish", "127.0.0.1::8080")
+	assertArgContains(t, runArgs, "--security-opt", "no-new-privileges")
+	assertArgContains(t, runArgs, "--cap-drop", "ALL")
+	assertArgContains(t, runArgs, "--user", "65532:65532")
+	if !slices.Contains(runArgs, "--read-only") {
+		t.Fatalf("expected read-only root filesystem, got %v", runArgs)
+	}
+	for _, arg := range runArgs {
+		if arg == "--privileged" || strings.HasPrefix(arg, "--device") || arg == "--pid=host" || arg == "--network=host" {
+			t.Fatalf("customer isolation flags leaked into docker run: %v", runArgs)
+		}
+	}
 }
 
 func TestDockerRuntimePullUsesEphemeralScopedCredentials(t *testing.T) {
