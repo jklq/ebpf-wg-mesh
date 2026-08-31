@@ -5,6 +5,7 @@ import {
 	refreshSession,
 } from "#/lib/dashboard/core/auth.server";
 import {
+	applyDeploymentActionFromSession,
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
@@ -28,11 +29,10 @@ import {
 	loadDashboardHome,
 	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
-	applyDeploymentActionFromSession,
-	scaleServiceFromSession,
 	renameEnvironmentFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
+	scaleServiceFromSession,
 	updateDomainBindingFromSession,
 	updateServiceFromSession,
 	waitForEnvironmentServicesFromSession,

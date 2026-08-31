@@ -492,7 +492,9 @@ function DeploymentCard({
 		try {
 			await onAction(record, action, allocationId);
 		} catch (cause) {
-			setActionError(formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`));
+			setActionError(
+				formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`),
+			);
 		} finally {
 			setPendingAction(undefined);
 		}
@@ -843,7 +845,8 @@ function DeploymentHistoryRow({
 		build?.queuedAt ??
 		build?.finishedAt ??
 		allocation?.updatedAt;
-	const [pendingAction, setPendingAction] = useState<DashboardDeploymentAction>();
+	const [pendingAction, setPendingAction] =
+		useState<DashboardDeploymentAction>();
 	const [actionError, setActionError] = useState<string>();
 	const actions = availableDeploymentActions(record);
 
@@ -854,7 +857,9 @@ function DeploymentHistoryRow({
 		try {
 			await onAction(record, action);
 		} catch (cause) {
-			setActionError(formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`));
+			setActionError(
+				formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`),
+			);
 		} finally {
 			setPendingAction(undefined);
 		}
@@ -909,14 +914,17 @@ function DeploymentActionHistory({
 }) {
 	if (!record.actions?.length) return null;
 	return (
-		<div className="deployment-action-history" aria-label="Deployment actions">
+		<section
+			className="deployment-action-history"
+			aria-label="Deployment actions"
+		>
 			{record.actions.map((action) => (
 				<span key={action.id}>
 					{actionLabel(action.action)}
 					{action.allocationId ? ` ${shortId(action.allocationId)}` : ""}
 				</span>
 			))}
-		</div>
+		</section>
 	);
 }
 
@@ -1213,11 +1221,7 @@ function availableDeploymentActions(
 	) {
 		actions.push("cancel");
 	}
-	if (
-		state === "failed" ||
-		state === "cancelled" ||
-		state === "crashed"
-	) {
+	if (state === "failed" || state === "cancelled" || state === "crashed") {
 		actions.push("retry");
 	}
 	if (
