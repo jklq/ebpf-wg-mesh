@@ -316,7 +316,6 @@ export function redeployServiceFromSession(input: {
 export function scaleServiceFromSession(input: {
 	serviceId: string;
 	desiredReplicaCount: number;
-	confirmScaleToZero?: boolean;
 }): Promise<DashboardServiceStatus> {
 	return getDashboardService().scaleServiceFromSession(input);
 }

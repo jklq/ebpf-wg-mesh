@@ -20,12 +20,14 @@ const {
 	doDeployEnvironmentMock,
 	doCreateServiceFastMock,
 	doSaveServicePositionMock,
+	doUpdateServiceMock,
 	fetchGitHubCatalogMock,
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
 	doDeployEnvironmentMock: vi.fn(),
 	doSaveServicePositionMock: vi.fn(),
+	doUpdateServiceMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
 	routerMock: { invalidate: vi.fn() },
 }));
@@ -40,6 +42,7 @@ vi.mock("./server-fns", () => ({
 	doDeployEnvironment: doDeployEnvironmentMock,
 	doDiscardServiceChanges: vi.fn(),
 	doSaveServicePosition: doSaveServicePositionMock,
+	doUpdateService: doUpdateServiceMock,
 	fetchGitHubCatalog: fetchGitHubCatalogMock,
 }));
 
@@ -76,6 +79,7 @@ beforeEach(() => {
 	doDeployEnvironmentMock.mockReset();
 	doCreateServiceFastMock.mockReset();
 	doSaveServicePositionMock.mockReset();
+	doUpdateServiceMock.mockReset();
 	fetchGitHubCatalogMock.mockReset();
 	fetchGitHubCatalogMock.mockResolvedValue({
 		githubAccount: undefined,
@@ -113,6 +117,129 @@ afterEach(() => {
 });
 
 describe("DashboardPage", () => {
+	it("keeps Deploy active during a variable write and waits behind it", async () => {
+		const save = deferred<DashboardServiceRecord>();
+		doUpdateServiceMock.mockReturnValue(save.promise);
+		doDeployEnvironmentMock.mockResolvedValue([]);
+		render(<DashboardPage state={dashboardState(serviceRecord())} />);
+
+		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
+		fireEvent.click(await screen.findByRole("button", { name: "Variables" }));
+		fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+		fireEvent.change(screen.getByLabelText("Raw variables"), {
+			target: { value: "FOO=bar" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Update variables" }));
+
+		const deploy = await screen.findByRole("button", {
+			name: "Deploy changes",
+		});
+		expect((deploy as HTMLButtonElement).disabled).toBe(false);
+		fireEvent.click(deploy);
+		expect(
+			await screen.findByRole("button", { name: "Deploying…" }),
+		).toBeTruthy();
+		expect(doDeployEnvironmentMock).not.toHaveBeenCalled();
+
+		save.resolve(
+			serviceRecord({
+				specRevision: 2,
+				pendingChanges: true,
+				unappliedChangeCount: 1,
+				unappliedChanges: [
+					unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
+				],
+			}),
+		);
+
+		await waitFor(() =>
+			expect(doDeployEnvironmentMock).toHaveBeenCalledWith({
+				data: { environmentId: "environment-1" },
+			}),
+		);
+		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows saving immediately, then keeps the acknowledged undeployed change", async () => {
+		const save = deferred<DashboardServiceRecord>();
+		doUpdateServiceMock.mockReturnValue(save.promise);
+		const current = serviceRecord({
+			spec: {
+				runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			},
+		});
+		render(<DashboardPage state={dashboardState(current)} />);
+
+		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
+		fireEvent.click(await screen.findByRole("button", { name: "Variables" }));
+		fireEvent.click(await screen.findByRole("button", { name: "Raw" }));
+		fireEvent.change(screen.getByLabelText("Raw variables"), {
+			target: { value: "FOO=bar" },
+		});
+		expect(doUpdateServiceMock).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByRole("button", { name: "Update variables" }));
+
+		expect(await screen.findByText("Updating undeployed changes")).toBeTruthy();
+		await waitFor(() => expect(doUpdateServiceMock).toHaveBeenCalledTimes(1));
+		expect(doUpdateServiceMock).toHaveBeenCalledWith({
+			data: {
+				serviceId: "service-1",
+				runtimeEnv: { FOO: "bar" },
+			},
+		});
+		save.resolve(
+			serviceRecord({
+				specRevision: 2,
+				spec: {
+					runtime: {
+						env: { FOO: "bar" },
+						cpuMillis: 250,
+						memoryMebibytes: 256,
+						ports: [],
+					},
+				},
+				pendingChanges: true,
+				unappliedChangeCount: 1,
+				unappliedChanges: [
+					unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
+				],
+			}),
+		);
+
+		expect(await screen.findByText("Undeployed changes")).toBeTruthy();
+	});
+
+	it("does not let a stale loader rerender clear undeployed changes", async () => {
+		const current = serviceRecord({
+			specRevision: 2,
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
+			],
+		});
+		const { rerender } = render(
+			<DashboardPage state={dashboardState(current)} />,
+		);
+		expect(await screen.findByText("Undeployed changes")).toBeTruthy();
+
+		rerender(
+			<DashboardPage
+				state={dashboardState(
+					serviceRecord({
+						specRevision: 1,
+						pendingChanges: false,
+						unappliedChangeCount: 0,
+						unappliedChanges: [],
+					}),
+				)}
+			/>,
+		);
+
+		expect(await screen.findByText("Undeployed changes")).toBeTruthy();
+	});
+
 	it("keeps the service status event stream open when the project object refreshes with the same id", async () => {
 		const service = serviceRecord();
 		const { rerender } = render(
@@ -188,6 +315,9 @@ describe("DashboardPage", () => {
 		]);
 
 		expect(await screen.findByText("2 changes")).toBeTruthy();
+		expect(
+			document.querySelector(".dirty-workspace-banner.changed"),
+		).toBeTruthy();
 	});
 
 	it("replaces subscriptions and ignores stale events when the environment changes", async () => {
@@ -395,7 +525,7 @@ describe("DashboardPage", () => {
 		});
 	});
 
-	it("marks the active deploy as applying and lets a newer deploy queue", async () => {
+	it("keeps deploy single-flight when newer changes arrive", async () => {
 		const firstDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
 		const secondDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
 		doDeployEnvironmentMock
@@ -414,7 +544,7 @@ describe("DashboardPage", () => {
 			<DashboardPage state={dashboardState(firstEdit)} />,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Deploy" }));
+		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
 
 		await screen.findByText("Applying 1 change");
 		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
@@ -431,8 +561,8 @@ describe("DashboardPage", () => {
 		rerender(<DashboardPage state={dashboardState(secondEdit)} />);
 
 		await screen.findByText("Applying 1 change, 1 ready");
-		fireEvent.click(screen.getByRole("button", { name: "Queue deploy" }));
-		await screen.findByText("Applying 1 change, next deploy queued");
+		const deployingButton = screen.getByRole("button", { name: "Deploying…" });
+		expect((deployingButton as HTMLButtonElement).disabled).toBe(true);
 
 		firstDeploy.resolve([
 			{
@@ -445,6 +575,10 @@ describe("DashboardPage", () => {
 			},
 		]);
 
+		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
+		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
+
+		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
 		await waitFor(() =>
 			expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(2),
 		);
@@ -462,7 +596,7 @@ describe("DashboardPage", () => {
 				}),
 			},
 		]);
-		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
+		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalledTimes(2));
 	});
 
 	it("keeps the panel open for a new service while the server state catches up", async () => {

@@ -89,3 +89,27 @@ export function MonoValue({
 		</span>
 	);
 }
+
+export function PanelSection({
+	title,
+	lede,
+	tone = "default",
+	children,
+}: {
+	title: string;
+	lede?: ReactNode;
+	tone?: "default" | "danger";
+	children: ReactNode;
+}) {
+	return (
+		<section className={`panel-section${tone === "danger" ? " danger" : ""}`}>
+			<header className="panel-section-head">
+				<div className="panel-section-copy">
+					<h3 className="panel-section-title">{title}</h3>
+					{lede ? <p className="panel-section-lede">{lede}</p> : null}
+				</div>
+			</header>
+			<div className="panel-section-body">{children}</div>
+		</section>
+	);
+}

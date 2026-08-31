@@ -857,6 +857,13 @@ export async function updateServiceFromSession(
 					},
 				}
 			: undefined;
+	const nextReplicaCount =
+		input.desiredReplicaCount ?? current.spec?.desiredReplicaCount;
+	if (nextReplicaCount !== undefined && nextReplicaCount < 1) {
+		throw new DashboardValidationError({
+			message: "Replica count must be at least 1.",
+		});
+	}
 	if (desiredSource?.provider === "github") {
 		const environment = await platformCall(
 			runtime,
@@ -883,6 +890,8 @@ export async function updateServiceFromSession(
 			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
 			spec: {
 				...(desiredSource ? { source: desiredSource } : {}),
+				desiredReplicaCount:
+					input.desiredReplicaCount ?? current.spec?.desiredReplicaCount,
 				runtime: {
 					env: normalizeRuntimeEnv(
 						input.runtimeEnv ?? current.spec?.runtime.env,
@@ -904,7 +913,7 @@ export async function updateServiceFromSession(
 					...(current.spec?.runtime.livenessCheck
 						? { livenessCheck: current.spec.runtime.livenessCheck }
 						: {}),
-					...(input.restart ?? current.spec?.runtime.restart
+					...((input.restart ?? current.spec?.runtime.restart)
 						? { restart: input.restart ?? current.spec?.runtime.restart }
 						: {}),
 				},
@@ -928,7 +937,6 @@ export async function scaleServiceFromSession(
 	input: {
 		serviceId: string;
 		desiredReplicaCount: number;
-		confirmScaleToZero?: boolean;
 	},
 ): Promise<DashboardServiceStatus> {
 	const session = await requireSession(runtime);
@@ -936,7 +944,6 @@ export async function scaleServiceFromSession(
 		platform.scaleService(session.user, {
 			serviceId: input.serviceId,
 			desiredReplicaCount: input.desiredReplicaCount,
-			confirmScaleToZero: input.confirmScaleToZero,
 		}),
 	);
 }
@@ -1154,6 +1161,7 @@ function buildServiceSpec(
 		}));
 	return {
 		source,
+		desiredReplicaCount: 1,
 		runtime: {
 			env: {},
 			cpuMillis: normalizeResource(

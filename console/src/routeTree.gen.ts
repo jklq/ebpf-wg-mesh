@@ -9,11 +9,11 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ReadyzRouteImport } from './routes/readyz'
 import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as LivezRouteImport } from './routes/livez'
-import { Route as ReadyzRouteImport } from './routes/readyz'
+import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
@@ -23,6 +23,11 @@ import { Route as EnvironmentsEnvironmentIdRouteImport } from './routes/environm
 import { Route as AuthStartRouteImport } from './routes/auth/start'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 
+const ReadyzRoute = ReadyzRouteImport.update({
+  id: '/readyz',
+  path: '/readyz',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LogoutRoute = LogoutRouteImport.update({
   id: '/logout',
   path: '/logout',
@@ -33,19 +38,14 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const HealthzRoute = HealthzRouteImport.update({
-  id: '/healthz',
-  path: '/healthz',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LivezRoute = LivezRouteImport.update({
   id: '/livez',
   path: '/livez',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReadyzRoute = ReadyzRouteImport.update({
-  id: '/readyz',
-  path: '/readyz',
+const HealthzRoute = HealthzRouteImport.update({
+  id: '/healthz',
+  path: '/healthz',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -95,9 +95,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
-  '/readyz': typeof ReadyzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
+  '/readyz': typeof ReadyzRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
@@ -110,9 +110,9 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
-  '/readyz': typeof ReadyzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
+  '/readyz': typeof ReadyzRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
@@ -126,9 +126,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
-  '/readyz': typeof ReadyzRoute
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
+  '/readyz': typeof ReadyzRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
@@ -143,9 +143,9 @@ export interface FileRouteTypes {
     | '/'
     | '/healthz'
     | '/livez'
-    | '/readyz'
     | '/login'
     | '/logout'
+    | '/readyz'
     | '/auth/callback'
     | '/auth/start'
     | '/environments/$environmentId'
@@ -158,9 +158,9 @@ export interface FileRouteTypes {
     | '/'
     | '/healthz'
     | '/livez'
-    | '/readyz'
     | '/login'
     | '/logout'
+    | '/readyz'
     | '/auth/callback'
     | '/auth/start'
     | '/environments/$environmentId'
@@ -173,9 +173,9 @@ export interface FileRouteTypes {
     | '/'
     | '/healthz'
     | '/livez'
-    | '/readyz'
     | '/login'
     | '/logout'
+    | '/readyz'
     | '/auth/callback'
     | '/auth/start'
     | '/environments/$environmentId'
@@ -189,9 +189,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthzRoute: typeof HealthzRoute
   LivezRoute: typeof LivezRoute
-  ReadyzRoute: typeof ReadyzRoute
   LoginRoute: typeof LoginRoute
   LogoutRoute: typeof LogoutRoute
+  ReadyzRoute: typeof ReadyzRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthStartRoute: typeof AuthStartRoute
   EnvironmentsEnvironmentIdRoute: typeof EnvironmentsEnvironmentIdRoute
@@ -203,6 +203,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/readyz': {
+      id: '/readyz'
+      path: '/readyz'
+      fullPath: '/readyz'
+      preLoaderRoute: typeof ReadyzRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/logout': {
       id: '/logout'
       path: '/logout'
@@ -217,13 +224,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/healthz': {
-      id: '/healthz'
-      path: '/healthz'
-      fullPath: '/healthz'
-      preLoaderRoute: typeof HealthzRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/livez': {
       id: '/livez'
       path: '/livez'
@@ -231,11 +231,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LivezRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/readyz': {
-      id: '/readyz'
-      path: '/readyz'
-      fullPath: '/readyz'
-      preLoaderRoute: typeof ReadyzRouteImport
+    '/healthz': {
+      id: '/healthz'
+      path: '/healthz'
+      fullPath: '/healthz'
+      preLoaderRoute: typeof HealthzRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -301,9 +301,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthzRoute: HealthzRoute,
   LivezRoute: LivezRoute,
-  ReadyzRoute: ReadyzRoute,
   LoginRoute: LoginRoute,
   LogoutRoute: LogoutRoute,
+  ReadyzRoute: ReadyzRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthStartRoute: AuthStartRoute,
   EnvironmentsEnvironmentIdRoute: EnvironmentsEnvironmentIdRoute,

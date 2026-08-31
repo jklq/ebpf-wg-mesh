@@ -163,7 +163,6 @@ export const doScaleService = createServerFn({ method: "POST" })
 			input as {
 				serviceId: string;
 				desiredReplicaCount: number;
-				confirmScaleToZero?: boolean;
 			},
 	)
 	.handler(async ({ data }) => {

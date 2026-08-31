@@ -23,7 +23,13 @@ import type {
 
 import { EmptyCanvas } from "./empty-canvas";
 import { EnvironmentDialog } from "./environment-dialog";
-import { NODE_H, NODE_W, nextNodePositionNear, nodePosition } from "./layout";
+import {
+	NODE_H,
+	NODE_W,
+	nextNodePositionNear,
+	nodePosition,
+	SIDE_PANEL_VIEWPORT_RATIO,
+} from "./layout";
 import {
 	doDeployEnvironment,
 	doDiscardServiceChanges,
@@ -31,6 +37,7 @@ import {
 	fetchGitHubCatalog,
 } from "./server-fns";
 import { ServiceNode } from "./service-node";
+import { newestServiceRecord } from "./service-record-order";
 import { formatError } from "./service-utils";
 import { Topbar } from "./topbar";
 import type { DashboardTab } from "./types";
@@ -150,9 +157,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	);
 	const services = localState.services;
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
-	const [liveStatus, setLiveStatus] = useState<DashboardServiceStatus | null>(
-		null,
-	);
 	const [, setStatusLoading] = useState(false);
 	const [showNewService, setShowNewService] = useState(false);
 	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
@@ -161,13 +165,15 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		state.repositories.length > 0,
 	);
 	const [deployingChanges, setDeployingChanges] = useState(false);
-	const [deployQueued, setDeployQueued] = useState(false);
 	const [applyingServices, setApplyingServices] = useState<
 		Array<ApplyingServiceChanges>
 	>([]);
 	const [deployError, setDeployError] = useState<string>();
 	const [showChangeDetails, setShowChangeDetails] = useState(false);
 	const [discardingChangeId, setDiscardingChangeId] = useState<string>();
+	const [pendingSpecWrites, setPendingSpecWrites] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const [promptLeft, setPromptLeft] = useState<number>();
 	const [panOffset, setPanOffset] = useState<Point>({ x: 0, y: 0 });
 	const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
@@ -182,18 +188,17 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	);
 	const [, startTransition] = useTransition();
 	const environmentId = localState.environment?.id ?? null;
+	const servicesRef = useRef(services);
+	servicesRef.current = services;
+	const environmentIdRef = useRef(environmentId);
+	environmentIdRef.current = environmentId;
+	const pendingSpecWritesRef = useRef(pendingSpecWrites);
+	pendingSpecWritesRef.current = pendingSpecWrites;
+	const specWriteWaitersRef = useRef<Array<() => void>>([]);
 	const panOffsetRef = useRef(panOffset);
 	const nodePositionsRef = useRef(nodePositions);
-	const dirtyServicesRef = useRef<Array<DashboardServiceRecord>>([]);
-	const environmentIdRef = useRef<string | null>(environmentId);
 	const previousEnvironmentIdRef = useRef<string | null>(environmentId);
-	const deployQueuedRef = useRef(false);
 	const githubCatalogPromiseRef = useRef<Promise<void> | null>(null);
-	// Tracks spec revisions that were just deployed so that stale server data
-	// returned by router.invalidate() (before a build rolls out) doesn't snap
-	// the "Edited" badge / highlights back. Cleared once the server confirms
-	// the service is clean or a newer spec has been saved.
-	const deployedRevisionsRef = useRef<Map<string, number>>(new Map());
 	const panStart = useRef<{
 		mx: number;
 		my: number;
@@ -213,7 +218,20 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const centeredEnvironmentId = useRef<string | null | undefined>(undefined);
 	const canvasRef = useRef<HTMLDivElement>(null);
 	const selected = services.find((service) => service.id === selectedId);
+	const liveStatus =
+		selectedId && localState.serviceStatus?.service.id === selectedId
+			? localState.serviceStatus
+			: null;
 	const dirtyServices = services.filter(hasUnappliedChanges);
+	const changeSignature = dirtyServices
+		.flatMap((service) =>
+			(service.unappliedChanges ?? []).map(
+				(change) =>
+					`${service.id}:${change.id}:${change.action}:${change.newValue}`,
+			),
+		)
+		.sort()
+		.join("|");
 	const totalUnappliedChanges = dirtyServices.reduce(
 		(total, service) => total + unappliedChangeCount(service),
 		0,
@@ -237,15 +255,38 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		(total, service) => total + queuedChangeCount(service, applyingChangeKeys),
 		0,
 	);
-	const deployableServices = dirtyServices.filter(
-		(service) => queuedChangeCount(service, applyingChangeKeys) > 0,
-	);
+	const hasPendingSpecWrites = pendingSpecWrites.size > 0;
 	const showPrompt =
 		deployableUnappliedChanges > 0 ||
 		applyingChangeCount > 0 ||
-		deployQueued ||
+		hasPendingSpecWrites ||
 		Boolean(deployError);
 	const showCanvasSkeleton = services.length > 0 && !canvasReady;
+	const setSpecWriteState = useCallback(
+		(serviceId: string, key: string, saving: boolean) => {
+			const writeKey = `${serviceId}:${key}`;
+			setPendingSpecWrites((current) => {
+				if (current.has(writeKey) === saving) return current;
+				const next = new Set(current);
+				if (saving) next.add(writeKey);
+				else next.delete(writeKey);
+				return next;
+			});
+		},
+		[],
+	);
+	const setSelectedServiceWriteState = useCallback(
+		(key: string, saving: boolean) => {
+			if (selectedId) setSpecWriteState(selectedId, key, saving);
+		},
+		[selectedId, setSpecWriteState],
+	);
+
+	useEffect(() => {
+		if (hasPendingSpecWrites) return;
+		const waiters = specWriteWaitersRef.current.splice(0);
+		for (const resolve of waiters) resolve();
+	}, [hasPendingSpecWrites]);
 
 	const startPanAnimation = useCallback(() => {
 		if (panAnimationFrame.current !== null) return;
@@ -329,14 +370,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	}, [nodePositions]);
 
 	useEffect(() => {
-		dirtyServicesRef.current = dirtyServices;
-	}, [dirtyServices]);
-
-	useEffect(() => {
-		environmentIdRef.current = environmentId;
-	}, [environmentId]);
-
-	useEffect(() => {
 		if (previousEnvironmentIdRef.current === environmentId) return;
 		const pending = readPendingCreatedService();
 		const keepCreatedSelection =
@@ -346,7 +379,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			setSelectedId(pending.service.id);
 		} else {
 			setSelectedId(null);
-			setLiveStatus(null);
+			setLocalState((current) => ({ ...current, serviceStatus: undefined }));
 		}
 		setNodePositions(serviceLayoutPositions(localState.services));
 		nodePositionsRef.current = serviceLayoutPositions(localState.services);
@@ -439,7 +472,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		const canvas = canvasRef.current;
 		const sidePanelOpen = Boolean(selected);
 		const visibleWidth = sidePanelOpen
-			? canvas.clientWidth * 0.4
+			? canvas.clientWidth * (1 - SIDE_PANEL_VIEWPORT_RATIO)
 			: canvas.clientWidth;
 		setTargetPanOffset({
 			x: (visibleWidth - NODE_W) / 2 - pos.x,
@@ -459,7 +492,9 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				setPromptLeft(undefined);
 				return;
 			}
-			const sidePanelWidth = selected ? window.innerWidth * 0.6 : 0;
+			const sidePanelWidth = selected
+				? window.innerWidth * SIDE_PANEL_VIEWPORT_RATIO
+				: 0;
 			const visibleWidth = Math.max(0, canvas.clientWidth - sidePanelWidth);
 			setPromptLeft(visibleWidth / 2);
 		};
@@ -494,7 +529,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			if (selectedId) {
 				clearPendingCreatedService(selectedId);
 				setSelectedId(null);
-				setLiveStatus(null);
+				setLocalState((current) => ({ ...current, serviceStatus: undefined }));
 			}
 		};
 		document.addEventListener("keydown", onKeyDown);
@@ -555,62 +590,43 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		return () => canvas.removeEventListener("wheel", onWheel);
 	}, []);
 
-	const suppressJustDeployedChanges = useCallback(
-		(service: DashboardServiceRecord) => {
-			// Suppress unapplied changes for services that were just deployed. The
-			// backend may still report them while the build/rollout catches up, but
-			// the user has already applied those changes.
-			const deployedMap = deployedRevisionsRef.current;
-			const deployedRevision = deployedMap.get(service.id);
-			if (deployedRevision === undefined) return service;
-			if ((service.unappliedChangeCount ?? 0) === 0) {
-				deployedMap.delete(service.id);
-				return service;
-			}
-			if ((service.specRevision ?? 0) > deployedRevision) {
-				deployedMap.delete(service.id);
-				return service;
-			}
-			return {
-				...service,
-				unappliedChanges: [],
-				unappliedChangeCount: 0,
-				pendingChanges: false,
-			};
-		},
-		[],
-	);
-
 	const mergeStatusService = useCallback(
 		(status: DashboardServiceStatus) => {
-			// Suppress unapplied changes for services that were just deployed — the
-			// SSE stream continuously pushes status updates whose service.unappliedChanges
-			// still reflects the backend's "pending build" state, which would otherwise
-			// overwrite the optimistic clearing we did on Deploy.
-			const mergedService = suppressJustDeployedChanges(status.service);
-			setLocalState((current) => ({
-				...current,
-				services: current.services.map((entry) =>
-					entry.id === mergedService.id ? mergedService : entry,
-				),
-				service:
-					current.service?.id === mergedService.id
-						? mergedService
-						: current.service,
-				serviceStatus:
-					current.serviceStatus?.service.id === mergedService.id
-						? { ...current.serviceStatus, ...status }
-						: current.serviceStatus,
-			}));
+			const incomingService = status.service;
+			setLocalState((current) => {
+				const existing = current.services.find(
+					(entry) => entry.id === incomingService.id,
+				);
+				const mergedService = newestServiceRecord(existing, incomingService);
+				return {
+					...current,
+					services: current.services.map((entry) =>
+						entry.id === mergedService.id ? mergedService : entry,
+					),
+					service:
+						current.service?.id === mergedService.id
+							? mergedService
+							: current.service,
+					serviceStatus:
+						selectedId === mergedService.id
+							? { ...status, service: mergedService }
+							: current.serviceStatus,
+				};
+			});
 		},
-		[suppressJustDeployedChanges],
+		[selectedId],
 	);
 
 	const mergeEnvironmentServices = useCallback(
 		(nextServices: Array<DashboardServiceRecord>) => {
 			setLocalState((current) => {
+				const currentByID = new Map(
+					current.services.map((service) => [service.id, service]),
+				);
 				const mergedServices = withPendingCreatedService(
-					nextServices.map(suppressJustDeployedChanges),
+					nextServices.map((service) =>
+						newestServiceRecord(currentByID.get(service.id), service),
+					),
 				);
 				const selectedService =
 					current.service &&
@@ -630,76 +646,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							: undefined,
 				};
 			});
-			setLiveStatus((current) => {
-				if (!current) return current;
-				const service = nextServices
-					.map(suppressJustDeployedChanges)
-					.find((entry) => entry.id === current.service.id);
-				return service ? { ...current, service } : current;
-			});
-		},
-		[suppressJustDeployedChanges],
-	);
-
-	const mergeAppliedStatusService = useCallback(
-		(status: DashboardServiceStatus, applied: ApplyingServiceChanges) => {
-			const statusRevision = status.service.specRevision ?? 0;
-			setLocalState((current) => {
-				const existing = current.services.find(
-					(service) => service.id === status.service.id,
-				);
-				const existingRevision = existing?.specRevision ?? 0;
-				if (
-					existing &&
-					applied.specRevision !== undefined &&
-					existingRevision > applied.specRevision &&
-					statusRevision <= applied.specRevision
-				) {
-					return {
-						...current,
-						service:
-							current.service?.id === status.service.id
-								? existing
-								: current.service,
-						serviceStatus:
-							current.serviceStatus?.service.id === status.service.id
-								? { ...status, service: existing }
-								: current.serviceStatus,
-					};
-				}
-				return {
-					...current,
-					services: current.services.map((entry) =>
-						entry.id === status.service.id ? status.service : entry,
-					),
-					service:
-						current.service?.id === status.service.id
-							? status.service
-							: current.service,
-					serviceStatus:
-						current.serviceStatus?.service.id === status.service.id
-							? { ...current.serviceStatus, ...status }
-							: current.serviceStatus,
-				};
-			});
-			setLiveStatus((current) => {
-				if (current?.service.id !== status.service.id) return current;
-				const currentRevision = current.service.specRevision ?? 0;
-				if (
-					applied.specRevision !== undefined &&
-					currentRevision > applied.specRevision &&
-					statusRevision <= applied.specRevision
-				) {
-					return { ...status, service: current.service };
-				}
-				return status;
-			});
 		},
 		[],
 	);
 
 	useEffect(() => {
-		const deployedMap = deployedRevisionsRef.current;
 		// A just-created service can also be the first one to materialise its
 		// environment; keep that environment until the server snapshot has it,
 		// otherwise the environment flips back to none and the selection resets.
@@ -711,8 +662,23 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				? state.environments
 				: [...state.environments, pendingEnvironment]
 			: state.environments;
-		if (deployedMap.size === 0) {
-			setLocalState((current) => ({
+		setLocalState((current) => {
+			const services = withPendingCreatedService(state.services).map(
+				(service) =>
+					newestServiceRecord(
+						current.services.find((entry) => entry.id === service.id),
+						service,
+					),
+			);
+			const selectedService = current.service
+				? services.find((service) => service.id === current.service?.id)
+				: state.service;
+			const statusService = current.serviceStatus
+				? services.find(
+						(service) => service.id === current.serviceStatus?.service.id,
+					)
+				: undefined;
+			return {
 				...state,
 				githubAccount:
 					githubCatalogLoaded || githubCatalogLoading
@@ -724,47 +690,14 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						: state.repositories,
 				environment: state.environment ?? pendingEnvironment,
 				environments: pendingEnvironments,
-				services: withPendingCreatedService(state.services),
-			}));
-		} else {
-			// For services that were just deployed, the backend may still report
-			// unapplied changes until the build / rollout completes. Suppress them
-			// so the "Edited" badge and panel highlights stay gone after Deploy.
-			setLocalState((current) => ({
-				...state,
-				githubAccount:
-					githubCatalogLoaded || githubCatalogLoading
-						? (current.githubAccount ?? state.githubAccount)
-						: state.githubAccount,
-				repositories:
-					githubCatalogLoaded || githubCatalogLoading
-						? current.repositories
-						: state.repositories,
-				environment: state.environment ?? pendingEnvironment,
-				environments: pendingEnvironments,
-				services: withPendingCreatedService(state.services).map((service) => {
-					const deployedRevision = deployedMap.get(service.id);
-					if (deployedRevision === undefined) return service;
-					// Server confirms clean — stop suppressing.
-					if ((service.unappliedChangeCount ?? 0) === 0) {
-						deployedMap.delete(service.id);
-						return service;
-					}
-					// A newer spec was saved after the deploy — show its changes.
-					if ((service.specRevision ?? 0) > deployedRevision) {
-						deployedMap.delete(service.id);
-						return service;
-					}
-					// Same spec, still building — keep changes hidden.
-					return {
-						...service,
-						unappliedChanges: [],
-						unappliedChangeCount: 0,
-						pendingChanges: false,
-					};
-				}),
-			}));
-		}
+				services,
+				service: selectedService,
+				serviceStatus:
+					current.serviceStatus && statusService
+						? { ...current.serviceStatus, service: statusService }
+						: state.serviceStatus,
+			};
+		});
 		setStatusLoading(false);
 	}, [state, githubCatalogLoaded, githubCatalogLoading]);
 
@@ -795,7 +728,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	useEffect(() => {
 		if (!selectedId) {
-			setLiveStatus(null);
 			setStatusLoading(false);
 			return;
 		}
@@ -809,7 +741,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			const nextStatus = hydrateServiceStatusSnapshot(
 				JSON.parse((event as MessageEvent<string>).data),
 			);
-			setLiveStatus(nextStatus);
 			mergeStatusService(nextStatus);
 			setStatusLoading(false);
 		});
@@ -948,7 +879,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		if (!el.closest(".service-node")) {
 			clearPendingCreatedService(selectedId ?? undefined);
 			setSelectedId(null);
-			setLiveStatus(null);
+			setLocalState((current) => ({ ...current, serviceStatus: undefined }));
 		}
 	};
 
@@ -957,7 +888,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		hasUserPanned.current = false;
 		setSelectedId(id);
 		setActiveTab("deployments");
-		setLiveStatus(null);
+		setLocalState((current) => ({ ...current, serviceStatus: undefined }));
 	};
 
 	const handleRefresh = () => {
@@ -999,20 +930,23 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	};
 
 	const mergeService = (service: DashboardServiceRecord) => {
-		setLocalState((current) => ({
-			...current,
-			services: current.services.map((entry) =>
-				entry.id === service.id ? service : entry,
-			),
-			service: current.service?.id === service.id ? service : current.service,
-			serviceStatus:
-				current.serviceStatus?.service.id === service.id
-					? { ...current.serviceStatus, service }
-					: current.serviceStatus,
-		}));
-		setLiveStatus((current) =>
-			current?.service.id === service.id ? { ...current, service } : current,
-		);
+		setLocalState((current) => {
+			const existing = current.services.find(
+				(entry) => entry.id === service.id,
+			);
+			const merged = newestServiceRecord(existing, service);
+			return {
+				...current,
+				services: current.services.map((entry) =>
+					entry.id === merged.id ? merged : entry,
+				),
+				service: current.service?.id === merged.id ? merged : current.service,
+				serviceStatus:
+					current.serviceStatus?.service.id === merged.id
+						? { ...current.serviceStatus, service: merged }
+						: current.serviceStatus,
+			};
+		});
 	};
 
 	const handleCreated = (result: CreateServiceFastResult) => {
@@ -1089,7 +1023,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		setSelectedId(result.service.id);
 		hasUserPanned.current = false;
 		setActiveTab("deployments");
-		setLiveStatus(result.serviceStatus);
 		setShowNewService(false);
 		// Creating the first service also creates the environment. Invalidating
 		// `/` redirects to `/environments/:id` and remounts this page, which
@@ -1102,9 +1035,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	const handleServiceDeleted = (serviceId: string) => {
 		clearPendingCreatedService(serviceId);
-		deployedRevisionsRef.current.delete(serviceId);
 		setSelectedId((current) => (current === serviceId ? null : current));
-		setLiveStatus(null);
 		setLocalState((current) => ({
 			...current,
 			services: current.services.filter((service) => service.id !== serviceId),
@@ -1129,58 +1060,16 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		currentEnvironmentId: string,
 	) => {
 		const applying = servicesToDeploy.map(snapshotApplyingChanges);
-		const deployingIds = new Set(applying.map((a) => a.serviceId));
-		// Remember the spec revision at deploy time so the state effect can
-		// suppress stale "still unapplied" data that comes back from the server
-		// before the build / rollout actually completes.
-		for (const a of applying) {
-			deployedRevisionsRef.current.set(a.serviceId, a.specRevision ?? 0);
-		}
-		deployQueuedRef.current = false;
-		setDeployQueued(false);
 		setDeployError(undefined);
 		setShowChangeDetails(false);
 		setDeployingChanges(true);
 		setApplyingServices((current) => mergeApplyingServices(current, applying));
-		// Optimistically clear unapplied changes so nodes/panel/banner all snap
-		// clean immediately — if the server returns new changes they'll re-appear.
-		setLocalState((current) => ({
-			...current,
-			services: current.services.map((service) =>
-				deployingIds.has(service.id)
-					? {
-							...service,
-							unappliedChanges: [],
-							unappliedChangeCount: 0,
-							pendingChanges: false,
-						}
-					: service,
-			),
-		}));
 		try {
 			const statuses = await doDeployEnvironment({
 				data: { environmentId: currentEnvironmentId },
 			});
 			for (const status of statuses) {
-				const service = applying.find(
-					(entry) => entry.serviceId === status.service.id,
-				);
-				if (!service) continue;
-				// Strip unapplied changes from the response: for source-based services
-				// the backend still reports them as unapplied until the build rolls out,
-				// but the user just deployed — they are in flight, not pending.
-				mergeAppliedStatusService(
-					{
-						...status,
-						service: {
-							...status.service,
-							unappliedChanges: [],
-							unappliedChangeCount: 0,
-							pendingChanges: false,
-						},
-					},
-					service,
-				);
+				mergeStatusService(status);
 			}
 			startTransition(() => void router.invalidate());
 		} catch (error) {
@@ -1195,32 +1084,25 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				),
 			);
 			setDeployingChanges(false);
-			window.setTimeout(() => {
-				if (!deployQueuedRef.current) return;
-				const nextEnvironmentId = environmentIdRef.current;
-				const nextDirtyServices = dirtyServicesRef.current;
-				if (!nextEnvironmentId || nextDirtyServices.length === 0) {
-					deployQueuedRef.current = false;
-					setDeployQueued(false);
-					return;
-				}
-				void deployServiceBatch(nextDirtyServices, nextEnvironmentId);
-			}, 0);
 		}
 	};
 
 	const handleDeployChanges = async () => {
-		if (!environmentId) {
+		if (deployingChanges) return;
+		if (!environmentId) return;
+		setDeployingChanges(true);
+		if (pendingSpecWritesRef.current.size > 0) {
+			await new Promise<void>((resolve) => {
+				specWriteWaitersRef.current.push(resolve);
+			});
+		}
+		const currentEnvironmentId = environmentIdRef.current;
+		const currentServices = servicesRef.current.filter(hasUnappliedChanges);
+		if (!currentEnvironmentId || currentServices.length === 0) {
+			setDeployingChanges(false);
 			return;
 		}
-		if (deployingChanges) {
-			if (deployableServices.length === 0 || deployQueued) return;
-			deployQueuedRef.current = true;
-			setDeployQueued(true);
-			return;
-		}
-		if (deployableServices.length === 0) return;
-		await deployServiceBatch(deployableServices, environmentId);
+		await deployServiceBatch(currentServices, currentEnvironmentId);
 	};
 
 	const handleDiscardServiceChanges = async (serviceId: string) => {
@@ -1295,7 +1177,10 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					if (event.key === "Escape") {
 						clearPendingCreatedService(selectedId ?? undefined);
 						setSelectedId(null);
-						setLiveStatus(null);
+						setLocalState((current) => ({
+							...current,
+							serviceStatus: undefined,
+						}));
 					}
 				}}
 			>
@@ -1331,7 +1216,14 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 				{showPrompt && (
 					<div
-						className="dirty-workspace-banner"
+						key={changeSignature || "deploy-prompt"}
+						className={`dirty-workspace-banner${
+							deployError
+								? " failed"
+								: applyingChangeCount > 0
+									? " applying"
+									: ""
+						}${changeSignature ? " changed" : ""}`}
 						style={
 							promptLeft === undefined
 								? { display: "none" }
@@ -1339,12 +1231,18 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						}
 					>
 						<div>
-							<span className="dirty-workspace-title">Undeployed changes</span>
+							<span className="dirty-workspace-title">
+								{dirtyPromptTitle({
+									applying: applyingChangeCount,
+									deployError,
+									deploying: deployingChanges,
+								})}
+							</span>
 							<span className="dirty-workspace-detail">
 								{dirtyPromptDetail({
 									applying: applyingChangeCount,
-									deployQueued,
 									deployable: deployableUnappliedChanges,
+									saving: hasPendingSpecWrites,
 									total: totalUnappliedChanges,
 								})}
 							</span>
@@ -1364,8 +1262,8 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							className="btn-primary"
 							onClick={handleDeployChanges}
 							disabled={
-								(deployingChanges && deployQueued) ||
-								deployableUnappliedChanges === 0
+								deployingChanges ||
+								(!hasPendingSpecWrites && deployableUnappliedChanges === 0)
 							}
 						>
 							{deployingChanges ? (
@@ -1376,11 +1274,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							) : (
 								<UploadCloud size={13} />
 							)}
-							{deployingChanges
-								? deployQueued
-									? "Queued"
-									: "Queue deploy"
-								: "Deploy"}
+							{deployActionLabel({ deploying: deployingChanges })}
 						</button>
 					</div>
 				)}
@@ -1433,11 +1327,15 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 							onClose={() => {
 								clearPendingCreatedService(selectedId ?? undefined);
 								setSelectedId(null);
-								setLiveStatus(null);
+								setLocalState((current) => ({
+									...current,
+									serviceStatus: undefined,
+								}));
 							}}
 							onRefresh={handleRefresh}
 							onServiceUpdated={mergeService}
 							onServiceDeleted={handleServiceDeleted}
+							onSpecSaveStateChange={setSelectedServiceWriteState}
 						/>
 					</Suspense>
 				)}
@@ -1460,7 +1358,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 					totalChanges={totalUnappliedChanges}
 					applyingChanges={applyingChangeCount}
 					deployableChanges={deployableUnappliedChanges}
-					deployQueued={deployQueued}
 					affectedServices={dirtyServices.length}
 					deploying={deployingChanges}
 					deployError={deployError}
@@ -1560,14 +1457,7 @@ function SkeletonNode() {
 					<span className="skeleton-line skeleton-row row-2" />
 				</div>
 				<div className="skeleton-node-footer">
-					<span className="node-deploy-badge skeleton-deploy-badge">
-						<span className="skeleton-badge-icon" />
-						<span className="node-badge-rail">
-							<span className="panel-badge-segment" />
-							<span className="panel-badge-segment" />
-							<span className="panel-badge-segment" />
-						</span>
-					</span>
+					<span />
 					<span className="skeleton-line skeleton-sha" />
 				</div>
 			</div>
@@ -1580,7 +1470,6 @@ function UnappliedChangesDialog({
 	totalChanges,
 	applyingChanges,
 	deployableChanges,
-	deployQueued,
 	affectedServices,
 	deploying,
 	deployError,
@@ -1594,7 +1483,6 @@ function UnappliedChangesDialog({
 	totalChanges: number;
 	applyingChanges: number;
 	deployableChanges: number;
-	deployQueued: boolean;
 	affectedServices: number;
 	deploying: boolean;
 	deployError?: string;
@@ -1680,7 +1568,6 @@ function UnappliedChangesDialog({
 					<span>
 						{dirtyPromptDetail({
 							applying: applyingChanges,
-							deployQueued,
 							deployable: deployableChanges,
 							total: totalChanges,
 						})}{" "}
@@ -1694,7 +1581,7 @@ function UnappliedChangesDialog({
 						type="button"
 						className="btn-primary"
 						onClick={onDeploy}
-						disabled={(deploying && deployQueued) || deployableChanges === 0}
+						disabled={deploying || deployableChanges === 0}
 					>
 						{deploying ? (
 							<Loader2
@@ -1704,11 +1591,9 @@ function UnappliedChangesDialog({
 						) : (
 							<UploadCloud size={13} />
 						)}
-						{deploying
-							? deployQueued
-								? "Queued"
-								: "Queue Deploy"
-							: "Deploy Changes"}
+						{deployActionLabel({
+							deploying,
+						})}
 					</button>
 				</div>
 			</div>
@@ -1857,26 +1742,43 @@ function applyingChangeKey(serviceId: string, changeId: string): string {
 	return `${serviceId}:${changeId}`;
 }
 
+function dirtyPromptTitle({
+	applying,
+	deployError,
+	deploying = false,
+}: {
+	applying: number;
+	deployError?: string;
+	deploying?: boolean;
+}): string {
+	if (deployError) return "Deploy failed";
+	if (deploying || applying > 0) return "Deploying changes";
+	return "Undeployed changes";
+}
+
+function deployActionLabel({ deploying }: { deploying: boolean }): string {
+	if (deploying) return "Deploying…";
+	return "Deploy changes";
+}
+
 function dirtyPromptDetail({
 	applying,
-	deployQueued,
 	deployable,
+	saving = false,
 	total,
 }: {
 	applying: number;
-	deployQueued: boolean;
 	deployable: number;
+	saving?: boolean;
 	total: number;
 }): string {
-	if (applying > 0 && deployQueued) {
-		return `Applying ${applying} ${pluralizeChange(applying)}, next deploy queued`;
-	}
 	if (applying > 0 && deployable > 0) {
 		return `Applying ${applying} ${pluralizeChange(applying)}, ${deployable} ready`;
 	}
 	if (applying > 0) {
 		return `Applying ${applying} ${pluralizeChange(applying)}`;
 	}
+	if (saving) return "Updating undeployed changes";
 	return `Apply ${total} ${pluralizeChange(total)}`;
 }
 

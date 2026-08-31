@@ -23,7 +23,8 @@ import {
 	fetchDomainBindings,
 } from "./server-fns";
 import { buildServiceURL, formatError } from "./service-utils";
-import { ModalOverlay } from "./ui";
+import { ModalOverlay, PanelSection } from "./ui";
+import { usePolling } from "./use-polling";
 
 export function PanelDomains({
 	service,
@@ -110,15 +111,18 @@ export function PanelDomains({
 			!binding.platformGenerated && binding.ownershipState !== "verified",
 	);
 
-	useEffect(() => {
-		if (!needsOwnershipPoll) return;
-		const id = window.setInterval(() => {
-			fetchDomainBindings({ data: { serviceId: service.id } })
-				.then(setBindings)
-				.catch(() => undefined);
-		}, 5000);
-		return () => window.clearInterval(id);
-	}, [needsOwnershipPoll, service.id]);
+	usePolling(
+		async () => {
+			try {
+				setBindings(
+					await fetchDomainBindings({ data: { serviceId: service.id } }),
+				);
+			} catch {
+				// Keep the last known bindings during a transient refresh failure.
+			}
+		},
+		{ enabled: needsOwnershipPoll, intervalMs: 5000 },
+	);
 
 	const openDomainFlow = (flow: "generate" | "custom") => {
 		setDomainFlow(flow);
@@ -250,7 +254,7 @@ export function PanelDomains({
 	};
 
 	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+		<div className="domains-stack">
 			{domainFlow && (
 				<ModalOverlay
 					ariaLabel={
@@ -584,11 +588,10 @@ export function PanelDomains({
 				</ModalOverlay>
 			)}
 
-			<div>
-				<p className="section-header">Private networking</p>
-				<p className="domain-internal-description">
-					Communicate with this service from within the current environment.
-				</p>
+			<PanelSection
+				title="Private mesh"
+				lede="Reach this service from anything else in the current environment."
+			>
 				<div className="domain-internal-card">
 					<CircleCheck size={20} aria-hidden="true" />
 					<div className="domain-internal-content">
@@ -602,179 +605,176 @@ export function PanelDomains({
 						</p>
 					</div>
 				</div>
-			</div>
+			</PanelSection>
 
-			<hr className="divider" />
-
-			<div>
-				<p className="section-header">Active domains</p>
-				{loadingBindings && (
-					<div
-						style={{
-							display: "flex",
-							gap: 6,
-							color: "var(--text-muted)",
-							fontSize: 12,
-						}}
-					>
-						<Loader2
-							size={13}
-							style={{ animation: "spin 1s linear infinite" }}
-						/>
-						Loading…
-					</div>
-				)}
-				{!loadingBindings && visibleBindings.length === 0 && !pendingDomain && (
-					<p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
-						No domains yet.
-					</p>
-				)}
-				{pendingDomain && !pendingDomain.hostname && (
-					<div className="domain-item domain-item-pending">
+			<PanelSection
+				title="Public domains"
+				lede="Hostnames that route into this service."
+			>
+				<div className="domain-list">
+					{loadingBindings && (
 						<div
 							style={{
 								display: "flex",
-								alignItems: "center",
 								gap: 6,
-								overflow: "hidden",
+								color: "var(--text-muted)",
+								fontSize: 13,
 							}}
 						>
 							<Loader2
-								size={12}
+								size={13}
 								style={{ animation: "spin 1s linear infinite" }}
 							/>
-							<span
+							Loading…
+						</div>
+					)}
+					{!loadingBindings &&
+						visibleBindings.length === 0 &&
+						!pendingDomain && (
+							<div className="domain-empty">No public domains yet.</div>
+						)}
+					{pendingDomain && !pendingDomain.hostname && (
+						<div className="domain-item domain-item-pending">
+							<div
 								style={{
-									fontSize: 13,
-									fontFamily: "var(--font-mono)",
-									color: "var(--text-muted)",
+									display: "flex",
+									alignItems: "center",
+									gap: 6,
+									overflow: "hidden",
 								}}
 							>
-								Generating domain…
-							</span>
-						</div>
-					</div>
-				)}
-				{visibleBindings.map((binding) => {
-					const pending = pendingDomain?.hostname === binding.hostname;
-					const unverified =
-						!binding.platformGenerated && binding.ownershipState !== "verified";
-					return (
-						<div
-							key={binding.hostname}
-							className={`domain-item ${pending ? "domain-item-pending" : ""} ${unverified ? "domain-item-unverified" : ""}`}
-						>
-							<div className="domain-item-body">
-								<div className="domain-item-row">
-									<div
-										style={{
-											display: "flex",
-											alignItems: "center",
-											gap: 6,
-											overflow: "hidden",
-										}}
-									>
-										{pending || unverified ? (
-											<Loader2
-												size={12}
-												style={{ animation: "spin 1s linear infinite" }}
-											/>
-										) : (
-											<Globe size={12} color="var(--healthy)" />
-										)}
-										<span
-											style={{
-												fontSize: 13,
-												fontFamily: "var(--font-mono)",
-												color: "var(--text)",
-												overflow: "hidden",
-												textOverflow: "ellipsis",
-												whiteSpace: "nowrap",
-											}}
-										>
-											{binding.hostname}
-											<span style={{ color: "var(--text-muted)" }}>
-												{" "}
-												-&gt; :{binding.targetPort}
-											</span>
-										</span>
-									</div>
-									<div
-										style={{
-											display: "flex",
-											alignItems: "center",
-											gap: 4,
-											flexShrink: 0,
-										}}
-									>
-										{!pending && (
-											<span
-												className={`domain-ownership-badge ${unverified ? "unverified" : "verified"}`}
-											>
-												{unverified ? "Waiting for CNAME" : "Live"}
-											</span>
-										)}
-										<a
-											href={buildServiceURL(state, binding.hostname)}
-											target="_blank"
-											rel="noreferrer"
-											className="btn-ghost"
-											style={{ fontSize: 11 }}
-										>
-											Open ↗
-										</a>
-										<button
-											type="button"
-											className="btn-ghost"
-											style={{ padding: "4px 6px" }}
-											onClick={() => openEdit(binding)}
-											title="Edit"
-										>
-											<Pencil size={12} />
-										</button>
-										<button
-											type="button"
-											className="btn-ghost"
-											style={{
-												padding: "4px 6px",
-												color: "var(--danger, #e05252)",
-											}}
-											onClick={() => setDeleteConfirm(binding.hostname)}
-											title="Remove"
-										>
-											<Trash2 size={12} />
-										</button>
-									</div>
-								</div>
-								{unverified && (
-									<div className="domain-ownership-detail">
-										<p>
-											<CircleAlert size={12} aria-hidden="true" />
-											{formatOwnershipMessage(
-												binding.ownershipMessage,
-												platformBinding?.hostname,
-											)}
-										</p>
-										{platformBinding && (
-											<p className="domain-cname-hint">
-												{binding.hostname} CNAME {platformBinding.hostname}
-											</p>
-										)}
-									</div>
-								)}
+								<Loader2
+									size={12}
+									style={{ animation: "spin 1s linear infinite" }}
+								/>
+								<span
+									style={{
+										fontSize: 13,
+										fontFamily: "var(--font-mono)",
+										color: "var(--text-muted)",
+									}}
+								>
+									Generating domain…
+								</span>
 							</div>
 						</div>
-					);
-				})}
-				{!domainFlow && error && <p className="error-msg">{error}</p>}
-				{!domainFlow && success && <p className="success-msg">{success}</p>}
-			</div>
-
-			<hr className="divider" />
-
-			<div>
-				<p className="section-header">Add domain</p>
-				<div style={{ display: "flex", gap: 8 }}>
+					)}
+					{visibleBindings.map((binding) => {
+						const pending = pendingDomain?.hostname === binding.hostname;
+						const unverified =
+							!binding.platformGenerated &&
+							binding.ownershipState !== "verified";
+						return (
+							<div
+								key={binding.hostname}
+								className={`domain-item ${pending ? "domain-item-pending" : ""} ${unverified ? "domain-item-unverified" : ""}`}
+							>
+								<div className="domain-item-body">
+									<div className="domain-item-row">
+										<div
+											style={{
+												display: "flex",
+												alignItems: "center",
+												gap: 6,
+												overflow: "hidden",
+											}}
+										>
+											{pending || unverified ? (
+												<Loader2
+													size={12}
+													style={{ animation: "spin 1s linear infinite" }}
+												/>
+											) : (
+												<Globe size={12} color="var(--healthy)" />
+											)}
+											<span
+												style={{
+													fontSize: 13,
+													fontFamily: "var(--font-mono)",
+													color: "var(--text)",
+													overflow: "hidden",
+													textOverflow: "ellipsis",
+													whiteSpace: "nowrap",
+												}}
+											>
+												{binding.hostname}
+												<span style={{ color: "var(--text-muted)" }}>
+													{" "}
+													-&gt; :{binding.targetPort}
+												</span>
+											</span>
+										</div>
+										<div
+											style={{
+												display: "flex",
+												alignItems: "center",
+												gap: 4,
+												flexShrink: 0,
+											}}
+										>
+											{!pending && (
+												<span
+													className={`domain-ownership-badge ${unverified ? "unverified" : "verified"}`}
+												>
+													{unverified ? "Waiting for CNAME" : "Live"}
+												</span>
+											)}
+											<a
+												href={buildServiceURL(state, binding.hostname)}
+												target="_blank"
+												rel="noreferrer"
+												className="btn-ghost"
+												style={{ fontSize: 11 }}
+											>
+												Open ↗
+											</a>
+											<button
+												type="button"
+												className="btn-ghost"
+												style={{ padding: "4px 6px" }}
+												onClick={() => openEdit(binding)}
+												title="Edit"
+											>
+												<Pencil size={12} />
+											</button>
+											<button
+												type="button"
+												className="btn-ghost"
+												style={{
+													padding: "4px 6px",
+													color: "var(--danger, #e05252)",
+												}}
+												onClick={() => setDeleteConfirm(binding.hostname)}
+												title="Remove"
+											>
+												<Trash2 size={12} />
+											</button>
+										</div>
+									</div>
+									{unverified && (
+										<div className="domain-ownership-detail">
+											<p>
+												<CircleAlert size={12} aria-hidden="true" />
+												{formatOwnershipMessage(
+													binding.ownershipMessage,
+													platformBinding?.hostname,
+												)}
+											</p>
+											{platformBinding && (
+												<p className="domain-cname-hint">
+													{binding.hostname} CNAME {platformBinding.hostname}
+												</p>
+											)}
+										</div>
+									)}
+								</div>
+							</div>
+						);
+					})}
+					{!domainFlow && error && <p className="error-msg">{error}</p>}
+					{!domainFlow && success && <p className="success-msg">{success}</p>}
+				</div>
+				<div className="panel-sticky-actions">
 					<button
 						type="button"
 						className="btn-primary"
@@ -790,7 +790,7 @@ export function PanelDomains({
 						Custom Domain
 					</button>
 				</div>
-			</div>
+			</PanelSection>
 		</div>
 	);
 }
