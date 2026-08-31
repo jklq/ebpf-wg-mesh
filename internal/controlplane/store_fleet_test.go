@@ -4,7 +4,9 @@ package controlplane
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -262,15 +264,35 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if err := store.recordAgentCertificate(ctx, "node-retire", "abcd"); err != nil {
 		t.Fatalf("recordAgentCertificate: %v", err)
 	}
-	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-retire", agentStateCordoned); err != nil {
+	path := t.TempDir() + "/revoked.txt"
+	revocations, err := NewCertificateRevocations(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewOpsService(nil, store, nil, &TLSAuthority{revocations: revocations})
+	opsContext := contextWithDelegatedUser("ops", "ops@example.com")
+	if _, err := service.SetAgentLifecycle(opsContext, &platformv1.SetAgentLifecycleRequest{
+		AgentId:        "node-retire",
+		LifecycleState: platformv1.AgentLifecycleState_AGENT_LIFECYCLE_STATE_CORDONED,
+	}); err != nil {
 		t.Fatalf("cordon: %v", err)
 	}
-	rec, _, err := store.setAgentLifecycle(ctx, "ops", "node-retire", agentStateRetired)
+	retired, err := service.SetAgentLifecycle(opsContext, &platformv1.SetAgentLifecycleRequest{
+		AgentId:        "node-retire",
+		LifecycleState: platformv1.AgentLifecycleState_AGENT_LIFECYCLE_STATE_RETIRED,
+	})
 	if err != nil {
 		t.Fatalf("retire: %v", err)
 	}
+	rec, err := store.agentByID(ctx, "node-retire")
+	if err != nil {
+		t.Fatalf("agentByID: %v", err)
+	}
 	if rec.LifecycleState != agentStateRetired || !rec.CredentialRevokedAt.Valid {
 		t.Fatalf("expected retired revoked agent, got %+v", rec)
+	}
+	if retired.GetLifecycleState() != platformv1.AgentLifecycleState_AGENT_LIFECYCLE_STATE_RETIRED {
+		t.Fatalf("OpsService returned lifecycle %s", retired.GetLifecycleState())
 	}
 	if rec.WireGuardPublicKey != "" || rec.WorkloadIPv6Subnet != "" {
 		t.Fatalf("expected mesh identity to be cleared, got %+v", rec)
@@ -286,13 +308,8 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 		t.Fatalf("certificate serials = %v, err=%v", serials, err)
 	}
 
-	path := t.TempDir() + "/revoked.txt"
-	revocations, err := NewCertificateRevocations(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := revocations.Add(serials...); err != nil {
-		t.Fatalf("Add: %v", err)
+	if err := revocations.Check(&x509.Certificate{SerialNumber: new(big.Int).SetInt64(0xabcd)}); !errors.Is(err, errClientCertificateRevoked) {
+		t.Fatalf("production CRL was not updated by OpsService: %v", err)
 	}
 }
 
