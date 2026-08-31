@@ -146,7 +146,19 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		current: healthCheckValue(serviceRuntime(deployed).GetLivenessCheck()),
 		next:    healthCheckValue(serviceRuntime(current).GetLivenessCheck()),
 	})
+	fields = append(fields, unappliedChangeField{
+		id:      "desiredReplicaCount",
+		section: "Replicas",
+		field:   "Desired count",
+		path:    "desiredReplicaCount",
+		current: replicaCountValue(deployed),
+		next:    replicaCountValue(current),
+	})
 	return fields
+}
+
+func replicaCountValue(spec *platformv1.ServiceSpec) string {
+	return strconv.Itoa(int(specReplicaCount(spec, defaultDesiredReplicaCount)))
 }
 
 func restartValue(restart *platformv1.ServiceRestart) string {
@@ -273,6 +285,12 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 			currentRuntime(current).Restart = nil
 		} else {
 			currentRuntime(current).Restart = proto.Clone(deployedRestart).(*platformv1.ServiceRestart)
+		}
+	case "desiredReplicaCount":
+		if specHasDesiredReplicaCount(deployed) {
+			current.DesiredReplicaCount = replicaCountPtr(deployed.GetDesiredReplicaCount())
+		} else {
+			current.DesiredReplicaCount = nil
 		}
 	default:
 		const envPrefix = "runtime.env."

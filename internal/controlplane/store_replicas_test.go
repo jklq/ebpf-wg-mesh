@@ -25,9 +25,7 @@ func TestReplicaPlacementIsDeterministicAndAvoidsColocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 3, false); err != nil {
-		t.Fatalf("scaleService: %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 3)
 	allocations := mustListAllocations(t, store, ctx, service.ID)
 	if len(allocations) != 3 {
 		t.Fatalf("expected 3 allocations, got %d", len(allocations))
@@ -41,9 +39,7 @@ func TestReplicaPlacementIsDeterministicAndAvoidsColocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(2): %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service2.ID, 3, false); err != nil {
-		t.Fatalf("scaleService(2): %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service2.ID, 3)
 	second := allocationAgentIDs(mustListAllocations(t, store, ctx, service2.ID))
 	if second["node-a"] != 1 || second["node-b"] != 1 || second["node-c"] != 1 {
 		t.Fatalf("placement was not deterministic, got %v", second)
@@ -67,9 +63,7 @@ func TestReplicaPlacementColocatesOnlyWhenCapacityRequiresIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 2, false); err != nil {
-		t.Fatalf("scaleService: %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 	agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID))
 	if agents["node-a"] != 2 || agents["node-b"] != 0 {
 		t.Fatalf("expected both replicas on node-a when node-b lacks capacity, got %v", agents)
@@ -93,10 +87,27 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	scaled, allocations, err := store.scaleService(ctx, "user-1", "", service.ID, 4, false)
+	queued, allocations, err := store.scaleService(ctx, "user-1", "", service.ID, 4)
 	if err != nil {
 		t.Fatalf("scaleService: %v", err)
 	}
+	if queued.DesiredReplicaCount != 1 {
+		t.Fatalf("live desired replica count = %d, want 1 until deploy", queued.DesiredReplicaCount)
+	}
+	if queued.Spec.GetDesiredReplicaCount() != 4 {
+		t.Fatalf("queued replica count = %d, want 4", queued.Spec.GetDesiredReplicaCount())
+	}
+	if len(allocations) != 1 {
+		t.Fatalf("expected live allocations to stay at 1 until deploy, got %d", len(allocations))
+	}
+	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("deployEnvironment: %v", err)
+	}
+	scaled, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocations = mustListAllocations(t, store, ctx, service.ID)
 	if scaled.DesiredReplicaCount != 4 {
 		t.Fatalf("desired replica count = %d, want 4", scaled.DesiredReplicaCount)
 	}
@@ -124,7 +135,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(volume): %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", volumeService.ID, 2, false); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := store.scaleService(ctx, "user-1", "", volumeService.ID, 2); !errors.Is(err, errVolumeReplicaUnsupported) {
 		t.Fatalf("scale volume service to 2: got %v", err)
 	}
 
@@ -132,9 +143,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(replicas): %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", replicaService.ID, 2, false); err != nil {
-		t.Fatalf("scaleService: %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, replicaService.ID, 2)
 	volumeSpec.Runtime.CpuMillis = replicaService.Spec.GetRuntime().GetCpuMillis()
 	volumeSpec.Runtime.MemoryMebibytes = replicaService.Spec.GetRuntime().GetMemoryMebibytes()
 	volumeSpec.Runtime.Ports = replicaService.Spec.GetRuntime().GetPorts()
@@ -143,7 +152,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
-func TestReplicaScaleToZeroRequiresProductionConfirmation(t *testing.T) {
+func TestReplicaScaleRejectsZero(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -153,13 +162,8 @@ func TestReplicaScaleToZeroRequiresProductionConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 0, false); !errors.Is(err, errScaleToZeroUnconfirmed) {
-		t.Fatalf("expected errScaleToZeroUnconfirmed, got %v", err)
-	}
-	if _, allocations, err := store.scaleService(ctx, "user-1", "", service.ID, 0, true); err != nil {
-		t.Fatalf("confirmed scale to zero: %v", err)
-	} else if len(allocations) != 0 {
-		t.Fatalf("expected no allocations after scale to zero, got %d", len(allocations))
+	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 0); !errors.Is(err, errInvalidReplicaCount) {
+		t.Fatalf("expected errInvalidReplicaCount, got %v", err)
 	}
 }
 
@@ -173,9 +177,7 @@ func TestReplicaDesiredStateIsAgentLocalAndIdentityCatalogIsClusterWide(t *testi
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 2, false); err != nil {
-		t.Fatalf("scaleService: %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 
 	stateA, err := store.desiredStateForAgent(ctx, "node-a")
 	if err != nil {
@@ -212,9 +214,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 2, false); err != nil {
-		t.Fatalf("scaleService: %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 	if _, _, err := store.createDomainBinding(ctx, "user-1", "", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
@@ -276,9 +276,7 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 2, false); err != nil {
-		t.Fatalf("scaleService: %v", err)
-	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 
 	past := time.Now().UTC().Add(-time.Minute)
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, past, "node-b"); err != nil {
@@ -321,7 +319,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		desired := int32(2 + i%2)
 		go func(desired int32) {
 			defer wg.Done()
-			_, _, err := store.scaleService(ctx, "user-1", "", service.ID, desired, false)
+			_, _, err := store.scaleService(ctx, "user-1", "", service.ID, desired)
 			if err != nil && !errors.Is(err, errConcurrentUpdate) {
 				errs <- err
 			}
@@ -337,12 +335,36 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	queued := current.Spec.GetDesiredReplicaCount()
+	if queued != 2 && queued != 3 {
+		t.Fatalf("queued replica count settled at %d, want 2 or 3", queued)
+	}
+	if current.DesiredReplicaCount != 1 {
+		t.Fatalf("live desired replica count = %d, want 1 until deploy", current.DesiredReplicaCount)
+	}
+	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("deployEnvironment: %v", err)
+	}
+	current, err = store.serviceByID(ctx, "user-1", "", service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	allocations := mustListAllocations(t, store, ctx, service.ID)
 	if int32(len(allocations)) > current.DesiredReplicaCount {
 		t.Fatalf("placed %d allocations above desired %d", len(allocations), current.DesiredReplicaCount)
 	}
 	if current.DesiredReplicaCount != 2 && current.DesiredReplicaCount != 3 {
 		t.Fatalf("desired replica count settled at %d, want 2 or 3", current.DesiredReplicaCount)
+	}
+}
+
+func mustQueueAndDeployReplicas(t *testing.T, store *Store, ctx context.Context, envID, serviceID string, desired int32) {
+	t.Helper()
+	if _, _, err := store.scaleService(ctx, "user-1", "", serviceID, desired); err != nil {
+		t.Fatalf("scaleService: %v", err)
+	}
+	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("deployEnvironment: %v", err)
 	}
 }
 

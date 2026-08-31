@@ -103,6 +103,36 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if got := state.GetServices()[0].GetSpec().GetImage(); got != "registry.example.test/platform/web@sha256:111" {
 		t.Fatalf("expected resolved desired image digest, got %q", got)
 	}
+
+	if err := store.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+		RepositoryID:   1,
+		FullName:       "octocat/hello",
+		InstallationID: 1,
+	}); err != nil {
+		t.Fatalf("grant source repository: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
+		t.Fatalf("clear source work items: %v", err)
+	}
+	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 2); err != nil {
+		t.Fatalf("queue replica change: %v", err)
+	}
+	if _, _, err := store.deployEnvironment(ctx, "user-1", service.EnvironmentID); err != nil {
+		t.Fatalf("deploy replica change: %v", err)
+	}
+	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 0 {
+		t.Fatalf("replica-only deploy queued %d source builds, want 0", got)
+	}
+	current, err = store.serviceByID(ctx, "user-1", projects[0].ID, service.ID)
+	if err != nil {
+		t.Fatalf("serviceByID(after replica deploy): %v", err)
+	}
+	if current.DesiredReplicaCount != 2 {
+		t.Fatalf("live desired replica count = %d, want 2", current.DesiredReplicaCount)
+	}
+	if current.ResolvedImage != "registry.example.test/platform/web@sha256:111" {
+		t.Fatalf("replica deploy changed resolved image to %q", current.ResolvedImage)
+	}
 }
 
 func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
