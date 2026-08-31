@@ -156,8 +156,15 @@ function replicaAllocationState(
 	) {
 		return "failed";
 	}
+	const rolloutState = allocation.rolloutState?.toLowerCase();
+	if (rolloutState === "draining" || rolloutState === "withdrawing") {
+		return "draining";
+	}
 	if (draining) {
 		return allocation.healthy ? "draining" : "pending";
+	}
+	if (rolloutState === "starting") {
+		return "rolling";
 	}
 	const behindGeneration =
 		desiredGeneration !== undefined &&

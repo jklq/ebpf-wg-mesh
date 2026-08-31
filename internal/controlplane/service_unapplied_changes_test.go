@@ -87,6 +87,31 @@ func TestServiceUnappliedChangesIncludesReplicaCount(t *testing.T) {
 	}
 }
 
+func TestServiceUnappliedChangesIncludesRollingStrategy(t *testing.T) {
+	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{})
+	current := proto.Clone(deployed).(*platformv1.ServiceSpec)
+	current.RollingStrategy = &platformv1.RollingStrategy{
+		MaxUnavailable:        proto.Int32(1),
+		MaxSurge:              proto.Int32(0),
+		StartupTimeoutSeconds: proto.Int32(60),
+		DrainTimeoutSeconds:   proto.Int32(5),
+	}
+
+	changes := diffServiceUnappliedChanges(current, deployed)
+	if got, want := len(changes), 1; got != want {
+		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
+	}
+	assertChange(t, changes[0], "rollingStrategy", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE,
+		"unavailable 0, surge 1, startup 300s, drain 30s",
+		"unavailable 1, surge 0, startup 60s, drain 5s")
+
+	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"rollingStrategy"})
+	got := canonicalRollingStrategy(discarded.GetRollingStrategy())
+	if got.GetMaxUnavailable() != 0 || got.GetMaxSurge() != 1 {
+		t.Fatalf("discarded rolling strategy = %+v", got)
+	}
+}
+
 func TestServiceSpecsCompareHTTPReadinessConfiguration(t *testing.T) {
 	left := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{
 		HealthCheck: &platformv1.HealthCheck{Type: platformv1.HealthCheck_TYPE_HTTP, Path: "/ready"},

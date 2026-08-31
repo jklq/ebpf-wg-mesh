@@ -89,7 +89,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if history[0].State != deploymentStateActive || history[0].Build == nil || history[0].Build.CommitMessage != "Add lifecycle" {
 		t.Fatalf("latest history = %+v", history[0])
 	}
-	if history[0].ReasonCode != reasonDeploymentActive || history[0].CauseKind != deploymentCauseAgent {
+	if history[0].ReasonCode != reasonDeploymentActive || history[0].CauseKind != deploymentCauseSystem {
 		t.Fatalf("latest transition metadata = %+v", history[0])
 	}
 }

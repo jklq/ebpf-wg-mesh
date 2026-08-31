@@ -122,6 +122,14 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			if _, healthy := healthyAgents[allocation.AgentID]; healthy {
 				continue
 			}
+			if allocation.RolloutState == allocationRolloutDraining || allocation.RolloutState == allocationRolloutWithdrawing {
+				if err := finishLostDrainingAllocationTx(ctx, tx, allocation.ID, "node lost while draining; allocation will be removed", now.UTC()); err != nil {
+					return err
+				}
+				result.IngressChanged = true
+				moved = true
+				continue
+			}
 
 			var blockedMessage string
 			switch {
@@ -243,6 +251,20 @@ func projectKindsForFailover(ctx context.Context, q serviceQueryer) (map[string]
 		out[id] = kind
 	}
 	return out, rows.Err()
+}
+
+func finishLostDrainingAllocationTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE allocations
+		    SET phase = 'Drained',
+		        message = $1,
+		        healthy = FALSE,
+		        healthy_ports = $2,
+		        updated_at = $3
+		  WHERE id = $4`,
+		message, []byte("[]"), now, allocationID,
+	)
+	return err
 }
 
 func allocationStatesForFailover(ctx context.Context, q serviceQueryer) ([]allocationRecord, error) {

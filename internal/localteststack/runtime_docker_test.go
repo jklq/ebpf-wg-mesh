@@ -13,9 +13,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.T) {
@@ -274,6 +277,61 @@ func TestDockerRuntimeReconcileRemovesStaleContainerAndVolume(t *testing.T) {
 	}
 }
 
+func TestDockerRuntimeDrainSendsSIGTERMThenForceRemovesAfterDeadline(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runner.containers["localteststack-svc-alloc-1"] = dockerContainerInspect{
+		State: dockerContainerState{Running: true},
+	}
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+
+	svc := &agentv1.DesiredService{
+		AllocationId:             "alloc-1",
+		ServiceId:                "svc-1",
+		DesiredSpecRevision:      1,
+		DesiredRolloutGeneration: 1,
+		Intent:                   agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN,
+		DrainDeadline:            timestamppb.New(time.Now().Add(time.Minute)),
+		Spec:                     &platformv1.ResolvedServiceSpec{Image: "ghcr.io/demo/echo:latest"},
+	}
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{svc}})
+	if err != nil {
+		t.Fatalf("Reconcile before deadline: %v", err)
+	}
+	if report.Services[0].Phase != "Draining" {
+		t.Fatalf("phase = %q, want Draining", report.Services[0].Phase)
+	}
+	if !runner.hasCommand("kill", "--signal", "TERM", "localteststack-svc-alloc-1") {
+		t.Fatalf("expected SIGTERM, got %+v", runner.commands)
+	}
+	if runner.hasCommand("rm", "--force", "localteststack-svc-alloc-1") {
+		t.Fatalf("force-removed before deadline: %+v", runner.commands)
+	}
+
+	svc.DrainDeadline = timestamppb.New(time.Now().Add(-time.Second))
+	report, err = runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{svc}})
+	if err != nil {
+		t.Fatalf("Reconcile after deadline: %v", err)
+	}
+	if report.Services[0].Phase != "Drained" || !strings.Contains(report.Services[0].Message, "force killed") {
+		t.Fatalf("expected force kill after deadline, got %+v", report.Services[0])
+	}
+	if !runner.hasCommand("rm", "--force", "localteststack-svc-alloc-1") {
+		t.Fatalf("expected force remove after deadline, got %+v", runner.commands)
+	}
+}
+
 func TestDockerRuntimeInspectContainerTreatsLowercaseNoSuchObjectAsMissing(t *testing.T) {
 	t.Parallel()
 
@@ -343,6 +401,8 @@ func (f *fakeDockerRunner) Run(_ context.Context, args ...string) ([]byte, error
 			return nil, fmt.Errorf("No such object: %s", args[1])
 		}
 		return json.Marshal([]dockerContainerInspect{container})
+	case len(args) >= 2 && args[0] == "kill":
+		return []byte("killed"), nil
 	case len(args) >= 2 && args[0] == "rm":
 		delete(f.containers, args[len(args)-1])
 		return []byte("removed"), nil

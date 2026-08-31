@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -90,6 +90,19 @@ var schemaUpgrades = map[int][]string{
 			UNIQUE (service_id, requested_by_user_id, idempotency_key)
 		)`,
 		`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
+	},
+	7: {
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS rollout_state STRING NOT NULL DEFAULT 'serving'`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS drain_started_at TIMESTAMPTZ NULL`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS drain_deadline TIMESTAMPTZ NULL`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS state STRING NOT NULL DEFAULT 'succeeded'`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS strategy_json JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS desired_replica_count INT8 NOT NULL DEFAULT 1`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS image_digest STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS failure_reason STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS progress_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+		`CREATE INDEX IF NOT EXISTS idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
 	},
 }
 
@@ -251,6 +264,9 @@ var currentSchema = []string{
 			healthy BOOL NOT NULL,
 			restart_observation_json JSONB NOT NULL DEFAULT '{}',
 			operator_restart_nonce INT8 NOT NULL DEFAULT 0,
+			rollout_state STRING NOT NULL,
+			drain_started_at TIMESTAMPTZ NULL,
+			drain_deadline TIMESTAMPTZ NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
@@ -263,9 +279,17 @@ var currentSchema = []string{
 			reason STRING NOT NULL,
 			build_id STRING NOT NULL DEFAULT '',
 			requested_by_user_id STRING NOT NULL DEFAULT '',
+			state STRING NOT NULL,
+			strategy_json JSONB NOT NULL,
+			desired_replica_count INT8 NOT NULL,
+			image_digest STRING NOT NULL DEFAULT '',
+			failure_reason STRING NOT NULL DEFAULT '',
+			completed_at TIMESTAMPTZ NULL,
+			progress_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, rollout_generation)
 		)`,
+	`CREATE INDEX idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
 	`CREATE TABLE deployments (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,

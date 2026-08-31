@@ -26,6 +26,10 @@ type SettingsDraft = {
 	windowSeconds: string;
 	sandboxProfileName: string;
 	placementRegion: string;
+	maxUnavailable: string;
+	maxSurge: string;
+	startupTimeoutSeconds: string;
+	drainTimeoutSeconds: string;
 };
 
 export function PanelSettings({
@@ -78,6 +82,13 @@ export function PanelSettings({
 					},
 					sandboxProfileName: next.sandboxProfileName,
 					placementRegion: next.placementRegion,
+					rollingStrategy: {
+						maxUnavailable: Number(next.maxUnavailable) || 0,
+						maxSurge: Number(next.maxSurge) || 0,
+						startupTimeoutSeconds:
+							Number(next.startupTimeoutSeconds) || 0,
+						drainTimeoutSeconds: Number(next.drainTimeoutSeconds) || 0,
+					},
 				},
 			});
 			onSaved(updated);
@@ -295,6 +306,53 @@ export function PanelSettings({
 			</PanelSection>
 
 			<PanelSection
+				title="Rolling deployment"
+				lede="How quickly healthy replacements enter service and old processes shut down."
+			>
+				<div
+					className={`field-grid ${changedFields.has("rollingStrategy") ? "unapplied-field" : ""}`}
+				>
+					<RollingNumberField
+						id={`service-rollout-unavailable-${service.id}`}
+						label="Max unavailable"
+						value={draft.maxUnavailable}
+						onChange={(maxUnavailable) =>
+							setDraft((current) => ({ ...current, maxUnavailable }))
+						}
+					/>
+					<RollingNumberField
+						id={`service-rollout-surge-${service.id}`}
+						label="Max surge"
+						value={draft.maxSurge}
+						onChange={(maxSurge) =>
+							setDraft((current) => ({ ...current, maxSurge }))
+						}
+					/>
+					<RollingNumberField
+						id={`service-rollout-startup-${service.id}`}
+						label="Startup deadline (seconds)"
+						value={draft.startupTimeoutSeconds}
+						onChange={(startupTimeoutSeconds) =>
+							setDraft((current) => ({ ...current, startupTimeoutSeconds }))
+						}
+					/>
+					<RollingNumberField
+						id={`service-rollout-drain-${service.id}`}
+						label="Drain deadline (seconds)"
+						value={draft.drainTimeoutSeconds}
+						onChange={(drainTimeoutSeconds) =>
+							setDraft((current) => ({ ...current, drainTimeoutSeconds }))
+						}
+					/>
+				</div>
+				<p className="field-hint">
+					Healthy replacements enter ingress before old allocations receive
+					SIGTERM. Remaining processes are force-killed only after the drain
+					deadline.
+				</p>
+			</PanelSection>
+
+			<PanelSection
 				title="Process restart"
 				lede="What happens when the process exits."
 			>
@@ -478,7 +536,44 @@ function settingsDraftFromService(
 		sandboxProfileName:
 			service.spec?.runtime.sandboxProfile?.name ?? "production",
 		placementRegion: service.spec?.placementRegion ?? "",
+		maxUnavailable: String(
+			service.spec?.rollingStrategy?.maxUnavailable ?? 0,
+		),
+		maxSurge: String(service.spec?.rollingStrategy?.maxSurge ?? 1),
+		startupTimeoutSeconds: String(
+			service.spec?.rollingStrategy?.startupTimeoutSeconds ?? 300,
+		),
+		drainTimeoutSeconds: String(
+			service.spec?.rollingStrategy?.drainTimeoutSeconds ?? 30,
+		),
 	};
+}
+
+function RollingNumberField({
+	id,
+	label,
+	value,
+	onChange,
+}: {
+	id: string;
+	label: string;
+	value: string;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<div>
+			<label className="field-label" htmlFor={id}>
+				{label}
+			</label>
+			<input
+				id={id}
+				className="field-input"
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				inputMode="numeric"
+			/>
+		</div>
+	);
 }
 
 function SourceRepositoryDialog({

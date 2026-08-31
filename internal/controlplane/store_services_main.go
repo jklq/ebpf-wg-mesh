@@ -13,6 +13,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	rolloutStatePendingBuild = "pending_build"
+	rolloutStateInProgress   = "in_progress"
+	rolloutStateSucceeded    = "succeeded"
+	rolloutStateFailed       = "failed"
+	rolloutStateSuperseded   = "superseded"
+)
+
 func (s *Store) insertServiceRolloutTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -22,11 +30,36 @@ func (s *Store) insertServiceRolloutTx(
 	reason, buildID, requestedByUserID string,
 	now time.Time,
 ) error {
-	_, err := tx.ExecContext(ctx,
+	var rawSpec []byte
+	var desired int32
+	var image string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT r.spec_json, s.desired_replica_count, s.current_resolved_image
+		   FROM services s
+		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = $2
+		  WHERE s.id = $1`, serviceID, specRevision,
+	).Scan(&rawSpec, &desired, &image); err != nil {
+		return err
+	}
+	spec, err := loadServiceSpec(rawSpec)
+	if err != nil {
+		return err
+	}
+	strategyJSON, err := protojson.Marshal(canonicalRollingStrategy(spec.GetRollingStrategy()))
+	if err != nil {
+		return err
+	}
+	state := rolloutStateInProgress
+	if image == "" {
+		state = rolloutStatePendingBuild
+	}
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO service_rollouts(
-			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_user_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		serviceID, rolloutGeneration, specRevision, reason, buildID, requestedByUserID, now,
+			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_user_id,
+			state, strategy_json, desired_replica_count, image_digest, failure_reason, created_at, progress_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '', $11, $11)`,
+		serviceID, rolloutGeneration, specRevision, reason, buildID, requestedByUserID,
+		state, strategyJSON, desired, image, now,
 	)
 	return err
 }
@@ -227,6 +260,9 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 	if err := validateServicePlacement(spec); err != nil {
 		return serviceRecord{}, false, false, err
 	}
+	if err := validateRollingStrategy(spec); err != nil {
+		return serviceRecord{}, false, false, err
+	}
 	nameChanged := nextName != current.Name
 	if sameServiceSpec(current.Spec, spec) {
 		if !nameChanged {
@@ -345,6 +381,13 @@ func (s *Store) requestServiceSourceSync(ctx context.Context, userID, projectID,
 		if desiredSourceSpec(service.Spec) == nil {
 			return errServiceNotBuildable
 		}
+		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+		if err != nil {
+			return err
+		}
+		if _, err := s.prepareReplacementRolloutTx(ctx, tx, service, existing, time.Now().UTC()); err != nil {
+			return err
+		}
 		return s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, service.SpecRevision, true)
 	})
 }
@@ -370,10 +413,15 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 		}
 		current.DesiredReplicaCount = desired
 	}
-	identityCatalogChanged := current.AllocatedAgentID == ""
-	preferredAgentID := current.AllocatedAgentID
-
+	existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, true)
+	if err != nil {
+		return serviceRecord{}, false, err
+	}
 	now := time.Now().UTC()
+	if _, err := s.prepareReplacementRolloutTx(ctx, tx, current, existing, now); err != nil {
+		return serviceRecord{}, false, err
+	}
+	identityCatalogChanged := current.AllocatedAgentID == ""
 	nextRolloutGeneration := current.RolloutGeneration + 1
 	resolvedImage := current.ResolvedImage
 	if directImage := directImageRef(current.Spec); directImage != "" {
@@ -414,28 +462,15 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 		return serviceRecord{}, false, err
 	}
 	current.LatestDeployment = &dep
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE allocations
-		    SET desired_spec_revision = $1,
-		        desired_rollout_generation = $2,
-		        phase = 'Pending',
-		        message = '',
-		        restart_observation_json = '{}',
-		        updated_at = $3
-		  WHERE service_id = $4`,
-		current.SpecRevision, nextRolloutGeneration, now, serviceID,
-	); err != nil {
-		return serviceRecord{}, false, err
-	}
-
 	current.RolloutGeneration = nextRolloutGeneration
 	current.ResolvedImage = resolvedImage
 	current.PendingChanges = false
 	current.UpdatedAt = now
-	if _, err := s.reconcileServiceReplicasTx(ctx, tx, current, preferredAgentID, now); err != nil {
+	advanced, err := s.advanceRolloutTx(ctx, tx, serviceID, now)
+	if err != nil {
 		return serviceRecord{}, false, err
 	}
-	if current.AllocatedAgentID == "" {
+	if advanced.Changed || current.AllocatedAgentID == "" {
 		identityCatalogChanged = true
 	}
 	return current, identityCatalogChanged, nil

@@ -237,6 +237,7 @@ export interface DashboardServiceSpec {
 	runtime: DashboardRuntimeSpec;
 	desiredReplicaCount?: number;
 	placementRegion?: string;
+	rollingStrategy?: DashboardRollingStrategy;
 }
 
 export type DashboardAgentLifecycleState =
@@ -303,6 +304,13 @@ export interface FleetAgentInput {
 export interface DashboardAgentEnrollment {
 	agent: DashboardFleetAgent;
 	bootstrapToken: string;
+
+
+export interface DashboardRollingStrategy {
+	maxUnavailable: number;
+	maxSurge: number;
+	startupTimeoutSeconds: number;
+	drainTimeoutSeconds: number;
 }
 
 export interface DashboardResolvedSourceBinding {
@@ -404,6 +412,9 @@ export interface DashboardAllocationStatus {
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
 	operatorRestartNonce?: number;
+	rolloutState?: string;
+	drainStartedAt?: Date;
+	drainDeadline?: Date;
 	restart?: {
 		restartCount: number;
 		crashLoop: boolean;
@@ -965,6 +976,7 @@ export interface UpdateServiceInput {
 	desiredReplicaCount?: number;
 	sandboxProfileName?: string;
 	placementRegion?: string;
+	rollingStrategy?: DashboardRollingStrategy;
 }
 
 export interface DashboardService {

@@ -135,6 +135,12 @@ export interface CreateServiceRequest {
 			};
 			desiredReplicaCount?: number;
 			placementRegion?: string;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }
@@ -194,6 +200,12 @@ export interface UpdateServiceRequest {
 			};
 			desiredReplicaCount?: number;
 			placementRegion?: string;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }

@@ -145,6 +145,9 @@ type allocationRecord struct {
 	UpdatedAt                time.Time
 	Restart                  *platformv1.RestartObservation
 	OperatorRestartNonce     int64
+	RolloutState             string
+	DrainStartedAt           sql.NullTime
+	DrainDeadline            sql.NullTime
 }
 
 type allocationRestartEvent struct {
