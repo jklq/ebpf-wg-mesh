@@ -223,6 +223,15 @@ func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord 
 		RequestedByUserId: rec.RequestedByUserID,
 		Status:            status,
 		ImageDigest:       rec.ImageDigest,
+		VariableVersions:  rec.VariableVersions,
+	}
+	for _, action := range rec.Actions {
+		protoRec.Actions = append(protoRec.Actions, &platformv1.DeploymentActionRecord{
+			Id: action.ID, Action: toProtoDeploymentAction(action.Action),
+			TargetDeploymentId: action.TargetDeploymentID, ResultDeploymentId: action.ResultDeploymentID,
+			AllocationId: action.AllocationID, RequestedByUserId: action.RequestedByUserID,
+			CreatedAt: ts(action.CreatedAt),
+		})
 	}
 	if rec.Build != nil {
 		protoRec.Stages = deploymentStagesFromLifecycle(rec, serviceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision, AllocatedAgentID: ""}, rec.Build)
@@ -269,6 +278,8 @@ func toProtoBuildState(state string) platformv1.BuildState {
 		return platformv1.BuildState_BUILD_STATE_FAILED
 	case "superseded":
 		return platformv1.BuildState_BUILD_STATE_SUPERSEDED
+	case "cancelled":
+		return platformv1.BuildState_BUILD_STATE_CANCELLED
 	default:
 		return platformv1.BuildState_BUILD_STATE_UNSPECIFIED
 	}

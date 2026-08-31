@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -65,6 +65,31 @@ var schemaUpgrades = map[int][]string{
 		`CREATE INDEX IF NOT EXISTS idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
 			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
 			         reserved_cpu_millis, reserved_memory_mebibytes)`,
+	},
+	6: {
+		`ALTER TABLE deployments ADD COLUMN resolved_spec_json JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE deployments ADD COLUMN variable_versions_json JSONB NOT NULL DEFAULT '{}'`,
+		`UPDATE deployments d
+		    SET resolved_spec_json = r.spec_json
+		   FROM service_revisions r
+		  WHERE r.service_id = d.service_id AND r.spec_revision = d.spec_revision`,
+		`ALTER TABLE deployments ALTER COLUMN resolved_spec_json DROP DEFAULT`,
+		`ALTER TABLE deployments ALTER COLUMN variable_versions_json DROP DEFAULT`,
+		`DROP INDEX IF EXISTS idx_deployments_service_build`,
+		`CREATE INDEX IF NOT EXISTS idx_deployments_service_build ON deployments(service_id, build_id) WHERE build_id != ''`,
+		`CREATE TABLE deployment_actions (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			target_deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			result_deployment_id STRING NOT NULL DEFAULT '',
+			action STRING NOT NULL,
+			allocation_id STRING NOT NULL DEFAULT '',
+			idempotency_key STRING NOT NULL,
+			requested_by_user_id STRING NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (service_id, requested_by_user_id, idempotency_key)
+		)`,
+		`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
 	},
 }
 
@@ -253,6 +278,8 @@ var currentSchema = []string{
 			cause_id STRING NOT NULL DEFAULT '',
 			reason_code STRING NOT NULL,
 			detail STRING NOT NULL DEFAULT '',
+			resolved_spec_json JSONB NOT NULL,
+			variable_versions_json JSONB NOT NULL,
 			is_current BOOL NOT NULL DEFAULT FALSE,
 			requested_by_user_id STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
@@ -260,7 +287,7 @@ var currentSchema = []string{
 		)`,
 	`CREATE UNIQUE INDEX idx_deployments_service_current
 			ON deployments(service_id) WHERE is_current = TRUE`,
-	`CREATE UNIQUE INDEX idx_deployments_service_build
+	`CREATE INDEX idx_deployments_service_build
 			ON deployments(service_id, build_id) WHERE build_id != ''`,
 	`CREATE INDEX idx_deployments_service_rollout
 			ON deployments(service_id, rollout_generation DESC, created_at DESC, id)`,
@@ -282,6 +309,19 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_deployment_transitions_deployment
 			ON deployment_transitions(deployment_id, occurred_at ASC, id)`,
+	`CREATE TABLE deployment_actions (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			target_deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			result_deployment_id STRING NOT NULL DEFAULT '',
+			action STRING NOT NULL,
+			allocation_id STRING NOT NULL DEFAULT '',
+			idempotency_key STRING NOT NULL,
+			requested_by_user_id STRING NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (service_id, requested_by_user_id, idempotency_key)
+		)`,
+	`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
 	`CREATE TABLE builder_workers (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,

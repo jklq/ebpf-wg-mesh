@@ -24,6 +24,7 @@ import {
 import {
 	type CreateServiceFastResult,
 	type DashboardDeploymentRecord,
+	type DashboardDeploymentAction,
 	type DashboardDomainBinding,
 	type DashboardEnvironment,
 	type DashboardAgentEnrollment,
@@ -1001,13 +1002,19 @@ export async function updateServiceFromSession(
 	);
 }
 
-export async function redeployServiceFromSession(
+export async function applyDeploymentActionFromSession(
 	runtime: DashboardRuntime,
-	input: { serviceId: string },
+	input: {
+		serviceId: string;
+		deploymentId: string;
+		action: DashboardDeploymentAction;
+		idempotencyKey: string;
+		allocationId?: string;
+	},
 ): Promise<DashboardServiceStatus> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "redeployService", (platform) =>
-		platform.redeployService(session.user, { serviceId: input.serviceId }),
+	return platformCall(runtime, "applyDeploymentAction", (platform) =>
+		platform.applyDeploymentAction(session.user, input),
 	);
 }
 
@@ -1024,16 +1031,6 @@ export async function scaleServiceFromSession(
 			serviceId: input.serviceId,
 			desiredReplicaCount: input.desiredReplicaCount,
 		}),
-	);
-}
-
-export async function restartServiceFromSession(
-	runtime: DashboardRuntime,
-	input: { serviceId: string },
-): Promise<DashboardServiceStatus> {
-	const session = await requireSession(runtime);
-	return platformCall(runtime, "restartService", (platform) =>
-		platform.restartService(session.user, { serviceId: input.serviceId }),
 	);
 }
 

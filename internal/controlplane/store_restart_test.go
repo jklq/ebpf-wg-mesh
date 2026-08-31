@@ -114,22 +114,15 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	_, alloc, err := store.serviceStatus(ctx, "user-1", projects[0].ID, service.ID)
-	if err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
-		Services: []*agentv1.ServiceCondition{{
-			AllocationId: alloc.ID, ServiceId: service.ID,
-			Phase: restartpolicy.PhaseCrashLoop, Message: "crash loop",
-			Restart: &platformv1.RestartObservation{CrashLoop: true, RestartCount: 3, AppliedRolloutGeneration: 1},
-		}},
-	}); err != nil {
-		t.Fatal(err)
+	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || current.State != deploymentStateActive {
+		t.Fatalf("current deployment: %+v ok=%v err=%v", current, ok, err)
 	}
-
-	if _, err := store.restartService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
-		t.Fatalf("restartService: %v", err)
+	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-1", ""); err != nil {
+		t.Fatalf("applyDeploymentAction restart: %v", err)
 	}
 	afterRestart, err := store.allocationByServiceID(ctx, service.ID)
 	if err != nil {
@@ -145,6 +138,20 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	}
 	if len(desired.GetServices()) != 1 || desired.GetServices()[0].GetOperatorRestartNonce() != 1 {
 		t.Fatalf("desired state missing operator nonce: %#v", desired.GetServices())
+	}
+
+	afterRestart, err = store.allocationByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId: afterRestart.ID, ServiceId: service.ID,
+			Phase: restartpolicy.PhaseCrashLoop, Message: "crash loop",
+			Restart: &platformv1.RestartObservation{CrashLoop: true, RestartCount: 3, AppliedRolloutGeneration: afterRestart.DesiredRolloutGeneration},
+		}},
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID); err != nil {

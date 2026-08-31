@@ -159,14 +159,40 @@ func runProductE2EScenario(
 	if err != nil {
 		return productE2ESummary{}, err
 	}
-	redeployed, err := client.RedeployService(userCtx, &platformv1.RedeployServiceRequest{
-		ServiceId: service.GetId(),
-	})
+	redeployedEnvironment, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID})
 	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("redeploy fixture service: %w", err)
 	}
-	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration()); err != nil {
+	if len(redeployedEnvironment.GetServices()) != 1 {
+		return productE2ESummary{}, fmt.Errorf("redeploy fixture service: expected one service, got %d", len(redeployedEnvironment.GetServices()))
+	}
+	redeployed := redeployedEnvironment.GetServices()[0]
+	healthy, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
+	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("wait for fixture redeploy: %w", err)
+	}
+	deploymentHistory, err := client.ListServiceDeployments(userCtx, &platformv1.ListServiceDeploymentsRequest{ServiceId: service.GetId(), Limit: 1})
+	if err != nil {
+		return productE2ESummary{}, fmt.Errorf("list fixture deployment for restart: %w", err)
+	}
+	if len(deploymentHistory.GetDeployments()) != 1 {
+		return productE2ESummary{}, fmt.Errorf("list fixture deployment for restart: got %d deployments", len(deploymentHistory.GetDeployments()))
+	}
+	restartRequest := &platformv1.ApplyDeploymentActionRequest{
+		ServiceId:      service.GetId(),
+		DeploymentId:   deploymentHistory.GetDeployments()[0].GetId(),
+		Action:         platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART,
+		IdempotencyKey: uuid.NewString(),
+		AllocationId:   healthy.GetAllocation().GetAllocationId(),
+	}
+	if _, err := client.ApplyDeploymentAction(userCtx, restartRequest); err != nil {
+		return productE2ESummary{}, fmt.Errorf("restart fixture allocation: %w", err)
+	}
+	if _, err := client.ApplyDeploymentAction(userCtx, restartRequest); err != nil {
+		return productE2ESummary{}, fmt.Errorf("replay fixture restart: %w", err)
+	}
+	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration()); err != nil {
+		return productE2ESummary{}, fmt.Errorf("wait for fixture restart: %w", err)
 	}
 	if err := waitForProductRoute(ctx, routeURL, productE2EMarkerV2); err != nil {
 		return productE2ESummary{}, fmt.Errorf("verify redeployed domain route via public tunnel: %w", err)

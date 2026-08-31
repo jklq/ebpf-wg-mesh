@@ -26,7 +26,7 @@ vi.mock("./server-fns", () => ({
 	doScaleService: doScaleServiceMock,
 	fetchServiceDeployments: vi.fn().mockResolvedValue([]),
 	fetchServiceLogs: vi.fn().mockResolvedValue([]),
-	doRedeployService: vi.fn(),
+	doApplyDeploymentAction: vi.fn(),
 }));
 
 beforeEach(() => {

@@ -23,13 +23,13 @@ import { PanelDeployments } from "./panel-deployments";
 const serverFns = vi.hoisted(() => ({
 	fetchServiceDeployments: vi.fn(),
 	fetchServiceLogs: vi.fn(),
-	doRedeployService: vi.fn(),
+	doApplyDeploymentAction: vi.fn(),
 }));
 
 vi.mock("./server-fns", () => ({
 	fetchServiceDeployments: serverFns.fetchServiceDeployments,
 	fetchServiceLogs: serverFns.fetchServiceLogs,
-	doRedeployService: serverFns.doRedeployService,
+	doApplyDeploymentAction: serverFns.doApplyDeploymentAction,
 }));
 
 describe("deployments panel inline failure", () => {
@@ -87,7 +87,7 @@ describe("deployments panel inline failure", () => {
 				stage: "build",
 			},
 		]);
-		serverFns.doRedeployService.mockReset().mockResolvedValue({
+		serverFns.doApplyDeploymentAction.mockReset().mockResolvedValue({
 			service: failedService(),
 		});
 	});
@@ -159,8 +159,13 @@ describe("deployments panel inline failure", () => {
 
 		fireEvent.click(await screen.findByRole("button", { name: "Retry build" }));
 		await waitFor(() => {
-			expect(serverFns.doRedeployService).toHaveBeenCalledWith({
-				data: { serviceId: "service-1" },
+			expect(serverFns.doApplyDeploymentAction).toHaveBeenCalledWith({
+				data: expect.objectContaining({
+					serviceId: "service-1",
+					deploymentId: "deploy-1",
+					action: "retry",
+					idempotencyKey: expect.any(String),
+				}),
 			});
 		});
 		expect(onRedeployed).toHaveBeenCalled();
@@ -192,7 +197,7 @@ describe("deployments panel live rollouts", () => {
 				completedDeployment(),
 			]);
 		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([]);
-		serverFns.doRedeployService.mockReset();
+		serverFns.doApplyDeploymentAction.mockReset();
 	});
 
 	it("keeps the old active deployment live during a rolling release", async () => {
@@ -220,6 +225,8 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.queryByText("older worker")).toBeNull();
 		fireEvent.click(historyToggle);
 		expect(await screen.findByText("older worker")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Rollback" })).toBeTruthy();
 	});
 
 	it("summarizes exposure and replicas above the deployment cards", async () => {
@@ -431,8 +438,13 @@ function buildingDeployment(): DashboardDeploymentRecord {
 	};
 }
 
+function pinnedDigest(nibble: string): string {
+	return `registry.example.test/web@sha256:${nibble.repeat(64)}`;
+}
+
 function activeDeployment(): DashboardDeploymentRecord {
 	const startedAt = new Date("2026-08-13T10:02:00Z");
+	const imageDigest = pinnedDigest("a");
 	return {
 		id: "deploy-1",
 		rolloutGeneration: 1,
@@ -441,7 +453,7 @@ function activeDeployment(): DashboardDeploymentRecord {
 			buildId: "build-1",
 			state: "succeeded",
 			commitSha: "cc33dd44ee",
-			imageDigest: "sha256:old",
+			imageDigest,
 			failureReason: "",
 			commitMessage: "keep serving invoices",
 			queuedAt: startedAt,
@@ -467,7 +479,7 @@ function activeDeployment(): DashboardDeploymentRecord {
 			reasonCode: "DEPLOYMENT_ACTIVE",
 			detail: "Serving traffic",
 			specRevision: 1,
-			imageDigest: "sha256:old",
+			imageDigest,
 			rolloutGeneration: 1,
 			transitionedAt: startedAt,
 		},

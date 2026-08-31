@@ -20,6 +20,7 @@ enum BuildState {
   BUILD_STATE_SUCCEEDED = 3;
   BUILD_STATE_FAILED = 4;
   BUILD_STATE_SUPERSEDED = 5;
+  BUILD_STATE_CANCELLED = 6;
 }
 
 enum SourceAccessState {
@@ -269,6 +270,26 @@ enum DeploymentCauseKind {
   DEPLOYMENT_CAUSE_KIND_WEBHOOK = 5;
 }
 
+enum DeploymentAction {
+  DEPLOYMENT_ACTION_UNSPECIFIED = 0;
+  DEPLOYMENT_ACTION_RESTART = 1;
+  DEPLOYMENT_ACTION_EXACT_REDEPLOY = 2;
+  DEPLOYMENT_ACTION_ROLLBACK = 3;
+  DEPLOYMENT_ACTION_CANCEL = 4;
+  DEPLOYMENT_ACTION_REMOVE = 5;
+  DEPLOYMENT_ACTION_RETRY = 6;
+}
+
+message DeploymentActionRecord {
+  string id = 1;
+  DeploymentAction action = 2;
+  string target_deployment_id = 3;
+  string result_deployment_id = 4;
+  string allocation_id = 5;
+  string requested_by_user_id = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
 message DeploymentStatus {
   string deployment_id = 1;
   DeploymentState state = 2;
@@ -514,17 +535,18 @@ message UpdateServiceRequest {
   ServiceUpdate service = 2;
 }
 
-message RedeployServiceRequest {
-  string service_id = 1;
-}
-
 message ScaleServiceRequest {
   string service_id = 1;
   int32 desired_replica_count = 2;
 }
 
-message RestartServiceRequest {
+message ApplyDeploymentActionRequest {
   string service_id = 1;
+  string deployment_id = 2;
+  DeploymentAction action = 3;
+  string idempotency_key = 4;
+  // Empty restarts every allocation. Only valid for RESTART.
+  string allocation_id = 5;
 }
 
 message DiscardServiceChangesRequest {
@@ -685,6 +707,8 @@ message DeploymentRecord {
   DeploymentStatus status = 10;
   repeated DeploymentStage stages = 11;
   string image_digest = 12;
+  repeated DeploymentActionRecord actions = 13;
+  map<string, int64> variable_versions = 14;
 }
 
 message ListServiceDeploymentsResponse {
@@ -867,9 +891,8 @@ service PlatformService {
 
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
-  rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus);
   rpc ScaleService(ScaleServiceRequest) returns (ServiceStatus);
-  rpc RestartService(RestartServiceRequest) returns (ServiceStatus);
+  rpc ApplyDeploymentAction(ApplyDeploymentActionRequest) returns (ServiceStatus);
   rpc DiscardServiceChanges(DiscardServiceChangesRequest) returns (Service);
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
   rpc GetService(GetServiceRequest) returns (Service);
