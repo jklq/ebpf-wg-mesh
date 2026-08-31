@@ -32,6 +32,8 @@ type AgentHello struct {
 	MemoryMebibytesCapacity int64                  `protobuf:"varint,5,opt,name=memory_mebibytes_capacity,json=memoryMebibytesCapacity,proto3" json:"memory_mebibytes_capacity,omitempty"`
 	WireguardPublicKey      string                 `protobuf:"bytes,6,opt,name=wireguard_public_key,json=wireguardPublicKey,proto3" json:"wireguard_public_key,omitempty"`
 	WireguardListenPort     int32                  `protobuf:"varint,7,opt,name=wireguard_listen_port,json=wireguardListenPort,proto3" json:"wireguard_listen_port,omitempty"`
+	RuntimeCapabilities     []string               `protobuf:"bytes,8,rep,name=runtime_capabilities,json=runtimeCapabilities,proto3" json:"runtime_capabilities,omitempty"`
+	SoftwareVersion         string                 `protobuf:"bytes,9,opt,name=software_version,json=softwareVersion,proto3" json:"software_version,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -113,6 +115,20 @@ func (x *AgentHello) GetWireguardListenPort() int32 {
 		return x.WireguardListenPort
 	}
 	return 0
+}
+
+func (x *AgentHello) GetRuntimeCapabilities() []string {
+	if x != nil {
+		return x.RuntimeCapabilities
+	}
+	return nil
+}
+
+func (x *AgentHello) GetSoftwareVersion() string {
+	if x != nil {
+		return x.SoftwareVersion
+	}
+	return ""
 }
 
 type EnrollRequest struct {
@@ -1566,7 +1582,7 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xb4\x02\n" +
+	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\x92\x03\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
@@ -1575,7 +1591,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x13cpu_millis_capacity\x18\x04 \x01(\x03R\x11cpuMillisCapacity\x12:\n" +
 	"\x19memory_mebibytes_capacity\x18\x05 \x01(\x03R\x17memoryMebibytesCapacity\x120\n" +
 	"\x14wireguard_public_key\x18\x06 \x01(\tR\x12wireguardPublicKey\x122\n" +
-	"\x15wireguard_listen_port\x18\a \x01(\x05R\x13wireguardListenPort\"l\n" +
+	"\x15wireguard_listen_port\x18\a \x01(\x05R\x13wireguardListenPort\x121\n" +
+	"\x14runtime_capabilities\x18\b \x03(\tR\x13runtimeCapabilities\x12)\n" +
+	"\x10software_version\x18\t \x01(\tR\x0fsoftwareVersion\"l\n" +
 	"\rEnrollRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\x12'\n" +

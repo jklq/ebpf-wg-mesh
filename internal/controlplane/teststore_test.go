@@ -11,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
@@ -37,6 +39,39 @@ func TestMain(m *testing.M) {
 		testServer.Stop()
 	}
 	os.Exit(code)
+}
+
+func upsertTestAgent(t *testing.T, store *Store, ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
+	t.Helper()
+	if hello == nil {
+		return false, fmt.Errorf("agent hello is required")
+	}
+	if len(hello.RuntimeCapabilities) == 0 {
+		hello.RuntimeCapabilities = []string{"containerd", "wireguard", "ebpf-policy"}
+	}
+	if strings.TrimSpace(hello.SoftwareVersion) == "" {
+		hello.SoftwareVersion = "test"
+	}
+	if err := enrollTestAgent(ctx, store, hello); err != nil {
+		return false, err
+	}
+	return store.upsertAgent(ctx, hello)
+}
+
+func enrollTestAgent(ctx context.Context, store *Store, hello *agentv1.AgentHello) error {
+	id := strings.TrimSpace(hello.GetAgentId())
+	name := strings.TrimSpace(hello.GetName())
+	if name == "" {
+		name = id
+	}
+	failureDomain := strings.ToLower(id)
+	now := time.Now().UTC()
+	_, err := store.db.ExecContext(ctx, `INSERT INTO agents(
+		id, name, lifecycle_state, region, zone, failure_domain,
+		reserved_cpu_millis, reserved_memory_mebibytes, last_seen_at, created_at, updated_at
+	) VALUES ($1, $2, 'enrolling', 'default', '', $3, 0, 0, $4, $5, $5)
+	ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, time.Unix(0, 0).UTC(), now)
+	return err
 }
 
 func openTestStore(t *testing.T) *Store {
@@ -117,6 +152,8 @@ func resetTestStore(t *testing.T, store *Store) {
 		"projects",
 		"agents",
 		"agent_bootstrap_tokens",
+		"agent_certificates",
+		"platform_operators",
 		"environment_network_identity_counter",
 	}
 	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {

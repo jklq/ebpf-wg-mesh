@@ -26,6 +26,10 @@ import {
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
 	type DashboardEnvironment,
+	type DashboardAgentEnrollment,
+	type DashboardAgentLifecycleState,
+	type DashboardFleet,
+	type DashboardFleetAgent,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
@@ -44,6 +48,7 @@ import {
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
 	GitHubApiError,
+	type FleetAgentInput,
 	type GitHubUserRepository,
 	PlatformGatewayError,
 	type StoredDashboardGitHubAccount,
@@ -52,6 +57,60 @@ import {
 import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
 import { normalizeHostname } from "#/lib/dashboard/domain/dns.server";
 import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
+
+export async function loadFleetFromSession(
+	runtime: DashboardRuntime,
+): Promise<DashboardFleet> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "listFleet", (platform) =>
+		platform.listFleet(session.user),
+	);
+}
+
+export async function createFleetAgentFromSession(
+	runtime: DashboardRuntime,
+	input: FleetAgentInput,
+): Promise<DashboardAgentEnrollment> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "createFleetAgent", (platform) =>
+		platform.createFleetAgent(session.user, normalizeFleetAgentInput(input)),
+	);
+}
+
+export async function updateFleetAgentFromSession(
+	runtime: DashboardRuntime,
+	input: FleetAgentInput,
+): Promise<DashboardFleetAgent> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "updateFleetAgent", (platform) =>
+		platform.updateFleetAgent(session.user, normalizeFleetAgentInput(input)),
+	);
+}
+
+export async function setFleetAgentLifecycleFromSession(
+	runtime: DashboardRuntime,
+	input: { agentId: string; lifecycleState: DashboardAgentLifecycleState },
+): Promise<DashboardFleetAgent> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "setFleetAgentLifecycle", (platform) =>
+		platform.setFleetAgentLifecycle(session.user, {
+			agentId: input.agentId.trim(),
+			lifecycleState: input.lifecycleState,
+		}),
+	);
+}
+
+function normalizeFleetAgentInput(input: FleetAgentInput): FleetAgentInput {
+	return {
+		agentId: input.agentId.trim(),
+		name: input.name.trim(),
+		region: input.region.trim().toLowerCase(),
+		zone: input.zone.trim().toLowerCase(),
+		failureDomain: input.failureDomain.trim().toLowerCase(),
+		reservedCpuMillis: Number(input.reservedCpuMillis),
+		reservedMemoryMebibytes: Number(input.reservedMemoryMebibytes),
+	};
+}
 
 export async function loadDashboardHome(
 	runtime: DashboardRuntime,
@@ -900,9 +959,12 @@ export async function updateServiceFromSession(
 			serviceId: input.serviceId,
 			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
 			spec: {
-				...(desiredSource ? { source: desiredSource } : {}),
+			...(desiredSource ? { source: desiredSource } : {}),
 				desiredReplicaCount:
 					input.desiredReplicaCount ?? current.spec?.desiredReplicaCount,
+				placementRegion:
+					input.placementRegion?.trim().toLowerCase() ??
+					current.spec?.placementRegion,
 				runtime: {
 					env: normalizeRuntimeEnv(
 						input.runtimeEnv ?? current.spec?.runtime.env,

@@ -52,6 +52,25 @@ type serviceQueryer interface {
 
 type jsonInt32Slice []int32
 
+type jsonStringSlice []string
+
+func (p *jsonStringSlice) Scan(src any) error {
+	if p == nil {
+		return nil
+	}
+	switch v := src.(type) {
+	case nil:
+		*p = nil
+		return nil
+	case []byte:
+		return json.Unmarshal(v, (*[]string)(p))
+	case string:
+		return json.Unmarshal([]byte(v), (*[]string)(p))
+	default:
+		return fmt.Errorf("scan string slice json: unsupported type %T", src)
+	}
+}
+
 func (p *jsonInt32Slice) Scan(src any) error {
 	if p == nil {
 		return nil
@@ -103,6 +122,7 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		return nil
 	}
 	out := proto.Clone(spec).(*platformv1.ServiceSpec)
+	out.PlacementRegion = strings.ToLower(strings.TrimSpace(out.GetPlacementRegion()))
 	runtime := out.GetRuntime()
 	if runtime != nil {
 		if runtime.GetSandboxProfile() == nil || strings.TrimSpace(runtime.GetSandboxProfile().GetName()) == "" {
@@ -155,6 +175,17 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		}
 	}
 	return out
+}
+
+func validateServicePlacement(spec *platformv1.ServiceSpec) error {
+	region := strings.TrimSpace(spec.GetPlacementRegion())
+	if region == "" {
+		return nil
+	}
+	if !fleetLabelPattern.MatchString(region) {
+		return errors.New("placement region must be a lowercase operator region label")
+	}
+	return nil
 }
 
 func serviceRuntime(spec *platformv1.ServiceSpec) *platformv1.ServiceRuntime {
@@ -335,6 +366,10 @@ func buildSourceSummary(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceS
 
 type placementCandidate struct {
 	ID                     string
+	Region                 string
+	Zone                   string
+	FailureDomain          string
+	RuntimeCapabilities    []string
 	CPUMillisCapacity      int64
 	MemoryMebibytesCapcity int64
 	ServiceCount           int64

@@ -55,7 +55,7 @@ func TestReplicaPlacementColocatesOnlyWhenCapacityRequiresIt(t *testing.T) {
 	hello := agentHello("node-b")
 	hello.CpuMillisCapacity = 50
 	hello.MemoryMebibytesCapacity = 32
-	if _, err := store.upsertAgent(ctx, hello); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,7 +79,7 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	hello := agentHello("node-a")
 	hello.CpuMillisCapacity = 250
 	hello.MemoryMebibytesCapacity = 256
-	if _, err := store.upsertAgent(ctx, hello); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
 
@@ -390,7 +390,7 @@ func seedReplicaFixture(t *testing.T, store *Store, ctx context.Context, agentID
 	for _, agentID := range agentIDs {
 		hello := agentHello(agentID)
 		hello.AdvertiseAddr = "fd00:30::" + strings.TrimPrefix(agentID, "node-")
-		if _, err := store.upsertAgent(ctx, hello); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 			t.Fatalf("upsertAgent(%s): %v", agentID, err)
 		}
 	}

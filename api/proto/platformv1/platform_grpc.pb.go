@@ -1673,6 +1673,10 @@ var BuilderService_ServiceDesc = grpc.ServiceDesc{
 
 const (
 	OpsService_IngestGitHubWebhook_FullMethodName = "/platform.v1.OpsService/IngestGitHubWebhook"
+	OpsService_ListFleet_FullMethodName           = "/platform.v1.OpsService/ListFleet"
+	OpsService_CreateAgent_FullMethodName         = "/platform.v1.OpsService/CreateAgent"
+	OpsService_UpdateAgent_FullMethodName         = "/platform.v1.OpsService/UpdateAgent"
+	OpsService_SetAgentLifecycle_FullMethodName   = "/platform.v1.OpsService/SetAgentLifecycle"
 )
 
 // OpsServiceClient is the client API for OpsService service.
@@ -1680,6 +1684,10 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OpsServiceClient interface {
 	IngestGitHubWebhook(ctx context.Context, in *IngestGitHubWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ListFleet(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Fleet, error)
+	CreateAgent(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*AgentEnrollment, error)
+	UpdateAgent(ctx context.Context, in *UpdateAgentRequest, opts ...grpc.CallOption) (*Agent, error)
+	SetAgentLifecycle(ctx context.Context, in *SetAgentLifecycleRequest, opts ...grpc.CallOption) (*Agent, error)
 }
 
 type opsServiceClient struct {
@@ -1700,11 +1708,55 @@ func (c *opsServiceClient) IngestGitHubWebhook(ctx context.Context, in *IngestGi
 	return out, nil
 }
 
+func (c *opsServiceClient) ListFleet(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Fleet, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Fleet)
+	err := c.cc.Invoke(ctx, OpsService_ListFleet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) CreateAgent(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*AgentEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentEnrollment)
+	err := c.cc.Invoke(ctx, OpsService_CreateAgent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) UpdateAgent(ctx context.Context, in *UpdateAgentRequest, opts ...grpc.CallOption) (*Agent, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Agent)
+	err := c.cc.Invoke(ctx, OpsService_UpdateAgent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) SetAgentLifecycle(ctx context.Context, in *SetAgentLifecycleRequest, opts ...grpc.CallOption) (*Agent, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Agent)
+	err := c.cc.Invoke(ctx, OpsService_SetAgentLifecycle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OpsServiceServer is the server API for OpsService service.
 // All implementations must embed UnimplementedOpsServiceServer
 // for forward compatibility.
 type OpsServiceServer interface {
 	IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error)
+	ListFleet(context.Context, *emptypb.Empty) (*Fleet, error)
+	CreateAgent(context.Context, *CreateAgentRequest) (*AgentEnrollment, error)
+	UpdateAgent(context.Context, *UpdateAgentRequest) (*Agent, error)
+	SetAgentLifecycle(context.Context, *SetAgentLifecycleRequest) (*Agent, error)
 	mustEmbedUnimplementedOpsServiceServer()
 }
 
@@ -1717,6 +1769,18 @@ type UnimplementedOpsServiceServer struct{}
 
 func (UnimplementedOpsServiceServer) IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method IngestGitHubWebhook not implemented")
+}
+func (UnimplementedOpsServiceServer) ListFleet(context.Context, *emptypb.Empty) (*Fleet, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFleet not implemented")
+}
+func (UnimplementedOpsServiceServer) CreateAgent(context.Context, *CreateAgentRequest) (*AgentEnrollment, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateAgent not implemented")
+}
+func (UnimplementedOpsServiceServer) UpdateAgent(context.Context, *UpdateAgentRequest) (*Agent, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateAgent not implemented")
+}
+func (UnimplementedOpsServiceServer) SetAgentLifecycle(context.Context, *SetAgentLifecycleRequest) (*Agent, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetAgentLifecycle not implemented")
 }
 func (UnimplementedOpsServiceServer) mustEmbedUnimplementedOpsServiceServer() {}
 func (UnimplementedOpsServiceServer) testEmbeddedByValue()                    {}
@@ -1757,6 +1821,78 @@ func _OpsService_IngestGitHubWebhook_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OpsService_ListFleet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).ListFleet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_ListFleet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).ListFleet(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_CreateAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).CreateAgent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_CreateAgent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).CreateAgent(ctx, req.(*CreateAgentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_UpdateAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).UpdateAgent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_UpdateAgent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).UpdateAgent(ctx, req.(*UpdateAgentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_SetAgentLifecycle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetAgentLifecycleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).SetAgentLifecycle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_SetAgentLifecycle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).SetAgentLifecycle(ctx, req.(*SetAgentLifecycleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OpsService_ServiceDesc is the grpc.ServiceDesc for OpsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1767,6 +1903,22 @@ var OpsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IngestGitHubWebhook",
 			Handler:    _OpsService_IngestGitHubWebhook_Handler,
+		},
+		{
+			MethodName: "ListFleet",
+			Handler:    _OpsService_ListFleet_Handler,
+		},
+		{
+			MethodName: "CreateAgent",
+			Handler:    _OpsService_CreateAgent_Handler,
+		},
+		{
+			MethodName: "UpdateAgent",
+			Handler:    _OpsService_UpdateAgent_Handler,
+		},
+		{
+			MethodName: "SetAgentLifecycle",
+			Handler:    _OpsService_SetAgentLifecycle_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

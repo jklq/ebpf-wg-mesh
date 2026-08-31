@@ -25,7 +25,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 		t.Fatalf("list projects: %v", err)
 	}
 	for _, agentID := range []string{"node-1", "node-2"} {
-		if _, err := store.upsertAgent(ctx, agentHello(agentID)); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 			t.Fatalf("upsert %s: %v", agentID, err)
 		}
 	}
@@ -72,7 +72,7 @@ func TestFailoverServicesFromAgentIgnoresFreshNode(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	notified, environmentsChanged, err := store.failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
@@ -92,7 +92,7 @@ func TestServerRestoresPersistedAgentExpiryDeadline(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.upsertAgent(ctx, agentHello("node-stale")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-stale")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,7 +138,7 @@ func TestAgentExpiryTriggersStatelessServiceRollover(t *testing.T) {
 		t.Fatalf("list projects: %v", err)
 	}
 	for _, agentID := range []string{"node-a", "node-b"} {
-		if _, err := store.upsertAgent(ctx, agentHello(agentID)); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 			t.Fatalf("upsert %s: %v", agentID, err)
 		}
 	}

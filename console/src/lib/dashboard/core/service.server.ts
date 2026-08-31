@@ -21,6 +21,7 @@ import {
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
 	inspectRepositorySourceFromSession,
+	loadFleetFromSession,
 	listDomainBindingsFromSession,
 	listEnvironmentServicesFromSession,
 	listServiceDeploymentsFromSession,
@@ -35,6 +36,9 @@ import {
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
 	updateDomainBindingFromSession,
+	createFleetAgentFromSession,
+	updateFleetAgentFromSession,
+	setFleetAgentLifecycleFromSession,
 	updateServiceFromSession,
 	waitForEnvironmentServicesFromSession,
 	waitForProjectServicesFromSession,
@@ -54,6 +58,18 @@ export function createDashboardService(
 	const runtime = createDashboardRuntime(config, deps);
 
 	return {
+		loadFleetFromSession() {
+			return loadFleetFromSession(runtime);
+		},
+		createFleetAgentFromSession(input) {
+			return createFleetAgentFromSession(runtime, input);
+		},
+		updateFleetAgentFromSession(input) {
+			return updateFleetAgentFromSession(runtime, input);
+		},
+		setFleetAgentLifecycleFromSession(input) {
+			return setFleetAgentLifecycleFromSession(runtime, input);
+		},
 		listDevLogins() {
 			return config.devUsers;
 		},

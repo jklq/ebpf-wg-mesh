@@ -92,7 +92,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	volume, err := store.createVolume(ctx, "owner", source.ID, "data", 64<<20, "node-1")
@@ -169,7 +169,7 @@ func TestEnvironmentDeployAndDeleteAreScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, agentID := range []string{"node-1", "node-2"} {
-		if _, err := store.upsertAgent(ctx, agentHello(agentID)); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 			t.Fatal(err)
 		}
 	}
