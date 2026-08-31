@@ -244,13 +244,48 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		}
 		spec = canonicalServiceSpec(spec)
 		placementChanged := current.AllocatedAgentID != trustedAgentID
-		if sameServiceSpec(current.Spec, spec) && !placementChanged {
+		trustedAllocationExists := false
+		if placementChanged {
+			if err := tx.QueryRowContext(ctx,
+				`SELECT EXISTS(
+					SELECT 1 FROM allocations
+					 WHERE service_id = $1 AND agent_id = $2
+					   AND rollout_state IN ($3, $4)
+				)`,
+				current.ID, trustedAgentID, allocationRolloutStarting, allocationRolloutServing,
+			).Scan(&trustedAllocationExists); err != nil {
+				return err
+			}
+		}
+		if sameServiceSpec(current.Spec, spec) && (!placementChanged || trustedAllocationExists) {
 			rec = current
+			if trustedAllocationExists {
+				rec.AllocatedAgentID = trustedAgentID
+			}
 			return nil
 		}
 		now := time.Now().UTC()
 		nextSpecRevision := current.SpecRevision + 1
 		nextRolloutGeneration := current.RolloutGeneration + 1
+		desiredReplicas := specReplicaCount(spec, current.DesiredReplicaCount)
+		if err := validateDesiredReplicaCount(desiredReplicas); err != nil {
+			return err
+		}
+		if err := validateVolumeReplicaCompatibility(spec, desiredReplicas); err != nil {
+			return err
+		}
+		var existing []allocationRecord
+		if placementChanged {
+			existing, err = s.listAllocationsByServiceIDQuerier(ctx, tx, current.ID, true)
+			if err != nil {
+				return err
+			}
+			rolloutService := current
+			rolloutService.Spec = spec
+			if _, err := s.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
+				return err
+			}
+		}
 		specJSON, err := protojson.Marshal(spec)
 		if err != nil {
 			return err
@@ -260,10 +295,14 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 			`UPDATE services
 				    SET current_spec_revision = $1,
 				        current_rollout_generation = $2,
-				        updated_at = $3
-				  WHERE id = $4`,
+				        current_resolved_image = $3,
+				        desired_replica_count = $4,
+				        updated_at = $5
+				  WHERE id = $6`,
 			nextSpecRevision,
 			nextRolloutGeneration,
+			directImageRef(spec),
+			desiredReplicas,
 			now,
 			current.ID,
 		); err != nil {
@@ -285,34 +324,35 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		if _, err := s.insertDeploymentTx(ctx, tx, current.ID, deploymentStateScheduling, deploymentActor{Kind: deploymentCauseSystem}, reasonManagedSync, "Managed service synchronized", nextSpecRevision, nextRolloutGeneration, "", directImageRef(spec), "", now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(
-			ctx,
-			`UPDATE allocations
-			    SET desired_spec_revision = $1,
-			        desired_rollout_generation = $2,
-			        agent_id = $3,
-			        phase = $4,
-			        message = $5,
-			        healthy = $6,
-			        updated_at = $7
-			  WHERE service_id = $8`,
-			nextSpecRevision,
-			nextRolloutGeneration,
-			trustedAgentID,
-			"Pending",
-			"",
-			false,
-			now,
-			current.ID,
-		); err != nil {
-			return err
-		}
 		rec = current
 		rec.Spec = spec
 		rec.SpecRevision = nextSpecRevision
 		rec.RolloutGeneration = nextRolloutGeneration
 		rec.AllocatedAgentID = trustedAgentID
+		rec.ResolvedImage = directImageRef(spec)
+		rec.DesiredReplicaCount = desiredReplicas
 		rec.UpdatedAt = now
+		if placementChanged {
+			if _, err := s.insertAllocationTx(ctx, tx, rec, trustedAgentID, now); err != nil {
+				return err
+			}
+			if _, err := s.advanceRolloutTx(ctx, tx, current.ID, now); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE allocations
+				    SET desired_spec_revision = $1,
+				        desired_rollout_generation = $2,
+				        updated_at = $3
+				  WHERE service_id = $4 AND agent_id = $5
+				    AND rollout_state IN ($6, $7)`,
+				nextSpecRevision, nextRolloutGeneration, now, current.ID, trustedAgentID,
+				allocationRolloutStarting, allocationRolloutServing,
+			); err != nil {
+				return err
+			}
+		}
 		if desiredSourceSpec(spec) != nil {
 			if err := s.enqueueSourceSpecChangedTx(ctx, tx, rec.ID, rec.SpecRevision, false); err != nil {
 				return err
@@ -321,7 +361,7 @@ func (s *Store) ensureManagedService(ctx context.Context, projectID, name string
 		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
 			return err
 		}
-		affectedAgentIDs = []string{current.AllocatedAgentID, trustedAgentID}
+		affectedAgentIDs = appendAllocationAgentIDs([]string{trustedAgentID}, existing...)
 		rec.RolloutGeneration = nextRolloutGeneration
 		rec.UpdatedAt = now
 		return nil
