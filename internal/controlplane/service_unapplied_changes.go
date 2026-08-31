@@ -154,6 +154,14 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		current: replicaCountValue(deployed),
 		next:    replicaCountValue(current),
 	})
+	fields = append(fields, unappliedChangeField{
+		id:      "placementRegion",
+		section: "Placement",
+		field:   "Region",
+		path:    "placementRegion",
+		current: deployed.GetPlacementRegion(),
+		next:    current.GetPlacementRegion(),
+	})
 	return fields
 }
 
@@ -292,6 +300,8 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 		} else {
 			current.DesiredReplicaCount = nil
 		}
+	case "placementRegion":
+		current.PlacementRegion = deployed.GetPlacementRegion()
 	default:
 		const envPrefix = "runtime.env."
 		const portPrefix = "runtime.ports."

@@ -201,6 +201,73 @@ export interface DashboardServiceSpec {
 	source?: DashboardSourceSpec;
 	runtime: DashboardRuntimeSpec;
 	desiredReplicaCount?: number;
+	placementRegion?: string;
+}
+
+export type DashboardAgentLifecycleState =
+	| "enrolling"
+	| "active"
+	| "cordoned"
+	| "draining"
+	| "unavailable"
+	| "retired"
+	| "unspecified";
+
+export interface DashboardFleetAgent {
+	id: string;
+	name: string;
+	lifecycleState: DashboardAgentLifecycleState;
+	region: string;
+	zone: string;
+	failureDomain: string;
+	healthy: boolean;
+	lastSeenAt?: Date;
+	cpuMillisCapacity: number;
+	memoryMebibytesCapacity: number;
+	reservedCpuMillis: number;
+	reservedMemoryMebibytes: number;
+	schedulableCpuMillis: number;
+	schedulableMemoryMebibytes: number;
+	allocatedCpuMillis: number;
+	allocatedMemoryMebibytes: number;
+	headroomCpuMillis: number;
+	headroomMemoryMebibytes: number;
+	allocationCount: number;
+	runtimeCapabilities: string[];
+	softwareVersion: string;
+	versionSkewWarning?: string;
+	maintenanceMessage?: string;
+	credentialRevokedAt?: Date;
+}
+
+export interface DashboardFleet {
+	agents: DashboardFleetAgent[];
+	capacity: {
+		nodeCount: number;
+		schedulableNodeCount: number;
+		schedulableCpuMillis: number;
+		schedulableMemoryMebibytes: number;
+		allocatedCpuMillis: number;
+		allocatedMemoryMebibytes: number;
+		headroomCpuMillis: number;
+		headroomMemoryMebibytes: number;
+	};
+	versionWarning?: string;
+}
+
+export interface FleetAgentInput {
+	agentId: string;
+	name: string;
+	region: string;
+	zone: string;
+	failureDomain: string;
+	reservedCpuMillis: number;
+	reservedMemoryMebibytes: number;
+}
+
+export interface DashboardAgentEnrollment {
+	agent: DashboardFleetAgent;
+	bootstrapToken: string;
 }
 
 export interface DashboardResolvedSourceBinding {
@@ -612,6 +679,19 @@ export interface DashboardStore {
 }
 
 export interface PlatformGateway {
+	listFleet(user: DashboardUser): Promise<DashboardFleet>;
+	createFleetAgent(
+		user: DashboardUser,
+		input: FleetAgentInput,
+	): Promise<DashboardAgentEnrollment>;
+	updateFleetAgent(
+		user: DashboardUser,
+		input: FleetAgentInput,
+	): Promise<DashboardFleetAgent>;
+	setFleetAgentLifecycle(
+		user: DashboardUser,
+		input: { agentId: string; lifecycleState: DashboardAgentLifecycleState },
+	): Promise<DashboardFleetAgent>;
 	listProjects(user: DashboardUser): Promise<Array<DashboardProject>>;
 	createProject(user: DashboardUser, name: string): Promise<DashboardProject>;
 	listEnvironments(
@@ -839,9 +919,21 @@ export interface UpdateServiceInput {
 	contextDir?: string;
 	restart?: DashboardRestartSpec;
 	desiredReplicaCount?: number;
+	placementRegion?: string;
 }
 
 export interface DashboardService {
+	loadFleetFromSession(): Promise<DashboardFleet>;
+	createFleetAgentFromSession(
+		input: FleetAgentInput,
+	): Promise<DashboardAgentEnrollment>;
+	updateFleetAgentFromSession(
+		input: FleetAgentInput,
+	): Promise<DashboardFleetAgent>;
+	setFleetAgentLifecycleFromSession(input: {
+		agentId: string;
+		lifecycleState: DashboardAgentLifecycleState;
+	}): Promise<DashboardFleetAgent>;
 	listDevLogins(): Array<DevLoginIdentity>;
 	isGitHubLoginEnabled(): boolean;
 	getPublicBaseURL(): string;

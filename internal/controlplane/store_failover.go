@@ -32,6 +32,13 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 		if lastSeen.After(cutoff) {
 			return nil
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agents SET
+			state_before_unavailable = CASE WHEN lifecycle_state IN ('active', 'cordoned', 'draining') THEN lifecycle_state ELSE state_before_unavailable END,
+			lifecycle_state = CASE WHEN lifecycle_state = 'retired' THEN lifecycle_state ELSE 'unavailable' END,
+			maintenance_message = CASE WHEN lifecycle_state = 'retired' THEN maintenance_message ELSE 'heartbeat expired; workloads are being failed over' END,
+			updated_at = $1 WHERE id = $2`, time.Now().UTC(), agentID); err != nil {
+			return err
+		}
 
 		rows, err := tx.QueryContext(ctx,
 			`SELECT a.id, a.service_id, a.phase, a.message, a.allocation_ip, a.healthy_ports, a.healthy,
@@ -179,7 +186,7 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			changedEnvironments[service.environmentID] = struct{}{}
 			if current, ok, err := s.currentDeploymentTx(ctx, tx, service.serviceID); err != nil {
 				return err
-			} else if ok {
+			} else if ok && deploymentTransitionAllowed(current.State, deploymentStateScheduling) {
 				if _, err := s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
 					ToState:    deploymentStateScheduling,
 					Actor:      deploymentActor{Kind: deploymentCauseSystem},

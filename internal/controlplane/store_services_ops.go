@@ -144,6 +144,9 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 	if spec == nil {
 		spec = &platformv1.ServiceSpec{}
 	}
+	if err := validateServicePlacement(spec); err != nil {
+		return serviceRecord{}, err
+	}
 	if !specHasDesiredReplicaCount(spec) {
 		spec.DesiredReplicaCount = replicaCountPtr(defaultDesiredReplicaCount)
 	}
@@ -426,8 +429,12 @@ func (s *Store) chooseAgentForServiceTx(ctx context.Context, tx *sql.Tx, environ
 func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer) ([]placementCandidate, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT a.id,
-		        a.cpu_millis_capacity,
-		        a.memory_mebibytes_capacity,
+		        a.region,
+		        a.zone,
+		        a.failure_domain,
+		        a.runtime_capabilities,
+		        greatest(a.cpu_millis_capacity - a.reserved_cpu_millis, 0),
+		        greatest(a.memory_mebibytes_capacity - a.reserved_memory_mebibytes, 0),
 		        COALESCE(stats.service_count, 0),
 		        COALESCE(stats.cpu_millis, 0),
 		        COALESCE(stats.memory_mebibytes, 0)
@@ -445,7 +452,7 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 			 GROUP BY a.agent_id
 		   ) AS stats
 		     ON stats.agent_id = a.id
-		  WHERE a.last_seen_at > $1
+		  WHERE a.last_seen_at > $1 AND a.lifecycle_state = 'active'
 		  ORDER BY COALESCE(stats.service_count, 0) ASC, a.id ASC`,
 		time.Now().UTC().Add(-30*time.Second),
 	)
@@ -459,6 +466,10 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 		var candidate placementCandidate
 		if err := rows.Scan(
 			&candidate.ID,
+			&candidate.Region,
+			&candidate.Zone,
+			&candidate.FailureDomain,
+			(*jsonStringSlice)(&candidate.RuntimeCapabilities),
 			&candidate.CPUMillisCapacity,
 			&candidate.MemoryMebibytesCapcity,
 			&candidate.ServiceCount,

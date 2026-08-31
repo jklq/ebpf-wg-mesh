@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -14,6 +14,38 @@ var schemaUpgrades = map[int][]string{
 		`ALTER TABLE allocations ALTER COLUMN created_at DROP DEFAULT`,
 		`ALTER TABLE allocations DROP CONSTRAINT IF EXISTS allocations_service_id_key`,
 		`CREATE INDEX IF NOT EXISTS idx_allocations_service ON allocations(service_id, id)`,
+	},
+	4: {
+		`CREATE TABLE IF NOT EXISTS platform_operators (
+			user_id STRING PRIMARY KEY,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS lifecycle_state STRING NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS state_before_unavailable STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS region STRING NOT NULL DEFAULT 'default'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS zone STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS failure_domain STRING NOT NULL DEFAULT ''`,
+		`UPDATE agents SET failure_domain = lower(regexp_replace(id, '[^a-zA-Z0-9._-]', '-', 'g')) WHERE failure_domain = ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS reserved_cpu_millis INT8 NOT NULL DEFAULT 0`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS reserved_memory_mebibytes INT8 NOT NULL DEFAULT 0`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS runtime_capabilities JSONB NOT NULL DEFAULT '["containerd","ebpf-policy","wireguard"]'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS software_version STRING NOT NULL DEFAULT 'pre-fleet'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS maintenance_message STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS credential_revoked_at TIMESTAMPTZ NULL`,
+		`ALTER TABLE agents ALTER COLUMN advertise_addr SET DEFAULT ''`,
+		`ALTER TABLE agents ALTER COLUMN cpu_millis_capacity SET DEFAULT 0`,
+		`ALTER TABLE agents ALTER COLUMN memory_mebibytes_capacity SET DEFAULT 0`,
+		`ALTER TABLE agent_bootstrap_tokens ADD COLUMN IF NOT EXISTS origin STRING NOT NULL DEFAULT 'config'`,
+		`CREATE TABLE IF NOT EXISTS agent_certificates (
+			serial STRING PRIMARY KEY,
+			agent_id STRING NOT NULL,
+			issued_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_certificates_agent ON agent_certificates(agent_id, issued_at DESC)`,
+		`DROP INDEX IF EXISTS idx_agents_last_seen_id`,
+		`CREATE INDEX IF NOT EXISTS idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
+			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
+			         reserved_cpu_millis, reserved_memory_mebibytes)`,
 	},
 }
 
@@ -37,6 +69,10 @@ var currentSchema = []string{
 			PRIMARY KEY (user_id, project_id)
 		)`,
 	`CREATE INDEX idx_project_memberships_user ON project_memberships(user_id, project_id)`,
+	`CREATE TABLE platform_operators (
+			user_id STRING PRIMARY KEY,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
 	`CREATE TABLE environment_network_identity_counter (
 			id BOOL PRIMARY KEY,
 			next_identity INT8 NOT NULL
@@ -60,27 +96,46 @@ var currentSchema = []string{
 	`CREATE TABLE agents (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
-			advertise_addr STRING NOT NULL,
+			lifecycle_state STRING NOT NULL,
+			state_before_unavailable STRING NOT NULL DEFAULT '',
+			region STRING NOT NULL,
+			zone STRING NOT NULL DEFAULT '',
+			failure_domain STRING NOT NULL,
+			reserved_cpu_millis INT8 NOT NULL DEFAULT 0,
+			reserved_memory_mebibytes INT8 NOT NULL DEFAULT 0,
+			advertise_addr STRING NOT NULL DEFAULT '',
 			workload_ipv6_subnet STRING NOT NULL DEFAULT '',
 			wireguard_public_key STRING NOT NULL DEFAULT '',
 			wireguard_listen_port INT8 NOT NULL DEFAULT 0,
 			wireguard_ipv6 STRING NOT NULL DEFAULT '',
-			cpu_millis_capacity INT8 NOT NULL,
-			memory_mebibytes_capacity INT8 NOT NULL,
+			cpu_millis_capacity INT8 NOT NULL DEFAULT 0,
+			memory_mebibytes_capacity INT8 NOT NULL DEFAULT 0,
+			runtime_capabilities JSONB NOT NULL DEFAULT '[]',
+			software_version STRING NOT NULL DEFAULT '',
+			maintenance_message STRING NOT NULL DEFAULT '',
+			credential_revoked_at TIMESTAMPTZ NULL,
 			last_seen_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			desired_revision INT8 NOT NULL DEFAULT 0
 		)`,
-	`CREATE INDEX idx_agents_last_seen_id ON agents(last_seen_at DESC, id)
-			STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
+	`CREATE INDEX idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
+			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
+			         reserved_cpu_millis, reserved_memory_mebibytes)`,
 	`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
+			origin STRING NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			consumed_at TIMESTAMPTZ NULL
 		)`,
 	`CREATE INDEX idx_agent_bootstrap_tokens_agent ON agent_bootstrap_tokens(agent_id, consumed_at)`,
+	`CREATE TABLE agent_certificates (
+			serial STRING PRIMARY KEY,
+			agent_id STRING NOT NULL,
+			issued_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_agent_certificates_agent ON agent_certificates(agent_id, issued_at DESC)`,
 	`CREATE TABLE volumes (
 			id STRING PRIMARY KEY,
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,

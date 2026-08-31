@@ -3,6 +3,7 @@ import * as grpc from "@grpc/grpc-js";
 import type { PlatformGateway } from "#/lib/dashboard/core/types.server";
 import {
 	getOpsClient,
+	opsUserCall,
 	toPlatformGatewayError,
 	unaryCall,
 } from "#/lib/platform-grpc/client.server";
@@ -18,6 +19,9 @@ import {
 	decodeListServiceDeploymentsResponse,
 	decodeListServiceLogsResponse,
 	decodeListServicesResponse,
+	decodeAgentEnrollmentMessage,
+	decodeFleetAgentMessage,
+	decodeFleetMessage,
 	decodeProjectMessage,
 	decodeServiceMessage,
 	decodeServiceStatusMessage,
@@ -35,6 +39,32 @@ export function createPlatformGateway(
 	runtime: PlatformRuntimeConfig,
 ): PlatformGateway {
 	return {
+		async listFleet(user) {
+			return decodeFleetMessage(await opsUserCall(runtime, "ListFleet", {}, user));
+		},
+		async createFleetAgent(user, input) {
+			return decodeAgentEnrollmentMessage(
+				await opsUserCall(runtime, "CreateAgent", input, user),
+			);
+		},
+		async updateFleetAgent(user, input) {
+			return decodeFleetAgentMessage(
+				await opsUserCall(runtime, "UpdateAgent", input, user),
+			);
+		},
+		async setFleetAgentLifecycle(user, input) {
+			return decodeFleetAgentMessage(
+				await opsUserCall(
+					runtime,
+					"SetAgentLifecycle",
+					{
+						agentId: input.agentId,
+						lifecycleState: encodeAgentLifecycleState(input.lifecycleState),
+					},
+					user,
+				),
+			);
+		},
 		async listProjects(user) {
 			const response = await unaryCall(runtime, "ListProjects", {}, user);
 			return decodeListProjectsResponse(response).projects;
@@ -266,6 +296,10 @@ export function createPlatformGateway(
 			);
 		},
 	};
+}
+
+function encodeAgentLifecycleState(state: string): string {
+	return `AGENT_LIFECYCLE_STATE_${state.toUpperCase()}`;
 }
 
 export async function ingestGitHubWebhook(

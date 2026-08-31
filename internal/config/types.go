@@ -26,8 +26,14 @@ type ServerTLSConfig struct {
 }
 
 type AgentBootstrapToken struct {
-	AgentID string
-	Token   string
+	AgentID                 string
+	Token                   string
+	Name                    string
+	Region                  string
+	Zone                    string
+	FailureDomain           string
+	ReservedCPUMillis       int64
+	ReservedMemoryMebibytes int64
 }
 
 type ClientTLSConfig struct {
@@ -67,6 +73,7 @@ type BootstrapUser struct {
 	ID       string
 	Email    string
 	Projects []string
+	Operator bool
 }
 
 type IngressConfig struct {
@@ -189,18 +196,8 @@ type NodeConfig struct {
 }
 
 type NodeResourcesConfig struct {
-	CPUMillis               int64
-	MemoryMebibytes         int64
-	ReservedCPUMillis       int64
-	ReservedMemoryMebibytes int64
-}
-
-func (r NodeResourcesConfig) AdvertisedCPUMillis() int64 {
-	return r.CPUMillis - r.ReservedCPUMillis
-}
-
-func (r NodeResourcesConfig) AdvertisedMemoryMebibytes() int64 {
-	return r.MemoryMebibytes - r.ReservedMemoryMebibytes
+	CPUMillis       int64
+	MemoryMebibytes int64
 }
 
 type ControlPlaneClientConfig struct {

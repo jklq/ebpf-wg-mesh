@@ -55,6 +55,10 @@ HTTP health-check paths must be absolute request paths beginning with a single `
 
 `runtime.cpu_millis` is enforced with Linux CFS quota using a 100 ms period (for example, `500` millicpu becomes a `50 ms / 100 ms` quota). It is not interpreted as a cpuset.
 
+### Agent fleet
+
+Operators enroll, cordon, drain, and retire compute nodes from the console **Fleet** page. Region, zone, failure domain, and host reservations are operator policy; agents only report observed capacity, capabilities, software version, and heartbeat. New placement skips cordoned/draining/unavailable/retired nodes, spreads replicas across failure domains when it can, honors `placement_region`, and leaves a pending explanation when it cannot. Drain moves stateless allocations through the existing failover path; volume-backed allocations stay fenced until Stage 7. Retirement revokes credentials and removes mesh identity only after allocations are gone. See [docs/operator-fleet.md](docs/operator-fleet.md).
+
 Each service can generate a stable platform hostname under `CONTROLPLANE_INGRESS_PUBLIC_ADDR`, such as `violet-7k3.platform.example`. The Domains panel exposes separate **Generate Domain** and **Custom Domain** actions. The custom flow creates the platform hostname when needed, then keeps the required record (`app.customer.com CNAME violet-7k3.platform.example`) visible until verification succeeds. The control plane resolves and verifies the CNAME itself before routing the custom hostname; no TXT challenge is required.
 
 Services also receive an environment-private hostname derived from their unique service name, such as `accurate-reflection.mesh.internal`. Workloads in the same environment can use either the full hostname or the short `accurate-reflection` alias; these names resolve directly to the service's private address and are not published externally.

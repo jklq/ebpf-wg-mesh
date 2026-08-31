@@ -7,6 +7,21 @@ import type {
 	DashboardServiceLogType,
 } from "#/lib/dashboard/core/types.server";
 
+export interface FleetAgentRequest {
+	agentId: string;
+	name: string;
+	region: string;
+	zone: string;
+	failureDomain: string;
+	reservedCpuMillis: number;
+	reservedMemoryMebibytes: number;
+}
+
+export interface SetAgentLifecycleRequest {
+	agentId: string;
+	lifecycleState: string;
+}
+
 export interface PlatformRuntimeConfig {
 	controlPlaneAddress: string;
 	controlPlaneServerName: string;
@@ -114,6 +129,7 @@ export interface CreateServiceRequest {
 				};
 			};
 			desiredReplicaCount?: number;
+			placementRegion?: string;
 		};
 	};
 }
@@ -167,6 +183,7 @@ export interface UpdateServiceRequest {
 				};
 			};
 			desiredReplicaCount?: number;
+			placementRegion?: string;
 		};
 	};
 }
@@ -478,6 +495,39 @@ export type OpsClient = grpc.Client & {
 		metadata: grpc.Metadata,
 		callback: RawUnaryCallback,
 	) => void;
+	ListFleet: (
+		request: Record<string, never>,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	CreateAgent: (
+		request: FleetAgentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	UpdateAgent: (
+		request: FleetAgentRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+	SetAgentLifecycle: (
+		request: SetAgentLifecycleRequest,
+		metadata: grpc.Metadata,
+		callback: RawUnaryCallback,
+	) => void;
+};
+
+export type OpsMethod =
+	| "ListFleet"
+	| "CreateAgent"
+	| "UpdateAgent"
+	| "SetAgentLifecycle";
+
+export type OpsRequestMap = {
+	ListFleet: Record<string, never>;
+	CreateAgent: FleetAgentRequest;
+	UpdateAgent: FleetAgentRequest;
+	SetAgentLifecycle: SetAgentLifecycleRequest;
 };
 
 export interface PlatformProjectMessage {

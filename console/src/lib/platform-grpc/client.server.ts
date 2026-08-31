@@ -25,6 +25,8 @@ import type {
 	ListServiceDeploymentsRequest,
 	ListServiceLogsRequest,
 	ListServicesRequest,
+	OpsMethod,
+	OpsRequestMap,
 	OpsClient,
 	PlatformClient,
 	PlatformMethod,
@@ -234,6 +236,55 @@ export async function unaryCall<M extends PlatformMethod>(
 					return;
 				default:
 					reject(new Error(`unsupported platform method: ${method}`));
+					return;
+			}
+		});
+	} catch (cause) {
+		throw toPlatformGatewayError(method, cause);
+	}
+}
+
+export async function opsUserCall<M extends OpsMethod>(
+	runtime: PlatformRuntimeConfig,
+	method: M,
+	request: OpsRequestMap[M],
+	user: DashboardUser,
+): Promise<unknown> {
+	const client = getOpsClient(runtime);
+	const metadata = new grpc.Metadata();
+	metadata.set(
+		"x-platform-user-assertion",
+		createPlatformUserAssertion({
+			secret: runtime.userAssertionSecret,
+			userId: user.id,
+		}),
+	);
+	try {
+		return await new Promise<unknown>((resolve, reject) => {
+			const callback: RawUnaryCallback = (error, response) => {
+				if (error) reject(error);
+				else resolve(response);
+			};
+			switch (method) {
+				case "ListFleet":
+					client.ListFleet(
+						request as Record<string, never>,
+						metadata,
+						callback,
+					);
+					return;
+				case "CreateAgent":
+					client.CreateAgent(request as OpsRequestMap["CreateAgent"], metadata, callback);
+					return;
+				case "UpdateAgent":
+					client.UpdateAgent(request as OpsRequestMap["UpdateAgent"], metadata, callback);
+					return;
+				case "SetAgentLifecycle":
+					client.SetAgentLifecycle(
+						request as OpsRequestMap["SetAgentLifecycle"],
+						metadata,
+						callback,
+					);
 					return;
 			}
 		});

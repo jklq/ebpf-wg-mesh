@@ -160,10 +160,12 @@ func (a *App) runSession(ctx context.Context) error {
 			AgentId:                 a.cfg.Node.ID,
 			Name:                    a.cfg.Node.Name,
 			AdvertiseAddr:           a.cfg.Node.AdvertiseAddr,
-			CpuMillisCapacity:       a.cfg.Node.Resources.AdvertisedCPUMillis(),
-			MemoryMebibytesCapacity: a.cfg.Node.Resources.AdvertisedMemoryMebibytes(),
+			CpuMillisCapacity:       a.cfg.Node.Resources.CPUMillis,
+			MemoryMebibytesCapacity: a.cfg.Node.Resources.MemoryMebibytes,
 			WireguardPublicKey:      publicKey,
 			WireguardListenPort:     int32(a.cfg.Mesh.WireGuard.ListenPort),
+			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
+			SoftwareVersion:         Version,
 		}},
 	}); err != nil {
 		return err

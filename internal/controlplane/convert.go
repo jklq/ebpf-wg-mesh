@@ -103,15 +103,30 @@ func toProtoVolume(rec volumeRecord) *platformv1.Volume {
 }
 
 func toProtoAgent(rec agentRecord) *platformv1.Agent {
-	return &platformv1.Agent{
-		Id:                      rec.ID,
-		Name:                    rec.Name,
-		AdvertiseAddr:           rec.AdvertiseAddr,
-		Healthy:                 rec.healthy(time.Now().UTC()),
-		CpuMillisCapacity:       rec.CPUMillisCapacity,
-		MemoryMebibytesCapacity: rec.MemoryMebibytesCapcity,
-		LastSeenAt:              ts(rec.LastSeenAt),
+	out := &platformv1.Agent{
+		Id:                         rec.ID,
+		Name:                       rec.Name,
+		AdvertiseAddr:              rec.AdvertiseAddr,
+		Healthy:                    rec.healthy(time.Now().UTC()),
+		CpuMillisCapacity:          rec.CPUMillisCapacity,
+		MemoryMebibytesCapacity:    rec.MemoryMebibytesCapcity,
+		LastSeenAt:                 ts(rec.LastSeenAt),
+		LifecycleState:             lifecycleStateProto(rec.LifecycleState),
+		Region:                     rec.Region,
+		Zone:                       rec.Zone,
+		FailureDomain:              rec.FailureDomain,
+		ReservedCpuMillis:          rec.ReservedCPUMillis,
+		ReservedMemoryMebibytes:    rec.ReservedMemoryMebibytes,
+		SchedulableCpuMillis:       max(rec.CPUMillisCapacity-rec.ReservedCPUMillis, 0),
+		SchedulableMemoryMebibytes: max(rec.MemoryMebibytesCapcity-rec.ReservedMemoryMebibytes, 0),
+		RuntimeCapabilities:        append([]string(nil), rec.RuntimeCapabilities...),
+		SoftwareVersion:            rec.SoftwareVersion,
+		MaintenanceMessage:         rec.MaintenanceMessage,
 	}
+	if rec.CredentialRevokedAt.Valid {
+		out.CredentialRevokedAt = ts(rec.CredentialRevokedAt.Time)
+	}
+	return out
 }
 
 func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {

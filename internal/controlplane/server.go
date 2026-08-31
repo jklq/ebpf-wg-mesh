@@ -159,7 +159,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter), WithBuilderPlatformEvents(platformEvents)))
-	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler))
+	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler, store, notifier, authority))
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("listen internal grpc: %w", err)

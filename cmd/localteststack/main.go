@@ -166,8 +166,16 @@ func main() {
 		InternalGRPC: config.ListenerConfig{
 			Listen: "127.0.0.1:0",
 			TLS: config.ServerTLSConfig{
-				ServerNames:             []string{"controlplane", "localhost"},
-				BootstrapTokens:         []config.AgentBootstrapToken{{AgentID: localAgentID, Token: agentBootstrapToken}},
+				ServerNames: []string{"controlplane", "localhost"},
+				BootstrapTokens: []config.AgentBootstrapToken{{
+					AgentID:                 localAgentID,
+					Token:                   agentBootstrapToken,
+					Name:                    "Local Teststack Agent",
+					Region:                  "local",
+					FailureDomain:           "localteststack",
+					ReservedCPUMillis:       500,
+					ReservedMemoryMebibytes: 512,
+				}},
 				ServerCertValidityHours: 24,
 				ClientCertValidityHours: 24,
 			},
@@ -198,8 +206,9 @@ func main() {
 		},
 		Bootstrap: config.BootstrapConfig{
 			Users: []config.BootstrapUser{{
-				ID:    "dev-user",
-				Email: "dev@example.com",
+				ID:       "dev-user",
+				Email:    "dev@example.com",
+				Operator: true,
 			}},
 		},
 		Dashboard: config.ManagedDashboardConfig{

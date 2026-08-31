@@ -159,6 +159,30 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		domainBindings: [],
 		nextRepositoryInspection: undefined,
 		errors: {},
+		async listFleet() {
+			return {
+				agents: [],
+				capacity: {
+					nodeCount: 0,
+					schedulableNodeCount: 0,
+					schedulableCpuMillis: 0,
+					schedulableMemoryMebibytes: 0,
+					allocatedCpuMillis: 0,
+					allocatedMemoryMebibytes: 0,
+					headroomCpuMillis: 0,
+					headroomMemoryMebibytes: 0,
+				},
+			};
+		},
+		async createFleetAgent() {
+			throw new Error("fleet enrollment is not available in tests");
+		},
+		async updateFleetAgent() {
+			throw new Error("fleet updates are not available in tests");
+		},
+		async setFleetAgentLifecycle() {
+			throw new Error("fleet lifecycle is not available in tests");
+		},
 		async listProjects(user): Promise<Array<DashboardProject>> {
 			platform.listProjectsCalls.push(user);
 			if (platform.errors.listProjects) {

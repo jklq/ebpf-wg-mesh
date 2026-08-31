@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -39,6 +40,56 @@ func NewCertificateRevocations(path string) (*CertificateRevocations, error) {
 		return nil, err
 	}
 	return revocations, nil
+}
+
+func (r *CertificateRevocations) Add(serials ...string) error {
+	if r == nil {
+		return errors.New("certificate revocation list is not configured")
+	}
+	known, err := r.load()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, value := range serials {
+		serial, err := parseCertificateSerial(value)
+		if err != nil {
+			return err
+		}
+		if _, exists := known[serial]; exists {
+			continue
+		}
+		known[serial] = struct{}{}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	lines := make([]string, 0, len(known))
+	for serial := range known {
+		lines = append(lines, serial)
+	}
+	sort.Strings(lines)
+	payload := strings.Join(lines, "\n") + "\n"
+	tmp, err := os.CreateTemp(filepath.Dir(r.path), "revoked-client-cert-serials-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create client certificate revocation tempfile: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(payload); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write client certificate revocation tempfile: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close client certificate revocation tempfile: %w", err)
+	}
+	if err := os.Rename(tmpName, r.path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("replace client certificate revocation file: %w", err)
+	}
+	return nil
 }
 
 func (r *CertificateRevocations) Check(cert *x509.Certificate) error {

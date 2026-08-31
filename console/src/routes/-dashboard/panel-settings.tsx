@@ -24,6 +24,7 @@ type SettingsDraft = {
 	restartPolicy: "on-failure" | "always" | "never";
 	maxRestarts: string;
 	windowSeconds: string;
+	placementRegion: string;
 };
 
 export function PanelSettings({
@@ -45,6 +46,7 @@ export function PanelSettings({
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
+	const placementRegionId = `service-placement-region-${service.id}`;
 	const incoming = settingsDraftFromService(service);
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [deleting, setDeleting] = useState(false);
@@ -73,6 +75,7 @@ export function PanelSettings({
 						maxRestarts: Number(next.maxRestarts) || 0,
 						windowSeconds: Number(next.windowSeconds) || 0,
 					},
+					placementRegion: next.placementRegion,
 				},
 			});
 			onSaved(updated);
@@ -189,6 +192,29 @@ export function PanelSettings({
 				onQueued={onSaved}
 				onSavingChange={reportReplicaSaving}
 			/>
+
+			<PanelSection
+				title="Placement"
+				lede="Optionally keep this service in one operator-defined region. Replicas still spread across failure domains when capacity permits."
+			>
+				<div>
+					<label className="field-label" htmlFor={placementRegionId}>
+						Required region
+					</label>
+					<input
+						id={placementRegionId}
+						className={`field-input ${changedFields.has("placementRegion") ? "unapplied-field" : ""}`}
+						value={draft.placementRegion}
+						onChange={(event) =>
+							setDraft((current) => ({
+								...current,
+								placementRegion: event.target.value,
+							}))
+						}
+						placeholder="Any region"
+					/>
+				</div>
+			</PanelSection>
 
 			<PanelSection
 				title="Process restart"
@@ -371,6 +397,7 @@ function settingsDraftFromService(
 		restartPolicy: service.spec?.runtime.restart?.policy ?? "on-failure",
 		maxRestarts: String(service.spec?.runtime.restart?.maxRestarts ?? 5),
 		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
+		placementRegion: service.spec?.placementRegion ?? "",
 	};
 }
 
