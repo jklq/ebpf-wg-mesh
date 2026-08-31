@@ -36,6 +36,7 @@ import {
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
 	type DashboardServiceSpec,
+	type DashboardSandboxProfile,
 	type DashboardServiceStatus,
 	type DashboardSourceSpec,
 	type DashboardUser,
@@ -81,13 +82,20 @@ export async function loadDashboardHome(
 		environments: [],
 		services: [],
 		domainBindings: [],
+		sandboxProfiles: [],
 		controlPlaneReachable: true,
 	} satisfies DashboardHomeState;
 
 	try {
-		const projects = await platformCall(runtime, "listProjects", (platform) =>
-			platform.listProjects(session.user),
-		);
+		const [projects, sandboxProfiles] = await Promise.all([
+			platformCall(runtime, "listProjects", (platform) =>
+				platform.listProjects(session.user),
+			),
+			safePlatformCall(runtime, "listSandboxProfiles", (platform) =>
+				platform.listSandboxProfiles(session.user),
+			),
+		]);
+		baseState.sandboxProfiles = sandboxProfiles ?? [];
 		const selectedEnvironment = selectedEnvironmentId
 			? await safePlatformCall(runtime, "getEnvironment", (platform) =>
 					platform.getEnvironment(session.user, selectedEnvironmentId),
@@ -859,6 +867,9 @@ export async function updateServiceFromSession(
 			: undefined;
 	const nextReplicaCount =
 		input.desiredReplicaCount ?? current.spec?.desiredReplicaCount;
+	const nextSandboxProfile = input.sandboxProfileName?.trim()
+		? { name: input.sandboxProfileName.trim(), relaxations: [] as DashboardSandboxProfile["relaxations"] }
+		: current.spec?.runtime.sandboxProfile;
 	if (nextReplicaCount !== undefined && nextReplicaCount < 1) {
 		throw new DashboardValidationError({
 			message: "Replica count must be at least 1.",
@@ -915,6 +926,12 @@ export async function updateServiceFromSession(
 						: {}),
 					...((input.restart ?? current.spec?.runtime.restart)
 						? { restart: input.restart ?? current.spec?.runtime.restart }
+						: {}),
+					...(current.spec?.runtime.volumeName
+						? { volumeName: current.spec.runtime.volumeName }
+						: {}),
+					...(nextSandboxProfile
+						? { sandboxProfile: nextSandboxProfile }
 						: {}),
 				},
 			},

@@ -310,7 +310,7 @@ func (s *Store) duplicateEnvironment(ctx context.Context, userID, sourceEnvironm
 			if !copyVariables && spec.GetRuntime() != nil {
 				spec.Runtime.Env = nil
 			}
-			if _, err := s.createStagedServiceTx(ctx, tx, duplicate, service.name, spec); err != nil {
+			if _, err := s.createStagedServiceTx(ctx, tx, duplicate, service.name, spec, userID); err != nil {
 				return err
 			}
 		}

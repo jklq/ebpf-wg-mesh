@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -14,6 +14,25 @@ var schemaUpgrades = map[int][]string{
 		`ALTER TABLE allocations ALTER COLUMN created_at DROP DEFAULT`,
 		`ALTER TABLE allocations DROP CONSTRAINT IF EXISTS allocations_service_id_key`,
 		`CREATE INDEX IF NOT EXISTS idx_allocations_service ON allocations(service_id, id)`,
+	},
+	4: {
+		`UPDATE service_revisions
+		    SET spec_json = jsonb_set(spec_json, ARRAY['runtime', 'sandboxProfile'], '{"name":"production"}'::JSONB, true)
+		  WHERE spec_json->'runtime' IS NOT NULL
+		    AND spec_json->'runtime'->'sandboxProfile' IS NULL`,
+		`CREATE TABLE IF NOT EXISTS sandbox_profile_audit_events (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL,
+			actor_user_id STRING NOT NULL,
+			action STRING NOT NULL,
+			previous_profile_name STRING NOT NULL DEFAULT '',
+			profile_name STRING NOT NULL,
+			risk STRING NOT NULL,
+			relaxations JSONB NOT NULL,
+			spec_revision INT8 NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sandbox_profile_audit_service ON sandbox_profile_audit_events(service_id, created_at DESC, id)`,
 	},
 }
 
@@ -112,7 +131,20 @@ var currentSchema = []string{
 			spec_json JSONB NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, spec_revision)
+	)`,
+	`CREATE TABLE sandbox_profile_audit_events (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL,
+			actor_user_id STRING NOT NULL,
+			action STRING NOT NULL,
+			previous_profile_name STRING NOT NULL DEFAULT '',
+			profile_name STRING NOT NULL,
+			risk STRING NOT NULL,
+			relaxations JSONB NOT NULL,
+			spec_revision INT8 NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
 		)`,
+	`CREATE INDEX idx_sandbox_profile_audit_service ON sandbox_profile_audit_events(service_id, created_at DESC, id)`,
 	`CREATE TABLE domain_bindings (
 			hostname STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,

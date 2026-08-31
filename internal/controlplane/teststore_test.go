@@ -91,6 +91,7 @@ func resetTestStore(t *testing.T, store *Store) {
 	// for empty tables. These tables hold only a handful of test rows, so ordered
 	// deletes are substantially faster.
 	tables := []string{
+		"sandbox_profile_audit_events",
 		"project_github_repositories",
 		"source_work_items",
 		"source_snapshots",

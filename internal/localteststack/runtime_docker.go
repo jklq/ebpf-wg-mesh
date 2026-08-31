@@ -411,6 +411,7 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		"--label", meshlabels.DesiredRolloutGeneration + "=" + strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
 		"--label", internalHostnameLabel + "=" + svc.GetInternalHostname(),
 	}
+	args = append(args, dockerSandboxArgs(runtime)...)
 	if hostname := strings.TrimSpace(svc.GetInternalHostname()); hostname != "" {
 		args = append(args, "--network-alias", hostname)
 		if shortName := strings.TrimSuffix(hostname, internalDomainSuffix); shortName != hostname {
@@ -425,7 +426,7 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--mount", "type=bind,src="+hostPath+",dst="+localRuntimeVolumeMount)
+		args = append(args, "--mount", "type=bind,src="+hostPath+",dst="+localRuntimeVolumeMount+",bind-propagation=rprivate")
 		args = append(args, "--env", "PLATFORM_VOLUME_DIR="+localRuntimeVolumeMount)
 	}
 	if runtime.GetCpuMillis() > 0 {
@@ -433,6 +434,7 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 	}
 	if runtime.GetMemoryMebibytes() > 0 {
 		args = append(args, "--memory", fmt.Sprintf("%dm", runtime.GetMemoryMebibytes()))
+		args = append(args, "--memory-swap", fmt.Sprintf("%dm", runtime.GetMemoryMebibytes()))
 	}
 	for _, key := range sortedEnvKeys(runtime.GetEnv()) {
 		args = append(args, "--env", key+"="+runtime.GetEnv()[key])
@@ -445,6 +447,37 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		args = append(args, runtime.GetArgs()...)
 	}
 	return args, nil
+}
+
+func dockerSandboxArgs(runtime *platformv1.ServiceRuntime) []string {
+	allowRoot := false
+	writableRootFS := false
+	for _, relaxation := range runtime.GetSandboxProfile().GetRelaxations() {
+		switch relaxation {
+		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_RUN_AS_ROOT:
+			allowRoot = true
+		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM:
+			writableRootFS = true
+		}
+	}
+	args := []string{
+		"--security-opt", "no-new-privileges",
+		"--cap-drop", "ALL",
+		"--pids-limit", "256",
+		"--oom-score-adj", "500",
+	}
+	if !allowRoot {
+		args = append(args, "--user", "65532:65532")
+	}
+	if !writableRootFS {
+		args = append(args,
+			"--read-only",
+			"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
+			"--tmpfs", "/var/tmp:rw,noexec,nosuid,nodev,size=64m",
+			"--tmpfs", "/run:rw,noexec,nosuid,nodev,size=16m",
+		)
+	}
+	return args
 }
 
 func (r *DockerRuntime) inspectContainer(ctx context.Context, name string) (dockerContainerInspect, bool, error) {

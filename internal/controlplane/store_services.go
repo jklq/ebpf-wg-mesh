@@ -104,6 +104,9 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 	out := proto.Clone(spec).(*platformv1.ServiceSpec)
 	runtime := out.GetRuntime()
 	if runtime != nil {
+		if runtime.GetSandboxProfile() == nil || strings.TrimSpace(runtime.GetSandboxProfile().GetName()) == "" {
+			runtime.SandboxProfile = productionSandboxProfile()
+		}
 		if len(runtime.Command) == 0 {
 			runtime.Command = nil
 		}
@@ -478,7 +481,10 @@ func equalRuntimeAfterCanonicalization(a, b *platformv1.ServiceRuntime) bool {
 	if !proto.Equal(a.GetLivenessCheck(), b.GetLivenessCheck()) {
 		return false
 	}
-	return proto.Equal(a.GetRestart(), b.GetRestart())
+	if !proto.Equal(a.GetRestart(), b.GetRestart()) {
+		return false
+	}
+	return proto.Equal(a.GetSandboxProfile(), b.GetSandboxProfile())
 }
 
 func loadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {

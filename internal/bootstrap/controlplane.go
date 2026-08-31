@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -22,6 +23,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var dashboardContainerPort int
 	var githubPrivateKeyFile string
 	var userAssertionSecretFile string
+	var sandboxProfilesJSON string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
 	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
@@ -84,6 +86,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.Builder.HeartbeatTimeoutSeconds, "builder-heartbeat-timeout-seconds", "CONTROLPLANE_BUILDER_HEARTBEAT_TIMEOUT_SECONDS", 120, "")
 	intFlag(fs, &cfg.Failover.ReconcileIntervalSeconds, "failover-reconcile-interval-seconds", "CONTROLPLANE_FAILOVER_RECONCILE_INTERVAL_SECONDS", 5, "")
 	intFlag(fs, &cfg.Failover.UnhealthyThresholdSeconds, "failover-unhealthy-threshold-seconds", "CONTROLPLANE_FAILOVER_UNHEALTHY_THRESHOLD_SECONDS", 30, "")
+	stringFlag(fs, &sandboxProfilesJSON, "sandbox-compatibility-profiles-json", "CONTROLPLANE_SANDBOX_COMPATIBILITY_PROFILES_JSON", "", "JSON array of named compatibility profiles with risk and bounded relaxations")
 	stringFlag(fs, &cfg.Mesh.InterfaceName, "mesh-interface-name", "CONTROLPLANE_MESH_INTERFACE_NAME", "wg0", "")
 	intFlag(fs, &cfg.Mesh.ListenPort, "mesh-listen-port", "CONTROLPLANE_MESH_LISTEN_PORT", 51820, "")
 	stringFlag(fs, &cfg.Mesh.NetworkCIDR, "mesh-network-cidr", "CONTROLPLANE_MESH_NETWORK_CIDR", "fd00:44::/64", "")
@@ -114,6 +117,11 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	cfg.InternalGRPC.TLS.BootstrapTokens, err = parseAgentBootstrapTokens(agentBootstrapTokens)
 	if err != nil {
 		return config.ControlPlaneConfig{}, err
+	}
+	if strings.TrimSpace(sandboxProfilesJSON) != "" {
+		if err := json.Unmarshal([]byte(sandboxProfilesJSON), &cfg.Sandbox.CompatibilityProfiles); err != nil {
+			return config.ControlPlaneConfig{}, fmt.Errorf("parse sandbox compatibility profiles: %w", err)
+		}
 	}
 	cfg.Dashboard.ContainerPort = int32(dashboardContainerPort)
 	cfg.Dashboard.Command = splitWhitespaceList(dashboardCommand)

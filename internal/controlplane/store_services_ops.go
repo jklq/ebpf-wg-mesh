@@ -44,7 +44,7 @@ func (s *Store) createServiceTx(ctx context.Context, tx *sql.Tx, userID, environ
 	if err != nil {
 		return serviceRecord{}, err
 	}
-	return s.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID)
+	return s.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, userID)
 }
 
 func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
@@ -56,11 +56,11 @@ func (s *Store) createServiceTxInternal(ctx context.Context, tx *sql.Tx, project
 	if err != nil {
 		return serviceRecord{}, err
 	}
-	return s.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID)
+	return s.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, "system")
 }
 
-func (s *Store) createStagedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
-	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, "")
+func (s *Store) createStagedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, actorUserID string) (serviceRecord, error) {
+	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, "", actorUserID)
 	if err != nil {
 		return serviceRecord{}, err
 	}
@@ -72,7 +72,7 @@ func (s *Store) createStagedServiceTx(ctx context.Context, tx *sql.Tx, environme
 	return rec, nil
 }
 
-func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
+func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID, actorUserID string) (serviceRecord, error) {
 	if agentID == "" {
 		return serviceRecord{}, errors.New("agent id required")
 	}
@@ -93,7 +93,7 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 	if err := validateVolumeReplicaCompatibility(spec, spec.GetDesiredReplicaCount()); err != nil {
 		return serviceRecord{}, err
 	}
-	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, agentID)
+	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, agentID, actorUserID)
 	if err != nil {
 		return serviceRecord{}, err
 	}
@@ -138,7 +138,7 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 	return rec, nil
 }
 
-func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
+func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID, actorUserID string) (serviceRecord, error) {
 	now := time.Now().UTC()
 	spec = canonicalServiceSpec(spec)
 	if spec == nil {
@@ -184,6 +184,11 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 		rec.ID, rec.SpecRevision, specJSON, now,
 	); err != nil {
 		return serviceRecord{}, err
+	}
+	if sandboxProfileIsRelaxed(spec) {
+		if err := s.insertSandboxProfileAuditTx(ctx, tx, rec.ID, actorUserID, "selected", "", spec.GetRuntime().GetSandboxProfile(), rec.SpecRevision, now); err != nil {
+			return serviceRecord{}, err
+		}
 	}
 	return rec, nil
 }

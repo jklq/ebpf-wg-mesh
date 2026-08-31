@@ -45,17 +45,22 @@ const (
 )
 
 type containerdEngine struct {
-	cfg         config.AgentConfig
-	client      *containerd.Client
-	cni         cni.CNI
-	logSinkMu   sync.RWMutex
-	logSink     LogSink
-	logSequence atomic.Uint64
-	oomMu       sync.Mutex
-	oom         map[string]bool
+	cfg                  config.AgentConfig
+	client               *containerd.Client
+	cni                  cni.CNI
+	logSinkMu            sync.RWMutex
+	logSink              LogSink
+	logSequence          atomic.Uint64
+	oomMu                sync.Mutex
+	oom                  map[string]bool
+	workloadCgroupParent string
 }
 
 func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
+	workloadCgroupParent, err := prepareWorkloadSandboxHost(cfg)
+	if err != nil {
+		return nil, err
+	}
 	client, err := containerd.New(
 		cfg.Containerd.Socket,
 		containerd.WithDefaultNamespace(cfg.Containerd.Namespace),
@@ -84,7 +89,7 @@ func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("mkdir hosts dir: %w", err)
 	}
-	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin}, nil
+	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin, workloadCgroupParent: workloadCgroupParent}, nil
 }
 
 func (e *containerdEngine) Close() error {
@@ -481,6 +486,11 @@ func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, passw
 
 func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image containerd.Image, netnsPath, hostsPath string) ([]oci.SpecOpts, error) {
 	runtime := svc.GetSpec().GetRuntime()
+	allowedBindMounts := map[string]sandboxBindMount{
+		"/etc/hosts":       {source: hostsPath},
+		"/etc/resolv.conf": {source: "/etc/resolv.conf"},
+	}
+	var writableVolumePath string
 	opts := []oci.SpecOpts{
 		oci.WithDefaultSpec(),
 		oci.WithDefaultPathEnv,
@@ -520,6 +530,8 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 			Type:        "bind",
 			Options:     []string{"rbind", "rw"},
 		}}))
+		allowedBindMounts[defaultVolumeMount] = sandboxBindMount{source: volumePath, writable: true}
+		writableVolumePath = volumePath
 		opts = append(opts, oci.WithEnv([]string{"PLATFORM_VOLUME_DIR=" + defaultVolumeMount}))
 	}
 	if isManagedDashboardService(svc) {
@@ -533,10 +545,12 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 			Type:        "bind",
 			Options:     []string{"rbind", "ro"},
 		}}))
+		allowedBindMounts[managedDashboardSecretMount] = sandboxBindMount{source: secretsDir}
 	}
 	if !e.cfg.Runtime.DisableCgroups {
 		memoryMebibytes := effectiveMemoryMebibytes(runtime)
 		opts = append(opts, oci.WithMemoryLimit(uint64(memoryMebibytes)*1024*1024))
+		opts = append(opts, withHardMemoryIsolation())
 		quota, period := cpuCFSForMillis(effectiveCPUMillis(runtime))
 		opts = append(opts, oci.WithCPUCFS(quota, period))
 	}
@@ -549,10 +563,51 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 	} else {
 		opts = append(opts, oci.WithImageConfig(image))
 	}
+	cgroupPath := ""
+	if e.workloadCgroupParent != "" {
+		cgroupPath = filepath.Join(e.workloadCgroupParent, containerName(svc.GetAllocationId()))
+	}
+	sandboxOpts, err := workloadSandboxOpts(runtime.GetSandboxProfile(), allowedBindMounts, cgroupPath)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, sandboxOpts...)
+	if writableVolumePath != "" {
+		opts = append(opts, withWritableVolumeOwnership(writableVolumePath))
+	}
 	if e.cfg.Runtime.DisableCgroups {
 		opts = append(opts, withoutCgroups)
 	}
 	return opts, nil
+}
+
+func withWritableVolumeOwnership(path string) oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
+		if spec.Process == nil {
+			return errors.New("writable volume ownership requires a process identity")
+		}
+		if err := os.Chown(path, int(spec.Process.User.UID), int(spec.Process.User.GID)); err != nil {
+			return fmt.Errorf("set writable volume ownership: %w", err)
+		}
+		return nil
+	}
+}
+
+func withHardMemoryIsolation() oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
+		if spec.Linux == nil || spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil || spec.Linux.Resources.Memory.Limit == nil {
+			return errors.New("hard memory isolation requires a memory limit")
+		}
+		memory := spec.Linux.Resources.Memory
+		memory.Swap = memory.Limit
+		disableOOMKiller := false
+		memory.DisableOOMKiller = &disableOOMKiller
+		if spec.Linux.Resources.Unified == nil {
+			spec.Linux.Resources.Unified = make(map[string]string)
+		}
+		spec.Linux.Resources.Unified["memory.oom.group"] = "1"
+		return nil
+	}
 }
 
 func withServiceHostsFile(path string) oci.SpecOpts {
