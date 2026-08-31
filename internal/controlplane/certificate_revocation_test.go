@@ -47,6 +47,23 @@ func TestCertificateRevocationsReloadsHexSerials(t *testing.T) {
 	}
 }
 
+func TestCertificateRevocationsAddIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "revoked-serials.txt")
+	revocations, err := NewCertificateRevocations(path)
+	if err != nil {
+		t.Fatalf("NewCertificateRevocations: %v", err)
+	}
+	cert := &x509.Certificate{SerialNumber: big.NewInt(0xabcd)}
+	if err := revocations.Add("AB:CD", "abcd"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := revocations.Check(cert); !errors.Is(err, errClientCertificateRevoked) {
+		t.Fatalf("expected added serial to be revoked, got %v", err)
+	}
+}
+
 func TestInternalAuthRejectsRevokedCertificatesForEveryCallerClass(t *testing.T) {
 	t.Parallel()
 

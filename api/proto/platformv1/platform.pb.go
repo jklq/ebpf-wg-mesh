@@ -81,6 +81,7 @@ const (
 	BuildState_BUILD_STATE_SUCCEEDED   BuildState = 3
 	BuildState_BUILD_STATE_FAILED      BuildState = 4
 	BuildState_BUILD_STATE_SUPERSEDED  BuildState = 5
+	BuildState_BUILD_STATE_CANCELLED   BuildState = 6
 )
 
 // Enum value maps for BuildState.
@@ -92,6 +93,7 @@ var (
 		3: "BUILD_STATE_SUCCEEDED",
 		4: "BUILD_STATE_FAILED",
 		5: "BUILD_STATE_SUPERSEDED",
+		6: "BUILD_STATE_CANCELLED",
 	}
 	BuildState_value = map[string]int32{
 		"BUILD_STATE_UNSPECIFIED": 0,
@@ -100,6 +102,7 @@ var (
 		"BUILD_STATE_SUCCEEDED":   3,
 		"BUILD_STATE_FAILED":      4,
 		"BUILD_STATE_SUPERSEDED":  5,
+		"BUILD_STATE_CANCELLED":   6,
 	}
 )
 
@@ -551,6 +554,67 @@ func (DeploymentCauseKind) EnumDescriptor() ([]byte, []int) {
 	return file_platform_proto_rawDescGZIP(), []int{8}
 }
 
+type DeploymentAction int32
+
+const (
+	DeploymentAction_DEPLOYMENT_ACTION_UNSPECIFIED    DeploymentAction = 0
+	DeploymentAction_DEPLOYMENT_ACTION_RESTART        DeploymentAction = 1
+	DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY DeploymentAction = 2
+	DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK       DeploymentAction = 3
+	DeploymentAction_DEPLOYMENT_ACTION_CANCEL         DeploymentAction = 4
+	DeploymentAction_DEPLOYMENT_ACTION_REMOVE         DeploymentAction = 5
+	DeploymentAction_DEPLOYMENT_ACTION_RETRY          DeploymentAction = 6
+)
+
+// Enum value maps for DeploymentAction.
+var (
+	DeploymentAction_name = map[int32]string{
+		0: "DEPLOYMENT_ACTION_UNSPECIFIED",
+		1: "DEPLOYMENT_ACTION_RESTART",
+		2: "DEPLOYMENT_ACTION_EXACT_REDEPLOY",
+		3: "DEPLOYMENT_ACTION_ROLLBACK",
+		4: "DEPLOYMENT_ACTION_CANCEL",
+		5: "DEPLOYMENT_ACTION_REMOVE",
+		6: "DEPLOYMENT_ACTION_RETRY",
+	}
+	DeploymentAction_value = map[string]int32{
+		"DEPLOYMENT_ACTION_UNSPECIFIED":    0,
+		"DEPLOYMENT_ACTION_RESTART":        1,
+		"DEPLOYMENT_ACTION_EXACT_REDEPLOY": 2,
+		"DEPLOYMENT_ACTION_ROLLBACK":       3,
+		"DEPLOYMENT_ACTION_CANCEL":         4,
+		"DEPLOYMENT_ACTION_REMOVE":         5,
+		"DEPLOYMENT_ACTION_RETRY":          6,
+	}
+)
+
+func (x DeploymentAction) Enum() *DeploymentAction {
+	p := new(DeploymentAction)
+	*p = x
+	return p
+}
+
+func (x DeploymentAction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DeploymentAction) Descriptor() protoreflect.EnumDescriptor {
+	return file_platform_proto_enumTypes[9].Descriptor()
+}
+
+func (DeploymentAction) Type() protoreflect.EnumType {
+	return &file_platform_proto_enumTypes[9]
+}
+
+func (x DeploymentAction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DeploymentAction.Descriptor instead.
+func (DeploymentAction) EnumDescriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{9}
+}
+
 type ServiceUnappliedChangeAction int32
 
 const (
@@ -587,11 +651,11 @@ func (x ServiceUnappliedChangeAction) String() string {
 }
 
 func (ServiceUnappliedChangeAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_platform_proto_enumTypes[9].Descriptor()
+	return file_platform_proto_enumTypes[10].Descriptor()
 }
 
 func (ServiceUnappliedChangeAction) Type() protoreflect.EnumType {
-	return &file_platform_proto_enumTypes[9]
+	return &file_platform_proto_enumTypes[10]
 }
 
 func (x ServiceUnappliedChangeAction) Number() protoreflect.EnumNumber {
@@ -600,7 +664,7 @@ func (x ServiceUnappliedChangeAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ServiceUnappliedChangeAction.Descriptor instead.
 func (ServiceUnappliedChangeAction) EnumDescriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{9}
+	return file_platform_proto_rawDescGZIP(), []int{10}
 }
 
 type DomainOwnershipState int32
@@ -636,11 +700,11 @@ func (x DomainOwnershipState) String() string {
 }
 
 func (DomainOwnershipState) Descriptor() protoreflect.EnumDescriptor {
-	return file_platform_proto_enumTypes[10].Descriptor()
+	return file_platform_proto_enumTypes[11].Descriptor()
 }
 
 func (DomainOwnershipState) Type() protoreflect.EnumType {
-	return &file_platform_proto_enumTypes[10]
+	return &file_platform_proto_enumTypes[11]
 }
 
 func (x DomainOwnershipState) Number() protoreflect.EnumNumber {
@@ -649,7 +713,68 @@ func (x DomainOwnershipState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DomainOwnershipState.Descriptor instead.
 func (DomainOwnershipState) EnumDescriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{10}
+	return file_platform_proto_rawDescGZIP(), []int{11}
+}
+
+type AgentLifecycleState int32
+
+const (
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_UNSPECIFIED AgentLifecycleState = 0
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_ENROLLING   AgentLifecycleState = 1
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_ACTIVE      AgentLifecycleState = 2
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_CORDONED    AgentLifecycleState = 3
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_DRAINING    AgentLifecycleState = 4
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_UNAVAILABLE AgentLifecycleState = 5
+	AgentLifecycleState_AGENT_LIFECYCLE_STATE_RETIRED     AgentLifecycleState = 6
+)
+
+// Enum value maps for AgentLifecycleState.
+var (
+	AgentLifecycleState_name = map[int32]string{
+		0: "AGENT_LIFECYCLE_STATE_UNSPECIFIED",
+		1: "AGENT_LIFECYCLE_STATE_ENROLLING",
+		2: "AGENT_LIFECYCLE_STATE_ACTIVE",
+		3: "AGENT_LIFECYCLE_STATE_CORDONED",
+		4: "AGENT_LIFECYCLE_STATE_DRAINING",
+		5: "AGENT_LIFECYCLE_STATE_UNAVAILABLE",
+		6: "AGENT_LIFECYCLE_STATE_RETIRED",
+	}
+	AgentLifecycleState_value = map[string]int32{
+		"AGENT_LIFECYCLE_STATE_UNSPECIFIED": 0,
+		"AGENT_LIFECYCLE_STATE_ENROLLING":   1,
+		"AGENT_LIFECYCLE_STATE_ACTIVE":      2,
+		"AGENT_LIFECYCLE_STATE_CORDONED":    3,
+		"AGENT_LIFECYCLE_STATE_DRAINING":    4,
+		"AGENT_LIFECYCLE_STATE_UNAVAILABLE": 5,
+		"AGENT_LIFECYCLE_STATE_RETIRED":     6,
+	}
+)
+
+func (x AgentLifecycleState) Enum() *AgentLifecycleState {
+	p := new(AgentLifecycleState)
+	*p = x
+	return p
+}
+
+func (x AgentLifecycleState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AgentLifecycleState) Descriptor() protoreflect.EnumDescriptor {
+	return file_platform_proto_enumTypes[12].Descriptor()
+}
+
+func (AgentLifecycleState) Type() protoreflect.EnumType {
+	return &file_platform_proto_enumTypes[12]
+}
+
+func (x AgentLifecycleState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AgentLifecycleState.Descriptor instead.
+func (AgentLifecycleState) EnumDescriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{12}
 }
 
 type ServiceLogType int32
@@ -694,11 +819,11 @@ func (x ServiceLogType) String() string {
 }
 
 func (ServiceLogType) Descriptor() protoreflect.EnumDescriptor {
-	return file_platform_proto_enumTypes[11].Descriptor()
+	return file_platform_proto_enumTypes[13].Descriptor()
 }
 
 func (ServiceLogType) Type() protoreflect.EnumType {
-	return &file_platform_proto_enumTypes[11]
+	return &file_platform_proto_enumTypes[13]
 }
 
 func (x ServiceLogType) Number() protoreflect.EnumNumber {
@@ -707,7 +832,7 @@ func (x ServiceLogType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ServiceLogType.Descriptor instead.
 func (ServiceLogType) EnumDescriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{11}
+	return file_platform_proto_rawDescGZIP(), []int{13}
 }
 
 // SandboxRelaxation is the intentionally small set of compatibility concessions
@@ -747,11 +872,11 @@ func (x SandboxRelaxation) String() string {
 }
 
 func (SandboxRelaxation) Descriptor() protoreflect.EnumDescriptor {
-	return file_platform_proto_enumTypes[12].Descriptor()
+	return file_platform_proto_enumTypes[14].Descriptor()
 }
 
 func (SandboxRelaxation) Type() protoreflect.EnumType {
-	return &file_platform_proto_enumTypes[12]
+	return &file_platform_proto_enumTypes[14]
 }
 
 func (x SandboxRelaxation) Number() protoreflect.EnumNumber {
@@ -760,7 +885,7 @@ func (x SandboxRelaxation) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SandboxRelaxation.Descriptor instead.
 func (SandboxRelaxation) EnumDescriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{12}
+	return file_platform_proto_rawDescGZIP(), []int{14}
 }
 
 type HealthCheck_Type int32
@@ -793,11 +918,11 @@ func (x HealthCheck_Type) String() string {
 }
 
 func (HealthCheck_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_platform_proto_enumTypes[13].Descriptor()
+	return file_platform_proto_enumTypes[15].Descriptor()
 }
 
 func (HealthCheck_Type) Type() protoreflect.EnumType {
-	return &file_platform_proto_enumTypes[13]
+	return &file_platform_proto_enumTypes[15]
 }
 
 func (x HealthCheck_Type) Number() protoreflect.EnumNumber {
@@ -2099,8 +2224,12 @@ type ServiceSpec struct {
 	Runtime             *ServiceRuntime        `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
 	Source              *ServiceSource         `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
 	DesiredReplicaCount *int32                 `protobuf:"varint,3,opt,name=desired_replica_count,json=desiredReplicaCount,proto3,oneof" json:"desired_replica_count,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	RollingStrategy     *RollingStrategy       `protobuf:"bytes,4,opt,name=rolling_strategy,json=rollingStrategy,proto3" json:"rolling_strategy,omitempty"`
+	// A customer may constrain placement to an operator-defined region. Node
+	// labels themselves are never accepted through workload APIs.
+	PlacementRegion string `protobuf:"bytes,5,opt,name=placement_region,json=placementRegion,proto3" json:"placement_region,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ServiceSpec) Reset() {
@@ -2154,6 +2283,91 @@ func (x *ServiceSpec) GetDesiredReplicaCount() int32 {
 	return 0
 }
 
+func (x *ServiceSpec) GetRollingStrategy() *RollingStrategy {
+	if x != nil {
+		return x.RollingStrategy
+	}
+	return nil
+}
+
+func (x *ServiceSpec) GetPlacementRegion() string {
+	if x != nil {
+		return x.PlacementRegion
+	}
+	return ""
+}
+
+// RollingStrategy bounds replacement concurrency and both rollout deadlines.
+// Unset fields receive platform defaults during canonicalization. Zero is a
+// legal value for max_unavailable and max_surge.
+type RollingStrategy struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	MaxUnavailable        *int32                 `protobuf:"varint,1,opt,name=max_unavailable,json=maxUnavailable,proto3,oneof" json:"max_unavailable,omitempty"`
+	MaxSurge              *int32                 `protobuf:"varint,2,opt,name=max_surge,json=maxSurge,proto3,oneof" json:"max_surge,omitempty"`
+	StartupTimeoutSeconds *int32                 `protobuf:"varint,3,opt,name=startup_timeout_seconds,json=startupTimeoutSeconds,proto3,oneof" json:"startup_timeout_seconds,omitempty"`
+	DrainTimeoutSeconds   *int32                 `protobuf:"varint,4,opt,name=drain_timeout_seconds,json=drainTimeoutSeconds,proto3,oneof" json:"drain_timeout_seconds,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *RollingStrategy) Reset() {
+	*x = RollingStrategy{}
+	mi := &file_platform_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RollingStrategy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RollingStrategy) ProtoMessage() {}
+
+func (x *RollingStrategy) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RollingStrategy.ProtoReflect.Descriptor instead.
+func (*RollingStrategy) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RollingStrategy) GetMaxUnavailable() int32 {
+	if x != nil && x.MaxUnavailable != nil {
+		return *x.MaxUnavailable
+	}
+	return 0
+}
+
+func (x *RollingStrategy) GetMaxSurge() int32 {
+	if x != nil && x.MaxSurge != nil {
+		return *x.MaxSurge
+	}
+	return 0
+}
+
+func (x *RollingStrategy) GetStartupTimeoutSeconds() int32 {
+	if x != nil && x.StartupTimeoutSeconds != nil {
+		return *x.StartupTimeoutSeconds
+	}
+	return 0
+}
+
+func (x *RollingStrategy) GetDrainTimeoutSeconds() int32 {
+	if x != nil && x.DrainTimeoutSeconds != nil {
+		return *x.DrainTimeoutSeconds
+	}
+	return 0
+}
+
 type ResolvedServiceSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Image         string                 `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
@@ -2164,7 +2378,7 @@ type ResolvedServiceSpec struct {
 
 func (x *ResolvedServiceSpec) Reset() {
 	*x = ResolvedServiceSpec{}
-	mi := &file_platform_proto_msgTypes[16]
+	mi := &file_platform_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2176,7 +2390,7 @@ func (x *ResolvedServiceSpec) String() string {
 func (*ResolvedServiceSpec) ProtoMessage() {}
 
 func (x *ResolvedServiceSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[16]
+	mi := &file_platform_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2189,7 +2403,7 @@ func (x *ResolvedServiceSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolvedServiceSpec.ProtoReflect.Descriptor instead.
 func (*ResolvedServiceSpec) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{16}
+	return file_platform_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResolvedServiceSpec) GetImage() string {
@@ -2218,7 +2432,7 @@ type SourceStateSummary struct {
 
 func (x *SourceStateSummary) Reset() {
 	*x = SourceStateSummary{}
-	mi := &file_platform_proto_msgTypes[17]
+	mi := &file_platform_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2230,7 +2444,7 @@ func (x *SourceStateSummary) String() string {
 func (*SourceStateSummary) ProtoMessage() {}
 
 func (x *SourceStateSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[17]
+	mi := &file_platform_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2243,7 +2457,7 @@ func (x *SourceStateSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceStateSummary.ProtoReflect.Descriptor instead.
 func (*SourceStateSummary) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{17}
+	return file_platform_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SourceStateSummary) GetDesiredSpec() *ServiceSourceSpec {
@@ -2287,7 +2501,7 @@ type ServiceSourceSummary struct {
 
 func (x *ServiceSourceSummary) Reset() {
 	*x = ServiceSourceSummary{}
-	mi := &file_platform_proto_msgTypes[18]
+	mi := &file_platform_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2299,7 +2513,7 @@ func (x *ServiceSourceSummary) String() string {
 func (*ServiceSourceSummary) ProtoMessage() {}
 
 func (x *ServiceSourceSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[18]
+	mi := &file_platform_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2312,7 +2526,7 @@ func (x *ServiceSourceSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceSourceSummary.ProtoReflect.Descriptor instead.
 func (*ServiceSourceSummary) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{18}
+	return file_platform_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ServiceSourceSummary) GetSource() isServiceSourceSummary_Source {
@@ -2356,6 +2570,98 @@ func (*ServiceSourceSummary_Image) isServiceSourceSummary_Source() {}
 
 func (*ServiceSourceSummary_SourceState) isServiceSourceSummary_Source() {}
 
+type DeploymentActionRecord struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Id                 string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Action             DeploymentAction       `protobuf:"varint,2,opt,name=action,proto3,enum=platform.v1.DeploymentAction" json:"action,omitempty"`
+	TargetDeploymentId string                 `protobuf:"bytes,3,opt,name=target_deployment_id,json=targetDeploymentId,proto3" json:"target_deployment_id,omitempty"`
+	ResultDeploymentId string                 `protobuf:"bytes,4,opt,name=result_deployment_id,json=resultDeploymentId,proto3" json:"result_deployment_id,omitempty"`
+	AllocationId       string                 `protobuf:"bytes,5,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	RequestedByUserId  string                 `protobuf:"bytes,6,opt,name=requested_by_user_id,json=requestedByUserId,proto3" json:"requested_by_user_id,omitempty"`
+	CreatedAt          *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *DeploymentActionRecord) Reset() {
+	*x = DeploymentActionRecord{}
+	mi := &file_platform_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeploymentActionRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeploymentActionRecord) ProtoMessage() {}
+
+func (x *DeploymentActionRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeploymentActionRecord.ProtoReflect.Descriptor instead.
+func (*DeploymentActionRecord) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *DeploymentActionRecord) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *DeploymentActionRecord) GetAction() DeploymentAction {
+	if x != nil {
+		return x.Action
+	}
+	return DeploymentAction_DEPLOYMENT_ACTION_UNSPECIFIED
+}
+
+func (x *DeploymentActionRecord) GetTargetDeploymentId() string {
+	if x != nil {
+		return x.TargetDeploymentId
+	}
+	return ""
+}
+
+func (x *DeploymentActionRecord) GetResultDeploymentId() string {
+	if x != nil {
+		return x.ResultDeploymentId
+	}
+	return ""
+}
+
+func (x *DeploymentActionRecord) GetAllocationId() string {
+	if x != nil {
+		return x.AllocationId
+	}
+	return ""
+}
+
+func (x *DeploymentActionRecord) GetRequestedByUserId() string {
+	if x != nil {
+		return x.RequestedByUserId
+	}
+	return ""
+}
+
+func (x *DeploymentActionRecord) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
 type DeploymentStatus struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	DeploymentId      string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
@@ -2374,7 +2680,7 @@ type DeploymentStatus struct {
 
 func (x *DeploymentStatus) Reset() {
 	*x = DeploymentStatus{}
-	mi := &file_platform_proto_msgTypes[19]
+	mi := &file_platform_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2386,7 +2692,7 @@ func (x *DeploymentStatus) String() string {
 func (*DeploymentStatus) ProtoMessage() {}
 
 func (x *DeploymentStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[19]
+	mi := &file_platform_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2399,7 +2705,7 @@ func (x *DeploymentStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentStatus.ProtoReflect.Descriptor instead.
 func (*DeploymentStatus) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{19}
+	return file_platform_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *DeploymentStatus) GetDeploymentId() string {
@@ -2486,7 +2792,7 @@ type DeploymentStage struct {
 
 func (x *DeploymentStage) Reset() {
 	*x = DeploymentStage{}
-	mi := &file_platform_proto_msgTypes[20]
+	mi := &file_platform_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2498,7 +2804,7 @@ func (x *DeploymentStage) String() string {
 func (*DeploymentStage) ProtoMessage() {}
 
 func (x *DeploymentStage) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[20]
+	mi := &file_platform_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2511,7 +2817,7 @@ func (x *DeploymentStage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentStage.ProtoReflect.Descriptor instead.
 func (*DeploymentStage) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{20}
+	return file_platform_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DeploymentStage) GetKey() string {
@@ -2575,7 +2881,7 @@ type BuildStatus struct {
 
 func (x *BuildStatus) Reset() {
 	*x = BuildStatus{}
-	mi := &file_platform_proto_msgTypes[21]
+	mi := &file_platform_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2587,7 +2893,7 @@ func (x *BuildStatus) String() string {
 func (*BuildStatus) ProtoMessage() {}
 
 func (x *BuildStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[21]
+	mi := &file_platform_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2600,7 +2906,7 @@ func (x *BuildStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildStatus.ProtoReflect.Descriptor instead.
 func (*BuildStatus) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{21}
+	return file_platform_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *BuildStatus) GetBuildId() string {
@@ -2695,7 +3001,7 @@ type ServiceUnappliedChange struct {
 
 func (x *ServiceUnappliedChange) Reset() {
 	*x = ServiceUnappliedChange{}
-	mi := &file_platform_proto_msgTypes[22]
+	mi := &file_platform_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2707,7 +3013,7 @@ func (x *ServiceUnappliedChange) String() string {
 func (*ServiceUnappliedChange) ProtoMessage() {}
 
 func (x *ServiceUnappliedChange) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[22]
+	mi := &file_platform_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2720,7 +3026,7 @@ func (x *ServiceUnappliedChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceUnappliedChange.ProtoReflect.Descriptor instead.
 func (*ServiceUnappliedChange) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{22}
+	return file_platform_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ServiceUnappliedChange) GetId() string {
@@ -2801,7 +3107,7 @@ type Service struct {
 
 func (x *Service) Reset() {
 	*x = Service{}
-	mi := &file_platform_proto_msgTypes[23]
+	mi := &file_platform_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2813,7 +3119,7 @@ func (x *Service) String() string {
 func (*Service) ProtoMessage() {}
 
 func (x *Service) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[23]
+	mi := &file_platform_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2826,7 +3132,7 @@ func (x *Service) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Service.ProtoReflect.Descriptor instead.
 func (*Service) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{23}
+	return file_platform_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Service) GetId() string {
@@ -2992,7 +3298,7 @@ type DomainBinding struct {
 
 func (x *DomainBinding) Reset() {
 	*x = DomainBinding{}
-	mi := &file_platform_proto_msgTypes[24]
+	mi := &file_platform_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3004,7 +3310,7 @@ func (x *DomainBinding) String() string {
 func (*DomainBinding) ProtoMessage() {}
 
 func (x *DomainBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[24]
+	mi := &file_platform_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3017,7 +3323,7 @@ func (x *DomainBinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainBinding.ProtoReflect.Descriptor instead.
 func (*DomainBinding) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{24}
+	return file_platform_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DomainBinding) GetHostname() string {
@@ -3089,7 +3395,7 @@ type Volume struct {
 
 func (x *Volume) Reset() {
 	*x = Volume{}
-	mi := &file_platform_proto_msgTypes[25]
+	mi := &file_platform_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3101,7 +3407,7 @@ func (x *Volume) String() string {
 func (*Volume) ProtoMessage() {}
 
 func (x *Volume) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[25]
+	mi := &file_platform_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3114,7 +3420,7 @@ func (x *Volume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Volume.ProtoReflect.Descriptor instead.
 func (*Volume) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{25}
+	return file_platform_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Volume) GetId() string {
@@ -3153,21 +3459,39 @@ func (x *Volume) GetCreatedAt() *timestamppb.Timestamp {
 }
 
 type Agent struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	Id                      string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name                    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	AdvertiseAddr           string                 `protobuf:"bytes,3,opt,name=advertise_addr,json=advertiseAddr,proto3" json:"advertise_addr,omitempty"`
-	Healthy                 bool                   `protobuf:"varint,4,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	CpuMillisCapacity       int64                  `protobuf:"varint,5,opt,name=cpu_millis_capacity,json=cpuMillisCapacity,proto3" json:"cpu_millis_capacity,omitempty"`
-	MemoryMebibytesCapacity int64                  `protobuf:"varint,6,opt,name=memory_mebibytes_capacity,json=memoryMebibytesCapacity,proto3" json:"memory_mebibytes_capacity,omitempty"`
-	LastSeenAt              *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	Id                         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name                       string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	AdvertiseAddr              string                 `protobuf:"bytes,3,opt,name=advertise_addr,json=advertiseAddr,proto3" json:"advertise_addr,omitempty"`
+	Healthy                    bool                   `protobuf:"varint,4,opt,name=healthy,proto3" json:"healthy,omitempty"`
+	CpuMillisCapacity          int64                  `protobuf:"varint,5,opt,name=cpu_millis_capacity,json=cpuMillisCapacity,proto3" json:"cpu_millis_capacity,omitempty"`
+	MemoryMebibytesCapacity    int64                  `protobuf:"varint,6,opt,name=memory_mebibytes_capacity,json=memoryMebibytesCapacity,proto3" json:"memory_mebibytes_capacity,omitempty"`
+	LastSeenAt                 *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`
+	LifecycleState             AgentLifecycleState    `protobuf:"varint,8,opt,name=lifecycle_state,json=lifecycleState,proto3,enum=platform.v1.AgentLifecycleState" json:"lifecycle_state,omitempty"`
+	Region                     string                 `protobuf:"bytes,9,opt,name=region,proto3" json:"region,omitempty"`
+	Zone                       string                 `protobuf:"bytes,10,opt,name=zone,proto3" json:"zone,omitempty"`
+	FailureDomain              string                 `protobuf:"bytes,11,opt,name=failure_domain,json=failureDomain,proto3" json:"failure_domain,omitempty"`
+	ReservedCpuMillis          int64                  `protobuf:"varint,12,opt,name=reserved_cpu_millis,json=reservedCpuMillis,proto3" json:"reserved_cpu_millis,omitempty"`
+	ReservedMemoryMebibytes    int64                  `protobuf:"varint,13,opt,name=reserved_memory_mebibytes,json=reservedMemoryMebibytes,proto3" json:"reserved_memory_mebibytes,omitempty"`
+	SchedulableCpuMillis       int64                  `protobuf:"varint,14,opt,name=schedulable_cpu_millis,json=schedulableCpuMillis,proto3" json:"schedulable_cpu_millis,omitempty"`
+	SchedulableMemoryMebibytes int64                  `protobuf:"varint,15,opt,name=schedulable_memory_mebibytes,json=schedulableMemoryMebibytes,proto3" json:"schedulable_memory_mebibytes,omitempty"`
+	AllocatedCpuMillis         int64                  `protobuf:"varint,16,opt,name=allocated_cpu_millis,json=allocatedCpuMillis,proto3" json:"allocated_cpu_millis,omitempty"`
+	AllocatedMemoryMebibytes   int64                  `protobuf:"varint,17,opt,name=allocated_memory_mebibytes,json=allocatedMemoryMebibytes,proto3" json:"allocated_memory_mebibytes,omitempty"`
+	HeadroomCpuMillis          int64                  `protobuf:"varint,18,opt,name=headroom_cpu_millis,json=headroomCpuMillis,proto3" json:"headroom_cpu_millis,omitempty"`
+	HeadroomMemoryMebibytes    int64                  `protobuf:"varint,19,opt,name=headroom_memory_mebibytes,json=headroomMemoryMebibytes,proto3" json:"headroom_memory_mebibytes,omitempty"`
+	RuntimeCapabilities        []string               `protobuf:"bytes,20,rep,name=runtime_capabilities,json=runtimeCapabilities,proto3" json:"runtime_capabilities,omitempty"`
+	SoftwareVersion            string                 `protobuf:"bytes,21,opt,name=software_version,json=softwareVersion,proto3" json:"software_version,omitempty"`
+	VersionSkewWarning         string                 `protobuf:"bytes,22,opt,name=version_skew_warning,json=versionSkewWarning,proto3" json:"version_skew_warning,omitempty"`
+	AllocationCount            int32                  `protobuf:"varint,23,opt,name=allocation_count,json=allocationCount,proto3" json:"allocation_count,omitempty"`
+	MaintenanceMessage         string                 `protobuf:"bytes,24,opt,name=maintenance_message,json=maintenanceMessage,proto3" json:"maintenance_message,omitempty"`
+	CredentialRevokedAt        *timestamppb.Timestamp `protobuf:"bytes,25,opt,name=credential_revoked_at,json=credentialRevokedAt,proto3" json:"credential_revoked_at,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *Agent) Reset() {
 	*x = Agent{}
-	mi := &file_platform_proto_msgTypes[26]
+	mi := &file_platform_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3179,7 +3503,7 @@ func (x *Agent) String() string {
 func (*Agent) ProtoMessage() {}
 
 func (x *Agent) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[26]
+	mi := &file_platform_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3192,7 +3516,7 @@ func (x *Agent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Agent.ProtoReflect.Descriptor instead.
 func (*Agent) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{26}
+	return file_platform_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Agent) GetId() string {
@@ -3244,6 +3568,132 @@ func (x *Agent) GetLastSeenAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Agent) GetLifecycleState() AgentLifecycleState {
+	if x != nil {
+		return x.LifecycleState
+	}
+	return AgentLifecycleState_AGENT_LIFECYCLE_STATE_UNSPECIFIED
+}
+
+func (x *Agent) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *Agent) GetZone() string {
+	if x != nil {
+		return x.Zone
+	}
+	return ""
+}
+
+func (x *Agent) GetFailureDomain() string {
+	if x != nil {
+		return x.FailureDomain
+	}
+	return ""
+}
+
+func (x *Agent) GetReservedCpuMillis() int64 {
+	if x != nil {
+		return x.ReservedCpuMillis
+	}
+	return 0
+}
+
+func (x *Agent) GetReservedMemoryMebibytes() int64 {
+	if x != nil {
+		return x.ReservedMemoryMebibytes
+	}
+	return 0
+}
+
+func (x *Agent) GetSchedulableCpuMillis() int64 {
+	if x != nil {
+		return x.SchedulableCpuMillis
+	}
+	return 0
+}
+
+func (x *Agent) GetSchedulableMemoryMebibytes() int64 {
+	if x != nil {
+		return x.SchedulableMemoryMebibytes
+	}
+	return 0
+}
+
+func (x *Agent) GetAllocatedCpuMillis() int64 {
+	if x != nil {
+		return x.AllocatedCpuMillis
+	}
+	return 0
+}
+
+func (x *Agent) GetAllocatedMemoryMebibytes() int64 {
+	if x != nil {
+		return x.AllocatedMemoryMebibytes
+	}
+	return 0
+}
+
+func (x *Agent) GetHeadroomCpuMillis() int64 {
+	if x != nil {
+		return x.HeadroomCpuMillis
+	}
+	return 0
+}
+
+func (x *Agent) GetHeadroomMemoryMebibytes() int64 {
+	if x != nil {
+		return x.HeadroomMemoryMebibytes
+	}
+	return 0
+}
+
+func (x *Agent) GetRuntimeCapabilities() []string {
+	if x != nil {
+		return x.RuntimeCapabilities
+	}
+	return nil
+}
+
+func (x *Agent) GetSoftwareVersion() string {
+	if x != nil {
+		return x.SoftwareVersion
+	}
+	return ""
+}
+
+func (x *Agent) GetVersionSkewWarning() string {
+	if x != nil {
+		return x.VersionSkewWarning
+	}
+	return ""
+}
+
+func (x *Agent) GetAllocationCount() int32 {
+	if x != nil {
+		return x.AllocationCount
+	}
+	return 0
+}
+
+func (x *Agent) GetMaintenanceMessage() string {
+	if x != nil {
+		return x.MaintenanceMessage
+	}
+	return ""
+}
+
+func (x *Agent) GetCredentialRevokedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CredentialRevokedAt
+	}
+	return nil
+}
+
 type AllocationStatus struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
 	AllocationId             string                 `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
@@ -3261,13 +3711,16 @@ type AllocationStatus struct {
 	HealthyPorts             []int32                `protobuf:"varint,13,rep,packed,name=healthy_ports,json=healthyPorts,proto3" json:"healthy_ports,omitempty"`
 	Restart                  *RestartObservation    `protobuf:"bytes,14,opt,name=restart,proto3" json:"restart,omitempty"`
 	OperatorRestartNonce     int64                  `protobuf:"varint,15,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
+	RolloutState             string                 `protobuf:"bytes,16,opt,name=rollout_state,json=rolloutState,proto3" json:"rollout_state,omitempty"`
+	DrainStartedAt           *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=drain_started_at,json=drainStartedAt,proto3" json:"drain_started_at,omitempty"`
+	DrainDeadline            *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
 
 func (x *AllocationStatus) Reset() {
 	*x = AllocationStatus{}
-	mi := &file_platform_proto_msgTypes[27]
+	mi := &file_platform_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3279,7 +3732,7 @@ func (x *AllocationStatus) String() string {
 func (*AllocationStatus) ProtoMessage() {}
 
 func (x *AllocationStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[27]
+	mi := &file_platform_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3292,7 +3745,7 @@ func (x *AllocationStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllocationStatus.ProtoReflect.Descriptor instead.
 func (*AllocationStatus) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{27}
+	return file_platform_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *AllocationStatus) GetAllocationId() string {
@@ -3400,6 +3853,27 @@ func (x *AllocationStatus) GetOperatorRestartNonce() int64 {
 	return 0
 }
 
+func (x *AllocationStatus) GetRolloutState() string {
+	if x != nil {
+		return x.RolloutState
+	}
+	return ""
+}
+
+func (x *AllocationStatus) GetDrainStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DrainStartedAt
+	}
+	return nil
+}
+
+func (x *AllocationStatus) GetDrainDeadline() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DrainDeadline
+	}
+	return nil
+}
+
 type ServiceStatus struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Service       *Service               `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
@@ -3413,7 +3887,7 @@ type ServiceStatus struct {
 
 func (x *ServiceStatus) Reset() {
 	*x = ServiceStatus{}
-	mi := &file_platform_proto_msgTypes[28]
+	mi := &file_platform_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3425,7 +3899,7 @@ func (x *ServiceStatus) String() string {
 func (*ServiceStatus) ProtoMessage() {}
 
 func (x *ServiceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[28]
+	mi := &file_platform_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3438,7 +3912,7 @@ func (x *ServiceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceStatus.ProtoReflect.Descriptor instead.
 func (*ServiceStatus) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{28}
+	return file_platform_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ServiceStatus) GetService() *Service {
@@ -3485,7 +3959,7 @@ type CreateProjectRequest struct {
 
 func (x *CreateProjectRequest) Reset() {
 	*x = CreateProjectRequest{}
-	mi := &file_platform_proto_msgTypes[29]
+	mi := &file_platform_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3497,7 +3971,7 @@ func (x *CreateProjectRequest) String() string {
 func (*CreateProjectRequest) ProtoMessage() {}
 
 func (x *CreateProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[29]
+	mi := &file_platform_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3510,7 +3984,7 @@ func (x *CreateProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProjectRequest.ProtoReflect.Descriptor instead.
 func (*CreateProjectRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{29}
+	return file_platform_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CreateProjectRequest) GetName() string {
@@ -3529,7 +4003,7 @@ type ListProjectsResponse struct {
 
 func (x *ListProjectsResponse) Reset() {
 	*x = ListProjectsResponse{}
-	mi := &file_platform_proto_msgTypes[30]
+	mi := &file_platform_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3541,7 +4015,7 @@ func (x *ListProjectsResponse) String() string {
 func (*ListProjectsResponse) ProtoMessage() {}
 
 func (x *ListProjectsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[30]
+	mi := &file_platform_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3554,7 +4028,7 @@ func (x *ListProjectsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProjectsResponse.ProtoReflect.Descriptor instead.
 func (*ListProjectsResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{30}
+	return file_platform_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ListProjectsResponse) GetProjects() []*Project {
@@ -3573,7 +4047,7 @@ type GetProjectRequest struct {
 
 func (x *GetProjectRequest) Reset() {
 	*x = GetProjectRequest{}
-	mi := &file_platform_proto_msgTypes[31]
+	mi := &file_platform_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3585,7 +4059,7 @@ func (x *GetProjectRequest) String() string {
 func (*GetProjectRequest) ProtoMessage() {}
 
 func (x *GetProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[31]
+	mi := &file_platform_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3598,7 +4072,7 @@ func (x *GetProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProjectRequest.ProtoReflect.Descriptor instead.
 func (*GetProjectRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{31}
+	return file_platform_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *GetProjectRequest) GetProjectId() string {
@@ -3617,7 +4091,7 @@ type ListEnvironmentsRequest struct {
 
 func (x *ListEnvironmentsRequest) Reset() {
 	*x = ListEnvironmentsRequest{}
-	mi := &file_platform_proto_msgTypes[32]
+	mi := &file_platform_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3629,7 +4103,7 @@ func (x *ListEnvironmentsRequest) String() string {
 func (*ListEnvironmentsRequest) ProtoMessage() {}
 
 func (x *ListEnvironmentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[32]
+	mi := &file_platform_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3642,7 +4116,7 @@ func (x *ListEnvironmentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnvironmentsRequest.ProtoReflect.Descriptor instead.
 func (*ListEnvironmentsRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{32}
+	return file_platform_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ListEnvironmentsRequest) GetProjectId() string {
@@ -3661,7 +4135,7 @@ type ListEnvironmentsResponse struct {
 
 func (x *ListEnvironmentsResponse) Reset() {
 	*x = ListEnvironmentsResponse{}
-	mi := &file_platform_proto_msgTypes[33]
+	mi := &file_platform_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3673,7 +4147,7 @@ func (x *ListEnvironmentsResponse) String() string {
 func (*ListEnvironmentsResponse) ProtoMessage() {}
 
 func (x *ListEnvironmentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[33]
+	mi := &file_platform_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3686,7 +4160,7 @@ func (x *ListEnvironmentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnvironmentsResponse.ProtoReflect.Descriptor instead.
 func (*ListEnvironmentsResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{33}
+	return file_platform_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ListEnvironmentsResponse) GetEnvironments() []*Environment {
@@ -3705,7 +4179,7 @@ type GetEnvironmentRequest struct {
 
 func (x *GetEnvironmentRequest) Reset() {
 	*x = GetEnvironmentRequest{}
-	mi := &file_platform_proto_msgTypes[34]
+	mi := &file_platform_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3717,7 +4191,7 @@ func (x *GetEnvironmentRequest) String() string {
 func (*GetEnvironmentRequest) ProtoMessage() {}
 
 func (x *GetEnvironmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[34]
+	mi := &file_platform_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3730,7 +4204,7 @@ func (x *GetEnvironmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEnvironmentRequest.ProtoReflect.Descriptor instead.
 func (*GetEnvironmentRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{34}
+	return file_platform_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetEnvironmentRequest) GetEnvironmentId() string {
@@ -3750,7 +4224,7 @@ type CreateEnvironmentRequest struct {
 
 func (x *CreateEnvironmentRequest) Reset() {
 	*x = CreateEnvironmentRequest{}
-	mi := &file_platform_proto_msgTypes[35]
+	mi := &file_platform_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3762,7 +4236,7 @@ func (x *CreateEnvironmentRequest) String() string {
 func (*CreateEnvironmentRequest) ProtoMessage() {}
 
 func (x *CreateEnvironmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[35]
+	mi := &file_platform_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3775,7 +4249,7 @@ func (x *CreateEnvironmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateEnvironmentRequest.ProtoReflect.Descriptor instead.
 func (*CreateEnvironmentRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{35}
+	return file_platform_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *CreateEnvironmentRequest) GetProjectId() string {
@@ -3803,7 +4277,7 @@ type DuplicateEnvironmentRequest struct {
 
 func (x *DuplicateEnvironmentRequest) Reset() {
 	*x = DuplicateEnvironmentRequest{}
-	mi := &file_platform_proto_msgTypes[36]
+	mi := &file_platform_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3815,7 +4289,7 @@ func (x *DuplicateEnvironmentRequest) String() string {
 func (*DuplicateEnvironmentRequest) ProtoMessage() {}
 
 func (x *DuplicateEnvironmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[36]
+	mi := &file_platform_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3828,7 +4302,7 @@ func (x *DuplicateEnvironmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DuplicateEnvironmentRequest.ProtoReflect.Descriptor instead.
 func (*DuplicateEnvironmentRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{36}
+	return file_platform_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *DuplicateEnvironmentRequest) GetSourceEnvironmentId() string {
@@ -3862,7 +4336,7 @@ type RenameEnvironmentRequest struct {
 
 func (x *RenameEnvironmentRequest) Reset() {
 	*x = RenameEnvironmentRequest{}
-	mi := &file_platform_proto_msgTypes[37]
+	mi := &file_platform_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3874,7 +4348,7 @@ func (x *RenameEnvironmentRequest) String() string {
 func (*RenameEnvironmentRequest) ProtoMessage() {}
 
 func (x *RenameEnvironmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[37]
+	mi := &file_platform_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3887,7 +4361,7 @@ func (x *RenameEnvironmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenameEnvironmentRequest.ProtoReflect.Descriptor instead.
 func (*RenameEnvironmentRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{37}
+	return file_platform_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *RenameEnvironmentRequest) GetEnvironmentId() string {
@@ -3913,7 +4387,7 @@ type DeleteEnvironmentRequest struct {
 
 func (x *DeleteEnvironmentRequest) Reset() {
 	*x = DeleteEnvironmentRequest{}
-	mi := &file_platform_proto_msgTypes[38]
+	mi := &file_platform_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3925,7 +4399,7 @@ func (x *DeleteEnvironmentRequest) String() string {
 func (*DeleteEnvironmentRequest) ProtoMessage() {}
 
 func (x *DeleteEnvironmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[38]
+	mi := &file_platform_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3938,7 +4412,7 @@ func (x *DeleteEnvironmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteEnvironmentRequest.ProtoReflect.Descriptor instead.
 func (*DeleteEnvironmentRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{38}
+	return file_platform_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *DeleteEnvironmentRequest) GetEnvironmentId() string {
@@ -3957,7 +4431,7 @@ type DeployEnvironmentRequest struct {
 
 func (x *DeployEnvironmentRequest) Reset() {
 	*x = DeployEnvironmentRequest{}
-	mi := &file_platform_proto_msgTypes[39]
+	mi := &file_platform_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3969,7 +4443,7 @@ func (x *DeployEnvironmentRequest) String() string {
 func (*DeployEnvironmentRequest) ProtoMessage() {}
 
 func (x *DeployEnvironmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[39]
+	mi := &file_platform_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3982,7 +4456,7 @@ func (x *DeployEnvironmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployEnvironmentRequest.ProtoReflect.Descriptor instead.
 func (*DeployEnvironmentRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{39}
+	return file_platform_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *DeployEnvironmentRequest) GetEnvironmentId() string {
@@ -4001,7 +4475,7 @@ type DeployEnvironmentResponse struct {
 
 func (x *DeployEnvironmentResponse) Reset() {
 	*x = DeployEnvironmentResponse{}
-	mi := &file_platform_proto_msgTypes[40]
+	mi := &file_platform_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4013,7 +4487,7 @@ func (x *DeployEnvironmentResponse) String() string {
 func (*DeployEnvironmentResponse) ProtoMessage() {}
 
 func (x *DeployEnvironmentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[40]
+	mi := &file_platform_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4026,7 +4500,7 @@ func (x *DeployEnvironmentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployEnvironmentResponse.ProtoReflect.Descriptor instead.
 func (*DeployEnvironmentResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{40}
+	return file_platform_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *DeployEnvironmentResponse) GetServices() []*ServiceStatus {
@@ -4050,7 +4524,7 @@ type InspectSourceRequest struct {
 
 func (x *InspectSourceRequest) Reset() {
 	*x = InspectSourceRequest{}
-	mi := &file_platform_proto_msgTypes[41]
+	mi := &file_platform_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4062,7 +4536,7 @@ func (x *InspectSourceRequest) String() string {
 func (*InspectSourceRequest) ProtoMessage() {}
 
 func (x *InspectSourceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[41]
+	mi := &file_platform_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4075,7 +4549,7 @@ func (x *InspectSourceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectSourceRequest.ProtoReflect.Descriptor instead.
 func (*InspectSourceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{41}
+	return file_platform_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *InspectSourceRequest) GetProvider() string {
@@ -4119,7 +4593,7 @@ type InspectSourceResponse struct {
 
 func (x *InspectSourceResponse) Reset() {
 	*x = InspectSourceResponse{}
-	mi := &file_platform_proto_msgTypes[42]
+	mi := &file_platform_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4131,7 +4605,7 @@ func (x *InspectSourceResponse) String() string {
 func (*InspectSourceResponse) ProtoMessage() {}
 
 func (x *InspectSourceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[42]
+	mi := &file_platform_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4144,7 +4618,7 @@ func (x *InspectSourceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectSourceResponse.ProtoReflect.Descriptor instead.
 func (*InspectSourceResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{42}
+	return file_platform_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *InspectSourceResponse) GetAccessState() SourceAccessState {
@@ -4192,7 +4666,7 @@ type CreateServiceRequest struct {
 
 func (x *CreateServiceRequest) Reset() {
 	*x = CreateServiceRequest{}
-	mi := &file_platform_proto_msgTypes[43]
+	mi := &file_platform_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4204,7 +4678,7 @@ func (x *CreateServiceRequest) String() string {
 func (*CreateServiceRequest) ProtoMessage() {}
 
 func (x *CreateServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[43]
+	mi := &file_platform_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4217,7 +4691,7 @@ func (x *CreateServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateServiceRequest.ProtoReflect.Descriptor instead.
 func (*CreateServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{43}
+	return file_platform_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CreateServiceRequest) GetEnvironmentId() string {
@@ -4244,7 +4718,7 @@ type UpdateServiceRequest struct {
 
 func (x *UpdateServiceRequest) Reset() {
 	*x = UpdateServiceRequest{}
-	mi := &file_platform_proto_msgTypes[44]
+	mi := &file_platform_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4256,7 +4730,7 @@ func (x *UpdateServiceRequest) String() string {
 func (*UpdateServiceRequest) ProtoMessage() {}
 
 func (x *UpdateServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[44]
+	mi := &file_platform_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4269,7 +4743,7 @@ func (x *UpdateServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateServiceRequest.ProtoReflect.Descriptor instead.
 func (*UpdateServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{44}
+	return file_platform_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *UpdateServiceRequest) GetServiceId() string {
@@ -4295,7 +4769,7 @@ type RedeployServiceRequest struct {
 
 func (x *RedeployServiceRequest) Reset() {
 	*x = RedeployServiceRequest{}
-	mi := &file_platform_proto_msgTypes[45]
+	mi := &file_platform_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4307,7 +4781,7 @@ func (x *RedeployServiceRequest) String() string {
 func (*RedeployServiceRequest) ProtoMessage() {}
 
 func (x *RedeployServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[45]
+	mi := &file_platform_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4320,7 +4794,7 @@ func (x *RedeployServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RedeployServiceRequest.ProtoReflect.Descriptor instead.
 func (*RedeployServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{45}
+	return file_platform_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *RedeployServiceRequest) GetServiceId() string {
@@ -4340,7 +4814,7 @@ type ScaleServiceRequest struct {
 
 func (x *ScaleServiceRequest) Reset() {
 	*x = ScaleServiceRequest{}
-	mi := &file_platform_proto_msgTypes[46]
+	mi := &file_platform_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4352,7 +4826,7 @@ func (x *ScaleServiceRequest) String() string {
 func (*ScaleServiceRequest) ProtoMessage() {}
 
 func (x *ScaleServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[46]
+	mi := &file_platform_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4365,7 +4839,7 @@ func (x *ScaleServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScaleServiceRequest.ProtoReflect.Descriptor instead.
 func (*ScaleServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{46}
+	return file_platform_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ScaleServiceRequest) GetServiceId() string {
@@ -4391,7 +4865,7 @@ type RestartServiceRequest struct {
 
 func (x *RestartServiceRequest) Reset() {
 	*x = RestartServiceRequest{}
-	mi := &file_platform_proto_msgTypes[47]
+	mi := &file_platform_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4403,7 +4877,7 @@ func (x *RestartServiceRequest) String() string {
 func (*RestartServiceRequest) ProtoMessage() {}
 
 func (x *RestartServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[47]
+	mi := &file_platform_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4416,12 +4890,89 @@ func (x *RestartServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestartServiceRequest.ProtoReflect.Descriptor instead.
 func (*RestartServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{47}
+	return file_platform_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *RestartServiceRequest) GetServiceId() string {
 	if x != nil {
 		return x.ServiceId
+	}
+	return ""
+}
+
+type ApplyDeploymentActionRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId      string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	DeploymentId   string                 `protobuf:"bytes,2,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	Action         DeploymentAction       `protobuf:"varint,3,opt,name=action,proto3,enum=platform.v1.DeploymentAction" json:"action,omitempty"`
+	IdempotencyKey string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	// Empty restarts every allocation. Only valid for RESTART.
+	AllocationId  string `protobuf:"bytes,5,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyDeploymentActionRequest) Reset() {
+	*x = ApplyDeploymentActionRequest{}
+	mi := &file_platform_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyDeploymentActionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyDeploymentActionRequest) ProtoMessage() {}
+
+func (x *ApplyDeploymentActionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyDeploymentActionRequest.ProtoReflect.Descriptor instead.
+func (*ApplyDeploymentActionRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *ApplyDeploymentActionRequest) GetServiceId() string {
+	if x != nil {
+		return x.ServiceId
+	}
+	return ""
+}
+
+func (x *ApplyDeploymentActionRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *ApplyDeploymentActionRequest) GetAction() DeploymentAction {
+	if x != nil {
+		return x.Action
+	}
+	return DeploymentAction_DEPLOYMENT_ACTION_UNSPECIFIED
+}
+
+func (x *ApplyDeploymentActionRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *ApplyDeploymentActionRequest) GetAllocationId() string {
+	if x != nil {
+		return x.AllocationId
 	}
 	return ""
 }
@@ -4437,7 +4988,7 @@ type DiscardServiceChangesRequest struct {
 
 func (x *DiscardServiceChangesRequest) Reset() {
 	*x = DiscardServiceChangesRequest{}
-	mi := &file_platform_proto_msgTypes[48]
+	mi := &file_platform_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4449,7 +5000,7 @@ func (x *DiscardServiceChangesRequest) String() string {
 func (*DiscardServiceChangesRequest) ProtoMessage() {}
 
 func (x *DiscardServiceChangesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[48]
+	mi := &file_platform_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4462,7 +5013,7 @@ func (x *DiscardServiceChangesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscardServiceChangesRequest.ProtoReflect.Descriptor instead.
 func (*DiscardServiceChangesRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{48}
+	return file_platform_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *DiscardServiceChangesRequest) GetServiceId() string {
@@ -4495,7 +5046,7 @@ type DeleteServiceRequest struct {
 
 func (x *DeleteServiceRequest) Reset() {
 	*x = DeleteServiceRequest{}
-	mi := &file_platform_proto_msgTypes[49]
+	mi := &file_platform_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4507,7 +5058,7 @@ func (x *DeleteServiceRequest) String() string {
 func (*DeleteServiceRequest) ProtoMessage() {}
 
 func (x *DeleteServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[49]
+	mi := &file_platform_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4520,7 +5071,7 @@ func (x *DeleteServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteServiceRequest.ProtoReflect.Descriptor instead.
 func (*DeleteServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{49}
+	return file_platform_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *DeleteServiceRequest) GetServiceId() string {
@@ -4539,7 +5090,7 @@ type GetServiceRequest struct {
 
 func (x *GetServiceRequest) Reset() {
 	*x = GetServiceRequest{}
-	mi := &file_platform_proto_msgTypes[50]
+	mi := &file_platform_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4551,7 +5102,7 @@ func (x *GetServiceRequest) String() string {
 func (*GetServiceRequest) ProtoMessage() {}
 
 func (x *GetServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[50]
+	mi := &file_platform_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4564,7 +5115,7 @@ func (x *GetServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServiceRequest.ProtoReflect.Descriptor instead.
 func (*GetServiceRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{50}
+	return file_platform_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *GetServiceRequest) GetServiceId() string {
@@ -4585,7 +5136,7 @@ type ListServicesRequest struct {
 
 func (x *ListServicesRequest) Reset() {
 	*x = ListServicesRequest{}
-	mi := &file_platform_proto_msgTypes[51]
+	mi := &file_platform_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4597,7 +5148,7 @@ func (x *ListServicesRequest) String() string {
 func (*ListServicesRequest) ProtoMessage() {}
 
 func (x *ListServicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[51]
+	mi := &file_platform_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4610,7 +5161,7 @@ func (x *ListServicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServicesRequest.ProtoReflect.Descriptor instead.
 func (*ListServicesRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{51}
+	return file_platform_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *ListServicesRequest) GetEnvironmentId() string {
@@ -4645,7 +5196,7 @@ type ListServicesResponse struct {
 
 func (x *ListServicesResponse) Reset() {
 	*x = ListServicesResponse{}
-	mi := &file_platform_proto_msgTypes[52]
+	mi := &file_platform_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4657,7 +5208,7 @@ func (x *ListServicesResponse) String() string {
 func (*ListServicesResponse) ProtoMessage() {}
 
 func (x *ListServicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[52]
+	mi := &file_platform_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4670,7 +5221,7 @@ func (x *ListServicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServicesResponse.ProtoReflect.Descriptor instead.
 func (*ListServicesResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{52}
+	return file_platform_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *ListServicesResponse) GetServices() []*Service {
@@ -4705,7 +5256,7 @@ type CreateVolumeRequest struct {
 
 func (x *CreateVolumeRequest) Reset() {
 	*x = CreateVolumeRequest{}
-	mi := &file_platform_proto_msgTypes[53]
+	mi := &file_platform_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4717,7 +5268,7 @@ func (x *CreateVolumeRequest) String() string {
 func (*CreateVolumeRequest) ProtoMessage() {}
 
 func (x *CreateVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[53]
+	mi := &file_platform_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4730,7 +5281,7 @@ func (x *CreateVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateVolumeRequest.ProtoReflect.Descriptor instead.
 func (*CreateVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{53}
+	return file_platform_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *CreateVolumeRequest) GetEnvironmentId() string {
@@ -4763,7 +5314,7 @@ type DeleteVolumeRequest struct {
 
 func (x *DeleteVolumeRequest) Reset() {
 	*x = DeleteVolumeRequest{}
-	mi := &file_platform_proto_msgTypes[54]
+	mi := &file_platform_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4775,7 +5326,7 @@ func (x *DeleteVolumeRequest) String() string {
 func (*DeleteVolumeRequest) ProtoMessage() {}
 
 func (x *DeleteVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[54]
+	mi := &file_platform_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4788,7 +5339,7 @@ func (x *DeleteVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteVolumeRequest.ProtoReflect.Descriptor instead.
 func (*DeleteVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{54}
+	return file_platform_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *DeleteVolumeRequest) GetVolumeId() string {
@@ -4807,7 +5358,7 @@ type ListVolumesRequest struct {
 
 func (x *ListVolumesRequest) Reset() {
 	*x = ListVolumesRequest{}
-	mi := &file_platform_proto_msgTypes[55]
+	mi := &file_platform_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4819,7 +5370,7 @@ func (x *ListVolumesRequest) String() string {
 func (*ListVolumesRequest) ProtoMessage() {}
 
 func (x *ListVolumesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[55]
+	mi := &file_platform_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4832,7 +5383,7 @@ func (x *ListVolumesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVolumesRequest.ProtoReflect.Descriptor instead.
 func (*ListVolumesRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{55}
+	return file_platform_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *ListVolumesRequest) GetEnvironmentId() string {
@@ -4851,7 +5402,7 @@ type ListVolumesResponse struct {
 
 func (x *ListVolumesResponse) Reset() {
 	*x = ListVolumesResponse{}
-	mi := &file_platform_proto_msgTypes[56]
+	mi := &file_platform_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4863,7 +5414,7 @@ func (x *ListVolumesResponse) String() string {
 func (*ListVolumesResponse) ProtoMessage() {}
 
 func (x *ListVolumesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[56]
+	mi := &file_platform_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4876,7 +5427,7 @@ func (x *ListVolumesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVolumesResponse.ProtoReflect.Descriptor instead.
 func (*ListVolumesResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{56}
+	return file_platform_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *ListVolumesResponse) GetVolumes() []*Volume {
@@ -4896,7 +5447,7 @@ type ServiceInput struct {
 
 func (x *ServiceInput) Reset() {
 	*x = ServiceInput{}
-	mi := &file_platform_proto_msgTypes[57]
+	mi := &file_platform_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4908,7 +5459,7 @@ func (x *ServiceInput) String() string {
 func (*ServiceInput) ProtoMessage() {}
 
 func (x *ServiceInput) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[57]
+	mi := &file_platform_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4921,7 +5472,7 @@ func (x *ServiceInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceInput.ProtoReflect.Descriptor instead.
 func (*ServiceInput) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{57}
+	return file_platform_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *ServiceInput) GetName() string {
@@ -4948,7 +5499,7 @@ type ServiceUpdate struct {
 
 func (x *ServiceUpdate) Reset() {
 	*x = ServiceUpdate{}
-	mi := &file_platform_proto_msgTypes[58]
+	mi := &file_platform_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4960,7 +5511,7 @@ func (x *ServiceUpdate) String() string {
 func (*ServiceUpdate) ProtoMessage() {}
 
 func (x *ServiceUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[58]
+	mi := &file_platform_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4973,7 +5524,7 @@ func (x *ServiceUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceUpdate.ProtoReflect.Descriptor instead.
 func (*ServiceUpdate) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{58}
+	return file_platform_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ServiceUpdate) GetSpec() *ServiceSpec {
@@ -5001,7 +5552,7 @@ type DomainBindingInput struct {
 
 func (x *DomainBindingInput) Reset() {
 	*x = DomainBindingInput{}
-	mi := &file_platform_proto_msgTypes[59]
+	mi := &file_platform_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5013,7 +5564,7 @@ func (x *DomainBindingInput) String() string {
 func (*DomainBindingInput) ProtoMessage() {}
 
 func (x *DomainBindingInput) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[59]
+	mi := &file_platform_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5026,7 +5577,7 @@ func (x *DomainBindingInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainBindingInput.ProtoReflect.Descriptor instead.
 func (*DomainBindingInput) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{59}
+	return file_platform_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *DomainBindingInput) GetHostname() string {
@@ -5060,7 +5611,7 @@ type DomainBindingTarget struct {
 
 func (x *DomainBindingTarget) Reset() {
 	*x = DomainBindingTarget{}
-	mi := &file_platform_proto_msgTypes[60]
+	mi := &file_platform_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5072,7 +5623,7 @@ func (x *DomainBindingTarget) String() string {
 func (*DomainBindingTarget) ProtoMessage() {}
 
 func (x *DomainBindingTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[60]
+	mi := &file_platform_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5085,7 +5636,7 @@ func (x *DomainBindingTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DomainBindingTarget.ProtoReflect.Descriptor instead.
 func (*DomainBindingTarget) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{60}
+	return file_platform_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *DomainBindingTarget) GetServiceId() string {
@@ -5112,7 +5663,7 @@ type GenerateDomainBindingRequest struct {
 
 func (x *GenerateDomainBindingRequest) Reset() {
 	*x = GenerateDomainBindingRequest{}
-	mi := &file_platform_proto_msgTypes[61]
+	mi := &file_platform_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5124,7 +5675,7 @@ func (x *GenerateDomainBindingRequest) String() string {
 func (*GenerateDomainBindingRequest) ProtoMessage() {}
 
 func (x *GenerateDomainBindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[61]
+	mi := &file_platform_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5137,7 +5688,7 @@ func (x *GenerateDomainBindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateDomainBindingRequest.ProtoReflect.Descriptor instead.
 func (*GenerateDomainBindingRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{61}
+	return file_platform_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *GenerateDomainBindingRequest) GetServiceId() string {
@@ -5163,7 +5714,7 @@ type CreateDomainBindingRequest struct {
 
 func (x *CreateDomainBindingRequest) Reset() {
 	*x = CreateDomainBindingRequest{}
-	mi := &file_platform_proto_msgTypes[62]
+	mi := &file_platform_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5175,7 +5726,7 @@ func (x *CreateDomainBindingRequest) String() string {
 func (*CreateDomainBindingRequest) ProtoMessage() {}
 
 func (x *CreateDomainBindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[62]
+	mi := &file_platform_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5188,7 +5739,7 @@ func (x *CreateDomainBindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateDomainBindingRequest.ProtoReflect.Descriptor instead.
 func (*CreateDomainBindingRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{62}
+	return file_platform_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *CreateDomainBindingRequest) GetBinding() *DomainBindingInput {
@@ -5207,7 +5758,7 @@ type GetDomainBindingRequest struct {
 
 func (x *GetDomainBindingRequest) Reset() {
 	*x = GetDomainBindingRequest{}
-	mi := &file_platform_proto_msgTypes[63]
+	mi := &file_platform_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5219,7 +5770,7 @@ func (x *GetDomainBindingRequest) String() string {
 func (*GetDomainBindingRequest) ProtoMessage() {}
 
 func (x *GetDomainBindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[63]
+	mi := &file_platform_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5232,7 +5783,7 @@ func (x *GetDomainBindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDomainBindingRequest.ProtoReflect.Descriptor instead.
 func (*GetDomainBindingRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{63}
+	return file_platform_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *GetDomainBindingRequest) GetHostname() string {
@@ -5251,7 +5802,7 @@ type ListDomainBindingsRequest struct {
 
 func (x *ListDomainBindingsRequest) Reset() {
 	*x = ListDomainBindingsRequest{}
-	mi := &file_platform_proto_msgTypes[64]
+	mi := &file_platform_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5263,7 +5814,7 @@ func (x *ListDomainBindingsRequest) String() string {
 func (*ListDomainBindingsRequest) ProtoMessage() {}
 
 func (x *ListDomainBindingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[64]
+	mi := &file_platform_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5276,7 +5827,7 @@ func (x *ListDomainBindingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDomainBindingsRequest.ProtoReflect.Descriptor instead.
 func (*ListDomainBindingsRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{64}
+	return file_platform_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ListDomainBindingsRequest) GetServiceId() string {
@@ -5295,7 +5846,7 @@ type ListDomainBindingsResponse struct {
 
 func (x *ListDomainBindingsResponse) Reset() {
 	*x = ListDomainBindingsResponse{}
-	mi := &file_platform_proto_msgTypes[65]
+	mi := &file_platform_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5307,7 +5858,7 @@ func (x *ListDomainBindingsResponse) String() string {
 func (*ListDomainBindingsResponse) ProtoMessage() {}
 
 func (x *ListDomainBindingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[65]
+	mi := &file_platform_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5320,7 +5871,7 @@ func (x *ListDomainBindingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDomainBindingsResponse.ProtoReflect.Descriptor instead.
 func (*ListDomainBindingsResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{65}
+	return file_platform_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ListDomainBindingsResponse) GetBindings() []*DomainBinding {
@@ -5340,7 +5891,7 @@ type UpdateDomainBindingRequest struct {
 
 func (x *UpdateDomainBindingRequest) Reset() {
 	*x = UpdateDomainBindingRequest{}
-	mi := &file_platform_proto_msgTypes[66]
+	mi := &file_platform_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5352,7 +5903,7 @@ func (x *UpdateDomainBindingRequest) String() string {
 func (*UpdateDomainBindingRequest) ProtoMessage() {}
 
 func (x *UpdateDomainBindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[66]
+	mi := &file_platform_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5365,7 +5916,7 @@ func (x *UpdateDomainBindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateDomainBindingRequest.ProtoReflect.Descriptor instead.
 func (*UpdateDomainBindingRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{66}
+	return file_platform_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *UpdateDomainBindingRequest) GetHostname() string {
@@ -5391,7 +5942,7 @@ type DeleteDomainBindingRequest struct {
 
 func (x *DeleteDomainBindingRequest) Reset() {
 	*x = DeleteDomainBindingRequest{}
-	mi := &file_platform_proto_msgTypes[67]
+	mi := &file_platform_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5403,7 +5954,7 @@ func (x *DeleteDomainBindingRequest) String() string {
 func (*DeleteDomainBindingRequest) ProtoMessage() {}
 
 func (x *DeleteDomainBindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[67]
+	mi := &file_platform_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5416,7 +5967,7 @@ func (x *DeleteDomainBindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteDomainBindingRequest.ProtoReflect.Descriptor instead.
 func (*DeleteDomainBindingRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{67}
+	return file_platform_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *DeleteDomainBindingRequest) GetHostname() string {
@@ -5437,7 +5988,7 @@ type GetServiceStatusRequest struct {
 
 func (x *GetServiceStatusRequest) Reset() {
 	*x = GetServiceStatusRequest{}
-	mi := &file_platform_proto_msgTypes[68]
+	mi := &file_platform_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5449,7 +6000,7 @@ func (x *GetServiceStatusRequest) String() string {
 func (*GetServiceStatusRequest) ProtoMessage() {}
 
 func (x *GetServiceStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[68]
+	mi := &file_platform_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5462,7 +6013,7 @@ func (x *GetServiceStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServiceStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetServiceStatusRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{68}
+	return file_platform_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *GetServiceStatusRequest) GetServiceId() string {
@@ -5502,7 +6053,7 @@ type ListServiceLogsRequest struct {
 
 func (x *ListServiceLogsRequest) Reset() {
 	*x = ListServiceLogsRequest{}
-	mi := &file_platform_proto_msgTypes[69]
+	mi := &file_platform_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5514,7 +6065,7 @@ func (x *ListServiceLogsRequest) String() string {
 func (*ListServiceLogsRequest) ProtoMessage() {}
 
 func (x *ListServiceLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[69]
+	mi := &file_platform_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5527,7 +6078,7 @@ func (x *ListServiceLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServiceLogsRequest.ProtoReflect.Descriptor instead.
 func (*ListServiceLogsRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{69}
+	return file_platform_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ListServiceLogsRequest) GetServiceId() string {
@@ -5606,7 +6157,7 @@ type ServiceLogLine struct {
 
 func (x *ServiceLogLine) Reset() {
 	*x = ServiceLogLine{}
-	mi := &file_platform_proto_msgTypes[70]
+	mi := &file_platform_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5618,7 +6169,7 @@ func (x *ServiceLogLine) String() string {
 func (*ServiceLogLine) ProtoMessage() {}
 
 func (x *ServiceLogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[70]
+	mi := &file_platform_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5631,7 +6182,7 @@ func (x *ServiceLogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceLogLine.ProtoReflect.Descriptor instead.
 func (*ServiceLogLine) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{70}
+	return file_platform_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ServiceLogLine) GetObservedAt() *timestamppb.Timestamp {
@@ -5727,7 +6278,7 @@ type ListServiceLogsResponse struct {
 
 func (x *ListServiceLogsResponse) Reset() {
 	*x = ListServiceLogsResponse{}
-	mi := &file_platform_proto_msgTypes[71]
+	mi := &file_platform_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5739,7 +6290,7 @@ func (x *ListServiceLogsResponse) String() string {
 func (*ListServiceLogsResponse) ProtoMessage() {}
 
 func (x *ListServiceLogsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[71]
+	mi := &file_platform_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5752,7 +6303,7 @@ func (x *ListServiceLogsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServiceLogsResponse.ProtoReflect.Descriptor instead.
 func (*ListServiceLogsResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{71}
+	return file_platform_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *ListServiceLogsResponse) GetLines() []*ServiceLogLine {
@@ -5772,7 +6323,7 @@ type ListServiceDeploymentsRequest struct {
 
 func (x *ListServiceDeploymentsRequest) Reset() {
 	*x = ListServiceDeploymentsRequest{}
-	mi := &file_platform_proto_msgTypes[72]
+	mi := &file_platform_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5784,7 +6335,7 @@ func (x *ListServiceDeploymentsRequest) String() string {
 func (*ListServiceDeploymentsRequest) ProtoMessage() {}
 
 func (x *ListServiceDeploymentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[72]
+	mi := &file_platform_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5797,7 +6348,7 @@ func (x *ListServiceDeploymentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServiceDeploymentsRequest.ProtoReflect.Descriptor instead.
 func (*ListServiceDeploymentsRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{72}
+	return file_platform_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *ListServiceDeploymentsRequest) GetServiceId() string {
@@ -5815,26 +6366,28 @@ func (x *ListServiceDeploymentsRequest) GetLimit() int32 {
 }
 
 type DeploymentRecord struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	Id                string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ServiceId         string                 `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	RolloutGeneration int64                  `protobuf:"varint,3,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
-	SpecRevision      int64                  `protobuf:"varint,4,opt,name=spec_revision,json=specRevision,proto3" json:"spec_revision,omitempty"`
-	Reason            string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
-	CreatedAt         *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	Build             *BuildStatus           `protobuf:"bytes,7,opt,name=build,proto3" json:"build,omitempty"`
-	IsCurrent         bool                   `protobuf:"varint,8,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
-	RequestedByUserId string                 `protobuf:"bytes,9,opt,name=requested_by_user_id,json=requestedByUserId,proto3" json:"requested_by_user_id,omitempty"`
-	Status            *DeploymentStatus      `protobuf:"bytes,10,opt,name=status,proto3" json:"status,omitempty"`
-	Stages            []*DeploymentStage     `protobuf:"bytes,11,rep,name=stages,proto3" json:"stages,omitempty"`
-	ImageDigest       string                 `protobuf:"bytes,12,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	state             protoimpl.MessageState    `protogen:"open.v1"`
+	Id                string                    `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ServiceId         string                    `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	RolloutGeneration int64                     `protobuf:"varint,3,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
+	SpecRevision      int64                     `protobuf:"varint,4,opt,name=spec_revision,json=specRevision,proto3" json:"spec_revision,omitempty"`
+	Reason            string                    `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	CreatedAt         *timestamppb.Timestamp    `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Build             *BuildStatus              `protobuf:"bytes,7,opt,name=build,proto3" json:"build,omitempty"`
+	IsCurrent         bool                      `protobuf:"varint,8,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
+	RequestedByUserId string                    `protobuf:"bytes,9,opt,name=requested_by_user_id,json=requestedByUserId,proto3" json:"requested_by_user_id,omitempty"`
+	Status            *DeploymentStatus         `protobuf:"bytes,10,opt,name=status,proto3" json:"status,omitempty"`
+	Stages            []*DeploymentStage        `protobuf:"bytes,11,rep,name=stages,proto3" json:"stages,omitempty"`
+	ImageDigest       string                    `protobuf:"bytes,12,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	Actions           []*DeploymentActionRecord `protobuf:"bytes,13,rep,name=actions,proto3" json:"actions,omitempty"`
+	VariableVersions  map[string]int64          `protobuf:"bytes,14,rep,name=variable_versions,json=variableVersions,proto3" json:"variable_versions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DeploymentRecord) Reset() {
 	*x = DeploymentRecord{}
-	mi := &file_platform_proto_msgTypes[73]
+	mi := &file_platform_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5846,7 +6399,7 @@ func (x *DeploymentRecord) String() string {
 func (*DeploymentRecord) ProtoMessage() {}
 
 func (x *DeploymentRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[73]
+	mi := &file_platform_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5859,7 +6412,7 @@ func (x *DeploymentRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentRecord.ProtoReflect.Descriptor instead.
 func (*DeploymentRecord) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{73}
+	return file_platform_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *DeploymentRecord) GetId() string {
@@ -5946,6 +6499,20 @@ func (x *DeploymentRecord) GetImageDigest() string {
 	return ""
 }
 
+func (x *DeploymentRecord) GetActions() []*DeploymentActionRecord {
+	if x != nil {
+		return x.Actions
+	}
+	return nil
+}
+
+func (x *DeploymentRecord) GetVariableVersions() map[string]int64 {
+	if x != nil {
+		return x.VariableVersions
+	}
+	return nil
+}
+
 type ListServiceDeploymentsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Deployments   []*DeploymentRecord    `protobuf:"bytes,1,rep,name=deployments,proto3" json:"deployments,omitempty"`
@@ -5955,7 +6522,7 @@ type ListServiceDeploymentsResponse struct {
 
 func (x *ListServiceDeploymentsResponse) Reset() {
 	*x = ListServiceDeploymentsResponse{}
-	mi := &file_platform_proto_msgTypes[74]
+	mi := &file_platform_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5967,7 +6534,7 @@ func (x *ListServiceDeploymentsResponse) String() string {
 func (*ListServiceDeploymentsResponse) ProtoMessage() {}
 
 func (x *ListServiceDeploymentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[74]
+	mi := &file_platform_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5980,7 +6547,7 @@ func (x *ListServiceDeploymentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServiceDeploymentsResponse.ProtoReflect.Descriptor instead.
 func (*ListServiceDeploymentsResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{74}
+	return file_platform_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *ListServiceDeploymentsResponse) GetDeployments() []*DeploymentRecord {
@@ -5999,7 +6566,7 @@ type ListAgentsResponse struct {
 
 func (x *ListAgentsResponse) Reset() {
 	*x = ListAgentsResponse{}
-	mi := &file_platform_proto_msgTypes[75]
+	mi := &file_platform_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6011,7 +6578,7 @@ func (x *ListAgentsResponse) String() string {
 func (*ListAgentsResponse) ProtoMessage() {}
 
 func (x *ListAgentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[75]
+	mi := &file_platform_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6024,7 +6591,7 @@ func (x *ListAgentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAgentsResponse.ProtoReflect.Descriptor instead.
 func (*ListAgentsResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{75}
+	return file_platform_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *ListAgentsResponse) GetAgents() []*Agent {
@@ -6032,6 +6599,455 @@ func (x *ListAgentsResponse) GetAgents() []*Agent {
 		return x.Agents
 	}
 	return nil
+}
+
+type CreateAgentRequest struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	AgentId                 string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Name                    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Region                  string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
+	Zone                    string                 `protobuf:"bytes,4,opt,name=zone,proto3" json:"zone,omitempty"`
+	FailureDomain           string                 `protobuf:"bytes,5,opt,name=failure_domain,json=failureDomain,proto3" json:"failure_domain,omitempty"`
+	ReservedCpuMillis       int64                  `protobuf:"varint,6,opt,name=reserved_cpu_millis,json=reservedCpuMillis,proto3" json:"reserved_cpu_millis,omitempty"`
+	ReservedMemoryMebibytes int64                  `protobuf:"varint,7,opt,name=reserved_memory_mebibytes,json=reservedMemoryMebibytes,proto3" json:"reserved_memory_mebibytes,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *CreateAgentRequest) Reset() {
+	*x = CreateAgentRequest{}
+	mi := &file_platform_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAgentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAgentRequest) ProtoMessage() {}
+
+func (x *CreateAgentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAgentRequest.ProtoReflect.Descriptor instead.
+func (*CreateAgentRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *CreateAgentRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *CreateAgentRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateAgentRequest) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *CreateAgentRequest) GetZone() string {
+	if x != nil {
+		return x.Zone
+	}
+	return ""
+}
+
+func (x *CreateAgentRequest) GetFailureDomain() string {
+	if x != nil {
+		return x.FailureDomain
+	}
+	return ""
+}
+
+func (x *CreateAgentRequest) GetReservedCpuMillis() int64 {
+	if x != nil {
+		return x.ReservedCpuMillis
+	}
+	return 0
+}
+
+func (x *CreateAgentRequest) GetReservedMemoryMebibytes() int64 {
+	if x != nil {
+		return x.ReservedMemoryMebibytes
+	}
+	return 0
+}
+
+type AgentEnrollment struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Agent *Agent                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
+	// Returned only when a new enrollment is created. Store it as a secret.
+	BootstrapToken string `protobuf:"bytes,2,opt,name=bootstrap_token,json=bootstrapToken,proto3" json:"bootstrap_token,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AgentEnrollment) Reset() {
+	*x = AgentEnrollment{}
+	mi := &file_platform_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentEnrollment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentEnrollment) ProtoMessage() {}
+
+func (x *AgentEnrollment) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentEnrollment.ProtoReflect.Descriptor instead.
+func (*AgentEnrollment) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *AgentEnrollment) GetAgent() *Agent {
+	if x != nil {
+		return x.Agent
+	}
+	return nil
+}
+
+func (x *AgentEnrollment) GetBootstrapToken() string {
+	if x != nil {
+		return x.BootstrapToken
+	}
+	return ""
+}
+
+type UpdateAgentRequest struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	AgentId                 string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Name                    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Region                  string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
+	Zone                    string                 `protobuf:"bytes,4,opt,name=zone,proto3" json:"zone,omitempty"`
+	FailureDomain           string                 `protobuf:"bytes,5,opt,name=failure_domain,json=failureDomain,proto3" json:"failure_domain,omitempty"`
+	ReservedCpuMillis       int64                  `protobuf:"varint,6,opt,name=reserved_cpu_millis,json=reservedCpuMillis,proto3" json:"reserved_cpu_millis,omitempty"`
+	ReservedMemoryMebibytes int64                  `protobuf:"varint,7,opt,name=reserved_memory_mebibytes,json=reservedMemoryMebibytes,proto3" json:"reserved_memory_mebibytes,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *UpdateAgentRequest) Reset() {
+	*x = UpdateAgentRequest{}
+	mi := &file_platform_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateAgentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateAgentRequest) ProtoMessage() {}
+
+func (x *UpdateAgentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateAgentRequest.ProtoReflect.Descriptor instead.
+func (*UpdateAgentRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *UpdateAgentRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *UpdateAgentRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateAgentRequest) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *UpdateAgentRequest) GetZone() string {
+	if x != nil {
+		return x.Zone
+	}
+	return ""
+}
+
+func (x *UpdateAgentRequest) GetFailureDomain() string {
+	if x != nil {
+		return x.FailureDomain
+	}
+	return ""
+}
+
+func (x *UpdateAgentRequest) GetReservedCpuMillis() int64 {
+	if x != nil {
+		return x.ReservedCpuMillis
+	}
+	return 0
+}
+
+func (x *UpdateAgentRequest) GetReservedMemoryMebibytes() int64 {
+	if x != nil {
+		return x.ReservedMemoryMebibytes
+	}
+	return 0
+}
+
+type SetAgentLifecycleRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	LifecycleState AgentLifecycleState    `protobuf:"varint,2,opt,name=lifecycle_state,json=lifecycleState,proto3,enum=platform.v1.AgentLifecycleState" json:"lifecycle_state,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SetAgentLifecycleRequest) Reset() {
+	*x = SetAgentLifecycleRequest{}
+	mi := &file_platform_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAgentLifecycleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAgentLifecycleRequest) ProtoMessage() {}
+
+func (x *SetAgentLifecycleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAgentLifecycleRequest.ProtoReflect.Descriptor instead.
+func (*SetAgentLifecycleRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *SetAgentLifecycleRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *SetAgentLifecycleRequest) GetLifecycleState() AgentLifecycleState {
+	if x != nil {
+		return x.LifecycleState
+	}
+	return AgentLifecycleState_AGENT_LIFECYCLE_STATE_UNSPECIFIED
+}
+
+type FleetCapacity struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	NodeCount                  int32                  `protobuf:"varint,1,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
+	SchedulableNodeCount       int32                  `protobuf:"varint,2,opt,name=schedulable_node_count,json=schedulableNodeCount,proto3" json:"schedulable_node_count,omitempty"`
+	SchedulableCpuMillis       int64                  `protobuf:"varint,3,opt,name=schedulable_cpu_millis,json=schedulableCpuMillis,proto3" json:"schedulable_cpu_millis,omitempty"`
+	SchedulableMemoryMebibytes int64                  `protobuf:"varint,4,opt,name=schedulable_memory_mebibytes,json=schedulableMemoryMebibytes,proto3" json:"schedulable_memory_mebibytes,omitempty"`
+	AllocatedCpuMillis         int64                  `protobuf:"varint,5,opt,name=allocated_cpu_millis,json=allocatedCpuMillis,proto3" json:"allocated_cpu_millis,omitempty"`
+	AllocatedMemoryMebibytes   int64                  `protobuf:"varint,6,opt,name=allocated_memory_mebibytes,json=allocatedMemoryMebibytes,proto3" json:"allocated_memory_mebibytes,omitempty"`
+	HeadroomCpuMillis          int64                  `protobuf:"varint,7,opt,name=headroom_cpu_millis,json=headroomCpuMillis,proto3" json:"headroom_cpu_millis,omitempty"`
+	HeadroomMemoryMebibytes    int64                  `protobuf:"varint,8,opt,name=headroom_memory_mebibytes,json=headroomMemoryMebibytes,proto3" json:"headroom_memory_mebibytes,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *FleetCapacity) Reset() {
+	*x = FleetCapacity{}
+	mi := &file_platform_proto_msgTypes[83]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetCapacity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetCapacity) ProtoMessage() {}
+
+func (x *FleetCapacity) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[83]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetCapacity.ProtoReflect.Descriptor instead.
+func (*FleetCapacity) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{83}
+}
+
+func (x *FleetCapacity) GetNodeCount() int32 {
+	if x != nil {
+		return x.NodeCount
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetSchedulableNodeCount() int32 {
+	if x != nil {
+		return x.SchedulableNodeCount
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetSchedulableCpuMillis() int64 {
+	if x != nil {
+		return x.SchedulableCpuMillis
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetSchedulableMemoryMebibytes() int64 {
+	if x != nil {
+		return x.SchedulableMemoryMebibytes
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetAllocatedCpuMillis() int64 {
+	if x != nil {
+		return x.AllocatedCpuMillis
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetAllocatedMemoryMebibytes() int64 {
+	if x != nil {
+		return x.AllocatedMemoryMebibytes
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetHeadroomCpuMillis() int64 {
+	if x != nil {
+		return x.HeadroomCpuMillis
+	}
+	return 0
+}
+
+func (x *FleetCapacity) GetHeadroomMemoryMebibytes() int64 {
+	if x != nil {
+		return x.HeadroomMemoryMebibytes
+	}
+	return 0
+}
+
+type Fleet struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Agents         []*Agent               `protobuf:"bytes,1,rep,name=agents,proto3" json:"agents,omitempty"`
+	Capacity       *FleetCapacity         `protobuf:"bytes,2,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	VersionWarning string                 `protobuf:"bytes,3,opt,name=version_warning,json=versionWarning,proto3" json:"version_warning,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Fleet) Reset() {
+	*x = Fleet{}
+	mi := &file_platform_proto_msgTypes[84]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Fleet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Fleet) ProtoMessage() {}
+
+func (x *Fleet) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[84]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Fleet.ProtoReflect.Descriptor instead.
+func (*Fleet) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{84}
+}
+
+func (x *Fleet) GetAgents() []*Agent {
+	if x != nil {
+		return x.Agents
+	}
+	return nil
+}
+
+func (x *Fleet) GetCapacity() *FleetCapacity {
+	if x != nil {
+		return x.Capacity
+	}
+	return nil
+}
+
+func (x *Fleet) GetVersionWarning() string {
+	if x != nil {
+		return x.VersionWarning
+	}
+	return ""
 }
 
 type ClaimBuildRequest struct {
@@ -6044,7 +7060,7 @@ type ClaimBuildRequest struct {
 
 func (x *ClaimBuildRequest) Reset() {
 	*x = ClaimBuildRequest{}
-	mi := &file_platform_proto_msgTypes[76]
+	mi := &file_platform_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6056,7 +7072,7 @@ func (x *ClaimBuildRequest) String() string {
 func (*ClaimBuildRequest) ProtoMessage() {}
 
 func (x *ClaimBuildRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[76]
+	mi := &file_platform_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6069,7 +7085,7 @@ func (x *ClaimBuildRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimBuildRequest.ProtoReflect.Descriptor instead.
 func (*ClaimBuildRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{76}
+	return file_platform_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *ClaimBuildRequest) GetBuilderId() string {
@@ -6108,7 +7124,7 @@ type BuildJob struct {
 
 func (x *BuildJob) Reset() {
 	*x = BuildJob{}
-	mi := &file_platform_proto_msgTypes[77]
+	mi := &file_platform_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6120,7 +7136,7 @@ func (x *BuildJob) String() string {
 func (*BuildJob) ProtoMessage() {}
 
 func (x *BuildJob) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[77]
+	mi := &file_platform_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6133,7 +7149,7 @@ func (x *BuildJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildJob.ProtoReflect.Descriptor instead.
 func (*BuildJob) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{77}
+	return file_platform_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *BuildJob) GetBuildId() string {
@@ -6215,7 +7231,7 @@ type DownloadSourceSnapshotRequest struct {
 
 func (x *DownloadSourceSnapshotRequest) Reset() {
 	*x = DownloadSourceSnapshotRequest{}
-	mi := &file_platform_proto_msgTypes[78]
+	mi := &file_platform_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6227,7 +7243,7 @@ func (x *DownloadSourceSnapshotRequest) String() string {
 func (*DownloadSourceSnapshotRequest) ProtoMessage() {}
 
 func (x *DownloadSourceSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[78]
+	mi := &file_platform_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6240,7 +7256,7 @@ func (x *DownloadSourceSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadSourceSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*DownloadSourceSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{78}
+	return file_platform_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *DownloadSourceSnapshotRequest) GetSnapshotId() string {
@@ -6263,7 +7279,7 @@ type SourceSnapshotChunk struct {
 
 func (x *SourceSnapshotChunk) Reset() {
 	*x = SourceSnapshotChunk{}
-	mi := &file_platform_proto_msgTypes[79]
+	mi := &file_platform_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6275,7 +7291,7 @@ func (x *SourceSnapshotChunk) String() string {
 func (*SourceSnapshotChunk) ProtoMessage() {}
 
 func (x *SourceSnapshotChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[79]
+	mi := &file_platform_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6288,7 +7304,7 @@ func (x *SourceSnapshotChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceSnapshotChunk.ProtoReflect.Descriptor instead.
 func (*SourceSnapshotChunk) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{79}
+	return file_platform_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *SourceSnapshotChunk) GetSnapshotId() string {
@@ -6336,7 +7352,7 @@ type BuilderHeartbeatRequest struct {
 
 func (x *BuilderHeartbeatRequest) Reset() {
 	*x = BuilderHeartbeatRequest{}
-	mi := &file_platform_proto_msgTypes[80]
+	mi := &file_platform_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6348,7 +7364,7 @@ func (x *BuilderHeartbeatRequest) String() string {
 func (*BuilderHeartbeatRequest) ProtoMessage() {}
 
 func (x *BuilderHeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[80]
+	mi := &file_platform_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6361,7 +7377,7 @@ func (x *BuilderHeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuilderHeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*BuilderHeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{80}
+	return file_platform_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *BuilderHeartbeatRequest) GetBuilderId() string {
@@ -6389,7 +7405,7 @@ type ReportBuildLogsRequest struct {
 
 func (x *ReportBuildLogsRequest) Reset() {
 	*x = ReportBuildLogsRequest{}
-	mi := &file_platform_proto_msgTypes[81]
+	mi := &file_platform_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6401,7 +7417,7 @@ func (x *ReportBuildLogsRequest) String() string {
 func (*ReportBuildLogsRequest) ProtoMessage() {}
 
 func (x *ReportBuildLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[81]
+	mi := &file_platform_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6414,7 +7430,7 @@ func (x *ReportBuildLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportBuildLogsRequest.ProtoReflect.Descriptor instead.
 func (*ReportBuildLogsRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{81}
+	return file_platform_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *ReportBuildLogsRequest) GetBuilderId() string {
@@ -6450,7 +7466,7 @@ type BuildLogLine struct {
 
 func (x *BuildLogLine) Reset() {
 	*x = BuildLogLine{}
-	mi := &file_platform_proto_msgTypes[82]
+	mi := &file_platform_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6462,7 +7478,7 @@ func (x *BuildLogLine) String() string {
 func (*BuildLogLine) ProtoMessage() {}
 
 func (x *BuildLogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[82]
+	mi := &file_platform_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6475,7 +7491,7 @@ func (x *BuildLogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildLogLine.ProtoReflect.Descriptor instead.
 func (*BuildLogLine) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{82}
+	return file_platform_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *BuildLogLine) GetObservedAt() *timestamppb.Timestamp {
@@ -6520,7 +7536,7 @@ type CompleteBuildRequest struct {
 
 func (x *CompleteBuildRequest) Reset() {
 	*x = CompleteBuildRequest{}
-	mi := &file_platform_proto_msgTypes[83]
+	mi := &file_platform_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6532,7 +7548,7 @@ func (x *CompleteBuildRequest) String() string {
 func (*CompleteBuildRequest) ProtoMessage() {}
 
 func (x *CompleteBuildRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[83]
+	mi := &file_platform_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6545,7 +7561,7 @@ func (x *CompleteBuildRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteBuildRequest.ProtoReflect.Descriptor instead.
 func (*CompleteBuildRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{83}
+	return file_platform_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *CompleteBuildRequest) GetBuilderId() string {
@@ -6602,7 +7618,7 @@ type IngestGitHubWebhookRequest struct {
 
 func (x *IngestGitHubWebhookRequest) Reset() {
 	*x = IngestGitHubWebhookRequest{}
-	mi := &file_platform_proto_msgTypes[84]
+	mi := &file_platform_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6614,7 +7630,7 @@ func (x *IngestGitHubWebhookRequest) String() string {
 func (*IngestGitHubWebhookRequest) ProtoMessage() {}
 
 func (x *IngestGitHubWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[84]
+	mi := &file_platform_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6627,7 +7643,7 @@ func (x *IngestGitHubWebhookRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestGitHubWebhookRequest.ProtoReflect.Descriptor instead.
 func (*IngestGitHubWebhookRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{84}
+	return file_platform_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *IngestGitHubWebhookRequest) GetDeliveryId() string {
@@ -6671,7 +7687,7 @@ type LinkGitHubRepositoryRequest struct {
 
 func (x *LinkGitHubRepositoryRequest) Reset() {
 	*x = LinkGitHubRepositoryRequest{}
-	mi := &file_platform_proto_msgTypes[85]
+	mi := &file_platform_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6683,7 +7699,7 @@ func (x *LinkGitHubRepositoryRequest) String() string {
 func (*LinkGitHubRepositoryRequest) ProtoMessage() {}
 
 func (x *LinkGitHubRepositoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[85]
+	mi := &file_platform_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6696,7 +7712,7 @@ func (x *LinkGitHubRepositoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkGitHubRepositoryRequest.ProtoReflect.Descriptor instead.
 func (*LinkGitHubRepositoryRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{85}
+	return file_platform_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *LinkGitHubRepositoryRequest) GetProjectId() string {
@@ -6734,7 +7750,7 @@ type SandboxProfile struct {
 
 func (x *SandboxProfile) Reset() {
 	*x = SandboxProfile{}
-	mi := &file_platform_proto_msgTypes[86]
+	mi := &file_platform_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6746,7 +7762,7 @@ func (x *SandboxProfile) String() string {
 func (*SandboxProfile) ProtoMessage() {}
 
 func (x *SandboxProfile) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[86]
+	mi := &file_platform_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6759,7 +7775,7 @@ func (x *SandboxProfile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxProfile.ProtoReflect.Descriptor instead.
 func (*SandboxProfile) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{86}
+	return file_platform_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *SandboxProfile) GetName() string {
@@ -6797,7 +7813,7 @@ type SandboxProfileAuditEvent struct {
 
 func (x *SandboxProfileAuditEvent) Reset() {
 	*x = SandboxProfileAuditEvent{}
-	mi := &file_platform_proto_msgTypes[87]
+	mi := &file_platform_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6809,7 +7825,7 @@ func (x *SandboxProfileAuditEvent) String() string {
 func (*SandboxProfileAuditEvent) ProtoMessage() {}
 
 func (x *SandboxProfileAuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[87]
+	mi := &file_platform_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6822,7 +7838,7 @@ func (x *SandboxProfileAuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SandboxProfileAuditEvent.ProtoReflect.Descriptor instead.
 func (*SandboxProfileAuditEvent) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{87}
+	return file_platform_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *SandboxProfileAuditEvent) GetActorUserId() string {
@@ -6876,7 +7892,7 @@ type ListSandboxProfilesResponse struct {
 
 func (x *ListSandboxProfilesResponse) Reset() {
 	*x = ListSandboxProfilesResponse{}
-	mi := &file_platform_proto_msgTypes[88]
+	mi := &file_platform_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6888,7 +7904,7 @@ func (x *ListSandboxProfilesResponse) String() string {
 func (*ListSandboxProfilesResponse) ProtoMessage() {}
 
 func (x *ListSandboxProfilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[88]
+	mi := &file_platform_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6901,7 +7917,7 @@ func (x *ListSandboxProfilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSandboxProfilesResponse.ProtoReflect.Descriptor instead.
 func (*ListSandboxProfilesResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{88}
+	return file_platform_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *ListSandboxProfilesResponse) GetProfiles() []*SandboxProfile {
@@ -7052,12 +8068,24 @@ const file_platform_proto_rawDesc = "" +
 	"\x05image\x18\x01 \x01(\v2\x1e.platform.v1.DirectImageSourceH\x00R\x05image\x12A\n" +
 	"\vsource_spec\x18\x02 \x01(\v2\x1e.platform.v1.ServiceSourceSpecH\x00R\n" +
 	"sourceSpecB\b\n" +
-	"\x06source\"\xcb\x01\n" +
+	"\x06source\"\xbf\x02\n" +
 	"\vServiceSpec\x125\n" +
 	"\aruntime\x18\x01 \x01(\v2\x1b.platform.v1.ServiceRuntimeR\aruntime\x122\n" +
 	"\x06source\x18\x02 \x01(\v2\x1a.platform.v1.ServiceSourceR\x06source\x127\n" +
-	"\x15desired_replica_count\x18\x03 \x01(\x05H\x00R\x13desiredReplicaCount\x88\x01\x01B\x18\n" +
-	"\x16_desired_replica_count\"b\n" +
+	"\x15desired_replica_count\x18\x03 \x01(\x05H\x00R\x13desiredReplicaCount\x88\x01\x01\x12G\n" +
+	"\x10rolling_strategy\x18\x04 \x01(\v2\x1c.platform.v1.RollingStrategyR\x0frollingStrategy\x12)\n" +
+	"\x10placement_region\x18\x05 \x01(\tR\x0fplacementRegionB\x18\n" +
+	"\x16_desired_replica_count\"\xaf\x02\n" +
+	"\x0fRollingStrategy\x12,\n" +
+	"\x0fmax_unavailable\x18\x01 \x01(\x05H\x00R\x0emaxUnavailable\x88\x01\x01\x12 \n" +
+	"\tmax_surge\x18\x02 \x01(\x05H\x01R\bmaxSurge\x88\x01\x01\x12;\n" +
+	"\x17startup_timeout_seconds\x18\x03 \x01(\x05H\x02R\x15startupTimeoutSeconds\x88\x01\x01\x127\n" +
+	"\x15drain_timeout_seconds\x18\x04 \x01(\x05H\x03R\x13drainTimeoutSeconds\x88\x01\x01B\x12\n" +
+	"\x10_max_unavailableB\f\n" +
+	"\n" +
+	"_max_surgeB\x1a\n" +
+	"\x18_startup_timeout_secondsB\x18\n" +
+	"\x16_drain_timeout_seconds\"b\n" +
 	"\x13ResolvedServiceSpec\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x125\n" +
 	"\aruntime\x18\x02 \x01(\v2\x1b.platform.v1.ServiceRuntimeR\aruntime\"\xb2\x02\n" +
@@ -7069,7 +8097,16 @@ const file_platform_proto_rawDesc = "" +
 	"\x14ServiceSourceSummary\x126\n" +
 	"\x05image\x18\x01 \x01(\v2\x1e.platform.v1.DirectImageSourceH\x00R\x05image\x12D\n" +
 	"\fsource_state\x18\x02 \x01(\v2\x1f.platform.v1.SourceStateSummaryH\x00R\vsourceStateB\b\n" +
-	"\x06source\"\xbc\x03\n" +
+	"\x06source\"\xd4\x02\n" +
+	"\x16DeploymentActionRecord\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x125\n" +
+	"\x06action\x18\x02 \x01(\x0e2\x1d.platform.v1.DeploymentActionR\x06action\x120\n" +
+	"\x14target_deployment_id\x18\x03 \x01(\tR\x12targetDeploymentId\x120\n" +
+	"\x14result_deployment_id\x18\x04 \x01(\tR\x12resultDeploymentId\x12#\n" +
+	"\rallocation_id\x18\x05 \x01(\tR\fallocationId\x12/\n" +
+	"\x14requested_by_user_id\x18\x06 \x01(\tR\x11requestedByUserId\x129\n" +
+	"\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xbc\x03\n" +
 	"\x10DeploymentStatus\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x122\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1c.platform.v1.DeploymentStateR\x05state\x12C\n" +
@@ -7162,7 +8199,7 @@ const file_platform_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\x129\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x96\x02\n" +
+	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xb0\t\n" +
 	"\x05Agent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12%\n" +
@@ -7171,7 +8208,26 @@ const file_platform_proto_rawDesc = "" +
 	"\x13cpu_millis_capacity\x18\x05 \x01(\x03R\x11cpuMillisCapacity\x12:\n" +
 	"\x19memory_mebibytes_capacity\x18\x06 \x01(\x03R\x17memoryMebibytesCapacity\x12<\n" +
 	"\flast_seen_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"lastSeenAt\"\x95\x05\n" +
+	"lastSeenAt\x12I\n" +
+	"\x0flifecycle_state\x18\b \x01(\x0e2 .platform.v1.AgentLifecycleStateR\x0elifecycleState\x12\x16\n" +
+	"\x06region\x18\t \x01(\tR\x06region\x12\x12\n" +
+	"\x04zone\x18\n" +
+	" \x01(\tR\x04zone\x12%\n" +
+	"\x0efailure_domain\x18\v \x01(\tR\rfailureDomain\x12.\n" +
+	"\x13reserved_cpu_millis\x18\f \x01(\x03R\x11reservedCpuMillis\x12:\n" +
+	"\x19reserved_memory_mebibytes\x18\r \x01(\x03R\x17reservedMemoryMebibytes\x124\n" +
+	"\x16schedulable_cpu_millis\x18\x0e \x01(\x03R\x14schedulableCpuMillis\x12@\n" +
+	"\x1cschedulable_memory_mebibytes\x18\x0f \x01(\x03R\x1aschedulableMemoryMebibytes\x120\n" +
+	"\x14allocated_cpu_millis\x18\x10 \x01(\x03R\x12allocatedCpuMillis\x12<\n" +
+	"\x1aallocated_memory_mebibytes\x18\x11 \x01(\x03R\x18allocatedMemoryMebibytes\x12.\n" +
+	"\x13headroom_cpu_millis\x18\x12 \x01(\x03R\x11headroomCpuMillis\x12:\n" +
+	"\x19headroom_memory_mebibytes\x18\x13 \x01(\x03R\x17headroomMemoryMebibytes\x121\n" +
+	"\x14runtime_capabilities\x18\x14 \x03(\tR\x13runtimeCapabilities\x12)\n" +
+	"\x10software_version\x18\x15 \x01(\tR\x0fsoftwareVersion\x120\n" +
+	"\x14version_skew_warning\x18\x16 \x01(\tR\x12versionSkewWarning\x12)\n" +
+	"\x10allocation_count\x18\x17 \x01(\x05R\x0fallocationCount\x12/\n" +
+	"\x13maintenance_message\x18\x18 \x01(\tR\x12maintenanceMessage\x12N\n" +
+	"\x15credential_revoked_at\x18\x19 \x01(\v2\x1a.google.protobuf.TimestampR\x13credentialRevokedAt\"\xc3\x06\n" +
 	"\x10AllocationStatus\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -7190,7 +8246,10 @@ const file_platform_proto_rawDesc = "" +
 	"\x1aapplied_rollout_generation\x18\f \x01(\x03R\x18appliedRolloutGeneration\x12#\n" +
 	"\rhealthy_ports\x18\r \x03(\x05R\fhealthyPorts\x129\n" +
 	"\arestart\x18\x0e \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\x124\n" +
-	"\x16operator_restart_nonce\x18\x0f \x01(\x03R\x14operatorRestartNonce\"\xf8\x01\n" +
+	"\x16operator_restart_nonce\x18\x0f \x01(\x03R\x14operatorRestartNonce\x12#\n" +
+	"\rrollout_state\x18\x10 \x01(\tR\frolloutState\x12D\n" +
+	"\x10drain_started_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\x0edrainStartedAt\x12A\n" +
+	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\"\xf8\x01\n" +
 	"\rServiceStatus\x12.\n" +
 	"\aservice\x18\x01 \x01(\v2\x14.platform.v1.ServiceR\aservice\x12=\n" +
 	"\n" +
@@ -7258,7 +8317,14 @@ const file_platform_proto_rawDesc = "" +
 	"\x15desired_replica_count\x18\x02 \x01(\x05R\x13desiredReplicaCount\"6\n" +
 	"\x15RestartServiceRequest\x12\x1d\n" +
 	"\n" +
-	"service_id\x18\x01 \x01(\tR\tserviceId\"}\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\"\xe7\x01\n" +
+	"\x1cApplyDeploymentActionRequest\x12\x1d\n" +
+	"\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\x12#\n" +
+	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x125\n" +
+	"\x06action\x18\x03 \x01(\x0e2\x1d.platform.v1.DeploymentActionR\x06action\x12'\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tR\x0eidempotencyKey\x12#\n" +
+	"\rallocation_id\x18\x05 \x01(\tR\fallocationId\"}\n" +
 	"\x1cDiscardServiceChangesRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x1d\n" +
@@ -7366,7 +8432,7 @@ const file_platform_proto_rawDesc = "" +
 	"\x1dListServiceDeploymentsRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\xf8\x03\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\xde\x05\n" +
 	"\x10DeploymentRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -7383,11 +8449,52 @@ const file_platform_proto_rawDesc = "" +
 	"\x06status\x18\n" +
 	" \x01(\v2\x1d.platform.v1.DeploymentStatusR\x06status\x124\n" +
 	"\x06stages\x18\v \x03(\v2\x1c.platform.v1.DeploymentStageR\x06stages\x12!\n" +
-	"\fimage_digest\x18\f \x01(\tR\vimageDigest\"a\n" +
+	"\fimage_digest\x18\f \x01(\tR\vimageDigest\x12=\n" +
+	"\aactions\x18\r \x03(\v2#.platform.v1.DeploymentActionRecordR\aactions\x12`\n" +
+	"\x11variable_versions\x18\x0e \x03(\v23.platform.v1.DeploymentRecord.VariableVersionsEntryR\x10variableVersions\x1aC\n" +
+	"\x15VariableVersionsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"a\n" +
 	"\x1eListServiceDeploymentsResponse\x12?\n" +
 	"\vdeployments\x18\x01 \x03(\v2\x1d.platform.v1.DeploymentRecordR\vdeployments\"@\n" +
 	"\x12ListAgentsResponse\x12*\n" +
-	"\x06agents\x18\x01 \x03(\v2\x12.platform.v1.AgentR\x06agents\"U\n" +
+	"\x06agents\x18\x01 \x03(\v2\x12.platform.v1.AgentR\x06agents\"\x82\x02\n" +
+	"\x12CreateAgentRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06region\x18\x03 \x01(\tR\x06region\x12\x12\n" +
+	"\x04zone\x18\x04 \x01(\tR\x04zone\x12%\n" +
+	"\x0efailure_domain\x18\x05 \x01(\tR\rfailureDomain\x12.\n" +
+	"\x13reserved_cpu_millis\x18\x06 \x01(\x03R\x11reservedCpuMillis\x12:\n" +
+	"\x19reserved_memory_mebibytes\x18\a \x01(\x03R\x17reservedMemoryMebibytes\"i\n" +
+	"\x0fAgentEnrollment\x12(\n" +
+	"\x05agent\x18\x01 \x01(\v2\x12.platform.v1.AgentR\x05agent\x12,\n" +
+	"\x0fbootstrap_token\x18\x02 \x01(\tB\x03\x80\x01\x01R\x0ebootstrapToken\"\x82\x02\n" +
+	"\x12UpdateAgentRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06region\x18\x03 \x01(\tR\x06region\x12\x12\n" +
+	"\x04zone\x18\x04 \x01(\tR\x04zone\x12%\n" +
+	"\x0efailure_domain\x18\x05 \x01(\tR\rfailureDomain\x12.\n" +
+	"\x13reserved_cpu_millis\x18\x06 \x01(\x03R\x11reservedCpuMillis\x12:\n" +
+	"\x19reserved_memory_mebibytes\x18\a \x01(\x03R\x17reservedMemoryMebibytes\"\x80\x01\n" +
+	"\x18SetAgentLifecycleRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12I\n" +
+	"\x0flifecycle_state\x18\x02 \x01(\x0e2 .platform.v1.AgentLifecycleStateR\x0elifecycleState\"\xb8\x03\n" +
+	"\rFleetCapacity\x12\x1d\n" +
+	"\n" +
+	"node_count\x18\x01 \x01(\x05R\tnodeCount\x124\n" +
+	"\x16schedulable_node_count\x18\x02 \x01(\x05R\x14schedulableNodeCount\x124\n" +
+	"\x16schedulable_cpu_millis\x18\x03 \x01(\x03R\x14schedulableCpuMillis\x12@\n" +
+	"\x1cschedulable_memory_mebibytes\x18\x04 \x01(\x03R\x1aschedulableMemoryMebibytes\x120\n" +
+	"\x14allocated_cpu_millis\x18\x05 \x01(\x03R\x12allocatedCpuMillis\x12<\n" +
+	"\x1aallocated_memory_mebibytes\x18\x06 \x01(\x03R\x18allocatedMemoryMebibytes\x12.\n" +
+	"\x13headroom_cpu_millis\x18\a \x01(\x03R\x11headroomCpuMillis\x12:\n" +
+	"\x19headroom_memory_mebibytes\x18\b \x01(\x03R\x17headroomMemoryMebibytes\"\x94\x01\n" +
+	"\x05Fleet\x12*\n" +
+	"\x06agents\x18\x01 \x03(\v2\x12.platform.v1.AgentR\x06agents\x126\n" +
+	"\bcapacity\x18\x02 \x01(\v2\x1a.platform.v1.FleetCapacityR\bcapacity\x12'\n" +
+	"\x0fversion_warning\x18\x03 \x01(\tR\x0eversionWarning\"U\n" +
 	"\x11ClaimBuildRequest\x12\x1d\n" +
 	"\n" +
 	"builder_id\x18\x01 \x01(\tR\tbuilderId\x12!\n" +
@@ -7471,7 +8578,7 @@ const file_platform_proto_rawDesc = "" +
 	"\vProjectKind\x12\x1c\n" +
 	"\x18PROJECT_KIND_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11PROJECT_KIND_USER\x10\x01\x12\x18\n" +
-	"\x14PROJECT_KIND_MANAGED\x10\x02*\xa9\x01\n" +
+	"\x14PROJECT_KIND_MANAGED\x10\x02*\xc4\x01\n" +
 	"\n" +
 	"BuildState\x12\x1b\n" +
 	"\x17BUILD_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
@@ -7479,7 +8586,8 @@ const file_platform_proto_rawDesc = "" +
 	"\x13BUILD_STATE_RUNNING\x10\x02\x12\x19\n" +
 	"\x15BUILD_STATE_SUCCEEDED\x10\x03\x12\x16\n" +
 	"\x12BUILD_STATE_FAILED\x10\x04\x12\x1a\n" +
-	"\x16BUILD_STATE_SUPERSEDED\x10\x05*\xde\x01\n" +
+	"\x16BUILD_STATE_SUPERSEDED\x10\x05\x12\x19\n" +
+	"\x15BUILD_STATE_CANCELLED\x10\x06*\xde\x01\n" +
 	"\x11SourceAccessState\x12#\n" +
 	"\x1fSOURCE_ACCESS_STATE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dSOURCE_ACCESS_STATE_AVAILABLE\x10\x01\x12-\n" +
@@ -7534,7 +8642,15 @@ const file_platform_proto_rawDesc = "" +
 	"\x1cDEPLOYMENT_CAUSE_KIND_SYSTEM\x10\x02\x12\x1f\n" +
 	"\x1bDEPLOYMENT_CAUSE_KIND_AGENT\x10\x03\x12!\n" +
 	"\x1dDEPLOYMENT_CAUSE_KIND_BUILDER\x10\x04\x12!\n" +
-	"\x1dDEPLOYMENT_CAUSE_KIND_WEBHOOK\x10\x05*\xd0\x01\n" +
+	"\x1dDEPLOYMENT_CAUSE_KIND_WEBHOOK\x10\x05*\xf3\x01\n" +
+	"\x10DeploymentAction\x12!\n" +
+	"\x1dDEPLOYMENT_ACTION_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19DEPLOYMENT_ACTION_RESTART\x10\x01\x12$\n" +
+	" DEPLOYMENT_ACTION_EXACT_REDEPLOY\x10\x02\x12\x1e\n" +
+	"\x1aDEPLOYMENT_ACTION_ROLLBACK\x10\x03\x12\x1c\n" +
+	"\x18DEPLOYMENT_ACTION_CANCEL\x10\x04\x12\x1c\n" +
+	"\x18DEPLOYMENT_ACTION_REMOVE\x10\x05\x12\x1b\n" +
+	"\x17DEPLOYMENT_ACTION_RETRY\x10\x06*\xd0\x01\n" +
 	"\x1cServiceUnappliedChangeAction\x12/\n" +
 	"+SERVICE_UNAPPLIED_CHANGE_ACTION_UNSPECIFIED\x10\x00\x12'\n" +
 	"#SERVICE_UNAPPLIED_CHANGE_ACTION_ADD\x10\x01\x12*\n" +
@@ -7543,7 +8659,15 @@ const file_platform_proto_rawDesc = "" +
 	"\x14DomainOwnershipState\x12&\n" +
 	"\"DOMAIN_OWNERSHIP_STATE_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fDOMAIN_OWNERSHIP_STATE_VERIFIED\x10\x01\x12%\n" +
-	"!DOMAIN_OWNERSHIP_STATE_UNVERIFIED\x10\x02*\xc2\x01\n" +
+	"!DOMAIN_OWNERSHIP_STATE_UNVERIFIED\x10\x02*\x95\x02\n" +
+	"\x13AgentLifecycleState\x12%\n" +
+	"!AGENT_LIFECYCLE_STATE_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fAGENT_LIFECYCLE_STATE_ENROLLING\x10\x01\x12 \n" +
+	"\x1cAGENT_LIFECYCLE_STATE_ACTIVE\x10\x02\x12\"\n" +
+	"\x1eAGENT_LIFECYCLE_STATE_CORDONED\x10\x03\x12\"\n" +
+	"\x1eAGENT_LIFECYCLE_STATE_DRAINING\x10\x04\x12%\n" +
+	"!AGENT_LIFECYCLE_STATE_UNAVAILABLE\x10\x05\x12!\n" +
+	"\x1dAGENT_LIFECYCLE_STATE_RETIRED\x10\x06*\xc2\x01\n" +
 	"\x0eServiceLogType\x12 \n" +
 	"\x1cSERVICE_LOG_TYPE_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18SERVICE_LOG_TYPE_RUNTIME\x10\x01\x12\x1a\n" +
@@ -7554,7 +8678,7 @@ const file_platform_proto_rawDesc = "" +
 	"\x11SandboxRelaxation\x12\"\n" +
 	"\x1eSANDBOX_RELAXATION_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eSANDBOX_RELAXATION_RUN_AS_ROOT\x10\x01\x12/\n" +
-	"+SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM\x10\x022\xb7\x17\n" +
+	"+SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM\x10\x022\x97\x18\n" +
 	"\x0fPlatformService\x12H\n" +
 	"\rCreateProject\x12!.platform.v1.CreateProjectRequest\x1a\x14.platform.v1.Project\x12I\n" +
 	"\fListProjects\x12\x16.google.protobuf.Empty\x1a!.platform.v1.ListProjectsResponse\x12B\n" +
@@ -7573,7 +8697,8 @@ const file_platform_proto_rawDesc = "" +
 	"\rUpdateService\x12!.platform.v1.UpdateServiceRequest\x1a\x14.platform.v1.Service\x12R\n" +
 	"\x0fRedeployService\x12#.platform.v1.RedeployServiceRequest\x1a\x1a.platform.v1.ServiceStatus\x12L\n" +
 	"\fScaleService\x12 .platform.v1.ScaleServiceRequest\x1a\x1a.platform.v1.ServiceStatus\x12P\n" +
-	"\x0eRestartService\x12\".platform.v1.RestartServiceRequest\x1a\x1a.platform.v1.ServiceStatus\x12X\n" +
+	"\x0eRestartService\x12\".platform.v1.RestartServiceRequest\x1a\x1a.platform.v1.ServiceStatus\x12^\n" +
+	"\x15ApplyDeploymentAction\x12).platform.v1.ApplyDeploymentActionRequest\x1a\x1a.platform.v1.ServiceStatus\x12X\n" +
 	"\x15DiscardServiceChanges\x12).platform.v1.DiscardServiceChangesRequest\x1a\x14.platform.v1.Service\x12J\n" +
 	"\rDeleteService\x12!.platform.v1.DeleteServiceRequest\x1a\x16.google.protobuf.Empty\x12B\n" +
 	"\n" +
@@ -7600,10 +8725,14 @@ const file_platform_proto_rawDesc = "" +
 	"\x16DownloadSourceSnapshot\x12*.platform.v1.DownloadSourceSnapshotRequest\x1a .platform.v1.SourceSnapshotChunk0\x01\x12T\n" +
 	"\x14ReportBuildHeartbeat\x12$.platform.v1.BuilderHeartbeatRequest\x1a\x16.google.protobuf.Empty\x12N\n" +
 	"\x0fReportBuildLogs\x12#.platform.v1.ReportBuildLogsRequest\x1a\x16.google.protobuf.Empty\x12J\n" +
-	"\rCompleteBuild\x12!.platform.v1.CompleteBuildRequest\x1a\x16.google.protobuf.Empty2d\n" +
+	"\rCompleteBuild\x12!.platform.v1.CompleteBuildRequest\x1a\x16.google.protobuf.Empty2\xff\x02\n" +
 	"\n" +
 	"OpsService\x12V\n" +
-	"\x13IngestGitHubWebhook\x12'.platform.v1.IngestGitHubWebhookRequest\x1a\x16.google.protobuf.EmptyB.Z,ebof-wg-mesh/api/proto/platformv1;platformv1b\x06proto3"
+	"\x13IngestGitHubWebhook\x12'.platform.v1.IngestGitHubWebhookRequest\x1a\x16.google.protobuf.Empty\x127\n" +
+	"\tListFleet\x12\x16.google.protobuf.Empty\x1a\x12.platform.v1.Fleet\x12L\n" +
+	"\vCreateAgent\x12\x1f.platform.v1.CreateAgentRequest\x1a\x1c.platform.v1.AgentEnrollment\x12B\n" +
+	"\vUpdateAgent\x12\x1f.platform.v1.UpdateAgentRequest\x1a\x12.platform.v1.Agent\x12N\n" +
+	"\x11SetAgentLifecycle\x12%.platform.v1.SetAgentLifecycleRequest\x1a\x12.platform.v1.AgentB.Z,ebof-wg-mesh/api/proto/platformv1;platformv1b\x06proto3"
 
 var (
 	file_platform_proto_rawDescOnce sync.Once
@@ -7617,8 +8746,8 @@ func file_platform_proto_rawDescGZIP() []byte {
 	return file_platform_proto_rawDescData
 }
 
-var file_platform_proto_enumTypes = make([]protoimpl.EnumInfo, 14)
-var file_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 90)
+var file_platform_proto_enumTypes = make([]protoimpl.EnumInfo, 16)
+var file_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 100)
 var file_platform_proto_goTypes = []any{
 	(ProjectKind)(0),                       // 0: platform.v1.ProjectKind
 	(BuildState)(0),                        // 1: platform.v1.BuildState
@@ -7629,293 +8758,329 @@ var file_platform_proto_goTypes = []any{
 	(DeploymentStageState)(0),              // 6: platform.v1.DeploymentStageState
 	(DeploymentState)(0),                   // 7: platform.v1.DeploymentState
 	(DeploymentCauseKind)(0),               // 8: platform.v1.DeploymentCauseKind
-	(ServiceUnappliedChangeAction)(0),      // 9: platform.v1.ServiceUnappliedChangeAction
-	(DomainOwnershipState)(0),              // 10: platform.v1.DomainOwnershipState
-	(ServiceLogType)(0),                    // 11: platform.v1.ServiceLogType
-	(SandboxRelaxation)(0),                 // 12: platform.v1.SandboxRelaxation
-	(HealthCheck_Type)(0),                  // 13: platform.v1.HealthCheck.Type
-	(*Project)(nil),                        // 14: platform.v1.Project
-	(*Environment)(nil),                    // 15: platform.v1.Environment
-	(*HealthCheck)(nil),                    // 16: platform.v1.HealthCheck
-	(*ServiceRestart)(nil),                 // 17: platform.v1.ServiceRestart
-	(*RestartObservation)(nil),             // 18: platform.v1.RestartObservation
-	(*ServiceRuntimePort)(nil),             // 19: platform.v1.ServiceRuntimePort
-	(*ServiceRuntime)(nil),                 // 20: platform.v1.ServiceRuntime
-	(*DirectImageSource)(nil),              // 21: platform.v1.DirectImageSource
-	(*BuildRecipe)(nil),                    // 22: platform.v1.BuildRecipe
-	(*ServiceSourceSpec)(nil),              // 23: platform.v1.ServiceSourceSpec
-	(*ResolvedSourceBinding)(nil),          // 24: platform.v1.ResolvedSourceBinding
-	(*SourceRevision)(nil),                 // 25: platform.v1.SourceRevision
-	(*SourceSnapshot)(nil),                 // 26: platform.v1.SourceSnapshot
-	(*BuildJobSource)(nil),                 // 27: platform.v1.BuildJobSource
-	(*ServiceSource)(nil),                  // 28: platform.v1.ServiceSource
-	(*ServiceSpec)(nil),                    // 29: platform.v1.ServiceSpec
-	(*ResolvedServiceSpec)(nil),            // 30: platform.v1.ResolvedServiceSpec
-	(*SourceStateSummary)(nil),             // 31: platform.v1.SourceStateSummary
-	(*ServiceSourceSummary)(nil),           // 32: platform.v1.ServiceSourceSummary
-	(*DeploymentStatus)(nil),               // 33: platform.v1.DeploymentStatus
-	(*DeploymentStage)(nil),                // 34: platform.v1.DeploymentStage
-	(*BuildStatus)(nil),                    // 35: platform.v1.BuildStatus
-	(*ServiceUnappliedChange)(nil),         // 36: platform.v1.ServiceUnappliedChange
-	(*Service)(nil),                        // 37: platform.v1.Service
-	(*DomainBinding)(nil),                  // 38: platform.v1.DomainBinding
-	(*Volume)(nil),                         // 39: platform.v1.Volume
-	(*Agent)(nil),                          // 40: platform.v1.Agent
-	(*AllocationStatus)(nil),               // 41: platform.v1.AllocationStatus
-	(*ServiceStatus)(nil),                  // 42: platform.v1.ServiceStatus
-	(*CreateProjectRequest)(nil),           // 43: platform.v1.CreateProjectRequest
-	(*ListProjectsResponse)(nil),           // 44: platform.v1.ListProjectsResponse
-	(*GetProjectRequest)(nil),              // 45: platform.v1.GetProjectRequest
-	(*ListEnvironmentsRequest)(nil),        // 46: platform.v1.ListEnvironmentsRequest
-	(*ListEnvironmentsResponse)(nil),       // 47: platform.v1.ListEnvironmentsResponse
-	(*GetEnvironmentRequest)(nil),          // 48: platform.v1.GetEnvironmentRequest
-	(*CreateEnvironmentRequest)(nil),       // 49: platform.v1.CreateEnvironmentRequest
-	(*DuplicateEnvironmentRequest)(nil),    // 50: platform.v1.DuplicateEnvironmentRequest
-	(*RenameEnvironmentRequest)(nil),       // 51: platform.v1.RenameEnvironmentRequest
-	(*DeleteEnvironmentRequest)(nil),       // 52: platform.v1.DeleteEnvironmentRequest
-	(*DeployEnvironmentRequest)(nil),       // 53: platform.v1.DeployEnvironmentRequest
-	(*DeployEnvironmentResponse)(nil),      // 54: platform.v1.DeployEnvironmentResponse
-	(*InspectSourceRequest)(nil),           // 55: platform.v1.InspectSourceRequest
-	(*InspectSourceResponse)(nil),          // 56: platform.v1.InspectSourceResponse
-	(*CreateServiceRequest)(nil),           // 57: platform.v1.CreateServiceRequest
-	(*UpdateServiceRequest)(nil),           // 58: platform.v1.UpdateServiceRequest
-	(*RedeployServiceRequest)(nil),         // 59: platform.v1.RedeployServiceRequest
-	(*ScaleServiceRequest)(nil),            // 60: platform.v1.ScaleServiceRequest
-	(*RestartServiceRequest)(nil),          // 61: platform.v1.RestartServiceRequest
-	(*DiscardServiceChangesRequest)(nil),   // 62: platform.v1.DiscardServiceChangesRequest
-	(*DeleteServiceRequest)(nil),           // 63: platform.v1.DeleteServiceRequest
-	(*GetServiceRequest)(nil),              // 64: platform.v1.GetServiceRequest
-	(*ListServicesRequest)(nil),            // 65: platform.v1.ListServicesRequest
-	(*ListServicesResponse)(nil),           // 66: platform.v1.ListServicesResponse
-	(*CreateVolumeRequest)(nil),            // 67: platform.v1.CreateVolumeRequest
-	(*DeleteVolumeRequest)(nil),            // 68: platform.v1.DeleteVolumeRequest
-	(*ListVolumesRequest)(nil),             // 69: platform.v1.ListVolumesRequest
-	(*ListVolumesResponse)(nil),            // 70: platform.v1.ListVolumesResponse
-	(*ServiceInput)(nil),                   // 71: platform.v1.ServiceInput
-	(*ServiceUpdate)(nil),                  // 72: platform.v1.ServiceUpdate
-	(*DomainBindingInput)(nil),             // 73: platform.v1.DomainBindingInput
-	(*DomainBindingTarget)(nil),            // 74: platform.v1.DomainBindingTarget
-	(*GenerateDomainBindingRequest)(nil),   // 75: platform.v1.GenerateDomainBindingRequest
-	(*CreateDomainBindingRequest)(nil),     // 76: platform.v1.CreateDomainBindingRequest
-	(*GetDomainBindingRequest)(nil),        // 77: platform.v1.GetDomainBindingRequest
-	(*ListDomainBindingsRequest)(nil),      // 78: platform.v1.ListDomainBindingsRequest
-	(*ListDomainBindingsResponse)(nil),     // 79: platform.v1.ListDomainBindingsResponse
-	(*UpdateDomainBindingRequest)(nil),     // 80: platform.v1.UpdateDomainBindingRequest
-	(*DeleteDomainBindingRequest)(nil),     // 81: platform.v1.DeleteDomainBindingRequest
-	(*GetServiceStatusRequest)(nil),        // 82: platform.v1.GetServiceStatusRequest
-	(*ListServiceLogsRequest)(nil),         // 83: platform.v1.ListServiceLogsRequest
-	(*ServiceLogLine)(nil),                 // 84: platform.v1.ServiceLogLine
-	(*ListServiceLogsResponse)(nil),        // 85: platform.v1.ListServiceLogsResponse
-	(*ListServiceDeploymentsRequest)(nil),  // 86: platform.v1.ListServiceDeploymentsRequest
-	(*DeploymentRecord)(nil),               // 87: platform.v1.DeploymentRecord
-	(*ListServiceDeploymentsResponse)(nil), // 88: platform.v1.ListServiceDeploymentsResponse
-	(*ListAgentsResponse)(nil),             // 89: platform.v1.ListAgentsResponse
-	(*ClaimBuildRequest)(nil),              // 90: platform.v1.ClaimBuildRequest
-	(*BuildJob)(nil),                       // 91: platform.v1.BuildJob
-	(*DownloadSourceSnapshotRequest)(nil),  // 92: platform.v1.DownloadSourceSnapshotRequest
-	(*SourceSnapshotChunk)(nil),            // 93: platform.v1.SourceSnapshotChunk
-	(*BuilderHeartbeatRequest)(nil),        // 94: platform.v1.BuilderHeartbeatRequest
-	(*ReportBuildLogsRequest)(nil),         // 95: platform.v1.ReportBuildLogsRequest
-	(*BuildLogLine)(nil),                   // 96: platform.v1.BuildLogLine
-	(*CompleteBuildRequest)(nil),           // 97: platform.v1.CompleteBuildRequest
-	(*IngestGitHubWebhookRequest)(nil),     // 98: platform.v1.IngestGitHubWebhookRequest
-	(*LinkGitHubRepositoryRequest)(nil),    // 99: platform.v1.LinkGitHubRepositoryRequest
-	(*SandboxProfile)(nil),                 // 100: platform.v1.SandboxProfile
-	(*SandboxProfileAuditEvent)(nil),       // 101: platform.v1.SandboxProfileAuditEvent
-	(*ListSandboxProfilesResponse)(nil),    // 102: platform.v1.ListSandboxProfilesResponse
-	nil,                                    // 103: platform.v1.ServiceRuntime.EnvEntry
-	(*timestamppb.Timestamp)(nil),          // 104: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                  // 105: google.protobuf.Empty
+	(DeploymentAction)(0),                  // 9: platform.v1.DeploymentAction
+	(ServiceUnappliedChangeAction)(0),      // 10: platform.v1.ServiceUnappliedChangeAction
+	(DomainOwnershipState)(0),              // 11: platform.v1.DomainOwnershipState
+	(AgentLifecycleState)(0),               // 12: platform.v1.AgentLifecycleState
+	(ServiceLogType)(0),                    // 13: platform.v1.ServiceLogType
+	(SandboxRelaxation)(0),                 // 14: platform.v1.SandboxRelaxation
+	(HealthCheck_Type)(0),                  // 15: platform.v1.HealthCheck.Type
+	(*Project)(nil),                        // 16: platform.v1.Project
+	(*Environment)(nil),                    // 17: platform.v1.Environment
+	(*HealthCheck)(nil),                    // 18: platform.v1.HealthCheck
+	(*ServiceRestart)(nil),                 // 19: platform.v1.ServiceRestart
+	(*RestartObservation)(nil),             // 20: platform.v1.RestartObservation
+	(*ServiceRuntimePort)(nil),             // 21: platform.v1.ServiceRuntimePort
+	(*ServiceRuntime)(nil),                 // 22: platform.v1.ServiceRuntime
+	(*DirectImageSource)(nil),              // 23: platform.v1.DirectImageSource
+	(*BuildRecipe)(nil),                    // 24: platform.v1.BuildRecipe
+	(*ServiceSourceSpec)(nil),              // 25: platform.v1.ServiceSourceSpec
+	(*ResolvedSourceBinding)(nil),          // 26: platform.v1.ResolvedSourceBinding
+	(*SourceRevision)(nil),                 // 27: platform.v1.SourceRevision
+	(*SourceSnapshot)(nil),                 // 28: platform.v1.SourceSnapshot
+	(*BuildJobSource)(nil),                 // 29: platform.v1.BuildJobSource
+	(*ServiceSource)(nil),                  // 30: platform.v1.ServiceSource
+	(*ServiceSpec)(nil),                    // 31: platform.v1.ServiceSpec
+	(*RollingStrategy)(nil),                // 32: platform.v1.RollingStrategy
+	(*ResolvedServiceSpec)(nil),            // 33: platform.v1.ResolvedServiceSpec
+	(*SourceStateSummary)(nil),             // 34: platform.v1.SourceStateSummary
+	(*ServiceSourceSummary)(nil),           // 35: platform.v1.ServiceSourceSummary
+	(*DeploymentActionRecord)(nil),         // 36: platform.v1.DeploymentActionRecord
+	(*DeploymentStatus)(nil),               // 37: platform.v1.DeploymentStatus
+	(*DeploymentStage)(nil),                // 38: platform.v1.DeploymentStage
+	(*BuildStatus)(nil),                    // 39: platform.v1.BuildStatus
+	(*ServiceUnappliedChange)(nil),         // 40: platform.v1.ServiceUnappliedChange
+	(*Service)(nil),                        // 41: platform.v1.Service
+	(*DomainBinding)(nil),                  // 42: platform.v1.DomainBinding
+	(*Volume)(nil),                         // 43: platform.v1.Volume
+	(*Agent)(nil),                          // 44: platform.v1.Agent
+	(*AllocationStatus)(nil),               // 45: platform.v1.AllocationStatus
+	(*ServiceStatus)(nil),                  // 46: platform.v1.ServiceStatus
+	(*CreateProjectRequest)(nil),           // 47: platform.v1.CreateProjectRequest
+	(*ListProjectsResponse)(nil),           // 48: platform.v1.ListProjectsResponse
+	(*GetProjectRequest)(nil),              // 49: platform.v1.GetProjectRequest
+	(*ListEnvironmentsRequest)(nil),        // 50: platform.v1.ListEnvironmentsRequest
+	(*ListEnvironmentsResponse)(nil),       // 51: platform.v1.ListEnvironmentsResponse
+	(*GetEnvironmentRequest)(nil),          // 52: platform.v1.GetEnvironmentRequest
+	(*CreateEnvironmentRequest)(nil),       // 53: platform.v1.CreateEnvironmentRequest
+	(*DuplicateEnvironmentRequest)(nil),    // 54: platform.v1.DuplicateEnvironmentRequest
+	(*RenameEnvironmentRequest)(nil),       // 55: platform.v1.RenameEnvironmentRequest
+	(*DeleteEnvironmentRequest)(nil),       // 56: platform.v1.DeleteEnvironmentRequest
+	(*DeployEnvironmentRequest)(nil),       // 57: platform.v1.DeployEnvironmentRequest
+	(*DeployEnvironmentResponse)(nil),      // 58: platform.v1.DeployEnvironmentResponse
+	(*InspectSourceRequest)(nil),           // 59: platform.v1.InspectSourceRequest
+	(*InspectSourceResponse)(nil),          // 60: platform.v1.InspectSourceResponse
+	(*CreateServiceRequest)(nil),           // 61: platform.v1.CreateServiceRequest
+	(*UpdateServiceRequest)(nil),           // 62: platform.v1.UpdateServiceRequest
+	(*RedeployServiceRequest)(nil),         // 63: platform.v1.RedeployServiceRequest
+	(*ScaleServiceRequest)(nil),            // 64: platform.v1.ScaleServiceRequest
+	(*RestartServiceRequest)(nil),          // 65: platform.v1.RestartServiceRequest
+	(*ApplyDeploymentActionRequest)(nil),   // 66: platform.v1.ApplyDeploymentActionRequest
+	(*DiscardServiceChangesRequest)(nil),   // 67: platform.v1.DiscardServiceChangesRequest
+	(*DeleteServiceRequest)(nil),           // 68: platform.v1.DeleteServiceRequest
+	(*GetServiceRequest)(nil),              // 69: platform.v1.GetServiceRequest
+	(*ListServicesRequest)(nil),            // 70: platform.v1.ListServicesRequest
+	(*ListServicesResponse)(nil),           // 71: platform.v1.ListServicesResponse
+	(*CreateVolumeRequest)(nil),            // 72: platform.v1.CreateVolumeRequest
+	(*DeleteVolumeRequest)(nil),            // 73: platform.v1.DeleteVolumeRequest
+	(*ListVolumesRequest)(nil),             // 74: platform.v1.ListVolumesRequest
+	(*ListVolumesResponse)(nil),            // 75: platform.v1.ListVolumesResponse
+	(*ServiceInput)(nil),                   // 76: platform.v1.ServiceInput
+	(*ServiceUpdate)(nil),                  // 77: platform.v1.ServiceUpdate
+	(*DomainBindingInput)(nil),             // 78: platform.v1.DomainBindingInput
+	(*DomainBindingTarget)(nil),            // 79: platform.v1.DomainBindingTarget
+	(*GenerateDomainBindingRequest)(nil),   // 80: platform.v1.GenerateDomainBindingRequest
+	(*CreateDomainBindingRequest)(nil),     // 81: platform.v1.CreateDomainBindingRequest
+	(*GetDomainBindingRequest)(nil),        // 82: platform.v1.GetDomainBindingRequest
+	(*ListDomainBindingsRequest)(nil),      // 83: platform.v1.ListDomainBindingsRequest
+	(*ListDomainBindingsResponse)(nil),     // 84: platform.v1.ListDomainBindingsResponse
+	(*UpdateDomainBindingRequest)(nil),     // 85: platform.v1.UpdateDomainBindingRequest
+	(*DeleteDomainBindingRequest)(nil),     // 86: platform.v1.DeleteDomainBindingRequest
+	(*GetServiceStatusRequest)(nil),        // 87: platform.v1.GetServiceStatusRequest
+	(*ListServiceLogsRequest)(nil),         // 88: platform.v1.ListServiceLogsRequest
+	(*ServiceLogLine)(nil),                 // 89: platform.v1.ServiceLogLine
+	(*ListServiceLogsResponse)(nil),        // 90: platform.v1.ListServiceLogsResponse
+	(*ListServiceDeploymentsRequest)(nil),  // 91: platform.v1.ListServiceDeploymentsRequest
+	(*DeploymentRecord)(nil),               // 92: platform.v1.DeploymentRecord
+	(*ListServiceDeploymentsResponse)(nil), // 93: platform.v1.ListServiceDeploymentsResponse
+	(*ListAgentsResponse)(nil),             // 94: platform.v1.ListAgentsResponse
+	(*CreateAgentRequest)(nil),             // 95: platform.v1.CreateAgentRequest
+	(*AgentEnrollment)(nil),                // 96: platform.v1.AgentEnrollment
+	(*UpdateAgentRequest)(nil),             // 97: platform.v1.UpdateAgentRequest
+	(*SetAgentLifecycleRequest)(nil),       // 98: platform.v1.SetAgentLifecycleRequest
+	(*FleetCapacity)(nil),                  // 99: platform.v1.FleetCapacity
+	(*Fleet)(nil),                          // 100: platform.v1.Fleet
+	(*ClaimBuildRequest)(nil),              // 101: platform.v1.ClaimBuildRequest
+	(*BuildJob)(nil),                       // 102: platform.v1.BuildJob
+	(*DownloadSourceSnapshotRequest)(nil),  // 103: platform.v1.DownloadSourceSnapshotRequest
+	(*SourceSnapshotChunk)(nil),            // 104: platform.v1.SourceSnapshotChunk
+	(*BuilderHeartbeatRequest)(nil),        // 105: platform.v1.BuilderHeartbeatRequest
+	(*ReportBuildLogsRequest)(nil),         // 106: platform.v1.ReportBuildLogsRequest
+	(*BuildLogLine)(nil),                   // 107: platform.v1.BuildLogLine
+	(*CompleteBuildRequest)(nil),           // 108: platform.v1.CompleteBuildRequest
+	(*IngestGitHubWebhookRequest)(nil),     // 109: platform.v1.IngestGitHubWebhookRequest
+	(*LinkGitHubRepositoryRequest)(nil),    // 110: platform.v1.LinkGitHubRepositoryRequest
+	(*SandboxProfile)(nil),                 // 111: platform.v1.SandboxProfile
+	(*SandboxProfileAuditEvent)(nil),       // 112: platform.v1.SandboxProfileAuditEvent
+	(*ListSandboxProfilesResponse)(nil),    // 113: platform.v1.ListSandboxProfilesResponse
+	nil,                                    // 114: platform.v1.ServiceRuntime.EnvEntry
+	nil,                                    // 115: platform.v1.DeploymentRecord.VariableVersionsEntry
+	(*timestamppb.Timestamp)(nil),          // 116: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                  // 117: google.protobuf.Empty
 }
 var file_platform_proto_depIdxs = []int32{
-	104, // 0: platform.v1.Project.created_at:type_name -> google.protobuf.Timestamp
+	116, // 0: platform.v1.Project.created_at:type_name -> google.protobuf.Timestamp
 	0,   // 1: platform.v1.Project.kind:type_name -> platform.v1.ProjectKind
 	3,   // 2: platform.v1.Environment.kind:type_name -> platform.v1.EnvironmentKind
-	104, // 3: platform.v1.Environment.created_at:type_name -> google.protobuf.Timestamp
-	104, // 4: platform.v1.Environment.updated_at:type_name -> google.protobuf.Timestamp
-	13,  // 5: platform.v1.HealthCheck.type:type_name -> platform.v1.HealthCheck.Type
+	116, // 3: platform.v1.Environment.created_at:type_name -> google.protobuf.Timestamp
+	116, // 4: platform.v1.Environment.updated_at:type_name -> google.protobuf.Timestamp
+	15,  // 5: platform.v1.HealthCheck.type:type_name -> platform.v1.HealthCheck.Type
 	4,   // 6: platform.v1.ServiceRestart.policy:type_name -> platform.v1.RestartPolicy
-	104, // 7: platform.v1.RestartObservation.window_started_at:type_name -> google.protobuf.Timestamp
-	104, // 8: platform.v1.RestartObservation.last_restart_at:type_name -> google.protobuf.Timestamp
-	104, // 9: platform.v1.RestartObservation.next_restart_at:type_name -> google.protobuf.Timestamp
-	104, // 10: platform.v1.RestartObservation.started_at:type_name -> google.protobuf.Timestamp
+	116, // 7: platform.v1.RestartObservation.window_started_at:type_name -> google.protobuf.Timestamp
+	116, // 8: platform.v1.RestartObservation.last_restart_at:type_name -> google.protobuf.Timestamp
+	116, // 9: platform.v1.RestartObservation.next_restart_at:type_name -> google.protobuf.Timestamp
+	116, // 10: platform.v1.RestartObservation.started_at:type_name -> google.protobuf.Timestamp
 	5,   // 11: platform.v1.RestartObservation.last_cause:type_name -> platform.v1.RestartCause
-	103, // 12: platform.v1.ServiceRuntime.env:type_name -> platform.v1.ServiceRuntime.EnvEntry
-	19,  // 13: platform.v1.ServiceRuntime.ports:type_name -> platform.v1.ServiceRuntimePort
-	16,  // 14: platform.v1.ServiceRuntime.health_check:type_name -> platform.v1.HealthCheck
-	17,  // 15: platform.v1.ServiceRuntime.restart:type_name -> platform.v1.ServiceRestart
-	16,  // 16: platform.v1.ServiceRuntime.liveness_check:type_name -> platform.v1.HealthCheck
-	100, // 17: platform.v1.ServiceRuntime.sandbox_profile:type_name -> platform.v1.SandboxProfile
-	22,  // 18: platform.v1.ServiceSourceSpec.build_recipe:type_name -> platform.v1.BuildRecipe
+	114, // 12: platform.v1.ServiceRuntime.env:type_name -> platform.v1.ServiceRuntime.EnvEntry
+	21,  // 13: platform.v1.ServiceRuntime.ports:type_name -> platform.v1.ServiceRuntimePort
+	18,  // 14: platform.v1.ServiceRuntime.health_check:type_name -> platform.v1.HealthCheck
+	19,  // 15: platform.v1.ServiceRuntime.restart:type_name -> platform.v1.ServiceRestart
+	18,  // 16: platform.v1.ServiceRuntime.liveness_check:type_name -> platform.v1.HealthCheck
+	111, // 17: platform.v1.ServiceRuntime.sandbox_profile:type_name -> platform.v1.SandboxProfile
+	24,  // 18: platform.v1.ServiceSourceSpec.build_recipe:type_name -> platform.v1.BuildRecipe
 	2,   // 19: platform.v1.ResolvedSourceBinding.access_state:type_name -> platform.v1.SourceAccessState
-	104, // 20: platform.v1.ResolvedSourceBinding.resolved_at:type_name -> google.protobuf.Timestamp
-	104, // 21: platform.v1.ResolvedSourceBinding.fresh_until:type_name -> google.protobuf.Timestamp
-	22,  // 22: platform.v1.ResolvedSourceBinding.build_recipe:type_name -> platform.v1.BuildRecipe
-	104, // 23: platform.v1.SourceRevision.observed_at:type_name -> google.protobuf.Timestamp
-	104, // 24: platform.v1.SourceSnapshot.fetched_at:type_name -> google.protobuf.Timestamp
-	22,  // 25: platform.v1.BuildJobSource.build_recipe:type_name -> platform.v1.BuildRecipe
-	21,  // 26: platform.v1.ServiceSource.image:type_name -> platform.v1.DirectImageSource
-	23,  // 27: platform.v1.ServiceSource.source_spec:type_name -> platform.v1.ServiceSourceSpec
-	20,  // 28: platform.v1.ServiceSpec.runtime:type_name -> platform.v1.ServiceRuntime
-	28,  // 29: platform.v1.ServiceSpec.source:type_name -> platform.v1.ServiceSource
-	20,  // 30: platform.v1.ResolvedServiceSpec.runtime:type_name -> platform.v1.ServiceRuntime
-	23,  // 31: platform.v1.SourceStateSummary.desired_spec:type_name -> platform.v1.ServiceSourceSpec
-	24,  // 32: platform.v1.SourceStateSummary.resolved_binding:type_name -> platform.v1.ResolvedSourceBinding
-	25,  // 33: platform.v1.SourceStateSummary.latest_revision:type_name -> platform.v1.SourceRevision
-	26,  // 34: platform.v1.SourceStateSummary.latest_snapshot:type_name -> platform.v1.SourceSnapshot
-	21,  // 35: platform.v1.ServiceSourceSummary.image:type_name -> platform.v1.DirectImageSource
-	31,  // 36: platform.v1.ServiceSourceSummary.source_state:type_name -> platform.v1.SourceStateSummary
-	7,   // 37: platform.v1.DeploymentStatus.state:type_name -> platform.v1.DeploymentState
-	104, // 38: platform.v1.DeploymentStatus.transitioned_at:type_name -> google.protobuf.Timestamp
-	8,   // 39: platform.v1.DeploymentStatus.cause_kind:type_name -> platform.v1.DeploymentCauseKind
-	6,   // 40: platform.v1.DeploymentStage.state:type_name -> platform.v1.DeploymentStageState
-	104, // 41: platform.v1.DeploymentStage.started_at:type_name -> google.protobuf.Timestamp
-	104, // 42: platform.v1.DeploymentStage.finished_at:type_name -> google.protobuf.Timestamp
-	1,   // 43: platform.v1.BuildStatus.state:type_name -> platform.v1.BuildState
-	104, // 44: platform.v1.BuildStatus.queued_at:type_name -> google.protobuf.Timestamp
-	104, // 45: platform.v1.BuildStatus.started_at:type_name -> google.protobuf.Timestamp
-	104, // 46: platform.v1.BuildStatus.finished_at:type_name -> google.protobuf.Timestamp
-	34,  // 47: platform.v1.BuildStatus.stages:type_name -> platform.v1.DeploymentStage
-	9,   // 48: platform.v1.ServiceUnappliedChange.action:type_name -> platform.v1.ServiceUnappliedChangeAction
-	29,  // 49: platform.v1.Service.spec:type_name -> platform.v1.ServiceSpec
-	104, // 50: platform.v1.Service.created_at:type_name -> google.protobuf.Timestamp
-	104, // 51: platform.v1.Service.updated_at:type_name -> google.protobuf.Timestamp
-	32,  // 52: platform.v1.Service.source_summary:type_name -> platform.v1.ServiceSourceSummary
-	35,  // 53: platform.v1.Service.latest_build:type_name -> platform.v1.BuildStatus
-	36,  // 54: platform.v1.Service.unapplied_changes:type_name -> platform.v1.ServiceUnappliedChange
-	33,  // 55: platform.v1.Service.latest_deployment:type_name -> platform.v1.DeploymentStatus
-	101, // 56: platform.v1.Service.sandbox_profile_audit:type_name -> platform.v1.SandboxProfileAuditEvent
-	104, // 57: platform.v1.DomainBinding.created_at:type_name -> google.protobuf.Timestamp
-	104, // 58: platform.v1.DomainBinding.updated_at:type_name -> google.protobuf.Timestamp
-	10,  // 59: platform.v1.DomainBinding.ownership_state:type_name -> platform.v1.DomainOwnershipState
-	104, // 60: platform.v1.Volume.created_at:type_name -> google.protobuf.Timestamp
-	104, // 61: platform.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
-	104, // 62: platform.v1.AllocationStatus.updated_at:type_name -> google.protobuf.Timestamp
-	18,  // 63: platform.v1.AllocationStatus.restart:type_name -> platform.v1.RestartObservation
-	37,  // 64: platform.v1.ServiceStatus.service:type_name -> platform.v1.Service
-	41,  // 65: platform.v1.ServiceStatus.allocation:type_name -> platform.v1.AllocationStatus
-	41,  // 66: platform.v1.ServiceStatus.allocations:type_name -> platform.v1.AllocationStatus
-	14,  // 67: platform.v1.ListProjectsResponse.projects:type_name -> platform.v1.Project
-	15,  // 68: platform.v1.ListEnvironmentsResponse.environments:type_name -> platform.v1.Environment
-	42,  // 69: platform.v1.DeployEnvironmentResponse.services:type_name -> platform.v1.ServiceStatus
-	2,   // 70: platform.v1.InspectSourceResponse.access_state:type_name -> platform.v1.SourceAccessState
-	22,  // 71: platform.v1.InspectSourceResponse.recommended_build_recipe:type_name -> platform.v1.BuildRecipe
-	71,  // 72: platform.v1.CreateServiceRequest.service:type_name -> platform.v1.ServiceInput
-	72,  // 73: platform.v1.UpdateServiceRequest.service:type_name -> platform.v1.ServiceUpdate
-	37,  // 74: platform.v1.ListServicesResponse.services:type_name -> platform.v1.Service
-	39,  // 75: platform.v1.ListVolumesResponse.volumes:type_name -> platform.v1.Volume
-	29,  // 76: platform.v1.ServiceInput.spec:type_name -> platform.v1.ServiceSpec
-	29,  // 77: platform.v1.ServiceUpdate.spec:type_name -> platform.v1.ServiceSpec
-	73,  // 78: platform.v1.CreateDomainBindingRequest.binding:type_name -> platform.v1.DomainBindingInput
-	38,  // 79: platform.v1.ListDomainBindingsResponse.bindings:type_name -> platform.v1.DomainBinding
-	74,  // 80: platform.v1.UpdateDomainBindingRequest.binding:type_name -> platform.v1.DomainBindingTarget
-	104, // 81: platform.v1.ListServiceLogsRequest.start_time:type_name -> google.protobuf.Timestamp
-	104, // 82: platform.v1.ListServiceLogsRequest.end_time:type_name -> google.protobuf.Timestamp
-	11,  // 83: platform.v1.ListServiceLogsRequest.log_type:type_name -> platform.v1.ServiceLogType
-	104, // 84: platform.v1.ServiceLogLine.observed_at:type_name -> google.protobuf.Timestamp
-	11,  // 85: platform.v1.ServiceLogLine.log_type:type_name -> platform.v1.ServiceLogType
-	84,  // 86: platform.v1.ListServiceLogsResponse.lines:type_name -> platform.v1.ServiceLogLine
-	104, // 87: platform.v1.DeploymentRecord.created_at:type_name -> google.protobuf.Timestamp
-	35,  // 88: platform.v1.DeploymentRecord.build:type_name -> platform.v1.BuildStatus
-	33,  // 89: platform.v1.DeploymentRecord.status:type_name -> platform.v1.DeploymentStatus
-	34,  // 90: platform.v1.DeploymentRecord.stages:type_name -> platform.v1.DeploymentStage
-	87,  // 91: platform.v1.ListServiceDeploymentsResponse.deployments:type_name -> platform.v1.DeploymentRecord
-	40,  // 92: platform.v1.ListAgentsResponse.agents:type_name -> platform.v1.Agent
-	27,  // 93: platform.v1.BuildJob.source:type_name -> platform.v1.BuildJobSource
-	96,  // 94: platform.v1.ReportBuildLogsRequest.lines:type_name -> platform.v1.BuildLogLine
-	104, // 95: platform.v1.BuildLogLine.observed_at:type_name -> google.protobuf.Timestamp
-	1,   // 96: platform.v1.CompleteBuildRequest.state:type_name -> platform.v1.BuildState
-	12,  // 97: platform.v1.SandboxProfile.relaxations:type_name -> platform.v1.SandboxRelaxation
-	100, // 98: platform.v1.SandboxProfileAuditEvent.profile:type_name -> platform.v1.SandboxProfile
-	104, // 99: platform.v1.SandboxProfileAuditEvent.created_at:type_name -> google.protobuf.Timestamp
-	100, // 100: platform.v1.ListSandboxProfilesResponse.profiles:type_name -> platform.v1.SandboxProfile
-	43,  // 101: platform.v1.PlatformService.CreateProject:input_type -> platform.v1.CreateProjectRequest
-	105, // 102: platform.v1.PlatformService.ListProjects:input_type -> google.protobuf.Empty
-	45,  // 103: platform.v1.PlatformService.GetProject:input_type -> platform.v1.GetProjectRequest
-	46,  // 104: platform.v1.PlatformService.ListEnvironments:input_type -> platform.v1.ListEnvironmentsRequest
-	48,  // 105: platform.v1.PlatformService.GetEnvironment:input_type -> platform.v1.GetEnvironmentRequest
-	49,  // 106: platform.v1.PlatformService.CreateEnvironment:input_type -> platform.v1.CreateEnvironmentRequest
-	50,  // 107: platform.v1.PlatformService.DuplicateEnvironment:input_type -> platform.v1.DuplicateEnvironmentRequest
-	51,  // 108: platform.v1.PlatformService.RenameEnvironment:input_type -> platform.v1.RenameEnvironmentRequest
-	52,  // 109: platform.v1.PlatformService.DeleteEnvironment:input_type -> platform.v1.DeleteEnvironmentRequest
-	53,  // 110: platform.v1.PlatformService.DeployEnvironment:input_type -> platform.v1.DeployEnvironmentRequest
-	99,  // 111: platform.v1.PlatformService.LinkGitHubRepository:input_type -> platform.v1.LinkGitHubRepositoryRequest
-	55,  // 112: platform.v1.PlatformService.InspectSource:input_type -> platform.v1.InspectSourceRequest
-	57,  // 113: platform.v1.PlatformService.CreateService:input_type -> platform.v1.CreateServiceRequest
-	58,  // 114: platform.v1.PlatformService.UpdateService:input_type -> platform.v1.UpdateServiceRequest
-	59,  // 115: platform.v1.PlatformService.RedeployService:input_type -> platform.v1.RedeployServiceRequest
-	60,  // 116: platform.v1.PlatformService.ScaleService:input_type -> platform.v1.ScaleServiceRequest
-	61,  // 117: platform.v1.PlatformService.RestartService:input_type -> platform.v1.RestartServiceRequest
-	62,  // 118: platform.v1.PlatformService.DiscardServiceChanges:input_type -> platform.v1.DiscardServiceChangesRequest
-	63,  // 119: platform.v1.PlatformService.DeleteService:input_type -> platform.v1.DeleteServiceRequest
-	64,  // 120: platform.v1.PlatformService.GetService:input_type -> platform.v1.GetServiceRequest
-	65,  // 121: platform.v1.PlatformService.ListServices:input_type -> platform.v1.ListServicesRequest
-	67,  // 122: platform.v1.PlatformService.CreateVolume:input_type -> platform.v1.CreateVolumeRequest
-	68,  // 123: platform.v1.PlatformService.DeleteVolume:input_type -> platform.v1.DeleteVolumeRequest
-	69,  // 124: platform.v1.PlatformService.ListVolumes:input_type -> platform.v1.ListVolumesRequest
-	76,  // 125: platform.v1.PlatformService.CreateDomainBinding:input_type -> platform.v1.CreateDomainBindingRequest
-	75,  // 126: platform.v1.PlatformService.GenerateDomainBinding:input_type -> platform.v1.GenerateDomainBindingRequest
-	77,  // 127: platform.v1.PlatformService.GetDomainBinding:input_type -> platform.v1.GetDomainBindingRequest
-	78,  // 128: platform.v1.PlatformService.ListDomainBindings:input_type -> platform.v1.ListDomainBindingsRequest
-	80,  // 129: platform.v1.PlatformService.UpdateDomainBinding:input_type -> platform.v1.UpdateDomainBindingRequest
-	81,  // 130: platform.v1.PlatformService.DeleteDomainBinding:input_type -> platform.v1.DeleteDomainBindingRequest
-	82,  // 131: platform.v1.PlatformService.GetServiceStatus:input_type -> platform.v1.GetServiceStatusRequest
-	83,  // 132: platform.v1.PlatformService.ListServiceLogs:input_type -> platform.v1.ListServiceLogsRequest
-	86,  // 133: platform.v1.PlatformService.ListServiceDeployments:input_type -> platform.v1.ListServiceDeploymentsRequest
-	105, // 134: platform.v1.PlatformService.ListAgents:input_type -> google.protobuf.Empty
-	105, // 135: platform.v1.PlatformService.ListSandboxProfiles:input_type -> google.protobuf.Empty
-	90,  // 136: platform.v1.BuilderService.ClaimBuild:input_type -> platform.v1.ClaimBuildRequest
-	92,  // 137: platform.v1.BuilderService.DownloadSourceSnapshot:input_type -> platform.v1.DownloadSourceSnapshotRequest
-	94,  // 138: platform.v1.BuilderService.ReportBuildHeartbeat:input_type -> platform.v1.BuilderHeartbeatRequest
-	95,  // 139: platform.v1.BuilderService.ReportBuildLogs:input_type -> platform.v1.ReportBuildLogsRequest
-	97,  // 140: platform.v1.BuilderService.CompleteBuild:input_type -> platform.v1.CompleteBuildRequest
-	98,  // 141: platform.v1.OpsService.IngestGitHubWebhook:input_type -> platform.v1.IngestGitHubWebhookRequest
-	14,  // 142: platform.v1.PlatformService.CreateProject:output_type -> platform.v1.Project
-	44,  // 143: platform.v1.PlatformService.ListProjects:output_type -> platform.v1.ListProjectsResponse
-	14,  // 144: platform.v1.PlatformService.GetProject:output_type -> platform.v1.Project
-	47,  // 145: platform.v1.PlatformService.ListEnvironments:output_type -> platform.v1.ListEnvironmentsResponse
-	15,  // 146: platform.v1.PlatformService.GetEnvironment:output_type -> platform.v1.Environment
-	15,  // 147: platform.v1.PlatformService.CreateEnvironment:output_type -> platform.v1.Environment
-	15,  // 148: platform.v1.PlatformService.DuplicateEnvironment:output_type -> platform.v1.Environment
-	15,  // 149: platform.v1.PlatformService.RenameEnvironment:output_type -> platform.v1.Environment
-	105, // 150: platform.v1.PlatformService.DeleteEnvironment:output_type -> google.protobuf.Empty
-	54,  // 151: platform.v1.PlatformService.DeployEnvironment:output_type -> platform.v1.DeployEnvironmentResponse
-	56,  // 152: platform.v1.PlatformService.LinkGitHubRepository:output_type -> platform.v1.InspectSourceResponse
-	56,  // 153: platform.v1.PlatformService.InspectSource:output_type -> platform.v1.InspectSourceResponse
-	37,  // 154: platform.v1.PlatformService.CreateService:output_type -> platform.v1.Service
-	37,  // 155: platform.v1.PlatformService.UpdateService:output_type -> platform.v1.Service
-	42,  // 156: platform.v1.PlatformService.RedeployService:output_type -> platform.v1.ServiceStatus
-	42,  // 157: platform.v1.PlatformService.ScaleService:output_type -> platform.v1.ServiceStatus
-	42,  // 158: platform.v1.PlatformService.RestartService:output_type -> platform.v1.ServiceStatus
-	37,  // 159: platform.v1.PlatformService.DiscardServiceChanges:output_type -> platform.v1.Service
-	105, // 160: platform.v1.PlatformService.DeleteService:output_type -> google.protobuf.Empty
-	37,  // 161: platform.v1.PlatformService.GetService:output_type -> platform.v1.Service
-	66,  // 162: platform.v1.PlatformService.ListServices:output_type -> platform.v1.ListServicesResponse
-	39,  // 163: platform.v1.PlatformService.CreateVolume:output_type -> platform.v1.Volume
-	105, // 164: platform.v1.PlatformService.DeleteVolume:output_type -> google.protobuf.Empty
-	70,  // 165: platform.v1.PlatformService.ListVolumes:output_type -> platform.v1.ListVolumesResponse
-	38,  // 166: platform.v1.PlatformService.CreateDomainBinding:output_type -> platform.v1.DomainBinding
-	38,  // 167: platform.v1.PlatformService.GenerateDomainBinding:output_type -> platform.v1.DomainBinding
-	38,  // 168: platform.v1.PlatformService.GetDomainBinding:output_type -> platform.v1.DomainBinding
-	79,  // 169: platform.v1.PlatformService.ListDomainBindings:output_type -> platform.v1.ListDomainBindingsResponse
-	38,  // 170: platform.v1.PlatformService.UpdateDomainBinding:output_type -> platform.v1.DomainBinding
-	105, // 171: platform.v1.PlatformService.DeleteDomainBinding:output_type -> google.protobuf.Empty
-	42,  // 172: platform.v1.PlatformService.GetServiceStatus:output_type -> platform.v1.ServiceStatus
-	85,  // 173: platform.v1.PlatformService.ListServiceLogs:output_type -> platform.v1.ListServiceLogsResponse
-	88,  // 174: platform.v1.PlatformService.ListServiceDeployments:output_type -> platform.v1.ListServiceDeploymentsResponse
-	89,  // 175: platform.v1.PlatformService.ListAgents:output_type -> platform.v1.ListAgentsResponse
-	102, // 176: platform.v1.PlatformService.ListSandboxProfiles:output_type -> platform.v1.ListSandboxProfilesResponse
-	91,  // 177: platform.v1.BuilderService.ClaimBuild:output_type -> platform.v1.BuildJob
-	93,  // 178: platform.v1.BuilderService.DownloadSourceSnapshot:output_type -> platform.v1.SourceSnapshotChunk
-	105, // 179: platform.v1.BuilderService.ReportBuildHeartbeat:output_type -> google.protobuf.Empty
-	105, // 180: platform.v1.BuilderService.ReportBuildLogs:output_type -> google.protobuf.Empty
-	105, // 181: platform.v1.BuilderService.CompleteBuild:output_type -> google.protobuf.Empty
-	105, // 182: platform.v1.OpsService.IngestGitHubWebhook:output_type -> google.protobuf.Empty
-	142, // [142:183] is the sub-list for method output_type
-	101, // [101:142] is the sub-list for method input_type
-	101, // [101:101] is the sub-list for extension type_name
-	101, // [101:101] is the sub-list for extension extendee
-	0,   // [0:101] is the sub-list for field type_name
+	116, // 20: platform.v1.ResolvedSourceBinding.resolved_at:type_name -> google.protobuf.Timestamp
+	116, // 21: platform.v1.ResolvedSourceBinding.fresh_until:type_name -> google.protobuf.Timestamp
+	24,  // 22: platform.v1.ResolvedSourceBinding.build_recipe:type_name -> platform.v1.BuildRecipe
+	116, // 23: platform.v1.SourceRevision.observed_at:type_name -> google.protobuf.Timestamp
+	116, // 24: platform.v1.SourceSnapshot.fetched_at:type_name -> google.protobuf.Timestamp
+	24,  // 25: platform.v1.BuildJobSource.build_recipe:type_name -> platform.v1.BuildRecipe
+	23,  // 26: platform.v1.ServiceSource.image:type_name -> platform.v1.DirectImageSource
+	25,  // 27: platform.v1.ServiceSource.source_spec:type_name -> platform.v1.ServiceSourceSpec
+	22,  // 28: platform.v1.ServiceSpec.runtime:type_name -> platform.v1.ServiceRuntime
+	30,  // 29: platform.v1.ServiceSpec.source:type_name -> platform.v1.ServiceSource
+	32,  // 30: platform.v1.ServiceSpec.rolling_strategy:type_name -> platform.v1.RollingStrategy
+	22,  // 31: platform.v1.ResolvedServiceSpec.runtime:type_name -> platform.v1.ServiceRuntime
+	25,  // 32: platform.v1.SourceStateSummary.desired_spec:type_name -> platform.v1.ServiceSourceSpec
+	26,  // 33: platform.v1.SourceStateSummary.resolved_binding:type_name -> platform.v1.ResolvedSourceBinding
+	27,  // 34: platform.v1.SourceStateSummary.latest_revision:type_name -> platform.v1.SourceRevision
+	28,  // 35: platform.v1.SourceStateSummary.latest_snapshot:type_name -> platform.v1.SourceSnapshot
+	23,  // 36: platform.v1.ServiceSourceSummary.image:type_name -> platform.v1.DirectImageSource
+	34,  // 37: platform.v1.ServiceSourceSummary.source_state:type_name -> platform.v1.SourceStateSummary
+	9,   // 38: platform.v1.DeploymentActionRecord.action:type_name -> platform.v1.DeploymentAction
+	116, // 39: platform.v1.DeploymentActionRecord.created_at:type_name -> google.protobuf.Timestamp
+	7,   // 40: platform.v1.DeploymentStatus.state:type_name -> platform.v1.DeploymentState
+	116, // 41: platform.v1.DeploymentStatus.transitioned_at:type_name -> google.protobuf.Timestamp
+	8,   // 42: platform.v1.DeploymentStatus.cause_kind:type_name -> platform.v1.DeploymentCauseKind
+	6,   // 43: platform.v1.DeploymentStage.state:type_name -> platform.v1.DeploymentStageState
+	116, // 44: platform.v1.DeploymentStage.started_at:type_name -> google.protobuf.Timestamp
+	116, // 45: platform.v1.DeploymentStage.finished_at:type_name -> google.protobuf.Timestamp
+	1,   // 46: platform.v1.BuildStatus.state:type_name -> platform.v1.BuildState
+	116, // 47: platform.v1.BuildStatus.queued_at:type_name -> google.protobuf.Timestamp
+	116, // 48: platform.v1.BuildStatus.started_at:type_name -> google.protobuf.Timestamp
+	116, // 49: platform.v1.BuildStatus.finished_at:type_name -> google.protobuf.Timestamp
+	38,  // 50: platform.v1.BuildStatus.stages:type_name -> platform.v1.DeploymentStage
+	10,  // 51: platform.v1.ServiceUnappliedChange.action:type_name -> platform.v1.ServiceUnappliedChangeAction
+	31,  // 52: platform.v1.Service.spec:type_name -> platform.v1.ServiceSpec
+	116, // 53: platform.v1.Service.created_at:type_name -> google.protobuf.Timestamp
+	116, // 54: platform.v1.Service.updated_at:type_name -> google.protobuf.Timestamp
+	35,  // 55: platform.v1.Service.source_summary:type_name -> platform.v1.ServiceSourceSummary
+	39,  // 56: platform.v1.Service.latest_build:type_name -> platform.v1.BuildStatus
+	40,  // 57: platform.v1.Service.unapplied_changes:type_name -> platform.v1.ServiceUnappliedChange
+	37,  // 58: platform.v1.Service.latest_deployment:type_name -> platform.v1.DeploymentStatus
+	112, // 59: platform.v1.Service.sandbox_profile_audit:type_name -> platform.v1.SandboxProfileAuditEvent
+	116, // 60: platform.v1.DomainBinding.created_at:type_name -> google.protobuf.Timestamp
+	116, // 61: platform.v1.DomainBinding.updated_at:type_name -> google.protobuf.Timestamp
+	11,  // 62: platform.v1.DomainBinding.ownership_state:type_name -> platform.v1.DomainOwnershipState
+	116, // 63: platform.v1.Volume.created_at:type_name -> google.protobuf.Timestamp
+	116, // 64: platform.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
+	12,  // 65: platform.v1.Agent.lifecycle_state:type_name -> platform.v1.AgentLifecycleState
+	116, // 66: platform.v1.Agent.credential_revoked_at:type_name -> google.protobuf.Timestamp
+	116, // 67: platform.v1.AllocationStatus.updated_at:type_name -> google.protobuf.Timestamp
+	20,  // 68: platform.v1.AllocationStatus.restart:type_name -> platform.v1.RestartObservation
+	116, // 69: platform.v1.AllocationStatus.drain_started_at:type_name -> google.protobuf.Timestamp
+	116, // 70: platform.v1.AllocationStatus.drain_deadline:type_name -> google.protobuf.Timestamp
+	41,  // 71: platform.v1.ServiceStatus.service:type_name -> platform.v1.Service
+	45,  // 72: platform.v1.ServiceStatus.allocation:type_name -> platform.v1.AllocationStatus
+	45,  // 73: platform.v1.ServiceStatus.allocations:type_name -> platform.v1.AllocationStatus
+	16,  // 74: platform.v1.ListProjectsResponse.projects:type_name -> platform.v1.Project
+	17,  // 75: platform.v1.ListEnvironmentsResponse.environments:type_name -> platform.v1.Environment
+	46,  // 76: platform.v1.DeployEnvironmentResponse.services:type_name -> platform.v1.ServiceStatus
+	2,   // 77: platform.v1.InspectSourceResponse.access_state:type_name -> platform.v1.SourceAccessState
+	24,  // 78: platform.v1.InspectSourceResponse.recommended_build_recipe:type_name -> platform.v1.BuildRecipe
+	76,  // 79: platform.v1.CreateServiceRequest.service:type_name -> platform.v1.ServiceInput
+	77,  // 80: platform.v1.UpdateServiceRequest.service:type_name -> platform.v1.ServiceUpdate
+	9,   // 81: platform.v1.ApplyDeploymentActionRequest.action:type_name -> platform.v1.DeploymentAction
+	41,  // 82: platform.v1.ListServicesResponse.services:type_name -> platform.v1.Service
+	43,  // 83: platform.v1.ListVolumesResponse.volumes:type_name -> platform.v1.Volume
+	31,  // 84: platform.v1.ServiceInput.spec:type_name -> platform.v1.ServiceSpec
+	31,  // 85: platform.v1.ServiceUpdate.spec:type_name -> platform.v1.ServiceSpec
+	78,  // 86: platform.v1.CreateDomainBindingRequest.binding:type_name -> platform.v1.DomainBindingInput
+	42,  // 87: platform.v1.ListDomainBindingsResponse.bindings:type_name -> platform.v1.DomainBinding
+	79,  // 88: platform.v1.UpdateDomainBindingRequest.binding:type_name -> platform.v1.DomainBindingTarget
+	116, // 89: platform.v1.ListServiceLogsRequest.start_time:type_name -> google.protobuf.Timestamp
+	116, // 90: platform.v1.ListServiceLogsRequest.end_time:type_name -> google.protobuf.Timestamp
+	13,  // 91: platform.v1.ListServiceLogsRequest.log_type:type_name -> platform.v1.ServiceLogType
+	116, // 92: platform.v1.ServiceLogLine.observed_at:type_name -> google.protobuf.Timestamp
+	13,  // 93: platform.v1.ServiceLogLine.log_type:type_name -> platform.v1.ServiceLogType
+	89,  // 94: platform.v1.ListServiceLogsResponse.lines:type_name -> platform.v1.ServiceLogLine
+	116, // 95: platform.v1.DeploymentRecord.created_at:type_name -> google.protobuf.Timestamp
+	39,  // 96: platform.v1.DeploymentRecord.build:type_name -> platform.v1.BuildStatus
+	37,  // 97: platform.v1.DeploymentRecord.status:type_name -> platform.v1.DeploymentStatus
+	38,  // 98: platform.v1.DeploymentRecord.stages:type_name -> platform.v1.DeploymentStage
+	36,  // 99: platform.v1.DeploymentRecord.actions:type_name -> platform.v1.DeploymentActionRecord
+	115, // 100: platform.v1.DeploymentRecord.variable_versions:type_name -> platform.v1.DeploymentRecord.VariableVersionsEntry
+	92,  // 101: platform.v1.ListServiceDeploymentsResponse.deployments:type_name -> platform.v1.DeploymentRecord
+	44,  // 102: platform.v1.ListAgentsResponse.agents:type_name -> platform.v1.Agent
+	44,  // 103: platform.v1.AgentEnrollment.agent:type_name -> platform.v1.Agent
+	12,  // 104: platform.v1.SetAgentLifecycleRequest.lifecycle_state:type_name -> platform.v1.AgentLifecycleState
+	44,  // 105: platform.v1.Fleet.agents:type_name -> platform.v1.Agent
+	99,  // 106: platform.v1.Fleet.capacity:type_name -> platform.v1.FleetCapacity
+	29,  // 107: platform.v1.BuildJob.source:type_name -> platform.v1.BuildJobSource
+	107, // 108: platform.v1.ReportBuildLogsRequest.lines:type_name -> platform.v1.BuildLogLine
+	116, // 109: platform.v1.BuildLogLine.observed_at:type_name -> google.protobuf.Timestamp
+	1,   // 110: platform.v1.CompleteBuildRequest.state:type_name -> platform.v1.BuildState
+	14,  // 111: platform.v1.SandboxProfile.relaxations:type_name -> platform.v1.SandboxRelaxation
+	111, // 112: platform.v1.SandboxProfileAuditEvent.profile:type_name -> platform.v1.SandboxProfile
+	116, // 113: platform.v1.SandboxProfileAuditEvent.created_at:type_name -> google.protobuf.Timestamp
+	111, // 114: platform.v1.ListSandboxProfilesResponse.profiles:type_name -> platform.v1.SandboxProfile
+	47,  // 115: platform.v1.PlatformService.CreateProject:input_type -> platform.v1.CreateProjectRequest
+	117, // 116: platform.v1.PlatformService.ListProjects:input_type -> google.protobuf.Empty
+	49,  // 117: platform.v1.PlatformService.GetProject:input_type -> platform.v1.GetProjectRequest
+	50,  // 118: platform.v1.PlatformService.ListEnvironments:input_type -> platform.v1.ListEnvironmentsRequest
+	52,  // 119: platform.v1.PlatformService.GetEnvironment:input_type -> platform.v1.GetEnvironmentRequest
+	53,  // 120: platform.v1.PlatformService.CreateEnvironment:input_type -> platform.v1.CreateEnvironmentRequest
+	54,  // 121: platform.v1.PlatformService.DuplicateEnvironment:input_type -> platform.v1.DuplicateEnvironmentRequest
+	55,  // 122: platform.v1.PlatformService.RenameEnvironment:input_type -> platform.v1.RenameEnvironmentRequest
+	56,  // 123: platform.v1.PlatformService.DeleteEnvironment:input_type -> platform.v1.DeleteEnvironmentRequest
+	57,  // 124: platform.v1.PlatformService.DeployEnvironment:input_type -> platform.v1.DeployEnvironmentRequest
+	110, // 125: platform.v1.PlatformService.LinkGitHubRepository:input_type -> platform.v1.LinkGitHubRepositoryRequest
+	59,  // 126: platform.v1.PlatformService.InspectSource:input_type -> platform.v1.InspectSourceRequest
+	61,  // 127: platform.v1.PlatformService.CreateService:input_type -> platform.v1.CreateServiceRequest
+	62,  // 128: platform.v1.PlatformService.UpdateService:input_type -> platform.v1.UpdateServiceRequest
+	63,  // 129: platform.v1.PlatformService.RedeployService:input_type -> platform.v1.RedeployServiceRequest
+	64,  // 130: platform.v1.PlatformService.ScaleService:input_type -> platform.v1.ScaleServiceRequest
+	65,  // 131: platform.v1.PlatformService.RestartService:input_type -> platform.v1.RestartServiceRequest
+	66,  // 132: platform.v1.PlatformService.ApplyDeploymentAction:input_type -> platform.v1.ApplyDeploymentActionRequest
+	67,  // 133: platform.v1.PlatformService.DiscardServiceChanges:input_type -> platform.v1.DiscardServiceChangesRequest
+	68,  // 134: platform.v1.PlatformService.DeleteService:input_type -> platform.v1.DeleteServiceRequest
+	69,  // 135: platform.v1.PlatformService.GetService:input_type -> platform.v1.GetServiceRequest
+	70,  // 136: platform.v1.PlatformService.ListServices:input_type -> platform.v1.ListServicesRequest
+	72,  // 137: platform.v1.PlatformService.CreateVolume:input_type -> platform.v1.CreateVolumeRequest
+	73,  // 138: platform.v1.PlatformService.DeleteVolume:input_type -> platform.v1.DeleteVolumeRequest
+	74,  // 139: platform.v1.PlatformService.ListVolumes:input_type -> platform.v1.ListVolumesRequest
+	81,  // 140: platform.v1.PlatformService.CreateDomainBinding:input_type -> platform.v1.CreateDomainBindingRequest
+	80,  // 141: platform.v1.PlatformService.GenerateDomainBinding:input_type -> platform.v1.GenerateDomainBindingRequest
+	82,  // 142: platform.v1.PlatformService.GetDomainBinding:input_type -> platform.v1.GetDomainBindingRequest
+	83,  // 143: platform.v1.PlatformService.ListDomainBindings:input_type -> platform.v1.ListDomainBindingsRequest
+	85,  // 144: platform.v1.PlatformService.UpdateDomainBinding:input_type -> platform.v1.UpdateDomainBindingRequest
+	86,  // 145: platform.v1.PlatformService.DeleteDomainBinding:input_type -> platform.v1.DeleteDomainBindingRequest
+	87,  // 146: platform.v1.PlatformService.GetServiceStatus:input_type -> platform.v1.GetServiceStatusRequest
+	88,  // 147: platform.v1.PlatformService.ListServiceLogs:input_type -> platform.v1.ListServiceLogsRequest
+	91,  // 148: platform.v1.PlatformService.ListServiceDeployments:input_type -> platform.v1.ListServiceDeploymentsRequest
+	117, // 149: platform.v1.PlatformService.ListAgents:input_type -> google.protobuf.Empty
+	117, // 150: platform.v1.PlatformService.ListSandboxProfiles:input_type -> google.protobuf.Empty
+	101, // 151: platform.v1.BuilderService.ClaimBuild:input_type -> platform.v1.ClaimBuildRequest
+	103, // 152: platform.v1.BuilderService.DownloadSourceSnapshot:input_type -> platform.v1.DownloadSourceSnapshotRequest
+	105, // 153: platform.v1.BuilderService.ReportBuildHeartbeat:input_type -> platform.v1.BuilderHeartbeatRequest
+	106, // 154: platform.v1.BuilderService.ReportBuildLogs:input_type -> platform.v1.ReportBuildLogsRequest
+	108, // 155: platform.v1.BuilderService.CompleteBuild:input_type -> platform.v1.CompleteBuildRequest
+	109, // 156: platform.v1.OpsService.IngestGitHubWebhook:input_type -> platform.v1.IngestGitHubWebhookRequest
+	117, // 157: platform.v1.OpsService.ListFleet:input_type -> google.protobuf.Empty
+	95,  // 158: platform.v1.OpsService.CreateAgent:input_type -> platform.v1.CreateAgentRequest
+	97,  // 159: platform.v1.OpsService.UpdateAgent:input_type -> platform.v1.UpdateAgentRequest
+	98,  // 160: platform.v1.OpsService.SetAgentLifecycle:input_type -> platform.v1.SetAgentLifecycleRequest
+	16,  // 161: platform.v1.PlatformService.CreateProject:output_type -> platform.v1.Project
+	48,  // 162: platform.v1.PlatformService.ListProjects:output_type -> platform.v1.ListProjectsResponse
+	16,  // 163: platform.v1.PlatformService.GetProject:output_type -> platform.v1.Project
+	51,  // 164: platform.v1.PlatformService.ListEnvironments:output_type -> platform.v1.ListEnvironmentsResponse
+	17,  // 165: platform.v1.PlatformService.GetEnvironment:output_type -> platform.v1.Environment
+	17,  // 166: platform.v1.PlatformService.CreateEnvironment:output_type -> platform.v1.Environment
+	17,  // 167: platform.v1.PlatformService.DuplicateEnvironment:output_type -> platform.v1.Environment
+	17,  // 168: platform.v1.PlatformService.RenameEnvironment:output_type -> platform.v1.Environment
+	117, // 169: platform.v1.PlatformService.DeleteEnvironment:output_type -> google.protobuf.Empty
+	58,  // 170: platform.v1.PlatformService.DeployEnvironment:output_type -> platform.v1.DeployEnvironmentResponse
+	60,  // 171: platform.v1.PlatformService.LinkGitHubRepository:output_type -> platform.v1.InspectSourceResponse
+	60,  // 172: platform.v1.PlatformService.InspectSource:output_type -> platform.v1.InspectSourceResponse
+	41,  // 173: platform.v1.PlatformService.CreateService:output_type -> platform.v1.Service
+	41,  // 174: platform.v1.PlatformService.UpdateService:output_type -> platform.v1.Service
+	46,  // 175: platform.v1.PlatformService.RedeployService:output_type -> platform.v1.ServiceStatus
+	46,  // 176: platform.v1.PlatformService.ScaleService:output_type -> platform.v1.ServiceStatus
+	46,  // 177: platform.v1.PlatformService.RestartService:output_type -> platform.v1.ServiceStatus
+	46,  // 178: platform.v1.PlatformService.ApplyDeploymentAction:output_type -> platform.v1.ServiceStatus
+	41,  // 179: platform.v1.PlatformService.DiscardServiceChanges:output_type -> platform.v1.Service
+	117, // 180: platform.v1.PlatformService.DeleteService:output_type -> google.protobuf.Empty
+	41,  // 181: platform.v1.PlatformService.GetService:output_type -> platform.v1.Service
+	71,  // 182: platform.v1.PlatformService.ListServices:output_type -> platform.v1.ListServicesResponse
+	43,  // 183: platform.v1.PlatformService.CreateVolume:output_type -> platform.v1.Volume
+	117, // 184: platform.v1.PlatformService.DeleteVolume:output_type -> google.protobuf.Empty
+	75,  // 185: platform.v1.PlatformService.ListVolumes:output_type -> platform.v1.ListVolumesResponse
+	42,  // 186: platform.v1.PlatformService.CreateDomainBinding:output_type -> platform.v1.DomainBinding
+	42,  // 187: platform.v1.PlatformService.GenerateDomainBinding:output_type -> platform.v1.DomainBinding
+	42,  // 188: platform.v1.PlatformService.GetDomainBinding:output_type -> platform.v1.DomainBinding
+	84,  // 189: platform.v1.PlatformService.ListDomainBindings:output_type -> platform.v1.ListDomainBindingsResponse
+	42,  // 190: platform.v1.PlatformService.UpdateDomainBinding:output_type -> platform.v1.DomainBinding
+	117, // 191: platform.v1.PlatformService.DeleteDomainBinding:output_type -> google.protobuf.Empty
+	46,  // 192: platform.v1.PlatformService.GetServiceStatus:output_type -> platform.v1.ServiceStatus
+	90,  // 193: platform.v1.PlatformService.ListServiceLogs:output_type -> platform.v1.ListServiceLogsResponse
+	93,  // 194: platform.v1.PlatformService.ListServiceDeployments:output_type -> platform.v1.ListServiceDeploymentsResponse
+	94,  // 195: platform.v1.PlatformService.ListAgents:output_type -> platform.v1.ListAgentsResponse
+	113, // 196: platform.v1.PlatformService.ListSandboxProfiles:output_type -> platform.v1.ListSandboxProfilesResponse
+	102, // 197: platform.v1.BuilderService.ClaimBuild:output_type -> platform.v1.BuildJob
+	104, // 198: platform.v1.BuilderService.DownloadSourceSnapshot:output_type -> platform.v1.SourceSnapshotChunk
+	117, // 199: platform.v1.BuilderService.ReportBuildHeartbeat:output_type -> google.protobuf.Empty
+	117, // 200: platform.v1.BuilderService.ReportBuildLogs:output_type -> google.protobuf.Empty
+	117, // 201: platform.v1.BuilderService.CompleteBuild:output_type -> google.protobuf.Empty
+	117, // 202: platform.v1.OpsService.IngestGitHubWebhook:output_type -> google.protobuf.Empty
+	100, // 203: platform.v1.OpsService.ListFleet:output_type -> platform.v1.Fleet
+	96,  // 204: platform.v1.OpsService.CreateAgent:output_type -> platform.v1.AgentEnrollment
+	44,  // 205: platform.v1.OpsService.UpdateAgent:output_type -> platform.v1.Agent
+	44,  // 206: platform.v1.OpsService.SetAgentLifecycle:output_type -> platform.v1.Agent
+	161, // [161:207] is the sub-list for method output_type
+	115, // [115:161] is the sub-list for method input_type
+	115, // [115:115] is the sub-list for extension type_name
+	115, // [115:115] is the sub-list for extension extendee
+	0,   // [0:115] is the sub-list for field type_name
 }
 
 func init() { file_platform_proto_init() }
@@ -7928,7 +9093,8 @@ func file_platform_proto_init() {
 		(*ServiceSource_SourceSpec)(nil),
 	}
 	file_platform_proto_msgTypes[15].OneofWrappers = []any{}
-	file_platform_proto_msgTypes[18].OneofWrappers = []any{
+	file_platform_proto_msgTypes[16].OneofWrappers = []any{}
+	file_platform_proto_msgTypes[19].OneofWrappers = []any{
 		(*ServiceSourceSummary_Image)(nil),
 		(*ServiceSourceSummary_SourceState)(nil),
 	}
@@ -7937,8 +9103,8 @@ func file_platform_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_platform_proto_rawDesc), len(file_platform_proto_rawDesc)),
-			NumEnums:      14,
-			NumMessages:   90,
+			NumEnums:      16,
+			NumMessages:   100,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

@@ -9,6 +9,7 @@ import {
 } from "#/lib/dashboard/core/types.server";
 import { formatError } from "#/lib/dashboard/core/utils.server";
 import type {
+	ApplyDeploymentActionRequest,
 	CreateDomainBindingRequest,
 	CreateProjectRequest,
 	CreateServiceRequest,
@@ -25,14 +26,14 @@ import type {
 	ListServiceDeploymentsRequest,
 	ListServiceLogsRequest,
 	ListServicesRequest,
+	OpsMethod,
+	OpsRequestMap,
 	OpsClient,
 	PlatformClient,
 	PlatformMethod,
 	PlatformRequestMap,
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
-	RedeployServiceRequest,
-	RestartServiceRequest,
 	ScaleServiceRequest,
 	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
@@ -148,9 +149,9 @@ export async function unaryCall<M extends PlatformMethod>(
 						handleResponse,
 					);
 					return;
-				case "RedeployService":
-					client.RedeployService(
-						request as RedeployServiceRequest,
+				case "ApplyDeploymentAction":
+					client.ApplyDeploymentAction(
+						request as ApplyDeploymentActionRequest,
 						metadata,
 						handleResponse,
 					);
@@ -158,13 +159,6 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "ScaleService":
 					client.ScaleService(
 						request as ScaleServiceRequest,
-						metadata,
-						handleResponse,
-					);
-					return;
-				case "RestartService":
-					client.RestartService(
-						request as RestartServiceRequest,
 						metadata,
 						handleResponse,
 					);
@@ -241,6 +235,55 @@ export async function unaryCall<M extends PlatformMethod>(
 					return;
 				default:
 					reject(new Error(`unsupported platform method: ${method}`));
+					return;
+			}
+		});
+	} catch (cause) {
+		throw toPlatformGatewayError(method, cause);
+	}
+}
+
+export async function opsUserCall<M extends OpsMethod>(
+	runtime: PlatformRuntimeConfig,
+	method: M,
+	request: OpsRequestMap[M],
+	user: DashboardUser,
+): Promise<unknown> {
+	const client = getOpsClient(runtime);
+	const metadata = new grpc.Metadata();
+	metadata.set(
+		"x-platform-user-assertion",
+		createPlatformUserAssertion({
+			secret: runtime.userAssertionSecret,
+			userId: user.id,
+		}),
+	);
+	try {
+		return await new Promise<unknown>((resolve, reject) => {
+			const callback: RawUnaryCallback = (error, response) => {
+				if (error) reject(error);
+				else resolve(response);
+			};
+			switch (method) {
+				case "ListFleet":
+					client.ListFleet(
+						request as Record<string, never>,
+						metadata,
+						callback,
+					);
+					return;
+				case "CreateAgent":
+					client.CreateAgent(request as OpsRequestMap["CreateAgent"], metadata, callback);
+					return;
+				case "UpdateAgent":
+					client.UpdateAgent(request as OpsRequestMap["UpdateAgent"], metadata, callback);
+					return;
+				case "SetAgentLifecycle":
+					client.SetAgentLifecycle(
+						request as OpsRequestMap["SetAgentLifecycle"],
+						metadata,
+						callback,
+					);
 					return;
 			}
 		});

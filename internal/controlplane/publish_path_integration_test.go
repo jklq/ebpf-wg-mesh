@@ -32,7 +32,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 		withDashboard: true,
 	})
 	store := cp.server.store
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	projects, err := store.listProjects(ctx, "user-1")
@@ -142,7 +142,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 		withDashboard: true,
 	})
 	store := cp.server.store
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	projects, err := store.listProjects(ctx, "user-1")

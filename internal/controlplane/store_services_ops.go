@@ -144,8 +144,14 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 	if spec == nil {
 		spec = &platformv1.ServiceSpec{}
 	}
+	if err := validateServicePlacement(spec); err != nil {
+		return serviceRecord{}, err
+	}
 	if !specHasDesiredReplicaCount(spec) {
 		spec.DesiredReplicaCount = replicaCountPtr(defaultDesiredReplicaCount)
+	}
+	if err := validateRollingStrategy(spec); err != nil {
+		return serviceRecord{}, err
 	}
 	rec := serviceRecord{
 		ID:                  mustID(),
@@ -431,8 +437,12 @@ func (s *Store) chooseAgentForServiceTx(ctx context.Context, tx *sql.Tx, environ
 func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer) ([]placementCandidate, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT a.id,
-		        a.cpu_millis_capacity,
-		        a.memory_mebibytes_capacity,
+		        a.region,
+		        a.zone,
+		        a.failure_domain,
+		        a.runtime_capabilities,
+		        greatest(a.cpu_millis_capacity - a.reserved_cpu_millis, 0),
+		        greatest(a.memory_mebibytes_capacity - a.reserved_memory_mebibytes, 0),
 		        COALESCE(stats.service_count, 0),
 		        COALESCE(stats.cpu_millis, 0),
 		        COALESCE(stats.memory_mebibytes, 0)
@@ -450,7 +460,7 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 			 GROUP BY a.agent_id
 		   ) AS stats
 		     ON stats.agent_id = a.id
-		  WHERE a.last_seen_at > $1
+		  WHERE a.last_seen_at > $1 AND a.lifecycle_state = 'active'
 		  ORDER BY COALESCE(stats.service_count, 0) ASC, a.id ASC`,
 		time.Now().UTC().Add(-30*time.Second),
 	)
@@ -464,6 +474,10 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 		var candidate placementCandidate
 		if err := rows.Scan(
 			&candidate.ID,
+			&candidate.Region,
+			&candidate.Zone,
+			&candidate.FailureDomain,
+			(*jsonStringSlice)(&candidate.RuntimeCapabilities),
 			&candidate.CPUMillisCapacity,
 			&candidate.MemoryMebibytesCapcity,
 			&candidate.ServiceCount,
@@ -532,16 +546,17 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.id, s.id, s.environment_id, s.name, s.current_spec_revision, s.current_rollout_generation,
-		        s.current_resolved_image, r.spec_json, e.network_identity, e.name, p.id, p.name,
-		        a.restart_observation_json, a.operator_restart_nonce
+		`SELECT a.id, s.id, s.environment_id, s.name, a.desired_spec_revision, a.desired_rollout_generation,
+		        ro.image_digest, r.spec_json, e.network_identity, e.name, p.id, p.name,
+		        a.restart_observation_json, a.operator_restart_nonce, a.rollout_state, a.drain_deadline
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id
 		   JOIN projects p ON p.id = e.project_id
-		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
+		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = a.desired_spec_revision
+		   JOIN service_rollouts ro ON ro.service_id = s.id AND ro.rollout_generation = a.desired_rollout_generation
 		  WHERE a.agent_id = $1
-		    AND s.current_resolved_image <> ''
+		    AND ro.image_digest <> ''
 		  ORDER BY s.created_at ASC`,
 		agentID,
 	)
@@ -558,8 +573,17 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		var networkIdentity int64
 		var environmentName, projectID, projectName string
 		var restartRaw []byte
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce); err != nil {
+		var rolloutState string
+		var drainDeadline sql.NullTime
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &drainDeadline); err != nil {
 			return nil, err
+		}
+		svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_RUN
+		if rolloutState == allocationRolloutDraining {
+			svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN
+			if drainDeadline.Valid {
+				svc.DrainDeadline = ts(drainDeadline.Time)
+			}
 		}
 		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
 			return nil, fmt.Errorf("environment %s has invalid network identity %d", svc.EnvironmentId, networkIdentity)
@@ -616,8 +640,9 @@ func (s *Store) internalHostsForEnvironment(ctx context.Context, environmentID s
 		   JOIN agents ag ON ag.id = a.agent_id
 		  WHERE s.environment_id = $1
 		    AND a.healthy = TRUE
-		    AND a.applied_spec_revision >= s.current_spec_revision
-		    AND a.applied_rollout_generation >= s.current_rollout_generation
+		    AND a.rollout_state = 'serving'
+		    AND a.applied_spec_revision >= a.desired_spec_revision
+		    AND a.applied_rollout_generation >= a.desired_rollout_generation
 		  ORDER BY s.created_at ASC, a.id ASC`,
 		environmentID,
 	)
@@ -678,15 +703,14 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 		   JOIN allocations a ON a.service_id = d.service_id
 		   JOIN services s ON s.id = a.service_id
 		   JOIN agents ag ON ag.id = a.agent_id
-		   JOIN deployments dep ON dep.service_id = a.service_id AND dep.is_current = TRUE
 		  WHERE a.healthy = TRUE
-		    AND a.applied_spec_revision >= s.current_spec_revision
-		    AND a.applied_rollout_generation >= s.current_rollout_generation
-		    AND a.phase <> $1
-		    AND dep.state = $2
+		    AND a.rollout_state = $1
+		    AND a.applied_spec_revision >= a.desired_spec_revision
+		    AND a.applied_rollout_generation >= a.desired_rollout_generation
+		    AND a.phase <> $2
 		  ORDER BY d.hostname ASC, a.id ASC`,
+		allocationRolloutServing,
 		restartpolicy.PhaseCrashLoop,
-		deploymentStateActive,
 	)
 	if err != nil {
 		return nil, err
@@ -723,8 +747,9 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 			}
 		}
 		backends = append(backends, ingressBackend{
-			Domain:   domain,
-			Upstream: net.JoinHostPort(allocationIP, strconv.Itoa(int(targetPort))),
+			Domain:       domain,
+			Upstream:     net.JoinHostPort(allocationIP, strconv.Itoa(int(targetPort))),
+			AllocationID: allocationID,
 		})
 	}
 	return backends, rows.Err()
@@ -743,6 +768,7 @@ func equalInt32Slices(a, b []int32) bool {
 }
 
 type ingressBackend struct {
-	Domain   string
-	Upstream string
+	Domain       string
+	Upstream     string
+	AllocationID string
 }

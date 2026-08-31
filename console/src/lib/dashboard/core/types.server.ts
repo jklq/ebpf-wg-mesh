@@ -44,7 +44,26 @@ export type DashboardBuildState =
 	| "succeeded"
 	| "failed"
 	| "superseded"
+	| "cancelled"
 	| "unspecified";
+
+export type DashboardDeploymentAction =
+	| "restart"
+	| "exact_redeploy"
+	| "rollback"
+	| "cancel"
+	| "remove"
+	| "retry";
+
+export interface DashboardDeploymentActionRecord {
+	id: string;
+	action: DashboardDeploymentAction;
+	targetDeploymentId: string;
+	resultDeploymentId?: string;
+	allocationId?: string;
+	requestedByUserId: string;
+	createdAt?: Date;
+}
 
 export type DashboardDeploymentStageState =
 	| "pending"
@@ -217,6 +236,81 @@ export interface DashboardServiceSpec {
 	source?: DashboardSourceSpec;
 	runtime: DashboardRuntimeSpec;
 	desiredReplicaCount?: number;
+	placementRegion?: string;
+	rollingStrategy?: DashboardRollingStrategy;
+}
+
+export interface DashboardRollingStrategy {
+	maxUnavailable: number;
+	maxSurge: number;
+	startupTimeoutSeconds: number;
+	drainTimeoutSeconds: number;
+}
+
+export type DashboardAgentLifecycleState =
+	| "enrolling"
+	| "active"
+	| "cordoned"
+	| "draining"
+	| "unavailable"
+	| "retired"
+	| "unspecified";
+
+export interface DashboardFleetAgent {
+	id: string;
+	name: string;
+	lifecycleState: DashboardAgentLifecycleState;
+	region: string;
+	zone: string;
+	failureDomain: string;
+	healthy: boolean;
+	lastSeenAt?: Date;
+	cpuMillisCapacity: number;
+	memoryMebibytesCapacity: number;
+	reservedCpuMillis: number;
+	reservedMemoryMebibytes: number;
+	schedulableCpuMillis: number;
+	schedulableMemoryMebibytes: number;
+	allocatedCpuMillis: number;
+	allocatedMemoryMebibytes: number;
+	headroomCpuMillis: number;
+	headroomMemoryMebibytes: number;
+	allocationCount: number;
+	runtimeCapabilities: string[];
+	softwareVersion: string;
+	versionSkewWarning?: string;
+	maintenanceMessage?: string;
+	credentialRevokedAt?: Date;
+}
+
+export interface DashboardFleet {
+	agents: DashboardFleetAgent[];
+	capacity: {
+		nodeCount: number;
+		schedulableNodeCount: number;
+		schedulableCpuMillis: number;
+		schedulableMemoryMebibytes: number;
+		allocatedCpuMillis: number;
+		allocatedMemoryMebibytes: number;
+		headroomCpuMillis: number;
+		headroomMemoryMebibytes: number;
+	};
+	versionWarning?: string;
+}
+
+export interface FleetAgentInput {
+	agentId: string;
+	name: string;
+	region: string;
+	zone: string;
+	failureDomain: string;
+	reservedCpuMillis: number;
+	reservedMemoryMebibytes: number;
+}
+
+export interface DashboardAgentEnrollment {
+	agent: DashboardFleetAgent;
+	bootstrapToken: string;
 }
 
 export interface DashboardResolvedSourceBinding {
@@ -318,6 +412,9 @@ export interface DashboardAllocationStatus {
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
 	operatorRestartNonce?: number;
+	rolloutState?: string;
+	drainStartedAt?: Date;
+	drainDeadline?: Date;
 	restart?: {
 		restartCount: number;
 		crashLoop: boolean;
@@ -370,6 +467,8 @@ export interface DashboardDeploymentRecord {
 	status?: DashboardDeploymentStatus;
 	stages?: Array<DashboardDeploymentStage>;
 	imageDigest?: string;
+	actions?: Array<DashboardDeploymentActionRecord>;
+	variableVersions?: Record<string, number>;
 }
 
 export interface CreateServiceFastResult {
@@ -630,6 +729,19 @@ export interface DashboardStore {
 }
 
 export interface PlatformGateway {
+	listFleet(user: DashboardUser): Promise<DashboardFleet>;
+	createFleetAgent(
+		user: DashboardUser,
+		input: FleetAgentInput,
+	): Promise<DashboardAgentEnrollment>;
+	updateFleetAgent(
+		user: DashboardUser,
+		input: FleetAgentInput,
+	): Promise<DashboardFleetAgent>;
+	setFleetAgentLifecycle(
+		user: DashboardUser,
+		input: { agentId: string; lifecycleState: DashboardAgentLifecycleState },
+	): Promise<DashboardFleetAgent>;
 	listProjects(user: DashboardUser): Promise<Array<DashboardProject>>;
 	listSandboxProfiles(
 		user: DashboardUser,
@@ -709,9 +821,15 @@ export interface PlatformGateway {
 			spec: DashboardServiceSpec;
 		},
 	): Promise<DashboardServiceRecord>;
-	redeployService(
+	applyDeploymentAction(
 		user: DashboardUser,
-		input: { serviceId: string },
+		input: {
+			serviceId: string;
+			deploymentId: string;
+			action: DashboardDeploymentAction;
+			idempotencyKey: string;
+			allocationId?: string;
+		},
 	): Promise<DashboardServiceStatus>;
 	scaleService(
 		user: DashboardUser,
@@ -719,10 +837,6 @@ export interface PlatformGateway {
 			serviceId: string;
 			desiredReplicaCount: number;
 		},
-	): Promise<DashboardServiceStatus>;
-	restartService(
-		user: DashboardUser,
-		input: { serviceId: string },
 	): Promise<DashboardServiceStatus>;
 	discardServiceChanges(
 		user: DashboardUser,
@@ -861,9 +975,22 @@ export interface UpdateServiceInput {
 	restart?: DashboardRestartSpec;
 	desiredReplicaCount?: number;
 	sandboxProfileName?: string;
+	placementRegion?: string;
+	rollingStrategy?: DashboardRollingStrategy;
 }
 
 export interface DashboardService {
+	loadFleetFromSession(): Promise<DashboardFleet>;
+	createFleetAgentFromSession(
+		input: FleetAgentInput,
+	): Promise<DashboardAgentEnrollment>;
+	updateFleetAgentFromSession(
+		input: FleetAgentInput,
+	): Promise<DashboardFleetAgent>;
+	setFleetAgentLifecycleFromSession(input: {
+		agentId: string;
+		lifecycleState: DashboardAgentLifecycleState;
+	}): Promise<DashboardFleetAgent>;
 	listDevLogins(): Array<DevLoginIdentity>;
 	isGitHubLoginEnabled(): boolean;
 	getPublicBaseURL(): string;
@@ -964,15 +1091,16 @@ export interface DashboardService {
 	updateServiceFromSession(
 		input: UpdateServiceInput,
 	): Promise<DashboardServiceRecord>;
-	redeployServiceFromSession(input: {
+	applyDeploymentActionFromSession(input: {
 		serviceId: string;
+		deploymentId: string;
+		action: DashboardDeploymentAction;
+		idempotencyKey: string;
+		allocationId?: string;
 	}): Promise<DashboardServiceStatus>;
 	scaleServiceFromSession(input: {
 		serviceId: string;
 		desiredReplicaCount: number;
-	}): Promise<DashboardServiceStatus>;
-	restartServiceFromSession(input: {
-		serviceId: string;
 	}): Promise<DashboardServiceStatus>;
 	discardServiceChangesFromSession(input: {
 		serviceId: string;

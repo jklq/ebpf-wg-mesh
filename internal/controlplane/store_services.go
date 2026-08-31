@@ -51,6 +51,25 @@ type serviceQueryer interface {
 
 type jsonInt32Slice []int32
 
+type jsonStringSlice []string
+
+func (p *jsonStringSlice) Scan(src any) error {
+	if p == nil {
+		return nil
+	}
+	switch v := src.(type) {
+	case nil:
+		*p = nil
+		return nil
+	case []byte:
+		return json.Unmarshal(v, (*[]string)(p))
+	case string:
+		return json.Unmarshal([]byte(v), (*[]string)(p))
+	default:
+		return fmt.Errorf("scan string slice json: unsupported type %T", src)
+	}
+}
+
 func (p *jsonInt32Slice) Scan(src any) error {
 	if p == nil {
 		return nil
@@ -102,6 +121,8 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		return nil
 	}
 	out := proto.Clone(spec).(*platformv1.ServiceSpec)
+	out.PlacementRegion = strings.ToLower(strings.TrimSpace(out.GetPlacementRegion()))
+	out.RollingStrategy = canonicalRollingStrategy(out.GetRollingStrategy())
 	runtime := out.GetRuntime()
 	if runtime != nil {
 		if runtime.GetSandboxProfile() == nil || strings.TrimSpace(runtime.GetSandboxProfile().GetName()) == "" {
@@ -154,6 +175,17 @@ func canonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		}
 	}
 	return out
+}
+
+func validateServicePlacement(spec *platformv1.ServiceSpec) error {
+	region := strings.TrimSpace(spec.GetPlacementRegion())
+	if region == "" {
+		return nil
+	}
+	if !fleetLabelPattern.MatchString(region) {
+		return errors.New("placement region must be a lowercase operator region label")
+	}
+	return nil
 }
 
 func serviceRuntime(spec *platformv1.ServiceSpec) *platformv1.ServiceRuntime {
@@ -334,6 +366,10 @@ func buildSourceSummary(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceS
 
 type placementCandidate struct {
 	ID                     string
+	Region                 string
+	Zone                   string
+	FailureDomain          string
+	RuntimeCapabilities    []string
 	CPUMillisCapacity      int64
 	MemoryMebibytesCapcity int64
 	ServiceCount           int64
@@ -361,6 +397,9 @@ func sameServiceSpec(a, b *platformv1.ServiceSpec) bool {
 }
 
 func equalServiceSpecAfterCanonicalization(a, b *platformv1.ServiceSpec) bool {
+	if !proto.Equal(canonicalRollingStrategy(a.GetRollingStrategy()), canonicalRollingStrategy(b.GetRollingStrategy())) {
+		return false
+	}
 	ar := a.GetRuntime()
 	br := b.GetRuntime()
 	if (ar == nil) != (br == nil) {
@@ -508,9 +547,19 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 			        healthy_ports = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        rollout_state = $5,
 			        updated_at = $3
 			  WHERE service_id = $4`,
-			allocationIP, encodedPorts, time.Now().UTC(), serviceID,
+			allocationIP, encodedPorts, time.Now().UTC(), serviceID, allocationRolloutServing,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE service_rollouts
+			    SET state = $1, failure_reason = '', completed_at = $2, progress_at = $2
+			  WHERE service_id = $3
+			    AND rollout_generation = (SELECT current_rollout_generation FROM services WHERE id = $3)`,
+			rolloutStateSucceeded, time.Now().UTC(), serviceID,
 		); err != nil {
 			return err
 		}
@@ -544,10 +593,11 @@ func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID
 			        healthy_ports = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
+			        rollout_state = $5,
 			        updated_at = $3
 			  WHERE id = $4
 			  RETURNING service_id, desired_rollout_generation`,
-			allocationIP, encodedPorts, time.Now().UTC(), allocationID,
+			allocationIP, encodedPorts, time.Now().UTC(), allocationID, allocationRolloutServing,
 		).Scan(&serviceID, &desiredRollout); err != nil {
 			return err
 		}

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	DashboardAllocationStatus,
 	DashboardBuildStatus,
+	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
 	DashboardDeploymentStatus,
@@ -36,7 +37,7 @@ import {
 	trafficRetentionCopy,
 } from "./deployment-inline";
 import {
-	doRedeployService,
+	doApplyDeploymentAction,
 	fetchServiceDeployments,
 	fetchServiceLogs,
 } from "./server-fns";
@@ -97,6 +98,7 @@ export function PanelDeployments({
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const lastObservedDeployment = useRef<DashboardDeploymentRecord | null>(null);
+	const actionKeys = useRef(new Map<string, string>());
 
 	const loadDeployments = useCallback(async () => {
 		if (!project) {
@@ -128,6 +130,34 @@ export function PanelDeployments({
 	useEffect(() => {
 		void loadDeployments();
 	}, [loadDeployments]);
+
+	const applyAction = useCallback(
+		async (
+			record: DashboardDeploymentRecord,
+			action: DashboardDeploymentAction,
+			allocationId?: string,
+		) => {
+			const requestKey = `${record.id}:${action}:${allocationId ?? "all"}`;
+			let idempotencyKey = actionKeys.current.get(requestKey);
+			if (!idempotencyKey) {
+				idempotencyKey = newIdempotencyKey();
+				actionKeys.current.set(requestKey, idempotencyKey);
+			}
+			const next = await doApplyDeploymentAction({
+				data: {
+					serviceId: service.id,
+					deploymentId: record.id,
+					action,
+					idempotencyKey,
+					allocationId,
+				},
+			});
+			actionKeys.current.delete(requestKey);
+			onRedeployed?.(next);
+			await loadDeployments();
+		},
+		[service.id, loadDeployments, onRedeployed],
+	);
 
 	useEffect(() => {
 		const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -237,9 +267,10 @@ export function PanelDeployments({
 							service={currentService}
 							record={entry}
 							logsEnabled={Boolean(project)}
+							allocations={status?.allocations ?? []}
 							nowMs={nowMs}
 							onOpenVariables={onOpenVariables}
-							onRedeployed={onRedeployed}
+							onAction={applyAction}
 							onOpenLogs={() =>
 								setLogTarget({
 									id: deploymentRecordKey(entry),
@@ -283,8 +314,10 @@ export function PanelDeployments({
 										build={entry.build}
 										allocation={entry.allocation}
 										status={entry.status}
+										record={entry}
 										logsEnabled={Boolean(project)}
 										nowMs={nowMs}
+										onAction={applyAction}
 										onOpenLogs={() =>
 											setLogTarget({
 												id: deploymentRecordKey(entry),
@@ -352,18 +385,24 @@ function DeploymentCard({
 	service,
 	record,
 	logsEnabled,
+	allocations,
 	nowMs,
 	onOpenLogs,
 	onOpenVariables,
-	onRedeployed,
+	onAction,
 }: {
 	service: DashboardServiceRecord;
 	record: DashboardDeploymentRecord;
 	logsEnabled: boolean;
+	allocations: Array<DashboardAllocationStatus>;
 	nowMs: number;
 	onOpenLogs: () => void;
 	onOpenVariables?: (key: string) => void;
-	onRedeployed?: (status: DashboardServiceStatus) => void;
+	onAction: (
+		record: DashboardDeploymentRecord,
+		action: DashboardDeploymentAction,
+		allocationId?: string,
+	) => Promise<void>;
 }) {
 	const build = record.build;
 	const allocation = record.allocation;
@@ -435,22 +474,29 @@ function DeploymentCard({
 		failed: Boolean(failedStage) || tone === "failed",
 		lastSuccessfulCommitSha: service.lastSuccessfulCommitSha,
 	});
-	const [retrying, setRetrying] = useState(false);
-	const [retryError, setRetryError] = useState<string>();
+	const [pendingAction, setPendingAction] = useState<string>();
+	const [actionError, setActionError] = useState<string>();
+	const [restartAllocationId, setRestartAllocationId] = useState("");
+	const actions = availableDeploymentActions(record);
+	const displayedActions = failedStage
+		? actions.filter((action) => action !== "retry")
+		: actions;
 
-	const retryBuild = async () => {
-		if (retrying) return;
-		setRetrying(true);
-		setRetryError(undefined);
+	const runAction = async (
+		action: DashboardDeploymentAction,
+		allocationId?: string,
+	) => {
+		if (pendingAction) return;
+		setPendingAction(action);
+		setActionError(undefined);
 		try {
-			const next = await doRedeployService({
-				data: { serviceId: service.id },
-			});
-			onRedeployed?.(next);
+			await onAction(record, action, allocationId);
 		} catch (cause) {
-			setRetryError(formatError(cause, "Unable to retry the build."));
+			setActionError(
+				formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`),
+			);
 		} finally {
-			setRetrying(false);
+			setPendingAction(undefined);
 		}
 	};
 
@@ -522,6 +568,52 @@ function DeploymentCard({
 					View logs
 				</button>
 			</div>
+
+			{(displayedActions.length > 0 || (record.actions?.length ?? 0) > 0) && (
+				<div className="deployment-actions">
+					{displayedActions.includes("restart") && allocations.length > 1 && (
+						<label className="deployment-restart-target">
+							<span>Restart target</span>
+							<select
+								value={restartAllocationId}
+								onChange={(event) => setRestartAllocationId(event.target.value)}
+								disabled={Boolean(pendingAction)}
+							>
+								<option value="">All replicas</option>
+								{allocations.map((entry) => (
+									<option key={entry.allocationId} value={entry.allocationId}>
+										{shortId(entry.allocationId)} on {shortId(entry.agentId)}
+									</option>
+								))}
+							</select>
+						</label>
+					)}
+					<div className="deployment-action-buttons">
+						{displayedActions.map((action) => (
+							<button
+								key={action}
+								type="button"
+								className={action === "remove" ? "btn-danger" : "btn-secondary"}
+								onClick={() =>
+									void runAction(
+										action,
+										action === "restart"
+											? restartAllocationId || undefined
+											: undefined,
+									)
+								}
+								disabled={Boolean(pendingAction)}
+							>
+								{pendingAction === action ? "Working…" : actionLabel(action)}
+							</button>
+						))}
+					</div>
+					<DeploymentActionHistory record={record} />
+					{actionError && (
+						<div className="deployment-error compact">{actionError}</div>
+					)}
+				</div>
+			)}
 
 			{showProgress && (
 				<div className={`deployment-inline-progress ${tone ?? ""}`}>
@@ -595,15 +687,12 @@ function DeploymentCard({
 						<button
 							type="button"
 							className="btn-secondary"
-							onClick={() => void retryBuild()}
-							disabled={retrying}
+							onClick={() => void runAction("retry")}
+							disabled={Boolean(pendingAction)}
 						>
-							{retrying ? "Retrying…" : "Retry build"}
+							{pendingAction === "retry" ? "Retrying…" : "Retry build"}
 						</button>
 					</div>
-					{retryError && (
-						<div className="deployment-error compact">{retryError}</div>
-					)}
 				</div>
 			)}
 
@@ -722,19 +811,26 @@ function withSourceStage(
 }
 
 function DeploymentHistoryRow({
+	record,
 	build,
 	allocation,
 	status,
 	logsEnabled,
 	nowMs,
 	onOpenLogs,
+	onAction,
 }: {
+	record: DashboardDeploymentRecord;
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
 	status?: DashboardDeploymentStatus;
 	logsEnabled: boolean;
 	nowMs: number;
 	onOpenLogs: () => void;
+	onAction: (
+		record: DashboardDeploymentRecord,
+		action: DashboardDeploymentAction,
+	) => Promise<void>;
 }) {
 	const tone =
 		getDeploymentCardTone({
@@ -749,25 +845,86 @@ function DeploymentHistoryRow({
 		build?.queuedAt ??
 		build?.finishedAt ??
 		allocation?.updatedAt;
+	const [pendingAction, setPendingAction] =
+		useState<DashboardDeploymentAction>();
+	const [actionError, setActionError] = useState<string>();
+	const actions = availableDeploymentActions(record);
+
+	const runAction = async (action: DashboardDeploymentAction) => {
+		if (pendingAction) return;
+		setPendingAction(action);
+		setActionError(undefined);
+		try {
+			await onAction(record, action);
+		} catch (cause) {
+			setActionError(
+				formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`),
+			);
+		} finally {
+			setPendingAction(undefined);
+		}
+	};
 
 	return (
-		<button
-			type="button"
-			className="deployment-history-row"
-			onClick={onOpenLogs}
-			disabled={!logsEnabled}
+		<div className="deployment-history-entry">
+			<button
+				type="button"
+				className="deployment-history-row"
+				onClick={onOpenLogs}
+				disabled={!logsEnabled}
+			>
+				<span className={`status-dot ${toneToHealthClass(tone)}`} />
+				<span className="deployment-history-message">
+					{deploymentCardHeadline(build)}
+				</span>
+				<span className="deployment-history-meta">
+					{build?.commitSha && (
+						<span className="mono">{shortSha(build.commitSha)}</span>
+					)}
+					{timestamp && <span>{formatRelativeAge(timestamp, nowMs)}</span>}
+				</span>
+			</button>
+			{actions.length > 0 && (
+				<div className="deployment-history-actions">
+					{actions.map((action) => (
+						<button
+							key={action}
+							type="button"
+							className="btn-secondary"
+							onClick={() => void runAction(action)}
+							disabled={Boolean(pendingAction)}
+						>
+							{pendingAction === action ? "Working…" : actionLabel(action)}
+						</button>
+					))}
+				</div>
+			)}
+			<DeploymentActionHistory record={record} />
+			{actionError && (
+				<div className="deployment-error compact">{actionError}</div>
+			)}
+		</div>
+	);
+}
+
+function DeploymentActionHistory({
+	record,
+}: {
+	record: DashboardDeploymentRecord;
+}) {
+	if (!record.actions?.length) return null;
+	return (
+		<section
+			className="deployment-action-history"
+			aria-label="Deployment actions"
 		>
-			<span className={`status-dot ${toneToHealthClass(tone)}`} />
-			<span className="deployment-history-message">
-				{deploymentCardHeadline(build)}
-			</span>
-			<span className="deployment-history-meta">
-				{build?.commitSha && (
-					<span className="mono">{shortSha(build.commitSha)}</span>
-				)}
-				{timestamp && <span>{formatRelativeAge(timestamp, nowMs)}</span>}
-			</span>
-		</button>
+			{record.actions.map((action) => (
+				<span key={action.id}>
+					{actionLabel(action.action)}
+					{action.allocationId ? ` ${shortId(action.allocationId)}` : ""}
+				</span>
+			))}
+		</section>
 	);
 }
 
@@ -1045,6 +1202,68 @@ function hasActiveDeployment(
 	return Boolean(build?.state === "queued" || build?.state === "running");
 }
 
+function availableDeploymentActions(
+	record: DashboardDeploymentRecord,
+): Array<DashboardDeploymentAction> {
+	const state = record.status?.state;
+	const image = record.imageDigest || record.status?.imageDigest || "";
+	const hasImmutableImage = /@sha256:[0-9a-f]{64}$/i.test(image);
+	const actions: Array<DashboardDeploymentAction> = [];
+	if (record.isCurrent && state === "active") {
+		actions.push("restart", "remove");
+	}
+	if (
+		record.isCurrent &&
+		state !== undefined &&
+		isInProgressDeploymentState(state) &&
+		state !== "active" &&
+		state !== "draining"
+	) {
+		actions.push("cancel");
+	}
+	if (state === "failed" || state === "cancelled" || state === "crashed") {
+		actions.push("retry");
+	}
+	if (
+		!record.isCurrent &&
+		(state === "active" ||
+			state === "completed" ||
+			state === "draining" ||
+			state === "removed") &&
+		hasImmutableImage
+	) {
+		actions.push("rollback");
+	}
+	if (hasImmutableImage) {
+		actions.push("exact_redeploy");
+	}
+	return actions;
+}
+
+function actionLabel(action: DashboardDeploymentAction): string {
+	switch (action) {
+		case "restart":
+			return "Restart";
+		case "exact_redeploy":
+			return "Redeploy exact";
+		case "rollback":
+			return "Rollback";
+		case "cancel":
+			return "Cancel";
+		case "remove":
+			return "Remove";
+		case "retry":
+			return "Retry";
+	}
+}
+
+function newIdempotencyKey(): string {
+	if (typeof globalThis.crypto?.randomUUID === "function") {
+		return globalThis.crypto.randomUUID();
+	}
+	return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function deploymentRecordKey(entry: DashboardDeploymentRecord): string {
 	return entry.build?.buildId || `${entry.id}-${entry.rolloutGeneration}`;
 }
@@ -1294,6 +1513,11 @@ function hydrateDeploymentRecord(
 				startedAt: hydrateDate(stage.startedAt),
 				finishedAt: hydrateDate(stage.finishedAt),
 			})) ?? record.stages,
+		actions:
+			record.actions?.map((action) => ({
+				...action,
+				createdAt: hydrateDate(action.createdAt),
+			})) ?? record.actions,
 	};
 }
 

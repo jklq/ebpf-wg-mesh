@@ -1,8 +1,12 @@
 import type {
+	DashboardAgentLifecycleState,
+	DashboardFleet,
+	DashboardFleetAgent,
 	DashboardAllocationStatus,
 	DashboardBuildRecipe,
 	DashboardBuildState,
 	DashboardBuildStatus,
+	DashboardDeploymentAction,
 	DashboardDeploymentCauseKind,
 	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
@@ -116,6 +120,9 @@ export function decodeBuildState(raw: unknown): DashboardBuildState {
 		case "BUILD_STATE_SUPERSEDED":
 		case "superseded":
 			return "superseded";
+		case "BUILD_STATE_CANCELLED":
+		case "cancelled":
+			return "cancelled";
 		default:
 			return "unspecified";
 	}
@@ -274,6 +281,8 @@ export function encodeCreateServiceRequest(input: {
 				runtime: encodeRuntimeSpec(input.spec.runtime),
 				source: encodeServiceSource(input.spec.source),
 				desiredReplicaCount: input.spec.desiredReplicaCount,
+				placementRegion: input.spec.placementRegion,
+				rollingStrategy: input.spec.rollingStrategy,
 			},
 		},
 	};
@@ -292,6 +301,8 @@ export function encodeUpdateServiceRequest(input: {
 				runtime: encodeRuntimeSpec(input.spec.runtime),
 				source: encodeServiceSource(input.spec.source),
 				desiredReplicaCount: input.spec.desiredReplicaCount,
+				placementRegion: input.spec.placementRegion,
+				rollingStrategy: input.spec.rollingStrategy,
 			},
 		},
 	};
@@ -409,11 +420,141 @@ function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 		value,
 		"desiredReplicaCount",
 	);
+	const placementRegion = readOptionalString(value, "placementRegion");
+	const rollingStrategyValue = readOptionalRecord(value.rollingStrategy);
+	const rollingStrategy = rollingStrategyValue
+		? {
+				maxUnavailable:
+					readOptionalNumberLike(rollingStrategyValue, "maxUnavailable") ?? 0,
+				maxSurge:
+					readOptionalNumberLike(rollingStrategyValue, "maxSurge") ?? 1,
+				startupTimeoutSeconds:
+					readOptionalNumberLike(
+						rollingStrategyValue,
+						"startupTimeoutSeconds",
+					) ?? 300,
+				drainTimeoutSeconds:
+					readOptionalNumberLike(
+						rollingStrategyValue,
+						"drainTimeoutSeconds",
+					) ?? 30,
+			}
+		: undefined;
 	return {
 		source,
 		runtime,
 		...(desiredReplicaCount === undefined ? {} : { desiredReplicaCount }),
+		...(placementRegion ? { placementRegion } : {}),
+		...(rollingStrategy === undefined ? {} : { rollingStrategy }),
 	};
+}
+
+export function decodeFleetMessage(raw: unknown): DashboardFleet {
+	const value = readRecord(raw, "fleet");
+	const capacity = readRecord(value.capacity, "fleet capacity");
+	return {
+		agents: readArray(value, "agents").map(decodeFleetAgentMessage),
+		capacity: {
+			nodeCount: readOptionalNumberLike(capacity, "nodeCount") ?? 0,
+			schedulableNodeCount:
+				readOptionalNumberLike(capacity, "schedulableNodeCount") ?? 0,
+			schedulableCpuMillis:
+				readOptionalNumberLike(capacity, "schedulableCpuMillis") ?? 0,
+			schedulableMemoryMebibytes:
+				readOptionalNumberLike(capacity, "schedulableMemoryMebibytes") ?? 0,
+			allocatedCpuMillis:
+				readOptionalNumberLike(capacity, "allocatedCpuMillis") ?? 0,
+			allocatedMemoryMebibytes:
+				readOptionalNumberLike(capacity, "allocatedMemoryMebibytes") ?? 0,
+			headroomCpuMillis:
+				readOptionalNumberLike(capacity, "headroomCpuMillis") ?? 0,
+			headroomMemoryMebibytes:
+				readOptionalNumberLike(capacity, "headroomMemoryMebibytes") ?? 0,
+		},
+		versionWarning: readOptionalString(value, "versionWarning") || undefined,
+	};
+}
+
+export function decodeAgentEnrollmentMessage(raw: unknown): {
+	agent: DashboardFleetAgent;
+	bootstrapToken: string;
+} {
+	const value = readRecord(raw, "agent enrollment");
+	return {
+		agent: decodeFleetAgentMessage(value.agent),
+		bootstrapToken: readRequiredString(
+			value,
+			"bootstrapToken",
+			"agent enrollment",
+		),
+	};
+}
+
+export function decodeFleetAgentMessage(raw: unknown): DashboardFleetAgent {
+	const value = readRecord(raw, "fleet agent");
+	return {
+		id: readRequiredString(value, "id", "fleet agent"),
+		name: readRequiredString(value, "name", "fleet agent"),
+		lifecycleState: decodeAgentLifecycleState(value.lifecycleState),
+		region: readOptionalString(value, "region") ?? "",
+		zone: readOptionalString(value, "zone") ?? "",
+		failureDomain: readOptionalString(value, "failureDomain") ?? "",
+		healthy: readBoolean(value, "healthy"),
+		lastSeenAt: readOptionalDate(value, "lastSeenAt"),
+		cpuMillisCapacity:
+			readOptionalNumberLike(value, "cpuMillisCapacity") ?? 0,
+		memoryMebibytesCapacity:
+			readOptionalNumberLike(value, "memoryMebibytesCapacity") ?? 0,
+		reservedCpuMillis:
+			readOptionalNumberLike(value, "reservedCpuMillis") ?? 0,
+		reservedMemoryMebibytes:
+			readOptionalNumberLike(value, "reservedMemoryMebibytes") ?? 0,
+		schedulableCpuMillis:
+			readOptionalNumberLike(value, "schedulableCpuMillis") ?? 0,
+		schedulableMemoryMebibytes:
+			readOptionalNumberLike(value, "schedulableMemoryMebibytes") ?? 0,
+		allocatedCpuMillis:
+			readOptionalNumberLike(value, "allocatedCpuMillis") ?? 0,
+		allocatedMemoryMebibytes:
+			readOptionalNumberLike(value, "allocatedMemoryMebibytes") ?? 0,
+		headroomCpuMillis:
+			readOptionalNumberLike(value, "headroomCpuMillis") ?? 0,
+		headroomMemoryMebibytes:
+			readOptionalNumberLike(value, "headroomMemoryMebibytes") ?? 0,
+		allocationCount: readOptionalNumberLike(value, "allocationCount") ?? 0,
+		runtimeCapabilities: readStringArray(value, "runtimeCapabilities"),
+		softwareVersion: readOptionalString(value, "softwareVersion") ?? "",
+		versionSkewWarning:
+			readOptionalString(value, "versionSkewWarning") || undefined,
+		maintenanceMessage:
+			readOptionalString(value, "maintenanceMessage") || undefined,
+		credentialRevokedAt: readOptionalDate(value, "credentialRevokedAt"),
+	};
+}
+
+function decodeAgentLifecycleState(raw: unknown): DashboardAgentLifecycleState {
+	switch (raw) {
+		case "AGENT_LIFECYCLE_STATE_ENROLLING":
+		case "enrolling":
+			return "enrolling";
+		case "AGENT_LIFECYCLE_STATE_ACTIVE":
+		case "active":
+			return "active";
+		case "AGENT_LIFECYCLE_STATE_CORDONED":
+		case "cordoned":
+			return "cordoned";
+		case "AGENT_LIFECYCLE_STATE_DRAINING":
+		case "draining":
+			return "draining";
+		case "AGENT_LIFECYCLE_STATE_UNAVAILABLE":
+		case "unavailable":
+			return "unavailable";
+		case "AGENT_LIFECYCLE_STATE_RETIRED":
+		case "retired":
+			return "retired";
+		default:
+			return "unspecified";
+	}
 }
 
 function decodeServiceSourceSummary(
@@ -550,6 +691,9 @@ function decodeAllocationStatus(
 			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
 		operatorRestartNonce: readOptionalNumberLike(value, "operatorRestartNonce"),
+		rolloutState: readOptionalString(value, "rolloutState"),
+		drainStartedAt: readOptionalDate(value, "drainStartedAt"),
+		drainDeadline: readOptionalDate(value, "drainDeadline"),
 		restart: decodeRestartObservation(value.restart),
 	};
 }
@@ -584,7 +728,74 @@ function decodeDeploymentRecord(raw: unknown): DashboardDeploymentRecord {
 			decodeDeploymentStage(stage),
 		),
 		imageDigest: readOptionalString(value, "imageDigest"),
+		actions: readArray(value, "actions").map((action) => {
+			const actionValue = readRecord(action, "deployment action");
+			return {
+				id: readRequiredString(actionValue, "id", "deployment action"),
+				action: decodeDeploymentAction(actionValue.action),
+				targetDeploymentId:
+					readOptionalString(actionValue, "targetDeploymentId") ?? "",
+				resultDeploymentId: readOptionalString(
+					actionValue,
+					"resultDeploymentId",
+				),
+				allocationId: readOptionalString(actionValue, "allocationId"),
+				requestedByUserId:
+					readOptionalString(actionValue, "requestedByUserId") ?? "",
+				createdAt: readOptionalDate(actionValue, "createdAt"),
+			};
+		}),
+		variableVersions: decodeVariableVersions(value.variableVersions),
 	};
+}
+
+function decodeDeploymentAction(raw: unknown): DashboardDeploymentAction {
+	switch (raw) {
+		case "DEPLOYMENT_ACTION_RESTART":
+		case "restart":
+			return "restart";
+		case "DEPLOYMENT_ACTION_EXACT_REDEPLOY":
+		case "exact_redeploy":
+			return "exact_redeploy";
+		case "DEPLOYMENT_ACTION_ROLLBACK":
+		case "rollback":
+			return "rollback";
+		case "DEPLOYMENT_ACTION_CANCEL":
+		case "cancel":
+			return "cancel";
+		case "DEPLOYMENT_ACTION_REMOVE":
+		case "remove":
+			return "remove";
+		case "DEPLOYMENT_ACTION_RETRY":
+		case "retry":
+			return "retry";
+		default:
+			throw new Error(`invalid deployment action: ${String(raw)}`);
+	}
+}
+
+function decodeVariableVersions(raw: unknown): Record<string, number> {
+	const value = readOptionalRecord(raw);
+	if (!value) return {};
+	return Object.fromEntries(
+		Object.entries(value).map(([key, version]) => [
+			key,
+			readNumberLikeValue(version, `variable version ${key}`),
+		]),
+	);
+}
+
+function readNumberLikeValue(raw: unknown, context: string): number {
+	const value =
+		typeof raw === "number"
+			? raw
+			: typeof raw === "string" && raw.trim() !== ""
+				? Number(raw)
+				: Number.NaN;
+	if (!Number.isFinite(value)) {
+		throw new Error(`invalid ${context}`);
+	}
+	return value;
 }
 
 function decodeDeploymentStatus(

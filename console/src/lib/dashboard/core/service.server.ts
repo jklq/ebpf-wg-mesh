@@ -5,6 +5,7 @@ import {
 	refreshSession,
 } from "#/lib/dashboard/core/auth.server";
 import {
+	applyDeploymentActionFromSession,
 	checkDomainDNSFromSession,
 	confirmRepositoryFromSession,
 	createDomainBindingFromSession,
@@ -21,6 +22,7 @@ import {
 	getServiceStatusFromSession,
 	inspectRepositoryFromSession,
 	inspectRepositorySourceFromSession,
+	loadFleetFromSession,
 	listDomainBindingsFromSession,
 	listEnvironmentServicesFromSession,
 	listServiceDeploymentsFromSession,
@@ -28,13 +30,14 @@ import {
 	loadDashboardHome,
 	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
-	redeployServiceFromSession,
-	scaleServiceFromSession,
-	restartServiceFromSession,
 	renameEnvironmentFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
+	scaleServiceFromSession,
 	updateDomainBindingFromSession,
+	createFleetAgentFromSession,
+	updateFleetAgentFromSession,
+	setFleetAgentLifecycleFromSession,
 	updateServiceFromSession,
 	waitForEnvironmentServicesFromSession,
 	waitForProjectServicesFromSession,
@@ -54,6 +57,18 @@ export function createDashboardService(
 	const runtime = createDashboardRuntime(config, deps);
 
 	return {
+		loadFleetFromSession() {
+			return loadFleetFromSession(runtime);
+		},
+		createFleetAgentFromSession(input) {
+			return createFleetAgentFromSession(runtime, input);
+		},
+		updateFleetAgentFromSession(input) {
+			return updateFleetAgentFromSession(runtime, input);
+		},
+		setFleetAgentLifecycleFromSession(input) {
+			return setFleetAgentLifecycleFromSession(runtime, input);
+		},
 		listDevLogins() {
 			return config.devUsers;
 		},
@@ -141,14 +156,11 @@ export function createDashboardService(
 		updateServiceFromSession(input) {
 			return updateServiceFromSession(runtime, input);
 		},
-		redeployServiceFromSession(input) {
-			return redeployServiceFromSession(runtime, input);
+		applyDeploymentActionFromSession(input) {
+			return applyDeploymentActionFromSession(runtime, input);
 		},
 		scaleServiceFromSession(input) {
 			return scaleServiceFromSession(runtime, input);
-		},
-		restartServiceFromSession(input) {
-			return restartServiceFromSession(runtime, input);
 		},
 		discardServiceChangesFromSession(input) {
 			return discardServiceChangesFromSession(runtime, input);

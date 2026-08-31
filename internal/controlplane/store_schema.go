@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 7
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -16,6 +16,77 @@ var schemaUpgrades = map[int][]string{
 		`CREATE INDEX IF NOT EXISTS idx_allocations_service ON allocations(service_id, id)`,
 	},
 	4: {
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS rollout_state STRING NOT NULL DEFAULT 'serving'`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS drain_started_at TIMESTAMPTZ NULL`,
+		`ALTER TABLE allocations ADD COLUMN IF NOT EXISTS drain_deadline TIMESTAMPTZ NULL`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS state STRING NOT NULL DEFAULT 'succeeded'`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS strategy_json JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS desired_replica_count INT8 NOT NULL DEFAULT 1`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS image_digest STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS failure_reason STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL`,
+		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS progress_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+		`CREATE INDEX IF NOT EXISTS idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
+	},
+	5: {
+		`ALTER TABLE service_rollouts ADD COLUMN target_allocation_id STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE deployments ADD COLUMN resolved_spec_json JSONB NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE deployments ADD COLUMN variable_versions_json JSONB NOT NULL DEFAULT '{}'`,
+		`UPDATE deployments d
+		    SET resolved_spec_json = r.spec_json
+		   FROM service_revisions r
+		  WHERE r.service_id = d.service_id AND r.spec_revision = d.spec_revision`,
+		`ALTER TABLE deployments ALTER COLUMN resolved_spec_json DROP DEFAULT`,
+		`ALTER TABLE deployments ALTER COLUMN variable_versions_json DROP DEFAULT`,
+		`DROP INDEX IF EXISTS idx_deployments_service_build`,
+		`CREATE INDEX IF NOT EXISTS idx_deployments_service_build ON deployments(service_id, build_id) WHERE build_id != ''`,
+		`CREATE TABLE deployment_actions (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			target_deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			result_deployment_id STRING NOT NULL DEFAULT '',
+			action STRING NOT NULL,
+			allocation_id STRING NOT NULL DEFAULT '',
+			idempotency_key STRING NOT NULL,
+			requested_by_user_id STRING NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (service_id, requested_by_user_id, idempotency_key)
+		)`,
+		`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
+	},
+	6: {
+		`CREATE TABLE IF NOT EXISTS platform_operators (
+			user_id STRING PRIMARY KEY,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS lifecycle_state STRING NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS state_before_unavailable STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS region STRING NOT NULL DEFAULT 'default'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS zone STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS failure_domain STRING NOT NULL DEFAULT ''`,
+		`UPDATE agents SET failure_domain = lower(regexp_replace(id, '[^a-zA-Z0-9._-]', '-', 'g')) WHERE failure_domain = ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS reserved_cpu_millis INT8 NOT NULL DEFAULT 0`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS reserved_memory_mebibytes INT8 NOT NULL DEFAULT 0`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS runtime_capabilities JSONB NOT NULL DEFAULT '["containerd","ebpf-policy","wireguard"]'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS software_version STRING NOT NULL DEFAULT 'pre-fleet'`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS maintenance_message STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS credential_revoked_at TIMESTAMPTZ NULL`,
+		`ALTER TABLE agents ALTER COLUMN advertise_addr SET DEFAULT ''`,
+		`ALTER TABLE agents ALTER COLUMN cpu_millis_capacity SET DEFAULT 0`,
+		`ALTER TABLE agents ALTER COLUMN memory_mebibytes_capacity SET DEFAULT 0`,
+		`ALTER TABLE agent_bootstrap_tokens ADD COLUMN IF NOT EXISTS origin STRING NOT NULL DEFAULT 'config'`,
+		`CREATE TABLE IF NOT EXISTS agent_certificates (
+			serial STRING PRIMARY KEY,
+			agent_id STRING NOT NULL,
+			issued_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_certificates_agent ON agent_certificates(agent_id, issued_at DESC)`,
+		`DROP INDEX IF EXISTS idx_agents_last_seen_id`,
+		`CREATE INDEX IF NOT EXISTS idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
+			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
+			         reserved_cpu_millis, reserved_memory_mebibytes)`,
+	},
+	7: {
 		`UPDATE service_revisions
 		    SET spec_json = jsonb_set(spec_json, ARRAY['runtime', 'sandboxProfile'], '{"name":"production"}'::JSONB, true)
 		  WHERE spec_json->'runtime' IS NOT NULL
@@ -56,6 +127,10 @@ var currentSchema = []string{
 			PRIMARY KEY (user_id, project_id)
 		)`,
 	`CREATE INDEX idx_project_memberships_user ON project_memberships(user_id, project_id)`,
+	`CREATE TABLE platform_operators (
+			user_id STRING PRIMARY KEY,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
 	`CREATE TABLE environment_network_identity_counter (
 			id BOOL PRIMARY KEY,
 			next_identity INT8 NOT NULL
@@ -79,27 +154,46 @@ var currentSchema = []string{
 	`CREATE TABLE agents (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
-			advertise_addr STRING NOT NULL,
+			lifecycle_state STRING NOT NULL,
+			state_before_unavailable STRING NOT NULL DEFAULT '',
+			region STRING NOT NULL,
+			zone STRING NOT NULL DEFAULT '',
+			failure_domain STRING NOT NULL,
+			reserved_cpu_millis INT8 NOT NULL DEFAULT 0,
+			reserved_memory_mebibytes INT8 NOT NULL DEFAULT 0,
+			advertise_addr STRING NOT NULL DEFAULT '',
 			workload_ipv6_subnet STRING NOT NULL DEFAULT '',
 			wireguard_public_key STRING NOT NULL DEFAULT '',
 			wireguard_listen_port INT8 NOT NULL DEFAULT 0,
 			wireguard_ipv6 STRING NOT NULL DEFAULT '',
-			cpu_millis_capacity INT8 NOT NULL,
-			memory_mebibytes_capacity INT8 NOT NULL,
+			cpu_millis_capacity INT8 NOT NULL DEFAULT 0,
+			memory_mebibytes_capacity INT8 NOT NULL DEFAULT 0,
+			runtime_capabilities JSONB NOT NULL DEFAULT '[]',
+			software_version STRING NOT NULL DEFAULT '',
+			maintenance_message STRING NOT NULL DEFAULT '',
+			credential_revoked_at TIMESTAMPTZ NULL,
 			last_seen_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			desired_revision INT8 NOT NULL DEFAULT 0
 		)`,
-	`CREATE INDEX idx_agents_last_seen_id ON agents(last_seen_at DESC, id)
-			STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
+	`CREATE INDEX idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
+			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
+			         reserved_cpu_millis, reserved_memory_mebibytes)`,
 	`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
+			origin STRING NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			consumed_at TIMESTAMPTZ NULL
 		)`,
 	`CREATE INDEX idx_agent_bootstrap_tokens_agent ON agent_bootstrap_tokens(agent_id, consumed_at)`,
+	`CREATE TABLE agent_certificates (
+			serial STRING PRIMARY KEY,
+			agent_id STRING NOT NULL,
+			issued_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_agent_certificates_agent ON agent_certificates(agent_id, issued_at DESC)`,
 	`CREATE TABLE volumes (
 			id STRING PRIMARY KEY,
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
@@ -171,6 +265,9 @@ var currentSchema = []string{
 			healthy BOOL NOT NULL,
 			restart_observation_json JSONB NOT NULL DEFAULT '{}',
 			operator_restart_nonce INT8 NOT NULL DEFAULT 0,
+			rollout_state STRING NOT NULL,
+			drain_started_at TIMESTAMPTZ NULL,
+			drain_deadline TIMESTAMPTZ NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
@@ -183,9 +280,18 @@ var currentSchema = []string{
 			reason STRING NOT NULL,
 			build_id STRING NOT NULL DEFAULT '',
 			requested_by_user_id STRING NOT NULL DEFAULT '',
+			state STRING NOT NULL,
+			strategy_json JSONB NOT NULL,
+			desired_replica_count INT8 NOT NULL,
+			image_digest STRING NOT NULL DEFAULT '',
+			failure_reason STRING NOT NULL DEFAULT '',
+			target_allocation_id STRING NOT NULL DEFAULT '',
+			completed_at TIMESTAMPTZ NULL,
+			progress_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, rollout_generation)
 		)`,
+	`CREATE INDEX idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
 	`CREATE TABLE deployments (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -198,6 +304,8 @@ var currentSchema = []string{
 			cause_id STRING NOT NULL DEFAULT '',
 			reason_code STRING NOT NULL,
 			detail STRING NOT NULL DEFAULT '',
+			resolved_spec_json JSONB NOT NULL,
+			variable_versions_json JSONB NOT NULL,
 			is_current BOOL NOT NULL DEFAULT FALSE,
 			requested_by_user_id STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
@@ -205,7 +313,7 @@ var currentSchema = []string{
 		)`,
 	`CREATE UNIQUE INDEX idx_deployments_service_current
 			ON deployments(service_id) WHERE is_current = TRUE`,
-	`CREATE UNIQUE INDEX idx_deployments_service_build
+	`CREATE INDEX idx_deployments_service_build
 			ON deployments(service_id, build_id) WHERE build_id != ''`,
 	`CREATE INDEX idx_deployments_service_rollout
 			ON deployments(service_id, rollout_generation DESC, created_at DESC, id)`,
@@ -227,6 +335,19 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_deployment_transitions_deployment
 			ON deployment_transitions(deployment_id, occurred_at ASC, id)`,
+	`CREATE TABLE deployment_actions (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			target_deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			result_deployment_id STRING NOT NULL DEFAULT '',
+			action STRING NOT NULL,
+			allocation_id STRING NOT NULL DEFAULT '',
+			idempotency_key STRING NOT NULL,
+			requested_by_user_id STRING NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (service_id, requested_by_user_id, idempotency_key)
+		)`,
+	`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
 	`CREATE TABLE builder_workers (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,

@@ -34,7 +34,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
@@ -92,7 +92,7 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
@@ -130,7 +130,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
@@ -200,7 +200,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,7 +290,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
@@ -434,6 +434,8 @@ func agentHello(id string) *agentv1.AgentHello {
 		WireguardListenPort:     51820,
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
+		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
+		SoftwareVersion:         "test",
 	}
 }
 

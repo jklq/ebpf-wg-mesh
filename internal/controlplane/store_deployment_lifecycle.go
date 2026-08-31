@@ -3,13 +3,19 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const deploymentSelectColumns = `id, service_id, spec_revision, rollout_generation, build_id, image_digest,
-	        state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at`
+	        state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
+	        is_current, requested_by_user_id, created_at, updated_at`
 
 func (s *Store) lockServiceTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	var id string
@@ -55,6 +61,8 @@ func (s *Store) deploymentByBuildIDTx(ctx context.Context, tx *sql.Tx, serviceID
 		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE service_id = $1 AND build_id = $2
+		  ORDER BY is_current DESC, updated_at DESC, id DESC
+		  LIMIT 1
 		  FOR UPDATE`,
 		serviceID, buildID,
 	))
@@ -107,6 +115,10 @@ func (s *Store) attachLatestDeploymentQuerier(ctx context.Context, q serviceQuer
 		return err
 	}
 	dep.Transitions = transitions
+	dep.Actions, err = s.loadDeploymentActions(ctx, q, dep.ID)
+	if err != nil {
+		return err
+	}
 	if dep.BuildID != "" {
 		build, err := s.buildRunByIDQuerier(ctx, q, dep.BuildID)
 		if err == nil {
@@ -175,13 +187,29 @@ func (s *Store) insertDeploymentTx(
 		UpdatedAt:         now,
 		Reason:            reasonCode,
 	}
+	resolvedSpec, err := s.loadServiceDetailsQuerier(ctx, tx, serviceID, specRevision)
+	if err != nil {
+		return deploymentRecord{}, err
+	}
+	resolvedSpecJSON, err := protojson.Marshal(resolvedSpec)
+	if err != nil {
+		return deploymentRecord{}, err
+	}
+	rec.ResolvedSpec = resolvedSpec
+	rec.VariableVersions = deploymentVariableVersions(resolvedSpec, specRevision)
+	variableVersionsJSON, err := json.Marshal(rec.VariableVersions)
+	if err != nil {
+		return deploymentRecord{}, err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO deployments(
 			id, service_id, spec_revision, rollout_generation, build_id, image_digest,
-			state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, $12, $13, $13)`,
+			state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
+			is_current, requested_by_user_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE, $14, $15, $15)`,
 		rec.ID, rec.ServiceID, rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ImageDigest,
-		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.RequestedByUserID, rec.CreatedAt,
+		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, resolvedSpecJSON, variableVersionsJSON,
+		rec.RequestedByUserID, rec.CreatedAt,
 	); err != nil {
 		return deploymentRecord{}, err
 	}
@@ -202,10 +230,17 @@ func (s *Store) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx, servi
 		}
 		return nil
 	}
+	// The last active deployment remains active while its allocations keep
+	// serving. It becomes draining only after healthy replacements enter
+	// ingress; merely requesting a rollout must not lie about that cutover.
+	if current.State == deploymentStateActive {
+		_, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID)
+		return err
+	}
 	nextState := deploymentStateSuperseded
 	reasonCode := reasonDeploymentSuperseded
 	detail := "Superseded by a newer deployment"
-	if current.State == deploymentStateActive || current.State == deploymentStateDraining {
+	if current.State == deploymentStateDraining {
 		nextState = deploymentStateDraining
 		reasonCode = reasonDeploymentDraining
 		detail = "Draining after a newer deployment started"
@@ -388,6 +423,12 @@ func (s *Store) applyAgentDeploymentObservationTx(
 	if deploymentStateTerminal(rec.State) {
 		return nil
 	}
+	// Removal is durable operator intent. A late status from an allocation that
+	// is being withdrawn must not turn the current deployment into active or
+	// crashed and strand the persisted drain.
+	if rec.State == deploymentStateDraining && rec.ReasonCode == reasonUserRemove {
+		return nil
+	}
 	observed, recognized := agentObservedDeploymentState(phase, healthy, appliedRolloutGeneration, desiredRolloutGeneration)
 	if !recognized {
 		return nil
@@ -450,6 +491,7 @@ func (s *Store) cancelCurrentDeployment(ctx context.Context, serviceID, userID s
 
 func scanDeploymentRow(scanner interface{ Scan(...any) error }) (deploymentRecord, error) {
 	var rec deploymentRecord
+	var resolvedSpecJSON, variableVersionsJSON []byte
 	if err := scanner.Scan(
 		&rec.ID,
 		&rec.ServiceID,
@@ -462,6 +504,8 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (deploymentRecor
 		&rec.CauseID,
 		&rec.ReasonCode,
 		&rec.Detail,
+		&resolvedSpecJSON,
+		&variableVersionsJSON,
 		&rec.IsCurrent,
 		&rec.RequestedByUserID,
 		&rec.CreatedAt,
@@ -469,8 +513,29 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (deploymentRecor
 	); err != nil {
 		return deploymentRecord{}, err
 	}
+	rec.ResolvedSpec = &platformv1.ServiceSpec{}
+	if err := protojson.Unmarshal(resolvedSpecJSON, rec.ResolvedSpec); err != nil {
+		return deploymentRecord{}, fmt.Errorf("decode deployment resolved spec: %w", err)
+	}
+	if err := json.Unmarshal(variableVersionsJSON, &rec.VariableVersions); err != nil {
+		return deploymentRecord{}, fmt.Errorf("decode deployment variable versions: %w", err)
+	}
+	if rec.VariableVersions == nil {
+		rec.VariableVersions = map[string]int64{}
+	}
 	rec.Reason = rec.ReasonCode
 	return rec, nil
+}
+
+func deploymentVariableVersions(spec *platformv1.ServiceSpec, specRevision int64) map[string]int64 {
+	versions := make(map[string]int64)
+	if spec == nil || spec.GetRuntime() == nil {
+		return versions
+	}
+	for key := range spec.GetRuntime().GetEnv() {
+		versions[key] = specRevision
+	}
+	return versions
 }
 
 func (s *Store) loadDeploymentTransitions(ctx context.Context, q serviceQueryer, deploymentID string) ([]deploymentTransitionRecord, error) {

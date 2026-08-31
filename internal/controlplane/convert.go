@@ -104,15 +104,30 @@ func toProtoVolume(rec volumeRecord) *platformv1.Volume {
 }
 
 func toProtoAgent(rec agentRecord) *platformv1.Agent {
-	return &platformv1.Agent{
-		Id:                      rec.ID,
-		Name:                    rec.Name,
-		AdvertiseAddr:           rec.AdvertiseAddr,
-		Healthy:                 rec.healthy(time.Now().UTC()),
-		CpuMillisCapacity:       rec.CPUMillisCapacity,
-		MemoryMebibytesCapacity: rec.MemoryMebibytesCapcity,
-		LastSeenAt:              ts(rec.LastSeenAt),
+	out := &platformv1.Agent{
+		Id:                         rec.ID,
+		Name:                       rec.Name,
+		AdvertiseAddr:              rec.AdvertiseAddr,
+		Healthy:                    rec.healthy(time.Now().UTC()),
+		CpuMillisCapacity:          rec.CPUMillisCapacity,
+		MemoryMebibytesCapacity:    rec.MemoryMebibytesCapcity,
+		LastSeenAt:                 ts(rec.LastSeenAt),
+		LifecycleState:             lifecycleStateProto(rec.LifecycleState),
+		Region:                     rec.Region,
+		Zone:                       rec.Zone,
+		FailureDomain:              rec.FailureDomain,
+		ReservedCpuMillis:          rec.ReservedCPUMillis,
+		ReservedMemoryMebibytes:    rec.ReservedMemoryMebibytes,
+		SchedulableCpuMillis:       max(rec.CPUMillisCapacity-rec.ReservedCPUMillis, 0),
+		SchedulableMemoryMebibytes: max(rec.MemoryMebibytesCapcity-rec.ReservedMemoryMebibytes, 0),
+		RuntimeCapabilities:        append([]string(nil), rec.RuntimeCapabilities...),
+		SoftwareVersion:            rec.SoftwareVersion,
+		MaintenanceMessage:         rec.MaintenanceMessage,
 	}
+	if rec.CredentialRevokedAt.Valid {
+		out.CredentialRevokedAt = ts(rec.CredentialRevokedAt.Time)
+	}
+	return out
 }
 
 func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
@@ -132,6 +147,13 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
 		Restart:                  rec.Restart,
 		OperatorRestartNonce:     rec.OperatorRestartNonce,
+		RolloutState:             rec.RolloutState,
+	}
+	if rec.DrainStartedAt.Valid {
+		out.DrainStartedAt = ts(rec.DrainStartedAt.Time)
+	}
+	if rec.DrainDeadline.Valid {
+		out.DrainDeadline = ts(rec.DrainDeadline.Time)
 	}
 	return out
 }
@@ -208,6 +230,15 @@ func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord 
 		RequestedByUserId: rec.RequestedByUserID,
 		Status:            status,
 		ImageDigest:       rec.ImageDigest,
+		VariableVersions:  rec.VariableVersions,
+	}
+	for _, action := range rec.Actions {
+		protoRec.Actions = append(protoRec.Actions, &platformv1.DeploymentActionRecord{
+			Id: action.ID, Action: toProtoDeploymentAction(action.Action),
+			TargetDeploymentId: action.TargetDeploymentID, ResultDeploymentId: action.ResultDeploymentID,
+			AllocationId: action.AllocationID, RequestedByUserId: action.RequestedByUserID,
+			CreatedAt: ts(action.CreatedAt),
+		})
 	}
 	if rec.Build != nil {
 		protoRec.Stages = deploymentStagesFromLifecycle(rec, serviceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision, AllocatedAgentID: ""}, rec.Build)
@@ -254,6 +285,8 @@ func toProtoBuildState(state string) platformv1.BuildState {
 		return platformv1.BuildState_BUILD_STATE_FAILED
 	case "superseded":
 		return platformv1.BuildState_BUILD_STATE_SUPERSEDED
+	case "cancelled":
+		return platformv1.BuildState_BUILD_STATE_CANCELLED
 	default:
 		return platformv1.BuildState_BUILD_STATE_UNSPECIFIED
 	}

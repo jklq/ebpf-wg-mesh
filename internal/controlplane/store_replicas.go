@@ -15,6 +15,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	allocationRolloutStarting    = "starting"
+	allocationRolloutServing     = "serving"
+	allocationRolloutWithdrawing = "withdrawing"
+	allocationRolloutDraining    = "draining"
+)
+
 func validateDesiredReplicaCount(count int32) error {
 	if count < defaultDesiredReplicaCount || count > maxDesiredReplicaCount {
 		return fmt.Errorf("%w: must be between %d and %d", errInvalidReplicaCount, defaultDesiredReplicaCount, maxDesiredReplicaCount)
@@ -23,7 +30,7 @@ func validateDesiredReplicaCount(count int32) error {
 }
 
 func allocationReady(rec allocationRecord) bool {
-	return rec.Healthy &&
+	return rec.RolloutState != allocationRolloutWithdrawing && rec.RolloutState != allocationRolloutDraining && rec.Healthy &&
 		strings.TrimSpace(rec.AllocationIP) != "" &&
 		rec.AppliedSpecRevision >= rec.DesiredSpecRevision &&
 		rec.AppliedRolloutGeneration >= rec.DesiredRolloutGeneration
@@ -138,9 +145,11 @@ func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, serv
 			occupied[alloc.AgentID] = struct{}{}
 		}
 		placed := 0
+		failureReason := "no active healthy node satisfies the placement constraints"
 		for i := 0; i < needed; i++ {
 			agentID, err := s.chooseReplicaAgentTx(ctx, tx, service, occupied, preferredAgentID, i == 0 && preferredAgentID != "")
 			if errors.Is(err, errNoPlacementAvailable) {
+				failureReason = strings.TrimSpace(strings.TrimPrefix(err.Error(), errNoPlacementAvailable.Error()+": "))
 				break
 			}
 			if err != nil {
@@ -156,7 +165,7 @@ func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, serv
 			preferredAgentID = ""
 		}
 		if placed < needed {
-			message := pendingCapacityMessage(len(existing), int(desired))
+			message := pendingPlacementMessage(len(existing), int(desired), failureReason)
 			if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, message, now); err != nil {
 				return nil, err
 			}
@@ -172,11 +181,12 @@ func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, serv
 	return existing, nil
 }
 
-func pendingCapacityMessage(placed, desired int) string {
-	if placed == 0 {
-		return fmt.Sprintf("0 of %d replicas placed; no healthy non-reserved agent has sufficient CPU or memory", desired)
+func pendingPlacementMessage(placed, desired int, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "no active healthy node satisfies the placement constraints"
 	}
-	return fmt.Sprintf("%d of %d replicas placed; no healthy non-reserved agent has sufficient CPU or memory", placed, desired)
+	return fmt.Sprintf("%d of %d replicas placed; %s", placed, desired, reason)
 }
 
 func (s *Store) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
@@ -197,16 +207,18 @@ func (s *Store) insertAllocationTx(ctx context.Context, tx *sql.Tx, service serv
 		DesiredSpecRevision:      service.SpecRevision,
 		DesiredRolloutGeneration: service.RolloutGeneration,
 		Phase:                    "Pending",
+		RolloutState:             allocationRolloutStarting,
 		CreatedAt:                now,
 		UpdatedAt:                now,
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
 		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
 		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, $7)`,
+		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce,
+		rollout_state, drain_started_at, drain_deadline, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, NULL, NULL, $8, $8)`,
 		alloc.ID, alloc.ServiceID, alloc.AgentID, alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration,
-		[]byte("[]"), now,
+		[]byte("[]"), alloc.RolloutState, now,
 	); err != nil {
 		return allocationRecord{}, err
 	}
@@ -244,14 +256,17 @@ func (s *Store) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, service se
 		}
 	}
 	if usePreferred && preferredAgentID != "" {
-		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1)`, preferredAgentID).Scan(&exists); err != nil {
-			return "", err
+		if _, taken := occupied[preferredAgentID]; !taken {
+			candidates, err := s.placementCandidatesQuerier(ctx, tx)
+			if err != nil {
+				return "", err
+			}
+			for _, candidate := range candidates {
+				if candidate.ID == preferredAgentID && candidateEligible(candidate, service.Spec) {
+					return preferredAgentID, nil
+				}
+			}
 		}
-		if !exists {
-			return "", errNoPlacementAvailable
-		}
-		return preferredAgentID, nil
 	}
 	return s.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied)
 }
@@ -261,16 +276,25 @@ func (s *Store) chooseAgentForReplicaQuerier(ctx context.Context, q serviceQuery
 	if err != nil {
 		return "", err
 	}
-	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, true); agentID != "" {
+	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, true, true); agentID != "" {
 		return agentID, nil
 	}
-	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, false); agentID != "" {
+	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, true, false); agentID != "" {
 		return agentID, nil
 	}
-	return "", errNoPlacementAvailable
+	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, false, false); agentID != "" {
+		return agentID, nil
+	}
+	return "", fmt.Errorf("%w: %s", errNoPlacementAvailable, placementFailureReason(candidates, spec, s.reservedAgentIDs))
 }
 
-func firstEligibleReplicaAgent(candidates []placementCandidate, spec *platformv1.ServiceSpec, reserved []string, occupied map[string]struct{}, avoidOccupied bool) string {
+func firstEligibleReplicaAgent(candidates []placementCandidate, spec *platformv1.ServiceSpec, reserved []string, occupied map[string]struct{}, avoidOccupied, avoidFailureDomain bool) string {
+	occupiedDomains := make(map[string]struct{}, len(occupied))
+	for _, candidate := range candidates {
+		if _, ok := occupied[candidate.ID]; ok {
+			occupiedDomains[candidateFailureDomain(candidate)] = struct{}{}
+		}
+	}
 	for _, candidate := range candidates {
 		if slices.Contains(reserved, candidate.ID) {
 			continue
@@ -280,12 +304,78 @@ func firstEligibleReplicaAgent(candidates []placementCandidate, spec *platformv1
 				continue
 			}
 		}
-		if !candidateHasCapacity(candidate, spec) {
+		if avoidFailureDomain {
+			if _, taken := occupiedDomains[candidateFailureDomain(candidate)]; taken {
+				continue
+			}
+		}
+		if !candidateEligible(candidate, spec) {
 			continue
 		}
 		return candidate.ID
 	}
 	return ""
+}
+
+func candidateFailureDomain(candidate placementCandidate) string {
+	if candidate.FailureDomain != "" {
+		return candidate.FailureDomain
+	}
+	if candidate.Zone != "" {
+		return candidate.Region + "/" + candidate.Zone
+	}
+	return candidate.ID
+}
+
+func candidateEligible(candidate placementCandidate, spec *platformv1.ServiceSpec) bool {
+	if spec != nil && strings.TrimSpace(spec.GetPlacementRegion()) != "" && candidate.Region != strings.TrimSpace(spec.GetPlacementRegion()) {
+		return false
+	}
+	for _, required := range []string{"containerd", "wireguard", "ebpf-policy"} {
+		if !slices.Contains(candidate.RuntimeCapabilities, required) {
+			return false
+		}
+	}
+	return candidateHasCapacity(candidate, spec)
+}
+
+func placementFailureReason(candidates []placementCandidate, spec *platformv1.ServiceSpec, reserved []string) string {
+	region := strings.TrimSpace(spec.GetPlacementRegion())
+	regionMatches, capable, cpuOK, memoryOK := 0, 0, 0, 0
+	for _, candidate := range candidates {
+		if slices.Contains(reserved, candidate.ID) {
+			continue
+		}
+		if region != "" && candidate.Region != region {
+			continue
+		}
+		regionMatches++
+		if !slices.Contains(candidate.RuntimeCapabilities, "containerd") || !slices.Contains(candidate.RuntimeCapabilities, "wireguard") || !slices.Contains(candidate.RuntimeCapabilities, "ebpf-policy") {
+			continue
+		}
+		capable++
+		runtime := serviceRuntime(spec)
+		if candidate.CPUMillisCapacity <= 0 || candidate.UsedCPUMillis+runtime.GetCpuMillis() <= candidate.CPUMillisCapacity {
+			cpuOK++
+		}
+		if candidate.MemoryMebibytesCapcity <= 0 || candidate.UsedMemoryMebibytes+runtime.GetMemoryMebibytes() <= candidate.MemoryMebibytesCapcity {
+			memoryOK++
+		}
+	}
+	switch {
+	case len(candidates) == 0:
+		return "no active healthy node is schedulable (enrolling, cordoned, draining, unavailable, and retired nodes are excluded)"
+	case region != "" && regionMatches == 0:
+		return fmt.Sprintf("no active healthy node is available in required region %q", region)
+	case capable == 0:
+		return "active nodes do not report the required containerd, WireGuard, and eBPF policy capabilities"
+	case cpuOK == 0:
+		return "insufficient schedulable CPU after operator reservations"
+	case memoryOK == 0:
+		return "insufficient schedulable memory after operator reservations"
+	default:
+		return "insufficient alternate capacity after operator reservations"
+	}
 }
 
 func candidateHasCapacity(candidate placementCandidate, spec *platformv1.ServiceSpec) bool {
@@ -335,7 +425,7 @@ const allocationSelectSQL = `SELECT a.id, a.service_id, e.project_id, s.environm
 		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
 		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
 		        a.applied_rollout_generation, a.healthy_ports, a.restart_observation_json,
-		        a.operator_restart_nonce, a.created_at
+		        a.operator_restart_nonce, a.created_at, a.rollout_state, a.drain_started_at, a.drain_deadline
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id`
@@ -364,6 +454,9 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecor
 		&restartRaw,
 		&rec.OperatorRestartNonce,
 		&rec.CreatedAt,
+		&rec.RolloutState,
+		&rec.DrainStartedAt,
+		&rec.DrainDeadline,
 	); err != nil {
 		return allocationRecord{}, err
 	}

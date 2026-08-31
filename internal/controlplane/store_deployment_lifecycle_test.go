@@ -89,7 +89,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if history[0].State != deploymentStateActive || history[0].Build == nil || history[0].Build.CommitMessage != "Add lifecycle" {
 		t.Fatalf("latest history = %+v", history[0])
 	}
-	if history[0].ReasonCode != reasonDeploymentActive || history[0].CauseKind != deploymentCauseAgent {
+	if history[0].ReasonCode != reasonDeploymentActive || history[0].CauseKind != deploymentCauseSystem {
 		t.Fatalf("latest transition metadata = %+v", history[0])
 	}
 }
@@ -300,7 +300,7 @@ func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, str
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
@@ -331,7 +331,7 @@ func setupDirectImageServiceForDeployment(t *testing.T) (*Store, context.Context
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{

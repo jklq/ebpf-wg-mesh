@@ -87,7 +87,7 @@ func bootstrapProjectAndAgent(t *testing.T, store *Store, ctx context.Context) s
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	return projects[0].ID

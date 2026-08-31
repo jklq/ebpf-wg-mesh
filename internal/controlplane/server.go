@@ -36,6 +36,7 @@ type Server struct {
 	webhooks       *GitHubWebhookProcessor
 	coordinator    *GitHubCoordinator
 	reconciler     *GitHubReconciler
+	rollouts       *RolloutReconciler
 	expiry         *AgentExpiryTracker
 	internalLn     net.Listener
 	registryLn     net.Listener
@@ -148,6 +149,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	)
 	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store, ingress, notifier)
+	rollouts := NewRolloutReconciler(store, notifier, ingress, platformEvents, 2*time.Second)
 	internal := grpc.NewServer(
 		grpc.Creds(internalCreds),
 		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
@@ -160,7 +162,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter), WithBuilderPlatformEvents(platformEvents)))
-	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler))
+	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler, store, notifier, authority))
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("listen internal grpc: %w", err)
@@ -197,6 +199,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		webhooks:     webhookProcessor,
 		coordinator:  githubCoordinator,
 		reconciler:   githubReconciler,
+		rollouts:     rollouts,
 		expiry:       expiry,
 		internalLn:   internalLn,
 		registryLn:   registryLn,
@@ -267,7 +270,7 @@ func (s *Server) Run(ctx context.Context) error {
 			slog.Warn("initial managed dashboard reconcile failed", "error", err)
 		}
 	}
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 	go func() {
 		errCh <- serveGRPC(s.internalGRPC, s.internalLn)
 	}()
@@ -288,6 +291,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.reconciler != nil {
 		go func() {
 			errCh <- s.reconciler.Run(ctx)
+		}()
+	}
+	if s.rollouts != nil {
+		go func() {
+			errCh <- s.rollouts.Run(ctx)
 		}()
 	}
 	select {

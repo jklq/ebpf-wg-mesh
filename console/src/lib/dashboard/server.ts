@@ -7,12 +7,18 @@ import {
 	setCookie,
 } from "@tanstack/react-start/server";
 import { Pool } from "pg";
-
+import {
+	assertProductionDashboardConfig,
+	formatDashboardStartupContract,
+	parseRuntimeProfile,
+	usesSecureCookies,
+} from "#/lib/dashboard/core/profile.server";
 import { createDashboardService } from "#/lib/dashboard/core/service.server";
 import {
 	type CreateServiceFastResult,
 	type DashboardConfig,
 	DashboardConfigError,
+	type DashboardDeploymentAction,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
 	type DashboardGitHubAccount,
@@ -29,13 +35,12 @@ import {
 	type DevLoginIdentity,
 	type GitHubUserRepository,
 	type UpdateServiceInput,
+	type DashboardAgentEnrollment,
+	type DashboardAgentLifecycleState,
+	type DashboardFleet,
+	type DashboardFleetAgent,
+	type FleetAgentInput,
 } from "#/lib/dashboard/core/types.server";
-import {
-	assertProductionDashboardConfig,
-	formatDashboardStartupContract,
-	parseRuntimeProfile,
-	usesSecureCookies,
-} from "#/lib/dashboard/core/profile.server";
 import {
 	parseDevUsers,
 	parseIdentifier,
@@ -115,7 +120,10 @@ export async function checkDashboardReadiness(): Promise<{
 		return { status: "not_ready", failed: ["database"] };
 	}
 	try {
-		await createPostgresDashboardStore(getConfig(), getPool()).ensureInitialized();
+		await createPostgresDashboardStore(
+			getConfig(),
+			getPool(),
+		).ensureInitialized();
 	} catch {
 		return { status: "not_ready", failed: ["migrations"] };
 	}
@@ -124,6 +132,29 @@ export async function checkDashboardReadiness(): Promise<{
 
 export function listDevLogins(): Array<DevLoginIdentity> {
 	return getDashboardService().listDevLogins();
+}
+
+export function loadFleetFromSession(): Promise<DashboardFleet> {
+	return getDashboardService().loadFleetFromSession();
+}
+
+export function createFleetAgentFromSession(
+	input: FleetAgentInput,
+): Promise<DashboardAgentEnrollment> {
+	return getDashboardService().createFleetAgentFromSession(input);
+}
+
+export function updateFleetAgentFromSession(
+	input: FleetAgentInput,
+): Promise<DashboardFleetAgent> {
+	return getDashboardService().updateFleetAgentFromSession(input);
+}
+
+export function setFleetAgentLifecycleFromSession(input: {
+	agentId: string;
+	lifecycleState: DashboardAgentLifecycleState;
+}): Promise<DashboardFleetAgent> {
+	return getDashboardService().setFleetAgentLifecycleFromSession(input);
 }
 
 export function isGitHubLoginEnabled(): boolean {
@@ -307,10 +338,14 @@ export function updateServiceFromSession(
 	return getDashboardService().updateServiceFromSession(input);
 }
 
-export function redeployServiceFromSession(input: {
+export function applyDeploymentActionFromSession(input: {
 	serviceId: string;
+	deploymentId: string;
+	action: DashboardDeploymentAction;
+	idempotencyKey: string;
+	allocationId?: string;
 }): Promise<DashboardServiceStatus> {
-	return getDashboardService().redeployServiceFromSession(input);
+	return getDashboardService().applyDeploymentActionFromSession(input);
 }
 
 export function scaleServiceFromSession(input: {
@@ -318,12 +353,6 @@ export function scaleServiceFromSession(input: {
 	desiredReplicaCount: number;
 }): Promise<DashboardServiceStatus> {
 	return getDashboardService().scaleServiceFromSession(input);
-}
-
-export function restartServiceFromSession(input: {
-	serviceId: string;
-}): Promise<DashboardServiceStatus> {
-	return getDashboardService().restartServiceFromSession(input);
 }
 
 export function discardServiceChangesFromSession(input: {

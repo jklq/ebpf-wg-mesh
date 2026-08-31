@@ -32,10 +32,17 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 		if lastSeen.After(cutoff) {
 			return nil
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agents SET
+			state_before_unavailable = CASE WHEN lifecycle_state IN ('active', 'cordoned', 'draining') THEN lifecycle_state ELSE state_before_unavailable END,
+			lifecycle_state = CASE WHEN lifecycle_state = 'retired' THEN lifecycle_state ELSE 'unavailable' END,
+			maintenance_message = CASE WHEN lifecycle_state = 'retired' THEN maintenance_message ELSE 'heartbeat expired; workloads are being failed over' END,
+			updated_at = $1 WHERE id = $2`, time.Now().UTC(), agentID); err != nil {
+			return err
+		}
 
 		rows, err := tx.QueryContext(ctx,
 			`SELECT a.id, a.service_id, a.phase, a.message, a.allocation_ip, a.healthy_ports, a.healthy,
-			        s.environment_id, e.project_id, p.kind, r.spec_json
+			        a.rollout_state, s.environment_id, e.project_id, p.kind, r.spec_json
 			   FROM allocations a
 			   JOIN services s ON s.id = a.service_id
 			   JOIN environments e ON e.id = s.environment_id
@@ -57,6 +64,7 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			environmentID string
 			projectKind   projectKind
 			spec          *platformv1.ServiceSpec
+			rolloutState  string
 			state         allocationFailoverState
 		}
 		var services []candidate
@@ -72,6 +80,7 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 				&rec.state.allocationIP,
 				&rec.state.healthyPorts,
 				&rec.state.healthy,
+				&rec.rolloutState,
 				&rec.environmentID,
 				&projectID,
 				&rec.projectKind,
@@ -95,6 +104,14 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 		moved := false
 		changedEnvironments := make(map[string]struct{})
 		for _, service := range services {
+			if service.rolloutState == allocationRolloutDraining || service.rolloutState == allocationRolloutWithdrawing {
+				if err := finishLostDrainingAllocationTx(ctx, tx, service.allocationID, "node lost while draining; allocation will be removed", now); err != nil {
+					return err
+				}
+				changedEnvironments[service.environmentID] = struct{}{}
+				moved = true
+				continue
+			}
 			blockedMessage := ""
 			switch {
 			case service.projectKind == projectKindManaged:
@@ -179,7 +196,7 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 			changedEnvironments[service.environmentID] = struct{}{}
 			if current, ok, err := s.currentDeploymentTx(ctx, tx, service.serviceID); err != nil {
 				return err
-			} else if ok {
+			} else if ok && deploymentTransitionAllowed(current.State, deploymentStateScheduling) {
 				if _, err := s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
 					ToState:    deploymentStateScheduling,
 					Actor:      deploymentActor{Kind: deploymentCauseSystem},

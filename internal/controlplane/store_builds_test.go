@@ -39,7 +39,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,8 +89,8 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if current.LastSuccessfulCommitSHA != "commit-1" {
 		t.Fatalf("expected last successful commit to be recorded, got %q", current.LastSuccessfulCommitSHA)
 	}
-	if current.RolloutGeneration != 2 {
-		t.Fatalf("expected rollout generation 2 after first successful build, got %d", current.RolloutGeneration)
+	if current.RolloutGeneration != 1 {
+		t.Fatalf("expected rollout generation 1 after first successful build, got %d", current.RolloutGeneration)
 	}
 
 	state, err = store.desiredStateForAgent(ctx, "node-1")
@@ -150,7 +150,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -197,7 +197,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	if current.ResolvedImage != "registry.example.test/platform/web@sha256:111" {
 		t.Fatalf("expected failed build to preserve last good image, got %q", current.ResolvedImage)
 	}
-	if current.RolloutGeneration != 2 {
+	if current.RolloutGeneration != 1 {
 		t.Fatalf("expected failed build not to advance rollout generation, got %d", current.RolloutGeneration)
 	}
 	if current.LatestBuild == nil || current.LatestBuild.GetState() != platformv1.BuildState_BUILD_STATE_FAILED {
@@ -220,7 +220,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -298,7 +298,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,7 +335,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -365,8 +365,8 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	if build.CommitAuthor != "Alice" {
 		t.Fatalf("expected build commit author to persist, got %q", build.CommitAuthor)
 	}
-	if build.TargetRolloutGeneration != 2 {
-		t.Fatalf("expected target rollout generation 2, got %d", build.TargetRolloutGeneration)
+	if build.TargetRolloutGeneration != 1 {
+		t.Fatalf("expected target rollout generation 1, got %d", build.TargetRolloutGeneration)
 	}
 }
 
@@ -385,7 +385,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -420,7 +420,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 		   FROM service_rollouts
 		  WHERE service_id = $1
 		    AND rollout_generation = $2`,
-		service.ID, 2,
+		service.ID, 1,
 	).Scan(&rolloutBuildID); err != nil {
 		t.Fatalf("query rollout build id: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -523,7 +523,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -582,7 +582,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 

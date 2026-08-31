@@ -85,7 +85,7 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 		usage := make(map[string]*agentWorkloadUsage, len(agents))
 		for _, agent := range agents {
 			usage[agent.ID] = &agentWorkloadUsage{}
-			if agent.LastSeenAt.After(cutoff) {
+			if agent.LastSeenAt.After(cutoff) && agent.LifecycleState == agentStateActive {
 				healthyAgents[agent.ID] = agent
 			}
 		}
@@ -120,6 +120,14 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 				return fmt.Errorf("allocation %s has no service", allocation.ID)
 			}
 			if _, healthy := healthyAgents[allocation.AgentID]; healthy {
+				continue
+			}
+			if allocation.RolloutState == allocationRolloutDraining || allocation.RolloutState == allocationRolloutWithdrawing {
+				if err := finishLostDrainingAllocationTx(ctx, tx, allocation.ID, "node lost while draining; allocation will be removed", now.UTC()); err != nil {
+					return err
+				}
+				result.IngressChanged = true
+				moved = true
 				continue
 			}
 
@@ -243,6 +251,20 @@ func projectKindsForFailover(ctx context.Context, q serviceQueryer) (map[string]
 		out[id] = kind
 	}
 	return out, rows.Err()
+}
+
+func finishLostDrainingAllocationTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE allocations
+		    SET phase = 'Drained',
+		        message = $1,
+		        healthy = FALSE,
+		        healthy_ports = $2,
+		        updated_at = $3
+		  WHERE id = $4`,
+		message, []byte("[]"), now, allocationID,
+	)
+	return err
 }
 
 func allocationStatesForFailover(ctx context.Context, q serviceQueryer) ([]allocationRecord, error) {

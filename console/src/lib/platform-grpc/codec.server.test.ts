@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	decodeFleetMessage,
 	decodeIndexedServiceStatusResponse,
 	decodeIndexedServicesResponse,
 	decodeListServiceDeploymentsResponse,
@@ -10,6 +11,41 @@ import {
 } from "#/lib/platform-grpc/codec.server";
 
 describe("platform grpc codec", () => {
+	it("decodes fleet capacity and lifecycle state", () => {
+		const fleet = decodeFleetMessage({
+			agents: [
+				{
+					id: "node-a",
+					name: "edge-a",
+					lifecycleState: "AGENT_LIFECYCLE_STATE_CORDONED",
+					region: "us-east",
+					failureDomain: "zone-1",
+					healthy: true,
+					schedulableCpuMillis: "1500",
+					headroomCpuMillis: "400",
+					allocationCount: "2",
+					softwareVersion: "1.0.0",
+					versionSkewWarning: "reports 1.0.0 while the fleet majority reports 1.0.1",
+				},
+			],
+			capacity: {
+				nodeCount: "3",
+				schedulableNodeCount: "2",
+				headroomCpuMillis: "800",
+			},
+			versionWarning: "fleet software version skew detected",
+		});
+		expect(fleet.agents[0]).toMatchObject({
+			id: "node-a",
+			lifecycleState: "cordoned",
+			region: "us-east",
+			schedulableCpuMillis: 1500,
+			allocationCount: 2,
+		});
+		expect(fleet.capacity.schedulableNodeCount).toBe(2);
+		expect(fleet.versionWarning).toContain("skew");
+	});
+
 	it("decodes blocking-query timeouts without payloads", () => {
 		expect(
 			decodeIndexedServicesResponse({ index: "42", notModified: true }),
@@ -76,6 +112,62 @@ describe("platform grpc codec", () => {
 			}).service.spec.runtime.sandboxProfile,
 		).toEqual({
 			name: "legacy-root",
+		});
+	});
+
+	it("encodes placement region and rolling strategy together", () => {
+		const request = encodeCreateServiceRequest({
+			environmentId: "environment-1",
+			name: "web",
+			spec: {
+				runtime: {
+					env: {},
+					cpuMillis: 250,
+					memoryMebibytes: 256,
+					ports: [],
+				},
+				placementRegion: "eu-west",
+				rollingStrategy: {
+					maxUnavailable: 0,
+					maxSurge: 1,
+					startupTimeoutSeconds: 300,
+					drainTimeoutSeconds: 30,
+				},
+			},
+		});
+		expect(request.service.spec.placementRegion).toBe("eu-west");
+		expect(request.service.spec.rollingStrategy).toEqual({
+			maxUnavailable: 0,
+			maxSurge: 1,
+			startupTimeoutSeconds: 300,
+			drainTimeoutSeconds: 30,
+		});
+	});
+
+	it("encodes an explicit rolling strategy including zero surge", () => {
+		const request = encodeCreateServiceRequest({
+			environmentId: "environment-1",
+			name: "web",
+			spec: {
+				runtime: {
+					env: {},
+					cpuMillis: 250,
+					memoryMebibytes: 256,
+					ports: [],
+				},
+				rollingStrategy: {
+					maxUnavailable: 1,
+					maxSurge: 0,
+					startupTimeoutSeconds: 60,
+					drainTimeoutSeconds: 5,
+				},
+			},
+		});
+		expect(request.service.spec.rollingStrategy).toEqual({
+			maxUnavailable: 1,
+			maxSurge: 0,
+			startupTimeoutSeconds: 60,
+			drainTimeoutSeconds: 5,
 		});
 	});
 

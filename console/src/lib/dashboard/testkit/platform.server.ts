@@ -1,4 +1,5 @@
 import type {
+	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardDomainBinding,
 	DashboardEnvironment,
@@ -44,18 +45,18 @@ export interface FakePlatformGateway extends PlatformGateway {
 		name?: string;
 		spec: DashboardServiceSpec;
 	}>;
-	redeployServiceCalls: Array<{
+	applyDeploymentActionCalls: Array<{
 		user: DashboardUser;
 		serviceId: string;
+		deploymentId: string;
+		action: DashboardDeploymentAction;
+		idempotencyKey: string;
+		allocationId?: string;
 	}>;
 	scaleServiceCalls: Array<{
 		user: DashboardUser;
 		serviceId: string;
 		desiredReplicaCount: number;
-	}>;
-	restartServiceCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
 	}>;
 	discardServiceChangesCalls: Array<{
 		user: DashboardUser;
@@ -117,9 +118,8 @@ export interface FakePlatformGateway extends PlatformGateway {
 		inspectRepositorySource?: Error;
 		createService?: Error;
 		updateService?: Error;
-		redeployService?: Error;
+		applyDeploymentAction?: Error;
 		scaleService?: Error;
-		restartService?: Error;
 		discardServiceChanges?: Error;
 		deleteService?: Error;
 		getService?: Error;
@@ -141,9 +141,8 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		linkGitHubRepositoryCalls: [],
 		createServiceCalls: [],
 		updateServiceCalls: [],
-		redeployServiceCalls: [],
+		applyDeploymentActionCalls: [],
 		scaleServiceCalls: [],
-		restartServiceCalls: [],
 		discardServiceChangesCalls: [],
 		deleteServiceCalls: [],
 		getServiceCalls: [],
@@ -162,6 +161,30 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		domainBindings: [],
 		nextRepositoryInspection: undefined,
 		errors: {},
+		async listFleet() {
+			return {
+				agents: [],
+				capacity: {
+					nodeCount: 0,
+					schedulableNodeCount: 0,
+					schedulableCpuMillis: 0,
+					schedulableMemoryMebibytes: 0,
+					allocatedCpuMillis: 0,
+					allocatedMemoryMebibytes: 0,
+					headroomCpuMillis: 0,
+					headroomMemoryMebibytes: 0,
+				},
+			};
+		},
+		async createFleetAgent() {
+			throw new Error("fleet enrollment is not available in tests");
+		},
+		async updateFleetAgent() {
+			throw new Error("fleet updates are not available in tests");
+		},
+		async setFleetAgentLifecycle() {
+			throw new Error("fleet lifecycle is not available in tests");
+		},
 		async listProjects(user): Promise<Array<DashboardProject>> {
 			platform.listProjectsCalls.push(user);
 			if (platform.errors.listProjects) {
@@ -494,10 +517,10 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				platform.serviceStatuses.get(input.serviceId) ?? { service: updated }
 			);
 		},
-		async restartService(user, input): Promise<DashboardServiceStatus> {
-			platform.restartServiceCalls.push({ user, ...input });
-			if (platform.errors.restartService) {
-				throw platform.errors.restartService;
+		async applyDeploymentAction(user, input): Promise<DashboardServiceStatus> {
+			platform.applyDeploymentActionCalls.push({ user, ...input });
+			if (platform.errors.applyDeploymentAction) {
+				throw platform.errors.applyDeploymentAction;
 			}
 			const current = platform.services.find(
 				(service) => service.id === input.serviceId,
@@ -507,25 +530,6 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			return (
 				platform.serviceStatuses.get(input.serviceId) ?? { service: current }
-			);
-		},
-		async redeployService(user, input): Promise<DashboardServiceStatus> {
-			platform.redeployServiceCalls.push({ user, ...input });
-			if (platform.errors.redeployService) {
-				throw platform.errors.redeployService;
-			}
-			const current = platform.services.find(
-				(service) => service.id === input.serviceId,
-			);
-			if (!current) {
-				throw new Error("service not found");
-			}
-			const updated = { ...current, pendingChanges: false };
-			platform.services = platform.services.map((service) =>
-				service.id === updated.id ? updated : service,
-			);
-			return (
-				platform.serviceStatuses.get(input.serviceId) ?? { service: updated }
 			);
 		},
 		async discardServiceChanges(user, input): Promise<DashboardServiceRecord> {

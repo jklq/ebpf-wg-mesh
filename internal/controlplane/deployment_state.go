@@ -59,10 +59,15 @@ const (
 	reasonDeploymentSuperseded = "DEPLOYMENT_SUPERSEDED"
 	reasonAgentObservation     = "AGENT_OBSERVATION"
 	reasonUserRedeploy         = "USER_REDEPLOY"
+	reasonExactRedeploy        = "EXACT_REDEPLOY"
+	reasonRollback             = "ROLLBACK"
+	reasonUserRetry            = "USER_RETRY"
 	reasonOperatorRestart      = "OPERATOR_RESTART"
 	reasonUserCancel           = "USER_CANCEL"
+	reasonUserRemove           = "USER_REMOVE"
 	reasonWebhookPush          = "WEBHOOK_PUSH"
 	reasonFailoverRescheduled  = "FAILOVER_RESCHEDULED"
+	reasonAgentDrain           = "AGENT_DRAIN"
 	reasonManagedSync          = "MANAGED_SYNC"
 )
 

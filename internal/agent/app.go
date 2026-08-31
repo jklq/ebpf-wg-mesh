@@ -164,6 +164,8 @@ func (a *App) runSession(ctx context.Context) error {
 			MemoryMebibytesCapacity: a.cfg.Node.Resources.AdvertisedMemoryMebibytes(),
 			WireguardPublicKey:      publicKey,
 			WireguardListenPort:     int32(a.cfg.Mesh.WireGuard.ListenPort),
+			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
+			SoftwareVersion:         Version,
 		}},
 	}); err != nil {
 		return err

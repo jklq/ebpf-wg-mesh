@@ -83,14 +83,22 @@ func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (
 			return nil, status.Error(codes.PermissionDenied, "client certificate does not match agent_id")
 		}
 	}
-	resp, err := s.authority.Enroll(req)
-	if err != nil {
-		return nil, err
+	if err := s.store.authorizeAgentCredential(ctx, req.GetAgentId()); err != nil {
+		return nil, status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
 	}
 	if !authenticated {
 		if err := s.store.consumeAgentBootstrapToken(ctx, req.GetAgentId(), req.GetBootstrapToken()); err != nil {
 			return nil, status.Error(codes.Unauthenticated, "invalid bootstrap token")
 		}
+	}
+	resp, err := s.authority.Enroll(req)
+	if err != nil {
+		return nil, err
+	}
+	if serial, err := certificateSerialFromPEM(resp.GetCertPem()); err != nil {
+		return nil, status.Errorf(codes.Internal, "record agent certificate: %v", err)
+	} else if err := s.store.recordAgentCertificate(ctx, req.GetAgentId(), serial); err != nil {
+		return nil, status.Errorf(codes.Internal, "record agent certificate: %v", err)
 	}
 	slog.Info("agent certificate issued", "agent_id", req.GetAgentId(), "authenticated_renewal", authenticated)
 	return resp, nil
@@ -144,11 +152,17 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
 	}
+	if err := s.store.authorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
+		return status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
+	}
 	changed, err := s.store.upsertAgent(ctx, hello)
 	if err != nil {
 		return status.Errorf(codes.Internal, "register agent: %v", err)
 	}
 	if changed {
+		if err := s.store.reconcileFleetCapacity(ctx); err != nil {
+			return status.Errorf(codes.Internal, "reconcile fleet capacity: %v", err)
+		}
 		if s.dashboard != nil {
 			if err := s.dashboard.Reconcile(ctx); err != nil && !errors.Is(err, errNoPlacementAvailable) {
 				slog.Warn("dashboard reconcile failed after agent change", "agent_id", hello.AgentId, "error", err)
@@ -186,6 +200,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		}
 		if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
 			return err
+		}
+		if err := s.store.authorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
+			return status.Error(codes.PermissionDenied, "agent credentials were revoked")
 		}
 		switch payload := msg.Payload.(type) {
 		case *agentv1.AgentClientMessage_Heartbeat:
