@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func TestServiceUnappliedChangesRuntimeEnvStableIDs(t *testing.T) {
@@ -64,6 +66,24 @@ func TestServiceUnappliedChangesIncludesHTTPReadinessCheck(t *testing.T) {
 	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"runtime.healthCheck"})
 	if discarded.GetRuntime().GetHealthCheck() != nil {
 		t.Fatalf("discarded health check = %+v, want nil", discarded.GetRuntime().GetHealthCheck())
+	}
+}
+
+func TestServiceUnappliedChangesIncludesReplicaCount(t *testing.T) {
+	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{})
+	deployed.DesiredReplicaCount = replicaCountPtr(1)
+	current := proto.Clone(deployed).(*platformv1.ServiceSpec)
+	current.DesiredReplicaCount = replicaCountPtr(3)
+
+	changes := diffServiceUnappliedChanges(current, deployed)
+	if got, want := len(changes), 1; got != want {
+		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
+	}
+	assertChange(t, changes[0], "desiredReplicaCount", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE, "1", "3")
+
+	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"desiredReplicaCount"})
+	if discarded.GetDesiredReplicaCount() != 1 {
+		t.Fatalf("discarded replica count = %d, want 1", discarded.GetDesiredReplicaCount())
 	}
 }
 

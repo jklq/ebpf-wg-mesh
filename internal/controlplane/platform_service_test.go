@@ -744,7 +744,7 @@ type fakePlatformStore struct {
 	listDomainBindingsFn              func(ctx context.Context, userID, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBindingFn             func(ctx context.Context, userID, projectID, hostname string) (bool, error)
 	serviceStatusFn                   func(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error)
-	scaleServiceFn                    func(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error)
+	scaleServiceFn                    func(ctx context.Context, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error)
 	listServiceDeploymentsFn          func(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceIDFn           func(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAllocationsByServiceIDFn      func(ctx context.Context, serviceID string) ([]allocationRecord, error)
@@ -954,9 +954,9 @@ func (f *fakePlatformStore) serviceStatus(ctx context.Context, userID, projectID
 	return serviceRecord{}, nil, nil
 }
 
-func (f *fakePlatformStore) scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error) {
+func (f *fakePlatformStore) scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
 	if f.scaleServiceFn != nil {
-		return f.scaleServiceFn(ctx, userID, projectID, serviceID, desired, confirmScaleToZero)
+		return f.scaleServiceFn(ctx, userID, projectID, serviceID, desired)
 	}
 	return serviceRecord{}, nil, nil
 }

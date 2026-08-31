@@ -12,11 +12,13 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func validateDesiredReplicaCount(count int32) error {
-	if count < 0 || count > maxDesiredReplicaCount {
-		return fmt.Errorf("%w: must be between 0 and %d", errInvalidReplicaCount, maxDesiredReplicaCount)
+	if count < defaultDesiredReplicaCount || count > maxDesiredReplicaCount {
+		return fmt.Errorf("%w: must be between %d and %d", errInvalidReplicaCount, defaultDesiredReplicaCount, maxDesiredReplicaCount)
 	}
 	return nil
 }
@@ -38,14 +40,14 @@ func countReadyAllocations(recs []allocationRecord) int32 {
 	return ready
 }
 
-func (s *Store) scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error) {
+func (s *Store) scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
 	var (
 		current     serviceRecord
 		allocations []allocationRecord
 	)
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		current, allocations, err = s.scaleServiceTx(ctx, tx, userID, projectID, serviceID, desired, confirmScaleToZero)
+		current, allocations, err = s.scaleServiceTx(ctx, tx, userID, projectID, serviceID, desired)
 		return err
 	})
 	if err != nil {
@@ -62,7 +64,7 @@ func (s *Store) scaleService(ctx context.Context, userID, projectID, serviceID s
 	return current, allocations, nil
 }
 
-func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error) {
+func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
 	if err := validateDesiredReplicaCount(desired); err != nil {
 		return serviceRecord{}, nil, err
 	}
@@ -76,48 +78,26 @@ func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, projectI
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE id = $1 FOR UPDATE`, serviceID).Scan(&serviceID); err != nil {
 		return serviceRecord{}, nil, err
 	}
-	environment, err := s.environmentByIDQuerier(ctx, tx, userID, current.EnvironmentID)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	if desired == 0 && environment.IsProduction && !confirmScaleToZero {
-		return serviceRecord{}, nil, errScaleToZeroUnconfirmed
-	}
 	if err := validateVolumeReplicaCompatibility(current.Spec, desired); err != nil {
 		return serviceRecord{}, nil, err
 	}
 
-	now := time.Now().UTC()
-	result, err := tx.ExecContext(ctx,
-		`UPDATE services
-		    SET desired_replica_count = $1,
-		        updated_at = $2
-		  WHERE id = $3
-		    AND current_spec_revision = $4
-		    AND current_rollout_generation = $5`,
-		desired, now, serviceID, current.SpecRevision, current.RolloutGeneration,
-	)
+	nextSpec := current.Spec
+	if nextSpec == nil {
+		nextSpec = &platformv1.ServiceSpec{}
+	} else {
+		nextSpec = proto.Clone(nextSpec).(*platformv1.ServiceSpec)
+	}
+	nextSpec.DesiredReplicaCount = replicaCountPtr(desired)
+	updated, _, _, err := s.updateServiceTx(ctx, tx, userID, projectID, serviceID, current.Name, nextSpec)
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}
-	affected, err := result.RowsAffected()
+	allocations, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, false)
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}
-	if affected == 0 {
-		return serviceRecord{}, nil, errConcurrentUpdate
-	}
-	current.DesiredReplicaCount = desired
-	current.UpdatedAt = now
-
-	allocations, err := s.reconcileServiceReplicasTx(ctx, tx, current, "", now)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
-		return serviceRecord{}, nil, err
-	}
-	return current, allocations, nil
+	return updated, allocations, nil
 }
 
 func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, service serviceRecord, preferredAgentID string, now time.Time) ([]allocationRecord, error) {

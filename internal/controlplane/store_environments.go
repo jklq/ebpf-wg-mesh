@@ -380,11 +380,15 @@ func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID str
 			if service.AllocatedAgentID == "" {
 				identityCatalogChanged = true
 			}
+			needsSourceBuild, err := s.serviceNeedsSourceBuildTx(ctx, tx, service)
+			if err != nil {
+				return err
+			}
 			deployed, _, err := s.redeployServiceTx(ctx, tx, userID, "", serviceID)
 			if err != nil {
 				return err
 			}
-			if desiredSourceSpec(service.Spec) != nil {
+			if needsSourceBuild {
 				if err := s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, service.SpecRevision, false); err != nil {
 					return err
 				}
@@ -416,4 +420,30 @@ func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID str
 		services = append(services, service)
 	}
 	return services, agentIDs, nil
+}
+
+// serviceNeedsSourceBuildTx distinguishes source changes from runtime-only
+// changes. A source-backed service needs a build for its first rollout and when
+// its repository/ref/build recipe changes. Runtime, restart, and replica-only
+// revisions reuse the image already resolved by the deployed rollout.
+func (s *Store) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, service serviceRecord) (bool, error) {
+	if desiredSourceSpec(service.Spec) == nil {
+		return false, nil
+	}
+	if service.RolloutGeneration == 0 || strings.TrimSpace(service.ResolvedImage) == "" {
+		return true, nil
+	}
+
+	var deployedSpecRevision int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT spec_revision FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
+		service.ID, service.RolloutGeneration,
+	).Scan(&deployedSpecRevision); err != nil {
+		return false, err
+	}
+	deployedSpec, err := s.loadServiceDetailsQuerier(ctx, tx, service.ID, deployedSpecRevision)
+	if err != nil {
+		return false, err
+	}
+	return !sameDesiredSourceSpec(deployedSpec, service.Spec), nil
 }

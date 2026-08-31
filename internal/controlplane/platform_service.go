@@ -57,7 +57,7 @@ type platformStore interface {
 	listDomainBindings(ctx context.Context, userID, projectID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, userID, projectID, hostname string) (bool, error)
 	serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error)
-	scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32, confirmScaleToZero bool) (serviceRecord, []allocationRecord, error)
+	scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error)
 	listServiceDeployments(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error)
 	allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error)
 	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error)
@@ -559,7 +559,7 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	if err := s.requireProjectWriteAccess(ctx, identity.UserID, current.ProjectID); err != nil {
 		return nil, err
 	}
-	service, allocations, err := s.store.scaleService(ctx, identity.UserID, "", req.GetServiceId(), req.GetDesiredReplicaCount(), req.GetConfirmScaleToZero())
+	service, allocations, err := s.store.scaleService(ctx, identity.UserID, "", req.GetServiceId(), req.GetDesiredReplicaCount())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -567,7 +567,7 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 		if errors.Is(err, errConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "scale service: %v", err)
 		}
-		if errors.Is(err, errInvalidReplicaCount) || errors.Is(err, errScaleToZeroUnconfirmed) || errors.Is(err, errVolumeReplicaUnsupported) {
+		if errors.Is(err, errInvalidReplicaCount) || errors.Is(err, errVolumeReplicaUnsupported) {
 			return nil, status.Errorf(codes.FailedPrecondition, "scale service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "scale service: %v", err)
@@ -576,7 +576,6 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate scaled service: %v", err)
 	}
-	s.notifyAllAgents(ctx)
 	index := s.events.Publish(service.EnvironmentID)
 	return toProtoServiceStatus(service, allocations, index), nil
 }
