@@ -14,6 +14,7 @@ import {
 	type DashboardConfig,
 	DashboardConfigError,
 	type DashboardDeploymentRecord,
+	type DashboardDeploymentAction,
 	type DashboardDomainBinding,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
@@ -307,10 +308,14 @@ export function updateServiceFromSession(
 	return getDashboardService().updateServiceFromSession(input);
 }
 
-export function redeployServiceFromSession(input: {
+export function applyDeploymentActionFromSession(input: {
 	serviceId: string;
+	deploymentId: string;
+	action: DashboardDeploymentAction;
+	idempotencyKey: string;
+	allocationId?: string;
 }): Promise<DashboardServiceStatus> {
-	return getDashboardService().redeployServiceFromSession(input);
+	return getDashboardService().applyDeploymentActionFromSession(input);
 }
 
 export function scaleServiceFromSession(input: {
@@ -318,12 +323,6 @@ export function scaleServiceFromSession(input: {
 	desiredReplicaCount: number;
 }): Promise<DashboardServiceStatus> {
 	return getDashboardService().scaleServiceFromSession(input);
-}
-
-export function restartServiceFromSession(input: {
-	serviceId: string;
-}): Promise<DashboardServiceStatus> {
-	return getDashboardService().restartServiceFromSession(input);
 }
 
 export function discardServiceChangesFromSession(input: {

@@ -325,65 +325,6 @@ func (s *Store) redeployService(ctx context.Context, userID, projectID, serviceI
 	return current, nil
 }
 
-func (s *Store) restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
-	var current serviceRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		current, err = s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
-			return err
-		}
-		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, true)
-		if err != nil {
-			return err
-		}
-		if len(existing) == 0 {
-			return fmt.Errorf("service %s has no allocation to restart", serviceID)
-		}
-		now := time.Now().UTC()
-		result, err := tx.ExecContext(ctx,
-			`UPDATE allocations
-			    SET operator_restart_nonce = operator_restart_nonce + 1,
-			        phase = 'Pending',
-			        message = 'operator restart requested',
-			        healthy = FALSE,
-			        updated_at = $1
-			  WHERE service_id = $2`,
-			now, serviceID,
-		)
-		if err != nil {
-			return err
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected == 0 {
-			return sql.ErrNoRows
-		}
-		dep, err := s.insertDeploymentTx(
-			ctx, tx, serviceID, deploymentStateStarting,
-			deploymentActor{Kind: deploymentCauseUser, ID: userID},
-			reasonOperatorRestart,
-			"Operator restart requested",
-			current.SpecRevision, current.RolloutGeneration,
-			current.LatestBuildID, current.ResolvedImage, userID, now,
-		)
-		if err != nil {
-			return err
-		}
-		current.LatestDeployment = &dep
-		return s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID})
-	})
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	return current, nil
-}
-
 func (s *Store) requestServiceSourceSync(ctx context.Context, userID, projectID, serviceID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)

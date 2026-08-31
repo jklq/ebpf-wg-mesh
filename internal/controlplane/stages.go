@@ -96,6 +96,8 @@ func inferDeploymentFromLegacy(service serviceRecord, build *buildRunRecord, all
 		rec.Detail = firstNonEmpty(build.FailureReason, defaultDetailForState(deploymentStateFailed))
 	case build != nil && build.State == buildStateSuperseded:
 		rec.State = deploymentStateSuperseded
+	case build != nil && build.State == buildStateCancelled:
+		rec.State = deploymentStateCancelled
 	case alloc.ID != "" && (alloc.Phase == restartpolicy.PhaseCrashLoop || alloc.Restart.GetCrashLoop()):
 		rec.State = deploymentStateCrashed
 		rec.Detail = firstNonEmpty(alloc.Message, defaultDetailForState(rec.State))
@@ -198,6 +200,9 @@ func buildStage(service serviceRecord, build *buildRunRecord) *platformv1.Deploy
 	case buildStateSuperseded:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED
 		stage.Detail = "Superseded by a newer build"
+	case buildStateCancelled:
+		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED
+		stage.Detail = "Cancelled by user"
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_UNSPECIFIED
 	}

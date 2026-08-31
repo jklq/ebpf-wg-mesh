@@ -318,7 +318,22 @@ type deploymentRecord struct {
 	CauseID           string
 	ReasonCode        string
 	Detail            string
+	ResolvedSpec      *platformv1.ServiceSpec
+	VariableVersions  map[string]int64
 	Transitions       []deploymentTransitionRecord
+	Actions           []deploymentActionRecord
+}
+
+type deploymentActionRecord struct {
+	ID                 string
+	ServiceID          string
+	TargetDeploymentID string
+	ResultDeploymentID string
+	Action             string
+	AllocationID       string
+	IdempotencyKey     string
+	RequestedByUserID  string
+	CreatedAt          time.Time
 }
 
 type deploymentTransitionRecord struct {

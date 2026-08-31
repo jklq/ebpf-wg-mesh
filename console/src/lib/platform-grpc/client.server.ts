@@ -12,6 +12,7 @@ import type {
 	CreateDomainBindingRequest,
 	CreateProjectRequest,
 	CreateServiceRequest,
+	ApplyDeploymentActionRequest,
 	DeleteDomainBindingRequest,
 	DiscardServiceChangesRequest,
 	GenerateDomainBindingRequest,
@@ -31,8 +32,6 @@ import type {
 	PlatformRequestMap,
 	PlatformRuntimeConfig,
 	RawUnaryCallback,
-	RedeployServiceRequest,
-	RestartServiceRequest,
 	ScaleServiceRequest,
 	UpdateDomainBindingRequest,
 	UpdateServiceRequest,
@@ -141,9 +140,9 @@ export async function unaryCall<M extends PlatformMethod>(
 						handleResponse,
 					);
 					return;
-				case "RedeployService":
-					client.RedeployService(
-						request as RedeployServiceRequest,
+				case "ApplyDeploymentAction":
+					client.ApplyDeploymentAction(
+						request as ApplyDeploymentActionRequest,
 						metadata,
 						handleResponse,
 					);
@@ -151,13 +150,6 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "ScaleService":
 					client.ScaleService(
 						request as ScaleServiceRequest,
-						metadata,
-						handleResponse,
-					);
-					return;
-				case "RestartService":
-					client.RestartService(
-						request as RestartServiceRequest,
 						metadata,
 						handleResponse,
 					);

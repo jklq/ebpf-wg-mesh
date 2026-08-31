@@ -25,8 +25,10 @@ import (
 	"ebof-wg-mesh/internal/health"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -169,6 +171,7 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	defer cancel()
 
 	heartbeatDone := make(chan struct{})
+	cancelledByControlPlane := make(chan struct{}, 1)
 	go func() {
 		defer close(heartbeatDone)
 		ticker := time.NewTicker(time.Duration(a.cfg.HeartbeatIntervalSeconds) * time.Second)
@@ -184,6 +187,14 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 				})
 				if err != nil {
 					slog.Warn("report builder heartbeat", "build_id", job.GetBuildId(), "error", err)
+					if code := status.Code(err); code == codes.PermissionDenied || code == codes.FailedPrecondition || code == codes.NotFound {
+						select {
+						case cancelledByControlPlane <- struct{}{}:
+						default:
+						}
+						cancel()
+						return
+					}
 				}
 			}
 		}
@@ -192,6 +203,11 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	imageRef, err := a.buildAndPush(jobCtx, job)
 	cancel()
 	<-heartbeatDone
+	select {
+	case <-cancelledByControlPlane:
+		return nil
+	default:
+	}
 
 	if err != nil {
 		_, completeErr := a.client.CompleteBuild(ctx, &platformv1.CompleteBuildRequest{
@@ -202,6 +218,9 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 			FailureReason: err.Error(),
 		})
 		if completeErr != nil {
+			if cooperativeBuildCancel(completeErr) {
+				return nil
+			}
 			return &buildFailureError{kind: failureKindProtocol, err: fmt.Errorf("report failed build: %w", completeErr)}
 		}
 		return err
@@ -214,9 +233,21 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 		CommitSha:   job.GetCommitSha(),
 		ImageDigest: imageRef,
 	}); err != nil {
+		if cooperativeBuildCancel(err) {
+			return nil
+		}
 		return &buildFailureError{kind: failureKindProtocol, err: fmt.Errorf("report successful build: %w", err)}
 	}
 	return nil
+}
+
+func cooperativeBuildCancel(err error) bool {
+	switch status.Code(err) {
+	case codes.PermissionDenied, codes.FailedPrecondition, codes.NotFound:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (string, error) {

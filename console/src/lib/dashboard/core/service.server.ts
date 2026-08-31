@@ -28,9 +28,8 @@ import {
 	loadDashboardHome,
 	loadGitHubCatalogFromSession,
 	publishDomainFromSession,
-	redeployServiceFromSession,
+	applyDeploymentActionFromSession,
 	scaleServiceFromSession,
-	restartServiceFromSession,
 	renameEnvironmentFromSession,
 	saveHostnameFromSession,
 	saveServicePositionFromSession,
@@ -141,14 +140,11 @@ export function createDashboardService(
 		updateServiceFromSession(input) {
 			return updateServiceFromSession(runtime, input);
 		},
-		redeployServiceFromSession(input) {
-			return redeployServiceFromSession(runtime, input);
+		applyDeploymentActionFromSession(input) {
+			return applyDeploymentActionFromSession(runtime, input);
 		},
 		scaleServiceFromSession(input) {
 			return scaleServiceFromSession(runtime, input);
-		},
-		restartServiceFromSession(input) {
-			return restartServiceFromSession(runtime, input);
 		},
 		discardServiceChangesFromSession(input) {
 			return discardServiceChangesFromSession(runtime, input);
