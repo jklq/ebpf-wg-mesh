@@ -55,6 +55,55 @@ func TestContainerdEngineCreateServeDestroy(t *testing.T) {
 	assertServiceTornDown(t, ctx, engine, cfg, allocID, netnsPath)
 }
 
+func TestContainerdEngineDrainSendsSIGTERMThenSIGKILLAfterDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	engine, cfg := newTestContainerdEngine(t)
+	allocID := uniqueRuntimeID("drain")
+	svc := busyboxHTTPService(allocID, 12, 1, "fd00:200:9::12", "waiting")
+	svc.Spec.Runtime.Args = []string{strings.Join([]string{
+		"mkdir -p /tmp/www",
+		"printf waiting > /tmp/www/index.html",
+		"httpd -f -p [::]:8080 -h /tmp/www &",
+		"trap 'printf term > /tmp/www/index.html' TERM",
+		"while :; do sleep 1; done",
+	}, "; ")}
+
+	cleanupContainerdService(t, engine, cfg, allocID)
+	if _, _, err := engine.EnsureService(ctx, svc); err != nil {
+		if skippableRuntimeErr(err) {
+			t.Skipf("containerd/CNI cannot start a workload: %v", err)
+		}
+		t.Fatalf("EnsureService: %v", err)
+	}
+	netnsPath := requirePersistedNetNS(t, engine, allocID)
+	if got := httpGetInNamespace(t, ctx, netnsPath, svc.GetPrivateIpv6(), 8080, "/"); got != "waiting" {
+		t.Fatalf("initial workload marker = %q", got)
+	}
+
+	drained, forced, err := engine.DrainService(ctx, allocID, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("DrainService(SIGTERM): %v", err)
+	}
+	if drained || forced {
+		t.Fatalf("pre-deadline drain = drained %t, forced %t", drained, forced)
+	}
+	if got := httpGetInNamespace(t, ctx, netnsPath, svc.GetPrivateIpv6(), 8080, "/"); got != "term" {
+		t.Fatalf("workload did not observe SIGTERM, marker = %q", got)
+	}
+	assertContainerRunning(t, ctx, engine, allocID)
+
+	drained, forced, err = engine.DrainService(ctx, allocID, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatalf("DrainService(SIGKILL): %v", err)
+	}
+	if !drained || !forced {
+		t.Fatalf("expired drain = drained %t, forced %t", drained, forced)
+	}
+	assertServiceTornDown(t, ctx, engine, cfg, allocID, netnsPath)
+}
+
 func TestContainerdEngineGenerationReplaceAndNetnsProbeFailClosed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

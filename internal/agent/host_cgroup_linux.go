@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,17 +24,23 @@ const (
 )
 
 func protectAgentRuntime(cfg config.AgentConfig) (string, error) {
+	if cfg.Profile.IsProduction() && cfg.Runtime.DisableCgroups {
+		return "", errors.New("reserve agent/runtime cgroup resources: cgroups are disabled in production")
+	}
+	reservedBytes := cfg.Node.Resources.ReservedMemoryMebibytes * 1024 * 1024
+	workloadBytes := cfg.Node.Resources.AdvertisedMemoryMebibytes() * 1024 * 1024
+	if !cfg.Runtime.DisableCgroups && (reservedBytes <= 0 || workloadBytes <= 0) {
+		if cfg.Profile.IsProduction() {
+			return "", fmt.Errorf("reserve agent/runtime cgroup resources: reserved memory and schedulable workload memory must both be greater than zero")
+		}
+		return "", nil
+	}
 	if err := os.WriteFile("/proc/self/oom_score_adj", []byte(strconv.Itoa(agentOOMScoreAdj)), 0o644); err != nil {
 		if cfg.Profile.IsProduction() && !cfg.Runtime.DisableCgroups {
 			return "", fmt.Errorf("protect agent from tenant OOM: %w", err)
 		}
 	}
 	if cfg.Runtime.DisableCgroups {
-		return "", nil
-	}
-	reservedBytes := cfg.Node.Resources.ReservedMemoryMebibytes * 1024 * 1024
-	workloadBytes := cfg.Node.Resources.AdvertisedMemoryMebibytes() * 1024 * 1024
-	if reservedBytes <= 0 || workloadBytes <= 0 {
 		return "", nil
 	}
 	parent, err := applyHostCgroupReservation(cgroupFSRoot, reservedBytes, workloadBytes)
@@ -51,6 +58,10 @@ func applyHostCgroupReservation(cgroupRoot string, reservedBytes, workloadBytes 
 	if err != nil {
 		return "", err
 	}
+	return applyHostCgroupReservationAt(cgroupRoot, current, reservedBytes, workloadBytes)
+}
+
+func applyHostCgroupReservationAt(cgroupRoot, current string, reservedBytes, workloadBytes int64) (string, error) {
 	agentDir := filepath.Join(cgroupRoot, strings.TrimPrefix(current, "/"))
 	if err := writeCgroupValue(agentDir, sandboxMemoryMinBytesPath, reservedBytes); err != nil {
 		return "", err
@@ -58,7 +69,9 @@ func applyHostCgroupReservation(cgroupRoot string, reservedBytes, workloadBytes 
 	if err := writeCgroupValue(agentDir, sandboxMemoryLowBytesPath, reservedBytes); err != nil {
 		return "", err
 	}
-	_ = os.WriteFile(filepath.Join(agentDir, sandboxCPUWeightPath), []byte("10000"), 0o644)
+	if err := writeCgroupValue(agentDir, sandboxCPUWeightPath, 10000); err != nil {
+		return "", err
+	}
 
 	parent := filepath.Join(cgroupRoot, workloadCgroupParentName)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
