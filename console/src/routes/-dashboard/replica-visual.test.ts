@@ -146,12 +146,41 @@ describe("replicaSlots", () => {
 			],
 		});
 		expect(slots.map((slot) => slot.state)).toEqual(["ready", "draining"]);
-		expect(shouldShowReplicaFleet({
+		expect(
+			shouldShowReplicaFleet({
+				desired: 1,
+				allocationCount: 2,
+				buildFailed: false,
+				buildOpen: false,
+			}),
+		).toBe(true);
+	});
+
+	it("keeps a surge allocation starting when it sorts after the desired replicas", () => {
+		const slots = replicaSlots({
 			desired: 1,
-			allocationCount: 2,
-			buildFailed: false,
-			buildOpen: false,
-		})).toBe(true);
+			desiredGeneration: 2,
+			allocations: [
+				allocation({
+					allocationId: "a-serving",
+					healthy: true,
+					appliedRolloutGeneration: 1,
+					desiredRolloutGeneration: 1,
+					rolloutState: "serving",
+				}),
+				allocation({
+					allocationId: "z-surge",
+					healthy: false,
+					appliedRolloutGeneration: 1,
+					desiredRolloutGeneration: 2,
+					rolloutState: "starting",
+					phase: "Starting",
+				}),
+			],
+		});
+
+		expect(slots.map((slot) => slot.state)).toEqual(["rolling", "rolling"]);
+		expect(slots[1]?.phaseLabel).toBe("Starting");
 	});
 
 	it("keeps a single-replica deploy on the shared stage list until a fleet exists", () => {

@@ -94,12 +94,7 @@ export function replicaSlots({
 			});
 			continue;
 		}
-		const draining = index >= desired;
-		const state = replicaAllocationState(
-			allocation,
-			desiredGeneration,
-			draining,
-		);
+		const state = replicaAllocationState(allocation, desiredGeneration);
 		slots.push({
 			id: allocation.allocationId || `replica-${index}`,
 			index,
@@ -143,7 +138,6 @@ export function replicaRolloutCopy({
 function replicaAllocationState(
 	allocation: DashboardAllocationStatus,
 	desiredGeneration: number | undefined,
-	draining: boolean,
 ): ReplicaSlotState {
 	if (allocation.restart?.crashLoop) {
 		return "failed";
@@ -159,9 +153,6 @@ function replicaAllocationState(
 	const rolloutState = allocation.rolloutState?.toLowerCase();
 	if (rolloutState === "draining" || rolloutState === "withdrawing") {
 		return "draining";
-	}
-	if (draining) {
-		return allocation.healthy ? "draining" : "pending";
 	}
 	if (rolloutState === "starting") {
 		return "rolling";
