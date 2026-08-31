@@ -892,6 +892,8 @@ export async function updateServiceFromSession(
 				...(desiredSource ? { source: desiredSource } : {}),
 				desiredReplicaCount:
 					input.desiredReplicaCount ?? current.spec?.desiredReplicaCount,
+				rollingStrategy:
+					input.rollingStrategy ?? current.spec?.rollingStrategy,
 				runtime: {
 					env: normalizeRuntimeEnv(
 						input.runtimeEnv ?? current.spec?.runtime.env,

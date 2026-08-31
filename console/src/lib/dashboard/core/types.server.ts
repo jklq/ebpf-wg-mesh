@@ -201,6 +201,14 @@ export interface DashboardServiceSpec {
 	source?: DashboardSourceSpec;
 	runtime: DashboardRuntimeSpec;
 	desiredReplicaCount?: number;
+	rollingStrategy?: DashboardRollingStrategy;
+}
+
+export interface DashboardRollingStrategy {
+	maxUnavailable: number;
+	maxSurge: number;
+	startupTimeoutSeconds: number;
+	drainTimeoutSeconds: number;
 }
 
 export interface DashboardResolvedSourceBinding {
@@ -301,6 +309,9 @@ export interface DashboardAllocationStatus {
 	appliedRolloutGeneration: number;
 	healthyPorts: number[];
 	operatorRestartNonce?: number;
+	rolloutState?: string;
+	drainStartedAt?: Date;
+	drainDeadline?: Date;
 	restart?: {
 		restartCount: number;
 		crashLoop: boolean;
@@ -839,6 +850,7 @@ export interface UpdateServiceInput {
 	contextDir?: string;
 	restart?: DashboardRestartSpec;
 	desiredReplicaCount?: number;
+	rollingStrategy?: DashboardRollingStrategy;
 }
 
 export interface DashboardService {

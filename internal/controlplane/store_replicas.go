@@ -15,6 +15,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	allocationRolloutStarting    = "starting"
+	allocationRolloutServing     = "serving"
+	allocationRolloutWithdrawing = "withdrawing"
+	allocationRolloutDraining    = "draining"
+)
+
 func validateDesiredReplicaCount(count int32) error {
 	if count < defaultDesiredReplicaCount || count > maxDesiredReplicaCount {
 		return fmt.Errorf("%w: must be between %d and %d", errInvalidReplicaCount, defaultDesiredReplicaCount, maxDesiredReplicaCount)
@@ -23,7 +30,7 @@ func validateDesiredReplicaCount(count int32) error {
 }
 
 func allocationReady(rec allocationRecord) bool {
-	return rec.Healthy &&
+	return rec.RolloutState != allocationRolloutWithdrawing && rec.RolloutState != allocationRolloutDraining && rec.Healthy &&
 		strings.TrimSpace(rec.AllocationIP) != "" &&
 		rec.AppliedSpecRevision >= rec.DesiredSpecRevision &&
 		rec.AppliedRolloutGeneration >= rec.DesiredRolloutGeneration
@@ -197,16 +204,18 @@ func (s *Store) insertAllocationTx(ctx context.Context, tx *sql.Tx, service serv
 		DesiredSpecRevision:      service.SpecRevision,
 		DesiredRolloutGeneration: service.RolloutGeneration,
 		Phase:                    "Pending",
+		RolloutState:             allocationRolloutStarting,
 		CreatedAt:                now,
 		UpdatedAt:                now,
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
 		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
 		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, $7)`,
+		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce,
+		rollout_state, drain_started_at, drain_deadline, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, NULL, NULL, $8, $8)`,
 		alloc.ID, alloc.ServiceID, alloc.AgentID, alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration,
-		[]byte("[]"), now,
+		[]byte("[]"), alloc.RolloutState, now,
 	); err != nil {
 		return allocationRecord{}, err
 	}
@@ -335,7 +344,7 @@ const allocationSelectSQL = `SELECT a.id, a.service_id, e.project_id, s.environm
 		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
 		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
 		        a.applied_rollout_generation, a.healthy_ports, a.restart_observation_json,
-		        a.operator_restart_nonce, a.created_at
+		        a.operator_restart_nonce, a.created_at, a.rollout_state, a.drain_started_at, a.drain_deadline
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id`
@@ -364,6 +373,9 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecor
 		&restartRaw,
 		&rec.OperatorRestartNonce,
 		&rec.CreatedAt,
+		&rec.RolloutState,
+		&rec.DrainStartedAt,
+		&rec.DrainDeadline,
 	); err != nil {
 		return allocationRecord{}, err
 	}

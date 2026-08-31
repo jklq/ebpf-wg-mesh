@@ -154,11 +154,25 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		current: replicaCountValue(deployed),
 		next:    replicaCountValue(current),
 	})
+	fields = append(fields, unappliedChangeField{
+		id:      "rollingStrategy",
+		section: "Deployment",
+		field:   "Rolling strategy",
+		path:    "rollingStrategy",
+		current: rollingStrategyValue(deployed),
+		next:    rollingStrategyValue(current),
+	})
 	return fields
 }
 
 func replicaCountValue(spec *platformv1.ServiceSpec) string {
 	return strconv.Itoa(int(specReplicaCount(spec, defaultDesiredReplicaCount)))
+}
+
+func rollingStrategyValue(spec *platformv1.ServiceSpec) string {
+	strategy := canonicalRollingStrategy(spec.GetRollingStrategy())
+	return fmt.Sprintf("unavailable %d, surge %d, startup %ds, drain %ds",
+		strategy.GetMaxUnavailable(), strategy.GetMaxSurge(), strategy.GetStartupTimeoutSeconds(), strategy.GetDrainTimeoutSeconds())
 }
 
 func restartValue(restart *platformv1.ServiceRestart) string {
@@ -292,6 +306,8 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 		} else {
 			current.DesiredReplicaCount = nil
 		}
+	case "rollingStrategy":
+		current.RollingStrategy = proto.Clone(canonicalRollingStrategy(deployed.GetRollingStrategy())).(*platformv1.RollingStrategy)
 	default:
 		const envPrefix = "runtime.env."
 		const portPrefix = "runtime.ports."

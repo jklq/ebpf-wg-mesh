@@ -248,6 +248,35 @@ describe("PanelSettings replica scaling", () => {
 		).toBeGreaterThan(0);
 	});
 
+	it("queues rolling strategy changes with the rest of the spec", async () => {
+		doUpdateServiceMock.mockResolvedValue(service());
+		render(
+			<PanelSettings
+				service={service()}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		fireEvent.change(screen.getByLabelText("Max surge"), {
+			target: { value: "2" },
+		});
+		await waitFor(() =>
+			expect(doUpdateServiceMock).toHaveBeenCalledWith({
+				data: expect.objectContaining({
+					serviceId: "service-1",
+					rollingStrategy: expect.objectContaining({
+						maxUnavailable: 0,
+						maxSurge: 2,
+						startupTimeoutSeconds: 300,
+						drainTimeoutSeconds: 30,
+					}),
+				}),
+			}),
+		);
+	});
+
 	it("does not loop when a settings field is queued back into the service", async () => {
 		doUpdateServiceMock.mockResolvedValue(service());
 		function Harness() {

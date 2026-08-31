@@ -394,6 +394,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := validateServiceSpecRestart(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
+	if err := validateRollingStrategy(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
+	}
 	environment, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
@@ -460,6 +463,9 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := validateServiceSpecRestart(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
+	if err := validateRollingStrategy(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
+	}
 	current, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -514,6 +520,9 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 			if errors.Is(err, errConcurrentUpdate) {
 				return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
 			}
+			if errors.Is(err, errRolloutInProgress) || errors.Is(err, errVolumeRollingUnsupported) {
+				return nil, status.Errorf(codes.FailedPrecondition, "redeploy service: %v", err)
+			}
 			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
 		}
 	} else {
@@ -524,6 +533,9 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 			}
 			if errors.Is(err, errConcurrentUpdate) {
 				return nil, status.Errorf(codes.Aborted, "redeploy service: %v", err)
+			}
+			if errors.Is(err, errRolloutInProgress) || errors.Is(err, errVolumeRollingUnsupported) {
+				return nil, status.Errorf(codes.FailedPrecondition, "redeploy service: %v", err)
 			}
 			return nil, status.Errorf(codes.Internal, "redeploy service: %v", err)
 		}

@@ -202,10 +202,17 @@ func (s *Store) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx, servi
 		}
 		return nil
 	}
+	// The last active deployment remains active while its allocations keep
+	// serving. It becomes draining only after healthy replacements enter
+	// ingress; merely requesting a rollout must not lie about that cutover.
+	if current.State == deploymentStateActive {
+		_, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID)
+		return err
+	}
 	nextState := deploymentStateSuperseded
 	reasonCode := reasonDeploymentSuperseded
 	detail := "Superseded by a newer deployment"
-	if current.State == deploymentStateActive || current.State == deploymentStateDraining {
+	if current.State == deploymentStateDraining {
 		nextState = deploymentStateDraining
 		reasonCode = reasonDeploymentDraining
 		detail = "Draining after a newer deployment started"

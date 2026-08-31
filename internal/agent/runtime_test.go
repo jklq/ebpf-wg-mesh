@@ -16,14 +16,24 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type fakeEngine struct {
-	ensured []string
-	removed []string
-	status  map[string]serviceStatus
-	created map[string]bool
-	stopped map[string]bool
+	ensured    []string
+	removed    []string
+	drainCalls []string
+	status     map[string]serviceStatus
+	created    map[string]bool
+	stopped    map[string]bool
+	drained    map[string]bool
+	forced     map[string]bool
+}
+
+func (f *fakeEngine) DrainService(_ context.Context, allocationID string, _ time.Time) (bool, bool, error) {
+	f.drainCalls = append(f.drainCalls, allocationID)
+	return f.drained[allocationID], f.forced[allocationID], nil
 }
 
 func TestPersistDesiredServiceDoesNotRewriteUnchangedState(t *testing.T) {
@@ -509,5 +519,82 @@ func TestContainerdRuntimeRejectsIDsThatEscapeRuntimeDirectories(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "outside")); !os.IsNotExist(err) {
 		t.Fatalf("unsafe path was created: %v", err)
+	}
+}
+
+func TestContainerdRuntimeDrainSendsSIGTERMWithoutEnsure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := &fakeEngine{
+		status:  map[string]serviceStatus{"alloc-1": {AllocationIP: "fd00::10"}},
+		created: map[string]bool{"alloc-1": true},
+	}
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: engine,
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			DesiredSpecRevision:      1,
+			DesiredRolloutGeneration: 1,
+			Intent:                   agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN,
+			DrainDeadline:            timestamppb.New(time.Now().Add(time.Minute)),
+			PrivateIpv6:              "fd00::10",
+			Spec:                     &platformv1.ResolvedServiceSpec{Image: "example.com/test:1"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(engine.ensured) != 0 {
+		t.Fatalf("drain started a replacement: %#v", engine.ensured)
+	}
+	if len(engine.drainCalls) != 1 || engine.drainCalls[0] != "alloc-1" {
+		t.Fatalf("drain calls = %#v", engine.drainCalls)
+	}
+	cond := report.Services[0]
+	if cond.GetPhase() != "Draining" || cond.GetHealthy() {
+		t.Fatalf("expected draining report, got %+v", cond)
+	}
+}
+
+func TestContainerdRuntimeForceKillAfterDrainDeadline(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := &fakeEngine{
+		drained: map[string]bool{"alloc-1": true},
+		forced:  map[string]bool{"alloc-1": true},
+	}
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: engine,
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			DesiredSpecRevision:      1,
+			DesiredRolloutGeneration: 1,
+			Intent:                   agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN,
+			DrainDeadline:            timestamppb.New(time.Now().Add(-time.Second)),
+			Spec:                     &platformv1.ResolvedServiceSpec{Image: "example.com/test:1"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	cond := report.Services[0]
+	if cond.GetPhase() != "Drained" || !strings.Contains(cond.GetMessage(), "force killed") {
+		t.Fatalf("expected force-killed drain, got %+v", cond)
 	}
 }

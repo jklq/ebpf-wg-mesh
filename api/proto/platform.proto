@@ -205,6 +205,17 @@ message ServiceSpec {
   ServiceRuntime runtime = 1;
   ServiceSource source = 2;
   optional int32 desired_replica_count = 3;
+  RollingStrategy rolling_strategy = 4;
+}
+
+// RollingStrategy bounds replacement concurrency and both rollout deadlines.
+// Unset fields receive platform defaults during canonicalization. Zero is a
+// legal value for max_unavailable and max_surge.
+message RollingStrategy {
+  optional int32 max_unavailable = 1;
+  optional int32 max_surge = 2;
+  optional int32 startup_timeout_seconds = 3;
+  optional int32 drain_timeout_seconds = 4;
 }
 
 message ResolvedServiceSpec {
@@ -390,6 +401,9 @@ message AllocationStatus {
   repeated int32 healthy_ports = 13;
   RestartObservation restart = 14;
   int64 operator_restart_nonce = 15;
+  string rollout_state = 16;
+  google.protobuf.Timestamp drain_started_at = 17;
+  google.protobuf.Timestamp drain_deadline = 18;
 }
 
 message ServiceStatus {

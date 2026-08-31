@@ -272,6 +272,7 @@ export function encodeCreateServiceRequest(input: {
 				runtime: encodeRuntimeSpec(input.spec.runtime),
 				source: encodeServiceSource(input.spec.source),
 				desiredReplicaCount: input.spec.desiredReplicaCount,
+				rollingStrategy: input.spec.rollingStrategy,
 			},
 		},
 	};
@@ -290,6 +291,7 @@ export function encodeUpdateServiceRequest(input: {
 				runtime: encodeRuntimeSpec(input.spec.runtime),
 				source: encodeServiceSource(input.spec.source),
 				desiredReplicaCount: input.spec.desiredReplicaCount,
+				rollingStrategy: input.spec.rollingStrategy,
 			},
 		},
 	};
@@ -403,10 +405,30 @@ function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 		value,
 		"desiredReplicaCount",
 	);
+	const rollingStrategyValue = readOptionalRecord(value.rollingStrategy);
+	const rollingStrategy = rollingStrategyValue
+		? {
+				maxUnavailable:
+					readOptionalNumberLike(rollingStrategyValue, "maxUnavailable") ?? 0,
+				maxSurge:
+					readOptionalNumberLike(rollingStrategyValue, "maxSurge") ?? 1,
+				startupTimeoutSeconds:
+					readOptionalNumberLike(
+						rollingStrategyValue,
+						"startupTimeoutSeconds",
+					) ?? 300,
+				drainTimeoutSeconds:
+					readOptionalNumberLike(
+						rollingStrategyValue,
+						"drainTimeoutSeconds",
+					) ?? 30,
+			}
+		: undefined;
 	return {
 		source,
 		runtime,
 		...(desiredReplicaCount === undefined ? {} : { desiredReplicaCount }),
+		...(rollingStrategy === undefined ? {} : { rollingStrategy }),
 	};
 }
 
@@ -544,6 +566,9 @@ function decodeAllocationStatus(
 			readOptionalNumberLike(value, "appliedRolloutGeneration") ?? 0,
 		healthyPorts: readNumberArray(value, "healthyPorts"),
 		operatorRestartNonce: readOptionalNumberLike(value, "operatorRestartNonce"),
+		rolloutState: readOptionalString(value, "rolloutState"),
+		drainStartedAt: readOptionalDate(value, "drainStartedAt"),
+		drainDeadline: readOptionalDate(value, "drainDeadline"),
 		restart: decodeRestartObservation(value.restart),
 	};
 }

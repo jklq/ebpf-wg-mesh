@@ -114,6 +114,12 @@ export interface CreateServiceRequest {
 				};
 			};
 			desiredReplicaCount?: number;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }
@@ -167,6 +173,12 @@ export interface UpdateServiceRequest {
 				};
 			};
 			desiredReplicaCount?: number;
+			rollingStrategy?: {
+				maxUnavailable: number;
+				maxSurge: number;
+				startupTimeoutSeconds: number;
+				drainTimeoutSeconds: number;
+			};
 		};
 	};
 }

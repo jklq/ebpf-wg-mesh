@@ -143,6 +143,17 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 		return buildRunRecord{}, err
 	}
 
+	targetGeneration := service.RolloutGeneration + 1
+	var currentRolloutState string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT state FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
+		service.ID, service.RolloutGeneration,
+	).Scan(&currentRolloutState); err != nil && err != sql.ErrNoRows {
+		return buildRunRecord{}, err
+	}
+	if currentRolloutState == rolloutStatePendingBuild {
+		targetGeneration = service.RolloutGeneration
+	}
 	rec := buildRunRecord{
 		ID:                      mustID(),
 		ServiceID:               service.ID,
@@ -155,7 +166,7 @@ func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, s
 		SourceRevisionID:        revision.ID,
 		SourceSnapshotID:        snapshot.ID,
 		SourceSnapshotDigest:    snapshot.Digest,
-		TargetRolloutGeneration: service.RolloutGeneration + 1,
+		TargetRolloutGeneration: targetGeneration,
 		BuildRecipe:             cloneBuildRecipe(buildRecipe),
 		QueuedAt:                now,
 	}
@@ -510,7 +521,37 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		if err != nil {
 			return err
 		}
-		nextRolloutGeneration := service.RolloutGeneration + 1
+		nextRolloutGeneration := service.RolloutGeneration
+		var currentRolloutState string
+		var currentRolloutSpec int64
+		err = tx.QueryRowContext(ctx,
+			`SELECT state, spec_revision FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
+			build.ServiceID, service.RolloutGeneration,
+		).Scan(&currentRolloutState, &currentRolloutSpec)
+		usePendingRollout := err == nil && currentRolloutState == rolloutStatePendingBuild && currentRolloutSpec == service.SpecRevision
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if !usePendingRollout && (currentRolloutState == rolloutStateInProgress || currentRolloutState == rolloutStatePendingBuild || serviceVolumeName(service.Spec) != "") {
+			detail := "Rollout rejected because another rollout is still in progress"
+			if serviceVolumeName(service.Spec) != "" {
+				detail = errVolumeRollingUnsupported.Error()
+			}
+			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
+				ToState:        deploymentStateFailed,
+				Actor:          deploymentActor{Kind: deploymentCauseSystem},
+				ReasonCode:     reasonDeploymentFailed,
+				Detail:         detail,
+				ImageDigest:    imageDigest,
+				HasImageDigest: true,
+			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			return nil
+		}
+		if !usePendingRollout {
+			nextRolloutGeneration++
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE services
 			    SET current_resolved_image = $1,
@@ -523,7 +564,16 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		); err != nil {
 			return err
 		}
-		if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", now); err != nil {
+		if usePendingRollout {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE service_rollouts
+				    SET state = $1, image_digest = $2, build_id = $3
+				  WHERE service_id = $4 AND rollout_generation = $5`,
+				rolloutStateInProgress, imageDigest, build.ID, build.ServiceID, nextRolloutGeneration,
+			); err != nil {
+				return err
+			}
+		} else if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", now); err != nil {
 			return err
 		}
 		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
@@ -540,20 +590,10 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations
-			    SET desired_spec_revision = $1,
-			        desired_rollout_generation = $2,
-			        phase = $3,
-			        message = $4,
-			        healthy = $5,
-			        updated_at = $6
-			  WHERE service_id = $7`,
-			service.SpecRevision, nextRolloutGeneration, "Pending", "", false, now, build.ServiceID,
-		); err != nil {
+		if _, err := s.advanceRolloutTx(ctx, tx, build.ServiceID, now); err != nil {
 			return err
 		}
-		return s.bumpDesiredRevisionsTx(ctx, tx, []string{service.AllocatedAgentID})
+		return s.bumpAllDesiredRevisionsTx(ctx, tx)
 	})
 }
 
