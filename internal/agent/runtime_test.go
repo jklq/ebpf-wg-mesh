@@ -522,7 +522,7 @@ func TestContainerdRuntimeRejectsIDsThatEscapeRuntimeDirectories(t *testing.T) {
 	}
 }
 
-func TestContainerdRuntimeDrainSendsSIGTERMWithoutEnsure(t *testing.T) {
+func TestContainerdRuntimeDrainDoesNotEnsureReplacement(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()

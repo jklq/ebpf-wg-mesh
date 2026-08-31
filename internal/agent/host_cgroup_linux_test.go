@@ -5,7 +5,10 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"ebof-wg-mesh/internal/config"
 )
 
 func TestApplyHostCgroupReservationWritesAgentAndWorkloadLimits(t *testing.T) {
@@ -25,22 +28,14 @@ func TestApplyHostCgroupReservationWritesAgentAndWorkloadLimits(t *testing.T) {
 
 	reserved := int64(512 * 1024 * 1024)
 	workload := int64(2048 * 1024 * 1024)
-	// Point the helper at the fake tree by writing files through applyHostCgroupReservation
-	// after substituting the current process path is not possible, so exercise writeCgroupValue
-	// and the parent directory contract directly.
-	if err := writeCgroupValue(agentDir, sandboxMemoryMinBytesPath, reserved); err != nil {
+	parentName, err := applyHostCgroupReservationAt(root, "/system.slice/ebpf-wg-mesh-agent.service", reserved, workload)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeCgroupValue(agentDir, sandboxMemoryLowBytesPath, reserved); err != nil {
-		t.Fatal(err)
+	if parentName != workloadCgroupParentName {
+		t.Fatalf("workload cgroup parent = %q", parentName)
 	}
-	parent := filepath.Join(root, workloadCgroupParentName)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeCgroupValue(parent, sandboxMemoryMaxBytesPath, workload); err != nil {
-		t.Fatal(err)
-	}
+	parent := filepath.Join(root, parentName)
 
 	gotMin, err := os.ReadFile(filepath.Join(agentDir, "memory.min"))
 	if err != nil {
@@ -49,12 +44,61 @@ func TestApplyHostCgroupReservationWritesAgentAndWorkloadLimits(t *testing.T) {
 	if string(gotMin) != "536870912" {
 		t.Fatalf("memory.min = %s", gotMin)
 	}
+	gotLow, err := os.ReadFile(filepath.Join(agentDir, "memory.low"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotLow) != "536870912" {
+		t.Fatalf("memory.low = %s", gotLow)
+	}
+	gotWeight, err := os.ReadFile(filepath.Join(agentDir, "cpu.weight"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotWeight) != "10000" {
+		t.Fatalf("cpu.weight = %s", gotWeight)
+	}
 	gotMax, err := os.ReadFile(filepath.Join(parent, "memory.max"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(gotMax) != "2147483648" {
 		t.Fatalf("memory.max = %s", gotMax)
+	}
+}
+
+func TestProtectAgentRuntimeRejectsMissingProductionReservation(t *testing.T) {
+	_, err := protectAgentRuntime(config.AgentConfig{
+		Profile: config.ProfileProduction,
+		Node: config.NodeConfig{Resources: config.NodeResourcesConfig{
+			MemoryMebibytes:         4096,
+			ReservedMemoryMebibytes: 0,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "reserved memory") {
+		t.Fatalf("protectAgentRuntime error = %v", err)
+	}
+}
+
+func TestProtectAgentRuntimeRejectsDisabledProductionCgroups(t *testing.T) {
+	_, err := protectAgentRuntime(config.AgentConfig{
+		Profile: config.ProfileProduction,
+		Runtime: config.RuntimeConfig{DisableCgroups: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "disabled in production") {
+		t.Fatalf("protectAgentRuntime error = %v", err)
+	}
+}
+
+func TestProtectAgentRuntimeAllowsMissingDevelopmentReservation(t *testing.T) {
+	parent, err := protectAgentRuntime(config.AgentConfig{
+		Profile: config.ProfileDevelopment,
+		Node: config.NodeConfig{Resources: config.NodeResourcesConfig{
+			MemoryMebibytes: 4096,
+		}},
+	})
+	if err != nil || parent != "" {
+		t.Fatalf("protectAgentRuntime = %q, %v", parent, err)
 	}
 }
 
