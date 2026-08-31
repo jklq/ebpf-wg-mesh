@@ -107,6 +107,8 @@ describe("platform grpc codec", () => {
 					internalHostname: "accurate-reflection.mesh.internal",
 					specRevision: 2,
 					rolloutGeneration: 1,
+					createdAt: "2026-04-24T10:00:00Z",
+					updatedAt: "2026-04-24T11:00:00Z",
 					spec: {
 						runtime: {
 							env: {},
@@ -125,9 +127,11 @@ describe("platform grpc codec", () => {
 		if (!service.spec) {
 			throw new Error("decoded service spec is missing");
 		}
-		expect(service.internalHostname).toBe(
-			"accurate-reflection.mesh.internal",
-		);
+		expect(service.internalHostname).toBe("accurate-reflection.mesh.internal");
+		expect(service.specRevision).toBe(2);
+		expect(service.rolloutGeneration).toBe(1);
+		expect(service.createdAt).toEqual(new Date("2026-04-24T10:00:00Z"));
+		expect(service.updatedAt).toEqual(new Date("2026-04-24T11:00:00Z"));
 
 		expect(service.spec.runtime.healthCheck).toEqual({
 			path: "/ready",

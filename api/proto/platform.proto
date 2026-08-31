@@ -204,6 +204,7 @@ message ServiceSource {
 message ServiceSpec {
   ServiceRuntime runtime = 1;
   ServiceSource source = 2;
+  optional int32 desired_replica_count = 3;
 }
 
 message ResolvedServiceSpec {
@@ -485,7 +486,6 @@ message RedeployServiceRequest {
 message ScaleServiceRequest {
   string service_id = 1;
   int32 desired_replica_count = 2;
-  bool confirm_scale_to_zero = 3;
 }
 
 message RestartServiceRequest {

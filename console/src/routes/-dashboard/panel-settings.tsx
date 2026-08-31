@@ -1,5 +1,5 @@
-import { Github, Loader2, Pencil, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Github, Pencil, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
 	DashboardHomeState,
@@ -7,85 +7,82 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 
 import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
+import { ReplicaScaleControls } from "./replica-scale";
 import { RepositoryPicker } from "./repository-picker";
 import { doDeleteService, doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
-import { ModalOverlay } from "./ui";
+import { ModalOverlay, PanelSection } from "./ui";
+import { useAutoQueuedPersist } from "./use-auto-queued-persist";
 
 const MANUAL_SELECTOR = /^[\w.-]+\/[\w.-]+$/;
+
+type SettingsDraft = {
+	repoSelector: string;
+	trackedRef: string;
+	dockerfilePath: string;
+	contextDir: string;
+	restartPolicy: "on-failure" | "always" | "never";
+	maxRestarts: string;
+	windowSeconds: string;
+};
 
 export function PanelSettings({
 	service,
 	state,
 	onSaved,
 	onDeleted,
+	onSavingChange,
 }: {
 	service: DashboardServiceRecord;
 	state: DashboardHomeState;
 	onSaved: (service: DashboardServiceRecord) => void;
 	onDeleted: (serviceId: string) => void;
+	onSavingChange?: (key: string, saving: boolean) => void;
 }) {
-	const source = service.spec?.source;
 	const changedFields = new Set(
 		(service.unappliedChanges ?? []).map((change) => change.id),
 	);
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
-	const [repoSelector, setRepoSelector] = useState(
-		source?.repositorySelector ?? "",
-	);
-	const [trackedRef, setTrackedRef] = useState(source?.trackedRef ?? "");
-	const [dockerfilePath, setDockerfilePath] = useState(
-		source?.buildRecipe?.dockerfilePath ?? "",
-	);
-	const [contextDir, setContextDir] = useState(
-		source?.buildRecipe?.contextDir ?? ".",
-	);
-	const [restartPolicy, setRestartPolicy] = useState(
-		service.spec?.runtime.restart?.policy ?? "on-failure",
-	);
-	const [maxRestarts, setMaxRestarts] = useState(
-		String(service.spec?.runtime.restart?.maxRestarts ?? 5),
-	);
-	const [windowSeconds, setWindowSeconds] = useState(
-		String(service.spec?.runtime.restart?.windowSeconds ?? 300),
-	);
-	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState<string>();
-	const [success, setSuccess] = useState(false);
-	const [pickingRepo, setPickingRepo] = useState(false);
+	const incoming = settingsDraftFromService(service);
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [deleteError, setDeleteError] = useState<string>();
+	const [pickingRepo, setPickingRepo] = useState(false);
+	const reportReplicaSaving = useCallback(
+		(saving: boolean) => onSavingChange?.("replicas", saving),
+		[onSavingChange],
+	);
 
-	const handleSave = async () => {
-		setError(undefined);
-		setSuccess(false);
-		setSaving(true);
-		try {
+	const { draft, setDraft, error, saving } = useAutoQueuedPersist({
+		serviceId: service.id,
+		incoming,
+		incomingEpoch: service.specRevision ?? 0,
+		enabled: (next) => next.repoSelector.trim() !== "",
+		persist: async (next) => {
 			const updated = await doUpdateService({
 				data: {
 					serviceId: service.id,
-					repositorySelector: repoSelector,
-					trackedRef,
-					dockerfilePath,
-					contextDir,
+					repositorySelector: next.repoSelector,
+					trackedRef: next.trackedRef,
+					dockerfilePath: next.dockerfilePath,
+					contextDir: next.contextDir,
 					restart: {
-						policy: restartPolicy,
-						maxRestarts: Number(maxRestarts) || 0,
-						windowSeconds: Number(windowSeconds) || 0,
+						policy: next.restartPolicy,
+						maxRestarts: Number(next.maxRestarts) || 0,
+						windowSeconds: Number(next.windowSeconds) || 0,
 					},
 				},
 			});
-			setSuccess(true);
 			onSaved(updated);
-		} catch (e) {
-			setError(formatError(e));
-		} finally {
-			setSaving(false);
-		}
-	};
+		},
+	});
+
+	useEffect(() => {
+		onSavingChange?.("settings", saving);
+		return () => onSavingChange?.("settings", false);
+	}, [onSavingChange, saving]);
 
 	const handleDelete = async () => {
 		setDeleting(true);
@@ -101,180 +98,227 @@ export function PanelSettings({
 	};
 
 	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-			<div>
-				<p className="section-header">Source</p>
-				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-					<div>
-						<p className="field-label">Source Repo</p>
-						<div
-							className={`source-repo-card ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
+		<div className="settings-stack">
+			<PanelSection
+				title="Source"
+				lede="The repository and branch this service builds from."
+			>
+				<div>
+					<p className="field-label">Source repo</p>
+					<div
+						className={`source-repo-card ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
+					>
+						<Github size={16} aria-hidden="true" />
+						<span className="source-repo-name">
+							{draft.repoSelector || "No repository selected"}
+						</span>
+						<button
+							type="button"
+							className="source-repo-edit"
+							aria-label="Change source repository"
+							title="Change source repository"
+							onClick={() => setPickingRepo(true)}
 						>
-							<Github size={16} aria-hidden="true" />
-							<span className="source-repo-name">
-								{repoSelector || "No repository selected"}
-							</span>
-							<button
-								type="button"
-								className="source-repo-edit"
-								aria-label="Change source repository"
-								title="Change source repository"
-								onClick={() => setPickingRepo(true)}
-							>
-								<Pencil size={14} />
-							</button>
-						</div>
-					</div>
-
-					<div>
-						<label className="field-label" htmlFor={trackedRefId}>
-							Branch
-						</label>
-						<input
-							id={trackedRefId}
-							className={`field-input ${changedFields.has("source.trackedRef") ? "unapplied-field" : ""}`}
-							value={trackedRef}
-							onChange={(e) => setTrackedRef(e.target.value)}
-							placeholder="main"
-						/>
+							<Pencil size={14} />
+						</button>
 					</div>
 				</div>
-			</div>
 
-			<div>
-				<p className="section-header">Build</p>
-				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-					<div>
-						<label className="field-label" htmlFor={dockerfilePathId}>
-							Dockerfile path
-						</label>
-						<input
-							id={dockerfilePathId}
-							className={`field-input ${changedFields.has("source.buildRecipe.dockerfilePath") ? "unapplied-field" : ""}`}
-							value={dockerfilePath}
-							onChange={(e) => setDockerfilePath(e.target.value)}
-							placeholder="Dockerfile"
-						/>
-					</div>
-
-					<div>
-						<label className="field-label" htmlFor={contextDirId}>
-							Build context directory
-						</label>
-						<input
-							id={contextDirId}
-							className={`field-input ${changedFields.has("source.buildRecipe.contextDir") ? "unapplied-field" : ""}`}
-							value={contextDir}
-							onChange={(e) => setContextDir(e.target.value)}
-							placeholder="."
-						/>
-					</div>
+				<div>
+					<label className="field-label" htmlFor={trackedRefId}>
+						Branch
+					</label>
+					<input
+						id={trackedRefId}
+						className={`field-input ${changedFields.has("source.trackedRef") ? "unapplied-field" : ""}`}
+						value={draft.trackedRef}
+						onChange={(e) =>
+							setDraft((current) => ({
+								...current,
+								trackedRef: e.target.value,
+							}))
+						}
+						placeholder="main"
+					/>
 				</div>
-			</div>
+			</PanelSection>
 
-			<div>
-				<p className="section-header">Process restart</p>
-				<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-					<fieldset className={changedFields.has("runtime.restart") ? "unapplied-field" : ""}>
-						<legend className="field-label">Policy</legend>
-						<label>
-							<input
-								type="radio"
-								name={`service-restart-policy-${service.id}`}
-								checked={restartPolicy === "on-failure"}
-								onChange={() => setRestartPolicy("on-failure")}
-							/>
-							On failure
-						</label>
-						<label>
-							<input
-								type="radio"
-								name={`service-restart-policy-${service.id}`}
-								checked={restartPolicy === "always"}
-								onChange={() => setRestartPolicy("always")}
-							/>
-							Always
-						</label>
-						<label>
-							<input
-								type="radio"
-								name={`service-restart-policy-${service.id}`}
-								checked={restartPolicy === "never"}
-								onChange={() => setRestartPolicy("never")}
-							/>
-							Never
-						</label>
-					</fieldset>
+			<PanelSection
+				title="Build"
+				lede="How the image is assembled before it reaches the mesh."
+			>
+				<div>
+					<label className="field-label" htmlFor={dockerfilePathId}>
+						Dockerfile path
+					</label>
+					<input
+						id={dockerfilePathId}
+						className={`field-input ${changedFields.has("source.buildRecipe.dockerfilePath") ? "unapplied-field" : ""}`}
+						value={draft.dockerfilePath}
+						onChange={(e) =>
+							setDraft((current) => ({
+								...current,
+								dockerfilePath: e.target.value,
+							}))
+						}
+						placeholder="Dockerfile"
+					/>
+				</div>
+
+				<div>
+					<label className="field-label" htmlFor={contextDirId}>
+						Build context directory
+					</label>
+					<input
+						id={contextDirId}
+						className={`field-input ${changedFields.has("source.buildRecipe.contextDir") ? "unapplied-field" : ""}`}
+						value={draft.contextDir}
+						onChange={(e) =>
+							setDraft((current) => ({
+								...current,
+								contextDir: e.target.value,
+							}))
+						}
+						placeholder="."
+					/>
+				</div>
+			</PanelSection>
+
+			<ReplicaScaleControls
+				service={service}
+				onQueued={onSaved}
+				onSavingChange={reportReplicaSaving}
+			/>
+
+			<PanelSection
+				title="Process restart"
+				lede="What happens when the process exits."
+			>
+				<fieldset
+					className={`choice-rail ${
+						changedFields.has("runtime.restart") ? "unapplied-field" : ""
+					}`}
+				>
+					<legend className="field-label">Policy</legend>
+					<label
+						className={draft.restartPolicy === "on-failure" ? "active" : ""}
+					>
+						<input
+							type="radio"
+							name={`service-restart-policy-${service.id}`}
+							checked={draft.restartPolicy === "on-failure"}
+							onChange={() =>
+								setDraft((current) => ({
+									...current,
+									restartPolicy: "on-failure",
+								}))
+							}
+						/>
+						On failure
+					</label>
+					<label className={draft.restartPolicy === "always" ? "active" : ""}>
+						<input
+							type="radio"
+							name={`service-restart-policy-${service.id}`}
+							checked={draft.restartPolicy === "always"}
+							onChange={() =>
+								setDraft((current) => ({
+									...current,
+									restartPolicy: "always",
+								}))
+							}
+						/>
+						Always
+					</label>
+					<label className={draft.restartPolicy === "never" ? "active" : ""}>
+						<input
+							type="radio"
+							name={`service-restart-policy-${service.id}`}
+							checked={draft.restartPolicy === "never"}
+							onChange={() =>
+								setDraft((current) => ({
+									...current,
+									restartPolicy: "never",
+								}))
+							}
+						/>
+						Never
+					</label>
+				</fieldset>
+				<div className="field-grid">
 					<div>
-						<label className="field-label" htmlFor={`service-restart-max-${service.id}`}>
+						<label
+							className="field-label"
+							htmlFor={`service-restart-max-${service.id}`}
+						>
 							Max restarts
 						</label>
 						<input
 							id={`service-restart-max-${service.id}`}
 							className="field-input"
-							value={maxRestarts}
-							onChange={(e) => setMaxRestarts(e.target.value)}
+							value={draft.maxRestarts}
+							onChange={(e) =>
+								setDraft((current) => ({
+									...current,
+									maxRestarts: e.target.value,
+								}))
+							}
 							inputMode="numeric"
 						/>
 					</div>
 					<div>
-						<label className="field-label" htmlFor={`service-restart-window-${service.id}`}>
+						<label
+							className="field-label"
+							htmlFor={`service-restart-window-${service.id}`}
+						>
 							Retry window (seconds)
 						</label>
 						<input
 							id={`service-restart-window-${service.id}`}
 							className="field-input"
-							value={windowSeconds}
-							onChange={(e) => setWindowSeconds(e.target.value)}
+							value={draft.windowSeconds}
+							onChange={(e) =>
+								setDraft((current) => ({
+									...current,
+									windowSeconds: e.target.value,
+								}))
+							}
 							inputMode="numeric"
 						/>
 					</div>
 				</div>
-			</div>
+			</PanelSection>
 
 			{error && <p className="error-msg">{error}</p>}
-			{success && (
-				<p className="success-msg">
-					Settings saved. Deploy the pending changes when ready.
-				</p>
-			)}
 
-			<button
-				type="button"
-				className="btn-primary"
-				onClick={handleSave}
-				disabled={saving || repoSelector.trim() === ""}
-				style={{ alignSelf: "flex-start" }}
+			<PanelSection
+				title="Danger zone"
+				tone="danger"
+				lede="Irreversible. The service and its deployments leave this environment."
 			>
-				{saving ? (
-					<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
-				) : null}
-				{saving ? "Saving…" : "Save changes"}
-			</button>
-
-			<div className="danger-zone">
-				<p className="section-header danger">Danger zone</p>
-				<div className="danger-zone-row">
-					<div>
-						<strong>Delete this service</strong>
-						<span>
-							Removes {service.name} and its deployments from this environment.
-							This cannot be undone.
-						</span>
+				<div className="danger-zone">
+					<div className="danger-zone-row">
+						<div>
+							<strong>Delete this service</strong>
+							<span>
+								Removes {service.name} from this environment. This cannot be
+								undone.
+							</span>
+						</div>
+						<button
+							type="button"
+							className="btn-danger-outline"
+							onClick={() => {
+								setDeleteError(undefined);
+								setConfirmingDelete(true);
+							}}
+						>
+							<Trash2 size={13} />
+							Delete service
+						</button>
 					</div>
-					<button
-						type="button"
-						className="btn-danger-outline"
-						onClick={() => {
-							setDeleteError(undefined);
-							setConfirmingDelete(true);
-						}}
-					>
-						<Trash2 size={13} />
-						Delete service
-					</button>
 				</div>
-			</div>
+			</PanelSection>
 
 			{confirmingDelete && (
 				<ConfirmDeleteDialog
@@ -300,16 +344,34 @@ export function PanelSettings({
 			{pickingRepo && (
 				<SourceRepositoryDialog
 					repositories={state.repositories}
-					repoSelector={repoSelector}
+					repoSelector={draft.repoSelector}
 					onClose={() => setPickingRepo(false)}
 					onSelect={(selector) => {
-						setRepoSelector(selector);
+						setDraft((current) => ({
+							...current,
+							repoSelector: selector,
+						}));
 						setPickingRepo(false);
 					}}
 				/>
 			)}
 		</div>
 	);
+}
+
+function settingsDraftFromService(
+	service: DashboardServiceRecord,
+): SettingsDraft {
+	const source = service.spec?.source;
+	return {
+		repoSelector: source?.repositorySelector ?? "",
+		trackedRef: source?.trackedRef ?? "",
+		dockerfilePath: source?.buildRecipe?.dockerfilePath ?? "",
+		contextDir: source?.buildRecipe?.contextDir ?? ".",
+		restartPolicy: service.spec?.runtime.restart?.policy ?? "on-failure",
+		maxRestarts: String(service.spec?.runtime.restart?.maxRestarts ?? 5),
+		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
+	};
 }
 
 function SourceRepositoryDialog({

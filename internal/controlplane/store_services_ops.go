@@ -81,7 +81,16 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 			return serviceRecord{}, err
 		}
 	}
-	if err := validateVolumeReplicaCompatibility(spec, defaultDesiredReplicaCount); err != nil {
+	if spec == nil {
+		spec = &platformv1.ServiceSpec{}
+	}
+	if !specHasDesiredReplicaCount(spec) {
+		spec.DesiredReplicaCount = replicaCountPtr(defaultDesiredReplicaCount)
+	}
+	if err := validateDesiredReplicaCount(spec.GetDesiredReplicaCount()); err != nil {
+		return serviceRecord{}, err
+	}
+	if err := validateVolumeReplicaCompatibility(spec, spec.GetDesiredReplicaCount()); err != nil {
 		return serviceRecord{}, err
 	}
 	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, agentID)
@@ -111,7 +120,7 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 		return serviceRecord{}, err
 	}
 	rec.LatestDeployment = &dep
-	rec.DesiredReplicaCount = defaultDesiredReplicaCount
+	rec.DesiredReplicaCount = specReplicaCount(spec, defaultDesiredReplicaCount)
 	if _, err := s.reconcileServiceReplicasTx(ctx, tx, rec, agentID, now); err != nil {
 		return serviceRecord{}, err
 	}
@@ -132,6 +141,12 @@ func (s *Store) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environ
 func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID string) (serviceRecord, error) {
 	now := time.Now().UTC()
 	spec = canonicalServiceSpec(spec)
+	if spec == nil {
+		spec = &platformv1.ServiceSpec{}
+	}
+	if !specHasDesiredReplicaCount(spec) {
+		spec.DesiredReplicaCount = replicaCountPtr(defaultDesiredReplicaCount)
+	}
 	rec := serviceRecord{
 		ID:                  mustID(),
 		EnvironmentID:       environment.ID,
@@ -140,7 +155,7 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 		Spec:                spec,
 		SpecRevision:        1,
 		AllocatedAgentID:    agentID,
-		DesiredReplicaCount: defaultDesiredReplicaCount,
+		DesiredReplicaCount: specReplicaCount(spec, defaultDesiredReplicaCount),
 		CreatedAt:           now,
 		UpdatedAt:           now,
 		PendingChanges:      true,

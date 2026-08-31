@@ -1,8 +1,8 @@
 import {
 	ArrowLeft,
-	CheckCircle2,
-	Circle,
-	Clock3,
+	Boxes,
+	EyeOff,
+	Globe2,
 	Loader2,
 	RefreshCw,
 	Search,
@@ -15,18 +15,36 @@ import type {
 	DashboardBuildStatus,
 	DashboardDeploymentRecord,
 	DashboardDeploymentStage,
-	DashboardDeploymentStageState,
 	DashboardDeploymentStatus,
+	DashboardDomainBinding,
 	DashboardProject,
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
-import { fetchServiceDeployments, fetchServiceLogs } from "./server-fns";
+import {
+	buildStepHint,
+	deploymentBadgeLabel,
+	deploymentCauseLabel,
+	deploymentProgressCopy,
+	extractMissingEnvKeys,
+	focusDeploymentStage,
+	isInProgressDeploymentState,
+	partitionDeployments,
+	selectInlineLogSnippet,
+	trafficRetentionCopy,
+} from "./deployment-inline";
+import {
+	doRedeployService,
+	fetchServiceDeployments,
+	fetchServiceLogs,
+} from "./server-fns";
 import { shortId, shortSha } from "./service-utils";
+import { usePolling } from "./use-polling";
 
 type LogTypeFilter = "all" | "deploy" | "build" | "runtime";
+type DeploymentCardTone = "running" | "active" | "draining" | "failed";
 
 type DeploymentLogTarget = {
 	id: string;
@@ -42,21 +60,32 @@ export function PanelDeployments({
 	service,
 	status,
 	project,
+	domains = [],
+	onOpenVariables,
+	onRedeployed,
 }: {
 	service: DashboardServiceRecord;
 	status: DashboardServiceStatus | null;
 	project: DashboardProject | undefined;
+	domains?: DashboardDomainBinding[];
+	onOpenVariables?: (key: string) => void;
+	onRedeployed?: (status: DashboardServiceStatus) => void;
 }) {
 	const currentService = status?.service ?? service;
 	const deploymentStatus =
 		currentService.latestDeployment ?? service.latestDeployment;
 	const build = currentService.latestBuild ?? service.latestBuild;
 	const allocation = status?.allocation;
+	const publicDomain = domains.find(
+		(binding) =>
+			binding.serviceId === currentService.id &&
+			binding.ownershipState !== "unverified",
+	)?.hostname;
+	const replicaCount = currentService.desiredReplicaCount ?? 1;
 	const rolloutGeneration =
 		deploymentStatus?.rolloutGeneration ||
 		allocation?.desiredRolloutGeneration ||
 		currentService.rolloutGeneration;
-	const activeRollout = hasActiveDeployment(deploymentStatus, build);
 	const [deployments, setDeployments] = useState<
 		Array<DashboardDeploymentRecord>
 	>([]);
@@ -65,6 +94,7 @@ export function PanelDeployments({
 	>([]);
 	const [deploymentsError, setDeploymentsError] = useState<string>();
 	const [logTarget, setLogTarget] = useState<DeploymentLogTarget | null>(null);
+	const [historyOpen, setHistoryOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const lastObservedDeployment = useRef<DashboardDeploymentRecord | null>(null);
 
@@ -104,11 +134,52 @@ export function PanelDeployments({
 		return () => window.clearInterval(id);
 	}, []);
 
-	useEffect(() => {
-		if (!activeRollout) return;
-		const id = window.setInterval(() => void loadDeployments(), 5000);
-		return () => window.clearInterval(id);
-	}, [activeRollout, loadDeployments]);
+	const currentRecord = useMemo(
+		() =>
+			createDeploymentRecord({
+				serviceId: service.id,
+				build,
+				allocation,
+				rolloutGeneration,
+				isCurrent: true,
+				status: deploymentStatus,
+			}),
+		[service.id, build, allocation, rolloutGeneration, deploymentStatus],
+	);
+
+	const mergedDeployments = useMemo(
+		() =>
+			mergeDeploymentRecords([
+				...sessionDeployments,
+				...deployments,
+				currentRecord,
+			]),
+		[sessionDeployments, deployments, currentRecord],
+	);
+
+	const { live: liveDeployments, history: previousDeployments } =
+		useMemo(() => {
+			const partitioned = partitionDeployments(mergedDeployments);
+			return {
+				live: partitioned.live.filter((entry) =>
+					shouldRenderDeploymentHistoryEntry(entry, currentService),
+				),
+				history: partitioned.history.filter((entry) =>
+					shouldRenderDeploymentHistoryEntry(entry, currentService),
+				),
+			};
+		}, [mergedDeployments, currentService]);
+
+	const shouldPollDeployments = liveDeployments.some(
+		(entry) =>
+			isInProgressDeploymentState(entry.status?.state) ||
+			hasActiveDeployment(entry.status, entry.build),
+	);
+
+	usePolling(loadDeployments, {
+		enabled: shouldPollDeployments,
+		intervalMs: 5000,
+	});
 
 	useEffect(() => {
 		if (!logTarget) return;
@@ -123,19 +194,11 @@ export function PanelDeployments({
 	}, [logTarget]);
 
 	useEffect(() => {
-		const currentDeployment = createDeploymentRecord({
-			serviceId: service.id,
-			build,
-			allocation,
-			rolloutGeneration,
-			isCurrent: true,
-			status: deploymentStatus,
-		});
 		const previousDeployment = lastObservedDeployment.current;
 
 		if (
 			previousDeployment &&
-			!isSameDeploymentRecord(previousDeployment, currentDeployment) &&
+			!isSameDeploymentRecord(previousDeployment, currentRecord) &&
 			hasDeploymentIdentity(previousDeployment)
 		) {
 			setSessionDeployments((currentSessionDeployments) =>
@@ -149,80 +212,98 @@ export function PanelDeployments({
 			);
 		}
 
-		lastObservedDeployment.current = currentDeployment;
-	}, [service.id, build, allocation, rolloutGeneration, deploymentStatus]);
-
-	const previousDeployments = useMemo(
-		() =>
-			mergeDeploymentRecords([...sessionDeployments, ...deployments]).filter(
-				(entry) =>
-					!isCurrentDeployment(entry, build?.buildId, rolloutGeneration) &&
-					shouldRenderDeploymentHistoryEntry(entry, currentService),
-			),
-		[
-			deployments,
-			sessionDeployments,
-			build?.buildId,
-			rolloutGeneration,
-			currentService,
-		],
-	);
+		lastObservedDeployment.current = currentRecord;
+	}, [currentRecord]);
 
 	return (
 		<div className="deployments-panel">
 			<div className="deployments-list">
-				<CurrentDeploymentCard
-					build={build}
-					allocation={allocation}
-					status={deploymentStatus}
-					logsEnabled={Boolean(project)}
-					nowMs={nowMs}
-					onOpenLogs={() =>
-						setLogTarget({
-							id: build?.buildId ?? `${service.id}-current`,
-							title: deploymentTitle(build, true),
-							subtitle: deploymentSubtitle(build, rolloutGeneration, nowMs),
-							build,
-							allocation,
-							rolloutGeneration,
-							active: activeRollout,
-						})
-					}
-				/>
+				<div className="deployments-summary">
+					<div className="deployments-summary-item">
+						{publicDomain ? <Globe2 size={15} /> : <EyeOff size={15} />}
+						<span>{publicDomain ?? "Unexposed service"}</span>
+					</div>
+					<div className="deployments-summary-item">
+						<Boxes size={15} />
+						<span>
+							{replicaCount} {replicaCount === 1 ? "Replica" : "Replicas"}
+						</span>
+					</div>
+				</div>
+				<div className="deployment-live-list">
+					{liveDeployments.map((entry) => (
+						<DeploymentCard
+							key={deploymentRecordKey(entry)}
+							service={currentService}
+							record={entry}
+							logsEnabled={Boolean(project)}
+							nowMs={nowMs}
+							onOpenVariables={onOpenVariables}
+							onRedeployed={onRedeployed}
+							onOpenLogs={() =>
+								setLogTarget({
+									id: deploymentRecordKey(entry),
+									title: deploymentTitle(entry.build, entry.isCurrent),
+									subtitle: deploymentSubtitle(
+										entry.build,
+										entry.rolloutGeneration,
+										nowMs,
+									),
+									build: entry.build,
+									allocation: entry.allocation,
+									rolloutGeneration: entry.rolloutGeneration,
+									active: hasActiveDeployment(entry.status, entry.build),
+								})
+							}
+						/>
+					))}
+				</div>
 
 				{previousDeployments.length > 0 && (
 					<section className="deployment-history">
-						<div className="deployment-section-heading">Previous</div>
-						<div className="deployment-history-list">
-							{previousDeployments.map((entry) => (
-								<DeploymentHistoryRow
-									key={deploymentRecordKey(entry)}
-									build={entry.build}
-									allocation={entry.allocation}
-									status={entry.status}
-									logsEnabled={Boolean(project)}
-									nowMs={nowMs}
-									onOpenLogs={() =>
-										setLogTarget({
-											id: deploymentRecordKey(entry),
-											title: deploymentTitle(entry.build, false),
-											subtitle: deploymentSubtitle(
-												entry.build,
-												entry.rolloutGeneration,
-												nowMs,
-											),
-											build: entry.build,
-											allocation: entry.allocation,
-											rolloutGeneration: entry.rolloutGeneration,
-											active: hasActiveDeployment(
-												entry.status,
-												entry.build,
-											),
-										})
-									}
-								/>
-							))}
-						</div>
+						<button
+							type="button"
+							className="deployment-history-toggle"
+							aria-expanded={historyOpen}
+							onClick={() => setHistoryOpen((open) => !open)}
+						>
+							<span className="deployment-history-chevron" aria-hidden>
+								{historyOpen ? "▾" : "▸"}
+							</span>
+							History
+							<span className="deployment-history-count">
+								{previousDeployments.length}
+							</span>
+						</button>
+						{historyOpen && (
+							<div className="deployment-history-list">
+								{previousDeployments.map((entry) => (
+									<DeploymentHistoryRow
+										key={deploymentRecordKey(entry)}
+										build={entry.build}
+										allocation={entry.allocation}
+										status={entry.status}
+										logsEnabled={Boolean(project)}
+										nowMs={nowMs}
+										onOpenLogs={() =>
+											setLogTarget({
+												id: deploymentRecordKey(entry),
+												title: deploymentTitle(entry.build, false),
+												subtitle: deploymentSubtitle(
+													entry.build,
+													entry.rolloutGeneration,
+													nowMs,
+												),
+												build: entry.build,
+												allocation: entry.allocation,
+												rolloutGeneration: entry.rolloutGeneration,
+												active: hasActiveDeployment(entry.status, entry.build),
+											})
+										}
+									/>
+								))}
+							</div>
+						)}
 					</section>
 				)}
 
@@ -267,22 +348,28 @@ export function PanelDeployments({
 	);
 }
 
-function CurrentDeploymentCard({
-	build,
-	allocation,
-	status,
+function DeploymentCard({
+	service,
+	record,
 	logsEnabled,
 	nowMs,
 	onOpenLogs,
+	onOpenVariables,
+	onRedeployed,
 }: {
-	build: DashboardBuildStatus | undefined;
-	allocation: DashboardAllocationStatus | undefined;
-	status?: DashboardDeploymentStatus;
+	service: DashboardServiceRecord;
+	record: DashboardDeploymentRecord;
 	logsEnabled: boolean;
 	nowMs: number;
 	onOpenLogs: () => void;
+	onOpenVariables?: (key: string) => void;
+	onRedeployed?: (status: DashboardServiceStatus) => void;
 }) {
-	const stages = build?.stages ?? [];
+	const build = record.build;
+	const allocation = record.allocation;
+	const status = record.status;
+	const reportedStages = build?.stages ?? record.stages ?? [];
+	const stages = withSourceStage(service, build, reportedStages);
 	const active = hasActiveDeployment(status, build);
 	const timestamp =
 		status?.transitionedAt ??
@@ -294,82 +381,344 @@ function CurrentDeploymentCard({
 		build,
 		allocation,
 		active,
-		isCurrent: true,
+		isCurrent: record.isCurrent,
 		status,
 	});
-	const meta = deploymentMeta(build);
+	const meta = deploymentMeta(build, status, timestamp, nowMs);
+	const failedStage = stages.find((stage) => stage.state === "failed");
+	const runningStage = stages.find((stage) => stage.state === "running");
+	const focusStage = focusDeploymentStage(stages);
+	const { lines: logLines } = useInlineDeploymentLogs({
+		enabled: logsEnabled && Boolean(failedStage || runningStage),
+		serviceId: service.id,
+		buildId: build?.buildId,
+		active: Boolean(runningStage),
+	});
+	const snippetLines = logLinesForStage(logLines, failedStage?.key);
+	const fallbackLine = failedStage
+		? failedStage.detail || build?.failureReason || "Stage failed"
+		: undefined;
+	const snippetSource =
+		snippetLines.length > 0
+			? snippetLines
+			: fallbackLine
+				? [
+						{
+							observedAt: undefined,
+							allocationId: "",
+							agentId: "",
+							stream: "stderr",
+							rolloutGeneration: 0,
+							sequence: 0,
+							line: fallbackLine,
+						} satisfies DashboardServiceLogLine,
+					]
+				: [];
+	const snippet = selectInlineLogSnippet(
+		snippetSource.map((line) => line.line),
+	);
+	const missingKeys = extractMissingEnvKeys([
+		...snippet.lines,
+		failedStage?.detail,
+		build?.failureReason,
+	]);
+	const stepHint = buildStepHint(
+		logLinesForStage(logLines, focusStage?.key).map((line) => line.line),
+	);
+	const progress = deploymentProgressCopy({
+		status,
+		stages,
+		build,
+		stepHint,
+	});
+	const retention = trafficRetentionCopy({
+		failed: Boolean(failedStage) || tone === "failed",
+		lastSuccessfulCommitSha: service.lastSuccessfulCommitSha,
+	});
+	const [retrying, setRetrying] = useState(false);
+	const [retryError, setRetryError] = useState<string>();
+
+	const retryBuild = async () => {
+		if (retrying) return;
+		setRetrying(true);
+		setRetryError(undefined);
+		try {
+			const next = await doRedeployService({
+				data: { serviceId: service.id },
+			});
+			onRedeployed?.(next);
+		} catch (cause) {
+			setRetryError(formatError(cause, "Unable to retry the build."));
+		} finally {
+			setRetrying(false);
+		}
+	};
+
+	const badgeClass =
+		tone === "failed"
+			? "failed"
+			: tone === "running"
+				? "building"
+				: tone === "draining"
+					? "offline"
+					: "healthy";
+	const showStepRail = tone === "running" && stages.length > 0;
+	const showProgress =
+		tone === "running" || tone === "failed" || tone === "draining";
 
 	return (
 		<section
-			className={`deployment-shell deployment-shell-current ${tone ? `tone-${tone}` : ""}`}
+			className={`deployment-shell deployment-shell-live ${tone ? `tone-${tone}` : ""}${
+				logsEnabled ? " clickable" : ""
+			}`}
 		>
-			<div className="deployment-current-head">
-				<div className="deployment-current-copy">
-					<p className="deployment-current-message">
+			<div className="deployment-live-head">
+				<span className={`badge ${badgeClass}`}>
+					{deploymentBadgeLabel(status?.state, build)}
+				</span>
+				<button
+					type="button"
+					className="deployment-live-copy"
+					onClick={onOpenLogs}
+					disabled={!logsEnabled}
+				>
+					<p className="deployment-live-message">
 						{deploymentCardHeadline(build)}
 					</p>
-					<div className="deployment-current-meta">
+					<div className="deployment-live-meta">
 						{meta.map((entry, index) => (
 							<span key={entry}>
 								{index > 0 && <span className="deployment-inline-dot" />}
 								{entry}
 							</span>
 						))}
-						{timestamp && meta.length > 0 && (
-							<span className="deployment-inline-dot" />
-						)}
-						{timestamp && (
-							<span className="deployment-current-time">
-								{formatRelativeAge(timestamp, nowMs)}
-							</span>
-						)}
 					</div>
-				</div>
+				</button>
+				{showStepRail && (
+					<div
+						className="panel-badge-rail"
+						role="img"
+						aria-label="Deploy steps"
+					>
+						{stages.map((stage) => {
+							const segmentState =
+								stage.state === "succeeded" ? "building-done" : stage.state;
+							return (
+								<span
+									key={stage.key || stage.label}
+									className={`panel-badge-segment ${segmentState}`}
+									title={stage.label || stage.key}
+								/>
+							);
+						})}
+					</div>
+				)}
 				<button
 					type="button"
 					className="deployment-view-logs"
 					onClick={onOpenLogs}
 					disabled={!logsEnabled}
 				>
-					Logs
+					View logs
 				</button>
 			</div>
 
-			{stages.length > 0 ? (
-				<ol className="stage-list">
-					{stages.map((stage) => {
-						// While the deployment is still active, already-succeeded stages use
-						// the building colour so the whole list reads as one amber tone.
-						const markerState =
-							tone === "running" && stage.state === "succeeded"
-								? "building-done"
-								: stage.state;
-						return (
-							<li
-								key={stage.key || stage.label}
-								className={`stage-row ${stage.state}`}
+			{showProgress && (
+				<div className={`deployment-inline-progress ${tone ?? ""}`}>
+					<span className="deployment-inline-progress-icon">
+						{tone === "failed" ? (
+							<XCircle size={13} />
+						) : (
+							<Loader2
+								size={13}
+								style={{ animation: "spin 1s linear infinite" }}
+							/>
+						)}
+					</span>
+					<span className="deployment-inline-progress-text">{progress}</span>
+					{focusStage && (
+						<span
+							className={`deployment-inline-progress-time${
+								focusStage.state === "failed" ? " failed" : ""
+							}`}
+						>
+							{stageStatusText(focusStage, nowMs)}
+						</span>
+					)}
+				</div>
+			)}
+
+			{failedStage && (
+				<div className="stage-inline">
+					{snippet.lines.length > 0 && (
+						<div
+							className="stage-inline-log"
+							role="log"
+							aria-label={`${failedStage.label || failedStage.key} logs`}
+						>
+							{snippet.lines.map((line, lineIndex) => {
+								const source = snippetSource[lineIndex];
+								return (
+									<div
+										key={`${source?.sequence ?? lineIndex}:${source?.observedAt?.toISOString() ?? "local"}:${line}`}
+										className={`stage-inline-line${
+											snippet.highlightIndexes.includes(lineIndex)
+												? " error"
+												: ""
+										}`}
+									>
+										{line}
+									</div>
+								);
+							})}
+						</div>
+					)}
+					<div className="stage-inline-actions">
+						{missingKeys.map((key) => (
+							<button
+								key={key}
+								type="button"
+								className="btn-primary"
+								onClick={() => onOpenVariables?.(key)}
 							>
-								<span className={`stage-marker ${markerState}`}>
-									<StageIcon state={stage.state} />
-								</span>
-								<div className="stage-copy">
-									<div className="stage-label">{stage.label || stage.key}</div>
-									{stage.detail && (
-										<div className="stage-detail">{stage.detail}</div>
-									)}
-								</div>
-								<div className="stage-status">{stageStatusText(stage)}</div>
-							</li>
-						);
-					})}
-				</ol>
-			) : (
-				<div className="deployment-empty-state">
-					No stage data has been reported for this deployment yet.
+								Add {key}
+							</button>
+						))}
+						<button
+							type="button"
+							className="btn-secondary"
+							onClick={onOpenLogs}
+							disabled={!logsEnabled}
+						>
+							Full log
+						</button>
+						<button
+							type="button"
+							className="btn-secondary"
+							onClick={() => void retryBuild()}
+							disabled={retrying}
+						>
+							{retrying ? "Retrying…" : "Retry build"}
+						</button>
+					</div>
+					{retryError && (
+						<div className="deployment-error compact">{retryError}</div>
+					)}
+				</div>
+			)}
+
+			{retention && (
+				<div className="deployment-retention">
+					{service.lastSuccessfulCommitSha ? (
+						<>
+							Traffic is still on{" "}
+							<span className="mono deployment-retention-sha">
+								{shortSha(service.lastSuccessfulCommitSha)}
+							</span>{" "}
+							— {retention}
+						</>
+					) : (
+						retention
+					)}
 				</div>
 			)}
 		</section>
 	);
+}
+
+function useInlineDeploymentLogs({
+	enabled,
+	serviceId,
+	buildId,
+	active,
+}: {
+	enabled: boolean;
+	serviceId: string;
+	buildId?: string;
+	active: boolean;
+}) {
+	const [lines, setLines] = useState<Array<DashboardServiceLogLine>>([]);
+
+	const loadLogs = useCallback(async () => {
+		if (!enabled) {
+			setLines([]);
+			return;
+		}
+		try {
+			const nextLines = await fetchServiceLogs({
+				data: {
+					serviceId,
+					limit: 80,
+					buildId,
+				},
+			});
+			if (!Array.isArray(nextLines)) {
+				setLines([]);
+				return;
+			}
+			setLines(
+				nextLines.map(hydrateServiceLogLine).sort((left, right) => {
+					const leftTime = left.observedAt?.getTime() ?? 0;
+					const rightTime = right.observedAt?.getTime() ?? 0;
+					return leftTime - rightTime || left.sequence - right.sequence;
+				}),
+			);
+		} catch {
+			setLines([]);
+		}
+	}, [enabled, serviceId, buildId]);
+
+	useEffect(() => {
+		void loadLogs();
+	}, [loadLogs]);
+
+	usePolling(loadLogs, { enabled: enabled && active, intervalMs: 2000 });
+
+	return { lines };
+}
+
+function logLinesForStage(
+	lines: Array<DashboardServiceLogLine>,
+	stageKey: string | undefined,
+): Array<DashboardServiceLogLine> {
+	const matching = stageKey
+		? lines.filter((line) => !line.stage || line.stage === stageKey)
+		: lines;
+	const source = matching.length > 0 ? matching : lines;
+	return source.filter((line) => line.line.trim() !== "");
+}
+
+function withSourceStage(
+	service: DashboardServiceRecord,
+	build: DashboardBuildStatus | undefined,
+	stages: Array<DashboardDeploymentStage>,
+): Array<DashboardDeploymentStage> {
+	if (
+		stages.some(
+			(stage) => stage.key === "initialization" || stage.key === "source",
+		)
+	) {
+		return stages;
+	}
+	const source = service.spec?.source;
+	if (!source?.repositorySelector) {
+		return stages;
+	}
+	const sha = build?.commitSha ? shortSha(build.commitSha) : undefined;
+	const repo =
+		source.repositorySelector.split("/").slice(-2).join("/") ||
+		source.repositorySelector;
+	return [
+		{
+			key: "source",
+			label: "Source",
+			detail: sha ? `${repo} @ ${sha}` : repo,
+			state: "succeeded",
+			startedAt: build?.queuedAt ?? build?.startedAt,
+			finishedAt: build?.startedAt ?? build?.queuedAt,
+		},
+		...stages,
+	];
 }
 
 function DeploymentHistoryRow({
@@ -394,7 +743,7 @@ function DeploymentHistoryRow({
 			active: hasActiveDeployment(status, build),
 			isCurrent: false,
 			status,
-		}) ?? "failed";
+		}) ?? "draining";
 	const timestamp =
 		build?.startedAt ??
 		build?.queuedAt ??
@@ -492,11 +841,7 @@ function DeploymentLogsView({
 		void loadLogs();
 	}, [loadLogs]);
 
-	useEffect(() => {
-		if (!active) return;
-		const id = window.setInterval(() => void loadLogs(), 2000);
-		return () => window.clearInterval(id);
-	}, [active, loadLogs]);
+	usePolling(loadLogs, { enabled: active, intervalMs: 2000 });
 
 	const filteredLines = useMemo(
 		() =>
@@ -591,23 +936,6 @@ function DeploymentLogsView({
 	);
 }
 
-function StageIcon({ state }: { state: DashboardDeploymentStageState }) {
-	switch (state) {
-		case "running":
-			return (
-				<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
-			);
-		case "succeeded":
-			return <CheckCircle2 size={13} />;
-		case "failed":
-			return <XCircle size={13} />;
-		case "pending":
-			return <Clock3 size={13} />;
-		default:
-			return <Circle size={13} />;
-	}
-}
-
 function getDeploymentCardTone({
 	build,
 	allocation,
@@ -620,7 +948,7 @@ function getDeploymentCardTone({
 	active: boolean;
 	isCurrent: boolean;
 	status?: DashboardDeploymentStatus;
-}): "running" | "succeeded" | "failed" | undefined {
+}): DeploymentCardTone | undefined {
 	if (
 		status?.state === "failed" ||
 		status?.state === "crashed" ||
@@ -628,8 +956,11 @@ function getDeploymentCardTone({
 	) {
 		return "failed";
 	}
-	if (status?.state === "active" || status?.state === "completed") {
-		return "succeeded";
+	if (status?.state === "active") {
+		return "active";
+	}
+	if (status?.state === "draining" || status?.state === "completed") {
+		return "draining";
 	}
 	if (
 		status &&
@@ -655,21 +986,27 @@ function getDeploymentCardTone({
 	}
 
 	if (isCurrent && !active && !failed && allocation?.healthy) {
-		return "succeeded";
+		return "active";
 	}
 
 	if (!isCurrent && build?.state === "succeeded") {
-		return "succeeded";
+		return "draining";
 	}
 
 	return undefined;
 }
 
-function stageStatusText(stage: DashboardDeploymentStage): string {
+function stageStatusText(
+	stage: DashboardDeploymentStage,
+	nowMs?: number,
+): string {
 	if (stage.startedAt && stage.finishedAt) {
 		return formatDuration(
 			stage.finishedAt.getTime() - stage.startedAt.getTime(),
 		);
+	}
+	if (stage.state === "running" && stage.startedAt && nowMs) {
+		return formatDuration(nowMs - stage.startedAt.getTime());
 	}
 	switch (stage.state) {
 		case "running":
@@ -737,19 +1074,6 @@ function deploymentTime(entry: DashboardDeploymentRecord): number {
 		entry.build?.finishedAt?.getTime() ??
 		entry.allocation?.updatedAt?.getTime() ??
 		0
-	);
-}
-
-function isCurrentDeployment(
-	entry: DashboardDeploymentRecord,
-	currentBuildId?: string,
-	currentRolloutGeneration?: number,
-): boolean {
-	if (entry.isCurrent) return true;
-	if (currentBuildId && entry.build?.buildId === currentBuildId) return true;
-	return (
-		currentRolloutGeneration !== undefined &&
-		entry.rolloutGeneration === currentRolloutGeneration
 	);
 }
 
@@ -882,22 +1206,31 @@ function formatDuration(ms: number): string {
 	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function deploymentMeta(build: DashboardBuildStatus | undefined): string[] {
+function deploymentMeta(
+	build: DashboardBuildStatus | undefined,
+	status: DashboardDeploymentStatus | undefined,
+	timestamp: Date | undefined,
+	nowMs: number,
+): string[] {
 	const parts: string[] = [];
 	if (build?.commitSha) parts.push(shortSha(build.commitSha));
 	if (build?.commitAuthor) parts.push(build.commitAuthor);
-	if (build?.state && build.state !== "unspecified") parts.push(build.state);
+	if (timestamp) parts.push(formatRelativeAge(timestamp, nowMs));
+	const cause = deploymentCauseLabel(status?.causeKind);
+	if (cause) parts.push(cause);
 	return parts;
 }
 
 function toneToHealthClass(
-	tone: "running" | "succeeded" | "failed",
-): "building" | "healthy" | "failed" {
+	tone: DeploymentCardTone,
+): "building" | "healthy" | "failed" | "offline" {
 	switch (tone) {
 		case "running":
 			return "building";
-		case "succeeded":
+		case "active":
 			return "healthy";
+		case "draining":
+			return "offline";
 		case "failed":
 			return "failed";
 	}

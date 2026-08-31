@@ -26,7 +26,6 @@ var (
 	errInvalidPort              = errors.New("port must be an integer between 1 and 65535")
 	errNoPlacementAvailable     = errors.New("no healthy agent satisfies placement")
 	errInvalidReplicaCount      = errors.New("desired replica count is invalid")
-	errScaleToZeroUnconfirmed   = errors.New("scaling a production service to zero requires confirmation")
 	errVolumeReplicaUnsupported = errors.New("volume-backed services support a single replica")
 )
 
@@ -171,6 +170,22 @@ func validateVolumeReplicaCompatibility(spec *platformv1.ServiceSpec, desiredRep
 		return nil
 	}
 	return fmt.Errorf("%w: %q", errVolumeReplicaUnsupported, volumeName)
+}
+
+func specHasDesiredReplicaCount(spec *platformv1.ServiceSpec) bool {
+	return spec != nil && spec.DesiredReplicaCount != nil
+}
+
+func specReplicaCount(spec *platformv1.ServiceSpec, fallback int32) int32 {
+	if specHasDesiredReplicaCount(spec) {
+		return spec.GetDesiredReplicaCount()
+	}
+	return fallback
+}
+
+func replicaCountPtr(count int32) *int32 {
+	value := count
+	return &value
 }
 
 func directImageRef(spec *platformv1.ServiceSpec) string {

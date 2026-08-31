@@ -200,6 +200,7 @@ export interface DashboardRuntimeSpec {
 export interface DashboardServiceSpec {
 	source?: DashboardSourceSpec;
 	runtime: DashboardRuntimeSpec;
+	desiredReplicaCount?: number;
 }
 
 export interface DashboardResolvedSourceBinding {
@@ -696,7 +697,6 @@ export interface PlatformGateway {
 		input: {
 			serviceId: string;
 			desiredReplicaCount: number;
-			confirmScaleToZero?: boolean;
 		},
 	): Promise<DashboardServiceStatus>;
 	restartService(
@@ -838,6 +838,7 @@ export interface UpdateServiceInput {
 	dockerfilePath?: string;
 	contextDir?: string;
 	restart?: DashboardRestartSpec;
+	desiredReplicaCount?: number;
 }
 
 export interface DashboardService {
@@ -947,7 +948,6 @@ export interface DashboardService {
 	scaleServiceFromSession(input: {
 		serviceId: string;
 		desiredReplicaCount: number;
-		confirmScaleToZero?: boolean;
 	}): Promise<DashboardServiceStatus>;
 	restartServiceFromSession(input: {
 		serviceId: string;

@@ -215,7 +215,11 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 			return serviceRecord{}, false, false, err
 		}
 	}
-	if err := validateVolumeReplicaCompatibility(spec, current.DesiredReplicaCount); err != nil {
+	pendingReplicas := specReplicaCount(spec, current.DesiredReplicaCount)
+	if live := current.DesiredReplicaCount; live > pendingReplicas {
+		pendingReplicas = live
+	}
+	if err := validateVolumeReplicaCompatibility(spec, pendingReplicas); err != nil {
 		return serviceRecord{}, false, false, err
 	}
 	spec = canonicalServiceSpec(spec)
@@ -404,6 +408,16 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 	if current.DesiredReplicaCount <= 0 {
 		current.DesiredReplicaCount = defaultDesiredReplicaCount
 	}
+	if specHasDesiredReplicaCount(current.Spec) {
+		desired := current.Spec.GetDesiredReplicaCount()
+		if err := validateDesiredReplicaCount(desired); err != nil {
+			return serviceRecord{}, false, err
+		}
+		if err := validateVolumeReplicaCompatibility(current.Spec, desired); err != nil {
+			return serviceRecord{}, false, err
+		}
+		current.DesiredReplicaCount = desired
+	}
 	identityCatalogChanged := current.AllocatedAgentID == ""
 	preferredAgentID := current.AllocatedAgentID
 
@@ -417,11 +431,12 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 		`UPDATE services
 		    SET current_rollout_generation = $1,
 		        current_resolved_image = $2,
-		        updated_at = $3
-		  WHERE id = $4
-		    AND current_spec_revision = $5
-		    AND current_rollout_generation = $6`,
-		nextRolloutGeneration, resolvedImage, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		        desired_replica_count = $3,
+		        updated_at = $4
+		  WHERE id = $5
+		    AND current_spec_revision = $6
+		    AND current_rollout_generation = $7`,
+		nextRolloutGeneration, resolvedImage, current.DesiredReplicaCount, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 	)
 	if err != nil {
 		return serviceRecord{}, false, err

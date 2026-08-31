@@ -1,12 +1,12 @@
-import { Code2, List, Loader2, Plus, Save, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Code2, List, Plus, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 
 import { doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
-
-type VariableMode = "fields" | "raw";
+import { ModalOverlay, PanelSection } from "./ui";
+import { enqueueServicePersist } from "./use-auto-queued-persist";
 
 type VariableRow = {
 	id: string;
@@ -19,36 +19,87 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export function PanelVariables({
 	service,
 	onSaved,
+	seedKey,
+	onSavingChange,
 }: {
 	service: DashboardServiceRecord;
 	onSaved: (service: DashboardServiceRecord) => void;
+	seedKey?: string;
+	onSavingChange?: (saving: boolean) => void;
 }) {
 	const savedEnvKey = stableEnvKey(service.spec?.runtime.env ?? {});
 	const changedEnvKeys = changedRuntimeEnvKeys(service);
-	const [mode, setMode] = useState<VariableMode>("fields");
+	const savedEnv = service.spec?.runtime.env ?? {};
 	const [rows, setRows] = useState<VariableRow[]>(() =>
 		rowsFromStableEnvKey(savedEnvKey),
 	);
 	const [raw, setRaw] = useState(() =>
 		formatRows(rowsFromStableEnvKey(savedEnvKey)),
 	);
-	const [saving, setSaving] = useState(false);
+	const [rawDialogOpen, setRawDialogOpen] = useState(false);
 	const [error, setError] = useState<string>();
-	const [success, setSuccess] = useState(false);
+	const [saving, setSaving] = useState(false);
+	const [focusRowId, setFocusRowId] = useState<string>();
+	const rawEditorRef = useRef<HTMLTextAreaElement>(null);
+	const persistRef = useRef(onSaved);
+	persistRef.current = onSaved;
+	const savingChangeRef = useRef(onSavingChange);
+	savingChangeRef.current = onSavingChange;
+	const serviceRef = useRef(service);
+	serviceRef.current = service;
+	const savedEnvKeyRef = useRef(savedEnvKey);
+	savedEnvKeyRef.current = savedEnvKey;
+	const queuedEnvKeyRef = useRef(savedEnvKey);
+	const localEditPendingRef = useRef(false);
+	const persistGenerationRef = useRef(0);
+	const seededKeyRef = useRef<string | undefined>(undefined);
 
 	useEffect(() => {
+		const incomingIsOurs = savedEnvKey === queuedEnvKeyRef.current;
+		if (incomingIsOurs && seedKey === seededKeyRef.current) {
+			localEditPendingRef.current = false;
+			return;
+		}
+		if (localEditPendingRef.current || saving || rawDialogOpen) return;
 		const nextRows = rowsFromStableEnvKey(savedEnvKey);
+		let nextFocus: string | undefined;
+		if (seedKey) {
+			const existing = nextRows.find((row) => row.key === seedKey);
+			if (existing) {
+				nextFocus = existing.id;
+			} else {
+				const seeded = { id: nextRowId(), key: seedKey, value: "" };
+				nextRows.push(seeded);
+				nextFocus = seeded.id;
+			}
+		}
 		setRows(nextRows);
 		setRaw(formatRows(nextRows));
 		setError(undefined);
-		setSuccess(false);
-		setMode("fields");
-	}, [savedEnvKey]);
+		setFocusRowId(nextFocus);
+		queuedEnvKeyRef.current = savedEnvKey;
+		seededKeyRef.current = seedKey;
+	}, [rawDialogOpen, savedEnvKey, saving, seedKey]);
+
+	useEffect(() => {
+		if (!focusRowId) return;
+		document.getElementById(`${focusRowId}-value`)?.focus();
+	}, [focusRowId]);
+
+	useEffect(() => {
+		if (rawDialogOpen) rawEditorRef.current?.focus();
+	}, [rawDialogOpen]);
+
+	useEffect(
+		() => () => {
+			savingChangeRef.current?.(false);
+		},
+		[],
+	);
 
 	const addRow = () => {
 		setRows((current) => [...current, { id: nextRowId(), key: "", value: "" }]);
 		setError(undefined);
-		setSuccess(false);
 	};
 
 	const updateRow = (id: string, field: "key" | "value", value: string) => {
@@ -56,102 +107,115 @@ export function PanelVariables({
 			current.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
 		);
 		setError(undefined);
-		setSuccess(false);
 	};
 
 	const removeRow = (id: string) => {
-		setRows((current) => current.filter((row) => row.id !== id));
+		const nextRows = rows.filter((row) => row.id !== id);
+		setRows(nextRows);
 		setError(undefined);
-		setSuccess(false);
+		commitRows(nextRows);
 	};
 
-	const switchMode = (nextMode: VariableMode) => {
-		if (nextMode === mode) {
+	const persistEnv = (env: Record<string, string>) => {
+		const nextKey = stableEnvKey(env);
+		if (nextKey === queuedEnvKeyRef.current) {
+			return;
+		}
+		queuedEnvKeyRef.current = nextKey;
+		localEditPendingRef.current = true;
+		const generation = persistGenerationRef.current + 1;
+		persistGenerationRef.current = generation;
+		setSaving(true);
+		savingChangeRef.current?.(true);
+		const serviceId = serviceRef.current.id;
+		void enqueueServicePersist(serviceId, () =>
+			doUpdateService({ data: { serviceId, runtimeEnv: env } }),
+		)
+			.then((updated) => {
+				if (generation === persistGenerationRef.current) {
+					persistRef.current(updated);
+				}
+			})
+			.catch((cause) => {
+				if (generation === persistGenerationRef.current) {
+					queuedEnvKeyRef.current = savedEnvKeyRef.current;
+					localEditPendingRef.current = false;
+					setError(formatError(cause));
+				}
+			})
+			.finally(() => {
+				if (generation === persistGenerationRef.current) {
+					setSaving(false);
+					savingChangeRef.current?.(false);
+				}
+			});
+	};
+
+	const commitRows = (nextRows: VariableRow[] = rows) => {
+		const parsed = envFromRows(nextRows);
+		if (!parsed.ok) {
+			setError(parsed.message);
 			return;
 		}
 		setError(undefined);
-		setSuccess(false);
-		if (nextMode === "raw") {
-			setRaw(formatRows(rows));
-			setMode("raw");
-			return;
-		}
+		persistEnv(parsed.env);
+	};
+
+	const openRawEditor = () => {
+		setRaw(formatRows(rows));
+		setError(undefined);
+		setRawDialogOpen(true);
+	};
+
+	const updateRawVariables = () => {
 		const parsed = parseRawEnv(raw);
 		if (!parsed.ok) {
 			setError(parsed.message);
 			return;
 		}
 		setRows(rowsFromEnv(parsed.env));
-		setMode("fields");
-	};
-
-	const handleSave = async () => {
 		setError(undefined);
-		setSuccess(false);
-		const parsed = mode === "raw" ? parseRawEnv(raw) : envFromRows(rows);
-		if (!parsed.ok) {
-			setError(parsed.message);
-			return;
-		}
-		setSaving(true);
-		try {
-			const updated = await doUpdateService({
-				data: {
-					serviceId: service.id,
-					runtimeEnv: parsed.env,
-				},
-			});
-			const nextRows = rowsFromEnv(updated.spec?.runtime.env ?? {});
-			setRows(nextRows);
-			setRaw(formatRows(nextRows));
-			setSuccess(true);
-			onSaved(updated);
-		} catch (e) {
-			setError(formatError(e));
-		} finally {
-			setSaving(false);
-		}
+		setRawDialogOpen(false);
+		persistEnv(parsed.env);
 	};
 
 	return (
 		<div className="variables-panel">
-			<div className="variables-toolbar">
-				<fieldset className="variables-mode-toggle">
-					<legend>Variable editor mode</legend>
-					<button
-						type="button"
-						className={mode === "fields" ? "active" : ""}
-						onClick={() => switchMode("fields")}
-					>
-						<List size={13} />
-						Fields
-					</button>
-					<button
-						type="button"
-						className={mode === "raw" ? "active" : ""}
-						onClick={() => switchMode("raw")}
-					>
-						<Code2 size={13} />
-						Raw
-					</button>
-				</fieldset>
-				{mode === "fields" && (
+			<PanelSection
+				title="Environment"
+				lede="These values ship with the next deploy. Highlighted rows are not live yet."
+			>
+				<div className="variables-toolbar">
+					<fieldset className="variables-mode-toggle">
+						<legend>Variable editor mode</legend>
+						<button type="button" className="active">
+							<List size={13} />
+							Fields
+						</button>
+						<button type="button" onClick={openRawEditor}>
+							<Code2 size={13} />
+							Raw
+						</button>
+					</fieldset>
 					<button type="button" className="btn-secondary" onClick={addRow}>
 						<Plus size={13} />
 						Add variable
 					</button>
-				)}
-			</div>
+				</div>
 
-			{mode === "fields" ? (
 				<div className="variables-list">
 					{rows.length === 0 ? (
 						<div className="variables-empty">
-							<span>No variables configured.</span>
+							<strong>No variables yet</strong>
+							<span>Add a name and value, or switch to raw KEY=value.</span>
 						</div>
 					) : (
 						rows.map((row) => {
-							const isUnapplied = changedEnvKeys.has(row.key);
+							const hasLocalChange =
+								(row.key !== "" || row.value !== "") &&
+								(!Object.hasOwn(savedEnv, row.key) ||
+									savedEnv[row.key] !== row.value);
+							const isUnapplied = changedEnvKeys.has(row.key) || hasLocalChange;
 							return (
 								<div
 									className={`variable-row ${isUnapplied ? "unapplied-field" : ""}`}
@@ -168,6 +232,7 @@ export function PanelVariables({
 											onChange={(event) =>
 												updateRow(row.id, "key", event.target.value)
 											}
+											onBlur={() => commitRows()}
 											placeholder="DATABASE_URL"
 											spellCheck={false}
 										/>
@@ -183,6 +248,7 @@ export function PanelVariables({
 											onChange={(event) =>
 												updateRow(row.id, "value", event.target.value)
 											}
+											onBlur={() => commitRows()}
 											placeholder="value"
 											spellCheck={false}
 										/>
@@ -201,50 +267,65 @@ export function PanelVariables({
 						})
 					)}
 				</div>
-			) : (
-				<div>
-					<label
-						className="field-label"
-						htmlFor={`variables-raw-${service.id}`}
-					>
-						Raw variables
-					</label>
-					<textarea
-						id={`variables-raw-${service.id}`}
-						className={`field-input variables-raw-editor ${changedEnvKeys.size > 0 ? "unapplied-field" : ""}`}
-						value={raw}
-						onChange={(event) => {
-							setRaw(event.target.value);
-							setError(undefined);
-							setSuccess(false);
-						}}
-						placeholder={"DATABASE_URL=postgres://...\nREDIS_URL=redis://..."}
-						spellCheck={false}
-					/>
-				</div>
-			)}
+			</PanelSection>
 
 			{error && <p className="error-msg">{error}</p>}
-			{success && (
-				<p className="success-msg">
-					Variables saved. Deploy the pending changes when ready.
-				</p>
-			)}
 
-			<button
-				type="button"
-				className="btn-primary"
-				onClick={handleSave}
-				disabled={saving}
-				style={{ alignSelf: "flex-start" }}
-			>
-				{saving ? (
-					<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
-				) : (
-					<Save size={13} />
-				)}
-				{saving ? "Saving..." : "Save variables"}
-			</button>
+			{rawDialogOpen && (
+				<ModalOverlay onClose={() => setRawDialogOpen(false)}>
+					<div className="modal-card variables-raw-dialog">
+						<div className="unapplied-dialog-header">
+							<div>
+								<h2>Raw variables</h2>
+								<p>Enter one NAME=value pair per line.</p>
+							</div>
+							<button
+								type="button"
+								className="icon-btn"
+								aria-label="Close raw variables"
+								onClick={() => setRawDialogOpen(false)}
+							>
+								<X size={16} />
+							</button>
+						</div>
+						<label
+							className="field-label"
+							htmlFor={`variables-raw-${service.id}`}
+						>
+							Raw variables
+						</label>
+						<textarea
+							ref={rawEditorRef}
+							id={`variables-raw-${service.id}`}
+							className="field-input variables-raw-editor"
+							value={raw}
+							onChange={(event) => {
+								setRaw(event.target.value);
+								setError(undefined);
+							}}
+							placeholder={"DATABASE_URL=postgres://...\nREDIS_URL=redis://..."}
+							spellCheck={false}
+						/>
+						{error && <p className="error-msg">{error}</p>}
+						<div className="unapplied-dialog-footer">
+							<button
+								type="button"
+								className="btn-secondary"
+								onClick={() => setRawDialogOpen(false)}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="btn-primary"
+								onClick={updateRawVariables}
+							>
+								Update variables
+							</button>
+						</div>
+					</div>
+				</ModalOverlay>
+			)}
 		</div>
 	);
 }
