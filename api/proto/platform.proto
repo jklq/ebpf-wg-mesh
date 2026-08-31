@@ -208,6 +208,9 @@ message ServiceSpec {
   ServiceRuntime runtime = 1;
   ServiceSource source = 2;
   optional int32 desired_replica_count = 3;
+  // A customer may constrain placement to an operator-defined region. Node
+  // labels themselves are never accepted through workload APIs.
+  string placement_region = 4;
 }
 
 message ResolvedServiceSpec {
@@ -368,6 +371,16 @@ message Volume {
   google.protobuf.Timestamp created_at = 5;
 }
 
+enum AgentLifecycleState {
+  AGENT_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  AGENT_LIFECYCLE_STATE_ENROLLING = 1;
+  AGENT_LIFECYCLE_STATE_ACTIVE = 2;
+  AGENT_LIFECYCLE_STATE_CORDONED = 3;
+  AGENT_LIFECYCLE_STATE_DRAINING = 4;
+  AGENT_LIFECYCLE_STATE_UNAVAILABLE = 5;
+  AGENT_LIFECYCLE_STATE_RETIRED = 6;
+}
+
 message Agent {
   string id = 1;
   string name = 2;
@@ -376,6 +389,24 @@ message Agent {
   int64 cpu_millis_capacity = 5;
   int64 memory_mebibytes_capacity = 6;
   google.protobuf.Timestamp last_seen_at = 7;
+  AgentLifecycleState lifecycle_state = 8;
+  string region = 9;
+  string zone = 10;
+  string failure_domain = 11;
+  int64 reserved_cpu_millis = 12;
+  int64 reserved_memory_mebibytes = 13;
+  int64 schedulable_cpu_millis = 14;
+  int64 schedulable_memory_mebibytes = 15;
+  int64 allocated_cpu_millis = 16;
+  int64 allocated_memory_mebibytes = 17;
+  int64 headroom_cpu_millis = 18;
+  int64 headroom_memory_mebibytes = 19;
+  repeated string runtime_capabilities = 20;
+  string software_version = 21;
+  string version_skew_warning = 22;
+  int32 allocation_count = 23;
+  string maintenance_message = 24;
+  google.protobuf.Timestamp credential_revoked_at = 25;
 }
 
 message AllocationStatus {
@@ -664,6 +695,54 @@ message ListAgentsResponse {
   repeated Agent agents = 1;
 }
 
+message CreateAgentRequest {
+  string agent_id = 1;
+  string name = 2;
+  string region = 3;
+  string zone = 4;
+  string failure_domain = 5;
+  int64 reserved_cpu_millis = 6;
+  int64 reserved_memory_mebibytes = 7;
+}
+
+message AgentEnrollment {
+  Agent agent = 1;
+  // Returned only when a new enrollment is created. Store it as a secret.
+  string bootstrap_token = 2 [debug_redact = true];
+}
+
+message UpdateAgentRequest {
+  string agent_id = 1;
+  string name = 2;
+  string region = 3;
+  string zone = 4;
+  string failure_domain = 5;
+  int64 reserved_cpu_millis = 6;
+  int64 reserved_memory_mebibytes = 7;
+}
+
+message SetAgentLifecycleRequest {
+  string agent_id = 1;
+  AgentLifecycleState lifecycle_state = 2;
+}
+
+message FleetCapacity {
+  int32 node_count = 1;
+  int32 schedulable_node_count = 2;
+  int64 schedulable_cpu_millis = 3;
+  int64 schedulable_memory_mebibytes = 4;
+  int64 allocated_cpu_millis = 5;
+  int64 allocated_memory_mebibytes = 6;
+  int64 headroom_cpu_millis = 7;
+  int64 headroom_memory_mebibytes = 8;
+}
+
+message Fleet {
+  repeated Agent agents = 1;
+  FleetCapacity capacity = 2;
+  string version_warning = 3;
+}
+
 message ClaimBuildRequest {
   string builder_id = 1;
   string builder_name = 2;
@@ -824,4 +903,8 @@ service BuilderService {
 
 service OpsService {
   rpc IngestGitHubWebhook(IngestGitHubWebhookRequest) returns (google.protobuf.Empty);
+  rpc ListFleet(google.protobuf.Empty) returns (Fleet);
+  rpc CreateAgent(CreateAgentRequest) returns (AgentEnrollment);
+  rpc UpdateAgent(UpdateAgentRequest) returns (Agent);
+  rpc SetAgentLifecycle(SetAgentLifecycleRequest) returns (Agent);
 }

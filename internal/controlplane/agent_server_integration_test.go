@@ -144,6 +144,8 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		WireguardListenPort:     51820,
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
+		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
+		SoftwareVersion:         "test",
 	}}}); err != nil {
 		t.Fatalf("send hello: %v", err)
 	}

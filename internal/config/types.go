@@ -26,8 +26,14 @@ type ServerTLSConfig struct {
 }
 
 type AgentBootstrapToken struct {
-	AgentID string
-	Token   string
+	AgentID                 string
+	Token                   string
+	Name                    string
+	Region                  string
+	Zone                    string
+	FailureDomain           string
+	ReservedCPUMillis       int64
+	ReservedMemoryMebibytes int64
 }
 
 type ClientTLSConfig struct {
@@ -67,6 +73,7 @@ type BootstrapUser struct {
 	ID       string
 	Email    string
 	Projects []string
+	Operator bool
 }
 
 type IngressConfig struct {

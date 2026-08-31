@@ -85,7 +85,7 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 		usage := make(map[string]*agentWorkloadUsage, len(agents))
 		for _, agent := range agents {
 			usage[agent.ID] = &agentWorkloadUsage{}
-			if agent.LastSeenAt.After(cutoff) {
+			if agent.LastSeenAt.After(cutoff) && agent.LifecycleState == agentStateActive {
 				healthyAgents[agent.ID] = agent
 			}
 		}

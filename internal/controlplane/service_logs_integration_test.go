@@ -178,7 +178,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 		withDashboard:   true,
 	})
 	store := cp.server.store
-	if _, err := store.upsertAgent(ctx, agentHello(agentID)); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 		t.Fatal(err)
 	}
 	projects, err := store.listProjects(ctx, "user-a")
@@ -257,7 +257,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 		}},
 		withDashboard: true,
 	})
-	if _, err := disabled.server.store.upsertAgent(ctx, agentHello("disabled-agent")); err != nil {
+	if _, err := upsertTestAgent(t, disabled.server.store, ctx, agentHello("disabled-agent")); err != nil {
 		t.Fatal(err)
 	}
 	disabledProjects, err := disabled.server.store.listProjects(ctx, "user-a")

@@ -34,7 +34,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 		hello := agentHello(id)
 		hello.CpuMillisCapacity = 100
 		hello.MemoryMebibytesCapacity = 128
-		if _, err := store.upsertAgent(ctx, hello); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 			t.Fatalf("upsertAgent(%s): %v", id, err)
 		}
 	}
@@ -91,7 +91,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -218,7 +218,7 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 		t.Fatalf("listProjects: %v", err)
 	}
 	for _, agentID := range []string{"node-1", "node-2"} {
-		if _, err := store.upsertAgent(ctx, agentHello(agentID)); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 			t.Fatalf("upsertAgent(%s): %v", agentID, err)
 		}
 	}
@@ -274,7 +274,7 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -329,7 +329,7 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -386,7 +386,7 @@ func TestDirectImageRedeployUpdatesDesiredImage(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("example.test/web:a", nil), "node-1")
@@ -430,7 +430,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
@@ -510,10 +510,10 @@ func TestAgentTopologyChangesBumpAllDesiredRevisions(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-2")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-2")); err != nil {
 		t.Fatal(err)
 	}
 	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
@@ -521,7 +521,7 @@ func TestAgentTopologyChangesBumpAllDesiredRevisions(t *testing.T) {
 
 	hello := agentHello("node-1")
 	hello.Name = "node-1-renamed"
-	changed, err := store.upsertAgent(ctx, hello)
+	changed, err := upsertTestAgent(t, store, ctx, hello)
 	if err != nil {
 		t.Fatalf("upsertAgent: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -675,10 +675,10 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-a")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-a")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-b")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-b")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
@@ -720,7 +720,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 	hello := agentHello("node-1")
 	hello.CpuMillisCapacity = 500
 	hello.MemoryMebibytesCapacity = 512
-	if _, err := store.upsertAgent(ctx, hello); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{

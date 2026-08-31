@@ -168,12 +168,6 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	if cfg.Node.Resources.MemoryMebibytes <= 0 {
 		cfg.Node.Resources.MemoryMebibytes = 4096
 	}
-	if cfg.Node.Resources.ReservedCPUMillis <= 0 {
-		cfg.Node.Resources.ReservedCPUMillis = 500
-	}
-	if cfg.Node.Resources.ReservedMemoryMebibytes <= 0 {
-		cfg.Node.Resources.ReservedMemoryMebibytes = 512
-	}
 	if cfg.ControlPlane.TLS.ServerName == "" {
 		cfg.ControlPlane.TLS.ServerName = "controlplane"
 	}

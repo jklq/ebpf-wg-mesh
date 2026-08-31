@@ -21,11 +21,40 @@ func (s *Store) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.
 		for _, bootstrap := range tokens {
 			agentID := strings.TrimSpace(bootstrap.AgentID)
 			token := strings.TrimSpace(bootstrap.Token)
+			name := strings.TrimSpace(bootstrap.Name)
+			if name == "" {
+				name = agentID
+			}
+			region := strings.TrimSpace(bootstrap.Region)
+			if region == "" {
+				region = "default"
+			}
+			failureDomain := strings.TrimSpace(bootstrap.FailureDomain)
+			if failureDomain == "" {
+				failureDomain = strings.ToLower(agentID)
+				failureDomain = strings.Map(func(r rune) rune {
+					if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+						return r
+					}
+					return '-'
+				}, failureDomain)
+			}
+			if err := validateFleetAgentInput(agentID, name, region, bootstrap.Zone, failureDomain, bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes); err != nil {
+				return fmt.Errorf("configured agent %s: %w", agentID, err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO agents(
+				id, name, lifecycle_state, region, zone, failure_domain,
+				reserved_cpu_millis, reserved_memory_mebibytes, last_seen_at, created_at, updated_at
+			) VALUES ($1, $2, 'enrolling', $3, $4, $5, $6, $7, $8, $9, $9)
+			ON CONFLICT(id) DO NOTHING`, agentID, name, region, strings.TrimSpace(bootstrap.Zone), failureDomain,
+				bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes, time.Unix(0, 0).UTC(), now); err != nil {
+				return fmt.Errorf("store configured fleet agent %s: %w", agentID, err)
+			}
 			hash := bootstrapTokenHash(token)
 			configured[string(hash[:])] = struct{}{}
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO agent_bootstrap_tokens(token_hash, agent_id, created_at, consumed_at)
-				 VALUES ($1, $2, $3, NULL)
+				`INSERT INTO agent_bootstrap_tokens(token_hash, agent_id, origin, created_at, consumed_at)
+				 VALUES ($1, $2, 'config', $3, NULL)
 				 ON CONFLICT(token_hash) DO NOTHING`,
 				hash[:], agentID, now,
 			); err != nil {
@@ -43,7 +72,7 @@ func (s *Store) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.
 			}
 		}
 		rows, err := tx.QueryContext(ctx,
-			`SELECT token_hash FROM agent_bootstrap_tokens WHERE consumed_at IS NULL`,
+			`SELECT token_hash FROM agent_bootstrap_tokens WHERE consumed_at IS NULL AND origin = 'config'`,
 		)
 		if err != nil {
 			return fmt.Errorf("list active bootstrap tokens: %w", err)

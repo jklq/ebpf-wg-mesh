@@ -14,7 +14,6 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 		"-profile", "development",
 		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
 		"-internal-server-names", "controlplane,controlplane-internal",
-		"-agent-bootstrap-tokens", "node-a=token-a,node-b=token-b",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		"-logs-clickhouse-url", "clickhouse://127.0.0.1:9000/default",
 		"-logs-retention-days", "30",
@@ -22,7 +21,8 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 		"-failover-unhealthy-threshold-seconds", "45",
 		"-state-dir", "var/controlplane",
 		"-internal-revoked-client-cert-serials-file", "var/security/revoked-client-serials.txt",
-		"-bootstrap-user", "demo-user:demo@example.com:demo,ops",
+		"-bootstrap-user", "demo-user:demo@example.com:demo,ops+operator",
+		"-agent-bootstrap-tokens", "node-a=token-a|region=us-east|failure-domain=zone-1|reserved-cpu-millis=500,node-b=token-b",
 	})
 	if err != nil {
 		t.Fatalf("ControlPlane: %v", err)
@@ -36,10 +36,13 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	if got := strings.Join(cfg.Bootstrap.Users[0].Projects, ","); got != "demo,ops" {
 		t.Fatalf("unexpected bootstrap projects %q", got)
 	}
+	if !cfg.Bootstrap.Users[0].Operator {
+		t.Fatal("expected bootstrap user to be a platform operator")
+	}
 	if got := strings.Join(cfg.InternalGRPC.TLS.ServerNames, ","); got != "controlplane,controlplane-internal" {
 		t.Fatalf("unexpected internal server names %q", got)
 	}
-	if got := cfg.InternalGRPC.TLS.BootstrapTokens; len(got) != 2 || got[0].AgentID != "node-a" || got[0].Token != "token-a" || got[1].AgentID != "node-b" || got[1].Token != "token-b" {
+	if got := cfg.InternalGRPC.TLS.BootstrapTokens; len(got) != 2 || got[0].AgentID != "node-a" || got[0].Token != "token-a" || got[0].Region != "us-east" || got[0].FailureDomain != "zone-1" || got[0].ReservedCPUMillis != 500 || got[1].AgentID != "node-b" || got[1].Token != "token-b" {
 		t.Fatalf("unexpected bootstrap tokens %#v", got)
 	}
 	if got := cfg.Database.URL; got != "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable" {
@@ -125,8 +128,6 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 		"-data-dir", dataDir,
 		"-cpu-millis", "4000",
 		"-memory-mebibytes", "8192",
-		"-reserved-cpu-millis", "750",
-		"-reserved-memory-mebibytes", "1024",
 	})
 	if err != nil {
 		t.Fatalf("Agent: %v", err)
@@ -148,10 +149,10 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 	if cfg.ControlPlane.TLS.BootstrapToken != "test-token" {
 		t.Fatalf("unexpected bootstrap token %q", cfg.ControlPlane.TLS.BootstrapToken)
 	}
-	if got := cfg.Node.Resources.AdvertisedCPUMillis(); got != 3250 {
-		t.Fatalf("unexpected advertised CPU capacity %d", got)
+	if cfg.Node.Resources.CPUMillis != 4000 {
+		t.Fatalf("unexpected reported CPU capacity %d", cfg.Node.Resources.CPUMillis)
 	}
-	if got := cfg.Node.Resources.AdvertisedMemoryMebibytes(); got != 7168 {
-		t.Fatalf("unexpected advertised memory capacity %d", got)
+	if cfg.Node.Resources.MemoryMebibytes != 8192 {
+		t.Fatalf("unexpected reported memory capacity %d", cfg.Node.Resources.MemoryMebibytes)
 	}
 }

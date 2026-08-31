@@ -33,7 +33,7 @@ func TestAssignedNodeConfigSupportsClusterSizes(t *testing.T) {
 			ctx := context.Background()
 
 			for i := 1; i <= tt.clusterSize; i++ {
-				if _, err := store.upsertAgent(ctx, testAgentHello(i)); err != nil {
+				if _, err := upsertTestAgent(t, store, ctx, testAgentHello(i)); err != nil {
 					t.Fatalf("upsertAgent(node-%d): %v", i, err)
 				}
 			}
@@ -89,7 +89,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 	for i, host := range []string{"fd00:30::10", "fd00:30::11"} {
 		hello := testAgentHello(i + 1)
 		hello.AdvertiseAddr = host
-		if _, err := store.upsertAgent(ctx, hello); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 			t.Fatalf("upsertAgent: %v", err)
 		}
 	}
@@ -156,7 +156,7 @@ func TestDesiredStateForSingleNodeClusterHasNoPeers(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if _, err := store.upsertAgent(ctx, testAgentHello(1)); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, testAgentHello(1)); err != nil {
 		t.Fatalf("upsertAgent(node-1): %v", err)
 	}
 
@@ -182,5 +182,7 @@ func testAgentHello(n int) *agentv1.AgentHello {
 		WireguardListenPort:     51820 + int32(n),
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
+		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
+		SoftwareVersion:         "test",
 	}
 }

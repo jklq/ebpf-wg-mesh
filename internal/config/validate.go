@@ -226,18 +226,6 @@ func validateAgent(cfg AgentConfig) error {
 	if cfg.Node.Resources.MemoryMebibytes <= 0 {
 		return errors.New("agent.node.resources.memoryMebibytes must be greater than 0")
 	}
-	if cfg.Node.Resources.ReservedCPUMillis < 0 {
-		return errors.New("agent.node.resources.reservedCpuMillis must not be negative")
-	}
-	if cfg.Node.Resources.ReservedMemoryMebibytes < 0 {
-		return errors.New("agent.node.resources.reservedMemoryMebibytes must not be negative")
-	}
-	if cfg.Node.Resources.AdvertisedCPUMillis() <= 0 {
-		return errors.New("agent.node.resources.reservedCpuMillis must be less than cpuMillis")
-	}
-	if cfg.Node.Resources.AdvertisedMemoryMebibytes() <= 0 {
-		return errors.New("agent.node.resources.reservedMemoryMebibytes must be less than memoryMebibytes")
-	}
 	if cfg.ControlPlane.Address == "" {
 		return errors.New("agent.controlPlane.address is required")
 	}
@@ -401,6 +389,9 @@ func validateServerTLS(prefix string, cfg ServerTLSConfig) error {
 		}
 		if _, exists := tokens[token]; exists {
 			return fmt.Errorf("%s.bootstrapTokens contains a token assigned more than once", prefix)
+		}
+		if bootstrap.ReservedCPUMillis < 0 || bootstrap.ReservedMemoryMebibytes < 0 {
+			return fmt.Errorf("%s.bootstrapTokens reservations must not be negative", prefix)
 		}
 		agents[agentID] = struct{}{}
 		tokens[token] = struct{}{}

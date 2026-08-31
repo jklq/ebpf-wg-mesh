@@ -47,7 +47,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		t.Fatalf("environments in one project shared a network identity: %#v %#v", environmentsOne[0], staging)
 	}
 
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatalf("upsertAgent: %v", err)
 	}
 	service, err := store.createScheduledService(ctx, "user-1", environmentsOne[0].ID, "web", directImageServiceSpec("nginx:1.27", nil))

@@ -102,6 +102,28 @@ func (a *TLSAuthority) TransportCredentials() (credentials.TransportCredentials,
 	}), nil
 }
 
+func (a *TLSAuthority) RevokeSerials(serials []string) error {
+	if a == nil || a.revocations == nil {
+		return errors.New("certificate revocation list is not configured")
+	}
+	return a.revocations.Add(serials...)
+}
+
+func certificateSerialFromPEM(raw string) (string, error) {
+	block, _ := pem.Decode([]byte(raw))
+	if block == nil {
+		return "", errors.New("decode issued certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("parse issued certificate: %w", err)
+	}
+	if cert.SerialNumber == nil || cert.SerialNumber.Sign() <= 0 {
+		return "", errors.New("issued certificate serial is missing")
+	}
+	return cert.SerialNumber.Text(16), nil
+}
+
 func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
 	agentID := strings.TrimSpace(req.GetAgentId())
 	if agentID == "" {

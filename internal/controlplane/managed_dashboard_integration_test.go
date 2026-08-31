@@ -18,10 +18,10 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 	trusted := agentHello("trusted-dashboard-node")
 	trusted.CpuMillisCapacity = 1
 	trusted.MemoryMebibytesCapacity = 1
-	if _, err := store.upsertAgent(ctx, trusted); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, trusted); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("pool-node")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("pool-node")); err != nil {
 		t.Fatal(err)
 	}
 	store.reserveAgents(trusted.AgentId)

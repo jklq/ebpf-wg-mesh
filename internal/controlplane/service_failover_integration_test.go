@@ -32,7 +32,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		hello := agentHello(id)
 		hello.CpuMillisCapacity = 1_000
 		hello.MemoryMebibytesCapacity = 1_024
-		if _, err := store.upsertAgent(ctx, hello); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -123,13 +123,13 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	old := agentHello("old-node")
 	old.CpuMillisCapacity = 1_000
 	old.MemoryMebibytesCapacity = 1_024
-	if _, err := store.upsertAgent(ctx, old); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, old); err != nil {
 		t.Fatal(err)
 	}
 	target := agentHello("small-node")
 	target.CpuMillisCapacity = 50
 	target.MemoryMebibytesCapacity = 64
-	if _, err := store.upsertAgent(ctx, target); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, target); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.createVolume(ctx, "user-1", projectID, "data", 64<<20, "old-node"); err != nil {
@@ -191,10 +191,10 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	ctx := context.Background()
 	trusted := agentHello("trusted-node")
 	pool := agentHello("pool-node")
-	if _, err := store.upsertAgent(ctx, trusted); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, trusted); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, pool); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	store.reserveAgents(trusted.AgentId)
@@ -228,7 +228,7 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 	ctx := context.Background()
 	projectID := bootstrapFailoverProject(t, store)
 	for _, id := range []string{"old-node", "new-node"} {
-		if _, err := store.upsertAgent(ctx, agentHello(id)); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, agentHello(id)); err != nil {
 			t.Fatal(err)
 		}
 	}

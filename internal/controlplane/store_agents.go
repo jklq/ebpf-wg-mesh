@@ -3,9 +3,11 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,29 +20,16 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 
-		var existing agentRecord
-		err := tx.QueryRowContext(ctx,
-			`SELECT id, name, advertise_addr, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
-			        wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity, last_seen_at
-			   FROM agents
-			  WHERE id = $1`,
-			hello.AgentId,
-		).Scan(
-			&existing.ID,
-			&existing.Name,
-			&existing.AdvertiseAddr,
-			&existing.WorkloadIPv6Subnet,
-			&existing.WireGuardPublicKey,
-			&existing.WireGuardListenPort,
-			&existing.WireGuardIPv6,
-			&existing.CPUMillisCapacity,
-			&existing.MemoryMebibytesCapcity,
-			&existing.LastSeenAt,
-		)
-		if err != nil && err != sql.ErrNoRows {
+		existing, err := agentByIDQuerier(ctx, tx, hello.GetAgentId(), true)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errAgentNotEnrolled
+		}
+		if err != nil {
 			return err
 		}
-		isNew := err == sql.ErrNoRows
+		if existing.LifecycleState == agentStateRetired || existing.CredentialRevokedAt.Valid {
+			return errAgentCredentialRevoked
+		}
 
 		workloadSubnet := existing.WorkloadIPv6Subnet
 		if workloadSubnet == "" {
@@ -57,37 +46,39 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 			}
 		}
 
-		changed = isNew ||
-			existing.Name != hello.Name ||
-			existing.AdvertiseAddr != hello.AdvertiseAddr ||
+		nextState := existing.LifecycleState
+		if nextState == agentStateEnrolling {
+			nextState = agentStateActive
+		} else if nextState == agentStateUnavailable {
+			nextState = existing.StateBeforeUnavailable
+			if nextState == "" || nextState == agentStateUnavailable || nextState == agentStateRetired {
+				nextState = agentStateActive
+			}
+		}
+		capabilities := canonicalCapabilities(hello.GetRuntimeCapabilities())
+		changed = existing.AdvertiseAddr != hello.AdvertiseAddr ||
 			existing.WireGuardPublicKey != hello.GetWireguardPublicKey() ||
 			existing.WireGuardListenPort != int(hello.GetWireguardListenPort()) ||
 			existing.CPUMillisCapacity != hello.CpuMillisCapacity ||
 			existing.MemoryMebibytesCapcity != hello.MemoryMebibytesCapacity ||
+			!slices.Equal(existing.RuntimeCapabilities, capabilities) ||
+			existing.SoftwareVersion != strings.TrimSpace(hello.GetSoftwareVersion()) ||
+			existing.LifecycleState != nextState ||
 			existing.WorkloadIPv6Subnet != workloadSubnet ||
 			existing.WireGuardIPv6 != wireGuardIPv6
 
+		capabilitiesJSON, err := json.Marshal(capabilities)
+		if err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO agents(
-				id, name, advertise_addr, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
-				wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity, last_seen_at, created_at, updated_at
-			) VALUES (
-				$1, $2, $3, $4, $5, $6,
-				$7, $8, $9, $10, $11, $12
-			)
-			ON CONFLICT(id) DO UPDATE SET
-				name = excluded.name,
-				advertise_addr = excluded.advertise_addr,
-				workload_ipv6_subnet = excluded.workload_ipv6_subnet,
-				wireguard_public_key = excluded.wireguard_public_key,
-				wireguard_listen_port = excluded.wireguard_listen_port,
-				wireguard_ipv6 = excluded.wireguard_ipv6,
-				cpu_millis_capacity = excluded.cpu_millis_capacity,
-				memory_mebibytes_capacity = excluded.memory_mebibytes_capacity,
-				last_seen_at = excluded.last_seen_at,
-				updated_at = excluded.updated_at`,
-			hello.AgentId,
-			hello.Name,
+			`UPDATE agents SET lifecycle_state = $1, state_before_unavailable = '',
+				advertise_addr = $2, workload_ipv6_subnet = $3, wireguard_public_key = $4,
+				wireguard_listen_port = $5, wireguard_ipv6 = $6, cpu_millis_capacity = $7,
+				memory_mebibytes_capacity = $8, runtime_capabilities = $9,
+				software_version = $10, last_seen_at = $11, updated_at = $11
+			 WHERE id = $12`,
+			nextState,
 			hello.AdvertiseAddr,
 			workloadSubnet,
 			hello.GetWireguardPublicKey(),
@@ -95,9 +86,10 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 			wireGuardIPv6,
 			hello.CpuMillisCapacity,
 			hello.MemoryMebibytesCapacity,
+			capabilitiesJSON,
+			strings.TrimSpace(hello.GetSoftwareVersion()),
 			now,
-			now,
-			now,
+			hello.AgentId,
 		)
 		if err != nil {
 			return err
@@ -115,7 +107,13 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 
 func (s *Store) heartbeatAgent(ctx context.Context, agentID string) error {
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1, updated_at = $2 WHERE id = $3`, now, now, agentID)
+	_, err := s.db.ExecContext(ctx, `UPDATE agents SET
+		lifecycle_state = CASE WHEN lifecycle_state = 'unavailable'
+			THEN CASE WHEN state_before_unavailable IN ('active', 'cordoned', 'draining') THEN state_before_unavailable ELSE 'active' END
+			ELSE lifecycle_state END,
+		state_before_unavailable = CASE WHEN lifecycle_state = 'unavailable' THEN '' ELSE state_before_unavailable END,
+		last_seen_at = $1, updated_at = $1
+		WHERE id = $2 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, now, agentID)
 	return err
 }
 
@@ -124,29 +122,7 @@ func (s *Store) listAgents(ctx context.Context) ([]agentRecord, error) {
 }
 
 func (s *Store) agentByID(ctx context.Context, agentID string) (agentRecord, error) {
-	var rec agentRecord
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, advertise_addr, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
-		        wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity, last_seen_at
-		   FROM agents
-		  WHERE id = $1`,
-		agentID,
-	).Scan(
-		&rec.ID,
-		&rec.Name,
-		&rec.AdvertiseAddr,
-		&rec.WorkloadIPv6Subnet,
-		&rec.WireGuardPublicKey,
-		&rec.WireGuardListenPort,
-		&rec.WireGuardIPv6,
-		&rec.CPUMillisCapacity,
-		&rec.MemoryMebibytesCapcity,
-		&rec.LastSeenAt,
-	)
-	if err != nil {
-		return agentRecord{}, err
-	}
-	return rec, nil
+	return agentByIDQuerier(ctx, s.db, agentID, false)
 }
 
 func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *agentv1.StatusReport) (bool, []string, error) {
@@ -361,7 +337,7 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 		return nil, err
 	}
 	for _, peer := range agents {
-		if peer.ID == agentID || peer.WireGuardPublicKey == "" || peer.WireGuardListenPort <= 0 || peer.WorkloadIPv6Subnet == "" {
+		if peer.ID == agentID || peer.LifecycleState == agentStateRetired || peer.CredentialRevokedAt.Valid || peer.WireGuardPublicKey == "" || peer.WireGuardListenPort <= 0 || peer.WorkloadIPv6Subnet == "" {
 			continue
 		}
 		endpoint, err := endpointForAgent(peer.AdvertiseAddr, peer.WireGuardListenPort)
@@ -511,9 +487,7 @@ func (s *Store) schedulerSnapshotTx(ctx context.Context, q serviceQueryer) ([]ag
 
 func (s *Store) listAgentsQuerier(ctx context.Context, q serviceQueryer) ([]agentRecord, error) {
 	rows, err := q.QueryContext(ctx,
-		`SELECT id, name, advertise_addr, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
-		        wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity, last_seen_at
-		   FROM agents
+		agentSelectSQL+`
 		  ORDER BY created_at ASC`,
 	)
 	if err != nil {
@@ -523,19 +497,8 @@ func (s *Store) listAgentsQuerier(ctx context.Context, q serviceQueryer) ([]agen
 
 	var out []agentRecord
 	for rows.Next() {
-		var rec agentRecord
-		if err := rows.Scan(
-			&rec.ID,
-			&rec.Name,
-			&rec.AdvertiseAddr,
-			&rec.WorkloadIPv6Subnet,
-			&rec.WireGuardPublicKey,
-			&rec.WireGuardListenPort,
-			&rec.WireGuardIPv6,
-			&rec.CPUMillisCapacity,
-			&rec.MemoryMebibytesCapcity,
-			&rec.LastSeenAt,
-		); err != nil {
+		rec, err := scanAgentRecord(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, rec)

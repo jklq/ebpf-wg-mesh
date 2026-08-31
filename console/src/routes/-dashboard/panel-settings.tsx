@@ -25,6 +25,7 @@ type SettingsDraft = {
 	maxRestarts: string;
 	windowSeconds: string;
 	sandboxProfileName: string;
+	placementRegion: string;
 };
 
 export function PanelSettings({
@@ -46,6 +47,7 @@ export function PanelSettings({
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
+	const placementRegionId = `service-placement-region-${service.id}`;
 	const incoming = settingsDraftFromService(service);
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [deleting, setDeleting] = useState(false);
@@ -75,6 +77,7 @@ export function PanelSettings({
 						windowSeconds: Number(next.windowSeconds) || 0,
 					},
 					sandboxProfileName: next.sandboxProfileName,
+					placementRegion: next.placementRegion,
 				},
 			});
 			onSaved(updated);
@@ -269,6 +272,29 @@ export function PanelSettings({
 			</PanelSection>
 
 			<PanelSection
+				title="Placement"
+				lede="Optionally keep this service in one operator-defined region. Replicas still spread across failure domains when capacity permits."
+			>
+				<div>
+					<label className="field-label" htmlFor={placementRegionId}>
+						Required region
+					</label>
+					<input
+						id={placementRegionId}
+						className={`field-input ${changedFields.has("placementRegion") ? "unapplied-field" : ""}`}
+						value={draft.placementRegion}
+						onChange={(event) =>
+							setDraft((current) => ({
+								...current,
+								placementRegion: event.target.value,
+							}))
+						}
+						placeholder="Any region"
+					/>
+				</div>
+			</PanelSection>
+
+			<PanelSection
 				title="Process restart"
 				lede="What happens when the process exits."
 			>
@@ -451,6 +477,7 @@ function settingsDraftFromService(
 		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
 		sandboxProfileName:
 			service.spec?.runtime.sandboxProfile?.name ?? "production",
+		placementRegion: service.spec?.placementRegion ?? "",
 	};
 }
 

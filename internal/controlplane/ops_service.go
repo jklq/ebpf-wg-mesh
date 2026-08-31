@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -13,11 +14,86 @@ import (
 
 type OpsService struct {
 	platformv1.UnimplementedOpsServiceServer
-	webhooks *GitHubWebhookHandler
+	webhooks  *GitHubWebhookHandler
+	store     *Store
+	notifier  *Notifier
+	authority *TLSAuthority
 }
 
-func NewOpsService(webhooks *GitHubWebhookHandler) *OpsService {
-	return &OpsService{webhooks: webhooks}
+func NewOpsService(webhooks *GitHubWebhookHandler, store *Store, notifier *Notifier, authority *TLSAuthority) *OpsService {
+	return &OpsService{webhooks: webhooks, store: store, notifier: notifier, authority: authority}
+}
+
+func (s *OpsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platformv1.Fleet, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fleet, err := s.store.fleetView(ctx, identity.UserID)
+	if err != nil {
+		return nil, fleetStatusError("list fleet", err)
+	}
+	return fleet, nil
+}
+
+func (s *OpsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgentRequest) (*platformv1.AgentEnrollment, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, token, err := s.store.createFleetAgent(ctx, identity.UserID, req)
+	if err != nil {
+		return nil, fleetStatusError("create agent", err)
+	}
+	return &platformv1.AgentEnrollment{Agent: toProtoAgent(rec), BootstrapToken: token}, nil
+}
+
+func (s *OpsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgentRequest) (*platformv1.Agent, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := s.store.updateFleetAgent(ctx, identity.UserID, req)
+	if err != nil {
+		return nil, fleetStatusError("update agent", err)
+	}
+	return toProtoAgent(rec), nil
+}
+
+func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetAgentLifecycleRequest) (*platformv1.Agent, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	target := lifecycleStateRecord(req.GetLifecycleState())
+	rec, notify, err := s.store.setAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
+	if err != nil {
+		return nil, fleetStatusError("set agent lifecycle", err)
+	}
+	if rec.LifecycleState == agentStateRetired && s.authority != nil {
+		serials, serialErr := s.store.listAgentCertificateSerials(ctx, rec.ID)
+		if serialErr != nil {
+			return nil, status.Errorf(codes.Internal, "set agent lifecycle: load revoked serials: %v", serialErr)
+		}
+		if err := s.authority.RevokeSerials(serials); err != nil {
+			return nil, status.Errorf(codes.Internal, "set agent lifecycle: revoke credentials: %v", err)
+		}
+	}
+	if s.notifier != nil {
+		s.notifier.NotifyAll(notify)
+	}
+	return toProtoAgent(rec), nil
+}
+
+func fleetStatusError(operation string, err error) error {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return status.Errorf(codes.PermissionDenied, "%s: operator access required or agent not found", operation)
+	case errors.Is(err, errInvalidAgentTransition), errors.Is(err, errAgentHasAllocations):
+		return status.Errorf(codes.FailedPrecondition, "%s: %v", operation, err)
+	default:
+		return status.Errorf(codes.InvalidArgument, "%s: %v", operation, err)
+	}
 }
 
 func (s *OpsService) IngestGitHubWebhook(ctx context.Context, req *platformv1.IngestGitHubWebhookRequest) (*emptypb.Empty, error) {

@@ -224,6 +224,9 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 		return serviceRecord{}, false, false, err
 	}
 	spec = canonicalServiceSpec(spec)
+	if err := validateServicePlacement(spec); err != nil {
+		return serviceRecord{}, false, false, err
+	}
 	nameChanged := nextName != current.Name
 	if sameServiceSpec(current.Spec, spec) {
 		if !nameChanged {

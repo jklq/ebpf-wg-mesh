@@ -1,0 +1,322 @@
+//go:build integration
+
+package controlplane
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
+)
+
+func TestUnenrolledAgentCannotSelfRegister(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if _, err := store.upsertAgent(ctx, agentHello("ghost")); !errors.Is(err, errAgentNotEnrolled) {
+		t.Fatalf("upsertAgent(ghost): got %v, want %v", err, errAgentNotEnrolled)
+	}
+}
+
+func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
+	seedFleetOperator(t, store, ctx)
+
+	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 1)
+	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 {
+		t.Fatalf("expected replica on node-a, got %v", agents)
+	}
+
+	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
+		t.Fatalf("cordon node-b: %v", err)
+	}
+	draining, _, err := store.setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining)
+	if err != nil {
+		t.Fatalf("drain node-a without alternate capacity: %v", err)
+	}
+	if !strings.Contains(draining.MaintenanceMessage, "drain paused") {
+		t.Fatalf("expected drain interruption message, got %q", draining.MaintenanceMessage)
+	}
+	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 {
+		t.Fatalf("drain without capacity moved the replica: %v", agents)
+	}
+
+	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateActive); err != nil {
+		t.Fatalf("return node-b: %v", err)
+	}
+	if _, err := store.reconcileDrainingAgent(ctx, "node-a"); err != nil {
+		t.Fatalf("retry drain: %v", err)
+	}
+	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-b"] != 1 || agents["node-a"] != 0 {
+		t.Fatalf("expected drain to move replica to node-b, got %v", agents)
+	}
+	finished, err := store.agentByID(ctx, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(finished.MaintenanceMessage, "drain complete") {
+		t.Fatalf("expected completed drain, got %q", finished.MaintenanceMessage)
+	}
+}
+
+func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
+	hello := agentHello("node-a")
+	hello.CpuMillisCapacity = 150
+	hello.MemoryMebibytesCapacity = 128
+	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
+	placed := mustListAllocations(t, store, ctx, service.ID)
+	if len(placed) != 1 {
+		t.Fatalf("expected one placed replica before node return, got %d", len(placed))
+	}
+	pending, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pending.PlacementMessage, "1 of 2 replicas placed") {
+		t.Fatalf("expected pending placement message, got %q", pending.PlacementMessage)
+	}
+
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcileFleetCapacity(ctx); err != nil {
+		t.Fatalf("reconcileFleetCapacity: %v", err)
+	}
+	after := mustListAllocations(t, store, ctx, service.ID)
+	if len(after) != 2 {
+		t.Fatalf("expected node return to place the pending replica, got %d", len(after))
+	}
+	cleared, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.PlacementMessage != "" {
+		t.Fatalf("expected placement message to clear after node return, got %q", cleared.PlacementMessage)
+	}
+}
+
+func TestFleetReplicaSpreadAndRegionPendingReason(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b", "node-c"})
+	seedFleetOperator(t, store, ctx)
+	for _, req := range []*platformv1.UpdateAgentRequest{
+		{AgentId: "node-a", Name: "node-a", Region: "us-east", FailureDomain: "zone-1"},
+		{AgentId: "node-b", Name: "node-b", Region: "us-east", FailureDomain: "zone-1"},
+		{AgentId: "node-c", Name: "node-c", Region: "us-east", FailureDomain: "zone-2"},
+	} {
+		if _, err := store.updateFleetAgent(ctx, "ops", req); err != nil {
+			t.Fatalf("updateFleetAgent(%s): %v", req.AgentId, err)
+		}
+	}
+
+	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
+	allocations := mustListAllocations(t, store, ctx, service.ID)
+	if len(allocations) != 2 {
+		t.Fatalf("expected 2 allocations, got %d", len(allocations))
+	}
+	agents := allocationAgentIDs(allocations)
+	if agents["node-c"] != 1 || (agents["node-a"]+agents["node-b"] != 1) {
+		t.Fatalf("expected replicas spread across zone-1 and zone-2, got %v", agents)
+	}
+
+	regionSpec := replicaSpec(100, 64)
+	regionSpec.PlacementRegion = "eu-west"
+	regionService, err := store.createService(ctx, "user-1", envID, "eu-web", regionSpec, "node-a")
+	if err != nil {
+		t.Fatalf("createService(region): %v", err)
+	}
+	pending, err := store.serviceByID(ctx, "user-1", "", regionService.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pending.PlacementMessage, `region "eu-west"`) {
+		t.Fatalf("expected region pending explanation, got %q", pending.PlacementMessage)
+	}
+}
+
+func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	seedFleetOperator(t, store, ctx)
+	hello := agentHello("node-retire")
+	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordAgentCertificate(ctx, "node-retire", "abcd"); err != nil {
+		t.Fatalf("recordAgentCertificate: %v", err)
+	}
+	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-retire", agentStateCordoned); err != nil {
+		t.Fatalf("cordon: %v", err)
+	}
+	rec, _, err := store.setAgentLifecycle(ctx, "ops", "node-retire", agentStateRetired)
+	if err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	if rec.LifecycleState != agentStateRetired || !rec.CredentialRevokedAt.Valid {
+		t.Fatalf("expected retired revoked agent, got %+v", rec)
+	}
+	if rec.WireGuardPublicKey != "" || rec.WorkloadIPv6Subnet != "" {
+		t.Fatalf("expected mesh identity to be cleared, got %+v", rec)
+	}
+	if err := store.authorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, errAgentCredentialRevoked) {
+		t.Fatalf("authorizeAgentCredential: got %v", err)
+	}
+	if _, err := store.upsertAgent(ctx, hello); !errors.Is(err, errAgentCredentialRevoked) {
+		t.Fatalf("upsert after retire: got %v", err)
+	}
+	serials, err := store.listAgentCertificateSerials(ctx, "node-retire")
+	if err != nil || len(serials) != 1 || serials[0] != "abcd" {
+		t.Fatalf("certificate serials = %v, err=%v", serials, err)
+	}
+
+	path := t.TempDir() + "/revoked.txt"
+	revocations, err := NewCertificateRevocations(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := revocations.Add(serials...); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+}
+
+func TestFleetViewReportsHeadroomAndVersionSkew(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	seedFleetOperator(t, store, ctx)
+	left := agentHello("node-a")
+	left.SoftwareVersion = "1.0.0"
+	right := agentHello("node-b")
+	right.SoftwareVersion = "1.0.1"
+	right.AdvertiseAddr = "fd00:30::11"
+	if _, err := upsertTestAgent(t, store, ctx, left); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, right); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.updateFleetAgent(ctx, "ops", &platformv1.UpdateAgentRequest{
+		AgentId: "node-a", Name: "node-a", Region: "us-east", FailureDomain: "zone-1", ReservedCpuMillis: 500,
+	}); err != nil {
+		t.Fatalf("reserve CPU: %v", err)
+	}
+	fleet, err := store.fleetView(ctx, "ops")
+	if err != nil {
+		t.Fatalf("fleetView: %v", err)
+	}
+	if fleet.GetCapacity().GetSchedulableNodeCount() != 2 {
+		t.Fatalf("schedulable nodes = %d", fleet.GetCapacity().GetSchedulableNodeCount())
+	}
+	if fleet.GetVersionWarning() == "" {
+		t.Fatal("expected version skew warning")
+	}
+	var reserved *platformv1.Agent
+	for _, agent := range fleet.GetAgents() {
+		if agent.GetId() == "node-a" {
+			reserved = agent
+		}
+	}
+	if reserved == nil || reserved.GetSchedulableCpuMillis() != 1500 {
+		t.Fatalf("expected reserved CPU to reduce schedulable capacity, got %+v", reserved)
+	}
+}
+
+func TestCordonedNodesAreExcludedFromNewPlacement(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
+	seedFleetOperator(t, store, ctx)
+	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
+	agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID))
+	if agents["node-a"] != 2 || agents["node-b"] != 0 {
+		t.Fatalf("cordoned node received a new replica: %v", agents)
+	}
+}
+
+func seedFleetOperator(t *testing.T, store *Store, ctx context.Context) {
+	t.Helper()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "ops", Email: "ops@example.com", Operator: true}},
+	}); err != nil {
+		t.Fatalf("EnsureBootstrap(operator): %v", err)
+	}
+}
+
+func TestStatefulDrainRemainsFenced(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
+	seedFleetOperator(t, store, ctx)
+	if _, err := store.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-a"); err != nil {
+		t.Fatalf("createVolume: %v", err)
+	}
+	spec := replicaSpec(100, 64)
+	spec.Runtime.VolumeName = "data"
+	service, err := store.createService(ctx, "user-1", envID, "disk", spec, "node-a")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("deployEnvironment: %v", err)
+	}
+	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID))
+	if agents["node-a"] != 1 {
+		t.Fatalf("stateful allocation was moved before Stage 7: %v", agents)
+	}
+	rec, err := store.agentByID(ctx, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.MaintenanceMessage, "Stage 7") {
+		t.Fatalf("expected fenced stateful drain message, got %q", rec.MaintenanceMessage)
+	}
+}

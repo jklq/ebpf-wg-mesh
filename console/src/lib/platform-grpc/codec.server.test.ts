@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	decodeFleetMessage,
 	decodeIndexedServiceStatusResponse,
 	decodeIndexedServicesResponse,
 	decodeListServiceDeploymentsResponse,
@@ -10,6 +11,41 @@ import {
 } from "#/lib/platform-grpc/codec.server";
 
 describe("platform grpc codec", () => {
+	it("decodes fleet capacity and lifecycle state", () => {
+		const fleet = decodeFleetMessage({
+			agents: [
+				{
+					id: "node-a",
+					name: "edge-a",
+					lifecycleState: "AGENT_LIFECYCLE_STATE_CORDONED",
+					region: "us-east",
+					failureDomain: "zone-1",
+					healthy: true,
+					schedulableCpuMillis: "1500",
+					headroomCpuMillis: "400",
+					allocationCount: "2",
+					softwareVersion: "1.0.0",
+					versionSkewWarning: "reports 1.0.0 while the fleet majority reports 1.0.1",
+				},
+			],
+			capacity: {
+				nodeCount: "3",
+				schedulableNodeCount: "2",
+				headroomCpuMillis: "800",
+			},
+			versionWarning: "fleet software version skew detected",
+		});
+		expect(fleet.agents[0]).toMatchObject({
+			id: "node-a",
+			lifecycleState: "cordoned",
+			region: "us-east",
+			schedulableCpuMillis: 1500,
+			allocationCount: 2,
+		});
+		expect(fleet.capacity.schedulableNodeCount).toBe(2);
+		expect(fleet.versionWarning).toContain("skew");
+	});
+
 	it("decodes blocking-query timeouts without payloads", () => {
 		expect(
 			decodeIndexedServicesResponse({ index: "42", notModified: true }),

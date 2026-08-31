@@ -52,6 +52,7 @@ type bootstrapUserSpec struct {
 	userID   string
 	email    string
 	projects []string
+	operator bool
 }
 
 func (f bootstrapUsersFlag) String() string {
@@ -66,13 +67,20 @@ func (f bootstrapUsersFlag) String() string {
 }
 
 func (f bootstrapUsersFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	operator := false
+	if strings.HasSuffix(value, "+operator") {
+		operator = true
+		value = strings.TrimSpace(strings.TrimSuffix(value, "+operator"))
+	}
 	parts := strings.SplitN(value, ":", 3)
 	if len(parts) < 2 {
-		return fmt.Errorf("bootstrap user must be user-id:email[:project1,project2]")
+		return fmt.Errorf("bootstrap user must be user-id:email[:project1,project2][+operator]")
 	}
 	spec := bootstrapUserSpec{
-		userID: strings.TrimSpace(parts[0]),
-		email:  strings.TrimSpace(parts[1]),
+		userID:   strings.TrimSpace(parts[0]),
+		email:    strings.TrimSpace(parts[1]),
+		operator: operator,
 	}
 	if len(parts) == 3 && strings.TrimSpace(parts[2]) != "" {
 		for _, item := range strings.Split(parts[2], ",") {
@@ -124,14 +132,50 @@ func parseAgentBootstrapTokens(raw string) ([]config.AgentBootstrapToken, error)
 	values := splitCommaList(raw)
 	tokens := make([]config.AgentBootstrapToken, 0, len(values))
 	for _, value := range values {
-		parts := strings.SplitN(value, "=", 2)
+		identity, attrs, _ := strings.Cut(value, "|")
+		parts := strings.SplitN(identity, "=", 2)
 		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 			return nil, fmt.Errorf("agent bootstrap token must be agent_id=token")
 		}
-		tokens = append(tokens, config.AgentBootstrapToken{
+		token := config.AgentBootstrapToken{
 			AgentID: strings.TrimSpace(parts[0]),
 			Token:   strings.TrimSpace(parts[1]),
-		})
+		}
+		for _, attr := range strings.Split(attrs, "|") {
+			attr = strings.TrimSpace(attr)
+			if attr == "" {
+				continue
+			}
+			key, val, ok := strings.Cut(attr, "=")
+			if !ok {
+				return nil, fmt.Errorf("agent bootstrap token attribute must be key=value")
+			}
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "name":
+				token.Name = strings.TrimSpace(val)
+			case "region":
+				token.Region = strings.TrimSpace(val)
+			case "zone":
+				token.Zone = strings.TrimSpace(val)
+			case "failure-domain", "failuredomain":
+				token.FailureDomain = strings.TrimSpace(val)
+			case "reserved-cpu-millis", "reservedcpu":
+				n, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("agent bootstrap token reserved-cpu-millis: %w", err)
+				}
+				token.ReservedCPUMillis = n
+			case "reserved-memory-mebibytes", "reservedmemory":
+				n, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("agent bootstrap token reserved-memory-mebibytes: %w", err)
+				}
+				token.ReservedMemoryMebibytes = n
+			default:
+				return nil, fmt.Errorf("unknown agent bootstrap token attribute %q", key)
+			}
+		}
+		tokens = append(tokens, token)
 	}
 	return tokens, nil
 }

@@ -173,6 +173,13 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 					return fmt.Errorf("insert project membership: %w", err)
 				}
 			}
+			if user.Operator {
+				if _, err := tx.ExecContext(ctx,
+					`INSERT INTO platform_operators(user_id, created_at) VALUES ($1, $2)
+					 ON CONFLICT(user_id) DO NOTHING`, user.ID, time.Now().UTC()); err != nil {
+					return fmt.Errorf("insert platform operator: %w", err)
+				}
+			}
 		}
 		return nil
 	})

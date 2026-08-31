@@ -245,5 +245,7 @@ func restartAgentHello(id, addr string) *agentv1.AgentHello {
 		WireguardListenPort:     51820,
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
+		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
+		SoftwareVersion:         "test",
 	}
 }

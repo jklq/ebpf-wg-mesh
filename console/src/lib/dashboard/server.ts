@@ -29,6 +29,11 @@ import {
 	type DevLoginIdentity,
 	type GitHubUserRepository,
 	type UpdateServiceInput,
+	type DashboardAgentEnrollment,
+	type DashboardAgentLifecycleState,
+	type DashboardFleet,
+	type DashboardFleetAgent,
+	type FleetAgentInput,
 } from "#/lib/dashboard/core/types.server";
 import {
 	assertProductionDashboardConfig,
@@ -124,6 +129,29 @@ export async function checkDashboardReadiness(): Promise<{
 
 export function listDevLogins(): Array<DevLoginIdentity> {
 	return getDashboardService().listDevLogins();
+}
+
+export function loadFleetFromSession(): Promise<DashboardFleet> {
+	return getDashboardService().loadFleetFromSession();
+}
+
+export function createFleetAgentFromSession(
+	input: FleetAgentInput,
+): Promise<DashboardAgentEnrollment> {
+	return getDashboardService().createFleetAgentFromSession(input);
+}
+
+export function updateFleetAgentFromSession(
+	input: FleetAgentInput,
+): Promise<DashboardFleetAgent> {
+	return getDashboardService().updateFleetAgentFromSession(input);
+}
+
+export function setFleetAgentLifecycleFromSession(input: {
+	agentId: string;
+	lifecycleState: DashboardAgentLifecycleState;
+}): Promise<DashboardFleetAgent> {
+	return getDashboardService().setFleetAgentLifecycleFromSession(input);
 }
 
 export function isGitHubLoginEnabled(): boolean {

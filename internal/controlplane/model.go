@@ -83,22 +83,44 @@ type domainBindingRecord struct {
 }
 
 type agentRecord struct {
-	ID                     string
-	Name                   string
-	AdvertiseAddr          string
-	WorkloadIPv6Subnet     string
-	WireGuardPublicKey     string
-	WireGuardListenPort    int
-	WireGuardIPv6          string
-	CPUMillisCapacity      int64
-	MemoryMebibytesCapcity int64
-	LastSeenAt             time.Time
+	ID                      string
+	Name                    string
+	LifecycleState          agentLifecycleState
+	StateBeforeUnavailable  agentLifecycleState
+	Region                  string
+	Zone                    string
+	FailureDomain           string
+	ReservedCPUMillis       int64
+	ReservedMemoryMebibytes int64
+	AdvertiseAddr           string
+	WorkloadIPv6Subnet      string
+	WireGuardPublicKey      string
+	WireGuardListenPort     int
+	WireGuardIPv6           string
+	CPUMillisCapacity       int64
+	MemoryMebibytesCapcity  int64
+	RuntimeCapabilities     []string
+	SoftwareVersion         string
+	MaintenanceMessage      string
+	CredentialRevokedAt     sql.NullTime
+	LastSeenAt              time.Time
 }
+
+type agentLifecycleState string
+
+const (
+	agentStateEnrolling   agentLifecycleState = "enrolling"
+	agentStateActive      agentLifecycleState = "active"
+	agentStateCordoned    agentLifecycleState = "cordoned"
+	agentStateDraining    agentLifecycleState = "draining"
+	agentStateUnavailable agentLifecycleState = "unavailable"
+	agentStateRetired     agentLifecycleState = "retired"
+)
 
 const agentHealthyTTL = 30 * time.Second
 
 func (a agentRecord) healthy(now time.Time) bool {
-	return now.Sub(a.LastSeenAt) < agentHealthyTTL
+	return a.LifecycleState != agentStateUnavailable && a.LifecycleState != agentStateRetired && now.Sub(a.LastSeenAt) < agentHealthyTTL
 }
 
 type allocationRecord struct {
