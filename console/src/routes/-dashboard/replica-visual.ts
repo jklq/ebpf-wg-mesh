@@ -76,37 +76,70 @@ export function replicaSlots({
 	allocations: Array<DashboardAllocationStatus>;
 	desiredGeneration?: number;
 }): ReplicaSlot[] {
-	const sorted = [...allocations].sort((left, right) =>
-		left.allocationId.localeCompare(right.allocationId),
-	);
-	const count = Math.max(desired, sorted.length, 0);
-	const slots: ReplicaSlot[] = [];
-	for (let index = 0; index < count; index++) {
-		const allocation = sorted[index];
-		if (!allocation) {
-			slots.push({
-				id: `pending-${index}`,
-				index,
-				state: "pending",
-				title: `Replica ${index + 1} · starting`,
-				label: `Replica ${index + 1}`,
-				phaseLabel: "Waiting for a slot",
-			});
-			continue;
+	const desiredCount = Math.max(desired, 0);
+	const serving: Array<DashboardAllocationStatus> = [];
+	const starting: Array<DashboardAllocationStatus> = [];
+	const draining: Array<DashboardAllocationStatus> = [];
+	for (const allocation of allocations) {
+		const rolloutState = allocation.rolloutState?.toLowerCase();
+		if (rolloutState === "draining" || rolloutState === "withdrawing") {
+			draining.push(allocation);
+		} else if (rolloutState === "starting") {
+			starting.push(allocation);
+		} else {
+			serving.push(allocation);
 		}
-		const state = replicaAllocationState(allocation, desiredGeneration);
+	}
+
+	const desiredAllocations = serving.slice(0, desiredCount);
+	const startingDesiredCount = Math.min(
+		starting.length,
+		desiredCount - desiredAllocations.length,
+	);
+	desiredAllocations.push(...starting.slice(0, startingDesiredCount));
+	const extraAllocations = [
+		...serving.slice(desiredCount),
+		...starting.slice(startingDesiredCount),
+		...draining,
+	];
+	const slots: ReplicaSlot[] = [];
+	for (const allocation of desiredAllocations) {
+		addAllocationSlot(slots, allocation, desiredGeneration);
+	}
+	while (slots.length < desiredCount) {
+		const index = slots.length;
 		slots.push({
-			id: allocation.allocationId || `replica-${index}`,
+			id: `pending-${index}`,
 			index,
-			state,
-			title: replicaSlotTitle(index, state, allocation),
+			state: "pending",
+			title: `Replica ${index + 1} · starting`,
 			label: `Replica ${index + 1}`,
-			phaseLabel: replicaPhaseLabel(allocation, state),
-			detail: replicaSlotDetail(allocation, state),
-			allocation,
+			phaseLabel: "Waiting for a slot",
 		});
 	}
+	for (const allocation of extraAllocations) {
+		addAllocationSlot(slots, allocation, desiredGeneration);
+	}
 	return slots;
+}
+
+function addAllocationSlot(
+	slots: ReplicaSlot[],
+	allocation: DashboardAllocationStatus,
+	desiredGeneration: number | undefined,
+): void {
+	const index = slots.length;
+	const state = replicaAllocationState(allocation, desiredGeneration);
+	slots.push({
+		id: allocation.allocationId || `replica-${index}`,
+		index,
+		state,
+		title: replicaSlotTitle(index, state, allocation),
+		label: `Replica ${index + 1}`,
+		phaseLabel: replicaPhaseLabel(allocation, state),
+		detail: replicaSlotDetail(allocation, state),
+		allocation,
+	});
 }
 
 export function replicaRolloutCopy({

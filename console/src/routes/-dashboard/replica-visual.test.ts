@@ -183,6 +183,48 @@ describe("replicaSlots", () => {
 		expect(slots[1]?.phaseLabel).toBe("Starting");
 	});
 
+	it("orders desired, surge, and draining slots by rollout role instead of allocation id", () => {
+		const slots = replicaSlots({
+			desired: 1,
+			desiredGeneration: 2,
+			allocations: [
+				allocation({
+					allocationId: "a",
+					healthy: false,
+					appliedRolloutGeneration: 1,
+					desiredRolloutGeneration: 2,
+					rolloutState: "starting",
+					phase: "Starting",
+				}),
+				allocation({
+					allocationId: "m",
+					appliedRolloutGeneration: 1,
+					desiredRolloutGeneration: 1,
+					rolloutState: "draining",
+					phase: "Draining",
+				}),
+				allocation({
+					allocationId: "z",
+					appliedRolloutGeneration: 2,
+					desiredRolloutGeneration: 2,
+					rolloutState: "serving",
+				}),
+			],
+		});
+
+		expect(slots.map((slot) => slot.allocation?.allocationId)).toEqual([
+			"z",
+			"a",
+			"m",
+		]);
+		expect(slots.map((slot) => slot.state)).toEqual([
+			"ready",
+			"rolling",
+			"draining",
+		]);
+		expect(slots[0]?.label).toBe("Replica 1");
+	});
+
 	it("keeps a single-replica deploy on the shared stage list until a fleet exists", () => {
 		expect(
 			shouldShowReplicaFleet({
