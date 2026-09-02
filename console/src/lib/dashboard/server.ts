@@ -521,6 +521,9 @@ function readConfig(): RuntimeConfig {
 		localIngressBaseURL,
 		githubInstallURL:
 			process.env.DASHBOARD_GITHUB_INSTALL_URL?.trim() || undefined,
+		operatorGitHubLogin:
+			process.env.DASHBOARD_OPERATOR_GITHUB_LOGIN?.trim().toLowerCase() ||
+			undefined,
 		ingressTargetHost: mustEnv("DASHBOARD_INGRESS_TARGET_HOST"),
 		localDomainSuffix:
 			process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim() || undefined,

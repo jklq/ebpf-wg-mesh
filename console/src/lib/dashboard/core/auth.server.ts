@@ -101,11 +101,20 @@ export async function completeAuthCallback(
 		const identity = await githubCall(runtime, "fetchIdentity", () =>
 			github.fetchIdentity(token.accessToken),
 		);
+		const operatorGitHubLogin = config.operatorGitHubLogin
+			?.trim()
+			.toLowerCase();
+		const operatorUserID =
+			operatorGitHubLogin &&
+			identity.login.toLowerCase() === operatorGitHubLogin
+				? `github:${operatorGitHubLogin}`
+				: undefined;
 		const result = await storeAuthCall(
 			runtime,
 			"completeGitHubLogin",
 			(store) =>
 				store.completeGitHubLogin({
+					userID: operatorUserID,
 					providerSubject: identity.providerSubject,
 					login: identity.login,
 					primaryEmail: identity.primaryEmail,

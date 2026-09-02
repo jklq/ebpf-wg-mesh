@@ -28,9 +28,6 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-2")); err != nil {
-		t.Fatal(err)
-	}
 	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)

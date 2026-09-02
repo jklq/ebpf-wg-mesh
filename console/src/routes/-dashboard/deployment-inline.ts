@@ -182,6 +182,7 @@ export function isFailedDeploymentState(
 export function isPinnedDeployment(
 	entry: Pick<DashboardDeploymentRecord, "isCurrent" | "status" | "build">,
 ): boolean {
+	if (entry.status?.state === "removed") return false;
 	if (entry.isCurrent) return true;
 	if (isLiveDeploymentState(entry.status?.state)) return true;
 	return Boolean(

@@ -14,6 +14,7 @@ import type {
 	CreateProjectRequest,
 	CreateServiceRequest,
 	DeleteDomainBindingRequest,
+	DeleteServiceRequest,
 	DiscardServiceChangesRequest,
 	GenerateDomainBindingRequest,
 	GetEnvironmentRequest,
@@ -159,6 +160,13 @@ export async function unaryCall<M extends PlatformMethod>(
 				case "DiscardServiceChanges":
 					client.DiscardServiceChanges(
 						request as DiscardServiceChangesRequest,
+						metadata,
+						handleResponse,
+					);
+					return;
+				case "DeleteService":
+					client.DeleteService(
+						request as DeleteServiceRequest,
 						metadata,
 						handleResponse,
 					);
