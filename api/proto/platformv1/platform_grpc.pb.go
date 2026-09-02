@@ -34,6 +34,7 @@ const (
 	PlatformService_InspectSource_FullMethodName          = "/platform.v1.PlatformService/InspectSource"
 	PlatformService_CreateService_FullMethodName          = "/platform.v1.PlatformService/CreateService"
 	PlatformService_UpdateService_FullMethodName          = "/platform.v1.PlatformService/UpdateService"
+	PlatformService_RedeployService_FullMethodName        = "/platform.v1.PlatformService/RedeployService"
 	PlatformService_ScaleService_FullMethodName           = "/platform.v1.PlatformService/ScaleService"
 	PlatformService_RestartService_FullMethodName         = "/platform.v1.PlatformService/RestartService"
 	PlatformService_ApplyDeploymentAction_FullMethodName  = "/platform.v1.PlatformService/ApplyDeploymentAction"
@@ -74,6 +75,7 @@ type PlatformServiceClient interface {
 	InspectSource(ctx context.Context, in *InspectSourceRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	UpdateService(ctx context.Context, in *UpdateServiceRequest, opts ...grpc.CallOption) (*Service, error)
+	RedeployService(ctx context.Context, in *RedeployServiceRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	ScaleService(ctx context.Context, in *ScaleServiceRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	RestartService(ctx context.Context, in *RestartServiceRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	ApplyDeploymentAction(ctx context.Context, in *ApplyDeploymentActionRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
@@ -238,6 +240,16 @@ func (c *platformServiceClient) UpdateService(ctx context.Context, in *UpdateSer
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Service)
 	err := c.cc.Invoke(ctx, PlatformService_UpdateService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RedeployService(ctx context.Context, in *RedeployServiceRequest, opts ...grpc.CallOption) (*ServiceStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ServiceStatus)
+	err := c.cc.Invoke(ctx, PlatformService_RedeployService_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +474,7 @@ type PlatformServiceServer interface {
 	InspectSource(context.Context, *InspectSourceRequest) (*InspectSourceResponse, error)
 	CreateService(context.Context, *CreateServiceRequest) (*Service, error)
 	UpdateService(context.Context, *UpdateServiceRequest) (*Service, error)
+	RedeployService(context.Context, *RedeployServiceRequest) (*ServiceStatus, error)
 	ScaleService(context.Context, *ScaleServiceRequest) (*ServiceStatus, error)
 	RestartService(context.Context, *RestartServiceRequest) (*ServiceStatus, error)
 	ApplyDeploymentAction(context.Context, *ApplyDeploymentActionRequest) (*ServiceStatus, error)
@@ -533,6 +546,9 @@ func (UnimplementedPlatformServiceServer) CreateService(context.Context, *Create
 }
 func (UnimplementedPlatformServiceServer) UpdateService(context.Context, *UpdateServiceRequest) (*Service, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateService not implemented")
+}
+func (UnimplementedPlatformServiceServer) RedeployService(context.Context, *RedeployServiceRequest) (*ServiceStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method RedeployService not implemented")
 }
 func (UnimplementedPlatformServiceServer) ScaleService(context.Context, *ScaleServiceRequest) (*ServiceStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method ScaleService not implemented")
@@ -863,6 +879,24 @@ func _PlatformService_UpdateService_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).UpdateService(ctx, req.(*UpdateServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RedeployService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RedeployServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RedeployService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RedeployService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RedeployService(ctx, req.(*RedeployServiceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1289,6 +1323,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateService",
 			Handler:    _PlatformService_UpdateService_Handler,
+		},
+		{
+			MethodName: "RedeployService",
+			Handler:    _PlatformService_RedeployService_Handler,
 		},
 		{
 			MethodName: "ScaleService",

@@ -289,15 +289,29 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	if len(result.MovedServiceIDs) == 0 {
 		t.Fatalf("expected the lost replica to be rescheduled, got %+v", result)
 	}
-	agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID))
-	if agents["node-b"] != 0 {
-		t.Fatalf("lost node still hosts a replica: %v", agents)
+	allocations := mustListAllocations(t, store, ctx, service.ID)
+	activeAgents := make(map[string]int)
+	lostNodeAllocationFound := false
+	for _, allocation := range allocations {
+		if allocation.RolloutState == allocationRolloutLost {
+			if allocation.AgentID == "node-b" {
+				lostNodeAllocationFound = true
+			}
+			continue
+		}
+		activeAgents[allocation.AgentID]++
 	}
-	if agents["node-a"] == 2 {
-		t.Fatalf("failover colocated onto the surviving replica when node-c had capacity: %v", agents)
+	if !lostNodeAllocationFound {
+		t.Fatalf("expected node-b allocation to be retained as lost, got %+v", allocations)
 	}
-	if agents["node-c"] != 1 {
-		t.Fatalf("expected failover onto node-c, got %v", agents)
+	if activeAgents["node-b"] != 0 {
+		t.Fatalf("lost node still has an active replica: %v", activeAgents)
+	}
+	if activeAgents["node-a"] == 2 {
+		t.Fatalf("failover colocated onto the surviving replica when node-c had capacity: %v", activeAgents)
+	}
+	if activeAgents["node-c"] != 1 {
+		t.Fatalf("expected failover onto node-c, got %v", activeAgents)
 	}
 }
 
