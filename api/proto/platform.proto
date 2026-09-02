@@ -139,7 +139,8 @@ message ServiceRuntime {
   string volume_name = 8;
   ServiceRestart restart = 9;
   HealthCheck liveness_check = 10;
-  SandboxProfile sandbox_profile = 11;
+  reserved 11;
+  reserved "sandbox_profile";
 }
 
 message DirectImageSource {
@@ -375,7 +376,8 @@ message Service {
   int32 desired_replica_count = 18;
   int32 ready_replica_count = 19;
   string placement_message = 20;
-  repeated SandboxProfileAuditEvent sandbox_profile_audit = 21;
+  reserved 21;
+  reserved "sandbox_profile_audit";
 }
 
 enum DomainOwnershipState {
@@ -865,38 +867,6 @@ message LinkGitHubRepositoryRequest {
   string github_user_access_token = 3 [debug_redact = true];
 }
 
-// SandboxRelaxation is the intentionally small set of compatibility concessions
-// an operator may attach to a named workload sandbox profile. Security-critical
-// namespace, device, seccomp, sysctl, capability, and cgroup controls are not
-// relaxable through the workload API.
-enum SandboxRelaxation {
-  SANDBOX_RELAXATION_UNSPECIFIED = 0;
-  SANDBOX_RELAXATION_RUN_AS_ROOT = 1;
-  SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM = 2;
-}
-
-// SandboxProfile is the control-plane-resolved isolation policy persisted with
-// each service revision. Clients select by name; the control plane replaces the
-// remaining fields from operator configuration before storing desired state.
-message SandboxProfile {
-  string name = 1;
-  string risk = 2;
-  repeated SandboxRelaxation relaxations = 3;
-}
-
-message SandboxProfileAuditEvent {
-  string actor_user_id = 1;
-  string action = 2;
-  string previous_profile_name = 3;
-  SandboxProfile profile = 4;
-  int64 spec_revision = 5;
-  google.protobuf.Timestamp created_at = 6;
-}
-
-message ListSandboxProfilesResponse {
-  repeated SandboxProfile profiles = 1;
-}
-
 service PlatformService {
   rpc CreateProject(CreateProjectRequest) returns (Project);
   rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
@@ -937,7 +907,6 @@ service PlatformService {
   rpc ListServiceLogs(ListServiceLogsRequest) returns (ListServiceLogsResponse);
   rpc ListServiceDeployments(ListServiceDeploymentsRequest) returns (ListServiceDeploymentsResponse);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
-  rpc ListSandboxProfiles(google.protobuf.Empty) returns (ListSandboxProfilesResponse);
 }
 
 service BuilderService {

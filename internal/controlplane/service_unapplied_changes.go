@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -140,14 +139,6 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		next:    restartValue(serviceRuntime(current).GetRestart()),
 	})
 	fields = append(fields, unappliedChangeField{
-		id:      "runtime.sandboxProfile",
-		section: "Workload isolation",
-		field:   "Sandbox profile",
-		path:    "runtime.sandboxProfile",
-		current: sandboxProfileValue(serviceRuntime(deployed).GetSandboxProfile()),
-		next:    sandboxProfileValue(serviceRuntime(current).GetSandboxProfile()),
-	})
-	fields = append(fields, unappliedChangeField{
 		id:      "runtime.livenessCheck",
 		section: "Health check",
 		field:   "HTTP liveness check",
@@ -197,18 +188,6 @@ func restartValue(restart *platformv1.ServiceRestart) string {
 		return ""
 	}
 	return restartpolicy.FormatRestart(restart)
-}
-
-func sandboxProfileValue(profile *platformv1.SandboxProfile) string {
-	if profile == nil {
-		return productionSandboxProfileName
-	}
-	parts := []string{profile.GetName()}
-	for _, relaxation := range profile.GetRelaxations() {
-		parts = append(parts, relaxation.String())
-	}
-	parts = append(parts, profile.GetRisk())
-	return strings.Join(parts, " | ")
 }
 
 func healthCheckValue(check *platformv1.HealthCheck) string {
@@ -328,13 +307,6 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 			currentRuntime(current).Restart = nil
 		} else {
 			currentRuntime(current).Restart = proto.Clone(deployedRestart).(*platformv1.ServiceRestart)
-		}
-	case "runtime.sandboxProfile":
-		deployedProfile := serviceRuntime(deployed).GetSandboxProfile()
-		if deployedProfile == nil {
-			currentRuntime(current).SandboxProfile = productionSandboxProfile()
-		} else {
-			currentRuntime(current).SandboxProfile = proto.Clone(deployedProfile).(*platformv1.SandboxProfile)
 		}
 	case "desiredReplicaCount":
 		if specHasDesiredReplicaCount(deployed) {

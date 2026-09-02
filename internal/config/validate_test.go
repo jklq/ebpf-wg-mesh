@@ -179,58 +179,6 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 	}
 }
 
-func TestFinalizeControlPlaneRejectsInvalidSandboxProfiles(t *testing.T) {
-	t.Parallel()
-
-	base := func() ControlPlaneConfig {
-		return ControlPlaneConfig{
-			Profile:        ProfileDevelopment,
-			UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
-			Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
-			InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
-				BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
-			}},
-		}
-	}
-
-	t.Run("reserved name", func(t *testing.T) {
-		cfg := base()
-		cfg.Sandbox.CompatibilityProfiles = []SandboxProfileConfig{{
-			Name: "production", Risk: "n/a", Relaxations: []string{"run-as-root"},
-		}}
-		if err := FinalizeControlPlane(&cfg); err == nil || !strings.Contains(err.Error(), "reserved") {
-			t.Fatalf("expected reserved name error, got %v", err)
-		}
-	})
-	t.Run("missing risk", func(t *testing.T) {
-		cfg := base()
-		cfg.Sandbox.CompatibilityProfiles = []SandboxProfileConfig{{
-			Name: "legacy-root", Relaxations: []string{"run-as-root"},
-		}}
-		if err := FinalizeControlPlane(&cfg); err == nil || !strings.Contains(err.Error(), "risk") {
-			t.Fatalf("expected risk error, got %v", err)
-		}
-	})
-	t.Run("unsupported relaxation", func(t *testing.T) {
-		cfg := base()
-		cfg.Sandbox.CompatibilityProfiles = []SandboxProfileConfig{{
-			Name: "privileged", Risk: "host devices", Relaxations: []string{"host-devices"},
-		}}
-		if err := FinalizeControlPlane(&cfg); err == nil || !strings.Contains(err.Error(), "unsupported relaxation") {
-			t.Fatalf("expected unsupported relaxation error, got %v", err)
-		}
-	})
-	t.Run("valid compatibility profile", func(t *testing.T) {
-		cfg := base()
-		cfg.Sandbox.CompatibilityProfiles = []SandboxProfileConfig{{
-			Name: "legacy-root", Risk: "The image must run as root.", Relaxations: []string{"run-as-root"},
-		}}
-		if err := FinalizeControlPlane(&cfg); err != nil {
-			t.Fatalf("FinalizeControlPlane: %v", err)
-		}
-	})
-}
-
 func TestFinalizeAgentRejectsReservedResourcesThatConsumeAllCapacity(t *testing.T) {
 	t.Parallel()
 

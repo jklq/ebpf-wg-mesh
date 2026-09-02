@@ -11,7 +11,6 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/testutil"
 )
 
@@ -25,8 +24,8 @@ func TestAdversarialWorkloadCannotReachHostFilesystemSocketsOrDevices(t *testing
 		"test ! -e /run/containerd/containerd.sock && test ! -e /var/run/docker.sock || ok=host-socket",
 		"test ! -e /dev/kmsg && test ! -e /dev/sda && test ! -e /dev/mem || ok=host-device",
 		"test ! -r /proc/kcore && test ! -r /sys/kernel/security && test ! -e /sys/fs/bpf || ok=masked-path",
-		"id -u | grep -vx 0 >/dev/null || ok=root",
-		"grep -q ' / rw' /proc/mounts && ok=writable-root || true",
+		"test \"$(id -u)\" = 0 || ok=image-user",
+		"touch /overlay-write-probe || ok=overlay-read-only",
 		"printf '%s' \"$ok\" > /tmp/index.html",
 		"exec httpd -f -p [::]:8080 -h /tmp",
 	}, "; ")
@@ -125,6 +124,5 @@ func busyboxProbeService(allocationID, ip, command string) *agentv1.DesiredServi
 	svc.Spec.Runtime.Args = []string{command}
 	svc.Spec.Runtime.CpuMillis = 250
 	svc.Spec.Runtime.MemoryMebibytes = 64
-	svc.Spec.Runtime.SandboxProfile = &platformv1.SandboxProfile{Name: "production"}
 	return svc
 }

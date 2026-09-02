@@ -6,13 +6,14 @@ import (
 )
 
 func TestSchemaVersionsKeepRollingActionsFleetAndIsolation(t *testing.T) {
-	if currentSchemaVersion != 7 {
-		t.Fatalf("current schema version = %d, want 7", currentSchemaVersion)
+	if currentSchemaVersion != 8 {
+		t.Fatalf("current schema version = %d, want 8", currentSchemaVersion)
 	}
 	rolling := strings.Join(schemaUpgrades[4], "\n")
 	actions := strings.Join(schemaUpgrades[5], "\n")
 	fleet := strings.Join(schemaUpgrades[6], "\n")
 	isolation := strings.Join(schemaUpgrades[7], "\n")
+	railwayDefaults := strings.Join(schemaUpgrades[8], "\n")
 	for _, marker := range []string{"rollout_state", "drain_deadline", "strategy_json"} {
 		if !strings.Contains(rolling, marker) {
 			t.Fatalf("schema v4 lost rolling replacement marker %q", marker)
@@ -33,6 +34,11 @@ func TestSchemaVersionsKeepRollingActionsFleetAndIsolation(t *testing.T) {
 			t.Fatalf("schema v7 lost isolation marker %q", marker)
 		}
 	}
+	for _, marker := range []string{"service_revisions", "deployments", "sandboxProfile", "DROP TABLE sandbox_profile_audit_events"} {
+		if !strings.Contains(railwayDefaults, marker) {
+			t.Fatalf("schema v8 lost Railway-default marker %q", marker)
+		}
+	}
 	if strings.Contains(rolling, "deployment_actions") {
 		t.Fatal("schema v4 reuses the rolling replacement version for deployment actions")
 	}
@@ -44,5 +50,8 @@ func TestSchemaVersionsKeepRollingActionsFleetAndIsolation(t *testing.T) {
 	}
 	if strings.Contains(rolling, "sandbox_profile_audit_events") || strings.Contains(actions, "sandbox_profile_audit_events") {
 		t.Fatal("schema v4/v5 reuses an earlier version for workload isolation")
+	}
+	if strings.Contains(isolation, "DROP TABLE sandbox_profile_audit_events") {
+		t.Fatal("schema v7 reuses the workload-isolation version for the Railway-default cutover")
 	}
 }

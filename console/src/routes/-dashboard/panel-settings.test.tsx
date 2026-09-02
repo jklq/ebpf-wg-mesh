@@ -53,74 +53,20 @@ describe("PanelSettings", () => {
 		expect(screen.queryByText(/Memory request/i)).toBeNull();
 	});
 
-	it("makes compatibility profile risk visible", () => {
-		const current = service();
-		if (!current.spec) throw new Error("expected service spec");
-		current.spec.runtime.sandboxProfile = {
-			name: "legacy-root",
-			risk: "This workload runs as root.",
-			relaxations: ["run-as-root"],
-		};
+	it("does not expose sandbox profile variants", () => {
 		render(
 			<PanelSettings
-				service={current}
+				service={service()}
 				state={state()}
 				onSaved={() => {}}
 				onDeleted={() => {}}
 			/>,
 		);
 
-		expect(screen.getByLabelText("Sandbox profile").textContent).toContain(
-			"legacy-root",
-		);
-		expect(screen.getByRole("alert").textContent).toContain(
-			"This workload runs as root.",
-		);
-		expect(screen.getByRole("alert").textContent).toContain("run-as-root");
-	});
-
-	it("lets operators pick a named compatibility profile and shows audit history", () => {
-		const current = service();
-		if (!current.spec) throw new Error("expected service spec");
-		current.spec.runtime.sandboxProfile = {
-			name: "legacy-root",
-			risk: "This workload runs as root.",
-			relaxations: ["run-as-root"],
-		};
-		current.sandboxProfileAudit = [
-			{
-				actorUserId: "user-1",
-				action: "selected",
-				profile: {
-					name: "legacy-root",
-					risk: "This workload runs as root.",
-					relaxations: ["run-as-root"],
-				},
-				specRevision: 1,
-			},
-		];
-		const home = state();
-		home.sandboxProfiles = [
-			{ name: "production", relaxations: [] },
-			{
-				name: "legacy-root",
-				risk: "This workload runs as root.",
-				relaxations: ["run-as-root"],
-			},
-		];
-		render(
-			<PanelSettings
-				service={current}
-				state={home}
-				onSaved={() => {}}
-				onDeleted={() => {}}
-			/>,
-		);
-
-		const select = screen.getByLabelText("Sandbox profile") as HTMLSelectElement;
-		expect(select.value).toBe("legacy-root");
-		expect(screen.getByText(/Audit history/i)).toBeTruthy();
-		expect(screen.getByText(/selected legacy-root/i)).toBeTruthy();
+		expect(screen.queryByLabelText("Sandbox profile")).toBeNull();
+		expect(screen.getByText(/same production sandbox/i)).toBeTruthy();
+		expect(screen.getByText(/image USER is preserved/i)).toBeTruthy();
+		expect(screen.getByText(/SYS_ADMIN/i)).toBeTruthy();
 	});
 
 	it("changes the source repository through the picker", async () => {
@@ -472,7 +418,6 @@ function state(): DashboardHomeState {
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",
 		domainBindings: [],
-		sandboxProfiles: [{ name: "production", relaxations: [] }],
 		controlPlaneReachable: true,
 	};
 }

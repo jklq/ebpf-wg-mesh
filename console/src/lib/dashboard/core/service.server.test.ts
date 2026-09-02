@@ -821,11 +821,6 @@ describe("dashboard service", () => {
 						ports: [{ port: 8080, primary: true }],
 						healthCheck: { path: "/ready", port: 8080, timeoutSeconds: 3 },
 						volumeName: "data",
-						sandboxProfile: {
-							name: "legacy-root",
-							risk: "Runs as root.",
-							relaxations: ["run-as-root"],
-						},
 					},
 				},
 			},
@@ -855,17 +850,12 @@ describe("dashboard service", () => {
 			name: "talented-harmony",
 			spec: {
 				runtime: {
-						healthCheck: {
+					healthCheck: {
 						path: "/ready",
 						port: 8080,
-							timeoutSeconds: 3,
-						},
-						volumeName: "data",
-						sandboxProfile: {
-							name: "legacy-root",
-							risk: "Runs as root.",
-							relaxations: ["run-as-root"],
-						},
+						timeoutSeconds: 3,
+					},
+					volumeName: "data",
 				},
 			},
 		});

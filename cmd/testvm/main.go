@@ -1089,9 +1089,10 @@ func runWorkloadIsolationChecks(ctx, userCtx context.Context, client platformv1.
 	}{
 		{"host sockets", `test ! -e /run/containerd/containerd.sock && test ! -e /var/run/docker.sock`},
 		{"host devices", `test ! -e /dev/kmsg && test ! -e /dev/sda && test ! -e /dev/mem`},
-		{"masked paths", `test ! -r /proc/kcore && test ! -r /sys/kernel/security`},
-		{"non-root", `id -u | grep -vx 0`},
-		{"read-only root", `awk '$2=="/" { exit !($4 ~ /(^|,)ro(,|$)/) }' /proc/mounts`},
+		{"masked paths", `test ! -r /proc/kcore && test ! -r /sys/kernel/security && test ! -e /sys/fs/bpf`},
+		{"image user", `test "$(id -u)" = 0`},
+		{"writable overlay root", `touch /overlay-write-probe && rm /overlay-write-probe`},
+		{"bounded capabilities", `caps=$(grep '^CapEff:' /proc/self/status | awk '{print $2}'); test $((0x$caps & 0x400)) -ne 0 && test $((0x$caps & 0x200000)) -eq 0 && test $((0x$caps & 0x1000)) -eq 0`},
 	}
 	for _, probe := range probes {
 		execID := fmt.Sprintf("sandbox-%s-%d", strings.ReplaceAll(probe.name, " ", "-"), time.Now().UnixNano())

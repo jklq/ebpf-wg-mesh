@@ -20,7 +20,9 @@ func TestSchemaVersionFourUpgradesDeploymentActionsToVersionFive(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, current := range currentSchema {
-		if strings.Contains(current, "CREATE TABLE deployment_actions") || strings.Contains(current, "idx_deployment_actions_target") {
+		if strings.Contains(current, "CREATE TABLE deployment_actions") ||
+			strings.Contains(current, "idx_deployment_actions_target") ||
+			strings.Contains(current, "sandbox_profile_audit") {
 			continue
 		}
 		v4 := strings.ReplaceAll(current, "\n\t\t\ttarget_allocation_id STRING NOT NULL DEFAULT '',", "")
@@ -50,7 +52,7 @@ func TestSchemaVersionFourUpgradesDeploymentActionsToVersionFive(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	for _, expected := range []struct{ table, column string }{
@@ -112,6 +114,10 @@ func TestSchemaVersionFiveUpgradesFleetToVersionSix(t *testing.T) {
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, spec_revision)
 		)`,
+		`CREATE TABLE deployments (
+			id STRING PRIMARY KEY,
+			resolved_spec_json JSONB NOT NULL
+		)`,
 		`CREATE TABLE schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -133,7 +139,7 @@ func TestSchemaVersionFiveUpgradesFleetToVersionSix(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	for _, expected := range []struct{ table, column string }{
@@ -161,7 +167,7 @@ func TestSchemaVersionFiveUpgradesFleetToVersionSix(t *testing.T) {
 	}
 }
 
-func TestSchemaVersionSixUpgradesIsolationToVersionSeven(t *testing.T) {
+func TestSchemaVersionSixUpgradesIsolationThroughRailwayDefaults(t *testing.T) {
 	ctx := context.Background()
 	dbURL := createTestDatabase(t)
 	db, err := sql.Open("pgx", dbURL)
@@ -224,19 +230,96 @@ func TestSchemaVersionSixUpgradesIsolationToVersionSeven(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	var auditTable int
 	if err := store.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'sandbox_profile_audit_events'`,
-	).Scan(&auditTable); err != nil || auditTable != 1 {
+	).Scan(&auditTable); err != nil || auditTable != 0 {
 		t.Fatalf("sandbox_profile_audit_events table count=%d err=%v", auditTable, err)
 	}
-	var profileName string
+	var profilePresent bool
 	if err := store.db.QueryRowContext(ctx,
-		`SELECT spec_json->'runtime'->'sandboxProfile'->>'name' FROM service_revisions WHERE service_id = 'svc-1' AND spec_revision = 1`,
-	).Scan(&profileName); err != nil || profileName != "production" {
-		t.Fatalf("backfilled sandbox profile = %q err=%v", profileName, err)
+		`SELECT spec_json->'runtime'->'sandboxProfile' IS NOT NULL FROM service_revisions WHERE service_id = 'svc-1' AND spec_revision = 1`,
+	).Scan(&profilePresent); err != nil || profilePresent {
+		t.Fatalf("sandbox profile present=%t err=%v", profilePresent, err)
+	}
+}
+
+func TestSchemaVersionSevenCutsPersistedProfilesOverToRailwayDefaults(t *testing.T) {
+	ctx := context.Background()
+	dbURL := createTestDatabase(t)
+	db, err := sql.Open("pgx", dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE service_revisions (
+			service_id STRING NOT NULL,
+			spec_revision INT8 NOT NULL,
+			spec_json JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (service_id, spec_revision)
+		)`,
+		`CREATE TABLE deployments (
+			id STRING PRIMARY KEY,
+			resolved_spec_json JSONB NOT NULL
+		)`,
+		`CREATE TABLE sandbox_profile_audit_events (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL,
+			actor_user_id STRING NOT NULL,
+			action STRING NOT NULL,
+			previous_profile_name STRING NOT NULL DEFAULT '',
+			profile_name STRING NOT NULL,
+			risk STRING NOT NULL,
+			relaxations JSONB NOT NULL,
+			spec_revision INT8 NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			_ = db.Close()
+			t.Fatalf("create v7 schema: %v\n%s", err, stmt)
+		}
+	}
+	now := time.Now().UTC()
+	oldSpec := `{"runtime":{"sandboxProfile":{"name":"legacy-root","risk":"Runs as root","relaxations":["SANDBOX_RELAXATION_RUN_AS_ROOT"]}}}`
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_revisions VALUES ('svc-1', 1, $1, $2)`, oldSpec, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO deployments VALUES ('dep-1', $1)`, oldSpec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO sandbox_profile_audit_events VALUES ('audit-1', 'svc-1', 'user-1', 'selected', '', 'legacy-root', 'Runs as root', '["SANDBOX_RELAXATION_RUN_AS_ROOT"]', 1, $1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations VALUES (7, $1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
+	if err != nil {
+		t.Fatalf("upgrade v7 schema: %v", err)
+	}
+	defer store.Close()
+
+	for _, query := range []string{
+		`SELECT spec_json->'runtime'->'sandboxProfile' IS NOT NULL FROM service_revisions WHERE service_id = 'svc-1'`,
+		`SELECT resolved_spec_json->'runtime'->'sandboxProfile' IS NOT NULL FROM deployments WHERE id = 'dep-1'`,
+	} {
+		var profilePresent bool
+		if err := store.db.QueryRowContext(ctx, query).Scan(&profilePresent); err != nil || profilePresent {
+			t.Fatalf("cut-over profile present=%t err=%v", profilePresent, err)
+		}
+	}
+	var auditTable int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'sandbox_profile_audit_events'`).Scan(&auditTable); err != nil || auditTable != 0 {
+		t.Fatalf("sandbox profile audit table count=%d err=%v", auditTable, err)
 	}
 }

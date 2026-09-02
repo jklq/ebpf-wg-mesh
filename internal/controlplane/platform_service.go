@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/grpc/codes"
@@ -29,7 +28,6 @@ type PlatformService struct {
 	dnsResolver          domainCNAMEResolver
 	platformDomainSuffix string
 	events               *PlatformEvents
-	sandboxProfiles      map[string]*platformv1.SandboxProfile
 }
 
 type platformStore interface {
@@ -148,14 +146,8 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 	}
 }
 
-func WithSandboxProfiles(cfg config.SandboxConfig) PlatformServiceOption {
-	return func(service *PlatformService) {
-		service.sandboxProfiles = sandboxProfilesFromConfig(cfg)
-	}
-}
-
 func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, opts ...PlatformServiceOption) *PlatformService {
-	service := &PlatformService{store: store, environmentStore: store, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver(), sandboxProfiles: sandboxProfilesFromConfig(config.SandboxConfig{})}
+	service := &PlatformService{store: store, environmentStore: store, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
@@ -394,9 +386,6 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
 	spec := canonicalServiceSpec(req.GetService().GetSpec())
-	if err := resolveServiceSandboxProfile(spec, s.sandboxProfiles); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "service isolation: %v", err)
-	}
 	if err := validateServiceSpecResources(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service resources: %v", err)
 	}
@@ -469,9 +458,6 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
 	spec := canonicalServiceSpec(req.GetService().GetSpec())
-	if err := resolveServiceSandboxProfile(spec, s.sandboxProfiles); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "service isolation: %v", err)
-	}
 	if err := validateServiceSpecResources(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service resources: %v", err)
 	}
@@ -1154,13 +1140,6 @@ func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*pl
 	return resp, nil
 }
 
-func (s *PlatformService) ListSandboxProfiles(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListSandboxProfilesResponse, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
-		return nil, err
-	}
-	return &platformv1.ListSandboxProfilesResponse{Profiles: listedSandboxProfiles(s.sandboxProfiles)}, nil
-}
-
 func (s *PlatformService) decorateServiceRecord(ctx context.Context, service serviceRecord) (serviceRecord, error) {
 	return s.decorateServiceRecordWithAllocations(ctx, service, nil)
 }
@@ -1197,15 +1176,6 @@ func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Conte
 		service.LatestBuild = &platformv1.BuildStatus{Stages: stages}
 	} else if service.LatestBuild != nil {
 		service.LatestBuild.Stages = stages
-	}
-	if auditStore, ok := s.store.(interface {
-		listSandboxProfileAudit(context.Context, string) ([]sandboxProfileAuditRecord, error)
-	}); ok && service.ID != "" {
-		events, err := auditStore.listSandboxProfileAudit(ctx, service.ID)
-		if err != nil {
-			return serviceRecord{}, err
-		}
-		service.SandboxProfileAudit = events
 	}
 	return service, nil
 }

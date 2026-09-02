@@ -10,7 +10,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -328,13 +327,6 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 		serviceID, nextSpecRevision, specJSON, now,
 	); err != nil {
 		return serviceRecord{}, false, false, err
-	}
-	previousProfile := current.Spec.GetRuntime().GetSandboxProfile()
-	nextProfile := spec.GetRuntime().GetSandboxProfile()
-	if !proto.Equal(previousProfile, nextProfile) && (len(previousProfile.GetRelaxations()) > 0 || len(nextProfile.GetRelaxations()) > 0) {
-		if err := s.insertSandboxProfileAuditTx(ctx, tx, serviceID, userID, "changed", sandboxProfileName(current.Spec), nextProfile, nextSpecRevision, now); err != nil {
-			return serviceRecord{}, false, false, err
-		}
 	}
 	nextRecord := current
 	nextRecord.Name = nextName

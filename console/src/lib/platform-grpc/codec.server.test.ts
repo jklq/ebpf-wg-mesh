@@ -25,7 +25,8 @@ describe("platform grpc codec", () => {
 					headroomCpuMillis: "400",
 					allocationCount: "2",
 					softwareVersion: "1.0.0",
-					versionSkewWarning: "reports 1.0.0 while the fleet majority reports 1.0.1",
+					versionSkewWarning:
+						"reports 1.0.0 while the fleet majority reports 1.0.1",
 				},
 			],
 			capacity: {
@@ -75,43 +76,6 @@ describe("platform grpc codec", () => {
 		expect(request.service.spec.runtime).toMatchObject({
 			cpuMillis: 500,
 			memoryMebibytes: 768,
-		});
-	});
-
-	it("round trips the operator-resolved sandbox profile", () => {
-		const [service] = decodeListServicesResponse({
-			services: [
-				{
-					id: "service-1",
-					environmentId: "environment-1",
-					name: "legacy",
-					spec: {
-						runtime: {
-							env: {},
-							ports: [],
-							sandboxProfile: {
-								name: "legacy-root",
-								risk: "The image runs as root.",
-								relaxations: ["SANDBOX_RELAXATION_RUN_AS_ROOT"],
-							},
-						},
-					},
-				},
-			],
-		});
-		if (!service.spec) throw new Error("decoded service spec is missing");
-		expect(service.spec.runtime.sandboxProfile).toEqual({
-			name: "legacy-root",
-			risk: "The image runs as root.",
-			relaxations: ["run-as-root"],
-		});
-		expect(
-			encodeUpdateServiceRequest({
-				serviceId: service.id,
-				spec: service.spec,
-			}).service.spec.runtime.sandboxProfile,
-		).toEqual({
-			name: "legacy-root",
 		});
 	});
 

@@ -90,6 +90,13 @@ func TestProtectAgentRuntimeRejectsDisabledProductionCgroups(t *testing.T) {
 	}
 }
 
+func TestHostReservationFailsClosedWithoutCgroupV2Hierarchy(t *testing.T) {
+	_, err := applyHostCgroupReservationAt(t.TempDir(), "/missing-agent-cgroup", 512*1024*1024, 2048*1024*1024)
+	if err == nil {
+		t.Fatal("missing cgroup v2 hierarchy was accepted")
+	}
+}
+
 func TestProtectAgentRuntimeAllowsMissingDevelopmentReservation(t *testing.T) {
 	parent, err := protectAgentRuntime(config.AgentConfig{
 		Profile: config.ProfileDevelopment,

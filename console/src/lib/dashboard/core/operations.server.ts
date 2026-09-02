@@ -23,12 +23,12 @@ import {
 } from "#/lib/dashboard/core/runtime.server";
 import {
 	type CreateServiceFastResult,
+	type DashboardAgentEnrollment,
+	type DashboardAgentLifecycleState,
 	type DashboardDeploymentAction,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
 	type DashboardEnvironment,
-	type DashboardAgentEnrollment,
-	type DashboardAgentLifecycleState,
 	type DashboardFleet,
 	type DashboardFleetAgent,
 	type DashboardGitHubAccount,
@@ -41,15 +41,14 @@ import {
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
 	type DashboardServiceSpec,
-	type DashboardSandboxProfile,
 	type DashboardServiceStatus,
 	type DashboardSourceSpec,
 	type DashboardUser,
 	DashboardValidationError,
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
-	GitHubApiError,
 	type FleetAgentInput,
+	GitHubApiError,
 	type GitHubUserRepository,
 	PlatformGatewayError,
 	type StoredDashboardGitHubAccount,
@@ -142,20 +141,13 @@ export async function loadDashboardHome(
 		environments: [],
 		services: [],
 		domainBindings: [],
-		sandboxProfiles: [],
 		controlPlaneReachable: true,
 	} satisfies DashboardHomeState;
 
 	try {
-		const [projects, sandboxProfiles] = await Promise.all([
-			platformCall(runtime, "listProjects", (platform) =>
-				platform.listProjects(session.user),
-			),
-			safePlatformCall(runtime, "listSandboxProfiles", (platform) =>
-				platform.listSandboxProfiles(session.user),
-			),
-		]);
-		baseState.sandboxProfiles = sandboxProfiles ?? [];
+		const projects = await platformCall(runtime, "listProjects", (platform) =>
+			platform.listProjects(session.user),
+		);
 		const selectedEnvironment = selectedEnvironmentId
 			? await safePlatformCall(runtime, "getEnvironment", (platform) =>
 					platform.getEnvironment(session.user, selectedEnvironmentId),
@@ -927,9 +919,6 @@ export async function updateServiceFromSession(
 			: undefined;
 	const nextReplicaCount =
 		input.desiredReplicaCount ?? current.spec?.desiredReplicaCount;
-	const nextSandboxProfile = input.sandboxProfileName?.trim()
-		? { name: input.sandboxProfileName.trim(), relaxations: [] as DashboardSandboxProfile["relaxations"] }
-		: current.spec?.runtime.sandboxProfile;
 	if (nextReplicaCount !== undefined && nextReplicaCount < 1) {
 		throw new DashboardValidationError({
 			message: "Replica count must be at least 1.",
@@ -960,14 +949,13 @@ export async function updateServiceFromSession(
 			serviceId: input.serviceId,
 			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
 			spec: {
-			...(desiredSource ? { source: desiredSource } : {}),
+				...(desiredSource ? { source: desiredSource } : {}),
 				desiredReplicaCount:
 					input.desiredReplicaCount ?? current.spec?.desiredReplicaCount,
 				placementRegion:
 					input.placementRegion?.trim().toLowerCase() ??
 					current.spec?.placementRegion,
-				rollingStrategy:
-					input.rollingStrategy ?? current.spec?.rollingStrategy,
+				rollingStrategy: input.rollingStrategy ?? current.spec?.rollingStrategy,
 				runtime: {
 					env: normalizeRuntimeEnv(
 						input.runtimeEnv ?? current.spec?.runtime.env,
@@ -994,9 +982,6 @@ export async function updateServiceFromSession(
 						: {}),
 					...(current.spec?.runtime.volumeName
 						? { volumeName: current.spec.runtime.volumeName }
-						: {}),
-					...(nextSandboxProfile
-						? { sandboxProfile: nextSandboxProfile }
 						: {}),
 				},
 			},
