@@ -26,9 +26,9 @@ import type {
 	ListServiceDeploymentsRequest,
 	ListServiceLogsRequest,
 	ListServicesRequest,
+	OpsClient,
 	OpsMethod,
 	OpsRequestMap,
-	OpsClient,
 	PlatformClient,
 	PlatformMethod,
 	PlatformRequestMap,
@@ -74,13 +74,6 @@ export async function unaryCall<M extends PlatformMethod>(
 			switch (method) {
 				case "ListProjects":
 					client.ListProjects(
-						request as Record<string, never>,
-						metadata,
-						handleResponse,
-					);
-					return;
-				case "ListSandboxProfiles":
-					client.ListSandboxProfiles(
 						request as Record<string, never>,
 						metadata,
 						handleResponse,
@@ -273,10 +266,18 @@ export async function opsUserCall<M extends OpsMethod>(
 					);
 					return;
 				case "CreateAgent":
-					client.CreateAgent(request as OpsRequestMap["CreateAgent"], metadata, callback);
+					client.CreateAgent(
+						request as OpsRequestMap["CreateAgent"],
+						metadata,
+						callback,
+					);
 					return;
 				case "UpdateAgent":
-					client.UpdateAgent(request as OpsRequestMap["UpdateAgent"], metadata, callback);
+					client.UpdateAgent(
+						request as OpsRequestMap["UpdateAgent"],
+						metadata,
+						callback,
+					);
 					return;
 				case "SetAgentLifecycle":
 					client.SetAgentLifecycle(

@@ -8,8 +8,11 @@ import {
 	unaryCall,
 } from "#/lib/platform-grpc/client.server";
 import {
+	decodeAgentEnrollmentMessage,
 	decodeDomainBindingMessage,
 	decodeEnvironmentMessage,
+	decodeFleetAgentMessage,
+	decodeFleetMessage,
 	decodeIndexedServiceStatusResponse,
 	decodeIndexedServicesResponse,
 	decodeInspectSourceResponse,
@@ -17,12 +20,8 @@ import {
 	decodeListEnvironmentsResponse,
 	decodeListProjectsResponse,
 	decodeListServiceDeploymentsResponse,
-	decodeListSandboxProfilesResponse,
 	decodeListServiceLogsResponse,
 	decodeListServicesResponse,
-	decodeAgentEnrollmentMessage,
-	decodeFleetAgentMessage,
-	decodeFleetMessage,
 	decodeProjectMessage,
 	decodeServiceMessage,
 	decodeServiceStatusMessage,
@@ -41,7 +40,9 @@ export function createPlatformGateway(
 ): PlatformGateway {
 	return {
 		async listFleet(user) {
-			return decodeFleetMessage(await opsUserCall(runtime, "ListFleet", {}, user));
+			return decodeFleetMessage(
+				await opsUserCall(runtime, "ListFleet", {}, user),
+			);
 		},
 		async createFleetAgent(user, input) {
 			return decodeAgentEnrollmentMessage(
@@ -69,15 +70,6 @@ export function createPlatformGateway(
 		async listProjects(user) {
 			const response = await unaryCall(runtime, "ListProjects", {}, user);
 			return decodeListProjectsResponse(response).projects;
-		},
-		async listSandboxProfiles(user) {
-			const response = await unaryCall(
-				runtime,
-				"ListSandboxProfiles",
-				{},
-				user,
-			);
-			return decodeListSandboxProfilesResponse(response);
 		},
 		async createProject(user, name) {
 			const response = await unaryCall(

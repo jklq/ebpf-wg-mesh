@@ -124,42 +124,6 @@ func TestServiceSpecsCompareHTTPReadinessConfiguration(t *testing.T) {
 	}
 }
 
-func TestServiceUnappliedChangesIncludesSandboxProfile(t *testing.T) {
-	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{
-		SandboxProfile: productionSandboxProfile(),
-	})
-	current := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{
-		SandboxProfile: &platformv1.SandboxProfile{
-			Name: "legacy-root",
-			Risk: "The image runs as root.",
-			Relaxations: []platformv1.SandboxRelaxation{
-				platformv1.SandboxRelaxation_SANDBOX_RELAXATION_RUN_AS_ROOT,
-			},
-		},
-	})
-
-	changes := diffServiceUnappliedChanges(current, deployed)
-	if got, want := len(changes), 1; got != want {
-		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
-	}
-	assertChange(
-		t,
-		changes[0],
-		"runtime.sandboxProfile",
-		platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE,
-		"production | ",
-		"legacy-root | SANDBOX_RELAXATION_RUN_AS_ROOT | The image runs as root.",
-	)
-	if sameServiceSpec(current, deployed) {
-		t.Fatal("service specs with different sandbox profiles compared equal")
-	}
-
-	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"runtime.sandboxProfile"})
-	if !proto.Equal(discarded.GetRuntime().GetSandboxProfile(), productionSandboxProfile()) {
-		t.Fatalf("discarded sandbox profile = %+v", discarded.GetRuntime().GetSandboxProfile())
-	}
-}
-
 func assertChange(t *testing.T, change *platformv1.ServiceUnappliedChange, id string, action platformv1.ServiceUnappliedChangeAction, current, next string) {
 	t.Helper()
 	if change.GetId() != id {

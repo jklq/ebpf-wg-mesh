@@ -288,7 +288,6 @@ function state(): DashboardHomeState {
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",
 		domainBindings: [],
-		sandboxProfiles: [],
 		controlPlaneReachable: true,
 	};
 }

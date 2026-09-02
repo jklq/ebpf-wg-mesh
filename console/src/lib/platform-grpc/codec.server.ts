@@ -1,7 +1,5 @@
 import type {
 	DashboardAgentLifecycleState,
-	DashboardFleet,
-	DashboardFleetAgent,
 	DashboardAllocationStatus,
 	DashboardBuildRecipe,
 	DashboardBuildState,
@@ -15,14 +13,14 @@ import type {
 	DashboardDeploymentStatus,
 	DashboardDomainBinding,
 	DashboardEnvironment,
+	DashboardFleet,
+	DashboardFleetAgent,
 	DashboardIndexedServiceStatus,
 	DashboardIndexedServices,
 	DashboardProject,
 	DashboardRepositoryInspection,
 	DashboardResolvedSourceBinding,
 	DashboardRuntimePort,
-	DashboardSandboxProfile,
-	DashboardSandboxProfileAuditEvent,
 	DashboardServiceLogType,
 	DashboardServiceRecord,
 	DashboardServiceSourceSummary,
@@ -364,9 +362,6 @@ export function decodeServiceMessage(raw: unknown): DashboardServiceRecord {
 		readyReplicaCount: readOptionalNumberLike(value, "readyReplicaCount") ?? 0,
 		placementMessage:
 			readOptionalString(value, "placementMessage") ?? undefined,
-		sandboxProfileAudit: readArray(value, "sandboxProfileAudit").map(
-			decodeSandboxProfileAuditEvent,
-		),
 	};
 }
 
@@ -411,8 +406,7 @@ function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 	if (
 		!source &&
 		runtime.ports.length === 0 &&
-		Object.keys(runtime.env).length === 0 &&
-		!runtime.sandboxProfile
+		Object.keys(runtime.env).length === 0
 	) {
 		return undefined;
 	}
@@ -426,18 +420,15 @@ function decodeServiceSpec(raw: unknown): DashboardServiceSpec | undefined {
 		? {
 				maxUnavailable:
 					readOptionalNumberLike(rollingStrategyValue, "maxUnavailable") ?? 0,
-				maxSurge:
-					readOptionalNumberLike(rollingStrategyValue, "maxSurge") ?? 1,
+				maxSurge: readOptionalNumberLike(rollingStrategyValue, "maxSurge") ?? 1,
 				startupTimeoutSeconds:
 					readOptionalNumberLike(
 						rollingStrategyValue,
 						"startupTimeoutSeconds",
 					) ?? 300,
 				drainTimeoutSeconds:
-					readOptionalNumberLike(
-						rollingStrategyValue,
-						"drainTimeoutSeconds",
-					) ?? 30,
+					readOptionalNumberLike(rollingStrategyValue, "drainTimeoutSeconds") ??
+					30,
 			}
 		: undefined;
 	return {
@@ -501,12 +492,10 @@ export function decodeFleetAgentMessage(raw: unknown): DashboardFleetAgent {
 		failureDomain: readOptionalString(value, "failureDomain") ?? "",
 		healthy: readBoolean(value, "healthy"),
 		lastSeenAt: readOptionalDate(value, "lastSeenAt"),
-		cpuMillisCapacity:
-			readOptionalNumberLike(value, "cpuMillisCapacity") ?? 0,
+		cpuMillisCapacity: readOptionalNumberLike(value, "cpuMillisCapacity") ?? 0,
 		memoryMebibytesCapacity:
 			readOptionalNumberLike(value, "memoryMebibytesCapacity") ?? 0,
-		reservedCpuMillis:
-			readOptionalNumberLike(value, "reservedCpuMillis") ?? 0,
+		reservedCpuMillis: readOptionalNumberLike(value, "reservedCpuMillis") ?? 0,
 		reservedMemoryMebibytes:
 			readOptionalNumberLike(value, "reservedMemoryMebibytes") ?? 0,
 		schedulableCpuMillis:
@@ -517,8 +506,7 @@ export function decodeFleetAgentMessage(raw: unknown): DashboardFleetAgent {
 			readOptionalNumberLike(value, "allocatedCpuMillis") ?? 0,
 		allocatedMemoryMebibytes:
 			readOptionalNumberLike(value, "allocatedMemoryMebibytes") ?? 0,
-		headroomCpuMillis:
-			readOptionalNumberLike(value, "headroomCpuMillis") ?? 0,
+		headroomCpuMillis: readOptionalNumberLike(value, "headroomCpuMillis") ?? 0,
 		headroomMemoryMebibytes:
 			readOptionalNumberLike(value, "headroomMemoryMebibytes") ?? 0,
 		allocationCount: readOptionalNumberLike(value, "allocationCount") ?? 0,
@@ -1017,9 +1005,6 @@ function encodeRuntimeSpec(
 			: undefined,
 		restart: encodeRestartSpec(runtime.restart),
 		volumeName: runtime.volumeName,
-		sandboxProfile: runtime.sandboxProfile
-			? { name: runtime.sandboxProfile.name }
-			: undefined,
 	};
 }
 
@@ -1081,67 +1066,6 @@ function decodeRuntimeSpec(raw: unknown): DashboardServiceSpec["runtime"] {
 		livenessCheck: decodeHTTPHealthCheck(value?.livenessCheck),
 		restart: decodeRestartSpec(value?.restart),
 		volumeName: readOptionalString(value, "volumeName") ?? undefined,
-		sandboxProfile: decodeSandboxProfile(value?.sandboxProfile),
-	};
-}
-
-function decodeSandboxProfile(
-	raw: unknown,
-): DashboardServiceSpec["runtime"]["sandboxProfile"] {
-	const value = readOptionalRecord(raw);
-	if (!value) return undefined;
-	const name = readOptionalString(value, "name")?.trim();
-	if (!name) return undefined;
-	const relaxations = readArray(value, "relaxations")
-		.map((item) => String(item))
-		.flatMap((item) => {
-			if (
-				item === "SANDBOX_RELAXATION_RUN_AS_ROOT" ||
-				item === "run-as-root"
-			) {
-				return ["run-as-root" as const];
-			}
-			if (
-				item === "SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM" ||
-				item === "writable-rootfs"
-			) {
-				return ["writable-rootfs" as const];
-			}
-			return [];
-		});
-	return {
-		name,
-		risk: readOptionalString(value, "risk") ?? undefined,
-		relaxations,
-	};
-}
-
-export function decodeListSandboxProfilesResponse(
-	raw: unknown,
-): Array<DashboardSandboxProfile> {
-	const value = readOptionalRecord(raw) ?? {};
-	return readArray(value, "profiles").flatMap((item) => {
-		const profile = decodeSandboxProfile(item);
-		return profile ? [profile] : [];
-	});
-}
-
-function decodeSandboxProfileAuditEvent(
-	raw: unknown,
-): DashboardSandboxProfileAuditEvent {
-	const value = readRecord(raw, "sandbox profile audit event");
-	const profile = decodeSandboxProfile(value.profile) ?? {
-		name: readOptionalString(value, "profileName") ?? "production",
-		relaxations: [],
-	};
-	return {
-		actorUserId: readOptionalString(value, "actorUserId") ?? "system",
-		action: readOptionalString(value, "action") ?? "",
-		previousProfileName:
-			readOptionalString(value, "previousProfileName") ?? undefined,
-		profile,
-		specRevision: readOptionalNumberLike(value, "specRevision") ?? 0,
-		createdAt: readOptionalDate(value, "createdAt"),
 	};
 }
 

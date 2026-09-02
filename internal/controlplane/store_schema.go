@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -103,6 +103,15 @@ var schemaUpgrades = map[int][]string{
 		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL`,
 		`ALTER TABLE service_rollouts ADD COLUMN IF NOT EXISTS progress_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
 		`CREATE INDEX IF NOT EXISTS idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
+	},
+	8: {
+		`UPDATE service_revisions
+		    SET spec_json = jsonb_set(spec_json, ARRAY['runtime'], (spec_json->'runtime') - 'sandboxProfile', true)
+		  WHERE spec_json->'runtime'->'sandboxProfile' IS NOT NULL`,
+		`UPDATE deployments
+		    SET resolved_spec_json = jsonb_set(resolved_spec_json, ARRAY['runtime'], (resolved_spec_json->'runtime') - 'sandboxProfile', true)
+		  WHERE resolved_spec_json->'runtime'->'sandboxProfile' IS NOT NULL`,
+		`DROP TABLE sandbox_profile_audit_events`,
 	},
 }
 
@@ -225,19 +234,6 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, spec_revision)
 	)`,
-	`CREATE TABLE sandbox_profile_audit_events (
-			id STRING PRIMARY KEY,
-			service_id STRING NOT NULL,
-			actor_user_id STRING NOT NULL,
-			action STRING NOT NULL,
-			previous_profile_name STRING NOT NULL DEFAULT '',
-			profile_name STRING NOT NULL,
-			risk STRING NOT NULL,
-			relaxations JSONB NOT NULL,
-			spec_revision INT8 NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL
-		)`,
-	`CREATE INDEX idx_sandbox_profile_audit_service ON sandbox_profile_audit_events(service_id, created_at DESC, id)`,
 	`CREATE TABLE domain_bindings (
 			hostname STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,

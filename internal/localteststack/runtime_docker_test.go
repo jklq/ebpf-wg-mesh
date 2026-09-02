@@ -131,13 +131,19 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	assertArgContains(t, runArgs, "--publish", "127.0.0.1::8080")
 	assertArgContains(t, runArgs, "--security-opt", "no-new-privileges")
 	assertArgContains(t, runArgs, "--cap-drop", "ALL")
-	assertArgContains(t, runArgs, "--user", "65532:65532")
-	if !slices.Contains(runArgs, "--read-only") {
-		t.Fatalf("expected read-only root filesystem, got %v", runArgs)
+	for _, capability := range []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETGID", "SETUID", "SETPCAP", "NET_BIND_SERVICE", "KILL"} {
+		assertArgContains(t, runArgs, "--cap-add", capability)
 	}
-	for _, arg := range runArgs {
+	assertArgContains(t, runArgs, "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m")
+	if slices.Contains(runArgs, "--user") || slices.Contains(runArgs, "--read-only") {
+		t.Fatalf("production sandbox overrode image USER or writable overlay root: %v", runArgs)
+	}
+	for index, arg := range runArgs {
 		if arg == "--privileged" || strings.HasPrefix(arg, "--device") || arg == "--pid=host" || arg == "--network=host" {
 			t.Fatalf("customer isolation flags leaked into docker run: %v", runArgs)
+		}
+		if arg == "--cap-add" && index+1 < len(runArgs) && slices.Contains([]string{"SYS_ADMIN", "NET_ADMIN", "NET_RAW", "BPF"}, runArgs[index+1]) {
+			t.Fatalf("dangerous capability leaked into docker run: %v", runArgs)
 		}
 	}
 }

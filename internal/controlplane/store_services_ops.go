@@ -191,11 +191,6 @@ func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment env
 	); err != nil {
 		return serviceRecord{}, err
 	}
-	if sandboxProfileIsRelaxed(spec) {
-		if err := s.insertSandboxProfileAuditTx(ctx, tx, rec.ID, actorUserID, "selected", "", spec.GetRuntime().GetSandboxProfile(), rec.SpecRevision, now); err != nil {
-			return serviceRecord{}, err
-		}
-	}
 	return rec, nil
 }
 

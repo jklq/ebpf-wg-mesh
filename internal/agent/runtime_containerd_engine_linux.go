@@ -592,7 +592,6 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		oci.WithDefaultPathEnv,
 		oci.WithDefaultUnixDevices,
 		oci.WithNoNewPrivileges,
-		oci.WithCapabilities(nil),
 		withServiceHostsFile(hostsPath),
 		oci.WithHostResolvconf,
 		oci.WithHostname(svc.GetName()),
@@ -663,11 +662,7 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 	if e.workloadCgroupParent != "" {
 		cgroupPath = filepath.Join(e.workloadCgroupParent, containerName(svc.GetAllocationId()))
 	}
-	sandboxOpts, err := workloadSandboxOpts(runtime.GetSandboxProfile(), allowedBindMounts, cgroupPath)
-	if err != nil {
-		return nil, err
-	}
-	opts = append(opts, sandboxOpts...)
+	opts = append(opts, workloadSandboxOpts(allowedBindMounts, cgroupPath)...)
 	if writableVolumePath != "" {
 		opts = append(opts, withWritableVolumeOwnership(writableVolumePath))
 	}

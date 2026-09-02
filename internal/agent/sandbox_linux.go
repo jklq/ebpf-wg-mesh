@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 
 	"github.com/containerd/containerd/containers"
@@ -25,23 +24,21 @@ import (
 )
 
 const (
-	productionSandboxName = "production"
-	sandboxUID            = uint32(65532)
-	sandboxGID            = uint32(65532)
-	sandboxProcessLimit   = int64(256)
-	sandboxOOMScoreAdj    = 500
-	workloadAppArmorName  = "ebpf-wg-mesh-workload"
+	sandboxProcessLimit  = int64(256)
+	sandboxOOMScoreAdj   = 500
+	workloadAppArmorName = "ebpf-wg-mesh-workload"
 )
 
 var (
 	sandboxMaskedPaths = []string{
-		"/proc/acpi", "/proc/asound", "/proc/kcore", "/proc/keys", "/proc/kmsg",
-		"/proc/latency_stats", "/proc/sched_debug", "/proc/scsi", "/proc/timer_list",
-		"/proc/timer_stats", "/sys/devices/virtual/powercap", "/sys/firmware",
-		"/sys/fs/bpf", "/sys/fs/cgroup", "/sys/kernel/security",
+		"/proc/kcore", "/sys/fs/bpf", "/sys/kernel/security",
 	}
 	sandboxReadonlyPaths = []string{
 		"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger",
+	}
+	sandboxCapabilities = []string{
+		"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_SETGID",
+		"CAP_SETUID", "CAP_SETPCAP", "CAP_NET_BIND_SERVICE", "CAP_KILL",
 	}
 )
 
@@ -50,46 +47,10 @@ type sandboxBindMount struct {
 	writable bool
 }
 
-type sandboxPolicy struct {
-	name           string
-	allowRoot      bool
-	writableRootFS bool
-	cgroupPath     string
-}
-
-func resolveSandboxPolicy(profile *platformv1.SandboxProfile) (sandboxPolicy, error) {
-	policy := sandboxPolicy{name: productionSandboxName}
-	if profile == nil || profile.GetName() == "" {
-		return policy, nil
-	}
-	policy.name = profile.GetName()
-	for _, relaxation := range profile.GetRelaxations() {
-		switch relaxation {
-		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_RUN_AS_ROOT:
-			policy.allowRoot = true
-		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM:
-			policy.writableRootFS = true
-		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_UNSPECIFIED:
-			return sandboxPolicy{}, fmt.Errorf("sandbox profile %q contains an unspecified relaxation", policy.name)
-		default:
-			return sandboxPolicy{}, fmt.Errorf("sandbox profile %q contains unsupported relaxation %d", policy.name, relaxation)
-		}
-	}
-	if (policy.allowRoot || policy.writableRootFS) && profile.GetRisk() == "" {
-		return sandboxPolicy{}, fmt.Errorf("relaxed sandbox profile %q has no risk statement", policy.name)
-	}
-	return policy, nil
-}
-
-func workloadSandboxOpts(profile *platformv1.SandboxProfile, allowedBindMounts map[string]sandboxBindMount, cgroupPath string) ([]oci.SpecOpts, error) {
-	policy, err := resolveSandboxPolicy(profile)
-	if err != nil {
-		return nil, err
-	}
-	policy.cgroupPath = cgroupPath
+func workloadSandboxOpts(allowedBindMounts map[string]sandboxBindMount, cgroupPath string) []oci.SpecOpts {
 	opts := []oci.SpecOpts{
 		containerdseccomp.WithDefaultProfile(),
-		withWorkloadSandbox(policy, allowedBindMounts),
+		withWorkloadSandbox(cgroupPath, allowedBindMounts),
 	}
 	if hostapparmor.HostSupports() {
 		opts = append(opts, containerdapparmor.WithDefaultProfile(workloadAppArmorName))
@@ -101,22 +62,18 @@ func workloadSandboxOpts(profile *platformv1.SandboxProfile, allowedBindMounts m
 			return nil
 		})
 	}
-	return opts, nil
+	return opts
 }
 
-func withWorkloadSandbox(policy sandboxPolicy, allowedBindMounts map[string]sandboxBindMount) oci.SpecOpts {
+func withWorkloadSandbox(cgroupPath string, allowedBindMounts map[string]sandboxBindMount) oci.SpecOpts {
 	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
 		if spec.Process == nil || spec.Root == nil || spec.Linux == nil {
 			return errors.New("sandbox requires a complete Linux OCI spec")
 		}
 		spec.Process.NoNewPrivileges = true
-		spec.Process.Capabilities = &specs.LinuxCapabilities{}
-		if !policy.allowRoot && spec.Process.User.UID == 0 {
-			spec.Process.User.UID = sandboxUID
-			spec.Process.User.GID = sandboxGID
-		}
+		spec.Process.Capabilities = workloadCapabilities()
 		spec.Process.User.AdditionalGids = nil
-		spec.Root.Readonly = !policy.writableRootFS
+		spec.Root.Readonly = false
 		spec.Process.OOMScoreAdj = intPtr(sandboxOOMScoreAdj)
 		spec.Process.Rlimits = upsertRlimit(spec.Process.Rlimits, specs.POSIXRlimit{
 			Type: "RLIMIT_NPROC", Soft: uint64(sandboxProcessLimit), Hard: uint64(sandboxProcessLimit),
@@ -136,8 +93,8 @@ func withWorkloadSandbox(policy sandboxPolicy, allowedBindMounts map[string]sand
 		spec.Linux.MaskedPaths = append([]string(nil), sandboxMaskedPaths...)
 		spec.Linux.ReadonlyPaths = append([]string(nil), sandboxReadonlyPaths...)
 		spec.Linux.Namespaces = isolatedNamespaces(spec.Linux.Namespaces)
-		if policy.cgroupPath != "" {
-			spec.Linux.CgroupsPath = policy.cgroupPath
+		if cgroupPath != "" {
+			spec.Linux.CgroupsPath = cgroupPath
 		}
 		mounts, err := hardenedSandboxMounts(spec.Mounts, allowedBindMounts)
 		if err != nil {
@@ -145,6 +102,14 @@ func withWorkloadSandbox(policy sandboxPolicy, allowedBindMounts map[string]sand
 		}
 		spec.Mounts = mounts
 		return nil
+	}
+}
+
+func workloadCapabilities() *specs.LinuxCapabilities {
+	return &specs.LinuxCapabilities{
+		Bounding:  append([]string(nil), sandboxCapabilities...),
+		Effective: append([]string(nil), sandboxCapabilities...),
+		Permitted: append([]string(nil), sandboxCapabilities...),
 	}
 }
 
@@ -232,7 +197,6 @@ func sandboxDeviceRules() []specs.LinuxDeviceCgroup {
 		device("c", 1, minor(8)), // /dev/random
 		device("c", 1, minor(9)), // /dev/urandom
 		device("c", 5, minor(0)), // /dev/tty
-		device("c", 5, minor(1)), // /dev/console
 		device("c", 5, minor(2)), // /dev/ptmx
 		device("c", 136, nil),    // private /dev/pts
 	}

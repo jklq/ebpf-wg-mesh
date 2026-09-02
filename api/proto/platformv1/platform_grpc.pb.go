@@ -54,7 +54,6 @@ const (
 	PlatformService_ListServiceLogs_FullMethodName        = "/platform.v1.PlatformService/ListServiceLogs"
 	PlatformService_ListServiceDeployments_FullMethodName = "/platform.v1.PlatformService/ListServiceDeployments"
 	PlatformService_ListAgents_FullMethodName             = "/platform.v1.PlatformService/ListAgents"
-	PlatformService_ListSandboxProfiles_FullMethodName    = "/platform.v1.PlatformService/ListSandboxProfiles"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -95,7 +94,6 @@ type PlatformServiceClient interface {
 	ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(ctx context.Context, in *ListServiceDeploymentsRequest, opts ...grpc.CallOption) (*ListServiceDeploymentsResponse, error)
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
-	ListSandboxProfiles(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListSandboxProfilesResponse, error)
 }
 
 type platformServiceClient struct {
@@ -446,16 +444,6 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empt
 	return out, nil
 }
 
-func (c *platformServiceClient) ListSandboxProfiles(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListSandboxProfilesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListSandboxProfilesResponse)
-	err := c.cc.Invoke(ctx, PlatformService_ListSandboxProfiles_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // PlatformServiceServer is the server API for PlatformService service.
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
@@ -494,7 +482,6 @@ type PlatformServiceServer interface {
 	ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error)
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
-	ListSandboxProfiles(context.Context, *emptypb.Empty) (*ListSandboxProfilesResponse, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
@@ -606,9 +593,6 @@ func (UnimplementedPlatformServiceServer) ListServiceDeployments(context.Context
 }
 func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
-}
-func (UnimplementedPlatformServiceServer) ListSandboxProfiles(context.Context, *emptypb.Empty) (*ListSandboxProfilesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListSandboxProfiles not implemented")
 }
 func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
 func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
@@ -1243,24 +1227,6 @@ func _PlatformService_ListAgents_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_ListSandboxProfiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PlatformServiceServer).ListSandboxProfiles(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PlatformService_ListSandboxProfiles_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).ListSandboxProfiles(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1403,10 +1369,6 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAgents",
 			Handler:    _PlatformService_ListAgents_Handler,
-		},
-		{
-			MethodName: "ListSandboxProfiles",
-			Handler:    _PlatformService_ListSandboxProfiles_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

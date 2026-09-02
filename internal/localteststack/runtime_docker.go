@@ -441,7 +441,7 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		"--label", meshlabels.DesiredRolloutGeneration + "=" + strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
 		"--label", internalHostnameLabel + "=" + svc.GetInternalHostname(),
 	}
-	args = append(args, dockerSandboxArgs(runtime)...)
+	args = append(args, dockerSandboxArgs()...)
 	if hostname := strings.TrimSpace(svc.GetInternalHostname()); hostname != "" {
 		args = append(args, "--network-alias", hostname)
 		if shortName := strings.TrimSuffix(hostname, internalDomainSuffix); shortName != hostname {
@@ -479,33 +479,24 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 	return args, nil
 }
 
-func dockerSandboxArgs(runtime *platformv1.ServiceRuntime) []string {
-	allowRoot := false
-	writableRootFS := false
-	for _, relaxation := range runtime.GetSandboxProfile().GetRelaxations() {
-		switch relaxation {
-		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_RUN_AS_ROOT:
-			allowRoot = true
-		case platformv1.SandboxRelaxation_SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM:
-			writableRootFS = true
-		}
-	}
+func dockerSandboxArgs() []string {
 	args := []string{
 		"--security-opt", "no-new-privileges",
 		"--cap-drop", "ALL",
+		"--cap-add", "CHOWN",
+		"--cap-add", "DAC_OVERRIDE",
+		"--cap-add", "FOWNER",
+		"--cap-add", "FSETID",
+		"--cap-add", "SETGID",
+		"--cap-add", "SETUID",
+		"--cap-add", "SETPCAP",
+		"--cap-add", "NET_BIND_SERVICE",
+		"--cap-add", "KILL",
 		"--pids-limit", "256",
 		"--oom-score-adj", "500",
-	}
-	if !allowRoot {
-		args = append(args, "--user", "65532:65532")
-	}
-	if !writableRootFS {
-		args = append(args,
-			"--read-only",
-			"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
-			"--tmpfs", "/var/tmp:rw,noexec,nosuid,nodev,size=64m",
-			"--tmpfs", "/run:rw,noexec,nosuid,nodev,size=16m",
-		)
+		"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
+		"--tmpfs", "/var/tmp:rw,noexec,nosuid,nodev,size=64m",
+		"--tmpfs", "/run:rw,noexec,nosuid,nodev,size=16m",
 	}
 	return args
 }

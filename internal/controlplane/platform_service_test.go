@@ -1052,3 +1052,17 @@ func (f *fakePlatformStore) listAgents(ctx context.Context) ([]agentRecord, erro
 	}
 	return []agentRecord{}, nil
 }
+
+func TestCustomerRuntimeContractOmitsPrivilegedHostAndMountControls(t *testing.T) {
+	fields := (&platformv1.ServiceRuntime{}).ProtoReflect().Descriptor().Fields()
+	forbidden := map[string]struct{}{
+		"privileged": {}, "host_network": {}, "host_pid": {}, "sysctls": {},
+		"devices": {}, "bind_mounts": {}, "mounts": {}, "sandbox_profile": {},
+	}
+	for index := 0; index < fields.Len(); index++ {
+		name := string(fields.Get(index).Name())
+		if _, exists := forbidden[name]; exists {
+			t.Fatalf("customer runtime exposes forbidden field %q", name)
+		}
+	}
+}

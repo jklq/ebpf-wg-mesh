@@ -66,7 +66,6 @@ type serviceRecord struct {
 	DesiredReplicaCount     int32
 	ReadyReplicaCount       int32
 	PlacementMessage        string
-	SandboxProfileAudit     []sandboxProfileAuditRecord
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }

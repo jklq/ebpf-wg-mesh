@@ -68,14 +68,7 @@ HTTP health-check paths must be absolute request paths beginning with a single `
 
 `runtime.cpu_millis` is enforced with Linux CFS quota using a 100 ms period (for example, `500` millicpu becomes a `50 ms / 100 ms` quota). It is not interpreted as a cpuset.
 
-Customer workloads always run under the production OCI sandbox: non-root when
-the image would otherwise be UID 0, read-only rootfs, empty capabilities,
-`no_new_privileges`, seccomp, AppArmor or SELinux when the host supports them,
-isolated namespaces, masked proc/sys paths, PID limits, and hard cgroup v2
-CPU/memory/swap/OOM controls. The customer API has no privileged, host-network,
-host-PID, sysctl, device, or bind-mount fields. Compatibility relaxations are
-operator-defined named profiles with a visible risk statement and audit history.
-See [docs/workload-isolation.md](docs/workload-isolation.md).
+Customer workloads always run under one production OCI sandbox: the image USER is preserved, the ephemeral overlay root is writable, and a bounded Docker-like capability set supports ordinary images while excluding administrative/network capabilities. The agent also enforces `no_new_privileges`, seccomp, AppArmor or SELinux when the host supports them, isolated namespaces, masked dangerous proc/sys paths, PID limits, and hard cgroup v2 CPU/memory/swap/OOM controls. The customer API has no privileged, host-network, host-PID, sysctl, device, bind-mount, or sandbox-profile fields. See [docs/workload-isolation.md](docs/workload-isolation.md).
 
 ### Agent fleet
 
