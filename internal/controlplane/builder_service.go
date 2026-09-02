@@ -282,7 +282,6 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service before completion: %v", err)
 	}
-	var agentID string
 	if req.GetState() == platformv1.BuildState_BUILD_STATE_SUCCEEDED {
 		if s.registry == nil || !s.registry.Enabled() {
 			return nil, status.Error(codes.FailedPrecondition, "registry policy is not configured")
@@ -291,13 +290,33 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 		if err := validateRuntimeImageRef(pushRef, req.GetImageDigest()); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "image_digest: %v", err)
 		}
-		agentID = service.AllocatedAgentID
 	}
 	if err := s.store.completeBuild(ctx, builderID, req.GetBuildId(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason()); err != nil {
 		if errors.Is(err, errBuildNotOwned) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "complete build: %v", err)
+	}
+	var allocationAgentIDs []string
+	if req.GetState() == platformv1.BuildState_BUILD_STATE_SUCCEEDED {
+		// A first source build has no allocation before completion. Completing the
+		// build creates its rollout allocations, so use the durable post-completion
+		// allocation set for logs and notifications.
+		allocations, err := s.store.listAllocationsByServiceID(ctx, build.ServiceID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "load build allocations after completion: %v", err)
+		}
+		seen := make(map[string]struct{}, len(allocations))
+		for _, allocation := range allocations {
+			if allocation.AgentID == "" {
+				continue
+			}
+			if _, ok := seen[allocation.AgentID]; ok {
+				continue
+			}
+			seen[allocation.AgentID] = struct{}{}
+			allocationAgentIDs = append(allocationAgentIDs, allocation.AgentID)
+		}
 	}
 	slog.InfoContext(ctx, "build completed", "build_id", req.GetBuildId(), "builder_id", builderID, "state", req.GetState().String(), "commit_sha", req.GetCommitSha(), "image_digest", req.GetImageDigest(), "failure_reason", req.GetFailureReason())
 
@@ -307,7 +326,11 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 		// We synthesize a deploy-stage line so the "Deploy" tab shows
 		// activity immediately even before the agent applies the new
 		// rollout; the runtime condition stream later adds more detail.
-		s.emitter.EmitDeployf(ctx, service, "", req.GetBuildId(), StageDeploy, "Scheduling rollout to agent %s", service.AllocatedAgentID)
+		target := strings.Join(allocationAgentIDs, ", ")
+		if target == "" {
+			target = "pending placement"
+		}
+		s.emitter.EmitDeployf(ctx, service, "", req.GetBuildId(), StageDeploy, "Scheduling rollout to agent %s", target)
 	case platformv1.BuildState_BUILD_STATE_FAILED:
 		reason := strings.TrimSpace(req.GetFailureReason())
 		if reason == "" {
@@ -318,8 +341,10 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 		s.emitter.EmitBuild(ctx, service, build, StageBuild, "Build superseded by a newer commit")
 	}
 
-	if agentID != "" && s.notifier != nil {
-		s.notifier.Notify(agentID)
+	if req.GetState() == platformv1.BuildState_BUILD_STATE_SUCCEEDED && s.notifier != nil {
+		for _, agentID := range allocationAgentIDs {
+			s.notifier.Notify(agentID)
+		}
 	}
 	s.events.Publish(build.EnvironmentID)
 	return &emptypb.Empty{}, nil
