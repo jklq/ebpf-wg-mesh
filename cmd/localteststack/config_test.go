@@ -50,6 +50,40 @@ func TestLoadLocalStackConfigRequiresExplicitValidConsoleBind(t *testing.T) {
 	}
 }
 
+func TestLoadLocalStackConfigNormalizesOperatorGitHubLogin(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := loadLocalStackConfig(func(key string) string {
+		if key == "LOCALTESTSTACK_OPERATOR_GITHUB_LOGIN" {
+			return " OctoCat "
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("loadLocalStackConfig: %v", err)
+	}
+	if cfg.OperatorGitHubLogin != "octocat" {
+		t.Fatalf("unexpected operator GitHub login %q", cfg.OperatorGitHubLogin)
+	}
+	if got := operatorGitHubUserID(cfg.OperatorGitHubLogin); got != "github:octocat" {
+		t.Fatalf("unexpected operator user ID %q", got)
+	}
+}
+
+func TestLoadLocalStackConfigRejectsInvalidOperatorGitHubLogin(t *testing.T) {
+	t.Parallel()
+
+	_, err := loadLocalStackConfig(func(key string) string {
+		if key == "LOCALTESTSTACK_OPERATOR_GITHUB_LOGIN" {
+			return "not/a/login"
+		}
+		return ""
+	})
+	if err == nil {
+		t.Fatal("expected invalid operator GitHub login to be rejected")
+	}
+}
+
 func TestLoadLocalStackConfigRejectsPublicTunnelWithLoopbackConsole(t *testing.T) {
 	t.Parallel()
 

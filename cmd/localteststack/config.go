@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -15,14 +16,17 @@ const (
 	defaultConsoleBindAddress = "127.0.0.1"
 )
 
+var githubLoginPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$`)
+
 type localStackConfig struct {
-	IngressHost           string
-	IngressPort           int
-	DockerNetwork         string
-	LocalDomainSuffix     string
-	PlatformDomainSuffix  string
-	ConsoleBindAddress    string
-	EnablePublicTunnel    bool
+	IngressHost          string
+	IngressPort          int
+	DockerNetwork        string
+	LocalDomainSuffix    string
+	PlatformDomainSuffix string
+	ConsoleBindAddress   string
+	EnablePublicTunnel   bool
+	OperatorGitHubLogin  string
 }
 
 func loadLocalStackConfig(lookup func(string) string) (localStackConfig, error) {
@@ -36,6 +40,7 @@ func loadLocalStackConfig(lookup func(string) string) (localStackConfig, error) 
 		PlatformDomainSuffix: normalizeDomainSuffix(strings.TrimSpace(lookup("LOCALTESTSTACK_PLATFORM_DOMAIN_SUFFIX"))),
 		ConsoleBindAddress:   firstNonEmpty(strings.TrimSpace(lookup("LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")), defaultConsoleBindAddress),
 		EnablePublicTunnel:   strings.EqualFold(strings.TrimSpace(lookup("LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL")), "true") || strings.TrimSpace(lookup("LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL")) == "1",
+		OperatorGitHubLogin:  strings.ToLower(strings.TrimSpace(lookup("LOCALTESTSTACK_OPERATOR_GITHUB_LOGIN"))),
 		IngressPort:          defaultLocalIngressPort,
 	}
 	if raw := strings.TrimSpace(lookup("LOCALTESTSTACK_INGRESS_PORT")); raw != "" {
@@ -74,7 +79,14 @@ func loadLocalStackConfig(lookup func(string) string) (localStackConfig, error) 
 	if cfg.EnablePublicTunnel && net.ParseIP(cfg.ConsoleBindAddress).IsLoopback() {
 		return localStackConfig{}, fmt.Errorf("public tunnel requires an explicit non-loopback LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")
 	}
+	if cfg.OperatorGitHubLogin != "" && !githubLoginPattern.MatchString(cfg.OperatorGitHubLogin) {
+		return localStackConfig{}, fmt.Errorf("LOCALTESTSTACK_OPERATOR_GITHUB_LOGIN must be a valid GitHub login")
+	}
 	return cfg, nil
+}
+
+func operatorGitHubUserID(login string) string {
+	return "github:" + strings.ToLower(strings.TrimSpace(login))
 }
 
 func (c localStackConfig) ingressBaseURL() string {
