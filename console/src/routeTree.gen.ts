@@ -12,9 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReadyzRouteImport } from './routes/readyz'
 import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as LivezRouteImport } from './routes/livez'
 import { Route as HealthzRouteImport } from './routes/healthz'
+import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
@@ -39,11 +39,6 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const FleetRoute = FleetRouteImport.update({
-  id: '/fleet',
-  path: '/fleet',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LivezRoute = LivezRouteImport.update({
   id: '/livez',
   path: '/livez',
@@ -52,6 +47,11 @@ const LivezRoute = LivezRouteImport.update({
 const HealthzRoute = HealthzRouteImport.update({
   id: '/healthz',
   path: '/healthz',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FleetRoute = FleetRouteImport.update({
+  id: '/fleet',
+  path: '/fleet',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -99,10 +99,10 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
   '/login': typeof LoginRoute
-  '/fleet': typeof FleetRoute
   '/logout': typeof LogoutRoute
   '/readyz': typeof ReadyzRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -115,10 +115,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
   '/login': typeof LoginRoute
-  '/fleet': typeof FleetRoute
   '/logout': typeof LogoutRoute
   '/readyz': typeof ReadyzRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -132,10 +132,10 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
   '/login': typeof LoginRoute
-  '/fleet': typeof FleetRoute
   '/logout': typeof LogoutRoute
   '/readyz': typeof ReadyzRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -150,10 +150,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/fleet'
     | '/healthz'
     | '/livez'
     | '/login'
-    | '/fleet'
     | '/logout'
     | '/readyz'
     | '/auth/callback'
@@ -166,10 +166,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/fleet'
     | '/healthz'
     | '/livez'
     | '/login'
-    | '/fleet'
     | '/logout'
     | '/readyz'
     | '/auth/callback'
@@ -182,10 +182,10 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/fleet'
     | '/healthz'
     | '/livez'
     | '/login'
-    | '/fleet'
     | '/logout'
     | '/readyz'
     | '/auth/callback'
@@ -199,10 +199,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  FleetRoute: typeof FleetRoute
   HealthzRoute: typeof HealthzRoute
   LivezRoute: typeof LivezRoute
   LoginRoute: typeof LoginRoute
-  FleetRoute: typeof FleetRoute
   LogoutRoute: typeof LogoutRoute
   ReadyzRoute: typeof ReadyzRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
@@ -237,13 +237,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/fleet': {
-      id: '/fleet'
-      path: '/fleet'
-      fullPath: '/fleet'
-      preLoaderRoute: typeof FleetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/livez': {
       id: '/livez'
       path: '/livez'
@@ -256,6 +249,13 @@ declare module '@tanstack/react-router' {
       path: '/healthz'
       fullPath: '/healthz'
       preLoaderRoute: typeof HealthzRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fleet': {
+      id: '/fleet'
+      path: '/fleet'
+      fullPath: '/fleet'
+      preLoaderRoute: typeof FleetRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -319,10 +319,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  FleetRoute: FleetRoute,
   HealthzRoute: HealthzRoute,
   LivezRoute: LivezRoute,
   LoginRoute: LoginRoute,
-  FleetRoute: FleetRoute,
   LogoutRoute: LogoutRoute,
   ReadyzRoute: ReadyzRoute,
   AuthCallbackRoute: AuthCallbackRoute,

@@ -2063,10 +2063,11 @@ select.field-input {
 
 .deployment-shell-live {
   border-radius: 2px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .deployment-live-head {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2553,8 +2554,6 @@ select.field-input {
   border-top: 1px dashed rgba(80, 76, 71, 0.55);
 }
 
-.deployment-action-buttons,
-.deployment-history-actions,
 .deployment-action-history {
   display: flex;
   flex-wrap: wrap;
@@ -2562,11 +2561,79 @@ select.field-input {
   gap: 6px;
 }
 
-.deployment-action-buttons .btn-secondary,
-.deployment-action-buttons .btn-danger,
-.deployment-history-actions .btn-secondary {
-  min-height: 27px;
-  padding: 0 9px;
+.deployment-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.deployment-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.deployment-menu-trigger:hover,
+.deployment-menu-trigger:focus-visible,
+.deployment-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.deployment-menu-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 184px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface-raised);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+}
+
+.deployment-menu-popover > button {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deployment-menu-popover > button:hover:not(:disabled),
+.deployment-menu-popover > button:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.deployment-menu-popover > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.deployment-menu-popover > button.danger {
+  color: var(--failed);
+}
+
+.deployment-menu-popover > button.danger:hover:not(:disabled),
+.deployment-menu-popover > button.danger:focus-visible {
+  color: #e08989;
+  background: rgba(208, 85, 85, 0.1);
 }
 
 .deployment-restart-target {
@@ -2577,6 +2644,9 @@ select.field-input {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  padding: 7px 10px 8px;
+  border-bottom: 1px solid rgba(80, 76, 71, 0.45);
+  margin-bottom: 4px;
 }
 
 .deployment-restart-target select {
@@ -2586,6 +2656,7 @@ select.field-input {
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 10px;
+  width: 100%;
 }
 
 .deployment-action-history {
@@ -2703,7 +2774,19 @@ select.field-input {
   border-top: 0;
 }
 
-.deployment-history-actions,
+.deployment-history-row-shell {
+  display: flex;
+  align-items: center;
+}
+
+.deployment-history-row-shell .deployment-history-row {
+  min-width: 0;
+}
+
+.deployment-history-row-shell > .deployment-menu {
+  margin-right: var(--deployment-row-inset);
+}
+
 .deployment-history-entry > .deployment-action-history,
 .deployment-history-entry > .deployment-error {
   margin: 0 var(--deployment-row-inset) 8px 34px;
@@ -2960,6 +3043,12 @@ select.field-input {
 
   .deployment-view-logs {
     width: 100%;
+  }
+
+  .deployment-live-head > .deployment-menu {
+    position: absolute;
+    top: 10px;
+    right: var(--deployment-row-inset);
   }
 
   .log-line {
