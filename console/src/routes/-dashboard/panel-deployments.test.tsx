@@ -225,8 +225,53 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.queryByText("older worker")).toBeNull();
 		fireEvent.click(historyToggle);
 		expect(await screen.findByText("older worker")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Rollback" })).toBeTruthy();
+		for (const trigger of screen.getAllByRole("button", {
+			name: "Deployment actions",
+		})) {
+			fireEvent.click(trigger);
+		}
+		expect(screen.getByRole("menuitem", { name: "Cancel" })).toBeTruthy();
+		expect(screen.getByRole("menuitem", { name: "Rollback" })).toBeTruthy();
+		expect(screen.queryByRole("menuitem", { name: "Redeploy" })).toBeNull();
+	});
+
+	it("puts active deployment actions in a menu with remove last", async () => {
+		const currentDeployment = { ...activeDeployment(), isCurrent: true };
+		const service: DashboardServiceRecord = {
+			...rollingService({
+				rolloutGeneration: currentDeployment.rolloutGeneration,
+				latestBuild: currentDeployment.build,
+				latestDeployment: currentDeployment.status,
+			}),
+		};
+		serverFns.fetchServiceDeployments.mockResolvedValue([currentDeployment]);
+
+		render(
+			<PanelDeployments
+				service={service}
+				status={{
+					service,
+					allocations: [
+						allocation({ allocationId: "alloc-1" }),
+						allocation({ allocationId: "alloc-2" }),
+					],
+				}}
+				project={project()}
+			/>,
+		);
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Deployment actions" }),
+		);
+		const menuItems = screen.getAllByRole("menuitem");
+		expect(menuItems.map((item) => item.textContent)).toEqual([
+			"Restart",
+			"Redeploy",
+			"Remove",
+		]);
+		expect(screen.queryByText("Redeploy exact")).toBeNull();
+		expect(menuItems.at(-1)?.classList.contains("danger")).toBe(true);
+		expect(screen.getByLabelText("Restart target")).toBeTruthy();
 	});
 
 	it("summarizes exposure and replicas above the deployment cards", async () => {

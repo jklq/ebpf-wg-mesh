@@ -41,7 +41,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := store.createScheduledService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -49,9 +49,12 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 			TrackedRef:         "main",
 			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
-	), "node-1")
+	))
 	if err != nil {
-		t.Fatalf("createService: %v", err)
+		t.Fatalf("createScheduledService: %v", err)
+	}
+	if service.AllocatedAgentID != "" {
+		t.Fatalf("first source build unexpectedly started with allocation %q", service.AllocatedAgentID)
 	}
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatalf("seedReadySourceState: %v", err)
