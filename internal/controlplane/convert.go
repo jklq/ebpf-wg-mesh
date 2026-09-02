@@ -61,7 +61,6 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 		DesiredReplicaCount:     rec.DesiredReplicaCount,
 		ReadyReplicaCount:       rec.ReadyReplicaCount,
 		PlacementMessage:        rec.PlacementMessage,
-		SandboxProfileAudit:     toProtoSandboxProfileAudit(rec.SandboxProfileAudit),
 	}
 }
 

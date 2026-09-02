@@ -127,6 +127,7 @@ func resetTestStore(t *testing.T, store *Store) {
 	// deletes are substantially faster.
 	tables := []string{
 		"sandbox_profile_audit_events",
+		"deployment_actions",
 		"project_github_repositories",
 		"source_work_items",
 		"source_snapshots",

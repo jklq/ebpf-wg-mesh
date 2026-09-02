@@ -65,26 +65,6 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 }
 
-func TestControlPlaneBootstrapParsesSandboxCompatibilityProfiles(t *testing.T) {
-	t.Parallel()
-
-	cfg, err := ControlPlane([]string{
-		"-profile", "development",
-		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
-		"-internal-server-names", "controlplane,controlplane-internal",
-		"-agent-bootstrap-tokens", "node-a=token-a",
-		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
-		"-state-dir", "var/controlplane",
-		"-sandbox-compatibility-profiles-json", `[{"name":"legacy-root","risk":"The image runs as root.","relaxations":["run-as-root"]}]`,
-	})
-	if err != nil {
-		t.Fatalf("ControlPlane: %v", err)
-	}
-	if len(cfg.Sandbox.CompatibilityProfiles) != 1 || cfg.Sandbox.CompatibilityProfiles[0].Name != "legacy-root" {
-		t.Fatalf("sandbox profiles = %+v", cfg.Sandbox.CompatibilityProfiles)
-	}
-}
-
 func TestControlPlaneBootstrapDefaultsToProductionAndRejectsLoopbackDatabase(t *testing.T) {
 	t.Parallel()
 

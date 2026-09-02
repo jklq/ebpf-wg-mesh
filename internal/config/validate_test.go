@@ -229,6 +229,39 @@ func TestFinalizeControlPlaneRejectsInvalidSandboxProfiles(t *testing.T) {
 			t.Fatalf("FinalizeControlPlane: %v", err)
 		}
 	})
+func TestFinalizeAgentRejectsReservedResourcesThatConsumeAllCapacity(t *testing.T) {
+	t.Parallel()
+
+	cfg := AgentConfig{
+		Profile: ProfileDevelopment,
+		Node: NodeConfig{
+			ID:            "node-1",
+			Name:          "node-1",
+			AdvertiseAddr: "fd00:30::10",
+			Resources: NodeResourcesConfig{
+				CPUMillis:               500,
+				MemoryMebibytes:         512,
+				ReservedCPUMillis:       500,
+				ReservedMemoryMebibytes: 512,
+			},
+		},
+		ControlPlane: ControlPlaneClientConfig{
+			Address: "controlplane:9443",
+			TLS: ClientTLSConfig{
+				CAFile:             "ca.crt",
+				ServerName:         "controlplane",
+				BootstrapToken:     "token-a",
+				RenewBeforeMinutes: 30,
+			},
+		},
+		Mesh: MeshConfig{
+			Host: HostConfig{IPv6: "fd00:30::10"},
+		},
+	}
+	err := FinalizeAgent(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "reservedCpuMillis must be less than cpuMillis") {
+		t.Fatalf("unexpected error %v", err)
+	}
 }
 
 func TestFinalizeAgentRejectsInvalidWireGuardPeerEndpoint(t *testing.T) {

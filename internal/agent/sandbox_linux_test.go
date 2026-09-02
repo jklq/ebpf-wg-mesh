@@ -7,8 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
 	"github.com/containerd/containerd/containers"
 	containerdseccomp "github.com/containerd/containerd/contrib/seccomp"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -41,18 +39,32 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	allowedBindMounts := map[string]sandboxBindMount{
 		defaultVolumeMount: {source: "/var/lib/platform/volume", writable: true},
 	}
-	if err := withWorkloadSandbox(sandboxPolicy{name: productionSandboxName}, allowedBindMounts)(context.Background(), nil, &containers.Container{}, spec); err != nil {
+	if err := withWorkloadSandbox("", allowedBindMounts)(context.Background(), nil, &containers.Container{}, spec); err != nil {
 		t.Fatalf("sandbox: %v", err)
 	}
 
-	if !spec.Process.NoNewPrivileges || spec.Process.User.UID != sandboxUID || spec.Process.User.GID != sandboxGID {
-		t.Fatalf("process identity was not hardened: %+v", spec.Process)
+	if !spec.Process.NoNewPrivileges || spec.Process.User.UID != 0 || spec.Process.User.GID != 0 {
+		t.Fatalf("image root identity was not preserved: %+v", spec.Process)
 	}
-	if len(spec.Process.User.AdditionalGids) != 0 || len(spec.Process.Capabilities.Effective) != 0 {
-		t.Fatalf("supplementary identity or capabilities survived: %+v", spec.Process)
+	if len(spec.Process.User.AdditionalGids) != 0 {
+		t.Fatalf("supplementary identity survived: %+v", spec.Process.User)
 	}
-	if !spec.Root.Readonly {
-		t.Fatal("root filesystem is writable")
+	if spec.Root.Readonly {
+		t.Fatal("production overlay root is read-only")
+	}
+	for _, capability := range sandboxCapabilities {
+		if !slices.Contains(spec.Process.Capabilities.Effective, capability) ||
+			!slices.Contains(spec.Process.Capabilities.Permitted, capability) ||
+			!slices.Contains(spec.Process.Capabilities.Bounding, capability) {
+			t.Fatalf("required capability %s missing: %+v", capability, spec.Process.Capabilities)
+		}
+	}
+	for _, capability := range []string{"CAP_SYS_ADMIN", "CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_BPF"} {
+		if slices.Contains(spec.Process.Capabilities.Effective, capability) ||
+			slices.Contains(spec.Process.Capabilities.Permitted, capability) ||
+			slices.Contains(spec.Process.Capabilities.Bounding, capability) {
+			t.Fatalf("dangerous capability %s survived: %+v", capability, spec.Process.Capabilities)
+		}
 	}
 	if spec.Linux.Seccomp == nil || spec.Linux.Seccomp.DefaultAction == "" {
 		t.Fatal("maintained seccomp profile was not installed")
@@ -79,7 +91,9 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	if pid := namespaceFor(spec.Linux.Namespaces, specs.PIDNamespace); pid.Path != "" {
 		t.Fatalf("injected PID namespace path survived: %+v", pid)
 	}
-	if !slices.Contains(spec.Linux.MaskedPaths, "/sys/fs/bpf") || !slices.Contains(spec.Linux.MaskedPaths, "/proc/kcore") {
+	if !slices.Contains(spec.Linux.MaskedPaths, "/sys/fs/bpf") ||
+		!slices.Contains(spec.Linux.MaskedPaths, "/proc/kcore") ||
+		!slices.Contains(spec.Linux.MaskedPaths, "/sys/kernel/security") {
 		t.Fatalf("sensitive proc/sys paths were not masked: %+v", spec.Linux.MaskedPaths)
 	}
 	for _, destination := range []string{"/tmp", "/var/tmp", "/run"} {
@@ -94,35 +108,23 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	}
 }
 
-func TestNamedCompatibilityProfileOnlyRelaxesDeclaredControls(t *testing.T) {
-	profile := &platformv1.SandboxProfile{
-		Name: "legacy-runtime",
-		Risk: "Legacy image executes as root and writes its image filesystem.",
-		Relaxations: []platformv1.SandboxRelaxation{
-			platformv1.SandboxRelaxation_SANDBOX_RELAXATION_RUN_AS_ROOT,
-			platformv1.SandboxRelaxation_SANDBOX_RELAXATION_WRITABLE_ROOT_FILESYSTEM,
-		},
+func TestProductionSandboxPreservesNonRootImageUser(t *testing.T) {
+	spec := &specs.Spec{
+		Root:    &specs.Root{},
+		Process: &specs.Process{User: specs.User{UID: 1000, GID: 1001}},
+		Linux:   &specs.Linux{Resources: &specs.LinuxResources{}},
 	}
-	policy, err := resolveSandboxPolicy(profile)
-	if err != nil {
+	if err := withWorkloadSandbox("", nil)(context.Background(), nil, nil, spec); err != nil {
 		t.Fatal(err)
 	}
-	spec := &specs.Spec{Root: &specs.Root{}, Process: &specs.Process{User: specs.User{}}, Linux: &specs.Linux{Resources: &specs.LinuxResources{}}}
-	if err := withWorkloadSandbox(policy, nil)(context.Background(), nil, nil, spec); err != nil {
-		t.Fatal(err)
-	}
-	if spec.Process.User.UID != 0 || spec.Root.Readonly {
-		t.Fatalf("declared compatibility relaxations were not honored: %+v", spec)
-	}
-	if !spec.Process.NoNewPrivileges || spec.Linux.Resources.Pids == nil || len(spec.Process.Capabilities.Effective) != 0 {
-		t.Fatalf("non-relaxable protections were lost: %+v", spec)
+	if spec.Process.User.UID != 1000 || spec.Process.User.GID != 1001 {
+		t.Fatalf("image user changed: %+v", spec.Process.User)
 	}
 }
 
 func TestWorkloadSandboxPlacesContainerInReservedCgroup(t *testing.T) {
 	spec := &specs.Spec{Root: &specs.Root{}, Process: &specs.Process{}, Linux: &specs.Linux{Resources: &specs.LinuxResources{}}}
-	policy := sandboxPolicy{name: productionSandboxName, cgroupPath: "ebpf-wg-mesh-workloads/platform-alloc"}
-	if err := withWorkloadSandbox(policy, nil)(context.Background(), nil, nil, spec); err != nil {
+	if err := withWorkloadSandbox("ebpf-wg-mesh-workloads/platform-alloc", nil)(context.Background(), nil, nil, spec); err != nil {
 		t.Fatal(err)
 	}
 	if spec.Linux.CgroupsPath != "ebpf-wg-mesh-workloads/platform-alloc" {
@@ -131,17 +133,23 @@ func TestWorkloadSandboxPlacesContainerInReservedCgroup(t *testing.T) {
 }
 
 func TestProductionSandboxRejectsUnrecognizedHostBindMount(t *testing.T) {
-	spec := &specs.Spec{
-		Root:    &specs.Root{},
-		Process: &specs.Process{},
-		Linux:   &specs.Linux{Resources: &specs.LinuxResources{}},
-		Mounts: []specs.Mount{{
-			Destination: "/host", Type: "bind", Source: "/", Options: []string{"rbind", "rw"},
-		}},
-	}
-	err := withWorkloadSandbox(sandboxPolicy{name: productionSandboxName}, nil)(context.Background(), nil, nil, spec)
-	if err == nil {
-		t.Fatal("unrecognized host bind mount was accepted")
+	for _, mount := range []specs.Mount{
+		{Destination: "/host", Type: "bind", Source: "/", Options: []string{"rbind", "rw"}},
+		{Destination: "/var/run/docker.sock", Type: "bind", Source: "/var/run/docker.sock"},
+		{Destination: "/run/containerd/containerd.sock", Type: "bind", Source: "/run/containerd/containerd.sock"},
+		{Destination: "/dev/kmsg", Type: "bind", Source: "/dev/kmsg"},
+		{Destination: "/dev/mem", Type: "bind", Source: "/dev/mem"},
+	} {
+		spec := &specs.Spec{
+			Root:    &specs.Root{},
+			Process: &specs.Process{},
+			Linux:   &specs.Linux{Resources: &specs.LinuxResources{}},
+			Mounts:  []specs.Mount{mount},
+		}
+		err := withWorkloadSandbox("", nil)(context.Background(), nil, nil, spec)
+		if err == nil {
+			t.Fatalf("unrecognized host bind mount was accepted: %+v", mount)
+		}
 	}
 }
 

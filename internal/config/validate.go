@@ -7,17 +7,10 @@ import (
 	"net/netip"
 	"net/url"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strings"
 )
 
-var sandboxProfileNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-
 func validateControlPlane(cfg ControlPlaneConfig) error {
-	if err := validateSandboxProfiles(cfg.Sandbox.CompatibilityProfiles); err != nil {
-		return err
-	}
 	if cfg.InternalGRPC.Listen == "" {
 		return errors.New("controlplane.internalGrpc.listen is required")
 	}
@@ -170,39 +163,6 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionControlPlane(cfg)
-	}
-	return nil
-}
-
-func validateSandboxProfiles(profiles []SandboxProfileConfig) error {
-	seen := map[string]struct{}{"production": {}}
-	allowed := []string{"run-as-root", "writable-rootfs"}
-	for _, profile := range profiles {
-		name := strings.TrimSpace(profile.Name)
-		if !sandboxProfileNamePattern.MatchString(name) {
-			return fmt.Errorf("controlplane.sandbox compatibility profile name %q must match %s", profile.Name, sandboxProfileNamePattern)
-		}
-		if _, exists := seen[name]; exists {
-			return fmt.Errorf("controlplane.sandbox compatibility profile name %q is reserved or duplicated", name)
-		}
-		seen[name] = struct{}{}
-		if strings.TrimSpace(profile.Risk) == "" {
-			return fmt.Errorf("controlplane.sandbox compatibility profile %q requires a visible risk statement", name)
-		}
-		if len(profile.Relaxations) == 0 {
-			return fmt.Errorf("controlplane.sandbox compatibility profile %q must declare at least one relaxation", name)
-		}
-		relaxations := make(map[string]struct{}, len(profile.Relaxations))
-		for _, raw := range profile.Relaxations {
-			relaxation := strings.TrimSpace(strings.ToLower(raw))
-			if !slices.Contains(allowed, relaxation) {
-				return fmt.Errorf("controlplane.sandbox compatibility profile %q has unsupported relaxation %q", name, raw)
-			}
-			if _, exists := relaxations[relaxation]; exists {
-				return fmt.Errorf("controlplane.sandbox compatibility profile %q repeats relaxation %q", name, relaxation)
-			}
-			relaxations[relaxation] = struct{}{}
-		}
 	}
 	return nil
 }
