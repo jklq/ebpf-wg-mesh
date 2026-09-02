@@ -44,9 +44,6 @@ export function PanelSettings({
 	onDeleted: (serviceId: string) => void;
 	onSavingChange?: (key: string, saving: boolean) => void;
 }) {
-	const changedFields = new Set(
-		(service.unappliedChanges ?? []).map((change) => change.id),
-	);
 	const trackedRefId = `service-tracked-ref-${service.id}`;
 	const dockerfilePathId = `service-dockerfile-path-${service.id}`;
 	const contextDirId = `service-context-dir-${service.id}`;
@@ -91,6 +88,7 @@ export function PanelSettings({
 			onSaved(updated);
 		},
 	});
+	const changedFields = settingsChangedFields(service, incoming, draft);
 
 	useEffect(() => {
 		onSavingChange?.("settings", saving);
@@ -112,10 +110,7 @@ export function PanelSettings({
 
 	return (
 		<div className="settings-stack">
-			<PanelSection
-				title="Source"
-				lede="The repository and branch this service builds from."
-			>
+			<PanelSection title="Source">
 				<div>
 					<p className="field-label">Source repo</p>
 					<div
@@ -156,10 +151,7 @@ export function PanelSettings({
 				</div>
 			</PanelSection>
 
-			<PanelSection
-				title="Build"
-				lede="How the image is assembled before it reaches the mesh."
-			>
+			<PanelSection title="Build">
 				<div>
 					<label className="field-label" htmlFor={dockerfilePathId}>
 						Dockerfile path
@@ -203,25 +195,7 @@ export function PanelSettings({
 				onSavingChange={reportReplicaSaving}
 			/>
 
-			<PanelSection
-				title="Workload isolation"
-				lede="Every service uses the same production sandbox; there are no profile variants."
-			>
-				<p className="field-note">
-					The image USER is preserved, the ephemeral overlay root is writable,
-					and ordinary image startup capabilities such as NET_BIND_SERVICE,
-					SETUID, and CHOWN are available.
-				</p>
-				<p className="field-note">
-					Privileged mode, host networking and PIDs, host devices and bind
-					mounts, SYS_ADMIN, and NET_ADMIN remain unavailable.
-				</p>
-			</PanelSection>
-
-			<PanelSection
-				title="Placement"
-				lede="Optionally keep this service in one operator-defined region. Replicas still spread across failure domains when capacity permits."
-			>
+			<PanelSection title="Placement">
 				<div>
 					<label className="field-label" htmlFor={placementRegionId}>
 						Required region
@@ -241,10 +215,7 @@ export function PanelSettings({
 				</div>
 			</PanelSection>
 
-			<PanelSection
-				title="Rolling deployment"
-				lede="How quickly healthy replacements enter service and old processes shut down."
-			>
+			<PanelSection title="Rolling deployment">
 				<div
 					className={`field-grid ${changedFields.has("rollingStrategy") ? "unapplied-field" : ""}`}
 				>
@@ -281,17 +252,9 @@ export function PanelSettings({
 						}
 					/>
 				</div>
-				<p className="field-hint">
-					Healthy replacements enter ingress before old allocations receive
-					SIGTERM. Remaining processes are force-killed only after the drain
-					deadline.
-				</p>
 			</PanelSection>
 
-			<PanelSection
-				title="Process restart"
-				lede="What happens when the process exits."
-			>
+			<PanelSection title="Process restart">
 				<fieldset
 					className={`choice-rail ${
 						changedFields.has("runtime.restart") ? "unapplied-field" : ""
@@ -389,11 +352,7 @@ export function PanelSettings({
 
 			{error && <p className="error-msg">{error}</p>}
 
-			<PanelSection
-				title="Danger zone"
-				tone="danger"
-				lede="Irreversible. The service and its deployments leave this environment."
-			>
+			<PanelSection title="Danger zone" tone="danger">
 				<div className="danger-zone">
 					<div className="danger-zone-row">
 						<div>
@@ -455,6 +414,47 @@ export function PanelSettings({
 			)}
 		</div>
 	);
+}
+
+function settingsChangedFields(
+	service: DashboardServiceRecord,
+	incoming: SettingsDraft,
+	draft: SettingsDraft,
+): Set<string> {
+	const changed = new Set(
+		(service.unappliedChanges ?? []).map((change) => change.id),
+	);
+	if (draft.repoSelector !== incoming.repoSelector) {
+		changed.add("source.repositorySelector");
+	}
+	if (draft.trackedRef !== incoming.trackedRef) {
+		changed.add("source.trackedRef");
+	}
+	if (draft.dockerfilePath !== incoming.dockerfilePath) {
+		changed.add("source.buildRecipe.dockerfilePath");
+	}
+	if (draft.contextDir !== incoming.contextDir) {
+		changed.add("source.buildRecipe.contextDir");
+	}
+	if (draft.placementRegion !== incoming.placementRegion) {
+		changed.add("placementRegion");
+	}
+	if (
+		draft.maxUnavailable !== incoming.maxUnavailable ||
+		draft.maxSurge !== incoming.maxSurge ||
+		draft.startupTimeoutSeconds !== incoming.startupTimeoutSeconds ||
+		draft.drainTimeoutSeconds !== incoming.drainTimeoutSeconds
+	) {
+		changed.add("rollingStrategy");
+	}
+	if (
+		draft.restartPolicy !== incoming.restartPolicy ||
+		draft.maxRestarts !== incoming.maxRestarts ||
+		draft.windowSeconds !== incoming.windowSeconds
+	) {
+		changed.add("runtime.restart");
+	}
+	return changed;
 }
 
 function settingsDraftFromService(

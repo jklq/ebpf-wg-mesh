@@ -1,4 +1,11 @@
-import { AlertCircle, Layers, LogOut, RefreshCw, Server, Zap } from "lucide-react";
+import {
+	AlertCircle,
+	Layers,
+	LogOut,
+	RefreshCw,
+	Server,
+	Zap,
+} from "lucide-react";
 
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 
@@ -97,9 +104,16 @@ export function Topbar({
 
 			<div style={{ flex: 1 }} />
 
-			<a href="/fleet" className="btn-ghost" style={{ gap: 4, fontSize: 12 }} title="Agent fleet">
-				<Server size={13} /> Fleet
-			</a>
+			{state.canManageFleet && (
+				<a
+					href="/fleet"
+					className="btn-ghost"
+					style={{ gap: 4, fontSize: 12 }}
+					title="Agent fleet"
+				>
+					<Server size={13} /> Fleet
+				</a>
+			)}
 
 			<button type="button" className="btn-ghost" onClick={onRefresh}>
 				<RefreshCw size={13} />

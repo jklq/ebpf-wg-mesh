@@ -64,9 +64,7 @@ describe("PanelSettings", () => {
 		);
 
 		expect(screen.queryByLabelText("Sandbox profile")).toBeNull();
-		expect(screen.getByText(/same production sandbox/i)).toBeTruthy();
-		expect(screen.getByText(/image USER is preserved/i)).toBeTruthy();
-		expect(screen.getByText(/SYS_ADMIN/i)).toBeTruthy();
+		expect(screen.queryByText("Workload isolation")).toBeNull();
 	});
 
 	it("changes the source repository through the picker", async () => {
@@ -99,6 +97,12 @@ describe("PanelSettings", () => {
 		fireEvent.click(screen.getByRole("button", { name: "octocat/other" }));
 
 		expect(screen.getByText("octocat/other")).toBeTruthy();
+		expect(
+			screen
+				.getByText("octocat/other")
+				.closest(".source-repo-card")
+				?.classList.contains("unapplied-field"),
+		).toBe(true);
 		expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
 
 		await waitFor(() =>
@@ -109,6 +113,124 @@ describe("PanelSettings", () => {
 				}),
 			}),
 		);
+	});
+
+	it("highlights changed settings immediately while persistence is pending", () => {
+		const save = deferred<DashboardServiceRecord>();
+		doUpdateServiceMock.mockReturnValue(save.promise);
+		render(
+			<PanelSettings
+				service={service()}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		fireEvent.click(screen.getByLabelText("Never"));
+		expect(screen.getByLabelText("Never").closest("label")?.className).toBe(
+			"active",
+		);
+		expect(
+			screen
+				.getByText("Policy")
+				.closest("fieldset")
+				?.classList.contains("unapplied-field"),
+		).toBe(true);
+
+		fireEvent.change(screen.getByLabelText("Required region"), {
+			target: { value: "eu-west" },
+		});
+		expect(
+			screen
+				.getByLabelText("Required region")
+				.classList.contains("unapplied-field"),
+		).toBe(true);
+
+		fireEvent.change(screen.getByLabelText("Max surge"), {
+			target: { value: "2" },
+		});
+		expect(
+			screen
+				.getByLabelText("Max surge")
+				.closest(".field-grid")
+				?.classList.contains("unapplied-field"),
+		).toBe(true);
+		expect(doUpdateServiceMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps the optimistic highlight when the acknowledged change is undeployed", async () => {
+		const save = deferred<DashboardServiceRecord>();
+		const onSaved = vi.fn();
+		doUpdateServiceMock.mockReturnValue(save.promise);
+		function Harness() {
+			const [current, setCurrent] = useState(service());
+			return (
+				<PanelSettings
+					service={current}
+					state={state()}
+					onSaved={(next) => {
+						onSaved(next);
+						setCurrent(next);
+					}}
+					onDeleted={() => {}}
+				/>
+			);
+		}
+		render(<Harness />);
+
+		fireEvent.click(screen.getByLabelText("Never"));
+		const policy = screen.getByText("Policy").closest("fieldset");
+		expect(policy?.classList.contains("unapplied-field")).toBe(true);
+		await waitFor(() => expect(doUpdateServiceMock).toHaveBeenCalledTimes(1));
+
+		const updated = service();
+		updated.specRevision = 2;
+		if (!updated.spec) throw new Error("expected service spec");
+		updated.spec.runtime.restart = {
+			policy: "never",
+			maxRestarts: 5,
+			windowSeconds: 300,
+		};
+		updated.pendingChanges = true;
+		updated.unappliedChangeCount = 1;
+		updated.unappliedChanges = [
+			{
+				id: "runtime.restart",
+				section: "Restart",
+				field: "Process restart",
+				path: "runtime.restart",
+				action: "update",
+				currentValue: "on-failure",
+				newValue: "never",
+			},
+		];
+		save.resolve(updated);
+
+		await waitFor(() => expect(onSaved).toHaveBeenCalledWith(updated));
+		expect(policy?.classList.contains("unapplied-field")).toBe(true);
+		expect(doUpdateServiceMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("retains the changed highlight and reports a failed save", async () => {
+		doUpdateServiceMock.mockRejectedValue(new Error("save failed"));
+		render(
+			<PanelSettings
+				service={service()}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		fireEvent.click(screen.getByLabelText("Never"));
+		expect(await screen.findByText("save failed")).toBeTruthy();
+		expect(
+			screen
+				.getByText("Policy")
+				.closest("fieldset")
+				?.classList.contains("unapplied-field"),
+		).toBe(true);
 	});
 
 	it("deletes the service once its name is typed back", async () => {
@@ -396,4 +518,12 @@ function state(): DashboardHomeState {
 		domainBindings: [],
 		controlPlaneReachable: true,
 	};
+}
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((next) => {
+		resolve = next;
+	});
+	return { promise, resolve };
 }

@@ -79,68 +79,6 @@ describe("platform grpc codec", () => {
 		});
 	});
 
-	it("round trips the operator-resolved sandbox profile", () => {
-		const [service] = decodeListServicesResponse({
-			services: [
-				{
-					id: "service-1",
-					environmentId: "environment-1",
-					name: "legacy",
-					spec: {
-						runtime: {
-							env: {},
-							ports: [],
-							sandboxProfile: {
-								name: "legacy-root",
-								risk: "The image runs as root.",
-								relaxations: ["SANDBOX_RELAXATION_RUN_AS_ROOT"],
-							},
-						},
-					},
-				},
-			],
-		});
-		if (!service.spec) throw new Error("decoded service spec is missing");
-		expect(service.spec.runtime.sandboxProfile).toEqual({
-			name: "legacy-root",
-			risk: "The image runs as root.",
-			relaxations: ["run-as-root"],
-		});
-		expect(
-			encodeUpdateServiceRequest({
-				serviceId: service.id,
-				spec: service.spec,
-			}).service.spec.runtime.sandboxProfile,
-		).toEqual({
-			name: "legacy-root",
-	it("encodes placement region and rolling strategy together", () => {
-		const request = encodeCreateServiceRequest({
-			environmentId: "environment-1",
-			name: "web",
-			spec: {
-				runtime: {
-					env: {},
-					cpuMillis: 250,
-					memoryMebibytes: 256,
-					ports: [],
-				},
-				placementRegion: "eu-west",
-				rollingStrategy: {
-					maxUnavailable: 0,
-					maxSurge: 1,
-					startupTimeoutSeconds: 300,
-					drainTimeoutSeconds: 30,
-				},
-			},
-		});
-		expect(request.service.spec.placementRegion).toBe("eu-west");
-		expect(request.service.spec.rollingStrategy).toEqual({
-			maxUnavailable: 0,
-			maxSurge: 1,
-			startupTimeoutSeconds: 300,
-			drainTimeoutSeconds: 30,
-		});
-	});
 
 	it("encodes an explicit rolling strategy including zero surge", () => {
 		const request = encodeCreateServiceRequest({

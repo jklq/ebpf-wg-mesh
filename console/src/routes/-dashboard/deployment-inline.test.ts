@@ -87,6 +87,31 @@ describe("trafficRetentionCopy", () => {
 });
 
 describe("partitionDeployments", () => {
+	it("moves the current deployment to history once it is removed", () => {
+		const removed = {
+			id: "deploy-1",
+			rolloutGeneration: 1,
+			isCurrent: true,
+			status: {
+				deploymentId: "deploy-1",
+				state: "removed" as const,
+				causeKind: "user" as const,
+				causeId: "user-1",
+				reasonCode: "DEPLOYMENT_REMOVED",
+				detail: "Service removed",
+				specRevision: 1,
+				imageDigest: "sha256:removed",
+				rolloutGeneration: 1,
+			},
+		};
+
+		expect(isPinnedDeployment(removed)).toBe(false);
+		expect(partitionDeployments([removed])).toEqual({
+			live: [],
+			history: [removed],
+		});
+	});
+
 	it("keeps a draining predecessor live until it is actually stopped", () => {
 		const incoming = {
 			id: "deploy-2",

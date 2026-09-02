@@ -761,7 +761,7 @@ textarea {
 
 .panel-badge-segment.running {
   background: var(--building);
-  /* animation-delay set via inline style (JS) to stay in phase with the label */
+  /* animation-delay set via inline style (JS) to share a wall-clock phase */
   animation: pulse-building 1.4s ease-in-out infinite;
 }
 
@@ -769,7 +769,6 @@ textarea {
   background: var(--failed);
 }
 
-/* Label — pulses in sync with stage bars when building */
 .panel-badge-label {
   font-family: "Barlow Condensed", var(--font-sans);
   font-size: 11px;
@@ -782,8 +781,6 @@ textarea {
 
 .panel-deploy-badge.tone-building .panel-badge-label {
   color: var(--building);
-  /* animation-delay applied inline (JS) to sync with running stage segments */
-  animation: pulse-building 1.4s ease-in-out infinite;
 }
 
 .panel-deploy-badge.tone-failed .panel-badge-label {
@@ -1904,6 +1901,7 @@ select.field-input {
 }
 
 .choice-rail {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   margin: 0;
@@ -1918,7 +1916,10 @@ select.field-input {
 }
 
 .choice-rail legend {
+  position: absolute;
+  top: -0.6em;
   padding: 0 6px;
+  background: var(--bg);
 }
 
 .choice-rail label {
