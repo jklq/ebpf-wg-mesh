@@ -551,6 +551,10 @@ message UpdateServiceRequest {
   ServiceUpdate service = 2;
 }
 
+message RedeployServiceRequest {
+  string service_id = 1;
+}
+
 message ScaleServiceRequest {
   string service_id = 1;
   int32 desired_replica_count = 2;
@@ -879,6 +883,7 @@ service PlatformService {
 
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
+  rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus);
   rpc ScaleService(ScaleServiceRequest) returns (ServiceStatus);
   rpc RestartService(RestartServiceRequest) returns (ServiceStatus);
   rpc ApplyDeploymentAction(ApplyDeploymentActionRequest) returns (ServiceStatus);
