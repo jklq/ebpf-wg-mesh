@@ -175,7 +175,7 @@ export function createPostgresDashboardStore(
 					};
 				}
 
-				const userID = randomUUID();
+				const userID = input.userID ?? randomUUID();
 				const created = await query<UserRow>(
 					client,
 					"completeGitHubLogin.createUser",

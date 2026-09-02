@@ -182,16 +182,7 @@ export function ServicePanel({
 					<div
 						className={`panel-deploy-badge tone-${health}${heroCompleting ? " completing" : ""}${heroExiting ? " exiting" : ""}`}
 					>
-						<span
-							className="panel-badge-label"
-							style={
-								health === "building"
-									? { animationDelay: pulseDelay }
-									: undefined
-							}
-						>
-							{healthLabel(health)}
-						</span>
+						<span className="panel-badge-label">{healthLabel(health)}</span>
 						{stages.length > 0 && (
 							<div
 								className="panel-badge-rail"

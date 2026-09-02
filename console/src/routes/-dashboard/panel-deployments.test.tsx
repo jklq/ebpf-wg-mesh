@@ -296,6 +296,42 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getByText("3 Replicas")).toBeTruthy();
 		expect(document.querySelector(".replica-rollout")).toBeNull();
 	});
+
+	it("shows a removed current deployment in history with a green status", async () => {
+		const active = activeDeployment();
+		if (!active.status) throw new Error("active deployment status is required");
+		const removed: DashboardDeploymentRecord = {
+			...active,
+			isCurrent: true,
+			status: {
+				...active.status,
+				state: "removed" as const,
+				reasonCode: "DEPLOYMENT_REMOVED",
+				detail: "Service removed",
+			},
+		};
+		const service = rollingService({
+			rolloutGeneration: removed.rolloutGeneration,
+			latestBuild: removed.build,
+			latestDeployment: removed.status,
+		});
+		serverFns.fetchServiceDeployments.mockResolvedValue([removed]);
+
+		render(
+			<PanelDeployments service={service} status={null} project={project()} />,
+		);
+
+		const historyToggle = await screen.findByRole("button", {
+			name: /History/,
+		});
+		expect(historyToggle.textContent).toContain("1");
+		expect(document.querySelector(".deployment-shell-live")).toBeNull();
+
+		fireEvent.click(historyToggle);
+		expect(
+			document.querySelector(".deployment-history-row .status-dot.healthy"),
+		).toBeTruthy();
+	});
 });
 
 function project(): DashboardProject {

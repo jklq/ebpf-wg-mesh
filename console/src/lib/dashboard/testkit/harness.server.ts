@@ -180,7 +180,7 @@ export function createDashboardTestHarness(
 			}
 
 			const user: DashboardUser = {
-				id: `user-${nextUserID++}`,
+				id: input.userID ?? `user-${nextUserID++}`,
 				email: input.primaryEmail,
 			};
 			users.set(user.id, user);
