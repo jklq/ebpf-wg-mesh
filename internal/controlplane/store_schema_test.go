@@ -6,14 +6,15 @@ import (
 )
 
 func TestSchemaVersionsKeepRollingActionsFleetAndIsolation(t *testing.T) {
-	if currentSchemaVersion != 8 {
-		t.Fatalf("current schema version = %d, want 8", currentSchemaVersion)
+	if currentSchemaVersion != 9 {
+		t.Fatalf("current schema version = %d, want 9", currentSchemaVersion)
 	}
 	rolling := strings.Join(schemaUpgrades[4], "\n")
 	actions := strings.Join(schemaUpgrades[5], "\n")
 	fleet := strings.Join(schemaUpgrades[6], "\n")
 	isolation := strings.Join(schemaUpgrades[7], "\n")
 	railwayDefaults := strings.Join(schemaUpgrades[8], "\n")
+	multiReplica := strings.Join(schemaUpgrades[9], "\n")
 	for _, marker := range []string{"rollout_state", "drain_deadline", "strategy_json"} {
 		if !strings.Contains(rolling, marker) {
 			t.Fatalf("schema v4 lost rolling replacement marker %q", marker)
@@ -37,6 +38,11 @@ func TestSchemaVersionsKeepRollingActionsFleetAndIsolation(t *testing.T) {
 	for _, marker := range []string{"service_revisions", "deployments", "sandboxProfile", "DROP TABLE sandbox_profile_audit_events"} {
 		if !strings.Contains(railwayDefaults, marker) {
 			t.Fatalf("schema v8 lost Railway-default marker %q", marker)
+		}
+	}
+	for _, marker := range []string{"control_plane_leases", "fencing_token", "environment_events", "revision", "control_plane_storage", "storage_id"} {
+		if !strings.Contains(multiReplica, marker) {
+			t.Fatalf("schema v9 lost multi-replica marker %q", marker)
 		}
 	}
 	if strings.Contains(rolling, "deployment_actions") {

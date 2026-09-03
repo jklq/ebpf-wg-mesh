@@ -108,10 +108,8 @@ func TestServiceUnappliedChangesIncludesRollingStrategy(t *testing.T) {
 	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{})
 	current := proto.Clone(deployed).(*platformv1.ServiceSpec)
 	current.RollingStrategy = &platformv1.RollingStrategy{
-		MaxUnavailable:        proto.Int32(1),
-		MaxSurge:              proto.Int32(0),
-		StartupTimeoutSeconds: proto.Int32(60),
-		DrainTimeoutSeconds:   proto.Int32(5),
+		HealthcheckTimeoutSeconds: proto.Int32(60),
+		DrainingSeconds:           proto.Int32(5),
 	}
 
 	changes := diffServiceUnappliedChanges(current, deployed)
@@ -119,12 +117,12 @@ func TestServiceUnappliedChangesIncludesRollingStrategy(t *testing.T) {
 		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
 	}
 	assertChange(t, changes[0], "rollingStrategy", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE,
-		"unavailable 0, surge 1, startup 300s, drain 30s",
-		"unavailable 1, surge 0, startup 60s, drain 5s")
+		"healthcheck timeout 300s, draining time 30s",
+		"healthcheck timeout 60s, draining time 5s")
 
 	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"rollingStrategy"})
 	got := canonicalRollingStrategy(discarded.GetRollingStrategy())
-	if got.GetMaxUnavailable() != 0 || got.GetMaxSurge() != 1 {
+	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 30 {
 		t.Fatalf("discarded rolling strategy = %+v", got)
 	}
 }

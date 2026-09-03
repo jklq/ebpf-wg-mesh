@@ -80,7 +80,7 @@ func (s *Store) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 }
 
 func (s *Store) migrate(ctx context.Context) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 			return fmt.Errorf("create schema_migrations: %w", err)
 		}
@@ -155,7 +155,27 @@ func applySchemaUpgrades(ctx context.Context, tx *sql.Tx, fromVersion int) error
 }
 
 func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+		if err := assertLeaseTx(ctx, tx); err != nil {
+			return err
+		}
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return bumpGlobalEnvironmentEventTx(ctx, tx)
+	})
+}
+
+func (s *Store) withTxUnfenced(ctx context.Context, fn func(*sql.Tx) error) error {
 	return crdb.ExecuteTx(ctx, s.db, nil, fn)
+}
+
+func databaseTime(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) (time.Time, error) {
+	var now time.Time
+	err := q.QueryRowContext(ctx, `SELECT statement_timestamp()`).Scan(&now)
+	return now.UTC(), err
 }
 
 func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {

@@ -1,10 +1,11 @@
 import { Loader2, RotateCcw, UploadCloud } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
-
+import { cn } from "#/lib/cn";
 import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { btnPrimary, btnSecondary } from "#/lib/ui-classes";
 
 import {
 	deployActionLabel,
@@ -14,6 +15,29 @@ import {
 import { EmptyCanvas } from "./empty-canvas";
 import { NODE_H, NODE_W, nodePosition } from "./layout";
 import { ServiceNode } from "./service-node";
+
+const skeletonShimmerClass =
+	"absolute inset-0 -translate-x-[120%] animate-skeleton-shimmer bg-gradient-to-r from-transparent via-[rgba(212,205,197,0.08)] to-transparent";
+
+const zoomBtnClass =
+	"flex size-8 cursor-pointer items-center justify-center border-0 bg-transparent font-mono text-sm text-muted hover:bg-surface-hover hover:text-ink [&:not(:first-child)]:border-t [&:not(:first-child)]:border-line";
+
+function SkeletonShimmer() {
+	return <span className={skeletonShimmerClass} />;
+}
+
+function SkeletonChip({ className }: { className?: string }) {
+	return (
+		<span
+			className={cn(
+				"relative inline-block overflow-hidden bg-[rgba(80,76,71,0.42)]",
+				className,
+			)}
+		>
+			<SkeletonShimmer />
+		</span>
+	);
+}
 
 export const CANVAS_SNAP = 32;
 export const CANVAS_MAJOR_GRID = 128;
@@ -30,31 +54,35 @@ export function DashboardCanvasSkeleton({
 }) {
 	return (
 		<div
-			className={showTopbar ? "app-canvas canvas-skeleton-page" : undefined}
+			className={
+				showTopbar ? "flex h-dvh flex-col overflow-hidden bg-canvas" : undefined
+			}
 			aria-hidden="true"
 		>
 			{showTopbar && (
-				<div className="topbar topbar-skeleton">
-					<span className="skeleton-mark" />
-					<span className="skeleton-line skeleton-title" />
-					<span className="skeleton-pill" />
-					<span className="skeleton-line skeleton-count" />
-					<span className="skeleton-spacer" />
-					<span className="skeleton-icon" />
-					<span className="skeleton-button" />
-					<span className="skeleton-icon" />
+				<div className="pointer-events-none fixed inset-x-0 top-0 z-40 flex h-header items-center gap-3 border-b border-line bg-surface px-4">
+					<span className="relative size-[15px] shrink-0 overflow-hidden bg-[rgba(212,119,26,0.22)] [clip-path:polygon(52%_0,100%_44%,68%_44%,86%_100%,0_48%,40%_48%)]">
+						<SkeletonShimmer />
+					</span>
+					<SkeletonChip className="h-3.5 w-12" />
+					<SkeletonChip className="h-6 w-[108px] border border-line" />
+					<SkeletonChip className="h-2.5 w-[66px]" />
+					<span className="flex-1" />
+					<SkeletonChip className="size-7 border border-line" />
+					<SkeletonChip className="h-[30px] w-24 border border-[rgba(212,119,26,0.24)] bg-[rgba(212,119,26,0.08)]" />
+					<SkeletonChip className="size-7 border border-line" />
 				</div>
 			)}
 			<div
-				className="canvas-grid canvas-skeleton-stage"
-				style={
+				className={cn(
+					"overflow-hidden bg-canvas",
 					showTopbar
-						? { marginTop: "var(--dashboard-header-height)" }
-						: undefined
-				}
+						? "relative mt-header h-[calc(100dvh-var(--spacing-header))]"
+						: "absolute inset-0 z-[15]",
+				)}
 			>
 				<div className="canvas-world-grid" />
-				<div className="canvas-loading-skeleton">
+				<div className="pointer-events-none absolute inset-0">
 					<SkeletonNode />
 				</div>
 			</div>
@@ -69,18 +97,17 @@ export function ServicePanelFallback({
 }) {
 	return (
 		<>
-			<div className="panel-crumbs">
-				<strong>{service.name}</strong>
-				<span style={{ flex: 1 }} />
-				<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+			<div className="flex h-header shrink-0 items-center gap-1.5 border-b border-line bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgba(24,23,21,0.92)] px-4 py-2">
+				<strong className="font-display text-[22px] font-medium tracking-[-0.03em] text-ink">
+					{service.name}
+				</strong>
+				<span className="flex-1" />
+				<Loader2 size={13} className="animate-spin" />
 			</div>
-			<div className="service-panel-content">
-				<div className="service-panel-scroll">
-					<div className="panel-loading-row">
-						<Loader2
-							size={13}
-							style={{ animation: "spin 1s linear infinite" }}
-						/>
+			<div className="relative min-h-0 flex-1 overflow-hidden">
+				<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
+					<div className="flex items-center">
+						<Loader2 size={13} className="animate-spin" />
 					</div>
 				</div>
 			</div>
@@ -91,25 +118,28 @@ export function ServicePanelFallback({
 function SkeletonNode() {
 	return (
 		<div
-			className="service-node skeleton-node"
+			className="skeleton-node pointer-events-none absolute flex flex-col overflow-hidden rounded-sm border border-line bg-surface-raised opacity-[0.92]"
 			style={{ width: NODE_W, height: NODE_H }}
 		>
-			<div className="skeleton-node-head">
-				<span className="skeleton-status" />
-				<span className="skeleton-line skeleton-node-title" />
+			<SkeletonShimmer />
+			<div className="flex items-center gap-2 border-b border-line px-3.5 pt-2.5 pb-2">
+				<span className="relative size-[7px] shrink-0 overflow-hidden rounded-sm bg-[rgba(212,119,26,0.22)]">
+					<SkeletonShimmer />
+				</span>
+				<SkeletonChip className="h-[13px] w-[104px]" />
 			</div>
-			<div className="skeleton-node-body">
-				<div className="skeleton-meta-row">
-					<span className="skeleton-icon-inline" />
-					<span className="skeleton-line skeleton-row row-1" />
+			<div className="flex flex-1 flex-col gap-[7px] px-3.5 pt-2 pb-2.5">
+				<div className="flex items-center gap-[5px]">
+					<SkeletonChip className="size-2.5 shrink-0" />
+					<SkeletonChip className="h-[9px] w-[86px]" />
 				</div>
-				<div className="skeleton-meta-row">
-					<span className="skeleton-icon-inline" />
-					<span className="skeleton-line skeleton-row row-2" />
+				<div className="flex items-center gap-[5px]">
+					<SkeletonChip className="size-2.5 shrink-0" />
+					<SkeletonChip className="h-[9px] w-[58px]" />
 				</div>
-				<div className="skeleton-node-footer">
+				<div className="mt-auto flex items-center justify-between gap-1.5">
 					<span />
-					<span className="skeleton-line skeleton-sha" />
+					<SkeletonChip className="h-2.5 w-[42px]" />
 				</div>
 			</div>
 		</div>
@@ -253,15 +283,11 @@ export function DashboardCanvasStage({
 		<div
 			role="application"
 			tabIndex={-1}
-			style={{
-				flex: 1,
-				marginTop: "var(--dashboard-header-height)",
-				position: "relative",
-				overflow: "hidden",
-				cursor: panCursor ? "grabbing" : "grab",
-			}}
 			ref={canvasRef}
-			className="canvas-grid"
+			className={cn(
+				"relative mt-header flex-1 overflow-hidden bg-canvas",
+				panCursor ? "cursor-grabbing" : "cursor-grab",
+			)}
 			onMouseDown={onCanvasMouseDown}
 			onClick={onCanvasClick}
 			onKeyDown={(event) => {
@@ -270,7 +296,8 @@ export function DashboardCanvasStage({
 		>
 			{showCanvasSkeleton && <DashboardCanvasSkeleton />}
 			<div
-				className="canvas-world"
+				data-canvas-world=""
+				className="absolute inset-0 origin-top-left"
 				style={{
 					transform: `translate(${panOffset.x}px,${panOffset.y}px) scale(${zoom})`,
 					visibility:
@@ -301,24 +328,31 @@ export function DashboardCanvasStage({
 			{showPrompt && (
 				<div
 					key={changeSignature || "deploy-prompt"}
-					className={`dirty-workspace-banner${
-						deployError ? " failed" : applyingChangeCount > 0 ? " applying" : ""
-					}${changeSignature ? " changed" : ""}`}
+					data-workspace-prompt=""
+					className={cn(
+						"absolute top-[18px] z-[35] flex min-w-[min(520px,calc(100vw-48px))] max-w-[calc(100vw-48px)] -translate-x-1/2 items-center gap-3.5 border border-line-bright bg-surface bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_40%)] py-[11px] pr-3 pl-4 shadow-[inset_3px_0_0_var(--color-accent),0_16px_40px_rgba(0,0,0,0.4)] max-sm:top-3 max-sm:flex-col max-sm:items-stretch",
+						deployError &&
+							"border-failed/50 shadow-[inset_3px_0_0_var(--color-failed),0_16px_40px_rgba(0,0,0,0.4)]",
+						!deployError &&
+							applyingChangeCount > 0 &&
+							"border-building/50 shadow-[inset_3px_0_0_var(--color-building),0_16px_40px_rgba(0,0,0,0.4)]",
+						changeSignature && "animate-dirty-banner-nudge",
+					)}
 					style={
 						promptLeft === undefined
 							? { display: "none" }
 							: { left: promptLeft }
 					}
 				>
-					<div>
-						<span className="dirty-workspace-title">
+					<div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden max-sm:flex-wrap">
+						<span className="shrink-0 font-display text-[18px] font-medium tracking-[-0.02em] text-ink">
 							{dirtyPromptTitle({
 								applying: applyingChangeCount,
 								deployError,
 								deploying: deployingChanges,
 							})}
 						</span>
-						<span className="dirty-workspace-detail">
+						<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
 							{dirtyPromptDetail({
 								applying: applyingChangeCount,
 								deployable: deployableUnappliedChanges,
@@ -327,19 +361,21 @@ export function DashboardCanvasStage({
 							})}
 						</span>
 						{deployError && (
-							<span className="dirty-workspace-error">{deployError}</span>
+							<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-failed">
+								{deployError}
+							</span>
 						)}
 					</div>
 					<button
 						type="button"
-						className="btn-secondary"
+						className={btnSecondary}
 						onClick={onShowDetails}
 					>
 						Details
 					</button>
 					<button
 						type="button"
-						className="btn-primary"
+						className={btnPrimary}
 						onClick={onDeploy}
 						disabled={
 							deployingChanges ||
@@ -347,10 +383,7 @@ export function DashboardCanvasStage({
 						}
 					>
 						{deployingChanges ? (
-							<Loader2
-								size={13}
-								style={{ animation: "spin 1s linear infinite" }}
-							/>
+							<Loader2 size={13} className="animate-spin" />
 						) : (
 							<UploadCloud size={13} />
 						)}
@@ -359,10 +392,10 @@ export function DashboardCanvasStage({
 				</div>
 			)}
 
-			<div className="zoom-controls">
+			<div className="fixed bottom-6 left-6 z-30 flex flex-col overflow-hidden rounded-sm border border-line bg-surface-raised">
 				<button
 					type="button"
-					className="zoom-btn"
+					className={zoomBtnClass}
 					aria-label="Zoom out"
 					title="Zoom out"
 					onClick={() =>
@@ -373,7 +406,7 @@ export function DashboardCanvasStage({
 				</button>
 				<button
 					type="button"
-					className="zoom-btn"
+					className={zoomBtnClass}
 					aria-label="Zoom in"
 					title="Zoom in"
 					onClick={() =>
@@ -384,7 +417,7 @@ export function DashboardCanvasStage({
 				</button>
 				<button
 					type="button"
-					className="zoom-btn"
+					className={zoomBtnClass}
 					aria-label="Reset zoom"
 					title="Reset zoom"
 					onClick={onResetView}

@@ -124,6 +124,16 @@ func (s *Store) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service serviceR
 }
 
 func (s *Store) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service serviceRecord, revision sourceRevisionRecord, snapshot sourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (buildRunRecord, error) {
+	// Build enqueue, claim, and completion all mutate the service's current
+	// deployment. Take the same lock before reading rollout state so concurrent
+	// webhook and user-triggered builds have one durable order.
+	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
+		return buildRunRecord{}, err
+	}
+	service, err := s.serviceByIDInternalQuerier(ctx, tx, service.ID)
+	if err != nil {
+		return buildRunRecord{}, err
+	}
 	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
 		return buildRunRecord{}, errSourceStateNotReady
 	}
@@ -222,7 +232,10 @@ func sourceSnapshotMatchesRevision(snapshot sourceSnapshotRecord, revision sourc
 func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName string, staleAfter time.Duration) (buildRunRecord, error) {
 	var rec buildRunRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC()
+		now, err := databaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO builder_workers(id, name, current_build_id, last_heartbeat_at, created_at, updated_at)
 			 VALUES ($1, $2, '', $3, $3, $3)
@@ -247,7 +260,6 @@ func (s *Store) claimNextBuild(ctx context.Context, builderID, builderName strin
 			  LIMIT 1`,
 			buildStateQueued,
 		)
-		var err error
 		rec, err = scanBuildRunRow(row)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -333,7 +345,11 @@ func (s *Store) recoverExpiredBuilds(ctx context.Context, staleAfter time.Durati
 		return nil
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		return s.recoverExpiredBuildsTx(ctx, tx, time.Now().UTC().Add(-staleAfter))
+		now, err := databaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return s.recoverExpiredBuildsTx(ctx, tx, now.Add(-staleAfter))
 	})
 }
 
@@ -368,7 +384,10 @@ func (s *Store) recoverExpiredBuildsTx(ctx context.Context, tx *sql.Tx, cutoff t
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	now, err := databaseTime(ctx, tx)
+	if err != nil {
+		return err
+	}
 	for _, rec := range expired {
 		var newerCount int
 		if err := tx.QueryRowContext(ctx,
@@ -621,22 +640,27 @@ func (s *Store) completeBuild(ctx context.Context, builderID, buildID string, st
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
-		if !usePendingRollout && (currentRolloutState == rolloutStateInProgress || currentRolloutState == rolloutStatePendingBuild || serviceVolumeName(service.Spec) != "") {
-			detail := "Rollout rejected because another rollout is still in progress"
-			if serviceVolumeName(service.Spec) != "" {
-				detail = errVolumeRollingUnsupported.Error()
-			}
+		if !usePendingRollout && serviceVolumeName(service.Spec) != "" {
 			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
 				ToState:        deploymentStateFailed,
 				Actor:          deploymentActor{Kind: deploymentCauseSystem},
 				ReasonCode:     reasonDeploymentFailed,
-				Detail:         detail,
+				Detail:         errVolumeRollingUnsupported.Error(),
 				ImageDigest:    imageDigest,
 				HasImageDigest: true,
 			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			return nil
+		}
+		if !usePendingRollout && (currentRolloutState == rolloutStateInProgress || currentRolloutState == rolloutStatePendingBuild) {
+			existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, build.ServiceID, true)
+			if err != nil {
+				return err
+			}
+			if _, err := s.prepareReplacementRolloutTx(ctx, tx, service, existing, now); err != nil {
+				return err
+			}
 		}
 		if !usePendingRollout {
 			nextRolloutGeneration++

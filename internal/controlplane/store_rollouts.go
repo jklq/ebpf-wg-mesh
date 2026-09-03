@@ -223,7 +223,7 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 	if missing > 0 {
 		limit := int(rollout.DesiredReplicaCount)
 		if len(predecessors) > 0 {
-			limit += int(rollout.Strategy.GetMaxSurge())
+			limit += defaultRolloutMaxSurge
 		}
 		slots := limit - len(occupying)
 		if slots > missing {
@@ -254,9 +254,9 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 		}
 	}
 
-	// Withdraw old replicas when the strategy needs room (zero surge or
-	// scale-down) without crossing maxUnavailable. Draining leftovers from a
-	// previous attempt do not occupy surge slots.
+	// Withdraw old replicas when scaling down without crossing the platform's
+	// availability floor. Draining leftovers from a previous attempt do not
+	// occupy surge slots.
 	if !result.NeedsIngressConvergence {
 		servingOld = filterAllocations(predecessors, func(a allocationRecord) bool {
 			return a.RolloutState == allocationRolloutServing
@@ -272,13 +272,13 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 				available++
 			}
 		}
-		minimumAvailable := int(rollout.DesiredReplicaCount - rollout.Strategy.GetMaxUnavailable())
+		minimumAvailable := int(rollout.DesiredReplicaCount) - defaultRolloutMaxUnavailable
 		if minimumAvailable < 0 {
 			minimumAvailable = 0
 		}
 		limit := int(rollout.DesiredReplicaCount)
 		if len(predecessors) > 0 {
-			limit += int(rollout.Strategy.GetMaxSurge())
+			limit += defaultRolloutMaxSurge
 		}
 		over := len(filterAllocations(allocs, allocationOccupiesRolloutSlot)) + created - limit
 		room := missing - created
@@ -318,16 +318,16 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 	placement := ""
 	if missing > 0 && created < missing && !result.NeedsIngressConvergence {
 		placement = pendingPlacementMessage(len(target)+created, int(desiredTargetCount),
-			"no eligible agent has capacity for the configured surge")
+			"no eligible agent has spare capacity for a replacement")
 	}
 	if err := s.setServicePlacementMessageTx(ctx, tx, serviceID, placement, now); err != nil {
 		return result, err
 	}
 
 	if missing > 0 && created == 0 && !result.NeedsIngressConvergence &&
-		now.Sub(rollout.ProgressAt) >= time.Duration(rollout.Strategy.GetStartupTimeoutSeconds())*time.Second {
-		reason := fmt.Sprintf("could not schedule a replacement within %s: no eligible agent has capacity for the configured surge",
-			time.Duration(rollout.Strategy.GetStartupTimeoutSeconds())*time.Second)
+		now.Sub(rollout.ProgressAt) >= defaultRolloutSchedulingWait {
+		reason := fmt.Sprintf("could not schedule a replacement within %s: no eligible agent has spare capacity for a replacement",
+			defaultRolloutSchedulingWait)
 		if err := s.failRolloutTx(ctx, tx, service, rollout, target, reason, now); err != nil {
 			return result, err
 		}
@@ -375,7 +375,7 @@ func (s *Store) confirmRolloutIngressConverged(ctx context.Context, serviceID st
 		if ok {
 			strategy = rollout.Strategy
 		}
-		deadline := now.UTC().Add(time.Duration(strategy.GetDrainTimeoutSeconds()) * time.Second)
+		deadline := now.UTC().Add(time.Duration(strategy.GetDrainingSeconds()) * time.Second)
 		rows, err := tx.QueryContext(ctx,
 			`SELECT id, agent_id FROM allocations
 			  WHERE service_id = $1 AND rollout_state = $2
@@ -482,17 +482,17 @@ func rolloutAllocationFailure(alloc allocationRecord, now time.Time, strategy *p
 	if alloc.Restart.GetCrashLoop() || alloc.Phase == "CrashLoop" {
 		return fmt.Sprintf("replacement allocation %s entered a crash loop: %s", alloc.ID, firstNonEmpty(alloc.Message, "restart budget exhausted"))
 	}
-	deadline := alloc.CreatedAt.Add(time.Duration(strategy.GetStartupTimeoutSeconds()) * time.Second)
+	deadline := alloc.CreatedAt.Add(time.Duration(strategy.GetHealthcheckTimeoutSeconds()) * time.Second)
 	if !now.Before(deadline) {
 		return fmt.Sprintf("replacement allocation %s did not become ready within %s: %s", alloc.ID,
-			time.Duration(strategy.GetStartupTimeoutSeconds())*time.Second,
+			time.Duration(strategy.GetHealthcheckTimeoutSeconds())*time.Second,
 			firstNonEmpty(alloc.Message, "readiness check did not pass"))
 	}
 	return ""
 }
 
 func (s *Store) failRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, target []allocationRecord, reason string, now time.Time) error {
-	deadline := now.Add(time.Duration(rollout.Strategy.GetDrainTimeoutSeconds()) * time.Second)
+	deadline := now.Add(time.Duration(rollout.Strategy.GetDrainingSeconds()) * time.Second)
 	for _, alloc := range target {
 		// A partially successful multi-replica rollout may already have healthy
 		// target-generation allocations serving. Keep those alongside any healthy
@@ -521,8 +521,11 @@ func (s *Store) failRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRe
 		return err
 	}
 	_, err = s.applyDeploymentTransitionTx(ctx, tx, dep.ID, deploymentTransitionInput{
-		ToState: deploymentStateFailed, Actor: deploymentActor{Kind: deploymentCauseSystem},
-		ReasonCode: reasonDeploymentFailed, Detail: reason,
+		ToState:          deploymentStateFailed,
+		Actor:            deploymentActor{Kind: deploymentCauseSystem},
+		ReasonCode:       reasonDeploymentFailed,
+		Detail:           reason,
+		IgnoreIfTerminal: true,
 	})
 	return err
 }
@@ -540,9 +543,11 @@ func (s *Store) completeRolloutTx(ctx context.Context, tx *sql.Tx, service servi
 		return err
 	}
 	if _, err := s.applyDeploymentTransitionTx(ctx, tx, dep.ID, deploymentTransitionInput{
-		ToState: deploymentStateActive, Actor: deploymentActor{Kind: deploymentCauseSystem},
-		ReasonCode: reasonDeploymentActive,
-		Detail:     fmt.Sprintf("Rollout complete: %d of %d replacement replicas ready", rolloutTargetReplicaCount(rollout), rolloutTargetReplicaCount(rollout)),
+		ToState:          deploymentStateActive,
+		Actor:            deploymentActor{Kind: deploymentCauseSystem},
+		ReasonCode:       reasonDeploymentActive,
+		Detail:           fmt.Sprintf("Rollout complete: %d of %d replacement replicas ready", rolloutTargetReplicaCount(rollout), rolloutTargetReplicaCount(rollout)),
+		IgnoreIfTerminal: true,
 	}); err != nil {
 		return err
 	}
@@ -685,17 +690,15 @@ func (s *Store) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, ser
 	default:
 		return false, nil
 	}
-	for _, alloc := range existing {
-		if alloc.RolloutState == allocationRolloutServing {
-			return false, errRolloutInProgress
-		}
-	}
-	return true, s.supersedeUnservedRolloutTx(ctx, tx, service, rollout, existing, now)
+	return true, s.supersedeCurrentRolloutTx(ctx, tx, service, rollout, existing, now)
 }
 
-func (s *Store) supersedeUnservedRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, existing []allocationRecord, now time.Time) error {
+func (s *Store) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, existing []allocationRecord, now time.Time) error {
 	for _, alloc := range existing {
-		if alloc.RolloutState == allocationRolloutLost {
+		// Starting allocations have never entered ingress and can be removed
+		// immediately. Serving allocations become predecessors of the newer
+		// generation, while an already-started withdrawal or drain must finish.
+		if alloc.RolloutState != allocationRolloutStarting {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE id = $1`, alloc.ID); err != nil {
@@ -705,7 +708,7 @@ func (s *Store) supersedeUnservedRolloutTx(ctx context.Context, tx *sql.Tx, serv
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_rollouts SET state = $1, failure_reason = $2, completed_at = $3, progress_at = $3
 		  WHERE service_id = $4 AND rollout_generation = $5`,
-		rolloutStateSuperseded, "superseded by a newer rollout before any replica served traffic", now, service.ID, rollout.Generation,
+		rolloutStateSuperseded, "superseded by a newer rollout", now, service.ID, rollout.Generation,
 	); err != nil {
 		return err
 	}
@@ -714,10 +717,11 @@ func (s *Store) supersedeUnservedRolloutTx(ctx context.Context, tx *sql.Tx, serv
 		return err
 	}
 	_, err = s.applyDeploymentTransitionTx(ctx, tx, dep.ID, deploymentTransitionInput{
-		ToState:    deploymentStateSuperseded,
-		Actor:      deploymentActor{Kind: deploymentCauseSystem},
-		ReasonCode: reasonDeploymentSuperseded,
-		Detail:     "Superseded before any replica became ready",
+		ToState:          deploymentStateSuperseded,
+		Actor:            deploymentActor{Kind: deploymentCauseSystem},
+		ReasonCode:       reasonDeploymentSuperseded,
+		Detail:           "Superseded by a newer rollout",
+		IgnoreIfTerminal: true,
 	})
 	return err
 }

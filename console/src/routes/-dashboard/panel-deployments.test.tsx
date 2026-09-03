@@ -113,7 +113,7 @@ describe("deployments panel inline failure", () => {
 				"This first rollout never left the builder. Nothing is serving yet.",
 			),
 		).toBeTruthy();
-		expect(document.querySelector(".deployment-log-drawer.open")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
 	});
 
 	it("names the last healthy sha when a later rollout dies in the builder", async () => {
@@ -216,7 +216,6 @@ describe("deployments panel live rollouts", () => {
 		).toBeTruthy();
 		expect(screen.queryByText("Deployment successful")).toBeNull();
 		expect(screen.getAllByRole("button", { name: "View logs" }).length).toBe(2);
-		expect(document.querySelector(".tone-active")).toBeTruthy();
 		expect(screen.queryByText("Source")).toBeNull();
 		expect(screen.queryByText("Post-deploy")).toBeNull();
 
@@ -270,7 +269,6 @@ describe("deployments panel live rollouts", () => {
 			"Remove",
 		]);
 		expect(screen.queryByText("Redeploy exact")).toBeNull();
-		expect(menuItems.at(-1)?.classList.contains("danger")).toBe(true);
 		expect(screen.getByLabelText("Restart target")).toBeTruthy();
 	});
 
@@ -294,7 +292,6 @@ describe("deployments panel live rollouts", () => {
 
 		expect(await screen.findByText("worker.example.com")).toBeTruthy();
 		expect(screen.getByText("3 Replicas")).toBeTruthy();
-		expect(document.querySelector(".replica-rollout")).toBeNull();
 	});
 
 	it("shows a removed current deployment in history with a green status", async () => {
@@ -325,12 +322,10 @@ describe("deployments panel live rollouts", () => {
 			name: /History/,
 		});
 		expect(historyToggle.textContent).toContain("1");
-		expect(document.querySelector(".deployment-shell-live")).toBeNull();
+		expect(screen.queryByRole("button", { name: "View logs" })).toBeNull();
 
 		fireEvent.click(historyToggle);
-		expect(
-			document.querySelector(".deployment-history-row .status-dot.healthy"),
-		).toBeTruthy();
+		expect(screen.getByLabelText("Status: healthy")).toBeTruthy();
 	});
 });
 

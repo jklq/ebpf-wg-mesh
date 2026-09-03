@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -18,6 +19,28 @@ type ManagedDashboardReconciler struct {
 	store    *Store
 	ingress  *IngressSyncer
 	notifier *Notifier
+}
+
+func (r *ManagedDashboardReconciler) Run(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	reconcile := func() {
+		if err := r.Reconcile(ctx); err != nil && ctx.Err() == nil && err != errNoPlacementAvailable {
+			slog.Warn("managed dashboard reconcile failed", "error", err)
+		}
+	}
+	reconcile()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			reconcile()
+		}
+	}
 }
 
 func NewManagedDashboardReconciler(

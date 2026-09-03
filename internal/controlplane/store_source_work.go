@@ -22,7 +22,10 @@ func (s *Store) enqueueSourceWorkItem(ctx context.Context, rec sourceWorkItemRec
 }
 
 func (s *Store) enqueueSourceWorkItemTx(ctx context.Context, tx *sql.Tx, rec sourceWorkItemRecord) (bool, error) {
-	now := time.Now().UTC()
+	now, err := databaseTime(ctx, tx)
+	if err != nil {
+		return false, err
+	}
 	if rec.ID == "" {
 		rec.ID = mustID()
 	}
@@ -58,7 +61,10 @@ func (s *Store) enqueueSourceWorkItemTx(ctx context.Context, tx *sql.Tx, rec sou
 func (s *Store) claimNextSourceWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (sourceWorkItemRecord, error) {
 	var rec sourceWorkItemRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC()
+		now, err := databaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if staleAfter > 0 {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE source_work_items
@@ -112,7 +118,7 @@ func (s *Store) claimNextSourceWorkItem(ctx context.Context, processorID string,
 		rec.State = sourceWorkStateProcessing
 		rec.ProcessorID = processorID
 		rec.UpdatedAt = now
-		_, err := tx.ExecContext(ctx,
+		_, err = tx.ExecContext(ctx,
 			`UPDATE source_work_items
 			    SET state = $1,
 			        processor_id = $2,
@@ -128,53 +134,73 @@ func (s *Store) claimNextSourceWorkItem(ctx context.Context, processorID string,
 	return rec, nil
 }
 
-func (s *Store) completeSourceWorkItem(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM source_work_items WHERE id = $1`, id)
-	return err
+func (s *Store) completeSourceWorkItem(ctx context.Context, id, processorID string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM source_work_items WHERE id = $1 AND state = $2 AND processor_id = $3`, id, sourceWorkStateProcessing, processorID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: source work item %s", errLeaseLost, id)
+	}
+	return nil
 }
 
-func (s *Store) releaseSourceWorkItem(ctx context.Context, id string, processErr error, retryAfter time.Duration) error {
-	now := time.Now().UTC()
+func (s *Store) releaseSourceWorkItem(ctx context.Context, id, processorID string, processErr error, retryAfter time.Duration) error {
 	message := ""
 	if processErr != nil {
 		message = processErr.Error()
 	}
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE source_work_items
 		    SET state = $1,
 		        processor_id = '',
 		        last_error = $2,
 		        attempt_count = attempt_count + 1,
-		        available_at = $3,
-		        updated_at = $4
-		  WHERE id = $5`,
+		        available_at = statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond',
+		        updated_at = statement_timestamp()
+		  WHERE id = $4 AND state = $5 AND processor_id = $6`,
 		sourceWorkStatePending,
 		message,
-		now.Add(retryAfter),
-		now,
+		retryAfter.Microseconds(),
 		id,
+		sourceWorkStateProcessing,
+		processorID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: source work item %s", errLeaseLost, id)
+	}
+	return nil
 }
 
 func (s *Store) recoverSourceWorkItems(ctx context.Context, staleAfter time.Duration) error {
 	if staleAfter <= 0 {
 		return nil
 	}
-	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE source_work_items
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE source_work_items
 		    SET state = $1,
 		        processor_id = '',
-		        updated_at = $2
+		        updated_at = statement_timestamp()
 		  WHERE state = $3
-		    AND updated_at < $4`,
-		sourceWorkStatePending,
-		now,
-		sourceWorkStateProcessing,
-		now.Add(-staleAfter),
-	)
-	return err
+		    AND updated_at < statement_timestamp() - $2::INT8 * INTERVAL '1 microsecond'`,
+			sourceWorkStatePending,
+			staleAfter.Microseconds(),
+			sourceWorkStateProcessing,
+		)
+		return err
+	})
 }
 
 func toProtoSourceAccessState(value string) platformv1.SourceAccessState {

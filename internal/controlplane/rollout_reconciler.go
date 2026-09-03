@@ -17,10 +17,18 @@ type RolloutReconciler struct {
 }
 
 func NewRolloutReconciler(store *Store, notifier *Notifier, ingress platformIngress, events *PlatformEvents, interval time.Duration) *RolloutReconciler {
-	return &RolloutReconciler{store: store, notifier: notifier, ingress: ingress, events: events, interval: interval, now: time.Now}
+	return &RolloutReconciler{store: store, notifier: notifier, ingress: ingress, events: events, interval: interval}
 }
 
 func (r *RolloutReconciler) Reconcile(ctx context.Context) error {
+	now, err := databaseTime(ctx, r.store.db)
+	if r.now != nil {
+		now = r.now().UTC()
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("read database time: %w", err)
+	}
 	rows, err := r.store.db.QueryContext(ctx,
 		`SELECT DISTINCT sr.service_id
 		   FROM service_rollouts sr
@@ -48,7 +56,7 @@ func (r *RolloutReconciler) Reconcile(ctx context.Context) error {
 	environments := map[string]struct{}{}
 	var waitingForIngress []string
 	for _, serviceID := range serviceIDs {
-		result, err := r.store.advanceRollout(ctx, serviceID, r.now().UTC())
+		result, err := r.store.advanceRollout(ctx, serviceID, now)
 		if err != nil {
 			return fmt.Errorf("advance service %s: %w", serviceID, err)
 		}
@@ -68,7 +76,7 @@ func (r *RolloutReconciler) Reconcile(ctx context.Context) error {
 			}
 		}
 		for _, serviceID := range waitingForIngress {
-			confirmed, err := r.store.confirmRolloutIngressConverged(ctx, serviceID, r.now().UTC())
+			confirmed, err := r.store.confirmRolloutIngressConverged(ctx, serviceID, now)
 			if err != nil {
 				return fmt.Errorf("confirm ingress convergence for service %s: %w", serviceID, err)
 			}
@@ -83,7 +91,7 @@ func (r *RolloutReconciler) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		cutoff := r.now().UTC().Add(-agentHealthyTTL)
+		cutoff := now.Add(-agentHealthyTTL)
 		for _, agent := range agents {
 			switch agent.LifecycleState {
 			case agentStateDraining:
@@ -109,7 +117,9 @@ func (r *RolloutReconciler) Reconcile(ctx context.Context) error {
 	}
 	for environmentID := range environments {
 		if r.events != nil {
-			r.events.Publish(environmentID)
+			if _, err := r.events.Publish(ctx, environmentID); err != nil {
+				return fmt.Errorf("publish rollout event: %w", err)
+			}
 		}
 	}
 	return nil

@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,18 +26,11 @@ type AgentService struct {
 	dashboardEnabled        bool
 	dashboardTrustedAgentID string
 	dashboardCallerID       string
-	expiry                  *AgentExpiryTracker
 	events                  *PlatformEvents
 	registry                *RegistryPolicy
 }
 
 type AgentServiceOption func(*AgentService)
-
-func WithAgentExpiryTracker(expiry *AgentExpiryTracker) AgentServiceOption {
-	return func(service *AgentService) {
-		service.expiry = expiry
-	}
-}
 
 func WithAgentPlatformEvents(events *PlatformEvents) AgentServiceOption {
 	return func(service *AgentService) {
@@ -163,14 +155,6 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		if err := s.store.reconcileFleetCapacity(ctx); err != nil {
 			return status.Errorf(codes.Internal, "reconcile fleet capacity: %v", err)
 		}
-		if s.dashboard != nil {
-			if err := s.dashboard.Reconcile(ctx); err != nil && !errors.Is(err, errNoPlacementAvailable) {
-				slog.Warn("dashboard reconcile failed after agent change", "agent_id", hello.AgentId, "error", err)
-			}
-		}
-	}
-	if s.expiry != nil {
-		s.expiry.Touch(hello.GetAgentId())
 	}
 	slog.Info("agent connected", "agent_id", hello.AgentId, "name", hello.Name)
 	notifyCh, stop := s.notifier.Watch(hello.AgentId)
@@ -212,9 +196,6 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if err := s.store.heartbeatAgent(ctx, hello.GetAgentId()); err != nil {
 				return status.Errorf(codes.Internal, "heartbeat: %v", err)
 			}
-			if s.expiry != nil {
-				s.expiry.Touch(hello.GetAgentId())
-			}
 		case *agentv1.AgentClientMessage_StatusReport:
 			if payload.StatusReport.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "status report agent_id does not match session")
@@ -225,7 +206,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 				return status.Errorf(codes.Internal, "status report: %v", err)
 			}
 			for _, environmentID := range changedEnvironmentIDs {
-				s.events.Publish(environmentID)
+				if _, err := s.events.Publish(ctx, environmentID); err != nil {
+					return status.Errorf(codes.Internal, "publish status event: %v", err)
+				}
 			}
 			s.emitCrashLoopEvents(ctx, hello.GetAgentId(), payload.StatusReport)
 			if ingressChanged {

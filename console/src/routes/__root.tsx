@@ -5,6 +5,10 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+
+import { cn } from "#/lib/cn";
+import { btnPrimary, modalCard } from "#/lib/ui-classes";
+
 import appCss from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -22,15 +26,22 @@ export const Route = createRootRoute({
 
 function RootError({ error, reset }: ErrorComponentProps) {
 	return (
-		<main className="route-error" role="alert">
-			<div className="modal-card">
-				<h1>The console hit a temporary error</h1>
-				<p>
+		<main
+			className="grid min-h-screen place-items-center bg-canvas p-8"
+			role="alert"
+		>
+			<div className={cn(modalCard, "max-w-xl p-8")}>
+				<h1 className="mt-0 mb-2 font-display text-2xl font-medium text-ink">
+					The console hit a temporary error
+				</h1>
+				<p className="mb-4 text-muted">
 					Your service is still running. Retry the failed view without leaving
 					the console.
 				</p>
-				<pre>{error instanceof Error ? error.message : String(error)}</pre>
-				<button type="button" className="btn-primary" onClick={reset}>
+				<pre className="mb-4 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-sm text-ink">
+					{error instanceof Error ? error.message : String(error)}
+				</pre>
+				<button type="button" className={btnPrimary} onClick={reset}>
 					Retry
 				</button>
 			</div>
@@ -40,11 +51,11 @@ function RootError({ error, reset }: ErrorComponentProps) {
 
 function RootDocument({ children }: { children: ReactNode }) {
 	return (
-		<html lang="en" suppressHydrationWarning>
+		<html lang="en" className="h-full min-h-full" suppressHydrationWarning>
 			<head>
 				<HeadContent />
 			</head>
-			<body>
+			<body className="h-full min-h-full bg-canvas font-sans text-[14px] text-ink antialiased">
 				{children}
 				<Scripts />
 			</body>

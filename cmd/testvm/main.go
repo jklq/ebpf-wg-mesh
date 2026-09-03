@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,8 +17,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 const (
@@ -28,6 +26,11 @@ const (
 	vmUserAssertionSecret = "vm-user-assertion-secret-at-least-32-bytes"
 	// Default controlplane dashboard ServiceCallerID; must match minted client cert CN.
 	vmDashboardCallerID = "dashboard"
+
+	primaryControlPlaneService = "ebpf-wg-mesh-controlplane"
+	replicaControlPlaneService = "ebpf-wg-mesh-controlplane-replica"
+	primaryControlPlanePort    = "9443"
+	replicaControlPlanePort    = "9444"
 )
 
 // Per-agent bootstrap tokens must be unique: controlplane rejects a token bound to more than one agent.
@@ -219,7 +222,15 @@ func main() {
 	if err := copyFile(ctx, sshKeyPath, binaries["internal-client-cert"], controlplane.PublicIPv4, "/opt/ebpf-wg-mesh/internal-client-cert"); err != nil {
 		failf("copy internal-client-cert binary: %v", err)
 	}
-	infof("installing controlplane on %s", controlplane.Name)
+	infof("installing ingress admin probe on %s", controlplane.Name)
+	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-ingress-probe.sh"), nil); err != nil {
+		failf("install ingress probe: %v", err)
+	}
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-ingress-probe && ss -ltn '( sport = :2019 )' | grep -q LISTEN"); err != nil {
+		failf("wait for ingress probe readiness: %v", err)
+	}
+
+	infof("installing primary controlplane replica on %s", controlplane.Name)
 	bootstrapBindings := make([]string, 0, len(vmAgentBootstrapTokens))
 	for agentID, token := range vmAgentBootstrapTokens {
 		bootstrapBindings = append(bootstrapBindings, agentID+"="+token)
@@ -230,13 +241,48 @@ func main() {
 		"PUBLIC_ADDR":            "platform.local",
 		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
 		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
+		"SERVICE_NAME":           primaryControlPlaneService,
+		"INTERNAL_LISTEN":        "0.0.0.0:" + primaryControlPlanePort,
 	}); err != nil {
-		failf("install controlplane: %v", err)
+		failf("install primary controlplane replica: %v", err)
 	}
-	infof("waiting for controlplane readiness on %s", controlplane.Name)
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-controlplane && test -f /var/lib/ebpf-wg-mesh/controlplane/pki/ca.crt && ss -ltn '( sport = :9443 )' | grep -q LISTEN"); err != nil {
-		failf("wait for controlplane readiness: %v", err)
+	infof("waiting for primary controlplane readiness on %s", controlplane.Name)
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+primaryControlPlaneService+" && test -f /var/lib/ebpf-wg-mesh/controlplane/pki/ca.crt && ss -ltn '( sport = :"+primaryControlPlanePort+" )' | grep -q LISTEN"); err != nil {
+		failf("wait for primary controlplane readiness: %v", err)
 	}
+	primaryLease, err := waitForSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4, "")
+	if err != nil {
+		failf("wait for primary singleton lease: %v", err)
+	}
+	infof("primary controlplane acquired singleton lease holder=%s token=%d", primaryLease.Holder, primaryLease.Token)
+
+	infof("installing second controlplane replica on %s", controlplane.Name)
+	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-controlplane.sh"), map[string]string{
+		"PUBLIC_ADDR":            "platform.local",
+		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
+		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
+		"SERVICE_NAME":           replicaControlPlaneService,
+		"INTERNAL_LISTEN":        "0.0.0.0:" + replicaControlPlanePort,
+	}); err != nil {
+		failf("install second controlplane replica: %v", err)
+	}
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+replicaControlPlaneService+" && ss -ltn '( sport = :"+replicaControlPlanePort+" )' | grep -q LISTEN"); err != nil {
+		failf("wait for second controlplane readiness: %v", err)
+	}
+	leaseWithBothReplicas, err := readSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4)
+	if err != nil {
+		failf("read singleton lease with both replicas running: %v", err)
+	}
+	if leaseWithBothReplicas != primaryLease {
+		failf("second replica displaced a healthy singleton owner: before=%+v after=%+v", primaryLease, leaseWithBothReplicas)
+	}
+	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/assert-local-storage-rejected.sh"), map[string]string{
+		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
+		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
+	}); err != nil {
+		failf("verify replica-local storage rejection: %v", err)
+	}
+	infof("replica-local controlplane state was rejected as expected")
 
 	caPath := filepath.Join(artifactRoot, "controlplane-ca.crt")
 	infof("fetching controlplane ca certificate")
@@ -267,7 +313,7 @@ func main() {
 			"NODE_ID":              key,
 			"NODE_NAME":            host.Name,
 			"ADVERTISE_ADDR":       trimCIDR(host.PublicIPv6),
-			"CONTROLPLANE_ADDRESS": controlplane.PublicIPv4 + ":9443",
+			"CONTROLPLANE_ADDRESS": controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
 			"BOOTSTRAP_TOKEN":      bootstrapToken,
 		}); err != nil {
 			failf("install agent on %s: %v", host.Name, err)
@@ -282,8 +328,50 @@ func main() {
 	if err != nil {
 		failf("fetch dashboard client identity: %v", err)
 	}
+	infof("running cross-replica notification scenario (writes on primary, reads and agent streams on replica)")
+	fixture, err := runCrossReplicaNotificationScenario(
+		ctx,
+		controlplane.PublicIPv4+":"+primaryControlPlanePort,
+		controlplane.PublicIPv4+":"+replicaControlPlanePort,
+		identity,
+		sshKeyPath,
+		controlplane,
+		hosts,
+	)
+	if err != nil {
+		infof("cross-replica scenario failed; collecting diagnostics into %s", artifactRoot)
+		_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
+		failf("run cross-replica notification scenario: %v", err)
+	}
+	ingressRequestsBeforeTakeover, err := ingressRequestCount(ctx, sshKeyPath, controlplane.PublicIPv4)
+	if err != nil {
+		failf("read ingress request count before takeover: %v", err)
+	}
+
+	infof("stopping primary controlplane to force singleton takeover")
+	if _, err := runRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl stop "+primaryControlPlaneService); err != nil {
+		failf("stop primary controlplane: %v", err)
+	}
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+replicaControlPlaneService+" && ! systemctl is-active --quiet "+primaryControlPlaneService); err != nil {
+		failf("wait for primary controlplane shutdown: %v", err)
+	}
+	replicaLease, err := waitForSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4, primaryLease.Holder)
+	if err != nil {
+		failf("wait for second replica singleton takeover: %v", err)
+	}
+	if replicaLease.Token <= primaryLease.Token {
+		failf("singleton fencing token did not advance on takeover: before=%d after=%d", primaryLease.Token, replicaLease.Token)
+	}
+	if err := waitForIngressTakeover(ctx, sshKeyPath, controlplane.PublicIPv4, ingressRequestsBeforeTakeover, fixture.Hostname); err != nil {
+		failf("wait for ingress convergence after takeover: %v", err)
+	}
+	infof("second controlplane took singleton lease holder=%s token=%d and republished ingress", replicaLease.Holder, replicaLease.Token)
+
+	if err := cleanupCrossReplicaFixture(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, fixture); err != nil {
+		failf("clean up cross-replica fixture: %v", err)
+	}
 	infof("running service rollout scenario against %s", controlplane.Name)
-	if err := runServiceRolloutScenario(ctx, controlplane.PublicIPv4+":9443", identity, sshKeyPath, hosts); err != nil {
+	if err := runServiceRolloutScenario(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, sshKeyPath, hosts); err != nil {
 		infof("scenario failed; collecting diagnostics into %s", artifactRoot)
 		_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
 		failf("run service rollout scenario: %v", err)
@@ -314,32 +402,8 @@ func main() {
 }
 func runServiceRolloutScenario(ctx context.Context, address string, identity clientIdentity, sshKeyPath string, hosts map[string]hostInfo) error {
 	scenarioStarted := time.Now()
-	infof("scenario: preparing client identity material")
-	caPEM, certPEM, keyPEM, err := identityMaterial(identity)
-	if err != nil {
-		return err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return errors.New("append ca pem")
-	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return err
-	}
 	infof("scenario: dialing controlplane grpc at %s", address)
-	dialCtx, cancelDial := context.WithTimeout(ctx, 30*time.Second)
-	defer cancelDial()
-	conn, err := grpc.DialContext(dialCtx, address,
-		grpc.WithBlock(),
-		grpc.WithPerRPCCredentials(vmUserAssertionCredentials{secret: vmUserAssertionSecret, userID: vmUserID}),
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			RootCAs:      pool,
-			Certificates: []tls.Certificate{cert},
-			ServerName:   "controlplane",
-			MinVersion:   tls.VersionTLS13,
-		})),
-	)
+	conn, err := dialPlatform(ctx, address, identity)
 	if err != nil {
 		return err
 	}
@@ -425,7 +489,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	}
 
 	markerV2 := fmt.Sprintf("vm-e2e-v2-%08x", rand.Uint32())
-	infof("scenario: updating service rollout to marker %q", markerV2)
+	infof("scenario: staging volume-backed service rollout to marker %q", markerV2)
 	updateCtx, cancelUpdate := context.WithTimeout(userCtx, 30*time.Second)
 	defer cancelUpdate()
 	updatedService, err := client.UpdateService(updateCtx, &platformv1.UpdateServiceRequest{
@@ -442,24 +506,31 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	}
 	redeployCtx, cancelRedeploy := context.WithTimeout(userCtx, 30*time.Second)
 	defer cancelRedeploy()
-	redeployed, err := client.RedeployService(redeployCtx, &platformv1.RedeployServiceRequest{
+	_, err = client.RedeployService(redeployCtx, &platformv1.RedeployServiceRequest{
 		ServiceId: service.GetId(),
 	})
-	if err != nil {
-		return err
+	if err == nil {
+		return errors.New("expected FailedPrecondition redeploying a volume-backed service with existing allocations")
 	}
+	if grpcstatus.Code(err) != codes.FailedPrecondition {
+		return fmt.Errorf("redeploy volume-backed service: got %v, want FailedPrecondition", err)
+	}
+	if !strings.Contains(err.Error(), "volume-backed services cannot overlap rollout generations until volume handoff is supported") {
+		return fmt.Errorf("redeploy volume-backed service: got %v, want volume-handoff rejection", err)
+	}
+	infof("scenario: overlapping volume-backed rollout rejected as FailedPrecondition")
 
-	status, err = waitForServiceHealthy(ctx, userCtx, client, service.GetId(), updatedService.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
+	status, err = waitForServiceHealthy(ctx, userCtx, client, service.GetId(), 1, 1)
 	if err != nil {
 		return err
 	}
 	allocationID = status.GetAllocation().GetAllocationId()
 	endpoint = allocationEndpoint(status.GetAllocation())
-	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV2); err != nil {
-		return fmt.Errorf("verify updated service response in allocation netns: %w", err)
+	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV1); err != nil {
+		return fmt.Errorf("verify original service response after rejected redeploy: %w", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("grep -Fqx %q /var/lib/ebpf-wg-mesh/agent/volumes/%s/index.html", markerV2, volume.GetId())); err != nil {
-		return fmt.Errorf("verify updated volume contents on %s: %w", allocatedHost.Name, err)
+	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("grep -Fqx %q /var/lib/ebpf-wg-mesh/agent/volumes/%s/index.html", markerV1, volume.GetId())); err != nil {
+		return fmt.Errorf("verify original volume contents on %s: %w", allocatedHost.Name, err)
 	}
 
 	infof("scenario: creating a second-project workload for the mesh isolation check")
@@ -497,7 +568,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, isolationHost.PublicIPv4, isolationStatus.GetAllocation().GetAllocationId(), allocationEndpoint(isolationStatus.GetAllocation()), "/", isolationMarker); err != nil {
 		return fmt.Errorf("verify isolated service is healthy in allocation netns: %w", err)
 	}
-	if err := assertHTTPResponseFromContainer(ctx, sshKeyPath, allocatedHost.PublicIPv4, managedContainerName(status.GetAllocation().GetAllocationId()), allocationEndpoint(status.GetAllocation()), "/index.html", markerV2); err != nil {
+	if err := assertHTTPResponseFromContainer(ctx, sshKeyPath, allocatedHost.PublicIPv4, managedContainerName(status.GetAllocation().GetAllocationId()), allocationEndpoint(status.GetAllocation()), "/index.html", markerV1); err != nil {
 		return fmt.Errorf("same-project mesh success control failed: %w", err)
 	}
 	if err := assertHTTPDeniedFromContainer(ctx, sshKeyPath, allocatedHost.PublicIPv4, managedContainerName(status.GetAllocation().GetAllocationId()), allocationEndpoint(isolationStatus.GetAllocation()), "/"); err != nil {

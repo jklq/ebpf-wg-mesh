@@ -47,17 +47,13 @@ export function decodeServiceSpec(
 	const rollingStrategyValue = readOptionalRecord(value.rollingStrategy);
 	const rollingStrategy = rollingStrategyValue
 		? {
-				maxUnavailable:
-					readOptionalNumberLike(rollingStrategyValue, "maxUnavailable") ?? 0,
-				maxSurge: readOptionalNumberLike(rollingStrategyValue, "maxSurge") ?? 1,
-				startupTimeoutSeconds:
+				healthcheckTimeoutSeconds:
 					readOptionalNumberLike(
 						rollingStrategyValue,
-						"startupTimeoutSeconds",
+						"healthcheckTimeoutSeconds",
 					) ?? 300,
-				drainTimeoutSeconds:
-					readOptionalNumberLike(rollingStrategyValue, "drainTimeoutSeconds") ??
-					30,
+				drainingSeconds:
+					readOptionalNumberLike(rollingStrategyValue, "drainingSeconds") ?? 30,
 			}
 		: undefined;
 	return {

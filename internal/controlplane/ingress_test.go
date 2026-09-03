@@ -309,7 +309,15 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	}
 	syncer.client = &http.Client{Transport: transport}
 
-	syncer.RequestSync()
+	runCtx, cancelRun := context.WithCancel(ctx)
+	runDone := make(chan error, 1)
+	go func() { runDone <- syncer.Run(runCtx) }()
+	t.Cleanup(func() {
+		cancelRun()
+		if err := <-runDone; err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	})
 	<-transport.firstStarted
 	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)

@@ -84,14 +84,14 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	if old.RolloutState != allocationRolloutDraining || !old.DrainDeadline.Valid {
 		t.Fatalf("expected durable drain intent after ingress convergence: %+v", old)
 	}
-	wantDeadline := fixedNow.Add(time.Duration(next.GetRollingStrategy().GetDrainTimeoutSeconds()) * time.Second)
+	wantDeadline := fixedNow.Add(time.Duration(next.GetRollingStrategy().GetDrainingSeconds()) * time.Second)
 	if !old.DrainDeadline.Time.Equal(wantDeadline) {
 		t.Fatalf("drain deadline = %v, want %v", old.DrainDeadline.Time, wantDeadline)
 	}
 	assertDesiredIntent(t, store, old, true)
 }
 
-func TestRollingReplacementUsesBoundedMultiReplicaBatches(t *testing.T) {
+func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T) {
 	store, projectID, service := createHealthyRollingService(t, 3, 2)
 	ctx := context.Background()
 	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 3, 2)); err != nil {
@@ -101,11 +101,11 @@ func TestRollingReplacementUsesBoundedMultiReplicaBatches(t *testing.T) {
 		t.Fatalf("redeployService: %v", err)
 	}
 	firstBatch := allocationForGeneration(t, store, service.ID, 2)
-	if len(firstBatch) != 2 {
-		t.Fatalf("first batch = %d, want max surge 2", len(firstBatch))
+	if len(firstBatch) != 1 {
+		t.Fatalf("first batch = %d, want platform surge 1", len(firstBatch))
 	}
-	if got := len(mustRolloutAllocations(t, store, service.ID)); got != 5 {
-		t.Fatalf("allocation count = %d, want desired 3 + surge 2", got)
+	if got := len(mustRolloutAllocations(t, store, service.ID)); got != 4 {
+		t.Fatalf("allocation count = %d, want desired 3 + platform surge 1", got)
 	}
 	for _, alloc := range firstBatch {
 		markRolloutAllocationReady(t, store, alloc)
@@ -121,10 +121,10 @@ func TestRollingReplacementUsesBoundedMultiReplicaBatches(t *testing.T) {
 		t.Fatalf("reconcile second batch: %v", err)
 	}
 	secondBatch := allocationForGeneration(t, store, service.ID, 2)
-	if len(secondBatch) != 3 {
-		t.Fatalf("target allocations after second batch = %d, want 3", len(secondBatch))
+	if len(secondBatch) != 2 {
+		t.Fatalf("target allocations after second batch = %d, want 2", len(secondBatch))
 	}
-	if got := len(mustRolloutAllocations(t, store, service.ID)); got > 5 {
+	if got := len(mustRolloutAllocations(t, store, service.ID)); got > 4 {
 		t.Fatalf("surge bound exceeded: %d allocations", got)
 	}
 	for _, alloc := range secondBatch {
@@ -133,9 +133,25 @@ func TestRollingReplacementUsesBoundedMultiReplicaBatches(t *testing.T) {
 		}
 	}
 	if err := reconciler.Reconcile(ctx); err != nil {
-		t.Fatalf("reconcile final replacement: %v", err)
+		t.Fatalf("reconcile second batch: %v", err)
 	}
 	assertServingCount(t, store, service.ID, 3)
+	markAllDrainingComplete(t, store, service.ID)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile final batch: %v", err)
+	}
+	finalBatch := allocationForGeneration(t, store, service.ID, 2)
+	if len(finalBatch) != 3 {
+		t.Fatalf("target allocations after final batch = %d, want 3", len(finalBatch))
+	}
+	for _, alloc := range finalBatch {
+		if alloc.RolloutState == allocationRolloutStarting {
+			markRolloutAllocationReady(t, store, alloc)
+		}
+	}
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile final replacement: %v", err)
+	}
 	markAllDrainingComplete(t, store, service.ID)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("complete rollout: %v", err)
@@ -204,6 +220,47 @@ func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T
 		}
 	}
 	assertRolloutState(t, store, service.ID, 2, rolloutStateSucceeded, "")
+}
+
+func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
+	store, projectID, service := createHealthyRollingService(t, 1, 1)
+	ctx := context.Background()
+
+	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+		t.Fatalf("updateService(b): %v", err)
+	}
+	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
+		t.Fatalf("redeployService(b): %v", err)
+	}
+	replacement := allocationForGeneration(t, store, service.ID, 2)
+	if len(replacement) != 1 {
+		t.Fatalf("rollout 2 allocations = %+v, want one", replacement)
+	}
+	markRolloutAllocationReady(t, store, replacement[0])
+	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("promote rollout 2 replacement: %v", err)
+	}
+	serving := allocationByID(t, store, service.ID, replacement[0].ID)
+	if serving.RolloutState != allocationRolloutServing || !allocationReady(serving) {
+		t.Fatalf("rollout 2 replacement did not enter service: %+v", serving)
+	}
+
+	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:c", 1, 1)); err != nil {
+		t.Fatalf("updateService(c): %v", err)
+	}
+	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
+		t.Fatalf("redeployService(c): %v", err)
+	}
+
+	assertRolloutState(t, store, service.ID, 2, rolloutStateSuperseded, "newer rollout")
+	kept := allocationByID(t, store, service.ID, replacement[0].ID)
+	if kept.RolloutState != allocationRolloutServing || !allocationReady(kept) {
+		t.Fatalf("serving replacement was not preserved as a predecessor: %+v", kept)
+	}
+	if next := allocationForGeneration(t, store, service.ID, 3); len(next) != 1 || next[0].RolloutState != allocationRolloutStarting {
+		t.Fatalf("rollout 3 allocations = %+v, want one starting allocation", next)
+	}
 }
 
 func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
@@ -293,7 +350,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	assertRolloutState(t, store, service.ID, 2, rolloutStateSucceeded, "")
 }
 
-func createHealthyRollingService(t *testing.T, replicas, surge int32) (*Store, string, serviceRecord) {
+func createHealthyRollingService(t *testing.T, replicas, _ int32) (*Store, string, serviceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -313,7 +370,7 @@ func createHealthyRollingService(t *testing.T, replicas, surge int32) (*Store, s
 			t.Fatalf("upsertAgent: %v", err)
 		}
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", rollingTestSpec("example.test/web:a", replicas, surge), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", rollingTestSpec("example.test/web:a", replicas, 1), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -327,16 +384,14 @@ func createHealthyRollingService(t *testing.T, replicas, surge int32) (*Store, s
 	return store, projects[0].ID, service
 }
 
-func rollingTestSpec(image string, replicas, surge int32) *platformv1.ServiceSpec {
+func rollingTestSpec(image string, replicas, _ int32) *platformv1.ServiceSpec {
 	spec := directImageServiceSpec(image, &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8080}), CpuMillis: 100, MemoryMebibytes: 64,
 	})
 	spec.DesiredReplicaCount = replicaCountPtr(replicas)
 	spec.RollingStrategy = &platformv1.RollingStrategy{
-		MaxUnavailable:        replicaCountPtr(0),
-		MaxSurge:              replicaCountPtr(surge),
-		StartupTimeoutSeconds: replicaCountPtr(60),
-		DrainTimeoutSeconds:   replicaCountPtr(15),
+		HealthcheckTimeoutSeconds: replicaCountPtr(60),
+		DrainingSeconds:           replicaCountPtr(15),
 	}
 	return spec
 }

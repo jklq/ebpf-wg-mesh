@@ -108,7 +108,9 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 	if changed {
 		s.notifyServices(ctx, identity.UserID, "", binding.ServiceID)
 		s.ingress.RequestSync()
-		s.events.Publish(service.EnvironmentID)
+		if _, err := s.events.Publish(ctx, service.EnvironmentID); err != nil {
+			return nil, status.Errorf(codes.Internal, "publish domain event: %v", err)
+		}
 	}
 	return s.annotateDomainBinding(ctx, identity.UserID, service.ProjectID, binding), nil
 }
@@ -143,7 +145,9 @@ func (s *PlatformService) GenerateDomainBinding(ctx context.Context, req *platfo
 	if changed {
 		s.notifyServices(ctx, identity.UserID, "", binding.ServiceID)
 		s.ingress.RequestSync()
-		s.events.Publish(service.EnvironmentID)
+		if _, err := s.events.Publish(ctx, service.EnvironmentID); err != nil {
+			return nil, status.Errorf(codes.Internal, "publish domain event: %v", err)
+		}
 	}
 	return s.annotateDomainBinding(ctx, identity.UserID, service.ProjectID, binding), nil
 }
@@ -208,8 +212,12 @@ func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platform
 	if changed {
 		s.notifyServices(ctx, identity.UserID, "", previousServiceID, binding.ServiceID)
 		s.ingress.RequestSync()
-		if updated, err := s.store.serviceByID(ctx, identity.UserID, "", binding.ServiceID); err == nil {
-			s.events.Publish(updated.EnvironmentID)
+		updated, err := s.store.serviceByID(ctx, identity.UserID, "", binding.ServiceID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "load updated domain service: %v", err)
+		}
+		if _, err := s.events.Publish(ctx, updated.EnvironmentID); err != nil {
+			return nil, status.Errorf(codes.Internal, "publish domain event: %v", err)
 		}
 	}
 	return s.annotateDomainBinding(ctx, identity.UserID, binding.ProjectID, binding), nil
@@ -259,8 +267,12 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 	if changed {
 		s.notifyServices(ctx, identity.UserID, "", binding.ServiceID)
 		s.ingress.RequestSync()
-		if updated, err := s.store.serviceByID(ctx, identity.UserID, "", binding.ServiceID); err == nil {
-			s.events.Publish(updated.EnvironmentID)
+		updated, err := s.store.serviceByID(ctx, identity.UserID, "", binding.ServiceID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "load updated domain service: %v", err)
+		}
+		if _, err := s.events.Publish(ctx, updated.EnvironmentID); err != nil {
+			return nil, status.Errorf(codes.Internal, "publish domain event: %v", err)
 		}
 	}
 	return &emptypb.Empty{}, nil

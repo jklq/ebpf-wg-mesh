@@ -2,6 +2,7 @@ import { Github, Plus } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+import { btnPrimary } from "#/lib/ui-classes";
 
 export function DeployButton({
 	state,
@@ -20,7 +21,7 @@ export function DeployButton({
 		return (
 			<a
 				href={state.githubLoginURL}
-				className="btn-primary"
+				className={btnPrimary}
 				onMouseDown={stopPropagation ? stop : undefined}
 				onClick={stopPropagation ? stop : undefined}
 			>
@@ -33,7 +34,7 @@ export function DeployButton({
 	return (
 		<button
 			type="button"
-			className="btn-primary"
+			className={btnPrimary}
 			onFocus={onPreload}
 			onMouseEnter={onPreload}
 			onMouseDown={stopPropagation ? stop : undefined}

@@ -1,6 +1,8 @@
 import { Loader2, Trash2, UploadCloud, X } from "lucide-react";
 
+import { cn } from "#/lib/cn";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import { btnPrimary, btnSecondary, iconBtn, modalCard } from "#/lib/ui-classes";
 
 import { ModalOverlay } from "./ui";
 
@@ -41,29 +43,38 @@ export function UnappliedChangesDialog({
 }) {
 	return (
 		<ModalOverlay onClose={onClose}>
-			<div className="modal-card unapplied-dialog">
-				<div className="unapplied-dialog-header">
-					<h2>{totalChanges} changes to apply</h2>
+			<div className={cn(modalCard, "max-w-[820px]")}>
+				<div className="flex items-center justify-between gap-3 border-b border-line p-4">
+					<h2 className="m-0 font-display text-[26px] font-medium tracking-[-0.03em] text-ink">
+						{totalChanges} changes to apply
+					</h2>
 					<button
 						type="button"
-						className="icon-btn"
+						className={iconBtn}
 						aria-label="Close"
 						onClick={onClose}
 					>
 						<X size={16} />
 					</button>
 				</div>
-				<div className="unapplied-service-list">
+				<div className="flex flex-col gap-3.5 p-4">
 					{services.map((service) => (
-						<div className="unapplied-service-group" key={service.id}>
-							<div className="unapplied-service-heading">
+						<div
+							className="border border-line bg-[rgba(255,255,255,0.02)]"
+							key={service.id}
+						>
+							<div className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-line px-3 py-2.5">
 								<div>
-									<strong>{service.name}</strong>
-									<span>{sectionSummary(service.unappliedChanges ?? [])}</span>
+									<strong className="block text-[13px] text-ink">
+										{service.name}
+									</strong>
+									<span className="text-[11px] text-muted">
+										{sectionSummary(service.unappliedChanges ?? [])}
+									</span>
 								</div>
 								<button
 									type="button"
-									className="btn-secondary"
+									className={btnSecondary}
 									onClick={() => onDiscardService(service.id)}
 									disabled={discardingChangeId === `service:${service.id}`}
 								>
@@ -72,32 +83,59 @@ export function UnappliedChangesDialog({
 								</button>
 							</div>
 							{(service.unappliedChanges ?? []).map((change) => (
-								<div className="unapplied-change-row" key={change.id}>
-									<span className={`change-action ${change.action}`}>
+								<div
+									className="grid grid-cols-[72px_minmax(120px,1fr)_minmax(220px,1.4fr)_32px] items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0 max-sm:grid-cols-[1fr_32px]"
+									key={change.id}
+								>
+									<span
+										className={cn(
+											"change-action text-[10px] font-bold tracking-[0.08em] uppercase max-sm:col-span-full",
+											change.action,
+											change.action === "add"
+												? "text-healthy"
+												: change.action === "remove"
+													? "text-failed"
+													: change.action === "update"
+														? "text-building"
+														: "text-muted",
+										)}
+									>
 										{change.action}
 									</span>
-									<div className="change-field">
-										<strong>{change.field}</strong>
-										<span>{change.section}</span>
+									<div>
+										<strong className="block text-[13px] text-ink">
+											{change.field}
+										</strong>
+										<span className="text-[11px] text-muted">
+											{change.section}
+										</span>
 									</div>
-									<div className="change-values">
+									<div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2 max-sm:col-span-full">
 										{change.currentValue && (
-											<div>
-												<span>Current</span>
-												<code>{change.currentValue}</code>
+											<div className="flex min-w-0 flex-col gap-1">
+												<span className="font-condensed text-[9px] font-bold tracking-[0.08em] text-dim uppercase">
+													Current
+												</span>
+												<code className="min-w-0 overflow-hidden border border-line bg-[rgba(0,0,0,0.2)] px-[7px] py-[5px] font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
+													{change.currentValue}
+												</code>
 											</div>
 										)}
 										{!change.currentValue && (
-											<div className="change-value-spacer" aria-hidden="true" />
+											<div className="block" aria-hidden="true" />
 										)}
-										<div>
-											<span>New</span>
-											<code>{change.newValue || "empty"}</code>
+										<div className="flex min-w-0 flex-col gap-1">
+											<span className="font-condensed text-[9px] font-bold tracking-[0.08em] text-dim uppercase">
+												New
+											</span>
+											<code className="min-w-0 overflow-hidden border border-line bg-[rgba(0,0,0,0.2)] px-[7px] py-[5px] font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
+												{change.newValue || "empty"}
+											</code>
 										</div>
 									</div>
 									<button
 										type="button"
-										className="icon-btn"
+										className={cn(iconBtn, "self-end")}
 										aria-label={`Discard ${change.field}`}
 										onClick={() => onDiscardChange(service.id, change.id)}
 										disabled={
@@ -111,7 +149,7 @@ export function UnappliedChangesDialog({
 						</div>
 					))}
 				</div>
-				<div className="unapplied-dialog-footer">
+				<div className="flex items-center justify-between gap-3 border-t border-line p-4 text-xs text-muted">
 					<span>
 						{dirtyPromptDetail({
 							applying: applyingChanges,
@@ -122,19 +160,18 @@ export function UnappliedChangesDialog({
 						{affectedServices === 1 ? "service" : "services"}
 					</span>
 					{deployError && (
-						<span className="dirty-workspace-error">{deployError}</span>
+						<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-failed">
+							{deployError}
+						</span>
 					)}
 					<button
 						type="button"
-						className="btn-primary"
+						className={btnPrimary}
 						onClick={onDeploy}
 						disabled={deploying || deployableChanges === 0}
 					>
 						{deploying ? (
-							<Loader2
-								size={13}
-								style={{ animation: "spin 1s linear infinite" }}
-							/>
+							<Loader2 size={13} className="animate-spin" />
 						) : (
 							<UploadCloud size={13} />
 						)}

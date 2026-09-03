@@ -15,13 +15,14 @@ import {
 	useRef,
 	useState,
 } from "react";
-
+import { cn } from "#/lib/cn";
 import type {
 	DashboardHomeState,
 	DashboardProject,
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { panelIconBtn } from "#/lib/ui-classes";
 import { PanelDeployments } from "./panel-deployments";
 import { doUpdateService } from "./server-fns";
 import { newestServiceRecord } from "./service-record-order";
@@ -171,21 +172,48 @@ export function ServicePanel({
 
 	return (
 		<>
-			<div className="panel-crumbs">
+			<div className="flex h-header shrink-0 items-center gap-1.5 border-b border-line bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgba(24,23,21,0.92)] px-4 py-2">
 				<EditableServiceHeaderName
 					service={currentService}
 					project={project}
 					onSaved={onServiceUpdated}
 				/>
-				<span style={{ flex: 1 }} />
+				<span className="flex-1" />
 				{heroVisible && !hasUndeployedChanges && (
-					<div
-						className={`panel-deploy-badge tone-${health}${heroCompleting ? " completing" : ""}${heroExiting ? " exiting" : ""}`}
+					<output
+						aria-label="Service status"
+						className={cn(
+							"relative flex h-[26px] min-w-24 shrink-0 items-center gap-1.5 overflow-hidden border px-2",
+							heroExiting
+								? "animate-panel-badge-exit"
+								: "animate-panel-badge-enter",
+							health === "building"
+								? "border-[rgba(192,133,32,0.28)] bg-[rgba(192,133,32,0.07)]"
+								: health === "failed"
+									? "border-[rgba(184,66,66,0.26)] bg-[rgba(184,66,66,0.06)]"
+									: "border-line bg-white/[0.025]",
+						)}
 					>
-						<span className="panel-badge-label">{healthLabel(health)}</span>
+						{heroCompleting && (
+							<span className="pointer-events-none absolute inset-0 animate-hero-glimmer bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+						)}
+						<span
+							className={cn(
+								"font-condensed text-[11px] font-bold tracking-[0.09em] whitespace-nowrap uppercase",
+								health === "building"
+									? "text-building"
+									: health === "failed"
+										? "text-failed"
+										: health === "healthy"
+											? "text-healthy"
+											: "text-muted",
+							)}
+						>
+							{healthLabel(health)}
+						</span>
 						{stages.length > 0 && (
 							<div
-								className="panel-badge-rail"
+								className="grid h-[3px] w-[54px] shrink-0 auto-cols-fr grid-flow-col gap-0.5"
 								role="img"
 								aria-label="Deploy progress"
 							>
@@ -197,9 +225,22 @@ export function ServicePanel({
 									return (
 										<span
 											key={stage.key || stage.label}
-											className={`panel-badge-segment ${segmentState}`}
+											className={cn(
+												"rounded-full transition-[background-color] duration-300",
+												heroCompleting || segmentState === "succeeded"
+													? "bg-healthy"
+													: segmentState === "building-done" ||
+															segmentState === "running"
+														? "bg-building"
+														: segmentState === "failed"
+															? "bg-failed"
+															: "bg-[rgba(80,76,71,0.7)]",
+												!heroCompleting &&
+													segmentState === "running" &&
+													"animate-pulse-building",
+											)}
 											style={
-												stage.state === "running"
+												!heroCompleting && stage.state === "running"
 													? { animationDelay: pulseDelay }
 													: undefined
 											}
@@ -209,11 +250,11 @@ export function ServicePanel({
 								})}
 							</div>
 						)}
-					</div>
+					</output>
 				)}
 				<button
 					type="button"
-					className="panel-icon-btn"
+					className={panelIconBtn}
 					onClick={onRefresh}
 					title="Refresh service"
 				>
@@ -221,7 +262,7 @@ export function ServicePanel({
 				</button>
 				<button
 					type="button"
-					className="panel-icon-btn"
+					className={panelIconBtn}
 					onClick={onClose}
 					title="Close service panel"
 				>
@@ -229,12 +270,17 @@ export function ServicePanel({
 				</button>
 			</div>
 
-			<div className="tab-bar condensed">
+			<div className="flex min-h-[54px] shrink-0 items-end gap-[22px] overflow-x-auto border-b border-line bg-[linear-gradient(180deg,rgba(255,255,255,0.035),transparent),rgba(20,18,16,0.88)] px-4 pt-2.5">
 				{tabs.map((tab) => (
 					<button
 						type="button"
 						key={tab.id}
-						className={`tab-item ${activeTab === tab.id ? "active" : ""}`}
+						className={cn(
+							"inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1.5 border-0 border-b-2 bg-transparent px-0.5 pb-2.5 font-condensed text-xs font-bold tracking-[0.12em] whitespace-nowrap uppercase transition-[color,border-color] duration-100",
+							activeTab === tab.id
+								? "border-accent text-accent"
+								: "border-transparent text-dim hover:text-ink",
+						)}
 						onClick={() => onTabChange(tab.id)}
 					>
 						{tab.icon}
@@ -243,7 +289,7 @@ export function ServicePanel({
 				))}
 			</div>
 
-			<div className="service-panel-content">
+			<div className="relative min-h-0 flex-1 overflow-hidden">
 				{(() => {
 					const VariablesPanel = loadedPanelModules.variables;
 					const SettingsPanel = loadedPanelModules.settings;
@@ -271,7 +317,7 @@ export function ServicePanel({
 							{activeTab === "variables" &&
 								project &&
 								(VariablesPanel ? (
-									<div className="service-panel-scroll">
+									<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
 										{/* The save response is the new record — merging it is
 										    enough; re-running the route loader here only
 										    re-renders the whole dashboard. */}
@@ -288,7 +334,7 @@ export function ServicePanel({
 							{activeTab === "settings" &&
 								project &&
 								(SettingsPanel ? (
-									<div className="service-panel-scroll">
+									<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
 										<SettingsPanel
 											service={currentService}
 											state={state}
@@ -303,7 +349,7 @@ export function ServicePanel({
 							{activeTab === "domains" &&
 								project &&
 								(DomainsPanel ? (
-									<div className="service-panel-scroll">
+									<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
 										<DomainsPanel service={service} state={state} />
 									</div>
 								) : (
@@ -319,9 +365,9 @@ export function ServicePanel({
 
 function PanelTabFallback() {
 	return (
-		<div className="service-panel-scroll">
-			<div className="panel-loading-row">
-				<Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+		<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
+			<div className="flex items-center gap-1.5 text-[13px] text-muted">
+				<Loader2 size={13} className="animate-spin" />
 			</div>
 		</div>
 	);
@@ -420,10 +466,14 @@ function EditableServiceHeaderName({
 
 	if (editing) {
 		return (
-			<form ref={formRef} className="panel-title-edit" onSubmit={saveName}>
+			<form
+				ref={formRef}
+				className="flex h-8 min-w-0 max-w-[min(520px,calc(100%-72px))] flex-1 items-center gap-0 border border-[rgba(92,170,112,0.42)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),transparent),rgba(15,14,13,0.86)] p-0.5 shadow-[inset_0_-1px_0_rgba(92,170,112,0.2),0_0_0_1px_rgba(15,14,13,0.8)]"
+				onSubmit={saveName}
+			>
 				<input
 					ref={inputRef}
-					className="panel-title-input"
+					className="h-full min-w-[120px] flex-1 appearance-none rounded-none border-0 bg-transparent px-[9px] font-display text-[22px] font-medium tracking-[-0.03em] text-ink caret-accent shadow-none outline-none selection:bg-[rgba(92,170,112,0.28)]"
 					value={draftName}
 					onChange={(event) => setDraftName(event.target.value)}
 					onKeyDown={(event) => {
@@ -436,29 +486,30 @@ function EditableServiceHeaderName({
 				/>
 				<button
 					type="submit"
-					className="panel-title-action save"
+					className="inline-flex h-full w-[30px] cursor-pointer items-center justify-center border-0 border-l border-[rgba(80,76,71,0.65)] bg-transparent text-muted transition-[color,background-color] duration-100 enabled:hover:bg-white/[0.045] enabled:hover:text-accent enabled:focus-visible:bg-white/[0.045] enabled:focus-visible:text-accent enabled:focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
 					disabled={saving || draftName.trim() === ""}
 					title="Save service name"
 				>
 					{saving ? (
-						<Loader2
-							size={13}
-							style={{ animation: "spin 1s linear infinite" }}
-						/>
+						<Loader2 size={13} className="animate-spin" />
 					) : (
 						<Check size={14} />
 					)}
 				</button>
 				<button
 					type="button"
-					className="panel-title-action cancel"
+					className="inline-flex h-full w-[30px] cursor-pointer items-center justify-center border-0 border-l border-[rgba(80,76,71,0.65)] bg-transparent text-muted transition-[color,background-color] duration-100 enabled:hover:bg-white/[0.045] enabled:hover:text-failed enabled:focus-visible:bg-white/[0.045] enabled:focus-visible:text-failed enabled:focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
 					onClick={cancelEditing}
 					disabled={saving}
 					title="Cancel service name edit"
 				>
 					<X size={14} />
 				</button>
-				{error && <span className="panel-title-error">{error}</span>}
+				{error && (
+					<span className="min-w-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-failed">
+						{error}
+					</span>
+				)}
 			</form>
 		);
 	}
@@ -466,12 +517,14 @@ function EditableServiceHeaderName({
 	return (
 		<button
 			type="button"
-			className="panel-title-button"
+			className="inline-flex h-7 max-w-[min(420px,calc(100%-72px))] min-w-0 cursor-pointer items-center overflow-hidden border border-transparent border-b-[rgba(255,255,255,0.12)] bg-transparent p-0 text-ink enabled:hover:border-b-accent enabled:hover:bg-white/[0.025] enabled:focus-visible:border-b-accent enabled:focus-visible:bg-white/[0.025] enabled:focus-visible:outline-none disabled:cursor-default"
 			onClick={startEditing}
 			disabled={!project}
 			title="Rename service"
 		>
-			<span className="panel-title-name">{service.name}</span>
+			<span className="max-w-full min-w-0 overflow-hidden font-display text-[22px] font-medium tracking-[-0.03em] text-ellipsis whitespace-nowrap">
+				{service.name}
+			</span>
 		</button>
 	);
 }

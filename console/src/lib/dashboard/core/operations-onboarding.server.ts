@@ -20,6 +20,7 @@ import {
 	type DashboardProject,
 	type DashboardRepositoryInspection,
 	type DashboardServiceSpec,
+	type DashboardServiceStatus,
 	DashboardValidationError,
 	type GitHubUserRepository,
 } from "#/lib/dashboard/core/types.server";

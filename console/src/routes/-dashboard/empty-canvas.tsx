@@ -1,5 +1,5 @@
 import { Layers } from "lucide-react";
-
+import { cn } from "#/lib/cn";
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 
 import { DeployButton } from "./deploy-button";
@@ -14,36 +14,20 @@ export function EmptyCanvas({
 	onPreloadAdd?: () => void;
 }) {
 	return (
-		<div className="empty-canvas">
-			<div
-				style={{
-					width: 56,
-					height: 56,
-					borderRadius: 2,
-					background: "var(--surface-raised)",
-					border: "1px solid var(--border)",
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "center",
-				}}
-			>
-				<Layers size={24} color="var(--text-dim)" />
+		<div
+			className={cn(
+				"pointer-events-none absolute inset-0 z-20 flex h-full flex-col items-center justify-center gap-4 text-muted",
+				"[&_button]:pointer-events-auto [&_a]:pointer-events-auto",
+			)}
+		>
+			<div className="flex size-14 items-center justify-center rounded-sm border border-line bg-surface-raised">
+				<Layers size={24} className="text-dim" />
 			</div>
-			<div style={{ textAlign: "center" }}>
-				<p
-					style={{
-						margin: "0 0 4px",
-						fontSize: 15,
-						fontWeight: 700,
-						letterSpacing: "0.08em",
-						textTransform: "uppercase",
-						fontFamily: "'Barlow Condensed', sans-serif",
-						color: "var(--text)",
-					}}
-				>
+			<div className="text-center">
+				<p className="m-0 mb-1 font-condensed text-[15px] font-bold uppercase tracking-[0.08em] text-ink">
 					No services
 				</p>
-				<p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+				<p className="m-0 text-xs text-muted">
 					Deploy your first service from a GitHub repo
 				</p>
 			</div>

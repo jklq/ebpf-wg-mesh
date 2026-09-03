@@ -402,6 +402,9 @@ func (s *Store) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service serv
 		}
 		return "", s.bumpAllDesiredRevisionsTx(ctx, tx)
 	}
+	if err := s.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
+		return "", err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM allocations WHERE service_id = $1 AND rollout_state = $2`,
 		service.ID, allocationRolloutStarting,
@@ -503,8 +506,11 @@ func (s *Store) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service servi
 	if target.State != deploymentStateFailed && target.State != deploymentStateCancelled && target.State != deploymentStateCrashed {
 		return "", errDeploymentActionInvalid
 	}
-	if target.BuildID == "" || target.ImageDigest != "" {
+	if target.ImageDigest != "" {
 		return s.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonUserRetry, "Deployment retry scheduled")
+	}
+	if target.BuildID == "" {
+		return s.retryUnresolvedSourceDeploymentTx(ctx, tx, service, target, userID)
 	}
 	build, err := s.buildRunByIDQuerier(ctx, tx, target.BuildID)
 	if err != nil {
@@ -536,6 +542,70 @@ func (s *Store) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service servi
 	}
 	dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, service.ID, retried.ID)
 	if err != nil || !ok {
+		return "", err
+	}
+	return dep.ID, nil
+}
+
+func (s *Store) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+	if target.ResolvedSpec == nil || desiredSourceSpec(target.ResolvedSpec) == nil {
+		return "", fmt.Errorf("%w: selected deployment has no reusable image or source configuration", errDeploymentActionInvalid)
+	}
+	existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+	if err != nil {
+		return "", err
+	}
+	rolloutService := service
+	rolloutService.Spec = target.ResolvedSpec
+	now := time.Now().UTC()
+	if _, err := s.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
+		return "", err
+	}
+	desiredReplicas := specReplicaCount(target.ResolvedSpec, service.DesiredReplicaCount)
+	if err := validateDesiredReplicaCount(desiredReplicas); err != nil {
+		return "", err
+	}
+	if err := validateVolumeReplicaCompatibility(target.ResolvedSpec, desiredReplicas); err != nil {
+		return "", err
+	}
+	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
+	if err != nil {
+		return "", err
+	}
+	nextRollout := service.RolloutGeneration + 1
+	result, err := tx.ExecContext(ctx,
+		`UPDATE services
+		    SET current_spec_revision = $1,
+		        current_rollout_generation = $2,
+		        current_resolved_image = '',
+		        desired_replica_count = $3,
+		        latest_build_id = '',
+		        updated_at = $4
+		  WHERE id = $5 AND current_spec_revision = $6 AND current_rollout_generation = $7`,
+		nextSpecRevision, nextRollout, desiredReplicas, now,
+		service.ID, service.SpecRevision, service.RolloutGeneration,
+	)
+	if err != nil {
+		return "", err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if affected != 1 {
+		return "", errConcurrentUpdate
+	}
+	if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, nextSpecRevision, "retry", "", userID, now); err != nil {
+		return "", err
+	}
+	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, deploymentStateStaged,
+		deploymentActor{Kind: deploymentCauseUser, ID: userID}, reasonUserRetry,
+		"Deployment retry staged; waiting for source build",
+		nextSpecRevision, nextRollout, "", "", userID, now)
+	if err != nil {
+		return "", err
+	}
+	if err := s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, nextSpecRevision, true); err != nil {
 		return "", err
 	}
 	return dep.ID, nil

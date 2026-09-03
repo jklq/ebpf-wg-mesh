@@ -34,6 +34,12 @@ Architecture decisions:
 ## Bootstrap
 
 - `controlplane` bootstraps from flags and environment, then owns node mesh/workload assignment in CockroachDB.
+
+### Multiple control-plane replicas
+
+Control-plane replicas coordinate singleton reconcilers through a fenced CockroachDB lease. Agent streams and platform blocking reads observe durable database revisions, so a write handled by one replica wakes clients connected to another. Replica clocks are not used for lease, rollout, or failover decisions.
+
+Every replica for one database must mount the same read-write `CONTROLPLANE_STATE_DIR` and `CONTROLPLANE_SOURCE_ARCHIVES_DIR`. These directories contain the shared internal PKI, registry identity, revocation data, and source objects. Startup binds both mounts to the database using persistent storage markers and fails if a replica is pointed at node-local or replacement storage. The ingress admin endpoint must likewise identify the same Caddy control plane for every replica.
 - `agent` bootstraps from flags and environment, discovers local host facts, persists its own WireGuard private key, enrolls, and waits for assigned node config from the control plane.
 
 Common bootstrap inputs:
@@ -62,7 +68,7 @@ Owners and editors may apply actions; viewers cannot. The console exposes only a
 
 Health checks are rollout readiness gates, not continuous monitors. With no health check configured, a deployment becomes ready as soon as its process is running. With an explicit HTTP health check, the agent retries the endpoint while the rollout is starting and marks the deployment ready only after an HTTP `200`. The successful result is latched for that rollout; the endpoint is not queried again during ordinary reconciliation.
 
-Deployments use a persisted rolling strategy. The defaults are `max_unavailable=0`, `max_surge=1`, a 300-second startup deadline, and a 30-second drain deadline. The control plane creates replacement allocations alongside the serving generation, waits for readiness, publishes the healthy replacement and withdraws its predecessor from Caddy, and only sends the predecessor a drain intent after that Caddy update succeeds. Agents send `SIGTERM`, preserve the container and network namespace during the drain window, and use `SIGKILL` only after the absolute deadline. Control-plane and agent restarts resume from the CockroachDB allocation state and desired drain deadline. A readiness or scheduling timeout fails the rollout without removing healthy serving allocations. Setting surge to zero requires a positive unavailable allowance and opts into bounded temporary downtime. Services with a single-writer volume reject replacement rollouts until the Stage 7 attachment handoff and fencing protocol exists.
+Deployments use a persisted rolling strategy with platform-managed replacement concurrency: healthy capacity is preserved and at most one extra allocation is created at a time. The user-configurable defaults are a 300-second healthcheck timeout and 30 seconds of draining time. The control plane creates replacement allocations alongside the serving generation, waits for readiness, publishes the healthy replacement and withdraws its predecessor from Caddy, and only sends the predecessor a drain intent after that Caddy update succeeds. Agents send `SIGTERM`, preserve the container and network namespace during the draining window, and use `SIGKILL` only after the absolute deadline. Control-plane and agent restarts resume from the CockroachDB allocation state and desired drain deadline. A readiness or scheduling timeout fails the rollout without removing healthy serving allocations. Services with a single-writer volume reject replacement rollouts until the Stage 7 attachment handoff and fencing protocol exists.
 
 HTTP health-check paths must be absolute request paths beginning with a single `/`. Checks never follow redirects or use proxy environment variables. Production requests originate in the workload's persisted network namespace and target only the control-plane-assigned workload IP and configured port (or the primary declared port when no check port is set). A missing or stale namespace keeps readiness pending; the agent does not fall back to host-network probing.
 
@@ -235,8 +241,9 @@ The Cockroach-backed integration suite includes regressions for cluster-wide cro
 ## VM Harness
 
 - Infrastructure lives under `infra/test-vm/`.
-- `cmd/testvm` builds Linux binaries, provisions the Hetzner topology through OpenTofu, waits for server readiness with `hcloud-go`, deploys the control plane and agents over SSH, runs a thin gRPC smoke scenario, collects host artifacts, and tears everything down.
-- The first cut keeps Cockroach colocated with the control plane and provisions two agent VMs.
+- `cmd/testvm` builds Linux binaries, provisions the Hetzner topology through OpenTofu, waits for server readiness with `hcloud-go`, deploys two independent control-plane processes and two agents over SSH, runs the gRPC scenarios, collects host artifacts, and tears everything down.
+- The multi-replica scenario pins agent streams and blocking reads to one replica while writing through the other, rejects replica-local control-plane storage, stops the original singleton owner, and verifies fenced lease takeover plus ingress re-publication before continuing the rollout and agent-failover checks.
+- Cockroach and the two control-plane processes are colocated on the control-plane VM; the processes use the same database and state directory while retaining independent in-memory state and lifecycles.
 - Artifacts are written under `artifacts/e2e-vm/<run-id>/`.
 
 ## Internal mTLS

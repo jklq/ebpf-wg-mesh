@@ -1,10 +1,19 @@
 import { Github, Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-
+import { cn } from "#/lib/cn";
 import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import {
+	btnDangerOutline,
+	errorMsg,
+	fieldInput,
+	fieldInputUnapplied,
+	fieldLabel,
+	modalCard,
+	unappliedSurface,
+} from "#/lib/ui-classes";
 
 import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
 import { ReplicaScaleControls } from "./replica-scale";
@@ -25,10 +34,8 @@ type SettingsDraft = {
 	maxRestarts: string;
 	windowSeconds: string;
 	placementRegion: string;
-	maxUnavailable: string;
-	maxSurge: string;
-	startupTimeoutSeconds: string;
-	drainTimeoutSeconds: string;
+	healthcheckTimeoutSeconds: string;
+	drainingSeconds: string;
 };
 
 export function PanelSettings({
@@ -78,10 +85,9 @@ export function PanelSettings({
 					},
 					placementRegion: next.placementRegion,
 					rollingStrategy: {
-						maxUnavailable: Number(next.maxUnavailable) || 0,
-						maxSurge: Number(next.maxSurge) || 0,
-						startupTimeoutSeconds: Number(next.startupTimeoutSeconds) || 0,
-						drainTimeoutSeconds: Number(next.drainTimeoutSeconds) || 0,
+						healthcheckTimeoutSeconds:
+							Number(next.healthcheckTimeoutSeconds) || 0,
+						drainingSeconds: Number(next.drainingSeconds) || 0,
 					},
 				},
 			});
@@ -109,20 +115,28 @@ export function PanelSettings({
 	};
 
 	return (
-		<div className="settings-stack">
+		<div className="flex flex-col gap-7">
 			<PanelSection title="Source">
 				<div>
-					<p className="field-label">Source repo</p>
+					<p className={fieldLabel}>Source repo</p>
 					<div
-						className={`source-repo-card ${changedFields.has("source.repositorySelector") ? "unapplied-field" : ""}`}
+						className={cn(
+							"flex items-center gap-2.5 border px-3 py-2.5 text-ink",
+							changedFields.has("source.repositorySelector")
+								? unappliedSurface
+								: "border-line bg-surface-raised",
+						)}
+						data-unapplied={
+							changedFields.has("source.repositorySelector") || undefined
+						}
 					>
 						<Github size={16} aria-hidden="true" />
-						<span className="source-repo-name">
+						<span className="min-w-0 flex-1 overflow-hidden font-mono text-[13px] text-ellipsis whitespace-nowrap">
 							{draft.repoSelector || "No repository selected"}
 						</span>
 						<button
 							type="button"
-							className="source-repo-edit"
+							className="inline-flex shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent p-1 text-muted transition-colors duration-100 hover:text-ink"
 							aria-label="Change source repository"
 							title="Change source repository"
 							onClick={() => setPickingRepo(true)}
@@ -133,12 +147,17 @@ export function PanelSettings({
 				</div>
 
 				<div>
-					<label className="field-label" htmlFor={trackedRefId}>
+					<label className={fieldLabel} htmlFor={trackedRefId}>
 						Branch
 					</label>
 					<input
 						id={trackedRefId}
-						className={`field-input ${changedFields.has("source.trackedRef") ? "unapplied-field" : ""}`}
+						className={
+							changedFields.has("source.trackedRef")
+								? fieldInputUnapplied
+								: fieldInput
+						}
+						data-unapplied={changedFields.has("source.trackedRef") || undefined}
 						value={draft.trackedRef}
 						onChange={(e) =>
 							setDraft((current) => ({
@@ -153,12 +172,20 @@ export function PanelSettings({
 
 			<PanelSection title="Build">
 				<div>
-					<label className="field-label" htmlFor={dockerfilePathId}>
+					<label className={fieldLabel} htmlFor={dockerfilePathId}>
 						Dockerfile path
 					</label>
 					<input
 						id={dockerfilePathId}
-						className={`field-input ${changedFields.has("source.buildRecipe.dockerfilePath") ? "unapplied-field" : ""}`}
+						className={
+							changedFields.has("source.buildRecipe.dockerfilePath")
+								? fieldInputUnapplied
+								: fieldInput
+						}
+						data-unapplied={
+							changedFields.has("source.buildRecipe.dockerfilePath") ||
+							undefined
+						}
 						value={draft.dockerfilePath}
 						onChange={(e) =>
 							setDraft((current) => ({
@@ -171,12 +198,19 @@ export function PanelSettings({
 				</div>
 
 				<div>
-					<label className="field-label" htmlFor={contextDirId}>
+					<label className={fieldLabel} htmlFor={contextDirId}>
 						Build context directory
 					</label>
 					<input
 						id={contextDirId}
-						className={`field-input ${changedFields.has("source.buildRecipe.contextDir") ? "unapplied-field" : ""}`}
+						className={
+							changedFields.has("source.buildRecipe.contextDir")
+								? fieldInputUnapplied
+								: fieldInput
+						}
+						data-unapplied={
+							changedFields.has("source.buildRecipe.contextDir") || undefined
+						}
 						value={draft.contextDir}
 						onChange={(e) =>
 							setDraft((current) => ({
@@ -197,12 +231,17 @@ export function PanelSettings({
 
 			<PanelSection title="Placement">
 				<div>
-					<label className="field-label" htmlFor={placementRegionId}>
+					<label className={fieldLabel} htmlFor={placementRegionId}>
 						Required region
 					</label>
 					<input
 						id={placementRegionId}
-						className={`field-input ${changedFields.has("placementRegion") ? "unapplied-field" : ""}`}
+						className={
+							changedFields.has("placementRegion")
+								? fieldInputUnapplied
+								: fieldInput
+						}
+						data-unapplied={changedFields.has("placementRegion") || undefined}
 						value={draft.placementRegion}
 						onChange={(event) =>
 							setDraft((current) => ({
@@ -215,40 +254,31 @@ export function PanelSettings({
 				</div>
 			</PanelSection>
 
-			<PanelSection title="Rolling deployment">
+			<PanelSection title="Deployment">
 				<div
-					className={`field-grid ${changedFields.has("rollingStrategy") ? "unapplied-field" : ""}`}
+					className={cn(
+						"grid grid-cols-2 gap-3 max-sm:grid-cols-1",
+						changedFields.has("rollingStrategy") && unappliedSurface,
+					)}
+					data-unapplied={changedFields.has("rollingStrategy") || undefined}
 				>
 					<RollingNumberField
-						id={`service-rollout-unavailable-${service.id}`}
-						label="Max unavailable"
-						value={draft.maxUnavailable}
-						onChange={(maxUnavailable) =>
-							setDraft((current) => ({ ...current, maxUnavailable }))
+						id={`service-healthcheck-timeout-${service.id}`}
+						label="Healthcheck timeout (seconds)"
+						value={draft.healthcheckTimeoutSeconds}
+						onChange={(healthcheckTimeoutSeconds) =>
+							setDraft((current) => ({
+								...current,
+								healthcheckTimeoutSeconds,
+							}))
 						}
 					/>
 					<RollingNumberField
-						id={`service-rollout-surge-${service.id}`}
-						label="Max surge"
-						value={draft.maxSurge}
-						onChange={(maxSurge) =>
-							setDraft((current) => ({ ...current, maxSurge }))
-						}
-					/>
-					<RollingNumberField
-						id={`service-rollout-startup-${service.id}`}
-						label="Startup deadline (seconds)"
-						value={draft.startupTimeoutSeconds}
-						onChange={(startupTimeoutSeconds) =>
-							setDraft((current) => ({ ...current, startupTimeoutSeconds }))
-						}
-					/>
-					<RollingNumberField
-						id={`service-rollout-drain-${service.id}`}
-						label="Drain deadline (seconds)"
-						value={draft.drainTimeoutSeconds}
-						onChange={(drainTimeoutSeconds) =>
-							setDraft((current) => ({ ...current, drainTimeoutSeconds }))
+						id={`service-draining-time-${service.id}`}
+						label="Draining time (seconds)"
+						value={draft.drainingSeconds}
+						onChange={(drainingSeconds) =>
+							setDraft((current) => ({ ...current, drainingSeconds }))
 						}
 					/>
 				</div>
@@ -256,16 +286,33 @@ export function PanelSettings({
 
 			<PanelSection title="Process restart">
 				<fieldset
-					className={`choice-rail ${
-						changedFields.has("runtime.restart") ? "unapplied-field" : ""
-					}`}
+					className={cn(
+						"relative m-0 flex flex-wrap border p-0",
+						changedFields.has("runtime.restart")
+							? unappliedSurface
+							: "border-line bg-canvas",
+					)}
+					data-unapplied={changedFields.has("runtime.restart") || undefined}
 				>
-					<legend className="field-label">Policy</legend>
+					<legend
+						className={cn(
+							fieldLabel,
+							"absolute -top-2.5 mb-0 bg-canvas px-1.5",
+						)}
+					>
+						Policy
+					</legend>
 					<label
-						className={draft.restartPolicy === "on-failure" ? "active" : ""}
+						className={cn(
+							"flex min-h-9 flex-1 cursor-pointer items-center justify-center border-r border-line px-3 font-condensed text-xs font-bold tracking-[0.08em] uppercase last:border-r-0",
+							draft.restartPolicy === "on-failure"
+								? "bg-surface-hover text-ink shadow-[inset_0_-2px_0_var(--color-accent)]"
+								: "text-muted",
+						)}
 					>
 						<input
 							type="radio"
+							className="pointer-events-none absolute opacity-0"
 							name={`service-restart-policy-${service.id}`}
 							checked={draft.restartPolicy === "on-failure"}
 							onChange={() =>
@@ -277,9 +324,17 @@ export function PanelSettings({
 						/>
 						On failure
 					</label>
-					<label className={draft.restartPolicy === "always" ? "active" : ""}>
+					<label
+						className={cn(
+							"flex min-h-9 flex-1 cursor-pointer items-center justify-center border-r border-line px-3 font-condensed text-xs font-bold tracking-[0.08em] uppercase last:border-r-0",
+							draft.restartPolicy === "always"
+								? "bg-surface-hover text-ink shadow-[inset_0_-2px_0_var(--color-accent)]"
+								: "text-muted",
+						)}
+					>
 						<input
 							type="radio"
+							className="pointer-events-none absolute opacity-0"
 							name={`service-restart-policy-${service.id}`}
 							checked={draft.restartPolicy === "always"}
 							onChange={() =>
@@ -291,9 +346,17 @@ export function PanelSettings({
 						/>
 						Always
 					</label>
-					<label className={draft.restartPolicy === "never" ? "active" : ""}>
+					<label
+						className={cn(
+							"flex min-h-9 flex-1 cursor-pointer items-center justify-center border-r border-line px-3 font-condensed text-xs font-bold tracking-[0.08em] uppercase last:border-r-0",
+							draft.restartPolicy === "never"
+								? "bg-surface-hover text-ink shadow-[inset_0_-2px_0_var(--color-accent)]"
+								: "text-muted",
+						)}
+					>
 						<input
 							type="radio"
+							className="pointer-events-none absolute opacity-0"
 							name={`service-restart-policy-${service.id}`}
 							checked={draft.restartPolicy === "never"}
 							onChange={() =>
@@ -306,17 +369,17 @@ export function PanelSettings({
 						Never
 					</label>
 				</fieldset>
-				<div className="field-grid">
+				<div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
 					<div>
 						<label
-							className="field-label"
+							className={fieldLabel}
 							htmlFor={`service-restart-max-${service.id}`}
 						>
 							Max restarts
 						</label>
 						<input
 							id={`service-restart-max-${service.id}`}
-							className="field-input"
+							className={fieldInput}
 							value={draft.maxRestarts}
 							onChange={(e) =>
 								setDraft((current) => ({
@@ -329,14 +392,14 @@ export function PanelSettings({
 					</div>
 					<div>
 						<label
-							className="field-label"
+							className={fieldLabel}
 							htmlFor={`service-restart-window-${service.id}`}
 						>
 							Retry window (seconds)
 						</label>
 						<input
 							id={`service-restart-window-${service.id}`}
-							className="field-input"
+							className={fieldInput}
 							value={draft.windowSeconds}
 							onChange={(e) =>
 								setDraft((current) => ({
@@ -350,21 +413,23 @@ export function PanelSettings({
 				</div>
 			</PanelSection>
 
-			{error && <p className="error-msg">{error}</p>}
+			{error && <p className={errorMsg}>{error}</p>}
 
 			<PanelSection title="Danger zone" tone="danger">
-				<div className="danger-zone">
-					<div className="danger-zone-row">
+				<div>
+					<div className="flex items-center justify-between gap-3.5 max-sm:flex-col max-sm:items-start">
 						<div>
-							<strong>Delete this service</strong>
-							<span>
+							<strong className="mb-[3px] block text-[13px] font-semibold text-ink">
+								Delete this service
+							</strong>
+							<span className="block text-xs leading-normal text-muted">
 								Removes {service.name} from this environment. This cannot be
 								undone.
 							</span>
 						</div>
 						<button
 							type="button"
-							className="btn-danger-outline"
+							className={btnDangerOutline}
 							onClick={() => {
 								setDeleteError(undefined);
 								setConfirmingDelete(true);
@@ -385,7 +450,7 @@ export function PanelSettings({
 					error={deleteError}
 					description={
 						<>
-							You are <span className="danger-word">deleting</span> the service{" "}
+							You are <span className="text-failed">deleting</span> the service{" "}
 							<strong>{service.name}</strong> from this environment.
 						</>
 					}
@@ -440,10 +505,8 @@ function settingsChangedFields(
 		changed.add("placementRegion");
 	}
 	if (
-		draft.maxUnavailable !== incoming.maxUnavailable ||
-		draft.maxSurge !== incoming.maxSurge ||
-		draft.startupTimeoutSeconds !== incoming.startupTimeoutSeconds ||
-		draft.drainTimeoutSeconds !== incoming.drainTimeoutSeconds
+		draft.healthcheckTimeoutSeconds !== incoming.healthcheckTimeoutSeconds ||
+		draft.drainingSeconds !== incoming.drainingSeconds
 	) {
 		changed.add("rollingStrategy");
 	}
@@ -470,13 +533,11 @@ function settingsDraftFromService(
 		maxRestarts: String(service.spec?.runtime.restart?.maxRestarts ?? 5),
 		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
 		placementRegion: service.spec?.placementRegion ?? "",
-		maxUnavailable: String(service.spec?.rollingStrategy?.maxUnavailable ?? 0),
-		maxSurge: String(service.spec?.rollingStrategy?.maxSurge ?? 1),
-		startupTimeoutSeconds: String(
-			service.spec?.rollingStrategy?.startupTimeoutSeconds ?? 300,
+		healthcheckTimeoutSeconds: String(
+			service.spec?.rollingStrategy?.healthcheckTimeoutSeconds ?? 300,
 		),
-		drainTimeoutSeconds: String(
-			service.spec?.rollingStrategy?.drainTimeoutSeconds ?? 30,
+		drainingSeconds: String(
+			service.spec?.rollingStrategy?.drainingSeconds ?? 30,
 		),
 	};
 }
@@ -494,12 +555,12 @@ function RollingNumberField({
 }) {
 	return (
 		<div>
-			<label className="field-label" htmlFor={id}>
+			<label className={fieldLabel} htmlFor={id}>
 				{label}
 			</label>
 			<input
 				id={id}
-				className="field-input"
+				className={fieldInput}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
 				inputMode="numeric"
@@ -548,7 +609,7 @@ function SourceRepositoryDialog({
 
 	return (
 		<ModalOverlay ariaLabel="Select source repository" onClose={onClose}>
-			<div className="modal-card">
+			<div className={modalCard}>
 				<RepositoryPicker
 					actions={[]}
 					filteredRepositories={filteredRepositories}

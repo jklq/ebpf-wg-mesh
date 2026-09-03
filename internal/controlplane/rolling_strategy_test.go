@@ -9,48 +9,36 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestCanonicalRollingStrategyPreservesExplicitZeroSurge(t *testing.T) {
+func TestCanonicalRollingStrategyAppliesTimingDefaults(t *testing.T) {
 	t.Parallel()
 
-	got := canonicalRollingStrategy(&platformv1.RollingStrategy{
-		MaxUnavailable: proto.Int32(1),
-		MaxSurge:       proto.Int32(0),
-	})
-	if got.GetMaxUnavailable() != 1 || got.GetMaxSurge() != 0 {
-		t.Fatalf("strategy = %+v, want unavailable=1 surge=0", got)
-	}
-	if got.GetStartupTimeoutSeconds() != 300 || got.GetDrainTimeoutSeconds() != 30 {
+	got := canonicalRollingStrategy(&platformv1.RollingStrategy{})
+	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 30 {
 		t.Fatalf("timeout defaults = %+v", got)
 	}
 }
 
-func TestValidateRollingStrategyRejectsBothBoundsZero(t *testing.T) {
+func TestCanonicalRollingStrategyPreservesExplicitTiming(t *testing.T) {
 	t.Parallel()
 
-	spec := &platformv1.ServiceSpec{
-		DesiredReplicaCount: proto.Int32(2),
-		RollingStrategy: &platformv1.RollingStrategy{
-			MaxUnavailable: proto.Int32(0),
-			MaxSurge:       proto.Int32(0),
-		},
-	}
-	err := validateRollingStrategy(spec)
-	if err == nil || !strings.Contains(err.Error(), "cannot both be zero") {
-		t.Fatalf("got %v, want both-zero error", err)
+	got := canonicalRollingStrategy(&platformv1.RollingStrategy{
+		HealthcheckTimeoutSeconds: proto.Int32(60),
+		DrainingSeconds:           proto.Int32(5),
+	})
+	if got.GetHealthcheckTimeoutSeconds() != 60 || got.GetDrainingSeconds() != 5 {
+		t.Fatalf("strategy = %+v, want healthcheck timeout 60s and draining time 5s", got)
 	}
 }
 
-func TestValidateRollingStrategyRejectsUnavailableAboveDesired(t *testing.T) {
+func TestValidateRollingStrategyRejectsInvalidHealthcheckTimeout(t *testing.T) {
 	t.Parallel()
 
 	spec := &platformv1.ServiceSpec{
-		DesiredReplicaCount: proto.Int32(1),
 		RollingStrategy: &platformv1.RollingStrategy{
-			MaxUnavailable: proto.Int32(2),
-			MaxSurge:       proto.Int32(1),
+			HealthcheckTimeoutSeconds: proto.Int32(0),
 		},
 	}
-	if err := validateRollingStrategy(spec); err == nil {
-		t.Fatal("expected max unavailable to be rejected")
+	if err := validateRollingStrategy(spec); err == nil || !strings.Contains(err.Error(), "healthcheck timeout") {
+		t.Fatalf("got %v, want healthcheck timeout error", err)
 	}
 }

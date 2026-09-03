@@ -23,7 +23,7 @@ func TestAdversarialWorkloadCannotReachHostFilesystemSocketsOrDevices(t *testing
 		"ok=1",
 		"test ! -e /run/containerd/containerd.sock && test ! -e /var/run/docker.sock || ok=host-socket",
 		"test ! -e /dev/kmsg && test ! -e /dev/sda && test ! -e /dev/mem || ok=host-device",
-		"test ! -r /proc/kcore && test ! -r /sys/kernel/security && test ! -e /sys/fs/bpf || ok=masked-path",
+		"for path in /proc/kcore /sys/kernel/security /sys/fs/bpf; do awk -v path=\"$path\" '$5 == path && $0 ~ / - tmpfs / { found=1 } END { exit !found }' /proc/self/mountinfo || ok=masked-path; done",
 		"test \"$(id -u)\" = 0 || ok=image-user",
 		"touch /overlay-write-probe || ok=overlay-read-only",
 		"printf '%s' \"$ok\" > /tmp/index.html",

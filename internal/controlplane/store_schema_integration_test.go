@@ -52,7 +52,7 @@ func TestSchemaVersionFourUpgradesDeploymentActionsToVersionFive(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
+	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	for _, expected := range []struct{ table, column string }{
@@ -139,7 +139,7 @@ func TestSchemaVersionFiveUpgradesFleetToVersionSix(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
+	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	for _, expected := range []struct{ table, column string }{
@@ -230,7 +230,7 @@ func TestSchemaVersionSixUpgradesIsolationThroughRailwayDefaults(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
+	if err := store.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&version); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema version = %d, err=%v", version, err)
 	}
 	var auditTable int
