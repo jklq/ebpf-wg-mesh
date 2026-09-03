@@ -1,311 +1,461 @@
-import * as grpc from "@grpc/grpc-js";
-
 import type { PlatformGateway } from "#/lib/dashboard/core/types.server";
 import {
 	getOpsClient,
-	opsUserCall,
+	getPlatformClient,
+	type PlatformRuntimeConfig,
 	toPlatformGatewayError,
-	unaryCall,
+	userAssertionMetadata,
 } from "#/lib/platform-grpc/client.server";
 import {
-	decodeAgentEnrollmentMessage,
-	decodeDomainBindingMessage,
-	decodeEnvironmentMessage,
-	decodeFleetAgentMessage,
-	decodeFleetMessage,
-	decodeIndexedServiceStatusResponse,
-	decodeIndexedServicesResponse,
-	decodeInspectSourceResponse,
-	decodeListDomainBindingsResponse,
-	decodeListEnvironmentsResponse,
-	decodeListProjectsResponse,
-	decodeListServiceDeploymentsResponse,
-	decodeListServiceLogsResponse,
-	decodeListServicesResponse,
-	decodeProjectMessage,
-	decodeServiceMessage,
-	decodeServiceStatusMessage,
-	encodeCreateServiceRequest,
-	encodeIngestGitHubWebhookRequest,
-	encodeListServiceLogsRequest,
-	encodeUpdateServiceRequest,
-} from "#/lib/platform-grpc/codec.server";
-import type {
-	IngestGitHubWebhookInput,
-	PlatformRuntimeConfig,
-} from "#/lib/platform-grpc/types.server";
+	toAgentEnrollment,
+	toApplyDeploymentActionRequest,
+	toCreateAgentRequest,
+	toCreateDomainBindingRequest,
+	toCreateEnvironmentRequest,
+	toCreateProjectRequest,
+	toCreateServiceRequest,
+	toDeleteDomainBindingRequest,
+	toDeleteEnvironmentRequest,
+	toDeleteServiceRequest,
+	toDeployEnvironmentRequest,
+	toDeploymentRecords,
+	toDiscardServiceChangesRequest,
+	toDomainBinding,
+	toDomainBindings,
+	toDuplicateEnvironmentRequest,
+	toEmptyRequest,
+	toEnvironment,
+	toEnvironments,
+	toFleet,
+	toFleetAgent,
+	toGenerateDomainBindingRequest,
+	toGetEnvironmentRequest,
+	toGetServiceRequest,
+	toGetServiceStatusRequest,
+	toIndexedServiceStatus,
+	toIndexedServices,
+	toIngestGitHubWebhookRequest,
+	toInspectSourceRequest,
+	toLinkGitHubRepositoryRequest,
+	toListDomainBindingsRequest,
+	toListEnvironmentsRequest,
+	toListServiceDeploymentsRequest,
+	toListServiceLogsRequest,
+	toListServicesRequest,
+	toProject,
+	toProjects,
+	toRenameEnvironmentRequest,
+	toRepositoryInspection,
+	toScaleServiceRequest,
+	toServiceLogLines,
+	toServiceRecord,
+	toServiceStatus,
+	toSetAgentLifecycleRequest,
+	toUpdateAgentRequest,
+	toUpdateDomainBindingRequest,
+	toUpdateServiceRequest,
+} from "#/lib/platform-grpc/proto-mappers.server";
+
+export interface IngestGitHubWebhookInput {
+	deliveryId: string;
+	eventType: string;
+	signature256: string;
+	payload: Uint8Array;
+}
 
 export function createPlatformGateway(
 	runtime: PlatformRuntimeConfig,
 ): PlatformGateway {
+	const platform = getPlatformClient(runtime);
+	const ops = getOpsClient(runtime);
+
+	function callOptions(user: Parameters<typeof userAssertionMetadata>[1]) {
+		return { headers: userAssertionMetadata(runtime, user) };
+	}
+
 	return {
 		async listFleet(user) {
-			return decodeFleetMessage(
-				await opsUserCall(runtime, "ListFleet", {}, user),
-			);
+			try {
+				return toFleet(
+					await ops.listFleet(toEmptyRequest(), callOptions(user)),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListFleet", cause);
+			}
 		},
 		async createFleetAgent(user, input) {
-			return decodeAgentEnrollmentMessage(
-				await opsUserCall(runtime, "CreateAgent", input, user),
-			);
+			try {
+				return toAgentEnrollment(
+					await ops.createAgent(toCreateAgentRequest(input), callOptions(user)),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("CreateAgent", cause);
+			}
 		},
 		async updateFleetAgent(user, input) {
-			return decodeFleetAgentMessage(
-				await opsUserCall(runtime, "UpdateAgent", input, user),
-			);
+			try {
+				return toFleetAgent(
+					await ops.updateAgent(toUpdateAgentRequest(input), callOptions(user)),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("UpdateAgent", cause);
+			}
 		},
 		async setFleetAgentLifecycle(user, input) {
-			return decodeFleetAgentMessage(
-				await opsUserCall(
-					runtime,
-					"SetAgentLifecycle",
-					{
-						agentId: input.agentId,
-						lifecycleState: encodeAgentLifecycleState(input.lifecycleState),
-					},
-					user,
-				),
-			);
+			try {
+				return toFleetAgent(
+					await ops.setAgentLifecycle(
+						toSetAgentLifecycleRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("SetAgentLifecycle", cause);
+			}
 		},
 		async listProjects(user) {
-			const response = await unaryCall(runtime, "ListProjects", {}, user);
-			return decodeListProjectsResponse(response).projects;
+			try {
+				return toProjects(
+					(await platform.listProjects(toEmptyRequest(), callOptions(user)))
+						.projects,
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListProjects", cause);
+			}
 		},
 		async createProject(user, name) {
-			const response = await unaryCall(
-				runtime,
-				"CreateProject",
-				{ name },
-				user,
-			);
-			return decodeProjectMessage(response);
+			try {
+				return toProject(
+					await platform.createProject(
+						toCreateProjectRequest(name),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("CreateProject", cause);
+			}
 		},
 		async listEnvironments(user, projectId) {
-			const response = await unaryCall(
-				runtime,
-				"ListEnvironments",
-				{ projectId },
-				user,
-			);
-			return decodeListEnvironmentsResponse(response).environments;
+			try {
+				return toEnvironments(
+					(
+						await platform.listEnvironments(
+							toListEnvironmentsRequest(projectId),
+							callOptions(user),
+						)
+					).environments,
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListEnvironments", cause);
+			}
 		},
 		async getEnvironment(user, environmentId) {
-			return decodeEnvironmentMessage(
-				await unaryCall(runtime, "GetEnvironment", { environmentId }, user),
-			);
+			try {
+				return toEnvironment(
+					await platform.getEnvironment(
+						toGetEnvironmentRequest(environmentId),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("GetEnvironment", cause);
+			}
 		},
 		async createEnvironment(user, input) {
-			return decodeEnvironmentMessage(
-				await unaryCall(runtime, "CreateEnvironment", input, user),
-			);
+			try {
+				return toEnvironment(
+					await platform.createEnvironment(
+						toCreateEnvironmentRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("CreateEnvironment", cause);
+			}
 		},
 		async duplicateEnvironment(user, input) {
-			return decodeEnvironmentMessage(
-				await unaryCall(runtime, "DuplicateEnvironment", input, user),
-			);
+			try {
+				return toEnvironment(
+					await platform.duplicateEnvironment(
+						toDuplicateEnvironmentRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("DuplicateEnvironment", cause);
+			}
 		},
 		async renameEnvironment(user, input) {
-			return decodeEnvironmentMessage(
-				await unaryCall(runtime, "RenameEnvironment", input, user),
-			);
+			try {
+				return toEnvironment(
+					await platform.renameEnvironment(
+						toRenameEnvironmentRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("RenameEnvironment", cause);
+			}
 		},
 		async deleteEnvironment(user, environmentId) {
-			await unaryCall(runtime, "DeleteEnvironment", { environmentId }, user);
+			try {
+				await platform.deleteEnvironment(
+					toDeleteEnvironmentRequest(environmentId),
+					callOptions(user),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("DeleteEnvironment", cause);
+			}
 		},
 		async deployEnvironment(user, environmentId) {
-			const response = (await unaryCall(
-				runtime,
-				"DeployEnvironment",
-				{ environmentId },
-				user,
-			)) as { services?: unknown[] };
-			return (response.services ?? []).map(decodeServiceStatusMessage);
+			try {
+				const response = await platform.deployEnvironment(
+					toDeployEnvironmentRequest(environmentId),
+					callOptions(user),
+				);
+				return response.services.map(toServiceStatus);
+			} catch (cause) {
+				throw toPlatformGatewayError("DeployEnvironment", cause);
+			}
 		},
 		async listServices(user, environmentId) {
-			const response = await unaryCall(
-				runtime,
-				"ListServices",
-				{ environmentId },
-				user,
-			);
-			return decodeListServicesResponse(response);
+			try {
+				const response = await platform.listServices(
+					toListServicesRequest({ environmentId }),
+					callOptions(user),
+				);
+				return response.services.map(toServiceRecord);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListServices", cause);
+			}
 		},
 		async waitForServices(user, input) {
-			const response = await unaryCall(runtime, "ListServices", input, user);
-			return decodeIndexedServicesResponse(response);
+			try {
+				return toIndexedServices(
+					await platform.listServices(
+						toListServicesRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListServices", cause);
+			}
 		},
 		async inspectRepositorySource(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"InspectSource",
-				{
-					projectId: input.projectId,
-					provider: input.provider,
-					repositorySelector: input.repositorySelector,
-					githubUserAccessToken: input.githubUserAccessToken,
-				},
-				user,
-			);
-			return decodeInspectSourceResponse(response);
+			try {
+				return toRepositoryInspection(
+					await platform.inspectSource(
+						toInspectSourceRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("InspectSource", cause);
+			}
 		},
 		async linkGitHubRepository(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"LinkGitHubRepository",
-				input,
-				user,
-			);
-			return decodeInspectSourceResponse(response);
+			try {
+				return toRepositoryInspection(
+					await platform.linkGitHubRepository(
+						toLinkGitHubRepositoryRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("LinkGitHubRepository", cause);
+			}
 		},
 		async createService(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"CreateService",
-				encodeCreateServiceRequest(input),
-				user,
-			);
-			return decodeServiceMessage(response);
+			try {
+				return toServiceRecord(
+					await platform.createService(
+						toCreateServiceRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("CreateService", cause);
+			}
 		},
 		async updateService(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"UpdateService",
-				encodeUpdateServiceRequest(input),
-				user,
-			);
-			return decodeServiceMessage(response);
+			try {
+				return toServiceRecord(
+					await platform.updateService(
+						toUpdateServiceRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("UpdateService", cause);
+			}
 		},
 		async applyDeploymentAction(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"ApplyDeploymentAction",
-				{
-					...input,
-					action: `DEPLOYMENT_ACTION_${input.action.toUpperCase()}`,
-				},
-				user,
-			);
-			return decodeServiceStatusMessage(response);
+			try {
+				return toServiceStatus(
+					await platform.applyDeploymentAction(
+						toApplyDeploymentActionRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ApplyDeploymentAction", cause);
+			}
 		},
 		async scaleService(user, input) {
-			const response = await unaryCall(runtime, "ScaleService", input, user);
-			return decodeServiceStatusMessage(response);
+			try {
+				return toServiceStatus(
+					await platform.scaleService(
+						toScaleServiceRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ScaleService", cause);
+			}
 		},
 		async discardServiceChanges(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"DiscardServiceChanges",
-				input,
-				user,
-			);
-			return decodeServiceMessage(response);
+			try {
+				return toServiceRecord(
+					await platform.discardServiceChanges(
+						toDiscardServiceChangesRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("DiscardServiceChanges", cause);
+			}
 		},
 		async deleteService(user, input) {
-			await unaryCall(runtime, "DeleteService", input, user);
+			try {
+				await platform.deleteService(
+					toDeleteServiceRequest(input.serviceId),
+					callOptions(user),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("DeleteService", cause);
+			}
 		},
 		async getService(user, input) {
-			const response = await unaryCall(runtime, "GetService", input, user);
-			return decodeServiceMessage(response);
+			try {
+				return toServiceRecord(
+					await platform.getService(
+						toGetServiceRequest(input.serviceId),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("GetService", cause);
+			}
 		},
 		async getServiceStatus(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"GetServiceStatus",
-				input,
-				user,
-			);
-			return decodeServiceStatusMessage(response);
+			try {
+				return toServiceStatus(
+					await platform.getServiceStatus(
+						toGetServiceStatusRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("GetServiceStatus", cause);
+			}
 		},
 		async waitForServiceStatus(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"GetServiceStatus",
-				input,
-				user,
-			);
-			return decodeIndexedServiceStatusResponse(response);
+			try {
+				return toIndexedServiceStatus(
+					await platform.getServiceStatus(
+						toGetServiceStatusRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("GetServiceStatus", cause);
+			}
 		},
 		async listServiceLogs(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"ListServiceLogs",
-				encodeListServiceLogsRequest(input),
-				user,
-			);
-			return decodeListServiceLogsResponse(response).lines.map(
-				({ environmentId: _environmentId, ...line }) => line,
-			);
+			try {
+				return toServiceLogLines(
+					await platform.listServiceLogs(
+						toListServiceLogsRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListServiceLogs", cause);
+			}
 		},
 		async listServiceDeployments(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"ListServiceDeployments",
-				input,
-				user,
-			);
-			return decodeListServiceDeploymentsResponse(response).deployments;
+			try {
+				return toDeploymentRecords(
+					await platform.listServiceDeployments(
+						toListServiceDeploymentsRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListServiceDeployments", cause);
+			}
 		},
 		async listDomainBindings(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"ListDomainBindings",
-				input,
-				user,
-			);
-			return decodeListDomainBindingsResponse(response);
+			try {
+				return toDomainBindings(
+					(
+						await platform.listDomainBindings(
+							toListDomainBindingsRequest(input.serviceId),
+							callOptions(user),
+						)
+					).bindings,
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("ListDomainBindings", cause);
+			}
 		},
 		async generateDomainBinding(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"GenerateDomainBinding",
-				input,
-				user,
-			);
-			return decodeDomainBindingMessage(response);
+			try {
+				return toDomainBinding(
+					await platform.generateDomainBinding(
+						toGenerateDomainBindingRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("GenerateDomainBinding", cause);
+			}
 		},
 		async createDomainBinding(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"CreateDomainBinding",
-				{
-					binding: {
-						hostname: input.hostname,
-						serviceId: input.serviceId,
-						targetPort: input.targetPort,
-					},
-				},
-				user,
-			);
-			return decodeDomainBindingMessage(response);
+			try {
+				return toDomainBinding(
+					await platform.createDomainBinding(
+						toCreateDomainBindingRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("CreateDomainBinding", cause);
+			}
 		},
 		async updateDomainBinding(user, input) {
-			const response = await unaryCall(
-				runtime,
-				"UpdateDomainBinding",
-				{
-					hostname: input.hostname,
-					binding: {
-						serviceId: input.serviceId,
-						targetPort: input.targetPort,
-					},
-				},
-				user,
-			);
-			return decodeDomainBindingMessage(response);
+			try {
+				return toDomainBinding(
+					await platform.updateDomainBinding(
+						toUpdateDomainBindingRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("UpdateDomainBinding", cause);
+			}
 		},
 		async deleteDomainBinding(user, input) {
-			await unaryCall(
-				runtime,
-				"DeleteDomainBinding",
-				{ hostname: input.hostname },
-				user,
-			);
+			try {
+				await platform.deleteDomainBinding(
+					toDeleteDomainBindingRequest(input.hostname),
+					callOptions(user),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("DeleteDomainBinding", cause);
+			}
 		},
 	};
-}
-
-function encodeAgentLifecycleState(state: string): string {
-	return `AGENT_LIFECYCLE_STATE_${state.toUpperCase()}`;
 }
 
 export async function ingestGitHubWebhook(
@@ -313,19 +463,9 @@ export async function ingestGitHubWebhook(
 	input: IngestGitHubWebhookInput,
 ): Promise<void> {
 	try {
-		await new Promise<void>((resolve, reject) => {
-			getOpsClient(runtime).IngestGitHubWebhook(
-				encodeIngestGitHubWebhookRequest(input),
-				new grpc.Metadata(),
-				(error) => {
-					if (error) {
-						reject(error);
-						return;
-					}
-					resolve();
-				},
-			);
-		});
+		await getOpsClient(runtime).ingestGitHubWebhook(
+			toIngestGitHubWebhookRequest(input),
+		);
 	} catch (cause) {
 		throw toPlatformGatewayError("IngestGitHubWebhook", cause);
 	}

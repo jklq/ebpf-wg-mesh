@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+import type { PlatformRuntimeConfig } from "#/lib/platform-grpc/client.server";
 import { createPlatformGateway } from "#/lib/platform-grpc/gateway.server";
-import type { PlatformRuntimeConfig } from "#/lib/platform-grpc/types.server";
 
-const unaryCall = vi.hoisted(() => vi.fn());
+const linkGitHubRepository = vi.hoisted(() => vi.fn());
 
 vi.mock("#/lib/platform-grpc/client.server", () => ({
-	getOpsClient: vi.fn(),
-	toPlatformGatewayError: vi.fn(),
-	unaryCall,
+	getPlatformClient: () => ({ linkGitHubRepository }),
+	getOpsClient: () => ({}),
+	userAssertionMetadata: () => ({}),
+	toPlatformGatewayError: (_operation: string, cause: unknown) => cause,
 }));
 
 function runtime(): PlatformRuntimeConfig {
@@ -24,7 +24,7 @@ function runtime(): PlatformRuntimeConfig {
 
 describe("GitHub repository authorization gateway", () => {
 	beforeEach(() => {
-		unaryCall.mockReset();
+		linkGitHubRepository.mockReset();
 	});
 
 	it("passes the OAuth token only in the transient link request", async () => {
@@ -34,8 +34,8 @@ describe("GitHub repository authorization gateway", () => {
 		const error = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => undefined);
-		unaryCall.mockResolvedValue({
-			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+		linkGitHubRepository.mockResolvedValue({
+			accessState: 1,
 			defaultBranch: "main",
 			dockerfileCandidates: ["Dockerfile"],
 			recommendedPorts: [8080],
@@ -55,15 +55,13 @@ describe("GitHub repository authorization gateway", () => {
 			},
 		);
 
-		expect(unaryCall).toHaveBeenCalledWith(
-			runtime(),
-			"LinkGitHubRepository",
-			{
+		expect(linkGitHubRepository).toHaveBeenCalledWith(
+			expect.objectContaining({
 				projectId: "project-1",
 				repositorySelector: "private/secret",
 				githubUserAccessToken: token,
-			},
-			user,
+			}),
+			{ headers: {} },
 		);
 		expect(JSON.stringify(result)).not.toContain(token);
 		expect(log).not.toHaveBeenCalled();

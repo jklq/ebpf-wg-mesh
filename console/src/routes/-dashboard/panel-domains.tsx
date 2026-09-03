@@ -99,7 +99,8 @@ export function PanelDomains({
 
 	const needsOwnershipPoll = bindings.some(
 		(binding) =>
-			!binding.platformGenerated && binding.ownershipState !== "verified",
+			!binding.platformGenerated &&
+			binding.ownershipState !== "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 	);
 
 	usePolling(
@@ -179,7 +180,7 @@ export function PanelDomains({
 			setBindings((prev) => [...prev, binding]);
 			setHostname("");
 			setSuccess(
-				binding.ownershipState === "verified"
+				binding.ownershipState === "DOMAIN_OWNERSHIP_STATE_VERIFIED"
 					? `${binding.hostname} is now live.`
 					: `${binding.hostname} added. Waiting for DNS to point at the platform hostname.`,
 			);

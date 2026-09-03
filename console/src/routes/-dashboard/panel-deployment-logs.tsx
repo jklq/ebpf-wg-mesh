@@ -103,7 +103,7 @@ export function DeploymentLogsView({
 		setLoading(true);
 		setError(undefined);
 		try {
-			const logType = filter === "all" ? undefined : filter;
+			const logType = filter === "all" ? undefined : logTypeFromFilter(filter);
 			const nextLines = await fetchServiceLogs({
 				data: {
 					serviceId: service.id,
@@ -240,7 +240,8 @@ export function DeploymentLogsView({
 									logBadgeToneClass(line.logType),
 								)}
 							>
-								{line.logType ?? "log"}
+								{line.logType?.replace("SERVICE_LOG_TYPE_", "").toLowerCase() ??
+									"log"}
 							</span>
 						</div>
 						<span className="whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">
@@ -260,14 +261,30 @@ export function DeploymentLogsView({
 
 function logBadgeToneClass(logType: string | undefined): string {
 	switch (logType) {
-		case "runtime":
+		case "SERVICE_LOG_TYPE_RUNTIME":
 			return "text-healthy";
-		case "build":
+		case "SERVICE_LOG_TYPE_BUILD":
 			return "text-building";
-		case "http":
-		case "network":
+		case "SERVICE_LOG_TYPE_HTTP":
+		case "SERVICE_LOG_TYPE_NETWORK":
 			return "text-muted";
 		default:
 			return "text-accent";
+	}
+}
+
+function logTypeFromFilter(
+	filter: Exclude<LogTypeFilter, "all">,
+):
+	| "SERVICE_LOG_TYPE_RUNTIME"
+	| "SERVICE_LOG_TYPE_BUILD"
+	| "SERVICE_LOG_TYPE_DEPLOY" {
+	switch (filter) {
+		case "runtime":
+			return "SERVICE_LOG_TYPE_RUNTIME";
+		case "build":
+			return "SERVICE_LOG_TYPE_BUILD";
+		case "deploy":
+			return "SERVICE_LOG_TYPE_DEPLOY";
 	}
 }

@@ -54,7 +54,7 @@ export function withSourceStage(
 			key: "source",
 			label: "Source",
 			detail: sha ? `${repo} @ ${sha}` : repo,
-			state: "succeeded",
+			state: "DEPLOYMENT_STAGE_STATE_SUCCEEDED",
 			startedAt: build?.queuedAt ?? build?.startedAt,
 			finishedAt: build?.startedAt ?? build?.queuedAt,
 		},
@@ -76,33 +76,38 @@ export function getDeploymentCardTone({
 	status?: DashboardDeploymentStatus;
 }): DeploymentCardTone | undefined {
 	if (
-		status?.state === "failed" ||
-		status?.state === "crashed" ||
-		status?.state === "cancelled"
+		status?.state === "DEPLOYMENT_STATE_FAILED" ||
+		status?.state === "DEPLOYMENT_STATE_CRASHED" ||
+		status?.state === "DEPLOYMENT_STATE_CANCELLED"
 	) {
 		return "failed";
 	}
-	if (status?.state === "active") {
+	if (status?.state === "DEPLOYMENT_STATE_ACTIVE") {
 		return "active";
 	}
-	if (status?.state === "removed") {
+	if (status?.state === "DEPLOYMENT_STATE_REMOVED") {
 		return "active";
 	}
-	if (status?.state === "draining" || status?.state === "completed") {
+	if (
+		status?.state === "DEPLOYMENT_STATE_DRAINING" ||
+		status?.state === "DEPLOYMENT_STATE_COMPLETED"
+	) {
 		return "draining";
 	}
 	if (
 		status &&
-		status.state !== "superseded" &&
-		status.state !== "unspecified"
+		status.state !== "DEPLOYMENT_STATE_SUPERSEDED" &&
+		status.state !== "DEPLOYMENT_STATE_UNSPECIFIED"
 	) {
 		return "running";
 	}
 
-	const failedStage = build?.stages?.find((stage) => stage.state === "failed");
+	const failedStage = build?.stages?.find(
+		(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_FAILED",
+	);
 	const failed =
 		Boolean(failedStage) ||
-		build?.state === "failed" ||
+		build?.state === "BUILD_STATE_FAILED" ||
 		Boolean(allocation?.message && !allocation.healthy && !active);
 
 	if (failed) {
@@ -117,7 +122,7 @@ export function getDeploymentCardTone({
 		return "active";
 	}
 
-	if (!isCurrent && build?.state === "succeeded") {
+	if (!isCurrent && build?.state === "BUILD_STATE_SUCCEEDED") {
 		return "draining";
 	}
 
@@ -133,19 +138,23 @@ export function stageStatusText(
 			stage.finishedAt.getTime() - stage.startedAt.getTime(),
 		);
 	}
-	if (stage.state === "running" && stage.startedAt && nowMs) {
+	if (
+		stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING" &&
+		stage.startedAt &&
+		nowMs
+	) {
 		return formatDuration(nowMs - stage.startedAt.getTime());
 	}
 	switch (stage.state) {
-		case "running":
+		case "DEPLOYMENT_STAGE_STATE_RUNNING":
 			return "In progress";
-		case "pending":
+		case "DEPLOYMENT_STAGE_STATE_PENDING":
 			return "Not started";
-		case "skipped":
+		case "DEPLOYMENT_STAGE_STATE_SKIPPED":
 			return "Skipped";
-		case "failed":
+		case "DEPLOYMENT_STAGE_STATE_FAILED":
 			return "Failed";
-		case "succeeded":
+		case "DEPLOYMENT_STAGE_STATE_SUCCEEDED":
 			return "Done";
 		default:
 			return "Waiting";
@@ -158,19 +167,22 @@ export function hasActiveDeployment(
 ): boolean {
 	if (status) {
 		switch (status.state) {
-			case "completed":
-			case "failed":
-			case "cancelled":
-			case "crashed":
-			case "removed":
-			case "superseded":
-			case "active":
+			case "DEPLOYMENT_STATE_COMPLETED":
+			case "DEPLOYMENT_STATE_FAILED":
+			case "DEPLOYMENT_STATE_CANCELLED":
+			case "DEPLOYMENT_STATE_CRASHED":
+			case "DEPLOYMENT_STATE_REMOVED":
+			case "DEPLOYMENT_STATE_SUPERSEDED":
+			case "DEPLOYMENT_STATE_ACTIVE":
 				return false;
 			default:
 				return true;
 		}
 	}
-	return Boolean(build?.state === "queued" || build?.state === "running");
+	return Boolean(
+		build?.state === "BUILD_STATE_QUEUED" ||
+			build?.state === "BUILD_STATE_RUNNING",
+	);
 }
 
 export function availableDeploymentActions(
@@ -181,51 +193,54 @@ export function availableDeploymentActions(
 	const image = record.imageDigest || record.status?.imageDigest || "";
 	const hasImmutableImage = /@sha256:[0-9a-f]{64}$/i.test(image);
 	const actions: Array<DashboardDeploymentAction> = [];
-	if (record.isCurrent && state === "active") {
-		actions.push("restart", "remove");
+	if (record.isCurrent && state === "DEPLOYMENT_STATE_ACTIVE") {
+		actions.push("DEPLOYMENT_ACTION_RESTART", "DEPLOYMENT_ACTION_REMOVE");
 	}
 	if (
 		record.isCurrent &&
 		state !== undefined &&
 		isInProgressDeploymentState(state) &&
-		state !== "active" &&
-		state !== "draining"
+		state !== "DEPLOYMENT_STATE_ACTIVE" &&
+		state !== "DEPLOYMENT_STATE_DRAINING"
 	) {
-		actions.push("cancel");
+		actions.push("DEPLOYMENT_ACTION_CANCEL");
 	}
 	if (
-		state === "failed" ||
-		state === "cancelled" ||
-		state === "crashed"
+		state === "DEPLOYMENT_STATE_FAILED" ||
+		state === "DEPLOYMENT_STATE_CANCELLED" ||
+		state === "DEPLOYMENT_STATE_CRASHED"
 	) {
-		actions.push("retry");
+		actions.push("DEPLOYMENT_ACTION_RETRY");
 	}
 	if (
 		!record.isCurrent &&
-		(state === "active" || state === "completed" || state === "draining") &&
+		(state === "DEPLOYMENT_STATE_ACTIVE" ||
+			state === "DEPLOYMENT_STATE_COMPLETED" ||
+			state === "DEPLOYMENT_STATE_DRAINING" ||
+			state === "DEPLOYMENT_STATE_REMOVED") &&
 		hasImmutableImage
 	) {
-		actions.push("rollback");
+		actions.push("DEPLOYMENT_ACTION_ROLLBACK");
 	}
 	if (hasImmutableImage && !deploymentInProgress) {
-		actions.push("exact_redeploy");
+		actions.push("DEPLOYMENT_ACTION_EXACT_REDEPLOY");
 	}
 	return actions;
 }
 
 export function actionLabel(action: DashboardDeploymentAction): string {
 	switch (action) {
-		case "restart":
+		case "DEPLOYMENT_ACTION_RESTART":
 			return "Restart";
-		case "exact_redeploy":
+		case "DEPLOYMENT_ACTION_EXACT_REDEPLOY":
 			return "Redeploy";
-		case "rollback":
+		case "DEPLOYMENT_ACTION_ROLLBACK":
 			return "Rollback";
-		case "cancel":
+		case "DEPLOYMENT_ACTION_CANCEL":
 			return "Cancel";
-		case "remove":
+		case "DEPLOYMENT_ACTION_REMOVE":
 			return "Remove";
-		case "retry":
+		case "DEPLOYMENT_ACTION_RETRY":
 			return "Retry";
 	}
 }

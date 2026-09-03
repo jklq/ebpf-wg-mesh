@@ -293,7 +293,11 @@ function homeState(
 
 function fastCreateResult(repositorySelector: string): CreateServiceFastResult {
 	return {
-		project: { id: "project-1", name: "test-project", kind: "user" },
+		project: {
+			id: "project-1",
+			name: "test-project",
+			kind: "PROJECT_KIND_USER",
+		},
 		environment: {
 			id: "environment-1",
 			projectId: "project-1",

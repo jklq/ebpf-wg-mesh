@@ -37,7 +37,10 @@ export function assertProductionDashboardConfig(input: {
 			message: "DASHBOARD_DEV_USERS are not allowed in production",
 		});
 	}
-	if (input.localDomainSuffix?.trim() || !usesSecureCookies(input.publicBaseURL)) {
+	if (
+		input.localDomainSuffix?.trim() ||
+		!usesSecureCookies(input.publicBaseURL)
+	) {
 		throw new DashboardConfigError({
 			message: "insecure cookies are not allowed in production",
 		});
