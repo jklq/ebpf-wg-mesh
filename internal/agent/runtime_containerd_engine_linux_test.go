@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +35,7 @@ func TestContainerdEngineCreateServeDestroy(t *testing.T) {
 	engine, cfg := newTestContainerdEngine(t)
 	allocID := uniqueRuntimeID("c")
 	marker := "marker-" + allocID
-	svc := busyboxHTTPService(allocID, 7, 1, "fd00:200:9::10", marker)
+	svc := busyboxHTTPService(allocID, 7, 1, "10.200.9.16", "fd00:200:0:9::10", marker)
 
 	cleanupContainerdService(t, engine, cfg, allocID)
 	if _, _, err := engine.EnsureService(ctx, svc); err != nil {
@@ -61,14 +63,16 @@ func TestContainerdEngineDrainSendsSIGTERMThenSIGKILLAfterDeadline(t *testing.T)
 
 	engine, cfg := newTestContainerdEngine(t)
 	allocID := uniqueRuntimeID("drain")
-	svc := busyboxHTTPService(allocID, 12, 1, "fd00:200:9::12", "waiting")
+	svc := busyboxHTTPService(allocID, 12, 1, "10.200.9.18", "fd00:200:0:9::12", "waiting")
+	// Join on newlines, not "; ": a "&" already terminates the command, so
+	// "httpd ... &; trap ..." is a shell syntax error and nothing ever starts.
 	svc.Spec.Runtime.Args = []string{strings.Join([]string{
 		"mkdir -p /tmp/www",
 		"printf waiting > /tmp/www/index.html",
 		"httpd -f -p [::]:8080 -h /tmp/www &",
 		"trap 'printf term > /tmp/www/index.html' TERM",
 		"while :; do sleep 1; done",
-	}, "; ")}
+	}, "\n")}
 
 	cleanupContainerdService(t, engine, cfg, allocID)
 	if _, _, err := engine.EnsureService(ctx, svc); err != nil {
@@ -110,8 +114,8 @@ func TestContainerdEngineGenerationReplaceAndNetnsProbeFailClosed(t *testing.T) 
 
 	engine, cfg := newTestContainerdEngine(t)
 	allocID := uniqueRuntimeID("g")
-	ip := "fd00:200:9::11"
-	first := busyboxHTTPService(allocID, 7, 3, ip, "gen-3-"+allocID)
+	ip := "fd00:200:0:9::11"
+	first := busyboxHTTPService(allocID, 7, 3, "10.200.9.17", ip, "gen-3-"+allocID)
 	first.Spec.Runtime.HealthCheck = &platformv1.HealthCheck{
 		Type:           platformv1.HealthCheck_TYPE_HTTP,
 		Path:           "/",
@@ -135,7 +139,7 @@ func TestContainerdEngineGenerationReplaceAndNetnsProbeFailClosed(t *testing.T) 
 	t.Setenv("no_proxy", "")
 
 	secondMarker := "gen-4-" + allocID
-	second := busyboxHTTPService(allocID, 7, 4, ip, secondMarker)
+	second := busyboxHTTPService(allocID, 7, 4, "10.200.9.17", ip, secondMarker)
 	second.Spec.Runtime.HealthCheck = first.Spec.Runtime.HealthCheck
 	status, created, err := engine.EnsureService(ctx, second)
 	if err != nil {
@@ -212,6 +216,22 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 	dataDir := t.TempDir()
 	cfg := config.AgentConfig{
 		Profile: config.ProfileDevelopment,
+		// The underlay advertise address stays IPv6 even though workloads are dual-stack.
+		Node: config.NodeConfig{
+			ID:            "node-" + uniqueRuntimeID("id"),
+			Name:          "runtime-test-node",
+			AdvertiseAddr: "fd00:44::10",
+		},
+		// The engine under test never dials the control plane; these only satisfy
+		// FinalizeAgent, which validates the whole agent config.
+		ControlPlane: config.ControlPlaneClientConfig{
+			Address: "[fd00:44::1]:8443",
+			TLS: config.ClientTLSConfig{
+				CAFile:         filepath.Join(dataDir, "ca.crt"),
+				BootstrapToken: "runtime-test-token",
+			},
+		},
+		Mesh:         config.MeshConfig{Host: config.HostConfig{IPv6: "fd00:44::10"}},
 		Runtime: config.RuntimeConfig{
 			DataDir:     dataDir,
 			VolumesDir:  filepath.Join(dataDir, "volumes"),
@@ -237,14 +257,15 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 	return engine, cfg
 }
 
-func busyboxHTTPService(allocationID string, identity uint32, generation int64, ip, marker string) *agentv1.DesiredService {
+func busyboxHTTPService(allocationID string, identity uint32, generation int64, ipv4, ipv6, marker string) *agentv1.DesiredService {
 	return &agentv1.DesiredService{
 		AllocationId:             allocationID,
 		ServiceId:                "svc-" + allocationID,
 		EnvironmentId:            "env-" + allocationID,
 		Name:                     "busybox-http",
 		NetworkIdentity:          identity,
-		PrivateIpv6:              ip,
+		PrivateIpv4:              ipv4,
+		PrivateIpv6:              ipv6,
 		DesiredSpecRevision:      1,
 		DesiredRolloutGeneration: generation,
 		Spec: &platformv1.ResolvedServiceSpec{
@@ -328,14 +349,17 @@ func httpGetInNamespace(t *testing.T, ctx context.Context, netnsPath, ip string,
 		body = got
 		return true, nil
 	}); err != nil {
-		t.Fatalf("HTTP GET from netns %s to [%s]:%d%s: %v", netnsPath, ip, port, path, err)
+		t.Fatalf("HTTP GET from netns %s to %s%s: %v", netnsPath, net.JoinHostPort(ip, strconv.Itoa(port)), path, err)
 	}
 	return body
 }
 
 func httpGetInNamespaceErr(ctx context.Context, netnsPath, ip string, port int, path string) (string, error) {
 	client := healthHTTPClient(2*time.Second, workloadNamespaceDialer(netnsPath))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://[%s]:%d%s", ip, port, path), nil)
+	// JoinHostPort brackets IPv6 literals and leaves IPv4 bare; formatting "[%s]"
+	// unconditionally produces an invalid URL for IPv4 workload addresses.
+	url := "http://" + net.JoinHostPort(ip, strconv.Itoa(port)) + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
