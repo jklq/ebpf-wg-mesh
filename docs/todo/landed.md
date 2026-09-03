@@ -2,6 +2,8 @@
 
 These prompts are done. They stay here so the work queue in [README.md](README.md) only lists open product-priority work. Old IDs are in parentheses.
 
+Current code still uses a full-cluster identity catalog, a full WireGuard mesh, a full desired-state snapshot on every agent, and a single Caddy. Those are not the architecture to preserve; [2.7](02-host-untrusted-code.md#27-envoy-ingress-fleet)–[2.12](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) replace them.
+
 ## Production configuration profile (0.4)
 
 Fail-closed production startup, separate liveness and readiness, sanitized startup contract, explicit development profile.
@@ -24,7 +26,7 @@ New allocations alongside the serving generation, ingress switch, graceful drain
 
 ## Deployment actions (1.6)
 
-Restart, exact redeploy, rollback, cancel, remove, retry. Audit events wait for [3.4](03-operate-multi-tenant.md#34-tamper-evident-audit-history).
+Restart, exact redeploy, rollback, cancel, remove, retry. Audit events wait for [3.4](03-operate-multi-tenant.md#34-audit-history).
 
 ## Agent fleet lifecycle (1.7)
 
@@ -32,7 +34,7 @@ Enroll / cordon / drain / retire, failure-domain placement, credential revocatio
 
 ## Production OCI sandbox (1.8)
 
-Single untrusted-workload sandbox, cgroup isolation, no customer-selectable privileged profile.
+Single untrusted-workload sandbox, cgroup isolation, no customer-selectable privileged profile. Ephemeral disk cap is [1.11](01-running-service.md#111-bounded-ephemeral-disk).
 
 ## Multi-replica control plane (2.1)
 

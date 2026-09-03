@@ -40,7 +40,7 @@ Prompt:
 Create a hierarchical quota model with operator defaults and workspace/project overrides for projects, environments, services, replicas, requested CPU and memory, volume bytes, domains, concurrent builds, build minutes, source storage, image retention, log ingestion, metrics cardinality, network egress, API rate, and webhook delivery. Enforce quotas transactionally at resource creation or scaling, reserve capacity during in-progress changes, and release it reliably on cancellation or tombstoned deletion according to documented semantics. Distinguish product quota from temporary physical-capacity shortage and return machine-readable errors with current use, limit, and remediation. Do not silently overcommit resources whose isolation depends on hard limits. Provide usage views and operator override/audit flows. Test concurrent admission, failed rollout release, project transfer, quota reduction below current use, and enforcement consistency across console and API.
 ```
 
-## 3.4 Tamper-evident audit history
+## 3.4 Audit history
 
 Was: 6.2
 Status: open
@@ -49,7 +49,7 @@ Depends on: 3.1. Deployment actions already exist and must emit events once this
 Prompt:
 
 ```text
-Record an audit event for every authenticated mutation and every security-relevant system action: membership, roles, secrets, service config, deploy actions, domains, volumes, API tokens, billing limits, key rotation, support access, backups, restores, policy overrides, and deletion. Store actor type and stable ID, effective role, workspace/project/environment/resource scope, request correlation ID, action, safe before/after summaries, source IP metadata where trusted, result, reason, and UTC timestamp. Never store plaintext secrets, tokens, source archives, or unrestricted request bodies. Make event creation atomic with the mutation through a transaction or durable outbox, append-only to ordinary callers, queryable with authorization and pagination, exportable, and subject to a documented retention policy. Add a hash-chain or external archival hook so operators can detect deletion or rewriting. Test redaction, failed attempts, system actors, retries, pagination, and tenant isolation.
+Record an audit event for every authenticated mutation and every security-relevant system action: membership, roles, secrets, service config, deploy actions, domains, volumes, API tokens, billing limits, key rotation, support access, backups, restores, policy overrides, and deletion. Store actor type and stable ID, effective role, workspace/project/environment/resource scope, request correlation ID, action, safe before/after summaries, source IP metadata where trusted, result, reason, and UTC timestamp. Never store plaintext secrets, tokens, source archives, or unrestricted request bodies. Make event creation atomic with the mutation through a transaction or durable outbox, append-only to ordinary callers, queryable with authorization and pagination, exportable, and subject to a documented retention policy. Test redaction, failed attempts, system actors, retries, pagination, and tenant isolation. Do not add a hash-chain or external archival product.
 ```
 
 ## 3.5 Workload and platform metrics
@@ -76,16 +76,16 @@ Prompt:
 Build console observability views backed by VictoriaMetrics for resource series and ClickHouse for logs/events. A service view should correlate deployments with CPU, memory, OOMs, restarts, network traffic, probe transitions, replica count, request volume, error rate, and latency where ingress can observe them. An environment view should aggregate services while allowing drill-down by allocation and deployment generation. Support fixed and custom time ranges, stable downsampling, timezone-aware labels, missing-data explanation, and links from a chart anomaly to the relevant deployment and filtered logs. Query authorization must be enforced server-side from membership, not only by UI filtering. Bound query range, cardinality, and response size to protect shared backends, and test that one project cannot infer another project’s series or labels.
 ```
 
-## 3.7 Explicit HTTP and TCP exposure
+## 3.7 Explicit HTTP exposure
 
 Was: 5.4
 Status: open
-Depends on: 2.7 so exposure is published through the ingress fleet.
+Depends on: 2.7 so exposure is published through the Envoy fleet.
 
 Prompt:
 
 ```text
-Model public endpoints separately from container ports. HTTP endpoints need hostname, target port, TLS policy, request-size and timeout limits, optional WebSocket support, and trusted proxy/header behavior. TCP endpoints need an allocated public port or hostname/SNI routing strategy supported by the configured ingress provider, target port, idle timeout, and connection limits. Reject exposure of undeclared or unhealthy ports and ensure private-only services remain unreachable publicly. Record enough ingress metrics in VictoriaMetrics to show request count, response class, latency, active connections, bytes, and rejected traffic without storing sensitive paths by default. Add console flows that explain the security and billing effect of exposure, plus end-to-end tests for HTTP, WebSocket, long-lived TCP, TLS, replica balancing, drain behavior, and cross-project isolation.
+Model public HTTP endpoints separately from container ports: hostname, target port, TLS policy, request-size and timeout limits, optional WebSocket support, and trusted proxy/header behavior. Reject exposure of undeclared or unhealthy ports and ensure private-only services remain unreachable publicly. Record enough Envoy metrics in VictoriaMetrics to show request count, response class, latency, and rejected traffic without storing sensitive paths by default. Add console flows that explain the effect of exposure, plus end-to-end tests for HTTP, WebSocket, TLS, replica balancing, drain behavior, and cross-project isolation. Do not add public TCP/SNI routing in this item.
 ```
 
 ## 3.8 Egress policy
@@ -104,24 +104,24 @@ Add per-environment outbound policy enforced close to workloads. The default pro
 
 Was: 3.4
 Status: open
-Depends on: 2.1 for webhook delivery, 3.5 for metric monitors. Volume and billing monitors stay unimplemented until those products exist.
+Depends on: 2.1 for webhook delivery, 3.5 for metric monitors.
 
 Prompt:
 
 ```text
-Create persisted monitors for deployment failure, crash loop, no healthy replica, CPU saturation, memory/OOM pressure, volume capacity, build queue delay, build failure, agent loss, ingress sync failure, log loss, metrics ingestion lag, backup staleness, and billing-limit approach. Evaluate metric monitors from VictoriaMetrics and state/event monitors from authoritative control-plane data, with configurable duration, threshold, severity, deduplication key, cooldown, and resolved notifications. Deliver in-app and email notifications through provider interfaces, plus project webhooks signed with a rotating secret. Webhook delivery needs an outbox, attempts, exponential retry, terminal failure visibility, replay, SSRF-safe URL validation, and no secret-bearing payloads. Give users test controls and event filters. Add deterministic rule tests and integration tests for firing, deduplication, resolution, retry, replay, and unauthorized configuration.
+Create persisted monitors for deployment failure, crash loop, no healthy replica, CPU saturation, memory/OOM pressure, build queue delay, build failure, agent loss, ingress sync failure, log loss, and metrics ingestion lag. Evaluate metric monitors from VictoriaMetrics and state/event monitors from authoritative control-plane data, with configurable duration, threshold, severity, deduplication key, cooldown, and resolved notifications. Deliver in-app and email notifications through provider interfaces, plus project webhooks signed with a rotating secret. Webhook delivery needs an outbox, attempts, exponential retry, terminal failure visibility, replay, SSRF-safe URL validation, and no secret-bearing payloads. Give users test controls and event filters. Add deterministic rule tests and integration tests for firing, deduplication, resolution, retry, replay, and unauthorized configuration. Do not stub volume, backup, or billing monitors here.
 ```
 
 ## 3.10 Operator control room
 
 Was: 3.5
 Status: open
-Depends on: 2.7, 2.11, 3.5. Backup freshness waits for 3.11.
+Depends on: 2.7, 2.13, 3.5. Backup freshness waits for 3.11.
 
 Prompt:
 
 ```text
-Create an operator-only view and API that summarize control-plane replica health, CockroachDB and VictoriaMetrics reachability, ClickHouse ingestion, object storage, registry auth, builder capacity, build queue age, agent heartbeat age, allocation capacity, ingress convergence, certificate expiry, backup freshness, notification failures, and garbage-collection backlog. Every degraded item must identify the affected scope and link to a runbook without exposing customer secrets. Add a diagnostic bundle command that gathers sanitized configuration shape, component versions, recent platform events, relevant metrics summaries, and bounded logs for a selected time and resource scope; bundles must be inspectable before export and carry an expiry. Define severity and ownership for each signal so the page is actionable instead of a wall of green checks. Exercise degraded dependencies in the local/VM harness.
+Create an operator-only view and API that summarize control-plane replica health, CockroachDB and VictoriaMetrics reachability, ClickHouse ingestion, object storage, registry auth, builder capacity, build queue age, agent heartbeat age, allocation capacity, Envoy convergence, certificate expiry, notification failures, and garbage-collection backlog. Every degraded item must identify the affected scope and link to a runbook without exposing customer secrets. Define severity and ownership for each signal so the page is actionable instead of a wall of green checks. Exercise degraded dependencies in the local/VM harness. Do not add a diagnostic-bundle product in this item.
 ```
 
 ## 3.11 Platform backup and restore
@@ -200,12 +200,12 @@ Define the production requirements and integration contract for the external OCI
 
 Was: 9.2
 Status: open
-Depends on: 2.11. Cover the components that exist; add stateful two-writer cases when 6.4 lands.
+Depends on: 2.13. Cover the components that exist; add stateful two-writer cases when 6.4 lands.
 
 Prompt:
 
 ```text
-Create a focused fault suite against the production-like topology. Kill and restart control-plane replicas, Cockroach nodes, agents, ingress instances, builders, VictoriaMetrics, ClickHouse, object storage, registry, and network links at meaningful transition points. Verify that active healthy workloads stay reachable within the stated availability target, old deployment generations remain serving during failed rollouts, stateless replicas reschedule, stateful workloads never gain two writers, durable work resumes without duplicate effects, logs/metrics report bounded gaps honestly, and queued actions do not disappear. Include clock skew and expired credentials where feasible. Record recovery time and invariant failures as artifacts. Keep scenarios few and high-value rather than creating a combinatorial chaos framework.
+Create a focused fault suite against the production-like topology. Kill and restart control-plane replicas, Cockroach nodes, agents, Envoy instances, builders, VictoriaMetrics, ClickHouse, object storage, registry, and network links at meaningful transition points. Verify that active healthy workloads stay reachable, old deployment generations remain serving during failed rollouts, stateless replicas reschedule, durable work resumes without duplicate effects, logs/metrics report bounded gaps honestly, and queued actions do not disappear. Include clock skew and expired credentials where feasible. Record recovery time and invariant failures as artifacts. Keep scenarios few and high-value rather than creating a combinatorial chaos framework. Do not invent stateful two-writer cases until 6.4 exists.
 ```
 
 ## 3.18 Load, scale, and noisy-neighbor limits
@@ -217,5 +217,5 @@ Depends on: 3.3, 2.11
 Prompt:
 
 ```text
-Define initial supported scale targets for workspaces, projects, environments, services, allocations, agents, concurrent builds, desired-state snapshot size, domains, log lines per second, VictoriaMetrics samples/cardinality, API requests, and ingress connections. Build reproducible load tests that exercise control-plane reads and mutations, scheduler placement, agent reconnect storms, rollout fan-out, log/metrics ingestion, deployment history, billing rollups, and console-critical queries at those targets. Measure latency percentiles, error rate, Cockroach contention, queue age, memory, CPU, and recovery after load. Include one intentionally noisy tenant and prove quotas protect others. Turn discovered cliffs into enforced product limits or engineering fixes; publish the limits and fail admission before undefined behavior.
+Define initial supported scale targets for workspaces, projects, environments, services, allocations, agents, concurrent builds, per-node alloc-set size, domains, log lines per second, VictoriaMetrics samples/cardinality, API requests, and ingress connections. Build reproducible load tests that exercise control-plane reads and mutations, scheduler placement, agent reconnect storms, rollout fan-out, log/metrics ingestion, deployment history, and console-critical queries at those targets. Measure latency percentiles, error rate, Cockroach contention, queue age, memory, CPU, and recovery after load. Include one intentionally noisy tenant and prove quotas protect others. Turn discovered cliffs into enforced product limits or engineering fixes; publish the limits and fail admission before undefined behavior. Do not require billing rollups in this item.
 ```

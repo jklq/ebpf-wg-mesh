@@ -64,26 +64,4 @@ Prompt:
 Separate ordinary operator health access from exceptional customer-resource support access. Operators should diagnose aggregate platform state without automatically reading customer logs, configuration, source metadata, or secrets. Any support access to a customer scope requires an eligible operator role, ticket/reason, bounded duration, least-privilege capability, prominent customer-visible audit event, and automatic expiry; secret plaintext remains unavailable unless a separate break-glass policy explicitly permits it. Break-glass actions require strong re-authentication, a second approver where configured, immediate security notification, and immutable audit export. Do not implement silent impersonation. Add support-session inventory and revocation, ensure all downstream API and query calls retain the true operator actor plus delegated customer scope, and test expiry, revocation, attempted scope expansion, and audit redaction.
 ```
 
-## 5.6 Privacy and security evidence
 
-Was: 6.10
-Status: open
-Depends on: the controls it documents, not on certifications.
-
-Prompt:
-
-```text
-Document the platform’s data flow, subprocessors/provider classes, encryption boundaries, regional storage behavior, retention, deletion, backup, incident response, access control, and shared-responsibility model directly from implemented configuration and controls. Generate evidence reports for access reviews, key rotation, backup/restore drills, vulnerability remediation, release provenance, availability, support access, audit retention, and incident exercises without claiming a certification the operator has not obtained. Add configurable data-region constraints that admission and provider selection can enforce when the installation supports them; reject unsupported combinations rather than presenting a cosmetic region field. Provide versioned customer-facing security and privacy documentation plus an operator evidence-export command whose output is sanitized and integrity-protected. Treat formal certifications, legal terms, DPA, and insurance as organizational work outside this repository, but make the technical evidence they require reproducible.
-```
-
-## 5.7 Optional upstream edge provider
-
-Was: 5.6
-Status: open
-Depends on: 2.8. Direct ingress remains the default.
-
-Prompt:
-
-```text
-Define an optional EdgeProvider integration for deployments that need CDN, WAF, DDoS protection, under-attack mode, or geographically distributed TLS entry. The platform should continue to own domains, origin routing, health, authorization, and product state while delegating global edge capabilities to an operator-selected provider such as Cloudflare. Provision and reconcile provider resources idempotently from domain settings, use scoped credentials, validate origin authentication, surface provider status and limits, and tear resources down only after the deletion grace period. Keep a direct-ingress mode for installations that do not configure an edge provider. Do not implement BGP, a CDN cache, or a WAF engine in this repository. Test provider outage, stale credentials, manual provider drift, origin bypass prevention, and safe disablement.
-```

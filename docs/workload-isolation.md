@@ -31,7 +31,10 @@ images. The agent:
   swap), `memory.oom.group=1`, and a raised workload OOM score
 
 Overlay writes are ephemeral and disappear with the container. Persistent data
-belongs on the platform volume mounted at `PLATFORM_VOLUME_DIR`.
+belongs on the platform volume mounted at `PLATFORM_VOLUME_DIR`. Each
+allocation's ephemeral overlay is capped at 1 GiB once
+[docs/todo/01-running-service.md](todo/01-running-service.md#111-bounded-ephemeral-disk)
+lands; until then overlay growth can fill the host.
 
 ## Agent and runtime reservation
 
