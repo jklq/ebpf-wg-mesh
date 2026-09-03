@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.26.5
 
 require (
+	connectrpc.com/connect v1.20.0
 	github.com/1password/onepassword-sdk-go v0.4.1-beta.1
 	github.com/ClickHouse/clickhouse-go/v2 v2.45.0
 	github.com/cilium/ebpf v0.20.0
