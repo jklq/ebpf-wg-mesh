@@ -51,9 +51,8 @@ func (s *Store) placementCandidatesQuerier(ctx context.Context, q serviceQueryer
 			 GROUP BY a.agent_id
 		   ) AS stats
 		     ON stats.agent_id = a.id
-		  WHERE a.last_seen_at > $1 AND a.lifecycle_state = 'active'
+		  WHERE a.last_seen_at > statement_timestamp() - INTERVAL '30 seconds' AND a.lifecycle_state = 'active'
 		  ORDER BY COALESCE(stats.service_count, 0) ASC, a.id ASC`,
-		time.Now().UTC().Add(-30*time.Second),
 	)
 	if err != nil {
 		return nil, err

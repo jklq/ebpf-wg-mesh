@@ -283,6 +283,153 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	}
 }
 
+func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
+	t.Parallel()
+
+	store, projectID, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState(commit-1): %v", err)
+	}
+	build1, err := store.enqueueBuildForService(ctx, "user-1", projectID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService(build1): %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	if err := store.completeBuild(ctx, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+		t.Fatalf("completeBuild(build1): %v", err)
+	}
+	assertRolloutState(t, store, service.ID, 1, rolloutStateInProgress, "")
+
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState(commit-2): %v", err)
+	}
+	build2, err := store.enqueueBuildForService(ctx, "user-1", projectID, service.ID, "commit-2")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService(build2): %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
+	if err := store.completeBuild(ctx, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
+		t.Fatalf("completeBuild(build2): %v", err)
+	}
+
+	assertRolloutState(t, store, service.ID, 1, rolloutStateSuperseded, "newer rollout")
+	assertRolloutState(t, store, service.ID, 2, rolloutStateInProgress, "")
+	current, err := store.serviceByID(ctx, "user-1", projectID, service.ID)
+	if err != nil {
+		t.Fatalf("serviceByID: %v", err)
+	}
+	if current.RolloutGeneration != 2 || current.ResolvedImage != "registry.example.test/platform/web@sha256:222" {
+		t.Fatalf("latest build was not scheduled: generation=%d image=%q", current.RolloutGeneration, current.ResolvedImage)
+	}
+	if old := allocationForGeneration(t, store, service.ID, 1); len(old) != 0 {
+		t.Fatalf("superseded rollout retained unrouted allocations: %+v", old)
+	}
+	if next := allocationForGeneration(t, store, service.ID, 2); len(next) != 1 || next[0].RolloutState != allocationRolloutStarting {
+		t.Fatalf("new rollout allocations = %+v, want one starting allocation", next)
+	}
+	var deploymentState string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT state FROM deployments WHERE service_id = $1 AND build_id = $2`,
+		service.ID, build2.ID,
+	).Scan(&deploymentState); err != nil {
+		t.Fatalf("load build2 deployment: %v", err)
+	}
+	if deploymentState == deploymentStateFailed {
+		t.Fatal("successful build was rejected")
+	}
+}
+
+func TestSupersededDeploymentDoesNotBlockRolloutFinalization(t *testing.T) {
+	t.Parallel()
+
+	store, projectID, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState(commit-1): %v", err)
+	}
+	build1, err := store.enqueueBuildForService(ctx, "user-1", projectID, service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForService(build1): %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	if err := store.completeBuild(ctx, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+		t.Fatalf("completeBuild(build1): %v", err)
+	}
+	target := allocationForGeneration(t, store, service.ID, 1)
+	if len(target) != 1 {
+		t.Fatalf("rollout 1 allocations = %+v, want one", target)
+	}
+	markRolloutAllocationReady(t, store, target[0])
+
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState(commit-2): %v", err)
+	}
+	if _, err := store.enqueueBuildForService(ctx, "user-1", projectID, service.ID, "commit-2"); err != nil {
+		t.Fatalf("enqueueBuildForService(build2): %v", err)
+	}
+	if _, err := store.advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("advance superseded deployment rollout: %v", err)
+	}
+	assertRolloutState(t, store, service.ID, 1, rolloutStateSucceeded, "")
+}
+
+func TestConcurrentBuildEnqueuesHaveOneCurrentWinner(t *testing.T) {
+	t.Parallel()
+
+	store, projectID, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+	for _, commit := range []string{"commit-1", "commit-2"} {
+		if err := seedReadySourceState(t, store, service, commit); err != nil {
+			t.Fatalf("seedReadySourceState(%s): %v", commit, err)
+		}
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, commit := range []string{"commit-1", "commit-2"} {
+		commit := commit
+		go func() {
+			<-start
+			_, err := store.enqueueBuildForService(ctx, "user-1", projectID, service.ID, commit)
+			errs <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent enqueue: %v", err)
+		}
+	}
+
+	var queued, superseded int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT count(*) FILTER (WHERE state = $1), count(*) FILTER (WHERE state = $2)
+		   FROM build_runs WHERE service_id = $3`,
+		buildStateQueued, buildStateSuperseded, service.ID,
+	).Scan(&queued, &superseded); err != nil {
+		t.Fatalf("count build states: %v", err)
+	}
+	if queued != 1 || superseded != 1 {
+		t.Fatalf("build states: queued=%d superseded=%d, want one of each", queued, superseded)
+	}
+	var currentBuildID, queuedBuildID string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT d.build_id, b.id
+		   FROM deployments d
+		   JOIN build_runs b ON b.service_id = d.service_id AND b.state = $1
+		  WHERE d.service_id = $2 AND d.is_current = TRUE`,
+		buildStateQueued, service.ID,
+	).Scan(&currentBuildID, &queuedBuildID); err != nil {
+		t.Fatalf("load current queued deployment: %v", err)
+	}
+	if currentBuildID != queuedBuildID {
+		t.Fatalf("current deployment build=%q, queued build=%q", currentBuildID, queuedBuildID)
+	}
+}
+
 func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	t.Parallel()
 
@@ -631,6 +778,37 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 
 func seedReadySourceState(t *testing.T, store *Store, service serviceRecord, commitSHA string) error {
 	return seedReadySourceStateWithMetadata(t, store, service, commitSHA, "", "")
+}
+
+func newRepoBuildTestService(t *testing.T) (*Store, string, serviceRecord) {
+	t.Helper()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	return store, projects[0].ID, service
 }
 
 func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service serviceRecord, commitSHA, commitMessage, commitAuthor string) error {

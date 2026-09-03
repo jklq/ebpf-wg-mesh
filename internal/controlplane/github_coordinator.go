@@ -394,7 +394,9 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		)
 	}
 	if committed {
-		c.events.Publish(committedService.EnvironmentID)
+		if _, err := c.events.Publish(ctx, committedService.EnvironmentID); err != nil {
+			return fmt.Errorf("publish source event: %w", err)
+		}
 	}
 	return nil
 }

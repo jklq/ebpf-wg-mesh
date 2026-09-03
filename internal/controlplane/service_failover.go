@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 )
 
@@ -14,6 +15,7 @@ type serviceFailoverResult struct {
 	MovedServiceIDs   []string
 	BlockedServiceIDs []string
 	NotifyAgentIDs    []string
+	EnvironmentIDs    []string
 	IngressChanged    bool
 }
 
@@ -53,11 +55,46 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			return err
 		}
 
+		cutoff := now.UTC().Add(-unhealthyThreshold)
+		staleRows, err := tx.QueryContext(ctx, `UPDATE agents
+			SET state_before_unavailable = lifecycle_state,
+			    lifecycle_state = $1,
+			    updated_at = $2
+			WHERE lifecycle_state IN ($3, $4, $5) AND last_seen_at <= $6
+			RETURNING id`, agentStateUnavailable, now.UTC(), agentStateActive, agentStateCordoned, agentStateDraining, cutoff)
+		if err != nil {
+			return err
+		}
+		var staleAgentIDs []string
+		for staleRows.Next() {
+			var agentID string
+			if err := staleRows.Scan(&agentID); err != nil {
+				_ = staleRows.Close()
+				return err
+			}
+			staleAgentIDs = append(staleAgentIDs, agentID)
+		}
+		if err := staleRows.Err(); err != nil {
+			_ = staleRows.Close()
+			return err
+		}
+		if err := staleRows.Close(); err != nil {
+			return err
+		}
+
 		agents, services, err := s.schedulerSnapshotTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if len(services) == 0 {
+			if len(staleAgentIDs) > 0 {
+				if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+					return err
+				}
+				for _, agent := range agents {
+					result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)
+				}
+			}
 			return nil
 		}
 
@@ -66,7 +103,6 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			return err
 		}
 
-		cutoff := now.UTC().Add(-unhealthyThreshold)
 		healthyAgents := make(map[string]agentRecord, len(agents))
 		for _, agent := range agents {
 			if agent.LastSeenAt.After(cutoff) && agent.LifecycleState == agentStateActive {
@@ -80,6 +116,7 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 
 		moved := false
 		alreadyBumped := false
+		changedEnvironments := make(map[string]struct{})
 		for i := range allocations {
 			allocation := allocations[i]
 			service := servicesByID[allocation.ServiceID]
@@ -97,6 +134,7 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 				continue
 			}
 			result.IngressChanged = true
+			changedEnvironments[service.EnvironmentID] = struct{}{}
 			moved = true
 			if replacement.Bumped {
 				alreadyBumped = true
@@ -110,15 +148,19 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			}
 		}
 
-		if moved && !alreadyBumped {
+		if (moved || len(staleAgentIDs) > 0) && !alreadyBumped {
 			if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
 				return err
 			}
 		}
-		if moved {
+		if moved || len(staleAgentIDs) > 0 {
 			for _, agent := range agents {
 				result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)
 			}
+			for environmentID := range changedEnvironments {
+				result.EnvironmentIDs = append(result.EnvironmentIDs, environmentID)
+			}
+			sort.Strings(result.EnvironmentIDs)
 		}
 		return nil
 	})
@@ -195,16 +237,16 @@ type ServiceFailoverReconciler struct {
 	store              *Store
 	notifier           failoverNotifier
 	ingress            failoverIngress
+	events             *PlatformEvents
 	interval           time.Duration
 	unhealthyThreshold time.Duration
 	now                func() time.Time
 }
 
-func NewServiceFailoverReconciler(store *Store, notifier failoverNotifier, ingress failoverIngress, interval, unhealthyThreshold time.Duration) *ServiceFailoverReconciler {
+func NewServiceFailoverReconciler(store *Store, notifier failoverNotifier, ingress failoverIngress, events *PlatformEvents, interval, unhealthyThreshold time.Duration) *ServiceFailoverReconciler {
 	return &ServiceFailoverReconciler{
-		store: store, notifier: notifier, ingress: ingress,
+		store: store, notifier: notifier, ingress: ingress, events: events,
 		interval: interval, unhealthyThreshold: unhealthyThreshold,
-		now: time.Now,
 	}
 }
 
@@ -212,7 +254,15 @@ func (r *ServiceFailoverReconciler) Reconcile(ctx context.Context) (serviceFailo
 	if r == nil || r.store == nil {
 		return serviceFailoverResult{}, nil
 	}
-	result, err := r.store.failoverUnhealthyServices(ctx, r.now().UTC(), r.unhealthyThreshold)
+	now, err := databaseTime(ctx, r.store.db)
+	if r.now != nil {
+		now = r.now().UTC()
+		err = nil
+	}
+	if err != nil {
+		return serviceFailoverResult{}, fmt.Errorf("read database time: %w", err)
+	}
+	result, err := r.store.failoverUnhealthyServices(ctx, now, r.unhealthyThreshold)
 	if err != nil {
 		return serviceFailoverResult{}, err
 	}
@@ -223,6 +273,13 @@ func (r *ServiceFailoverReconciler) Reconcile(ctx context.Context) (serviceFailo
 	}
 	if result.IngressChanged && r.ingress != nil {
 		r.ingress.RequestSync()
+	}
+	for _, environmentID := range result.EnvironmentIDs {
+		if r.events != nil {
+			if _, err := r.events.Publish(ctx, environmentID); err != nil {
+				return serviceFailoverResult{}, fmt.Errorf("publish failover event: %w", err)
+			}
+		}
 	}
 	return result, nil
 }

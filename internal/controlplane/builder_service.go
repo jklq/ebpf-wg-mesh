@@ -91,7 +91,9 @@ func (s *BuilderService) ClaimBuild(ctx context.Context, req *platformv1.ClaimBu
 		return &platformv1.BuildJob{}, nil
 	}
 	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
-	s.events.Publish(build.EnvironmentID)
+	if _, err := s.events.Publish(ctx, build.EnvironmentID); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish build event: %v", err)
+	}
 	if s.store == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
@@ -346,7 +348,9 @@ func (s *BuilderService) CompleteBuild(ctx context.Context, req *platformv1.Comp
 			s.notifier.Notify(agentID)
 		}
 	}
-	s.events.Publish(build.EnvironmentID)
+	if _, err := s.events.Publish(ctx, build.EnvironmentID); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish build event: %v", err)
+	}
 	return &emptypb.Empty{}, nil
 }
 

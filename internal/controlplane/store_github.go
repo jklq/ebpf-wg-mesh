@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -296,7 +297,10 @@ func (s *Store) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, ev
 func (s *Store) claimNextGitHubWebhookDelivery(ctx context.Context, processorID string, staleAfter time.Duration) (githubWebhookDeliveryRecord, error) {
 	var rec githubWebhookDeliveryRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC()
+		now, err := databaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if staleAfter > 0 {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE github_webhook_deliveries
@@ -327,7 +331,7 @@ func (s *Store) claimNextGitHubWebhookDelivery(ctx context.Context, processorID 
 		rec.State = githubWebhookStateProcessing
 		rec.ProcessorID = processorID
 		rec.UpdatedAt = now
-		_, err := tx.ExecContext(ctx,
+		_, err = tx.ExecContext(ctx,
 			`UPDATE github_webhook_deliveries
 			    SET state = $1,
 			        processor_id = $2,
@@ -343,24 +347,33 @@ func (s *Store) claimNextGitHubWebhookDelivery(ctx context.Context, processorID 
 	return rec, nil
 }
 
-func (s *Store) completeGitHubWebhookDelivery(ctx context.Context, deliveryID string, processErr error) error {
+func (s *Store) completeGitHubWebhookDelivery(ctx context.Context, deliveryID, processorID string, processErr error) error {
 	state := githubWebhookStateProcessed
 	lastError := ""
 	if processErr != nil {
 		state = githubWebhookStateFailed
 		lastError = processErr.Error()
 	}
-	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE github_webhook_deliveries
 		    SET state = $1,
 		        last_error = $2,
-		        processed_at = $3,
-		        updated_at = $3
-		  WHERE id = $4`,
-		state, lastError, now, deliveryID,
+		        processed_at = statement_timestamp(),
+		        updated_at = statement_timestamp()
+		  WHERE id = $3 AND state = $4 AND processor_id = $5`,
+		state, lastError, deliveryID, githubWebhookStateProcessing, processorID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: webhook delivery %s", errLeaseLost, deliveryID)
+	}
+	return nil
 }
 
 func (s *Store) enqueueGitHubWorkItem(ctx context.Context, rec githubWorkItemRecord) (bool, error) {
@@ -407,7 +420,10 @@ func (s *Store) enqueueGitHubWorkItemTx(ctx context.Context, tx *sql.Tx, rec git
 func (s *Store) claimNextGitHubWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (githubWorkItemRecord, error) {
 	var rec githubWorkItemRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC()
+		now, err := databaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if staleAfter > 0 {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE github_work_items
@@ -455,7 +471,7 @@ func (s *Store) claimNextGitHubWorkItem(ctx context.Context, processorID string,
 		rec.State = githubWorkStateProcessing
 		rec.ProcessorID = processorID
 		rec.UpdatedAt = now
-		_, err := tx.ExecContext(ctx,
+		_, err = tx.ExecContext(ctx,
 			`UPDATE github_work_items
 			    SET state = $1,
 			        processor_id = $2,
@@ -471,53 +487,76 @@ func (s *Store) claimNextGitHubWorkItem(ctx context.Context, processorID string,
 	return rec, nil
 }
 
-func (s *Store) completeGitHubWorkItem(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM github_work_items WHERE id = $1`, id)
-	return err
+func (s *Store) completeGitHubWorkItem(ctx context.Context, id, processorID string) error {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM github_work_items WHERE id = $1 AND state = $2 AND processor_id = $3`,
+		id, githubWorkStateProcessing, processorID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: github work item %s", errLeaseLost, id)
+	}
+	return nil
 }
 
-func (s *Store) releaseGitHubWorkItem(ctx context.Context, id string, processErr error, retryAfter time.Duration) error {
-	now := time.Now().UTC()
+func (s *Store) releaseGitHubWorkItem(ctx context.Context, id, processorID string, processErr error, retryAfter time.Duration) error {
 	message := ""
 	if processErr != nil {
 		message = processErr.Error()
 	}
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE github_work_items
 		    SET state = $1,
 		        processor_id = '',
 		        last_error = $2,
 		        attempt_count = attempt_count + 1,
-		        available_at = $3,
-		        updated_at = $4
-		  WHERE id = $5`,
+		        available_at = statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond',
+		        updated_at = statement_timestamp()
+		  WHERE id = $4 AND state = $5 AND processor_id = $6`,
 		githubWorkStatePending,
 		message,
-		now.Add(retryAfter),
-		now,
+		retryAfter.Microseconds(),
 		id,
+		githubWorkStateProcessing,
+		processorID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: github work item %s", errLeaseLost, id)
+	}
+	return nil
 }
 
 func (s *Store) recoverGitHubWorkItems(ctx context.Context, staleAfter time.Duration) error {
 	if staleAfter <= 0 {
 		return nil
 	}
-	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE github_work_items
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE github_work_items
 		    SET state = $1,
 		        processor_id = '',
-		        updated_at = $2
+		        updated_at = statement_timestamp()
 		  WHERE state = $3
-		    AND updated_at < $4`,
-		githubWorkStatePending,
-		now,
-		githubWorkStateProcessing,
-		now.Add(-staleAfter),
-	)
-	return err
+		    AND updated_at < statement_timestamp() - $2::INT8 * INTERVAL '1 microsecond'`,
+			githubWorkStatePending,
+			staleAfter.Microseconds(),
+			githubWorkStateProcessing,
+		)
+		return err
+	})
 }
 
 func (s *Store) upsertGitHubRepositorySnapshot(ctx context.Context, rec githubRepositorySnapshotRecord) error {
@@ -609,20 +648,20 @@ func (s *Store) recoverGitHubWebhookDeliveries(ctx context.Context, staleAfter t
 	if staleAfter <= 0 {
 		return nil
 	}
-	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE github_webhook_deliveries
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE github_webhook_deliveries
 		    SET state = $1,
 		        processor_id = '',
-		        updated_at = $2
+		        updated_at = statement_timestamp()
 		  WHERE state = $3
-		    AND updated_at < $4`,
-		githubWebhookStatePending,
-		now,
-		githubWebhookStateProcessing,
-		now.Add(-staleAfter),
-	)
-	return err
+		    AND updated_at < statement_timestamp() - $2::INT8 * INTERVAL '1 microsecond'`,
+			githubWebhookStatePending,
+			staleAfter.Microseconds(),
+			githubWebhookStateProcessing,
+		)
+		return err
+	})
 }
 
 func githubFullName(owner, repo string) string {

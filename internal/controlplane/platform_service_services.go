@@ -67,7 +67,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
-	s.events.Publish(service.EnvironmentID)
+	if _, err := s.events.Publish(ctx, service.EnvironmentID); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoService(service), nil
 }
 
@@ -137,7 +139,9 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
-	s.events.Publish(service.EnvironmentID)
+	if _, err := s.events.Publish(ctx, service.EnvironmentID); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoService(service), nil
 }
 
@@ -193,7 +197,10 @@ func (s *PlatformService) RedeployService(ctx context.Context, req *platformv1.R
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate redeploy status: %v", err)
 	}
-	index := s.events.Publish(currentService.EnvironmentID)
+	index, err := s.events.Publish(ctx, currentService.EnvironmentID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoServiceStatus(currentService, allocations, index), nil
 }
 
@@ -241,7 +248,10 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate deployment action status: %v", err)
 	}
-	index := s.events.Publish(currentService.EnvironmentID)
+	index, err := s.events.Publish(ctx, currentService.EnvironmentID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoServiceStatus(currentService, allocations, index), nil
 }
 
@@ -280,7 +290,10 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate scaled service: %v", err)
 	}
-	index := s.events.Publish(service.EnvironmentID)
+	index, err := s.events.Publish(ctx, service.EnvironmentID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoServiceStatus(service, allocations, index), nil
 }
 
@@ -315,7 +328,10 @@ func (s *PlatformService) RestartService(ctx context.Context, req *platformv1.Re
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate restart status: %v", err)
 	}
-	index := s.events.Publish(currentService.EnvironmentID)
+	index, err := s.events.Publish(ctx, currentService.EnvironmentID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoServiceStatus(currentService, allocations, index), nil
 }
 
@@ -345,7 +361,9 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
-	s.events.Publish(service.EnvironmentID)
+	if _, err := s.events.Publish(ctx, service.EnvironmentID); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return toProtoService(service), nil
 }
 
@@ -372,7 +390,9 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 	if len(bindings) > 0 {
 		s.ingress.RequestSync()
 	}
-	s.events.Publish(service.EnvironmentID)
+	if _, err := s.events.Publish(ctx, service.EnvironmentID); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish service event: %v", err)
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -401,9 +421,9 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
 	}
-	index, changed := s.events.Wait(ctx, environment.ID, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	index, changed, err := s.events.Wait(ctx, environment.ID, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "wait for service event: %v", err)
 	}
 	if !changed {
 		return &platformv1.ListServicesResponse{Index: index, NotModified: true}, nil

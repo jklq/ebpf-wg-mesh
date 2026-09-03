@@ -272,7 +272,9 @@ func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1
 		s.notifier.Notify(agentID)
 	}
 	s.ingress.RequestSync()
-	s.events.Publish(req.GetEnvironmentId())
+	if _, err := s.events.Publish(ctx, req.GetEnvironmentId()); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish environment event: %v", err)
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -296,6 +298,8 @@ func (s *PlatformService) DeployEnvironment(ctx context.Context, req *platformv1
 		}
 		resp.Services = append(resp.Services, toProtoServiceStatus(service, allocations, 0))
 	}
-	s.events.Publish(req.GetEnvironmentId())
+	if _, err := s.events.Publish(ctx, req.GetEnvironmentId()); err != nil {
+		return nil, status.Errorf(codes.Internal, "publish environment event: %v", err)
+	}
 	return resp, nil
 }

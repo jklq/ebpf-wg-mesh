@@ -165,7 +165,7 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 	fields = append(fields, unappliedChangeField{
 		id:      "rollingStrategy",
 		section: "Deployment",
-		field:   "Rolling strategy",
+		field:   "Deployment timing",
 		path:    "rollingStrategy",
 		current: rollingStrategyValue(deployed),
 		next:    rollingStrategyValue(current),
@@ -179,8 +179,8 @@ func replicaCountValue(spec *platformv1.ServiceSpec) string {
 
 func rollingStrategyValue(spec *platformv1.ServiceSpec) string {
 	strategy := canonicalRollingStrategy(spec.GetRollingStrategy())
-	return fmt.Sprintf("unavailable %d, surge %d, startup %ds, drain %ds",
-		strategy.GetMaxUnavailable(), strategy.GetMaxSurge(), strategy.GetStartupTimeoutSeconds(), strategy.GetDrainTimeoutSeconds())
+	return fmt.Sprintf("healthcheck timeout %ds, draining time %ds",
+		strategy.GetHealthcheckTimeoutSeconds(), strategy.GetDrainingSeconds())
 }
 
 func restartValue(restart *platformv1.ServiceRestart) string {

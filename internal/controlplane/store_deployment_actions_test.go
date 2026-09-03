@@ -201,6 +201,77 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 	}
 }
 
+func TestDeploymentActionRetryCancelledUnresolvedSource(t *testing.T) {
+	t.Parallel()
+	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	staged, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || staged.State != deploymentStateStaged || staged.BuildID != "" || staged.ImageDigest != "" {
+		t.Fatalf("initial staged deployment: %+v ok=%v err=%v", staged, ok, err)
+	}
+
+	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, staged.ID,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-unresolved", ""); err != nil {
+		t.Fatalf("cancel unresolved deployment: %v", err)
+	}
+	assertRolloutState(t, store, service.ID, 1, rolloutStateSuperseded, "cancelled by user")
+
+	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, staged.ID,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY, "retry-unresolved", ""); err != nil {
+		t.Fatalf("retry unresolved deployment: %v", err)
+	} else if action.ResultDeploymentID == "" {
+		t.Fatalf("retry did not create a staged deployment: %+v", action)
+	}
+	retried, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok {
+		t.Fatalf("retried deployment: ok=%v err=%v", ok, err)
+	}
+	if retried.State != deploymentStateStaged || retried.ReasonCode != reasonUserRetry || retried.RolloutGeneration != 2 {
+		t.Fatalf("retried deployment = %+v, want staged rollout 2", retried)
+	}
+	if retried.ResolvedSpec == nil || desiredSourceSpec(retried.ResolvedSpec) == nil {
+		t.Fatalf("retried deployment lost its source snapshot: %+v", retried)
+	}
+	assertRolloutState(t, store, service.ID, 2, rolloutStatePendingBuild, "")
+	var queued int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM source_work_items
+		  WHERE service_id = $1 AND spec_revision = $2 AND state = $3`,
+		service.ID, retried.SpecRevision, sourceWorkStatePending,
+	).Scan(&queued); err != nil {
+		t.Fatalf("count retry source work: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("retry source work count = %d, want 1", queued)
+	}
+	current := deploymentByIDForTest(t, store, ctx, userID, projectID, service.ID, retried.ID)
+	if !current.IsCurrent {
+		t.Fatalf("retried deployment is not current: %+v", current)
+	}
+}
+
+func TestDeleteServiceAfterCancelledDeployment(t *testing.T) {
+	t.Parallel()
+	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	staged, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok {
+		t.Fatalf("staged deployment: ok=%v err=%v", ok, err)
+	}
+	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, staged.ID,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-before-delete", ""); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := store.deleteService(ctx, userID, projectID, service.ID); err != nil {
+		t.Fatalf("delete cancelled service: %v", err)
+	}
+	var remaining int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM services WHERE id = $1`, service.ID).Scan(&remaining); err != nil {
+		t.Fatalf("count deleted service: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("cancelled service still exists: count=%d", remaining)
+	}
+}
+
 func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) {
 	store, ctx, userID, projectID, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {

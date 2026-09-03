@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -113,9 +113,45 @@ var schemaUpgrades = map[int][]string{
 		  WHERE resolved_spec_json->'runtime'->'sandboxProfile' IS NOT NULL`,
 		`DROP TABLE sandbox_profile_audit_events`,
 	},
+	9: {
+		`CREATE TABLE IF NOT EXISTS control_plane_leases (
+			name STRING PRIMARY KEY,
+			holder_id STRING NOT NULL,
+			fencing_token INT8 NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS environment_events (
+			environment_id STRING PRIMARY KEY,
+			revision INT8 NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS control_plane_storage (
+			name STRING PRIMARY KEY,
+			storage_id STRING NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+	},
 }
 
 var currentSchema = []string{
+	`CREATE TABLE control_plane_leases (
+			name STRING PRIMARY KEY,
+			holder_id STRING NOT NULL,
+			fencing_token INT8 NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE TABLE environment_events (
+			environment_id STRING PRIMARY KEY,
+			revision INT8 NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE TABLE control_plane_storage (
+			name STRING PRIMARY KEY,
+			storage_id STRING NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
 	`CREATE TABLE projects (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,

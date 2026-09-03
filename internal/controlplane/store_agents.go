@@ -18,7 +18,8 @@ import (
 func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC()
+		now, err := databaseTime(ctx, tx)
+		if err != nil { return err }
 
 		existing, err := agentByIDQuerier(ctx, tx, hello.GetAgentId(), true)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -106,14 +107,13 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 }
 
 func (s *Store) heartbeatAgent(ctx context.Context, agentID string) error {
-	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `UPDATE agents SET
 		lifecycle_state = CASE WHEN lifecycle_state = 'unavailable'
 			THEN CASE WHEN state_before_unavailable IN ('active', 'cordoned', 'draining') THEN state_before_unavailable ELSE 'active' END
 			ELSE lifecycle_state END,
 		state_before_unavailable = CASE WHEN lifecycle_state = 'unavailable' THEN '' ELSE state_before_unavailable END,
-		last_seen_at = $1, updated_at = $1
-		WHERE id = $2 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, now, agentID)
+		last_seen_at = statement_timestamp(), updated_at = statement_timestamp()
+		WHERE id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, agentID)
 	return err
 }
 
