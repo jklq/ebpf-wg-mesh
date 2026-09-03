@@ -216,14 +216,12 @@ message ServiceSpec {
   string placement_region = 5;
 }
 
-// RollingStrategy bounds replacement concurrency and both rollout deadlines.
-// Unset fields receive platform defaults during canonicalization. Zero is a
-// legal value for max_unavailable and max_surge.
+// RollingStrategy contains the application-specific timing controls for a
+// rolling deployment. Replacement concurrency is platform-managed. Unset
+// fields receive platform defaults during canonicalization.
 message RollingStrategy {
-  optional int32 max_unavailable = 1;
-  optional int32 max_surge = 2;
-  optional int32 startup_timeout_seconds = 3;
-  optional int32 drain_timeout_seconds = 4;
+  optional int32 healthcheck_timeout_seconds = 1;
+  optional int32 draining_seconds = 2;
 }
 
 message ResolvedServiceSpec {

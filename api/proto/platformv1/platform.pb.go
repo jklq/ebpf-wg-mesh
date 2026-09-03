@@ -2236,17 +2236,15 @@ func (x *ServiceSpec) GetPlacementRegion() string {
 	return ""
 }
 
-// RollingStrategy bounds replacement concurrency and both rollout deadlines.
-// Unset fields receive platform defaults during canonicalization. Zero is a
-// legal value for max_unavailable and max_surge.
+// RollingStrategy contains the application-specific timing controls for a
+// rolling deployment. Replacement concurrency is platform-managed. Unset
+// fields receive platform defaults during canonicalization.
 type RollingStrategy struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	MaxUnavailable        *int32                 `protobuf:"varint,1,opt,name=max_unavailable,json=maxUnavailable,proto3,oneof" json:"max_unavailable,omitempty"`
-	MaxSurge              *int32                 `protobuf:"varint,2,opt,name=max_surge,json=maxSurge,proto3,oneof" json:"max_surge,omitempty"`
-	StartupTimeoutSeconds *int32                 `protobuf:"varint,3,opt,name=startup_timeout_seconds,json=startupTimeoutSeconds,proto3,oneof" json:"startup_timeout_seconds,omitempty"`
-	DrainTimeoutSeconds   *int32                 `protobuf:"varint,4,opt,name=drain_timeout_seconds,json=drainTimeoutSeconds,proto3,oneof" json:"drain_timeout_seconds,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	HealthcheckTimeoutSeconds *int32                 `protobuf:"varint,1,opt,name=healthcheck_timeout_seconds,json=healthcheckTimeoutSeconds,proto3,oneof" json:"healthcheck_timeout_seconds,omitempty"`
+	DrainingSeconds           *int32                 `protobuf:"varint,2,opt,name=draining_seconds,json=drainingSeconds,proto3,oneof" json:"draining_seconds,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *RollingStrategy) Reset() {
@@ -2279,30 +2277,16 @@ func (*RollingStrategy) Descriptor() ([]byte, []int) {
 	return file_platform_proto_rawDescGZIP(), []int{16}
 }
 
-func (x *RollingStrategy) GetMaxUnavailable() int32 {
-	if x != nil && x.MaxUnavailable != nil {
-		return *x.MaxUnavailable
+func (x *RollingStrategy) GetHealthcheckTimeoutSeconds() int32 {
+	if x != nil && x.HealthcheckTimeoutSeconds != nil {
+		return *x.HealthcheckTimeoutSeconds
 	}
 	return 0
 }
 
-func (x *RollingStrategy) GetMaxSurge() int32 {
-	if x != nil && x.MaxSurge != nil {
-		return *x.MaxSurge
-	}
-	return 0
-}
-
-func (x *RollingStrategy) GetStartupTimeoutSeconds() int32 {
-	if x != nil && x.StartupTimeoutSeconds != nil {
-		return *x.StartupTimeoutSeconds
-	}
-	return 0
-}
-
-func (x *RollingStrategy) GetDrainTimeoutSeconds() int32 {
-	if x != nil && x.DrainTimeoutSeconds != nil {
-		return *x.DrainTimeoutSeconds
+func (x *RollingStrategy) GetDrainingSeconds() int32 {
+	if x != nil && x.DrainingSeconds != nil {
+		return *x.DrainingSeconds
 	}
 	return 0
 }
@@ -7814,17 +7798,12 @@ const file_platform_proto_rawDesc = "" +
 	"\x15desired_replica_count\x18\x03 \x01(\x05H\x00R\x13desiredReplicaCount\x88\x01\x01\x12G\n" +
 	"\x10rolling_strategy\x18\x04 \x01(\v2\x1c.platform.v1.RollingStrategyR\x0frollingStrategy\x12)\n" +
 	"\x10placement_region\x18\x05 \x01(\tR\x0fplacementRegionB\x18\n" +
-	"\x16_desired_replica_count\"\xaf\x02\n" +
-	"\x0fRollingStrategy\x12,\n" +
-	"\x0fmax_unavailable\x18\x01 \x01(\x05H\x00R\x0emaxUnavailable\x88\x01\x01\x12 \n" +
-	"\tmax_surge\x18\x02 \x01(\x05H\x01R\bmaxSurge\x88\x01\x01\x12;\n" +
-	"\x17startup_timeout_seconds\x18\x03 \x01(\x05H\x02R\x15startupTimeoutSeconds\x88\x01\x01\x127\n" +
-	"\x15drain_timeout_seconds\x18\x04 \x01(\x05H\x03R\x13drainTimeoutSeconds\x88\x01\x01B\x12\n" +
-	"\x10_max_unavailableB\f\n" +
-	"\n" +
-	"_max_surgeB\x1a\n" +
-	"\x18_startup_timeout_secondsB\x18\n" +
-	"\x16_drain_timeout_seconds\"b\n" +
+	"\x16_desired_replica_count\"\xbb\x01\n" +
+	"\x0fRollingStrategy\x12C\n" +
+	"\x1bhealthcheck_timeout_seconds\x18\x01 \x01(\x05H\x00R\x19healthcheckTimeoutSeconds\x88\x01\x01\x12.\n" +
+	"\x10draining_seconds\x18\x02 \x01(\x05H\x01R\x0fdrainingSeconds\x88\x01\x01B\x1e\n" +
+	"\x1c_healthcheck_timeout_secondsB\x13\n" +
+	"\x11_draining_seconds\"b\n" +
 	"\x13ResolvedServiceSpec\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x125\n" +
 	"\aruntime\x18\x02 \x01(\v2\x1b.platform.v1.ServiceRuntimeR\aruntime\"\xb2\x02\n" +
