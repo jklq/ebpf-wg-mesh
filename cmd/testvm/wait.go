@@ -172,9 +172,9 @@ func waitForAgents(ctx context.Context, userCtx context.Context, client platform
 func dumpRemoteDiagnostics(ctx context.Context, sshKeyPath string, host hostInfo) {
 	cmd := strings.Join([]string{
 		"echo '=== systemctl ==='",
-		"systemctl status ebpf-wg-mesh-agent ebpf-wg-mesh-controlplane --no-pager || true",
+		"systemctl status ebpf-wg-mesh-agent ebpf-wg-mesh-controlplane ebpf-wg-mesh-controlplane-replica ebpf-wg-mesh-ingress-probe --no-pager || true",
 		"echo '=== journal (agent/controlplane, last 80) ==='",
-		"journalctl -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-controlplane --no-pager -n 80 || true",
+		"journalctl -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-controlplane-replica -u ebpf-wg-mesh-ingress-probe --no-pager -n 80 || true",
 		"echo '=== connectivity ==='",
 		"ip -brief addr || true",
 		"ss -ltn | head -40 || true",
@@ -221,23 +221,56 @@ func waitForServiceHealthyOnAgent(ctx context.Context, userCtx context.Context, 
 			return false, nil
 		}
 		latest = status
-		allocation := status.GetAllocation()
-		onRequiredAgent := requiredAgentID == "" || allocation.GetAgentId() == requiredAgentID
-		if allocation != nil &&
-			onRequiredAgent &&
-			allocation.GetHealthy() &&
-			allocation.GetAppliedSpecRevision() >= specRevision &&
-			allocation.GetAppliedRolloutGeneration() >= rolloutGeneration &&
-			allocationEndpoint(allocation) != "" {
+		allocation := matchingHealthyAllocation(status, requiredAgentID, specRevision, rolloutGeneration)
+		if allocation != nil {
+			latest.Allocation = allocation
 			infof("scenario: service %s healthy on agent %s with endpoint %s after %s", serviceID, allocation.GetAgentId(), allocationEndpoint(allocation), time.Since(waitStarted).Round(time.Second))
 			return true, nil
 		}
 		if attempt == 1 || attempt%6 == 0 {
-			infof("scenario: still waiting for service %s after %s (attempt %d): agent=%q want=%q phase=%q healthy=%v applied_spec=%d/%d applied_rollout=%d/%d endpoint=%q message=%q", serviceID, time.Since(waitStarted).Round(time.Second), attempt, allocation.GetAgentId(), requiredAgentID, allocation.GetPhase(), allocation.GetHealthy(), allocation.GetAppliedSpecRevision(), specRevision, allocation.GetAppliedRolloutGeneration(), rolloutGeneration, allocationEndpoint(allocation), allocation.GetMessage())
+			infof("scenario: still waiting for service %s after %s (attempt %d): want agent=%q spec>=%d rollout>=%d allocations=[%s]", serviceID, time.Since(waitStarted).Round(time.Second), attempt, requiredAgentID, specRevision, rolloutGeneration, formatServiceAllocations(status))
 		}
 		return false, nil
 	})
 	return latest, err
+}
+
+func matchingHealthyAllocation(status *platformv1.ServiceStatus, requiredAgentID string, specRevision, rolloutGeneration int64) *platformv1.AllocationStatus {
+	for _, allocation := range status.GetAllocations() {
+		if requiredAgentID != "" && allocation.GetAgentId() != requiredAgentID {
+			continue
+		}
+		if allocation.GetHealthy() &&
+			allocation.GetRolloutState() == "serving" &&
+			allocation.GetAppliedSpecRevision() >= specRevision &&
+			allocation.GetAppliedRolloutGeneration() >= rolloutGeneration &&
+			allocationEndpoint(allocation) != "" {
+			return allocation
+		}
+	}
+	return nil
+}
+
+func formatServiceAllocations(status *platformv1.ServiceStatus) string {
+	allocs := status.GetAllocations()
+	if len(allocs) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(allocs))
+	for _, allocation := range allocs {
+		parts = append(parts, fmt.Sprintf("id=%s agent=%s phase=%s rollout_state=%s healthy=%v applied_spec=%d applied_rollout=%d endpoint=%q message=%q",
+			allocation.GetAllocationId(),
+			allocation.GetAgentId(),
+			allocation.GetPhase(),
+			allocation.GetRolloutState(),
+			allocation.GetHealthy(),
+			allocation.GetAppliedSpecRevision(),
+			allocation.GetAppliedRolloutGeneration(),
+			allocationEndpoint(allocation),
+			allocation.GetMessage(),
+		))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func waitForServiceDeletion(ctx context.Context, userCtx context.Context, client platformv1.PlatformServiceClient, environmentID, serviceID string) error {
