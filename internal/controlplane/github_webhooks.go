@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type GitHubWebhookHandler struct {
@@ -178,7 +180,7 @@ func NewGitHubWebhookProcessor(store *Store, coordinator *GitHubCoordinator) *Gi
 		store:       store,
 		coordinator: coordinator,
 		requestCh:   make(chan struct{}, 1),
-		id:          "github-webhook-processor",
+		id:          "github-webhook-processor-" + uuid.NewString(),
 	}
 }
 
@@ -196,31 +198,34 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
-	p.RequestProcess()
+	processPending := func() error {
+		for {
+			rec, err := p.store.claimNextGitHubWebhookDelivery(ctx, p.id, 5*time.Minute)
+			if err != nil { return err }
+			if rec.ID == "" { return nil }
+			slog.InfoContext(ctx, "github webhook delivery claimed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "processor_id", rec.ProcessorID)
+			err = p.processDelivery(ctx, rec)
+			if completeErr := p.store.completeGitHubWebhookDelivery(ctx, rec.ID, p.id, err); completeErr != nil { return completeErr }
+			if err != nil {
+				slog.Warn("github webhook processing failed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "error", err)
+			} else {
+				slog.Info("github webhook delivery processed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType)
+			}
+		}
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-p.requestCh:
-			for {
-				rec, err := p.store.claimNextGitHubWebhookDelivery(ctx, p.id, 5*time.Minute)
-				if err != nil {
-					return err
-				}
-				if rec.ID == "" {
-					break
-				}
-				slog.InfoContext(ctx, "github webhook delivery claimed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "processor_id", rec.ProcessorID)
-				err = p.processDelivery(ctx, rec)
-				if completeErr := p.store.completeGitHubWebhookDelivery(ctx, rec.ID, err); completeErr != nil {
-					return completeErr
-				}
-				if err != nil {
-					slog.Warn("github webhook processing failed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "error", err)
-				} else {
-					slog.Info("github webhook delivery processed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType)
-				}
-			}
+		case <-ticker.C:
+		}
+		if err := processPending(); err != nil {
+			if ctx.Err() != nil { return nil }
+			slog.Warn("github webhook processor pass failed", "error", err)
+			if !waitContext(ctx, jitter(time.Second)) { return nil }
 		}
 	}
 }

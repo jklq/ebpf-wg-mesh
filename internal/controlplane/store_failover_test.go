@@ -80,7 +80,7 @@ func TestFailoverServicesFromAgentIgnoresFreshNode(t *testing.T) {
 	}
 }
 
-func TestServerRestoresPersistedAgentExpiryDeadline(t *testing.T) {
+func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -95,28 +95,22 @@ func TestServerRestoresPersistedAgentExpiryDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fired := make(chan string, 1)
-	tracker := NewAgentExpiryTracker(ctx, agentHealthyTTL, func(_ context.Context, agentID string, _ time.Time) error {
-		fired <- agentID
-		return nil
-	})
-	t.Cleanup(tracker.Close)
-	server := &Server{store: store, expiry: tracker}
-	if err := server.restoreAgentExpiryDeadlines(ctx, now); err != nil {
+	reconciler := NewServiceFailoverReconciler(store, nil, nil, nil, time.Second, agentHealthyTTL)
+	reconciler.now = func() time.Time { return now }
+	_, err := reconciler.Reconcile(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	select {
-	case agentID := <-fired:
-		if agentID != "node-stale" {
-			t.Fatalf("expired agent = %q, want node-stale", agentID)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("server did not restore the persisted stale-agent deadline")
+	agents, err := store.listAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].ID != "node-stale" || agents[0].LifecycleState != agentStateUnavailable {
+		t.Fatalf("agents after reconcile = %+v, want node-stale unavailable", agents)
 	}
 }
 
-func TestAgentExpiryTriggersStatelessServiceRollover(t *testing.T) {
+func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -150,42 +144,21 @@ func TestAgentExpiryTriggersStatelessServiceRollover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate a dead agent whose last heartbeat is already past the healthy TTL,
-	// then drive the same AgentExpiryTracker path the control plane uses in production.
+	// Simulate a dead agent whose last heartbeat is already past the healthy TTL.
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * agentHealthyTTL)
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-a'`, lastSeen); err != nil {
 		t.Fatal(err)
 	}
 
-	type expiryResult struct {
-		agentID  string
-		notified []string
-		err      error
+	reconciler := NewServiceFailoverReconciler(store, nil, nil, nil, time.Second, agentHealthyTTL)
+	reconciler.now = func() time.Time { return now }
+	result, err := reconciler.Reconcile(ctx)
+	if err != nil {
+		t.Fatalf("reconcile failover: %v", err)
 	}
-	done := make(chan expiryResult, 1)
-	tracker := NewAgentExpiryTracker(ctx, agentHealthyTTL, func(ctx context.Context, agentID string, cutoff time.Time) error {
-		notified, _, err := store.failoverServicesFromAgent(ctx, agentID, cutoff)
-		done <- expiryResult{agentID: agentID, notified: notified, err: err}
-		return err
-	})
-	t.Cleanup(tracker.Close)
-	tracker.Restore("node-a", lastSeen, now)
-
-	var fired expiryResult
-	select {
-	case fired = <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("agent expiry did not fire service rollover")
-	}
-	if fired.err != nil {
-		t.Fatalf("failoverServicesFromAgent: %v", fired.err)
-	}
-	if fired.agentID != "node-a" {
-		t.Fatalf("expired agent = %q, want node-a", fired.agentID)
-	}
-	if len(fired.notified) == 0 {
-		t.Fatalf("expected cluster notifications after rollover, got %v", fired.notified)
+	if len(result.NotifyAgentIDs) == 0 {
+		t.Fatalf("expected cluster notifications after rollover, got %v", result.NotifyAgentIDs)
 	}
 
 	replacement := requireNodeLossReplacement(t, store, service.ID, originalID, "node-a", "node-b")

@@ -453,10 +453,11 @@ func (s *Store) markCurrentDeploymentRemovedTx(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 	_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
-		ToState:    deploymentStateRemoved,
-		Actor:      actor,
-		ReasonCode: reasonDeploymentRemoved,
-		Detail:     "Service removed",
+		ToState:          deploymentStateRemoved,
+		Actor:            actor,
+		ReasonCode:       reasonDeploymentRemoved,
+		Detail:           "Service removed",
+		IgnoreIfTerminal: true,
 	})
 	return err
 }

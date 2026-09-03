@@ -55,7 +55,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 
-	notifier := NewNotifier()
+	notifier := NewNotifier(ctx, store, time.Hour)
 	watches := make(map[string]<-chan struct{})
 	for _, id := range []string{"old-node", "new-node", "reserved-node"} {
 		ch, stop := notifier.Watch(id)
@@ -63,7 +63,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		watches[id] = ch
 	}
 	ingress := &countingFailoverIngress{}
-	reconciler := NewServiceFailoverReconciler(store, notifier, ingress, time.Second, 30*time.Second)
+	reconciler := NewServiceFailoverReconciler(store, notifier, ingress, nil, time.Second, 30*time.Second)
 	reconciler.now = func() time.Time { return now }
 
 	result, err := reconciler.Reconcile(ctx)
@@ -148,7 +148,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 	ingress := &countingFailoverIngress{}
-	reconciler := NewServiceFailoverReconciler(store, nil, ingress, time.Second, 30*time.Second)
+	reconciler := NewServiceFailoverReconciler(store, nil, ingress, nil, time.Second, 30*time.Second)
 	reconciler.now = func() time.Time { return now }
 
 	result, err := reconciler.Reconcile(ctx)
@@ -206,7 +206,7 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, trusted.AgentId, now.Add(-2*time.Minute))
-	reconciler := NewServiceFailoverReconciler(store, nil, &countingFailoverIngress{}, time.Second, 30*time.Second)
+	reconciler := NewServiceFailoverReconciler(store, nil, &countingFailoverIngress{}, nil, time.Second, 30*time.Second)
 	reconciler.now = func() time.Time { return now }
 	if _, err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type GitHubReconciler struct {
@@ -12,6 +14,7 @@ type GitHubReconciler struct {
 	buildStaleAfter   time.Duration
 	webhookStaleAfter time.Duration
 	workStaleAfter    time.Duration
+	workerID          string
 }
 
 func NewGitHubReconciler(store *Store, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter, workStaleAfter time.Duration) *GitHubReconciler {
@@ -24,6 +27,7 @@ func NewGitHubReconciler(store *Store, coordinator *GitHubCoordinator, buildStal
 		buildStaleAfter:   buildStaleAfter,
 		webhookStaleAfter: webhookStaleAfter,
 		workStaleAfter:    workStaleAfter,
+		workerID:          "github-reconciler-" + uuid.NewString(),
 	}
 }
 
@@ -56,26 +60,36 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	const maxRetryDelay = 30 * time.Second
+	retryDelay := 250 * time.Millisecond
 	for {
 		processed, err := r.processNext(ctx)
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				return nil
+			}
+			slog.Warn("github reconciler pass failed", "error", err, "retry_after", retryDelay)
+			if !waitContext(ctx, jitter(retryDelay)) {
+				return nil
+			}
+			retryDelay *= 2
+			if retryDelay > maxRetryDelay {
+				retryDelay = maxRetryDelay
+			}
+			continue
 		}
+		retryDelay = 250 * time.Millisecond
 		if processed {
 			continue
 		}
-		select {
-		case <-ctx.Done():
+		if !waitContext(ctx, jitter(time.Second)) {
 			return nil
-		case <-ticker.C:
 		}
 	}
 }
 
 func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
-	rec, err := r.store.claimNextSourceWorkItem(ctx, "github-reconciler", r.workStaleAfter)
+	rec, err := r.store.claimNextSourceWorkItem(ctx, r.workerID, r.workStaleAfter)
 	if err != nil {
 		return false, err
 	}
@@ -84,7 +98,7 @@ func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
 	}
 	slog.InfoContext(ctx, "github work item claimed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
 	if err := r.coordinator.processWorkItem(ctx, rec); err != nil {
-		if releaseErr := r.store.releaseSourceWorkItem(ctx, rec.ID, err, r.coordinator.retryAfter); releaseErr != nil {
+		if releaseErr := r.store.releaseSourceWorkItem(ctx, rec.ID, r.workerID, err, r.coordinator.retryAfter); releaseErr != nil {
 			return false, releaseErr
 		}
 		if err != errGitHubWorkDeferred {
@@ -92,7 +106,7 @@ func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
-	if err := r.store.completeSourceWorkItem(ctx, rec.ID); err != nil {
+	if err := r.store.completeSourceWorkItem(ctx, rec.ID, r.workerID); err != nil {
 		return false, err
 	}
 	slog.InfoContext(ctx, "github work item completed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)

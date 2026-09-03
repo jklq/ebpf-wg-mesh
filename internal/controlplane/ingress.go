@@ -85,9 +85,7 @@ type IngressSyncer struct {
 	disableAutoHTTPS bool
 	minSyncInterval  time.Duration
 	pushMu           sync.Mutex
-	mu               sync.Mutex
-	timer            *time.Timer
-	dirty            bool
+	requestCh        chan struct{}
 	loaded           bool
 	lastPayload      []byte
 }
@@ -123,6 +121,7 @@ func NewIngressSyncer(adminURL string, store *Store, opts ...IngressSyncerOption
 		store:           store,
 		listenAddrs:     []string{":80", ":443"},
 		minSyncInterval: defaultIngressMinSyncInterval,
+		requestCh:       make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -150,34 +149,36 @@ func (i *IngressSyncer) RequestSync() {
 		return
 	}
 
-	i.mu.Lock()
-	if i.timer == nil {
-		i.timer = time.AfterFunc(i.minSyncInterval, i.onDebounceWindowEnd)
-		i.mu.Unlock()
-		go i.syncAsync()
-		return
+	select {
+	case i.requestCh <- struct{}{}:
+	default:
 	}
-	i.dirty = true
-	i.mu.Unlock()
 }
 
-func (i *IngressSyncer) onDebounceWindowEnd() {
-	i.mu.Lock()
-	if !i.dirty {
-		i.timer = nil
-		i.mu.Unlock()
-		return
+// Run owns asynchronous ingress writes under the server's singleton lease.
+// Periodic convergence also catches requests received by a non-owner replica.
+func (i *IngressSyncer) Run(ctx context.Context) error {
+	if i == nil || i.adminURL == "" {
+		<-ctx.Done()
+		return nil
 	}
-	i.dirty = false
-	i.timer = time.AfterFunc(i.minSyncInterval, i.onDebounceWindowEnd)
-	i.mu.Unlock()
-
-	go i.syncAsync()
-}
-
-func (i *IngressSyncer) syncAsync() {
-	if err := i.Sync(context.Background()); err != nil {
-		slog.Warn("ingress sync failed", "error", err)
+	syncNow := func() {
+		if err := i.Sync(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("ingress sync failed", "error", err)
+		}
+	}
+	syncNow()
+	ticker := time.NewTicker(i.minSyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			syncNow()
+		case <-i.requestCh:
+			syncNow()
+		}
 	}
 }
 
@@ -190,28 +191,34 @@ func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(body, i.lastPayload) {
-		return nil
-	}
 
-	// POST /load replaces Caddy's HTTP server and drops live connections,
-	// including the dashboard Vite HMR websocket. After the initial load,
-	// only swap the route list.
-	if i.loaded {
-		if err := i.pushRoutes(ctx, cfg); err != nil {
-			slog.Warn("ingress route patch failed; falling back to full load", "error", err)
+	// Render before taking the lease-row lock so database reads cannot deadlock
+	// behind a concurrent lease renewal. Only the external write needs fencing:
+	// takeover waits for it, and a former owner cannot enter this section.
+	return i.store.withLeaseGuard(ctx, func() error {
+		if bytes.Equal(body, i.lastPayload) {
+			return nil
+		}
+
+		// POST /load replaces Caddy's HTTP server and drops live connections,
+		// including the dashboard Vite HMR websocket. After the initial load,
+		// only swap the route list.
+		if i.loaded {
+			if err := i.pushRoutes(ctx, cfg); err != nil {
+				slog.Warn("ingress route patch failed; falling back to full load", "error", err)
+				if err := i.pushJSON(ctx, http.MethodPost, i.adminURL, body); err != nil {
+					return err
+				}
+			}
+		} else {
 			if err := i.pushJSON(ctx, http.MethodPost, i.adminURL, body); err != nil {
 				return err
 			}
+			i.loaded = true
 		}
-	} else {
-		if err := i.pushJSON(ctx, http.MethodPost, i.adminURL, body); err != nil {
-			return err
-		}
-		i.loaded = true
-	}
-	i.lastPayload = bytes.Clone(body)
-	return nil
+		i.lastPayload = bytes.Clone(body)
+		return nil
+	})
 }
 
 func (i *IngressSyncer) pushRoutes(ctx context.Context, cfg *caddyConfig) error {

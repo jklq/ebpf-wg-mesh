@@ -205,13 +205,6 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 	return fmt.Sprintf("%d of %d replicas placed; %s", placed, desired, reason)
 }
 
-func pendingCapacityMessage(placed, desired int) string {
-	if placed == 0 {
-		return fmt.Sprintf("0 of %d replicas placed; no healthy non-reserved agent has sufficient CPU or memory", desired)
-	}
-	return fmt.Sprintf("%d of %d replicas placed; no healthy non-reserved agent has sufficient CPU or memory", placed, desired)
-}
-
 func (s *Store) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
 	_, err := tx.ExecContext(ctx,
 		`UPDATE services SET placement_message = $1, updated_at = $2 WHERE id = $3`,
