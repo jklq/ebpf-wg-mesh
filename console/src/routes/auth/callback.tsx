@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
 export interface AuthCallbackService {
 	completeAuthCallback(input: {
@@ -130,17 +131,15 @@ function parseAuthCallbackInput(input: unknown): {
 	email?: string;
 	redirectTo?: string;
 } {
-	if (!input || typeof input !== "object" || Array.isArray(input)) {
-		return {};
-	}
-	const data = input as Record<string, unknown>;
-	return {
-		code: readOptionalString(data.code),
-		state: readOptionalString(data.state),
-		userId: readOptionalString(data.userId),
-		email: readOptionalString(data.email),
-		redirectTo: readOptionalString(data.redirectTo),
-	};
+	return z
+		.object({
+			code: z.string().optional(),
+			state: z.string().optional(),
+			userId: z.string().optional(),
+			email: z.string().optional(),
+			redirectTo: z.string().optional(),
+		})
+		.parse(input);
 }
 
 function parseAuthCallbackSearch(input: unknown): {
@@ -150,19 +149,18 @@ function parseAuthCallbackSearch(input: unknown): {
 	email?: string;
 	redirect?: string;
 } {
-	if (!input || typeof input !== "object" || Array.isArray(input)) {
-		return {};
-	}
-	const data = input as Record<string, unknown>;
-	return {
-		code: readOptionalString(data.code),
-		state: readOptionalString(data.state),
-		userId: readOptionalString(data.userId ?? data.user_id),
-		email: readOptionalString(data.email),
-		redirect: readOptionalString(data.redirect),
-	};
-}
-
-function readOptionalString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
+	return z
+		.object({
+			code: z.string().optional(),
+			state: z.string().optional(),
+			userId: z.string().optional(),
+			user_id: z.string().optional(),
+			email: z.string().optional(),
+			redirect: z.string().optional(),
+		})
+		.transform(({ user_id, ...data }) => ({
+			...data,
+			userId: data.userId ?? user_id,
+		}))
+		.parse(input);
 }

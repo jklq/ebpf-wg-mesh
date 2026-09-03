@@ -182,7 +182,7 @@ describe("PanelSettings", () => {
 		updated.specRevision = 2;
 		if (!updated.spec) throw new Error("expected service spec");
 		updated.spec.runtime.restart = {
-			policy: "never",
+			policy: "RESTART_POLICY_NEVER",
 			maxRestarts: 5,
 			windowSeconds: 300,
 		};
@@ -194,7 +194,7 @@ describe("PanelSettings", () => {
 				section: "Restart",
 				field: "Process restart",
 				path: "runtime.restart",
-				action: "update",
+				action: "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE",
 				currentValue: "on-failure",
 				newValue: "never",
 			},
@@ -511,7 +511,11 @@ function state(): DashboardHomeState {
 	};
 	return {
 		user: { id: "user-1", email: "user@example.com" },
-		project: { id: "project-1", name: "test-project", kind: "user" },
+		project: {
+			id: "project-1",
+			name: "test-project",
+			kind: "PROJECT_KIND_USER",
+		},
 		environments: [environment],
 		environment,
 		onboarding: {

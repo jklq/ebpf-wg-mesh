@@ -420,7 +420,7 @@ export function DomainPanelView({
 						const pending = pendingDomain?.hostname === binding.hostname;
 						const unverified =
 							!binding.platformGenerated &&
-							binding.ownershipState !== "verified";
+							binding.ownershipState !== "DOMAIN_OWNERSHIP_STATE_VERIFIED";
 						return (
 							<div
 								key={binding.hostname}

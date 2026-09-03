@@ -1,20 +1,84 @@
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
 import type {
-	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardGitHubAccount,
 	DashboardRepositoryInspection,
-	DashboardServiceLogType,
-	DashboardServicePosition,
 	GitHubUserRepository,
-	UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 
+const identifier = z.string().min(1);
+const optionalIdentifier = identifier.optional();
+const environmentIdInput = z.object({ environmentId: identifier });
+const serviceIdInput = z.object({ serviceId: identifier });
+const hostnameInput = z.object({ hostname: identifier });
+const repositorySelectorInput = z.object({ repositorySelector: identifier });
+const targetPort = z.union([z.string(), z.number()]).optional();
+const deploymentAction = z.enum([
+	"DEPLOYMENT_ACTION_RESTART",
+	"DEPLOYMENT_ACTION_EXACT_REDEPLOY",
+	"DEPLOYMENT_ACTION_ROLLBACK",
+	"DEPLOYMENT_ACTION_CANCEL",
+	"DEPLOYMENT_ACTION_REMOVE",
+	"DEPLOYMENT_ACTION_RETRY",
+]);
+const serviceLogType = z.enum([
+	"SERVICE_LOG_TYPE_RUNTIME",
+	"SERVICE_LOG_TYPE_BUILD",
+	"SERVICE_LOG_TYPE_DEPLOY",
+	"SERVICE_LOG_TYPE_HTTP",
+	"SERVICE_LOG_TYPE_NETWORK",
+	"SERVICE_LOG_TYPE_UNSPECIFIED",
+]);
+const restartPolicy = z.enum([
+	"RESTART_POLICY_ALWAYS",
+	"RESTART_POLICY_ON_FAILURE",
+	"RESTART_POLICY_NEVER",
+]);
+const restartSpec = z.object({
+	policy: restartPolicy,
+	maxRestarts: z.number().int().optional(),
+	windowSeconds: z.number().int().optional(),
+	initialDelayMs: z.number().int().optional(),
+	maxDelayMs: z.number().int().optional(),
+	backoffMultiplier: z.number().optional(),
+	jitter: z.number().optional(),
+	stableAfterSeconds: z.number().int().optional(),
+});
+const rollingStrategy = z.object({
+	healthcheckTimeoutSeconds: z.number().int(),
+	drainingSeconds: z.number().int(),
+});
+const updateServiceInput = z.object({
+	serviceId: identifier,
+	serviceName: z.string().optional(),
+	runtimeEnv: z.record(z.string(), z.string()).optional(),
+	cpuMillis: z.number().optional(),
+	memoryMebibytes: z.number().optional(),
+	repositorySelector: z.string().optional(),
+	trackedRef: z.string().optional(),
+	dockerfilePath: z.string().optional(),
+	contextDir: z.string().optional(),
+	restart: restartSpec.optional(),
+	desiredReplicaCount: z.number().int().optional(),
+	placementRegion: z.string().optional(),
+	rollingStrategy: rollingStrategy.optional(),
+});
+const confirmRepositoryInput = z.object({
+	repositorySelector: identifier,
+	serviceName: z.string().optional(),
+	trackedRef: z.string().optional(),
+	dockerfilePath: z.string().optional(),
+	contextDir: z.string().optional(),
+	cpuMillis: z.number().optional(),
+	memoryMebibytes: z.number().optional(),
+});
+
 export const loadHome = createServerFn({ method: "GET" })
-	.inputValidator(
-		(input: unknown) => input as { environmentId?: string } | undefined,
+	.inputValidator((input: unknown) =>
+		z.object({ environmentId: optionalIdentifier }).optional().parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -29,8 +93,8 @@ export const loadHome = createServerFn({ method: "GET" })
 	});
 
 export const doCreateEnvironment = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) => input as { projectId: string; name: string },
+	.inputValidator((input: unknown) =>
+		z.object({ projectId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
 		(await import("#/lib/dashboard/entry.server")).createEnvironmentFromSession(
@@ -39,13 +103,14 @@ export const doCreateEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doDuplicateEnvironment = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				sourceEnvironmentId: string;
-				name: string;
-				copyVariables: boolean;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				sourceEnvironmentId: identifier,
+				name: identifier,
+				copyVariables: z.boolean(),
+			})
+			.parse(input),
 	)
 	.handler(async ({ data }) =>
 		(
@@ -54,8 +119,8 @@ export const doDuplicateEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doRenameEnvironment = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) => input as { environmentId: string; name: string },
+	.inputValidator((input: unknown) =>
+		z.object({ environmentId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
 		(await import("#/lib/dashboard/entry.server")).renameEnvironmentFromSession(
@@ -64,7 +129,7 @@ export const doRenameEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doDeleteEnvironment = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { environmentId: string })
+	.inputValidator((input: unknown) => environmentIdInput.parse(input))
 	.handler(async ({ data }) =>
 		(await import("#/lib/dashboard/entry.server")).deleteEnvironmentFromSession(
 			data.environmentId,
@@ -72,7 +137,7 @@ export const doDeleteEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doDeployEnvironment = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { environmentId: string })
+	.inputValidator((input: unknown) => environmentIdInput.parse(input))
 	.handler(async ({ data }) =>
 		(await import("#/lib/dashboard/entry.server")).deployEnvironmentFromSession(
 			data.environmentId,
@@ -80,7 +145,7 @@ export const doDeployEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const fetchServiceStatus = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { serviceId: string })
+	.inputValidator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.getServiceStatusFromSession(data);
@@ -97,7 +162,7 @@ export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
 );
 
 export const fetchRepositoryInspection = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { repositorySelector: string })
+	.inputValidator((input: unknown) => repositorySelectorInput.parse(input))
 	.handler(
 		async ({ data }): Promise<DashboardRepositoryInspection | undefined> => {
 			const svc = await import("#/lib/dashboard/entry.server");
@@ -106,18 +171,19 @@ export const fetchRepositoryInspection = createServerFn({ method: "POST" })
 	);
 
 export const fetchServiceLogs = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				allocationId?: string;
-				limit?: number;
-				logType?: DashboardServiceLogType;
-				buildId?: string;
-				search?: string;
-				startTime?: Date;
-				endTime?: Date;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				serviceId: identifier,
+				allocationId: z.string().optional(),
+				limit: z.number().int().optional(),
+				logType: serviceLogType.optional(),
+				buildId: z.string().optional(),
+				search: z.string().optional(),
+				startTime: z.date().optional(),
+				endTime: z.date().optional(),
+			})
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -125,12 +191,10 @@ export const fetchServiceLogs = createServerFn({ method: "POST" })
 	});
 
 export const fetchServiceDeployments = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				limit?: number;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({ serviceId: identifier, limit: z.number().int().optional() })
+			.parse(input),
 	)
 	.handler(async ({ data }): Promise<Array<DashboardDeploymentRecord>> => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -138,29 +202,30 @@ export const fetchServiceDeployments = createServerFn({ method: "POST" })
 	});
 
 export const fetchDomainBindings = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { serviceId: string })
+	.inputValidator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.listDomainBindingsFromSession(data);
 	});
 
 export const doUpdateService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as UpdateServiceInput)
+	.inputValidator((input: unknown) => updateServiceInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.updateServiceFromSession(data);
 	});
 
 export const doApplyDeploymentAction = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				deploymentId: string;
-				action: DashboardDeploymentAction;
-				idempotencyKey: string;
-				allocationId?: string;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				serviceId: identifier,
+				deploymentId: identifier,
+				action: deploymentAction,
+				idempotencyKey: identifier,
+				allocationId: z.string().optional(),
+			})
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -168,12 +233,10 @@ export const doApplyDeploymentAction = createServerFn({ method: "POST" })
 	});
 
 export const doScaleService = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				desiredReplicaCount: number;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({ serviceId: identifier, desiredReplicaCount: z.number().int() })
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -181,13 +244,14 @@ export const doScaleService = createServerFn({ method: "POST" })
 	});
 
 export const doDiscardServiceChanges = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				changeIds?: Array<string>;
-				discardAll?: boolean;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				serviceId: identifier,
+				changeIds: z.array(identifier).optional(),
+				discardAll: z.boolean().optional(),
+			})
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -195,20 +259,21 @@ export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 	});
 
 export const doDeleteService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { serviceId: string })
+	.inputValidator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		await svc.deleteServiceFromSession(data);
 	});
 
 export const doSaveServicePosition = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				environmentId: string;
-				serviceId: string;
-				position: DashboardServicePosition;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				environmentId: identifier,
+				serviceId: identifier,
+				position: z.object({ x: z.number(), y: z.number() }),
+			})
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -216,13 +281,11 @@ export const doSaveServicePosition = createServerFn({ method: "POST" })
 	});
 
 export const doCreateDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				hostname: string;
-				targetPort: string | number | undefined;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({ serviceId: identifier, hostname: identifier, targetPort })
+			.transform((data) => ({ ...data, targetPort: data.targetPort }))
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -230,12 +293,11 @@ export const doCreateDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doGenerateDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				targetPort: string | number | undefined;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({ serviceId: identifier, targetPort })
+			.transform((data) => ({ ...data, targetPort: data.targetPort }))
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -243,13 +305,11 @@ export const doGenerateDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doUpdateDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				serviceId: string;
-				hostname: string;
-				targetPort: string | number | undefined;
-			},
+	.inputValidator((input: unknown) =>
+		z
+			.object({ serviceId: identifier, hostname: identifier, targetPort })
+			.transform((data) => ({ ...data, targetPort: data.targetPort }))
+			.parse(input),
 	)
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
@@ -257,21 +317,21 @@ export const doUpdateDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doDeleteDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { hostname: string })
+	.inputValidator((input: unknown) => hostnameInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.deleteDomainBindingFromSession(data);
 	});
 
 export const doCheckDNS = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { hostname: string })
+	.inputValidator((input: unknown) => hostnameInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.checkDomainDNSFromSession(data.hostname);
 	});
 
 export const doInspectRepository = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => input as { repositorySelector: string })
+	.inputValidator((input: unknown) => repositorySelectorInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		await svc.inspectRepositoryFromSession(data);
@@ -286,18 +346,7 @@ export const doInspectRepository = createServerFn({ method: "POST" })
 	});
 
 export const doConfirmRepository = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				repositorySelector: string;
-				serviceName?: string;
-				trackedRef?: string;
-				dockerfilePath?: string;
-				contextDir?: string;
-				cpuMillis?: number;
-				memoryMebibytes?: number;
-			},
-	)
+	.inputValidator((input: unknown) => confirmRepositoryInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		await svc.confirmRepositoryFromSession(data);
@@ -312,18 +361,7 @@ export const doConfirmRepository = createServerFn({ method: "POST" })
 	});
 
 export const doCreateServiceFast = createServerFn({ method: "POST" })
-	.inputValidator(
-		(input: unknown) =>
-			input as {
-				repositorySelector: string;
-				serviceName?: string;
-				trackedRef?: string;
-				dockerfilePath?: string;
-				contextDir?: string;
-				cpuMillis?: number;
-				memoryMebibytes?: number;
-			},
-	)
+	.inputValidator((input: unknown) => confirmRepositoryInput.parse(input))
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/entry.server");
 		return svc.createServiceFastFromSession(data);

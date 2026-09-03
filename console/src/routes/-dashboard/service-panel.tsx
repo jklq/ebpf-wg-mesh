@@ -219,7 +219,8 @@ export function ServicePanel({
 							>
 								{stages.map((stage) => {
 									const segmentState =
-										health === "building" && stage.state === "succeeded"
+										health === "building" &&
+										stage.state === "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
 											? "building-done"
 											: stage.state;
 									return (
@@ -227,20 +228,22 @@ export function ServicePanel({
 											key={stage.key || stage.label}
 											className={cn(
 												"rounded-full transition-[background-color] duration-300",
-												heroCompleting || segmentState === "succeeded"
+												heroCompleting ||
+													segmentState === "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
 													? "bg-healthy"
 													: segmentState === "building-done" ||
-															segmentState === "running"
+															segmentState === "DEPLOYMENT_STAGE_STATE_RUNNING"
 														? "bg-building"
-														: segmentState === "failed"
+														: segmentState === "DEPLOYMENT_STAGE_STATE_FAILED"
 															? "bg-failed"
 															: "bg-[rgba(80,76,71,0.7)]",
 												!heroCompleting &&
-													segmentState === "running" &&
+													segmentState === "DEPLOYMENT_STAGE_STATE_RUNNING" &&
 													"animate-pulse-building",
 											)}
 											style={
-												!heroCompleting && stage.state === "running"
+												!heroCompleting &&
+												stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING"
 													? { animationDelay: pulseDelay }
 													: undefined
 											}

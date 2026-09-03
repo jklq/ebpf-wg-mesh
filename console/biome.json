@@ -13,6 +13,7 @@
 			"**/index.html",
 			"**/vite.config.ts",
 			"!**/src/routeTree.gen.ts",
+			"!**/src/lib/platform-gen",
 			"!**/src/styles.css"
 		]
 	},

@@ -61,7 +61,11 @@ export function dashboardState(
 			id: "user-1",
 			email: "user@example.com",
 		},
-		project: { id: "project-1", name: "test-project", kind: "user" },
+		project: {
+			id: "project-1",
+			name: "test-project",
+			kind: "PROJECT_KIND_USER",
+		},
 		environments: [
 			{
 				id: "environment-1",
@@ -161,7 +165,9 @@ export function unappliedChange(
 		section,
 		field,
 		path: id,
-		action: currentValue ? "update" : "add",
+		action: currentValue
+			? "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE"
+			: "SERVICE_UNAPPLIED_CHANGE_ACTION_ADD",
 		currentValue,
 		newValue,
 	};

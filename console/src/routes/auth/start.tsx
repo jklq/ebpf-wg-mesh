@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
 const beginLogin = createServerFn({ method: "GET" })
 	.inputValidator((input: unknown) => {
@@ -37,11 +38,5 @@ function AuthStartPage() {
 }
 
 function parseAuthStartInput(input: unknown): { redirect?: string } {
-	if (!input || typeof input !== "object" || Array.isArray(input)) {
-		return {};
-	}
-	const { redirect } = input as { redirect?: unknown };
-	return {
-		redirect: typeof redirect === "string" ? redirect : undefined,
-	};
+	return z.object({ redirect: z.string().optional() }).parse(input);
 }

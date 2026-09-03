@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "#/lib/cn";
 import type {
 	DashboardHomeState,
+	DashboardRestartPolicy,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
 import {
@@ -79,7 +80,7 @@ export function PanelSettings({
 					dockerfilePath: next.dockerfilePath,
 					contextDir: next.contextDir,
 					restart: {
-						policy: next.restartPolicy,
+						policy: restartPolicyFromDraft(next.restartPolicy),
 						maxRestarts: Number(next.maxRestarts) || 0,
 						windowSeconds: Number(next.windowSeconds) || 0,
 					},
@@ -529,7 +530,7 @@ function settingsDraftFromService(
 		trackedRef: source?.trackedRef ?? "",
 		dockerfilePath: source?.buildRecipe?.dockerfilePath ?? "",
 		contextDir: source?.buildRecipe?.contextDir ?? ".",
-		restartPolicy: service.spec?.runtime.restart?.policy ?? "on-failure",
+		restartPolicy: restartPolicyToDraft(service.spec?.runtime.restart?.policy),
 		maxRestarts: String(service.spec?.runtime.restart?.maxRestarts ?? 5),
 		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
 		placementRegion: service.spec?.placementRegion ?? "",
@@ -540,6 +541,35 @@ function settingsDraftFromService(
 			service.spec?.rollingStrategy?.drainingSeconds ?? 30,
 		),
 	};
+}
+
+function restartPolicyFromDraft(
+	policy: SettingsDraft["restartPolicy"],
+):
+	| "RESTART_POLICY_ALWAYS"
+	| "RESTART_POLICY_NEVER"
+	| "RESTART_POLICY_ON_FAILURE" {
+	switch (policy) {
+		case "always":
+			return "RESTART_POLICY_ALWAYS";
+		case "never":
+			return "RESTART_POLICY_NEVER";
+		case "on-failure":
+			return "RESTART_POLICY_ON_FAILURE";
+	}
+}
+
+function restartPolicyToDraft(
+	policy: DashboardRestartPolicy | undefined,
+): SettingsDraft["restartPolicy"] {
+	switch (policy) {
+		case "RESTART_POLICY_ALWAYS":
+			return "always";
+		case "RESTART_POLICY_NEVER":
+			return "never";
+		default:
+			return "on-failure";
+	}
 }
 
 function RollingNumberField({

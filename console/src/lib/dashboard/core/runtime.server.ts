@@ -347,7 +347,7 @@ export function buildHealthyAndReady(
 	status: DashboardServiceStatus | undefined,
 ): boolean {
 	return (
-		status?.service.latestBuild?.state === "succeeded" &&
+		status?.service.latestBuild?.state === "BUILD_STATE_SUCCEEDED" &&
 		status.allocation?.healthy === true
 	);
 }
