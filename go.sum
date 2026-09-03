@@ -1,4 +1,6 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
+connectrpc.com/connect v1.20.0 h1:6TNDAB+WeNd2uolWNlYczB5E0KNNaVMNUEx8JEUsPmQ=
+connectrpc.com/connect v1.20.0/go.mod h1:A2ygJrukXwWy32vkCAAHNVguZrqZ+jeZ9rGRnGR4dN4=
 github.com/1password/onepassword-sdk-go v0.4.1-beta.1 h1:b/tt+bAXFXR5f3/irmPAaytfmsN6+5Nj6pbsx5nmKZA=
 github.com/1password/onepassword-sdk-go v0.4.1-beta.1/go.mod h1:j/CbzhucTywjlYrd6SE6k0LcQaFZ2l8OLBsAsOYtvD0=
 github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 h1:bvDV9vkmnHYOMsOr4WLk+Vo07yKIzd94sVoIqshQ4bU=

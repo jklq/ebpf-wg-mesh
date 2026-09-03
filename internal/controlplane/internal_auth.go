@@ -9,16 +9,20 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"connectrpc.com/connect"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
 type serviceCallerContextKey struct{}
 type delegatedUserContextKey struct{}
+
+// verifiedClientCertificateContextKey carries the verified client certificate
+// leaf into request contexts. The internal HTTP handler derives it from
+// request.TLS, so both the gRPC and Connect paths see the same identity.
+type verifiedClientCertificateContextKey struct{}
 
 type serviceCallerClass string
 
@@ -67,7 +71,7 @@ func NewInternalAuth(dashboardCallerID, userAssertionSecret string, revocations 
 
 func (a *InternalAuth) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		ctx, err := a.authorize(ctx, info.FullMethod, false)
+		ctx, err := a.authorizeGRPCContext(ctx, info.FullMethod)
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +81,7 @@ func (a *InternalAuth) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 
 func (a *InternalAuth) StreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		ctx, err := a.authorize(stream.Context(), info.FullMethod, true)
+		ctx, err := a.authorizeGRPCContext(stream.Context(), info.FullMethod)
 		if err != nil {
 			return err
 		}
@@ -85,20 +89,91 @@ func (a *InternalAuth) StreamServerInterceptor() grpc.StreamServerInterceptor {
 	}
 }
 
-func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStream bool) (context.Context, error) {
+// ConnectInterceptor enforces the same authorization rules for Connect
+// requests that the gRPC interceptors enforce for gRPC requests.
+func (a *InternalAuth) ConnectInterceptor() connect.Interceptor {
+	return connect.UnaryInterceptorFunc(a.connectUnary)
+}
+
+func (a *InternalAuth) connectUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		ctx, err := a.authorize(ctx, req.Spec().Procedure, callerIdentityFromConnectRequest(ctx, req))
+		if err != nil {
+			return nil, connect.NewError(connect.Code(uint32(status.Code(err))), err)
+		}
+		return next(ctx, req)
+	}
+}
+
+func (a *InternalAuth) authorizeGRPCContext(ctx context.Context, fullMethod string) (context.Context, error) {
+	return a.authorize(ctx, fullMethod, callerIdentityFromGRPCContext(ctx))
+}
+
+// callerIdentity is the transport-agnostic view of who is calling: the
+// verified client certificate (if any), the derived service caller, and any
+// user assertions accompanying the request. identityErr carries peer identity
+// failures (for example an unusable certificate subject).
+type callerIdentity struct {
+	identityErr         error
+	caller              ServiceCaller
+	authenticated       bool
+	verifiedCertificate *x509.Certificate
+	assertions          []string
+}
+
+func callerIdentityFromGRPCContext(ctx context.Context) callerIdentity {
+	return callerIdentityFromContext(ctx, metadataAssertions(ctx))
+}
+
+func callerIdentityFromConnectRequest(ctx context.Context, req connect.AnyRequest) callerIdentity {
+	return callerIdentityFromContext(ctx, req.Header().Values(userAssertionHeader))
+}
+
+func callerIdentityFromContext(ctx context.Context, assertions []string) callerIdentity {
+	cert := verifiedClientCertificateFromContext(ctx)
+	identity := callerIdentity{assertions: assertions}
+	if cert == nil {
+		return identity
+	}
+	caller, _, err := serviceCallerFromCertificate(cert)
+	if err != nil {
+		identity.identityErr = err
+		return identity
+	}
+	identity.caller, identity.authenticated, identity.verifiedCertificate = caller, true, cert
+	return identity
+}
+
+func metadataAssertions(ctx context.Context) []string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+	return md.Get(userAssertionHeader)
+}
+
+// verifiedClientCertificateFromContext returns the verified client certificate
+// leaf, or nil when the caller presented none. The internal HTTP handler
+// populates it from the TLS handshake for both gRPC and Connect requests.
+func verifiedClientCertificateFromContext(ctx context.Context) *x509.Certificate {
+	cert, _ := ctx.Value(verifiedClientCertificateContextKey{}).(*x509.Certificate)
+	return cert
+}
+
+func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identity callerIdentity) (context.Context, error) {
 	if fullMethod == "" || fullMethod[0] != '/' {
 		return nil, status.Error(codes.Unimplemented, "malformed method name")
 	}
-	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
+	if identity.identityErr != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", identity.identityErr)
 	}
-	if authenticated && a.revocations != nil {
-		if err := checkClientCertificateRevocation(a.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+	if identity.authenticated && a.revocations != nil {
+		if err := checkClientCertificateRevocation(a.revocations, identity.verifiedCertificate); err != nil {
 			return nil, err
 		}
 	}
 
+	caller, authenticated := identity.caller, identity.authenticated
 	if authenticated {
 		ctx = context.WithValue(ctx, serviceCallerContextKey{}, caller)
 	}
@@ -107,7 +182,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, isStrea
 		return nil, status.Error(codes.PermissionDenied, "dashboard client certificate common name is not allowed")
 	}
 
-	delegatedUser, delegated, err := a.delegatedUserFromMetadata(ctx)
+	delegatedUser, delegated, err := a.delegatedUserFromAssertions(identity.assertions)
 	if err != nil {
 		return nil, err
 	}
@@ -182,21 +257,6 @@ func authenticatedServiceCallerFromContext(ctx context.Context) (ServiceCaller, 
 	return serviceCallerFromCertificate(cert)
 }
 
-func verifiedClientCertificateFromContext(ctx context.Context) *x509.Certificate {
-	peerInfo, ok := peer.FromContext(ctx)
-	if !ok || peerInfo.AuthInfo == nil {
-		return nil
-	}
-	tlsInfo, ok := peerInfo.AuthInfo.(credentials.TLSInfo)
-	if !ok {
-		return nil
-	}
-	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.VerifiedChains[0]) == 0 {
-		return nil
-	}
-	return tlsInfo.State.VerifiedChains[0][0]
-}
-
 func checkClientCertificateRevocation(revocations *CertificateRevocations, cert *x509.Certificate) error {
 	if revocations == nil || cert == nil {
 		return nil
@@ -230,12 +290,7 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	}
 }
 
-func (a *InternalAuth) delegatedUserFromMetadata(ctx context.Context) (DelegatedUser, bool, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return DelegatedUser{}, false, nil
-	}
-	assertions := md.Get(userAssertionHeader)
+func (a *InternalAuth) delegatedUserFromAssertions(assertions []string) (DelegatedUser, bool, error) {
 	if len(assertions) == 0 {
 		return DelegatedUser{}, false, nil
 	}

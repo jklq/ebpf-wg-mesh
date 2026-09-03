@@ -21,7 +21,6 @@ import (
 	"ebof-wg-mesh/internal/config"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -85,10 +84,12 @@ func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
 	}, nil
 }
 
-func (a *TLSAuthority) TransportCredentials() (credentials.TransportCredentials, error) {
+// HTTPConfig returns the TLS configuration for serving the internal
+// dual-protocol listener (gRPC and Connect share one TLS + HTTP/2 listener).
+func (a *TLSAuthority) HTTPConfig() *tls.Config {
 	pool := x509.NewCertPool()
 	pool.AddCert(a.caCert)
-	return credentials.NewTLS(&tls.Config{
+	return &tls.Config{
 		Certificates: []tls.Certificate{a.serverCert},
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 		ClientCAs:    pool,
@@ -99,7 +100,7 @@ func (a *TLSAuthority) TransportCredentials() (credentials.TransportCredentials,
 			}
 			return a.revocations.Check(state.PeerCertificates[0])
 		},
-	}), nil
+	}
 }
 
 func (a *TLSAuthority) RevokeSerials(serials []string) error {

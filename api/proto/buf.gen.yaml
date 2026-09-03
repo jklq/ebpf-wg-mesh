@@ -4,3 +4,5 @@ plugins:
     out: .
   - plugin: go-grpc
     out: .
+  - plugin: connect-go
+    out: .

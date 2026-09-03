@@ -65,6 +65,7 @@ docker-compose.override.yml
 
 # Generated protobuf files
 api/proto/**/*.pb.go
+console/src/lib/platform-gen/
 
 # Build/test binaries and artifacts
 integration.test

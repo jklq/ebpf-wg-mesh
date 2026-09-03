@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -13,9 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -28,7 +25,7 @@ func TestInternalAuthAllowsDashboardPlatformCallsWithDelegatedUser(t *testing.T)
 		userAssertionHeader, signedUserAssertion(t, "user-1", nil),
 	))
 
-	authorized, err := authz.authorize(ctx, "/platform.v1.PlatformService/ListProjects", false)
+	authorized, err := authz.authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -45,7 +42,7 @@ func TestInternalAuthRejectsMissingDelegatedUserOnPlatformCall(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorize(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.PlatformService/ListProjects", false)
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.PlatformService/ListProjects")
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected Unauthenticated, got %v", err)
 	}
@@ -60,7 +57,7 @@ func TestInternalAuthRejectsAgentCallingPlatformService(t *testing.T) {
 		userAssertionHeader, signedUserAssertion(t, "user-1", nil),
 	))
 
-	_, err := authz.authorize(ctx, "/platform.v1.PlatformService/ListProjects", false)
+	_, err := authz.authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
@@ -70,7 +67,7 @@ func TestInternalAuthRejectsDashboardCallingAgentSync(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorize(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/agent.v1.AgentControl/Sync", true)
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/agent.v1.AgentControl/Sync")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
@@ -80,7 +77,7 @@ func TestInternalAuthAllowsDashboardOpsCalls(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorize(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.OpsService/IngestGitHubWebhook", false)
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.OpsService/IngestGitHubWebhook")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -90,7 +87,7 @@ func TestInternalAuthRejectsUnauthenticatedOpsCalls(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorize(context.Background(), "/platform.v1.OpsService/IngestGitHubWebhook", false)
+	_, err := authz.authorizeGRPCContext(context.Background(), "/platform.v1.OpsService/IngestGitHubWebhook")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
@@ -100,7 +97,7 @@ func TestInternalAuthRejectsWrongClassOpsCalls(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorize(contextWithClientIdentity(serviceCallerBuilder, "builder-1"), "/platform.v1.OpsService/IngestGitHubWebhook", false)
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerBuilder, "builder-1"), "/platform.v1.OpsService/IngestGitHubWebhook")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
@@ -115,7 +112,7 @@ func TestInternalAuthRejectsNonCanonicalAndUnknownMethods(t *testing.T) {
 		"platform.v1.BuilderService/ClaimBuild",
 		"/unknown.v1.Service/Method",
 	} {
-		_, err := authz.authorize(ctx, method, false)
+		_, err := authz.authorizeGRPCContext(ctx, method)
 		if status.Code(err) != codes.PermissionDenied && status.Code(err) != codes.Unimplemented {
 			t.Fatalf("expected method %q to be rejected, got %v", method, err)
 		}
@@ -128,7 +125,7 @@ func TestInternalAuthRejectsUnpinnedDashboard(t *testing.T) {
 	authz := newTestInternalAuth()
 	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-2")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(userAssertionHeader, signedUserAssertion(t, "user-1", nil)))
-	_, err := authz.authorize(ctx, "/platform.v1.PlatformService/ListProjects", false)
+	_, err := authz.authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected unpinned dashboard CN to be rejected, got %v", err)
 	}
@@ -163,7 +160,7 @@ func TestInternalAuthRejectsInvalidUserAssertions(t *testing.T) {
 			ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
 				userAssertionHeader, signedUserAssertion(t, "user-1", mutate),
 			))
-			_, err := newTestInternalAuth().authorize(ctx, "/platform.v1.PlatformService/ListProjects", false)
+			_, err := newTestInternalAuth().authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 			if status.Code(err) != codes.Unauthenticated {
 				t.Fatalf("expected invalid %s assertion to be rejected, got %v", name, err)
 			}
@@ -185,7 +182,7 @@ func TestInternalAuthRejectsInvalidSignatureAndDuplicateAssertions(t *testing.T)
 			t.Parallel()
 			ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
 			ctx = metadata.NewIncomingContext(ctx, metadata.MD{userAssertionHeader: values})
-			_, err := newTestInternalAuth().authorize(ctx, "/platform.v1.PlatformService/ListProjects", false)
+			_, err := newTestInternalAuth().authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 			if status.Code(err) != codes.Unauthenticated {
 				t.Fatalf("expected invalid %s assertion to be rejected, got %v", name, err)
 			}
@@ -220,13 +217,11 @@ func contextWithClientIdentity(class serviceCallerClass, id string) context.Cont
 			OrganizationalUnit: []string{string(class)},
 		},
 	}
-	return peer.NewContext(context.Background(), &peer.Peer{
-		AuthInfo: credentials.TLSInfo{
-			State: tls.ConnectionState{
-				VerifiedChains: [][]*x509.Certificate{{cert}},
-			},
-		},
-	})
+	return context.WithValue(
+		context.Background(),
+		verifiedClientCertificateContextKey{},
+		cert,
+	)
 }
 
 const testUserAssertionSecret = "test-control-plane-user-assertion-secret"

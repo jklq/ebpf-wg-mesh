@@ -17,7 +17,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -90,7 +89,7 @@ func TestInternalAuthRejectsRevokedCertificatesForEveryCallerClass(t *testing.T)
 		test := test
 		t.Run(string(test.class)+test.method, func(t *testing.T) {
 			ctx := contextWithCertificate(test.class, test.id, big.NewInt(0x2a))
-			_, err := authz.authorize(ctx, test.method, test.method == "/agent.v1.AgentControl/Sync")
+			_, err := authz.authorizeGRPCContext(ctx, test.method)
 			if status.Code(err) != codes.Unauthenticated {
 				t.Fatalf("expected revoked %s certificate to be rejected, got %v", test.class, err)
 			}
@@ -134,10 +133,7 @@ func TestTLSHandshakeRejectsRevokedCertificateButAllowsCertificateFreeBootstrap(
 	if !roots.AppendCertsFromPEM(material.CAPEM) {
 		t.Fatal("append CA")
 	}
-	serverCredentials, err := authority.TransportCredentials()
-	if err != nil {
-		t.Fatalf("TransportCredentials: %v", err)
-	}
+	serverCredentials := credentials.NewTLS(authority.HTTPConfig())
 
 	clientWithRevokedCert := credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{pair},
@@ -190,7 +186,9 @@ func contextWithCertificate(class serviceCallerClass, id string, serial *big.Int
 			OrganizationalUnit: []string{string(class)},
 		},
 	}
-	return peer.NewContext(context.Background(), &peer.Peer{
-		AuthInfo: credentials.TLSInfo{State: tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{cert}}}},
-	})
+	return context.WithValue(
+		context.Background(),
+		verifiedClientCertificateContextKey{},
+		cert,
+	)
 }

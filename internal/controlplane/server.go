@@ -12,8 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
+
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	platformv1connect "ebof-wg-mesh/api/proto/platformv1connect"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
 
@@ -28,6 +31,7 @@ type Server struct {
 	notifier        *Notifier
 	authority       *TLSAuthority
 	internalGRPC    *grpc.Server
+	internalHTTP    *http.Server
 	ingress         *IngressSyncer
 	dashboard       *ManagedDashboardReconciler
 	registry        *RegistryPolicy
@@ -128,10 +132,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		ingressOpts = append(ingressOpts, WithIngressStaticRoutes(staticRoutes))
 	}
 	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store, ingressOpts...)
-	internalCreds, err := authority.TransportCredentials()
-	if err != nil {
-		return nil, err
-	}
 	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
 	var githubClient *GitHubClient
 	var githubCatalog *GitHubCatalog
@@ -168,7 +168,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
 	internal := grpc.NewServer(
-		grpc.Creds(internalCreds),
 		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
 		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
 	)
@@ -179,10 +178,15 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter), WithBuilderPlatformEvents(platformEvents)))
-	platformv1.RegisterOpsServiceServer(internal, NewOpsService(webhookHandler, store, notifier, authority))
+	opsService := NewOpsService(webhookHandler, store, notifier, authority)
+	platformv1.RegisterOpsServiceServer(internal, opsService)
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("listen internal grpc: %w", err)
+	}
+	internalHTTP := &http.Server{
+		Handler:   dualProtocolHandler(internal, newConnectHandler(authz, connectPlatformService{platformService}, connectOpsService{opsService})),
+		TLSConfig: authority.HTTPConfig(),
 	}
 	var registryLn net.Listener
 	var registryHTTP *http.Server
@@ -221,6 +225,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		leases:          leases,
 		buildStaleAfter: time.Duration(cfg.Builder.HeartbeatTimeoutSeconds) * time.Second,
 		internalLn:      internalLn,
+		internalHTTP:    internalHTTP,
 		registryLn:      registryLn,
 		runDone:         make(chan struct{}),
 	}
@@ -293,7 +298,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 8)
 	go func() {
-		errCh <- serveGRPC(s.internalGRPC, s.internalLn)
+		errCh <- serveInternalHTTP(s.internalHTTP, s.internalLn)
 	}()
 	if s.registryHTTP != nil && s.registryLn != nil {
 		go func() {
@@ -437,11 +442,19 @@ func (s *Server) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	if s.internalLn != nil {
+		_ = s.internalLn.Close()
+	}
 	if s.internalGRPC != nil {
 		s.internalGRPC.GracefulStop()
 	}
-	if s.internalLn != nil {
-		_ = s.internalLn.Close()
+	if s.internalHTTP != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := s.internalHTTP.Shutdown(shutdownCtx)
+		cancel()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errs = append(errs, err)
+		}
 	}
 	if s.registryHTTP != nil {
 		err := s.registryHTTP.Close()
@@ -518,9 +531,40 @@ func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, err
 	}
 }
 
-func serveGRPC(server *grpc.Server, ln net.Listener) error {
-	if err := server.Serve(ln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+func serveInternalHTTP(server *http.Server, ln net.Listener) error {
+	if err := server.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// newConnectHandler exposes PlatformService and OpsService over the Connect
+// protocol, enforcing the same authorization rules as the gRPC interceptors.
+func newConnectHandler(authz *InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
+	options := []connect.HandlerOption{
+		connect.WithInterceptors(authz.ConnectInterceptor()),
+	}
+	mux := http.NewServeMux()
+	mux.Handle(platformv1connect.NewPlatformServiceHandler(platformService, options...))
+	mux.Handle(platformv1connect.NewOpsServiceHandler(opsService, options...))
+	return mux
+}
+
+// dualProtocolHandler routes gRPC traffic (HTTP/2 with an application/grpc
+// content type) to the gRPC server and everything else to the Connect
+// handlers. Both protocols share one TLS listener; the verified client
+// certificate is extracted once and carried into both request contexts.
+func dualProtocolHandler(grpcServer *grpc.Server, connectHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+			ctx = context.WithValue(ctx, verifiedClientCertificateContextKey{}, r.TLS.VerifiedChains[0][0])
+		}
+		r = r.WithContext(ctx)
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcServer.ServeHTTP(w, r)
+			return
+		}
+		connectHandler.ServeHTTP(w, r)
+	})
 }
