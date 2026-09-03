@@ -1,4 +1,4 @@
-.PHONY: test-unit-go test-unit-console test-integration test-integration-go test-integration-console test-linux-runtime test-e2e-local test-e2e-vm dev-ephemeral
+.PHONY: test-unit-go test-unit-console test-integration test-integration-go test-integration-console test-linux-runtime test-linux-runtime-docker test-e2e-local test-e2e-vm dev-ephemeral
 
 test-unit-go:
 	go test ./...
@@ -6,6 +6,11 @@ test-unit-go:
 test-linux-runtime:
 	go test -count=1 -timeout 10m ./internal/agent
 	go test -count=1 -timeout 10m ./internal/firewall
+
+# Same tests, but provisioned with containerd/CNI/BPF inside a privileged Linux
+# container so they actually run on a non-Linux host instead of skipping.
+test-linux-runtime-docker:
+	./scripts/test-linux-runtime-docker.zsh
 
 test-unit-console:
 	bun --cwd=console run test:unit
