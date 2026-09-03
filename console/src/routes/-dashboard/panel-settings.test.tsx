@@ -98,11 +98,8 @@ describe("PanelSettings", () => {
 
 		expect(screen.getByText("octocat/other")).toBeTruthy();
 		expect(
-			screen
-				.getByText("octocat/other")
-				.closest(".source-repo-card")
-				?.classList.contains("unapplied-field"),
-		).toBe(true);
+			screen.getByText("octocat/other").closest("[data-unapplied]"),
+		).toBeTruthy();
 		expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
 
 		await waitFor(() =>
@@ -128,34 +125,31 @@ describe("PanelSettings", () => {
 		);
 
 		fireEvent.click(screen.getByLabelText("Never"));
-		expect(screen.getByLabelText("Never").closest("label")?.className).toBe(
-			"active",
+		expect((screen.getByLabelText("Never") as HTMLInputElement).checked).toBe(
+			true,
 		);
 		expect(
 			screen
 				.getByText("Policy")
 				.closest("fieldset")
-				?.classList.contains("unapplied-field"),
+				?.hasAttribute("data-unapplied"),
 		).toBe(true);
 
 		fireEvent.change(screen.getByLabelText("Required region"), {
 			target: { value: "eu-west" },
 		});
 		expect(
-			screen
-				.getByLabelText("Required region")
-				.classList.contains("unapplied-field"),
+			screen.getByLabelText("Required region").hasAttribute("data-unapplied"),
 		).toBe(true);
 
-		fireEvent.change(screen.getByLabelText("Max surge"), {
+		fireEvent.change(screen.getByLabelText("Healthcheck timeout (seconds)"), {
 			target: { value: "2" },
 		});
 		expect(
 			screen
-				.getByLabelText("Max surge")
-				.closest(".field-grid")
-				?.classList.contains("unapplied-field"),
-		).toBe(true);
+				.getByLabelText("Healthcheck timeout (seconds)")
+				.closest("[data-unapplied]"),
+		).toBeTruthy();
 		expect(doUpdateServiceMock).not.toHaveBeenCalled();
 	});
 
@@ -181,7 +175,7 @@ describe("PanelSettings", () => {
 
 		fireEvent.click(screen.getByLabelText("Never"));
 		const policy = screen.getByText("Policy").closest("fieldset");
-		expect(policy?.classList.contains("unapplied-field")).toBe(true);
+		expect(policy?.hasAttribute("data-unapplied")).toBe(true);
 		await waitFor(() => expect(doUpdateServiceMock).toHaveBeenCalledTimes(1));
 
 		const updated = service();
@@ -208,7 +202,7 @@ describe("PanelSettings", () => {
 		save.resolve(updated);
 
 		await waitFor(() => expect(onSaved).toHaveBeenCalledWith(updated));
-		expect(policy?.classList.contains("unapplied-field")).toBe(true);
+		expect(policy?.hasAttribute("data-unapplied")).toBe(true);
 		expect(doUpdateServiceMock).toHaveBeenCalledTimes(1);
 	});
 
@@ -229,7 +223,7 @@ describe("PanelSettings", () => {
 			screen
 				.getByText("Policy")
 				.closest("fieldset")
-				?.classList.contains("unapplied-field"),
+				?.hasAttribute("data-unapplied"),
 		).toBe(true);
 	});
 
@@ -397,18 +391,16 @@ describe("PanelSettings replica scaling", () => {
 			/>,
 		);
 
-		fireEvent.change(screen.getByLabelText("Max surge"), {
-			target: { value: "2" },
+		fireEvent.change(screen.getByLabelText("Healthcheck timeout (seconds)"), {
+			target: { value: "60" },
 		});
 		await waitFor(() =>
 			expect(doUpdateServiceMock).toHaveBeenCalledWith({
 				data: expect.objectContaining({
 					serviceId: "service-1",
 					rollingStrategy: expect.objectContaining({
-						maxUnavailable: 0,
-						maxSurge: 2,
-						startupTimeoutSeconds: 300,
-						drainTimeoutSeconds: 30,
+						healthcheckTimeoutSeconds: 60,
+						drainingSeconds: 30,
 					}),
 				}),
 			}),

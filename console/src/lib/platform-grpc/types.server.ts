@@ -131,10 +131,8 @@ export interface CreateServiceRequest {
 			desiredReplicaCount?: number;
 			placementRegion?: string;
 			rollingStrategy?: {
-				maxUnavailable: number;
-				maxSurge: number;
-				startupTimeoutSeconds: number;
-				drainTimeoutSeconds: number;
+				healthcheckTimeoutSeconds: number;
+				drainingSeconds: number;
 			};
 		};
 	};
@@ -191,10 +189,8 @@ export interface UpdateServiceRequest {
 			desiredReplicaCount?: number;
 			placementRegion?: string;
 			rollingStrategy?: {
-				maxUnavailable: number;
-				maxSurge: number;
-				startupTimeoutSeconds: number;
-				drainTimeoutSeconds: number;
+				healthcheckTimeoutSeconds: number;
+				drainingSeconds: number;
 			};
 		};
 	};

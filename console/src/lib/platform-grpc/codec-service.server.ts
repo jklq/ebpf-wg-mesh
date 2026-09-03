@@ -35,6 +35,7 @@ import {
 	decodeDomainOwnershipState,
 	decodeProjectKind,
 	decodeServiceLogType,
+	decodeSourceAccessState,
 	decodeUnappliedChangeAction,
 	encodeServiceLogType,
 } from "./codec-enums.server";
@@ -50,6 +51,7 @@ import {
 	readRecord,
 	readRequiredNumber,
 	readRequiredString,
+	readStringArray,
 } from "./codec-read.server";
 import {
 	decodeOptionalBuildRecipe,

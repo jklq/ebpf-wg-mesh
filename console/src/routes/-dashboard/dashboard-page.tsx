@@ -9,7 +9,7 @@ import {
 	useState,
 	useTransition,
 } from "react";
-
+import { cn } from "#/lib/cn";
 import type {
 	CreateServiceFastResult,
 	DashboardHomeState,
@@ -594,10 +594,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	};
 
 	return (
-		<div
-			className="app-canvas"
-			style={{ display: "flex", flexDirection: "column" }}
-		>
+		<div className="flex h-dvh flex-col overflow-hidden">
 			<Topbar
 				state={localState}
 				onNewService={openNewService}
@@ -667,7 +664,13 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				onDeploy={handleDeployChanges}
 			/>
 
-			<div className={`side-panel ${selected ? "open" : ""}`}>
+			<div
+				className={cn(
+					"fixed top-0 right-0 z-50 flex h-screen w-side-panel max-w-full translate-x-full flex-col overflow-hidden border-l border-line bg-[radial-gradient(920px_420px_at_100%_-40px,rgba(226,138,36,0.08),transparent_58%),linear-gradient(180deg,#1d1a16_0%,#141210_72%)] transition-transform duration-200 ease-out max-[900px]:w-screen",
+					selected && "translate-x-0",
+				)}
+			>
+				<div className="panel-grain" />
 				{selected && (
 					<Suspense fallback={<ServicePanelFallback service={selected} />}>
 						<ServicePanel

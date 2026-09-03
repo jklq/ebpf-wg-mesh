@@ -7,6 +7,15 @@ import {
 	useState,
 } from "react";
 
+import { cn } from "#/lib/cn";
+import {
+	btnDangerSolid,
+	btnSecondary,
+	errorMsg,
+	fieldInput,
+	modalCard,
+} from "#/lib/ui-classes";
+
 import { ModalOverlay } from "./ui";
 
 export function ConfirmDeleteDialog({
@@ -46,27 +55,42 @@ export function ConfirmDeleteDialog({
 
 	return (
 		<ModalOverlay
-			className="danger-overlay"
+			className="items-center p-6"
 			ariaLabel={title}
 			onClose={() => {
 				if (!busy) onCancel();
 			}}
 		>
-			<form className="modal-card danger-card" onSubmit={submit}>
-				<div className="danger-card-head">
-					<AlertTriangle size={20} className="danger-card-icon" />
-					<h2>{title}</h2>
+			<form
+				className={cn(
+					modalCard,
+					"flex max-w-[460px] flex-col gap-3 border-[rgba(184,66,66,0.55)] p-[18px] shadow-[0_24px_70px_rgba(0,0,0,0.6)] select-text",
+				)}
+				onSubmit={submit}
+			>
+				<div className="flex items-center gap-2.5">
+					<AlertTriangle size={20} className="shrink-0 text-failed" />
+					<h2 className="m-0 font-condensed text-[21px] tracking-[0.02em] text-ink">
+						{title}
+					</h2>
 				</div>
 
-				<p className="danger-card-body">{description}</p>
+				<p className="m-0 text-[13px] leading-relaxed text-muted select-text">
+					{description}
+				</p>
 
-				<p className="danger-card-body">
-					Type <strong className="danger-card-name">{name}</strong> to confirm
+				<p className="m-0 text-[13px] leading-relaxed text-muted select-text">
+					Type{" "}
+					<strong className="font-mono font-semibold text-ink">{name}</strong>{" "}
+					to confirm
 				</p>
 
 				<input
 					ref={inputRef}
-					className="field-input danger-card-input"
+					className={cn(
+						fieldInput,
+						"font-mono focus:!border-failed focus:!shadow-[0_0_0_2px_var(--color-failed-dim)]",
+					)}
 					value={typed}
 					onChange={(event) => setTyped(event.target.value)}
 					placeholder={name}
@@ -75,12 +99,12 @@ export function ConfirmDeleteDialog({
 					aria-label={`Type ${name} to confirm`}
 				/>
 
-				{error && <p className="error-msg danger-card-error">{error}</p>}
+				{error && <p className={cn(errorMsg, "m-0")}>{error}</p>}
 
-				<div className="danger-card-actions">
+				<div className="mt-0.5 flex justify-end gap-2">
 					<button
 						type="button"
-						className="btn-secondary"
+						className={btnSecondary}
 						onClick={onCancel}
 						disabled={busy}
 					>
@@ -88,15 +112,10 @@ export function ConfirmDeleteDialog({
 					</button>
 					<button
 						type="submit"
-						className="btn-danger-solid"
+						className={btnDangerSolid}
 						disabled={!matches || busy}
 					>
-						{busy && (
-							<Loader2
-								size={13}
-								style={{ animation: "spin 1s linear infinite" }}
-							/>
-						)}
+						{busy && <Loader2 size={13} className="animate-spin" />}
 						{busy ? (busyLabel ?? "Deleting…") : confirmLabel}
 					</button>
 				</div>

@@ -5,6 +5,7 @@ import type {
 	CreateServiceFastResult,
 	DashboardHomeState,
 } from "#/lib/dashboard/core/types.server";
+import { modalCard } from "#/lib/ui-classes";
 
 import { RepositoryPicker } from "./repository-picker";
 import { doCreateServiceFast } from "./server-fns";
@@ -115,7 +116,7 @@ export function NewServiceModal({
 
 	return (
 		<ModalOverlay onClose={onClose}>
-			<div className="modal-card">
+			<div className={modalCard}>
 				<RepositoryPicker
 					actions={pickerActions}
 					error={error}

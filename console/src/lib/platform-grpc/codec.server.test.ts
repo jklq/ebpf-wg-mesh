@@ -79,8 +79,32 @@ describe("platform grpc codec", () => {
 		});
 	});
 
+	it("encodes placement region and deployment timing together", () => {
+		const request = encodeCreateServiceRequest({
+			environmentId: "environment-1",
+			name: "web",
+			spec: {
+				runtime: {
+					env: {},
+					cpuMillis: 250,
+					memoryMebibytes: 256,
+					ports: [],
+				},
+				placementRegion: "eu-west",
+				rollingStrategy: {
+					healthcheckTimeoutSeconds: 300,
+					drainingSeconds: 30,
+				},
+			},
+		});
+		expect(request.service.spec.placementRegion).toBe("eu-west");
+		expect(request.service.spec.rollingStrategy).toEqual({
+			healthcheckTimeoutSeconds: 300,
+			drainingSeconds: 30,
+		});
+	});
 
-	it("encodes an explicit rolling strategy including zero surge", () => {
+	it("encodes explicit deployment timing", () => {
 		const request = encodeCreateServiceRequest({
 			environmentId: "environment-1",
 			name: "web",
@@ -92,18 +116,14 @@ describe("platform grpc codec", () => {
 					ports: [],
 				},
 				rollingStrategy: {
-					maxUnavailable: 1,
-					maxSurge: 0,
-					startupTimeoutSeconds: 60,
-					drainTimeoutSeconds: 5,
+					healthcheckTimeoutSeconds: 60,
+					drainingSeconds: 5,
 				},
 			},
 		});
 		expect(request.service.spec.rollingStrategy).toEqual({
-			maxUnavailable: 1,
-			maxSurge: 0,
-			startupTimeoutSeconds: 60,
-			drainTimeoutSeconds: 5,
+			healthcheckTimeoutSeconds: 60,
+			drainingSeconds: 5,
 		});
 	});
 

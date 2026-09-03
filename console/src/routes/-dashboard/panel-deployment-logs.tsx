@@ -1,6 +1,7 @@
 import { RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { cn } from "#/lib/cn";
 import type {
 	DashboardAllocationStatus,
 	DashboardBuildStatus,
@@ -8,6 +9,7 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { errorMsg } from "#/lib/ui-classes";
 import {
 	formatError,
 	formatLogTime,
@@ -169,11 +171,12 @@ export function DeploymentLogsView({
 			: "Logs will appear here as this deployment progresses.";
 
 	return (
-		<div className="logs-view">
-			<div className="logs-toolbar">
-				<label className="logs-search">
+		<div className="flex min-h-0 flex-1 flex-col gap-[9px] overflow-hidden p-4">
+			<div className="flex items-center gap-2">
+				<label className="flex flex-1 items-center gap-[7px] border border-line bg-canvas px-[9px] text-dim">
 					<Search size={13} />
 					<input
+						className="min-w-0 flex-1 border-0 bg-transparent py-2 font-mono text-xs text-ink outline-none"
 						value={search}
 						onChange={(event) => setSearch(event.target.value)}
 						placeholder="Search logs"
@@ -181,22 +184,27 @@ export function DeploymentLogsView({
 				</label>
 				<button
 					type="button"
-					className="logs-refresh"
+					className="inline-flex size-[31px] cursor-pointer items-center justify-center border border-line bg-canvas text-muted hover:bg-surface-hover hover:text-ink"
 					onClick={() => void loadLogs()}
 					disabled={loading}
 					aria-label="Refresh logs"
 					title="Refresh logs"
 				>
-					<RefreshCw size={13} className={loading ? "spinning" : ""} />
+					<RefreshCw size={13} className={loading ? "animate-spin" : ""} />
 				</button>
 			</div>
 
-			<div className="log-filters">
+			<div className="flex border border-line bg-canvas">
 				{(["all", "deploy", "build", "runtime"] as const).map((type) => (
 					<button
 						key={type}
 						type="button"
-						className={filter === type ? "active" : ""}
+						className={cn(
+							"min-h-8 flex-1 cursor-pointer border border-line px-2 py-1.5 font-condensed text-[11px] font-bold uppercase tracking-[0.09em]",
+							filter === type
+								? "bg-surface-raised text-accent"
+								: "bg-transparent text-ink hover:bg-surface-hover",
+						)}
 						onClick={() => setFilter(type)}
 					>
 						{type}
@@ -204,32 +212,62 @@ export function DeploymentLogsView({
 				))}
 			</div>
 
-			{error && <div className="deployment-error compact">{error}</div>}
+			{error && (
+				<div className={cn(errorMsg, "px-[9px] py-[7px] text-[11px]")}>
+					{error}
+				</div>
+			)}
 
-			<div className="terminal-log">
+			<div className="min-h-[220px] flex-1 overflow-auto border border-line bg-[#10100f] py-2 font-mono">
 				{sortedLines.length === 0 && !loading && (
-					<div className="deployment-empty logs">{emptyText}</div>
+					<div className="px-3 pt-16 text-center text-xs text-muted">
+						{emptyText}
+					</div>
 				)}
 				{sortedLines.map((line) => (
 					<div
 						key={`${line.observedAt?.toISOString() ?? "t"}-${line.sequence}-${line.line}`}
-						className="log-line"
+						className="grid grid-cols-[max-content_minmax(0,1fr)] items-start gap-2 px-[9px] py-[3px] text-[11px] leading-[1.45] text-muted max-[900px]:grid-cols-1 max-[900px]:gap-0.5"
 					>
-						<div className="log-meta">
-							<span className="log-time">
+						<div className="inline-flex items-baseline gap-1.5 whitespace-nowrap max-[900px]:flex-wrap">
+							<span className="text-dim">
 								{line.observedAt ? formatLogTime(line.observedAt) : "--:--:--"}
 							</span>
-							<span className={`log-badge ${line.logType ?? "unspecified"}`}>
+							<span
+								className={cn(
+									"log-badge text-[9px] tracking-[0.06em] uppercase",
+									line.logType ?? "unspecified",
+									logBadgeToneClass(line.logType),
+								)}
+							>
 								{line.logType ?? "log"}
 							</span>
 						</div>
-						<span className="log-body">{line.line}</span>
+						<span className="whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">
+							{line.line}
+						</span>
 					</div>
 				))}
 				{loading && sortedLines.length === 0 && (
-					<div className="deployment-empty logs">Loading logs...</div>
+					<div className="px-3 pt-16 text-center text-xs text-muted">
+						Loading logs...
+					</div>
 				)}
 			</div>
 		</div>
 	);
+}
+
+function logBadgeToneClass(logType: string | undefined): string {
+	switch (logType) {
+		case "runtime":
+			return "text-healthy";
+		case "build":
+			return "text-building";
+		case "http":
+		case "network":
+			return "text-muted";
+		default:
+			return "text-accent";
+	}
 }

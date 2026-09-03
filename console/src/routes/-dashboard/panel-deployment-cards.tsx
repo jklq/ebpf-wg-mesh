@@ -1,6 +1,7 @@
 import { Loader2, MoreVertical, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { cn } from "#/lib/cn";
 import type {
 	DashboardAllocationStatus,
 	DashboardBuildStatus,
@@ -10,6 +11,14 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import {
+	badge,
+	badgeClass,
+	btnPrimary,
+	btnSecondary,
+	errorMsg,
+	statusDotClass,
+} from "#/lib/ui-classes";
 
 import {
 	buildStepHint,
@@ -156,7 +165,7 @@ export function DeploymentCard({
 		}
 	};
 
-	const badgeClass =
+	const healthTone =
 		tone === "failed"
 			? "failed"
 			: tone === "running"
@@ -170,27 +179,43 @@ export function DeploymentCard({
 
 	return (
 		<section
-			className={`deployment-shell deployment-shell-live ${tone ? `tone-${tone}` : ""}${
-				logsEnabled ? " clickable" : ""
-			}`}
+			className={cn(
+				"shrink-0 overflow-visible rounded-sm border bg-[rgba(25,24,22,0.96)]",
+				logsEnabled && "group/shell cursor-pointer",
+				logsEnabled && deploymentShellHoverClass(tone),
+				deploymentShellToneClass(tone),
+			)}
 		>
-			<div className="deployment-live-head">
-				<span className={`badge ${badgeClass}`}>
+			<div className="relative flex min-h-[52px] items-center gap-3 px-7 py-2.5 max-[900px]:flex-col max-[900px]:items-stretch max-[900px]:px-4">
+				<span
+					className={
+						tone === "draining"
+							? cn(
+									"badge",
+									"offline",
+									badge,
+									"border-[rgba(80,76,71,0.28)] bg-[rgba(80,76,71,0.18)] text-dim",
+								)
+							: badgeClass(healthTone)
+					}
+				>
 					{deploymentBadgeLabel(status?.state, build)}
 				</span>
 				<button
 					type="button"
-					className="deployment-live-copy"
+					className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 border-0 bg-transparent p-0 text-left disabled:cursor-default"
 					onClick={onOpenLogs}
 					disabled={!logsEnabled}
 				>
-					<p className="deployment-live-message">
+					<p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap font-display text-[15px] font-medium leading-[1.25] tracking-[-0.02em] text-ink">
 						{deploymentCardHeadline(build)}
 					</p>
-					<div className="deployment-live-meta">
+					<div className="flex flex-wrap items-center gap-[7px] font-mono text-[11px] text-muted">
 						{meta.map((entry, index) => (
-							<span key={entry}>
-								{index > 0 && <span className="deployment-inline-dot" />}
+							<span key={entry} className="inline-flex items-center gap-[7px]">
+								{index > 0 && (
+									<span className="inline-block size-[3px] shrink-0 rounded-full bg-dim" />
+								)}
 								{entry}
 							</span>
 						))}
@@ -198,7 +223,7 @@ export function DeploymentCard({
 				</button>
 				{showStepRail && (
 					<div
-						className="panel-badge-rail"
+						className="grid h-[3px] w-[54px] shrink-0 auto-cols-fr grid-flow-col gap-0.5"
 						role="img"
 						aria-label="Deploy steps"
 					>
@@ -208,7 +233,7 @@ export function DeploymentCard({
 							return (
 								<span
 									key={stage.key || stage.label}
-									className={`panel-badge-segment ${segmentState}`}
+									className={panelBadgeSegmentClass(segmentState)}
 									title={stage.label || stage.key}
 								/>
 							);
@@ -217,7 +242,7 @@ export function DeploymentCard({
 				)}
 				<button
 					type="button"
-					className="deployment-view-logs"
+					className={deploymentViewLogsClass(tone)}
 					onClick={onOpenLogs}
 					disabled={!logsEnabled}
 				>
@@ -225,6 +250,7 @@ export function DeploymentCard({
 				</button>
 				{displayedActions.length > 0 && (
 					<DeploymentActionsMenu
+						className="max-[900px]:absolute max-[900px]:top-2.5 max-[900px]:right-7"
 						actions={displayedActions}
 						pendingAction={pendingAction}
 						restartAllocationId={restartAllocationId}
@@ -236,32 +262,43 @@ export function DeploymentCard({
 			</div>
 
 			{((record.actions?.length ?? 0) > 0 || actionError) && (
-				<div className="deployment-actions">
+				<div className="flex flex-wrap items-end gap-x-3 gap-y-2 border-t border-dashed border-[rgba(80,76,71,0.55)] px-7 py-2.5 pb-3 max-[900px]:px-4">
 					<DeploymentActionHistory record={record} />
 					{actionError && (
-						<div className="deployment-error compact">{actionError}</div>
+						<div className={cn(errorMsg, "px-[9px] py-[7px] text-[11px]")}>
+							{actionError}
+						</div>
 					)}
 				</div>
 			)}
 
 			{showProgress && (
-				<div className={`deployment-inline-progress ${tone ?? ""}`}>
-					<span className="deployment-inline-progress-icon">
+				<div
+					className={cn(
+						"grid min-h-[34px] grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 border-t border-dashed border-[rgba(80,76,71,0.55)] px-7 py-[7px] text-xs leading-[1.35] max-[900px]:px-4",
+						tone === "running"
+							? "bg-[rgba(192,133,32,0.08)] text-building"
+							: tone === "failed"
+								? "bg-[linear-gradient(90deg,rgba(184,66,66,0.22),transparent_18px),var(--color-failed-dim)] text-failed"
+								: "bg-[rgba(15,14,13,0.42)] text-muted",
+					)}
+				>
+					<span className="inline-flex items-center justify-center">
 						{tone === "failed" ? (
 							<XCircle size={13} />
 						) : (
-							<Loader2
-								size={13}
-								style={{ animation: "spin 1s linear infinite" }}
-							/>
+							<Loader2 size={13} className="animate-spin" />
 						)}
 					</span>
-					<span className="deployment-inline-progress-text">{progress}</span>
+					<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+						{progress}
+					</span>
 					{focusStage && (
 						<span
-							className={`deployment-inline-progress-time${
-								focusStage.state === "failed" ? " failed" : ""
-							}`}
+							className={cn(
+								"whitespace-nowrap font-mono text-[11px]",
+								focusStage.state === "failed" ? "text-failed" : "text-dim",
+							)}
 						>
 							{stageStatusText(focusStage, nowMs)}
 						</span>
@@ -270,10 +307,10 @@ export function DeploymentCard({
 			)}
 
 			{failedStage && (
-				<div className="stage-inline">
+				<div className="flex animate-stage-inline-in flex-col gap-2.5 px-7 pb-3.5 max-[900px]:px-4">
 					{snippet.lines.length > 0 && (
 						<div
-							className="stage-inline-log"
+							className="overflow-hidden border border-[rgba(80,76,71,0.55)] bg-[#10100f] font-mono text-[11px] leading-[1.6] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
 							role="log"
 							aria-label={`${failedStage.label || failedStage.key} logs`}
 						>
@@ -282,11 +319,11 @@ export function DeploymentCard({
 								return (
 									<div
 										key={`${source?.sequence ?? lineIndex}:${source?.observedAt?.toISOString() ?? "local"}:${line}`}
-										className={`stage-inline-line${
-											snippet.highlightIndexes.includes(lineIndex)
-												? " error"
-												: ""
-										}`}
+										className={cn(
+											"px-2.5 py-[3px] whitespace-pre-wrap text-dim [overflow-wrap:anywhere]",
+											snippet.highlightIndexes.includes(lineIndex) &&
+												"bg-[rgba(184,66,66,0.16)] text-[#d27a7a] shadow-[inset_2px_0_0_var(--color-failed)]",
+										)}
 									>
 										{line}
 									</div>
@@ -294,12 +331,12 @@ export function DeploymentCard({
 							})}
 						</div>
 					)}
-					<div className="stage-inline-actions">
+					<div className="flex flex-wrap gap-2">
 						{missingKeys.map((key) => (
 							<button
 								key={key}
 								type="button"
-								className="btn-primary"
+								className={cn(btnPrimary, "min-h-7 px-[11px]")}
 								onClick={() => onOpenVariables?.(key)}
 							>
 								Add {key}
@@ -307,7 +344,7 @@ export function DeploymentCard({
 						))}
 						<button
 							type="button"
-							className="btn-secondary"
+							className={cn(btnSecondary, "min-h-7 px-[11px]")}
 							onClick={onOpenLogs}
 							disabled={!logsEnabled}
 						>
@@ -315,7 +352,7 @@ export function DeploymentCard({
 						</button>
 						<button
 							type="button"
-							className="btn-secondary"
+							className={cn(btnSecondary, "min-h-7 px-[11px]")}
 							onClick={() => void runAction("retry")}
 							disabled={Boolean(pendingAction)}
 						>
@@ -326,11 +363,11 @@ export function DeploymentCard({
 			)}
 
 			{retention && (
-				<div className="deployment-retention">
+				<div className="border-t border-dashed border-[rgba(80,76,71,0.7)] px-7 py-3 text-xs leading-[1.45] text-muted max-[900px]:px-4">
 					{service.lastSuccessfulCommitSha ? (
 						<>
 							Traffic is still on{" "}
-							<span className="mono deployment-retention-sha">
+							<span className="font-mono text-accent">
 								{shortSha(service.lastSuccessfulCommitSha)}
 							</span>{" "}
 							— {retention}
@@ -399,36 +436,47 @@ export function DeploymentHistoryRow({
 	};
 
 	return (
-		<div className="deployment-history-entry">
-			<div className="deployment-history-row-shell">
+		<div className="border-t border-[rgba(80,76,71,0.35)]">
+			<div className="flex items-center">
 				<button
 					type="button"
-					className="deployment-history-row"
+					className="grid min-h-[42px] w-full min-w-0 cursor-pointer grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-2.5 border-0 bg-transparent px-7 py-2 text-left text-muted hover:bg-[rgba(255,255,255,0.025)] hover:text-ink disabled:cursor-default disabled:opacity-55 max-[900px]:px-4"
 					onClick={onOpenLogs}
 					disabled={!logsEnabled}
 				>
-					<span className={`status-dot ${toneToHealthClass(tone)}`} />
-					<span className="deployment-history-message">
+					<span
+						role="img"
+						className={statusDotClass(toneToHealthClass(tone))}
+						aria-label={`Status: ${toneToHealthClass(tone)}`}
+					/>
+					<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px]">
 						{deploymentCardHeadline(build)}
 					</span>
-					<span className="deployment-history-meta">
+					<span className="inline-flex items-center gap-2 font-mono text-[10px] text-dim">
 						{build?.commitSha && (
-							<span className="mono">{shortSha(build.commitSha)}</span>
+							<span className="font-mono">{shortSha(build.commitSha)}</span>
 						)}
 						{timestamp && <span>{formatRelativeAge(timestamp, nowMs)}</span>}
 					</span>
 				</button>
 				{actions.length > 0 && (
 					<DeploymentActionsMenu
+						className="mr-7 max-[900px]:mr-4"
 						actions={actions}
 						pendingAction={pendingAction}
 						onAction={runAction}
 					/>
 				)}
 			</div>
-			<DeploymentActionHistory record={record} />
 			{actionError && (
-				<div className="deployment-error compact">{actionError}</div>
+				<div
+					className={cn(
+						errorMsg,
+						"mr-7 mb-2 ml-[34px] px-[9px] py-[7px] text-[11px]",
+					)}
+				>
+					{actionError}
+				</div>
 			)}
 		</div>
 	);
@@ -439,6 +487,7 @@ export function DeploymentActionsMenu({
 	pendingAction,
 	allocations = [],
 	restartAllocationId = "",
+	className,
 	onRestartAllocationChange,
 	onAction,
 }: {
@@ -446,6 +495,7 @@ export function DeploymentActionsMenu({
 	pendingAction?: DashboardDeploymentAction;
 	allocations?: Array<DashboardAllocationStatus>;
 	restartAllocationId?: string;
+	className?: string;
 	onRestartAllocationChange?: (allocationId: string) => void;
 	onAction: (
 		action: DashboardDeploymentAction,
@@ -476,10 +526,10 @@ export function DeploymentActionsMenu({
 	}, [open]);
 
 	return (
-		<div className="deployment-menu" ref={menuRef}>
+		<div className={cn("relative shrink-0", className)} ref={menuRef}>
 			<button
 				type="button"
-				className="deployment-menu-trigger"
+				className="inline-flex size-8 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-muted hover:bg-[rgba(255,255,255,0.05)] hover:text-ink focus-visible:bg-[rgba(255,255,255,0.05)] focus-visible:text-ink aria-expanded:bg-[rgba(255,255,255,0.05)] aria-expanded:text-ink"
 				aria-label="Deployment actions"
 				aria-expanded={open}
 				onClick={() => setOpen((current) => !current)}
@@ -487,13 +537,17 @@ export function DeploymentActionsMenu({
 				<MoreVertical size={20} />
 			</button>
 			{open && (
-				<div className="deployment-menu-popover" role="menu">
+				<div
+					className="absolute top-[calc(100%+6px)] right-0 z-30 flex min-w-[184px] flex-col rounded-sm border border-line bg-surface-raised p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.45)]"
+					role="menu"
+				>
 					{actions.includes("restart") &&
 						allocations.length > 1 &&
 						onRestartAllocationChange && (
-							<label className="deployment-restart-target">
+							<label className="mb-1 flex flex-col gap-1 border-b border-[rgba(80,76,71,0.45)] px-2.5 pt-[7px] pb-2 text-[10px] tracking-[0.05em] text-dim uppercase">
 								<span>Restart target</span>
 								<select
+									className="h-[27px] w-full border border-line bg-surface font-mono text-[10px] text-ink"
 									value={restartAllocationId}
 									onChange={(event) =>
 										onRestartAllocationChange(event.target.value)
@@ -514,7 +568,12 @@ export function DeploymentActionsMenu({
 							key={action}
 							type="button"
 							role="menuitem"
-							className={action === "remove" ? "danger" : undefined}
+							className={cn(
+								"min-h-9 w-full cursor-pointer border-0 bg-transparent px-2.5 text-left text-[13px] font-medium disabled:cursor-default disabled:opacity-50",
+								action === "remove"
+									? "text-failed hover:bg-[rgba(208,85,85,0.1)] hover:text-[#e08989] focus-visible:bg-[rgba(208,85,85,0.1)] focus-visible:text-[#e08989]"
+									: "text-muted hover:bg-[rgba(255,255,255,0.055)] hover:text-ink focus-visible:bg-[rgba(255,255,255,0.055)] focus-visible:text-ink",
+							)}
 							onClick={() => {
 								setOpen(false);
 								void onAction(
@@ -542,13 +601,99 @@ export function DeploymentActionHistory({
 }) {
 	if (!record.actions?.length) return null;
 	return (
-		<div className="deployment-action-history" aria-label="Deployment actions">
+		<section
+			className="flex w-full flex-wrap items-center gap-1.5 font-mono text-[10px] text-dim"
+			aria-label="Deployment actions"
+		>
 			{record.actions.map((action) => (
-				<span key={action.id}>
+				<span
+					key={action.id}
+					className="border border-[rgba(80,76,71,0.45)] px-[5px] py-0.5"
+				>
 					{actionLabel(action.action)}
 					{action.allocationId ? ` ${shortId(action.allocationId)}` : ""}
 				</span>
 			))}
 		</div>
 	);
+}
+
+function deploymentShellToneClass(tone: string | undefined): string {
+	switch (tone) {
+		case "running":
+			return "border-[rgba(192,133,32,0.28)] bg-[linear-gradient(180deg,rgba(192,133,32,0.12),rgba(192,133,32,0.04)),var(--color-surface-raised)] shadow-[inset_3px_0_0_rgba(192,133,32,0.45)]";
+		case "active":
+			return "border-[rgba(109,190,130,0.32)] bg-[linear-gradient(180deg,rgba(109,190,130,0.14),rgba(109,190,130,0.04)),var(--color-surface-raised)] shadow-[inset_3px_0_0_rgba(109,190,130,0.7)]";
+		case "draining":
+		case "succeeded":
+			return "border-[rgba(80,76,71,0.34)] bg-[linear-gradient(180deg,rgba(80,76,71,0.12),rgba(80,76,71,0.04)),var(--color-surface-raised)] shadow-[inset_3px_0_0_rgba(80,76,71,0.45)]";
+		case "failed":
+			return "border-[rgba(184,66,66,0.28)] bg-[linear-gradient(180deg,rgba(184,66,66,0.12),rgba(184,66,66,0.04)),var(--color-surface-raised)] shadow-[inset_3px_0_0_rgba(184,66,66,0.5)]";
+		default:
+			return "border-line";
+	}
+}
+
+function deploymentShellHoverClass(tone: string | undefined): string {
+	switch (tone) {
+		case "active":
+			return "hover:border-[rgba(109,190,130,0.48)]";
+		case "running":
+			return "hover:border-[rgba(192,133,32,0.42)]";
+		case "draining":
+		case "succeeded":
+			return "hover:border-[rgba(125,117,107,0.5)]";
+		default:
+			return "hover:border-[rgba(220,214,204,0.28)]";
+	}
+}
+
+function deploymentViewLogsClass(tone: string | undefined): string {
+	const base =
+		"shrink-0 min-h-8 cursor-pointer border px-3 font-condensed text-[11px] font-bold uppercase tracking-[0.09em] disabled:cursor-default disabled:opacity-50 max-[900px]:w-full";
+	switch (tone) {
+		case "active":
+			return cn(
+				base,
+				"border-[rgba(109,190,130,0.38)] bg-[rgba(109,190,130,0.1)] text-healthy hover:border-[rgba(109,190,130,0.62)] hover:bg-[rgba(109,190,130,0.2)] hover:text-[#9ad6aa] focus-visible:border-[rgba(109,190,130,0.62)] focus-visible:bg-[rgba(109,190,130,0.2)] focus-visible:text-[#9ad6aa] group-hover/shell:border-[rgba(109,190,130,0.62)] group-hover/shell:bg-[rgba(109,190,130,0.2)] group-hover/shell:text-[#9ad6aa]",
+			);
+		case "running":
+			return cn(
+				base,
+				"border-[rgba(212,154,42,0.4)] bg-[rgba(212,154,42,0.1)] text-building hover:border-[rgba(212,154,42,0.64)] hover:bg-[rgba(212,154,42,0.2)] hover:text-[#e4b65a] focus-visible:border-[rgba(212,154,42,0.64)] focus-visible:bg-[rgba(212,154,42,0.2)] focus-visible:text-[#e4b65a] group-hover/shell:border-[rgba(212,154,42,0.64)] group-hover/shell:bg-[rgba(212,154,42,0.2)] group-hover/shell:text-[#e4b65a]",
+			);
+		case "draining":
+		case "succeeded":
+			return cn(
+				base,
+				"border-[rgba(125,117,107,0.42)] bg-[rgba(80,76,71,0.22)] text-muted hover:border-[rgba(183,174,162,0.45)] hover:bg-[rgba(108,102,94,0.32)] hover:text-ink focus-visible:border-[rgba(183,174,162,0.45)] focus-visible:bg-[rgba(108,102,94,0.32)] focus-visible:text-ink group-hover/shell:border-[rgba(183,174,162,0.45)] group-hover/shell:bg-[rgba(108,102,94,0.32)] group-hover/shell:text-ink",
+			);
+		case "failed":
+			return cn(
+				base,
+				"border-[rgba(208,85,85,0.38)] bg-[rgba(208,85,85,0.1)] text-failed hover:border-[rgba(208,85,85,0.6)] hover:bg-[rgba(208,85,85,0.2)] hover:text-[#e08989] focus-visible:border-[rgba(208,85,85,0.6)] focus-visible:bg-[rgba(208,85,85,0.2)] focus-visible:text-[#e08989] group-hover/shell:border-[rgba(208,85,85,0.6)] group-hover/shell:bg-[rgba(208,85,85,0.2)] group-hover/shell:text-[#e08989]",
+			);
+		default:
+			return cn(
+				base,
+				"border-line bg-[rgba(255,255,255,0.03)] text-ink hover:bg-surface-hover focus-visible:bg-surface-hover",
+			);
+	}
+}
+
+function panelBadgeSegmentClass(state: string): string {
+	const base =
+		"rounded-full transition-[background-color] duration-[280ms] ease-in-out";
+	switch (state) {
+		case "succeeded":
+			return cn(base, "bg-healthy");
+		case "building-done":
+			return cn(base, "bg-building");
+		case "running":
+			return cn(base, "bg-building animate-pulse-building");
+		case "failed":
+			return cn(base, "bg-failed");
+		default:
+			return cn(base, "bg-[rgba(80,76,71,0.7)]");
+	}
 }

@@ -158,6 +158,10 @@ function stableKey(value: unknown): string {
 
 const servicePersistTails = new Map<string, Promise<unknown>>();
 
+export function resetServicePersistQueueForTests() {
+	servicePersistTails.clear();
+}
+
 export function enqueueServicePersist<T>(
 	serviceId: string,
 	persist: () => Promise<T>,

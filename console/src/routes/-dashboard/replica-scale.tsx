@@ -1,6 +1,12 @@
 import { useEffect, useId, useState } from "react";
-
+import { cn } from "#/lib/cn";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import {
+	errorMsg,
+	fieldInput,
+	fieldLabel,
+	unappliedSurface,
+} from "#/lib/ui-classes";
 
 import { doScaleService } from "./server-fns";
 import { PanelSection } from "./ui";
@@ -75,13 +81,19 @@ export function ReplicaScaleControls({
 
 	return (
 		<PanelSection title="Replicas">
-			<div className={`replica-field${pending ? " unapplied-field" : ""}`}>
-				<label className="field-label" htmlFor={countId}>
+			<div
+				className={cn(
+					"flex flex-col gap-3",
+					pending && cn(unappliedSurface, "border p-3"),
+				)}
+				data-unapplied={pending || undefined}
+			>
+				<label className={fieldLabel} htmlFor={countId}>
 					Current count
 				</label>
 				<input
 					id={countId}
-					className="field-input"
+					className={fieldInput}
 					value={draft}
 					onChange={(event) => {
 						const value = event.target.value;
@@ -113,16 +125,18 @@ export function ReplicaScaleControls({
 			</div>
 
 			{volumeName ? (
-				<p className="replica-field-note">
+				<p className="m-0 text-[12px] leading-normal text-muted">
 					Volume-backed services cannot run more than one replica
 				</p>
 			) : null}
 
 			{inputError || error ? (
-				<p className="error-msg">{inputError ?? error}</p>
+				<p className={errorMsg}>{inputError ?? error}</p>
 			) : null}
 			{saving ? (
-				<p className="replica-field-note">Saving replica count…</p>
+				<p className="m-0 text-[12px] leading-normal text-muted">
+					Saving replica count…
+				</p>
 			) : null}
 		</PanelSection>
 	);

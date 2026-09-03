@@ -1,6 +1,7 @@
 import { ArrowLeft, Boxes, EyeOff, Globe2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { cn } from "#/lib/cn";
 import type {
 	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
@@ -9,6 +10,7 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { errorMsg } from "#/lib/ui-classes";
 
 import {
 	isInProgressDeploymentState,
@@ -239,21 +241,27 @@ export function PanelDeployments({
 	}, [currentRecord]);
 
 	return (
-		<div className="deployments-panel">
-			<div className="deployments-list">
-				<div className="deployments-summary">
-					<div className="deployments-summary-item">
-						{publicDomain ? <Globe2 size={15} /> : <EyeOff size={15} />}
-						<span>{publicDomain ?? "Unexposed service"}</span>
+		<div className="relative h-full overflow-hidden">
+			<div className="flex h-full flex-col gap-2.5 overflow-y-auto p-4">
+				<div className="flex min-h-7 items-center justify-between gap-4 text-xs text-muted">
+					<div className="flex min-w-0 items-center gap-[7px] overflow-hidden">
+						{publicDomain ? (
+							<Globe2 size={15} className="shrink-0" />
+						) : (
+							<EyeOff size={15} className="shrink-0" />
+						)}
+						<span className="overflow-hidden text-ellipsis whitespace-nowrap">
+							{publicDomain ?? "Unexposed service"}
+						</span>
 					</div>
-					<div className="deployments-summary-item">
-						<Boxes size={15} />
-						<span>
+					<div className="flex min-w-0 items-center gap-[7px]">
+						<Boxes size={15} className="shrink-0" />
+						<span className="overflow-hidden text-ellipsis whitespace-nowrap">
 							{replicaCount} {replicaCount === 1 ? "Replica" : "Replicas"}
 						</span>
 					</div>
 				</div>
-				<div className="deployment-live-list">
+				<div className="flex flex-col gap-2.5">
 					{liveDeployments.map((entry) => (
 						<DeploymentCard
 							key={deploymentRecordKey(entry)}
@@ -285,23 +293,23 @@ export function PanelDeployments({
 				</div>
 
 				{previousDeployments.length > 0 && (
-					<section className="deployment-history">
+					<section className="flex shrink-0 flex-col">
 						<button
 							type="button"
-							className="deployment-history-toggle"
+							className="inline-flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-left font-display text-base font-medium tracking-[-0.02em] text-ink"
 							aria-expanded={historyOpen}
 							onClick={() => setHistoryOpen((open) => !open)}
 						>
-							<span className="deployment-history-chevron" aria-hidden>
+							<span className="w-2.5 text-xs text-dim" aria-hidden>
 								{historyOpen ? "▾" : "▸"}
 							</span>
 							History
-							<span className="deployment-history-count">
+							<span className="font-mono text-[11px] font-normal text-dim">
 								{previousDeployments.length}
 							</span>
 						</button>
 						{historyOpen && (
-							<div className="deployment-history-list">
+							<div className="flex flex-col">
 								{previousDeployments.map((entry) => (
 									<DeploymentHistoryRow
 										key={deploymentRecordKey(entry)}
@@ -336,24 +344,34 @@ export function PanelDeployments({
 				)}
 
 				{deploymentsError && (
-					<div className="deployment-error compact">{deploymentsError}</div>
+					<div className={cn(errorMsg, "px-[9px] py-[7px] text-[11px]")}>
+						{deploymentsError}
+					</div>
 				)}
 			</div>
 
-			<div className={`deployment-log-drawer ${logTarget ? "open" : ""}`}>
-				<div className="deployment-log-drawer-header">
+			<div
+				aria-hidden={logTarget ? undefined : true}
+				className={cn(
+					"absolute inset-0 z-[2] flex flex-col border-l border-line bg-surface transition-transform duration-200 ease-out",
+					logTarget ? "translate-x-0" : "translate-x-[102%]",
+				)}
+			>
+				<div className="flex shrink-0 items-start gap-3 border-b border-line p-4 max-[900px]:flex-col max-[900px]:items-stretch">
 					<button
 						type="button"
-						className="deployment-log-back"
+						className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 border border-line bg-transparent px-2.5 font-condensed text-[11px] font-bold uppercase tracking-[0.09em] text-ink hover:bg-surface-hover"
 						onClick={() => setLogTarget(null)}
 					>
 						<ArrowLeft size={14} />
 						Back
 					</button>
-					<div className="deployment-log-drawer-copy">
-						<div className="deployment-log-drawer-title">Deployment logs</div>
+					<div className="min-w-0 flex-1">
+						<div className="font-condensed text-sm font-bold uppercase tracking-[0.08em] text-ink">
+							Deployment logs
+						</div>
 						{logTarget?.title && (
-							<div className="deployment-log-drawer-subtitle">
+							<div className="mt-1 text-xs leading-[1.4] text-muted">
 								{logTarget.title}
 								{logTarget.subtitle ? ` • ${logTarget.subtitle}` : ""}
 							</div>
