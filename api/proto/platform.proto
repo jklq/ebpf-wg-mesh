@@ -449,17 +449,19 @@ message AllocationStatus {
   int64 applied_spec_revision = 5;
   string phase = 6;
   string message = 7;
-  string allocation_ip = 8;
+  string allocation_ipv4 = 8;
   bool healthy = 9;
   google.protobuf.Timestamp updated_at = 10;
   int64 desired_rollout_generation = 11;
   int64 applied_rollout_generation = 12;
-  repeated int32 healthy_ports = 13;
+  repeated int32 healthy_ipv4_ports = 13;
   RestartObservation restart = 14;
   int64 operator_restart_nonce = 15;
   string rollout_state = 16;
   google.protobuf.Timestamp drain_started_at = 17;
   google.protobuf.Timestamp drain_deadline = 18;
+  string allocation_ipv6 = 19;
+  repeated int32 healthy_ipv6_ports = 20;
 }
 
 message ServiceStatus {

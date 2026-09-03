@@ -155,6 +155,7 @@ func resetTestStore(t *testing.T, store *Store) {
 		"environments",
 		"projects",
 		"agents",
+		"workload_ipv4_prefix_allocator",
 		"agent_bootstrap_tokens",
 		"agent_certificates",
 		"platform_operators",
@@ -171,6 +172,12 @@ func resetTestStore(t *testing.T, store *Store) {
 			VALUES (TRUE, 1)
 		`); err != nil {
 			return fmt.Errorf("reset environment network identity counter: %w", err)
+		}
+		if _, err := tx.ExecContext(context.Background(), `
+			INSERT INTO workload_ipv4_prefix_allocator(id, pool_cidr, prefix_bits, next_ordinal)
+			VALUES (TRUE, $1, $2, 0)
+		`, store.mesh.WorkloadIPv4PoolCIDR, store.mesh.WorkloadIPv4NodePrefixBits); err != nil {
+			return fmt.Errorf("reset IPv4 prefix allocator: %w", err)
 		}
 		return nil
 	}); err != nil {

@@ -227,16 +227,14 @@ func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string
 		meshlabels.DesiredRolloutGeneration: strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
 	}
 	// The firewall recovers this identity from the labels once the task starts.
+	ipv4, _ := netip.ParseAddr(svc.GetPrivateIpv4())
 	ipv6, _ := netip.ParseAddr(svc.GetPrivateIpv6())
 	maps.Copy(labels, e.cfg.Containerd.LabelKeys().Encode(meshlabels.Identity{
 		NetworkIdentity: svc.GetNetworkIdentity(),
+		IPv4:            ipv4,
 		IPv6:            ipv6,
 	}))
 	return labels
-}
-
-func allocationIPForService(svc *agentv1.DesiredService) string {
-	return svc.GetPrivateIpv6()
 }
 
 func (e *containerdEngine) namespaced(ctx context.Context) context.Context {
@@ -262,17 +260,25 @@ func (e *containerdEngine) setupNetwork(ctx context.Context, containerID, netnsP
 			"K8S_POD_NAMESPACE": svc.GetEnvironmentId(),
 		}),
 	}
+	requestedIPs := make([]string, 0, 2)
+	if svc.GetPrivateIpv4() != "" {
+		requestedIPs = append(requestedIPs, svc.GetPrivateIpv4())
+	}
 	if svc.GetPrivateIpv6() != "" {
-		opts = append(opts, cni.WithArgs("IP", svc.GetPrivateIpv6()))
-		opts = append(opts, cni.WithCapability("ips", []string{svc.GetPrivateIpv6()}))
+		requestedIPs = append(requestedIPs, svc.GetPrivateIpv6())
+	}
+	if len(requestedIPs) != 0 {
+		opts = append(opts, cni.WithCapability("ips", requestedIPs))
 	}
 	result, err := e.cni.Setup(ctx, containerID, netnsPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("cni setup %s: %w", containerID, err)
 	}
-	if svc.GetPrivateIpv6() != "" && !resultHasIP(result, svc.GetPrivateIpv6()) {
-		_ = e.cni.Remove(ctx, containerID, netnsPath, opts...)
-		return nil, fmt.Errorf("cni did not assign requested ip %s", svc.GetPrivateIpv6())
+	for _, requestedIP := range requestedIPs {
+		if !resultHasIP(result, requestedIP) {
+			_ = e.cni.Remove(ctx, containerID, netnsPath, opts...)
+			return nil, fmt.Errorf("cni did not assign requested ip %s", requestedIP)
+		}
 	}
 	return result, nil
 }

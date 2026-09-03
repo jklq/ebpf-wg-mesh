@@ -8,7 +8,6 @@ import (
 	"net"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -122,10 +121,6 @@ func (s *Store) listDesiredVolumes(ctx context.Context, agentID string) ([]*agen
 }
 
 func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*agentv1.DesiredService, error) {
-	agent, err := s.agentByID(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
 	volumes, err := s.listDesiredVolumes(ctx, agentID)
 	if err != nil {
 		return nil, err
@@ -138,7 +133,8 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT a.id, s.id, s.environment_id, s.name, a.desired_spec_revision, a.desired_rollout_generation,
 		        ro.image_digest, r.spec_json, e.network_identity, e.name, p.id, p.name,
-		        a.restart_observation_json, a.operator_restart_nonce, a.rollout_state, a.drain_deadline
+		        a.restart_observation_json, a.operator_restart_nonce, a.rollout_state, a.drain_deadline,
+		        a.allocation_ipv4, a.allocation_ipv6
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id
@@ -165,7 +161,7 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		var restartRaw []byte
 		var rolloutState string
 		var drainDeadline sql.NullTime
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &drainDeadline); err != nil {
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &drainDeadline, &svc.PrivateIpv4, &svc.PrivateIpv6); err != nil {
 			return nil, err
 		}
 		if rolloutState == allocationRolloutLost {
@@ -211,10 +207,6 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 		if volumeName := serviceVolumeName(spec); volumeName != "" {
 			svc.VolumeId = volumeIDs[volumeKey(svc.EnvironmentId, volumeName)]
 		}
-		svc.PrivateIpv6, err = privateIPv6(agent.WorkloadIPv6Subnet, svc.EnvironmentId, svc.AllocationId)
-		if err != nil {
-			return nil, err
-		}
 		svc.InternalHostname = internalServiceHostname(svc.Name, svc.ServiceId)
 		svc.InternalHosts, err = s.internalHostsForEnvironment(ctx, svc.EnvironmentId)
 		if err != nil {
@@ -227,10 +219,10 @@ func (s *Store) listDesiredServices(ctx context.Context, agentID string) ([]*age
 
 func (s *Store) internalHostsForEnvironment(ctx context.Context, environmentID string) ([]*agentv1.InternalHost, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.name, a.id, ag.workload_ipv6_subnet, a.allocation_ip
+		`SELECT s.id, s.name, a.allocation_ipv4, a.allocation_ipv6,
+		        a.healthy_ipv4_ports, a.healthy_ipv6_ports
 		   FROM services s
 		   JOIN allocations a ON a.service_id = s.id
-		   JOIN agents ag ON ag.id = a.agent_id
 		  WHERE s.environment_id = $1
 		    AND a.healthy = TRUE
 		    AND a.rollout_state = 'serving'
@@ -246,20 +238,20 @@ func (s *Store) internalHostsForEnvironment(ctx context.Context, environmentID s
 
 	var hosts []*agentv1.InternalHost
 	for rows.Next() {
-		var serviceID, name, allocationID, workloadSubnet, reportedIP string
-		if err := rows.Scan(&serviceID, &name, &allocationID, &workloadSubnet, &reportedIP); err != nil {
+		var serviceID, name, ipv4, ipv6 string
+		var healthyIPv4Ports, healthyIPv6Ports []int32
+		if err := rows.Scan(&serviceID, &name, &ipv4, &ipv6, (*jsonInt32Slice)(&healthyIPv4Ports), (*jsonInt32Slice)(&healthyIPv6Ports)); err != nil {
 			return nil, err
 		}
-		ipv6 := strings.TrimSpace(reportedIP)
-		if !s.useReportedAllocationIP || net.ParseIP(ipv6) == nil {
-			derived, err := privateIPv6(workloadSubnet, environmentID, allocationID)
-			if err != nil {
-				return nil, err
-			}
-			ipv6 = derived
+		if len(healthyIPv4Ports) == 0 {
+			ipv4 = ""
+		}
+		if len(healthyIPv6Ports) == 0 {
+			ipv6 = ""
 		}
 		hosts = append(hosts, &agentv1.InternalHost{
 			Hostname: internalServiceHostname(name, serviceID),
+			Ipv4:     ipv4,
 			Ipv6:     ipv6,
 		})
 	}
@@ -291,11 +283,11 @@ func (s *Store) domainTargetPortsForService(ctx context.Context, serviceID strin
 
 func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT d.hostname, d.target_port, a.healthy_ports, a.allocation_ip, ag.workload_ipv6_subnet, s.environment_id, a.id
+		`SELECT d.hostname, d.target_port, a.healthy_ipv4_ports, a.healthy_ipv6_ports,
+		        a.allocation_ipv4, a.allocation_ipv6, a.id
 		   FROM domain_bindings d
 		   JOIN allocations a ON a.service_id = d.service_id
 		   JOIN services s ON s.id = a.service_id
-		   JOIN agents ag ON ag.id = a.agent_id
 		  WHERE a.healthy = TRUE
 		    AND a.rollout_state = $1
 		    AND a.applied_spec_revision >= a.desired_spec_revision
@@ -313,37 +305,26 @@ func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBacken
 	var backends []ingressBackend
 	for rows.Next() {
 		var (
-			domain         string
-			targetPort     int32
-			healthyPorts   []int32
-			reportedIP     string
-			workloadSubnet string
-			environmentID  string
-			allocationID   string
+			domain           string
+			targetPort       int32
+			healthyIPv4Ports []int32
+			healthyIPv6Ports []int32
+			allocationIPv4   string
+			allocationIPv6   string
+			allocationID     string
 		)
-		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyPorts), &reportedIP, &workloadSubnet, &environmentID, &allocationID); err != nil {
+		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyIPv4Ports), (*jsonInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
 			return nil, err
 		}
-		if !slices.Contains(healthyPorts, targetPort) {
-			continue
+		if slices.Contains(healthyIPv4Ports, targetPort) && net.ParseIP(allocationIPv4) != nil {
+			backends = append(backends, ingressBackend{
+				Domain: domain, Upstream: net.JoinHostPort(allocationIPv4, strconv.Itoa(int(targetPort))), AllocationID: allocationID,
+			})
+		} else if slices.Contains(healthyIPv6Ports, targetPort) && net.ParseIP(allocationIPv6) != nil {
+			backends = append(backends, ingressBackend{
+				Domain: domain, Upstream: net.JoinHostPort(allocationIPv6, strconv.Itoa(int(targetPort))), AllocationID: allocationID,
+			})
 		}
-		allocationIP := strings.TrimSpace(reportedIP)
-		if s.useReportedAllocationIP {
-			if net.ParseIP(allocationIP) == nil {
-				return nil, fmt.Errorf("reported ingress allocation ip %q is invalid", allocationIP)
-			}
-		} else {
-			var err error
-			allocationIP, err = privateIPv6(workloadSubnet, environmentID, allocationID)
-			if err != nil {
-				return nil, fmt.Errorf("derive ingress allocation ip: %w", err)
-			}
-		}
-		backends = append(backends, ingressBackend{
-			Domain:       domain,
-			Upstream:     net.JoinHostPort(allocationIP, strconv.Itoa(int(targetPort))),
-			AllocationID: allocationID,
-		})
 	}
 	return backends, rows.Err()
 }

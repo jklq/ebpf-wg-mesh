@@ -35,6 +35,7 @@ const (
 type containerRuntime struct {
 	containerID     string
 	ifindex         uint32
+	ipv4            netip.Addr
 	ipv6            netip.Addr
 	networkIdentity uint32
 	innerMap        *ebpf.Map
@@ -120,7 +121,7 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 	seedByIP := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
 	configuredByKey := make(map[firewallIdentityKey]firewallIdentityValue, len(configuredSeeds))
 	for _, seed := range configuredSeeds {
-		seedIP16 := addrAs16(seed.prefix.Addr())
+		key := identityKeyForPrefix(seed.prefix)
 		value := firewallIdentityValue{
 			NetworkIdentity: seed.networkIdentity,
 			VethIfindex:     0,
@@ -128,16 +129,12 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 		if seed.hostIPv6.IsValid() {
 			value.HostIp = addrAs16(seed.hostIPv6)
 		}
-		key := firewallIdentityKey{
-			Prefixlen: uint32(seed.prefix.Bits()),
-			IpAddress: seedIP16,
-		}
 		if err := objs.ClusterIdentityTrie.Put(key, value); err != nil {
 			return nil, fmt.Errorf("seed identity trie for prefix %s: %w", seed.prefix.String(), err)
 		}
 		configuredByKey[key] = value
-		if seed.prefix.Bits() == 128 {
-			seedByIP[seedIP16] = value
+		if key.Prefixlen == 128 {
+			seedByIP[key.IpAddress] = value
 		}
 	}
 	wgIfindex := uint32(wgIface.Index)
@@ -239,7 +236,7 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	next := make(map[firewallIdentityKey]firewallIdentityValue, len(configured))
 	nextSeeds := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
 	for _, seed := range configured {
-		key := firewallIdentityKey{Prefixlen: uint32(seed.prefix.Bits()), IpAddress: addrAs16(seed.prefix.Addr())}
+		key := identityKeyForPrefix(seed.prefix)
 		value := firewallIdentityValue{NetworkIdentity: seed.networkIdentity, VethIfindex: 0}
 		if seed.hostIPv6.IsValid() {
 			value.HostIp = addrAs16(seed.hostIPv6)
@@ -406,6 +403,14 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	ipv4Seed, ipv4Known := m.seedByIP[addrAs16(identity.IPv4)]
+	ipv6Seed, ipv6Known := m.seedByIP[addrAs16(identity.IPv6)]
+	if !ipv4Known || !ipv6Known ||
+		ipv4Seed.NetworkIdentity != identity.NetworkIdentity ||
+		ipv6Seed.NetworkIdentity != identity.NetworkIdentity ||
+		ipv4Seed.NetworkIdentity != ipv6Seed.NetworkIdentity {
+		return fmt.Errorf("container %s dual-stack identity is absent from the assigned catalog", evt.ContainerID)
+	}
 
 	if existing := m.containers[evt.ContainerID]; existing != nil {
 		_ = m.removeContainerLocked(existing)
@@ -429,6 +434,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 
 	policy := firewallContainerPolicy{
 		NetworkIdentity: identity.NetworkIdentity,
+		Ipv4:            identity.IPv4.As4(),
 		Ipv6:            addrAs16(identity.IPv6),
 	}
 	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
@@ -443,21 +449,33 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		return fmt.Errorf("write interface role: %w", err)
 	}
 
-	identityKey := firewallIdentityKey{
-		Prefixlen: uint32(128),
-		IpAddress: addrAs16(identity.IPv6),
-	}
 	identityValue := firewallIdentityValue{
 		NetworkIdentity: identity.NetworkIdentity,
 		HostIp:          m.localHostIP,
 		VethIfindex:     ifKey,
 	}
-	if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
-		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
-		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
-		_ = m.objs.ConntrackMatrix.Delete(ifKey)
-		innerMap.Close()
-		return fmt.Errorf("write identity trie entry: %w", err)
+	identityKeys := []firewallIdentityKey{
+		identityKeyForPrefix(netip.PrefixFrom(identity.IPv4, 32)),
+		identityKeyForPrefix(netip.PrefixFrom(identity.IPv6, 128)),
+	}
+	for _, identityKey := range identityKeys {
+		if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
+			for _, inserted := range identityKeys {
+				if inserted == identityKey {
+					break
+				}
+				if seed, ok := m.seedByIP[inserted.IpAddress]; ok {
+					_ = m.objs.ClusterIdentityTrie.Put(inserted, seed)
+				} else {
+					_ = m.objs.ClusterIdentityTrie.Delete(inserted)
+				}
+			}
+			_ = m.objs.InterfaceRoleMap.Delete(ifKey)
+			_ = m.objs.ContainerPolicyMap.Delete(ifKey)
+			_ = m.objs.ConntrackMatrix.Delete(ifKey)
+			innerMap.Close()
+			return fmt.Errorf("write identity trie entry: %w", err)
+		}
 	}
 
 	ingress, err := link.AttachTCX(link.TCXOptions{
@@ -466,7 +484,13 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		Program:   m.objs.TcxIngress,
 	})
 	if err != nil {
-		_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
+		for _, identityKey := range identityKeys {
+			if seed, ok := m.seedByIP[identityKey.IpAddress]; ok {
+				_ = m.objs.ClusterIdentityTrie.Put(identityKey, seed)
+			} else {
+				_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
+			}
+		}
 		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
 		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
@@ -481,7 +505,13 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	})
 	if err != nil {
 		_ = ingress.Close()
-		_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
+		for _, identityKey := range identityKeys {
+			if seed, ok := m.seedByIP[identityKey.IpAddress]; ok {
+				_ = m.objs.ClusterIdentityTrie.Put(identityKey, seed)
+			} else {
+				_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
+			}
+		}
 		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
 		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
@@ -492,6 +522,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	runtime := &containerRuntime{
 		containerID:     evt.ContainerID,
 		ifindex:         ifKey,
+		ipv4:            identity.IPv4,
 		ipv6:            identity.IPv6,
 		networkIdentity: identity.NetworkIdentity,
 		innerMap:        innerMap,
@@ -504,6 +535,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		"pid", evt.Pid,
 		"ifindex", ifindex,
 		"networkIdentity", identity.NetworkIdentity,
+		"ipv4", identity.IPv4.String(),
 		"ipv6", identity.IPv6.String(),
 	)
 
@@ -561,15 +593,18 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 			errs = append(errs, fmt.Errorf("delete conntrack matrix entry: %w", err))
 		}
 	}
-	if runtime.ipv6.IsValid() && runtime.ipv6.Is6() {
-		ip16 := addrAs16(runtime.ipv6)
-		identityKey := firewallIdentityKey{Prefixlen: uint32(128), IpAddress: ip16}
+	for _, addr := range []netip.Addr{runtime.ipv4, runtime.ipv6} {
+		if !addr.IsValid() {
+			continue
+		}
+		ip16 := addrAs16(addr)
+		identityKey := identityKeyForPrefix(netip.PrefixFrom(addr, addr.BitLen()))
 		if seedValue, ok := m.seedByIP[ip16]; ok {
 			if err := m.objs.ClusterIdentityTrie.Put(identityKey, seedValue); err != nil {
 				errs = append(errs, fmt.Errorf("restore seeded identity trie entry: %w", err))
 			}
 		} else {
-			if err := m.objs.ClusterIdentityTrie.Delete(identityKey); err != nil {
+			if err := m.objs.ClusterIdentityTrie.Delete(identityKey); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 				errs = append(errs, fmt.Errorf("delete identity trie entry: %w", err))
 			}
 		}
@@ -584,13 +619,18 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 
 func (m *Manager) resolveContainerIdentity(ctx context.Context, containerID string) (meshlabels.Identity, error) {
 	if assignment, ok := m.staticByID[containerID]; ok {
-		ip, err := netip.ParseAddr(assignment.IPv6)
-		if err != nil || !ip.Is6() {
+		ipv4, err := netip.ParseAddr(assignment.IPv4)
+		if err != nil || !ipv4.Is4() {
+			return meshlabels.Identity{}, fmt.Errorf("static assignment invalid ipv4 for %s: %w", containerID, err)
+		}
+		ipv6, err := netip.ParseAddr(assignment.IPv6)
+		if err != nil || !ipv6.Is6() {
 			return meshlabels.Identity{}, fmt.Errorf("static assignment invalid ipv6 for %s: %w", containerID, err)
 		}
 		return meshlabels.Identity{
 			NetworkIdentity: assignment.NetworkIdentity,
-			IPv6:            ip,
+			IPv4:            ipv4,
+			IPv6:            ipv6,
 		}, nil
 	}
 
@@ -681,7 +721,8 @@ func resolveHostVethIfindexWithRetry(ctx context.Context, pid uint32, attempts i
 
 func localRuntimeByIP(containers map[string]*containerRuntime, ip [16]byte) *containerRuntime {
 	for _, runtime := range containers {
-		if runtime != nil && runtime.ipv6.IsValid() && runtime.ipv6.Is6() && addrAs16(runtime.ipv6) == ip {
+		if runtime != nil && ((runtime.ipv4.IsValid() && addrAs16(runtime.ipv4) == ip) ||
+			(runtime.ipv6.IsValid() && addrAs16(runtime.ipv6) == ip)) {
 			return runtime
 		}
 	}
@@ -690,6 +731,20 @@ func localRuntimeByIP(containers map[string]*containerRuntime, ip [16]byte) *con
 
 func addrAs16(addr netip.Addr) [16]byte {
 	return addr.As16()
+}
+
+func identityKeyForPrefix(prefix netip.Prefix) firewallIdentityKey {
+	prefix = prefix.Masked()
+	bits := prefix.Bits()
+	if prefix.Addr().Is4() {
+		// netip.Addr.As16 represents IPv4 as ::ffff:a.b.c.d. The fixed 96-bit
+		// mapped prefix participates in LPM matching before the IPv4 CIDR bits.
+		bits += 96
+	}
+	return firewallIdentityKey{
+		Prefixlen: uint32(bits),
+		IpAddress: addrAs16(prefix.Addr()),
+	}
 }
 
 func (m *Manager) AttachedCount() int {

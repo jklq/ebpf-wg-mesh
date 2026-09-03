@@ -9,7 +9,8 @@ NODE_NAME=${NODE_NAME:?NODE_NAME is required}
 ADVERTISE_ADDR=${ADVERTISE_ADDR:?ADVERTISE_ADDR is required}
 CONTROLPLANE_ADDRESS=${CONTROLPLANE_ADDRESS:?CONTROLPLANE_ADDRESS is required}
 BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN:-vm-bootstrap-token}
-WORKLOAD_CNI_SUBNET=${WORKLOAD_CNI_SUBNET:-fd00:200::/48}
+WORKLOAD_CNI_IPV4_POOL=${WORKLOAD_CNI_IPV4_POOL:-10.200.0.0/16}
+WORKLOAD_CNI_IPV6_POOL=${WORKLOAD_CNI_IPV6_POOL:-fd00:200::/48}
 
 mkdir -p /opt/ebpf-wg-mesh "${STATE_DIR}"
 
@@ -40,16 +41,25 @@ ensure_cni() {
       "isGateway": true,
       "ipMasq": false,
       "promiscMode": true,
+      "capabilities": {"ips": true},
       "ipam": {
         "type": "host-local",
         "ranges": [
           [
             {
-              "subnet": "${WORKLOAD_CNI_SUBNET}"
+              "subnet": "${WORKLOAD_CNI_IPV4_POOL}"
+            }
+          ],
+          [
+            {
+              "subnet": "${WORKLOAD_CNI_IPV6_POOL}"
             }
           ]
         ],
         "routes": [
+          {
+            "dst": "0.0.0.0/0"
+          },
           {
             "dst": "::/0"
           }

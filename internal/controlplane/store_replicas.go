@@ -33,7 +33,7 @@ func validateDesiredReplicaCount(count int32) error {
 
 func allocationReady(rec allocationRecord) bool {
 	return rec.RolloutState != allocationRolloutWithdrawing && rec.RolloutState != allocationRolloutDraining && rec.Healthy &&
-		strings.TrimSpace(rec.AllocationIP) != "" &&
+		strings.TrimSpace(rec.AllocationIPv4) != "" && strings.TrimSpace(rec.AllocationIPv6) != "" &&
 		rec.AppliedSpecRevision >= rec.DesiredSpecRevision &&
 		rec.AppliedRolloutGeneration >= rec.DesiredRolloutGeneration
 }
@@ -227,14 +227,27 @@ func (s *Store) insertAllocationTx(ctx context.Context, tx *sql.Tx, service serv
 		CreatedAt:                now,
 		UpdatedAt:                now,
 	}
+	var workloadIPv6Subnet string
+	if err := tx.QueryRowContext(ctx, `SELECT workload_ipv6_subnet FROM agents WHERE id = $1`, agentID).Scan(&workloadIPv6Subnet); err != nil {
+		return allocationRecord{}, err
+	}
+	var err error
+	alloc.AllocationIPv4, err = s.allocateWorkloadIPv4AddressTx(ctx, tx, agentID)
+	if err != nil {
+		return allocationRecord{}, err
+	}
+	alloc.AllocationIPv6, err = privateIPv6(workloadIPv6Subnet, service.EnvironmentID, alloc.ID)
+	if err != nil {
+		return allocationRecord{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
 		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
 		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ip, healthy_ports, healthy, restart_observation_json, operator_restart_nonce,
+		allocation_ipv4, allocation_ipv6, healthy_ipv4_ports, healthy_ipv6_ports, healthy, restart_observation_json, operator_restart_nonce,
 		rollout_state, drain_started_at, drain_deadline, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', '', $6, FALSE, '{}', 0, $7, NULL, NULL, $8, $8)`,
+	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', $6, $7, $8, $8, FALSE, '{}', 0, $9, NULL, NULL, $10, $10)`,
 		alloc.ID, alloc.ServiceID, alloc.AgentID, alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration,
-		[]byte("[]"), alloc.RolloutState, now,
+		alloc.AllocationIPv4, alloc.AllocationIPv6, []byte("[]"), alloc.RolloutState, now,
 	); err != nil {
 		return allocationRecord{}, err
 	}
@@ -439,8 +452,8 @@ func (s *Store) listAllocationsByServiceIDQuerier(ctx context.Context, q service
 
 const allocationSelectSQL = `SELECT a.id, a.service_id, e.project_id, s.environment_id, a.agent_id,
 		        a.desired_spec_revision, a.applied_spec_revision, a.phase, a.message,
-		        a.allocation_ip, a.healthy, a.updated_at, a.desired_rollout_generation,
-		        a.applied_rollout_generation, a.healthy_ports, a.restart_observation_json,
+		        a.allocation_ipv4, a.allocation_ipv6, a.healthy, a.updated_at, a.desired_rollout_generation,
+		        a.applied_rollout_generation, a.healthy_ipv4_ports, a.healthy_ipv6_ports, a.restart_observation_json,
 		        a.operator_restart_nonce, a.created_at, a.rollout_state, a.drain_started_at, a.drain_deadline
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
@@ -461,12 +474,14 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (allocationRecor
 		&rec.AppliedSpecRevision,
 		&rec.Phase,
 		&rec.Message,
-		&rec.AllocationIP,
+		&rec.AllocationIPv4,
+		&rec.AllocationIPv6,
 		&rec.Healthy,
 		&rec.UpdatedAt,
 		&rec.DesiredRolloutGeneration,
 		&rec.AppliedRolloutGeneration,
-		(*jsonInt32Slice)(&rec.HealthyPorts),
+		(*jsonInt32Slice)(&rec.HealthyIPv4Ports),
+		(*jsonInt32Slice)(&rec.HealthyIPv6Ports),
 		&restartRaw,
 		&rec.OperatorRestartNonce,
 		&rec.CreatedAt,

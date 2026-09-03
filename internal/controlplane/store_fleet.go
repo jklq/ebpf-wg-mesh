@@ -26,7 +26,7 @@ var (
 
 const agentSelectSQL = `SELECT id, name, lifecycle_state, state_before_unavailable,
 		region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes,
-		advertise_addr, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
+		advertise_addr, workload_ipv4_subnet, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
 		wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity,
 		runtime_capabilities, software_version, maintenance_message,
 		credential_revoked_at, last_seen_at
@@ -38,7 +38,7 @@ func scanAgentRecord(scanner interface{ Scan(...any) error }) (agentRecord, erro
 	if err := scanner.Scan(
 		&rec.ID, &rec.Name, &rec.LifecycleState, &rec.StateBeforeUnavailable,
 		&rec.Region, &rec.Zone, &rec.FailureDomain, &rec.ReservedCPUMillis, &rec.ReservedMemoryMebibytes,
-		&rec.AdvertiseAddr, &rec.WorkloadIPv6Subnet, &rec.WireGuardPublicKey, &rec.WireGuardListenPort,
+		&rec.AdvertiseAddr, &rec.WorkloadIPv4Subnet, &rec.WorkloadIPv6Subnet, &rec.WireGuardPublicKey, &rec.WireGuardListenPort,
 		&rec.WireGuardIPv6, &rec.CPUMillisCapacity, &rec.MemoryMebibytesCapcity,
 		&capabilities, &rec.SoftwareVersion, &rec.MaintenanceMessage,
 		&rec.CredentialRevokedAt, &rec.LastSeenAt,
@@ -215,7 +215,7 @@ func (s *Store) setAgentLifecycle(ctx context.Context, userID, agentID string, t
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE agents SET lifecycle_state = 'retired',
 				credential_revoked_at = $1, maintenance_message = 'credentials revoked; mesh identity removed',
-				advertise_addr = '', workload_ipv6_subnet = '', wireguard_public_key = '',
+				advertise_addr = '', workload_ipv4_subnet = '', workload_ipv6_subnet = '', wireguard_public_key = '',
 				wireguard_listen_port = 0, wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
 				return err
 			}

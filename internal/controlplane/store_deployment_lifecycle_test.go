@@ -65,6 +65,8 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             alloc.ID,
 			ServiceId:                service.ID,
+			AllocationIpv4:           alloc.AllocationIPv4,
+			AllocationIpv6:           alloc.AllocationIPv6,
 			DesiredRolloutGeneration: scheduled.RolloutGeneration,
 			AppliedRolloutGeneration: scheduled.RolloutGeneration,
 			Phase:                    "Healthy",
@@ -125,6 +127,8 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 			ServiceId:                service.ID,
 			DesiredRolloutGeneration: failed.RolloutGeneration,
 			AppliedRolloutGeneration: failed.RolloutGeneration,
+			AllocationIpv4:           alloc.AllocationIPv4,
+			AllocationIpv6:           alloc.AllocationIPv6,
 			Phase:                    "Healthy",
 			Healthy:                  true,
 			Message:                  "should not resurrect",

@@ -63,7 +63,7 @@ func volumeBackedHTTPServiceSpec(marker, volumeName string) *platformv1.ServiceS
 	return &platformv1.ServiceSpec{
 		Runtime: &platformv1.ServiceRuntime{
 			Command:         []string{"sh", "-c"},
-			Args:            []string{"printf '%s\\n' \"$MARKER\" > /data/index.html && exec httpd -f -p 8080 -h /data"},
+			Args:            []string{"printf '%s\\n' \"$MARKER\" > /data/index.html && exec httpd -f -p [::]:8080 -h /data"},
 			Env:             map[string]string{"MARKER": marker},
 			CpuMillis:       250,
 			MemoryMebibytes: 256,
@@ -93,7 +93,7 @@ func inMemoryHTTPServiceSpec(marker string) *platformv1.ServiceSpec {
 	return &platformv1.ServiceSpec{
 		Runtime: &platformv1.ServiceRuntime{
 			Command:         []string{"sh", "-c"},
-			Args:            []string{"mkdir -p /tmp/www && printf '%s\\n' \"$MARKER\" > /tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"},
+			Args:            []string{"mkdir -p /tmp/www && printf '%s\\n' \"$MARKER\" > /tmp/www/index.html && exec httpd -f -p 0.0.0.0:8080 -h /tmp/www"},
 			Env:             map[string]string{"MARKER": marker},
 			CpuMillis:       250,
 			MemoryMebibytes: 256,
@@ -107,6 +107,12 @@ func inMemoryHTTPServiceSpec(marker string) *platformv1.ServiceSpec {
 		},
 		Source: &platformv1.ServiceSource{Source: &platformv1.ServiceSource_Image{Image: &platformv1.DirectImageSource{Image: "docker.io/library/busybox:1.36.1"}}},
 	}
+}
+
+func dualStackHTTPServiceSpec(marker string) *platformv1.ServiceSpec {
+	spec := inMemoryHTTPServiceSpec(marker)
+	spec.Runtime.Args = []string{"mkdir -p /tmp/www && printf '%s\\n' \"$MARKER\" > /tmp/www/index.html && exec httpd -f -p [::]:8080 -h /tmp/www"}
+	return spec
 }
 
 func crossNodeProbeHost(excludeAgentID string, hosts map[string]hostInfo) *hostInfo {

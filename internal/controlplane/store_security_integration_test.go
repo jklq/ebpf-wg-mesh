@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
 
@@ -50,7 +51,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatalf("upsertAgent: %v", err)
 	}
-	service, err := store.createScheduledService(ctx, "user-1", environmentsOne[0].ID, "web", directImageServiceSpec("nginx:1.27", nil))
+	service, err := store.createScheduledService(ctx, "user-1", environmentsOne[0].ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
 	if err != nil {
 		t.Fatalf("createScheduledService: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		t.Fatalf("deployEnvironment: %#v: %v", deployed, err)
 	}
 	service = deployed[0]
-	stagingService, err := store.createScheduledService(ctx, "user-1", staging.ID, "web", directImageServiceSpec("nginx:1.27", nil))
+	stagingService, err := store.createScheduledService(ctx, "user-1", staging.ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
 	if err != nil {
 		t.Fatalf("create staging service: %v", err)
 	}
@@ -68,11 +69,17 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		t.Fatalf("deploy staging environment: %#v: %v", stagingDeployed, err)
 	}
 	stagingService = stagingDeployed[0]
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, ""); err != nil {
-		t.Fatalf("mark production healthy: %v", err)
-	}
-	if err := store.markAllocationHealthyForTest(ctx, stagingService.ID, ""); err != nil {
-		t.Fatalf("mark staging healthy: %v", err)
+	for label, item := range map[string]serviceRecord{"production": service, "staging": stagingService} {
+		allocation, err := store.allocationByServiceID(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("load %s allocation: %v", label, err)
+		}
+		if err := store.markAllocationHealthyForTest(ctx, item.ID, allocation.AllocationIPv4, 8080); err != nil {
+			t.Fatalf("mark %s healthy: %v", label, err)
+		}
+		if _, err := store.db.ExecContext(ctx, `UPDATE allocations SET healthy_ipv6_ports = '[8080]' WHERE id = $1`, allocation.ID); err != nil {
+			t.Fatalf("mark %s IPv6 healthy: %v", label, err)
+		}
 	}
 	state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)
 	if err != nil {
@@ -106,8 +113,11 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		if len(desired.GetInternalHosts()) != 1 || desired.GetInternalHosts()[0].GetHostname() != "web.mesh.internal" {
 			t.Fatalf("%s service received cross-environment internal hosts: %#v", label, desired.GetInternalHosts())
 		}
-		if desired.GetInternalHosts()[0].GetIpv6() != desired.GetPrivateIpv6() {
-			t.Fatalf("%s internal host points at %q, want %q", label, desired.GetInternalHosts()[0].GetIpv6(), desired.GetPrivateIpv6())
+		if desired.GetInternalHosts()[0].GetIpv4() != desired.GetPrivateIpv4() ||
+			desired.GetInternalHosts()[0].GetIpv6() != desired.GetPrivateIpv6() {
+			t.Fatalf("%s internal host points at %q/%q, want %q/%q", label,
+				desired.GetInternalHosts()[0].GetIpv4(), desired.GetInternalHosts()[0].GetIpv6(),
+				desired.GetPrivateIpv4(), desired.GetPrivateIpv6())
 		}
 	}
 }

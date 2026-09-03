@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -19,7 +20,9 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now, err := databaseTime(ctx, tx)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 
 		existing, err := agentByIDQuerier(ctx, tx, hello.GetAgentId(), true)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -32,6 +35,17 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 			return errAgentCredentialRevoked
 		}
 
+		workloadIPv4Subnet := existing.WorkloadIPv4Subnet
+		if workloadIPv4Subnet == "" {
+			workloadIPv4Subnet, err = s.allocateWorkloadIPv4SubnetTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+		}
+		addressesBackfilled, err := s.backfillWorkloadIPv4AddressesTx(ctx, tx, existing.ID, workloadIPv4Subnet)
+		if err != nil {
+			return err
+		}
 		workloadSubnet := existing.WorkloadIPv6Subnet
 		if workloadSubnet == "" {
 			workloadSubnet, err = s.allocateWorkloadSubnetTx(ctx, tx, hello.AgentId)
@@ -65,6 +79,8 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 			!slices.Equal(existing.RuntimeCapabilities, capabilities) ||
 			existing.SoftwareVersion != strings.TrimSpace(hello.GetSoftwareVersion()) ||
 			existing.LifecycleState != nextState ||
+			addressesBackfilled ||
+			existing.WorkloadIPv4Subnet != workloadIPv4Subnet ||
 			existing.WorkloadIPv6Subnet != workloadSubnet ||
 			existing.WireGuardIPv6 != wireGuardIPv6
 
@@ -74,13 +90,14 @@ func (s *Store) upsertAgent(ctx context.Context, hello *agentv1.AgentHello) (boo
 		}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE agents SET lifecycle_state = $1, state_before_unavailable = '',
-				advertise_addr = $2, workload_ipv6_subnet = $3, wireguard_public_key = $4,
-				wireguard_listen_port = $5, wireguard_ipv6 = $6, cpu_millis_capacity = $7,
-				memory_mebibytes_capacity = $8, runtime_capabilities = $9,
-				software_version = $10, last_seen_at = $11, updated_at = $11
-			 WHERE id = $12`,
+				advertise_addr = $2, workload_ipv4_subnet = $3, workload_ipv6_subnet = $4, wireguard_public_key = $5,
+				wireguard_listen_port = $6, wireguard_ipv6 = $7, cpu_millis_capacity = $8,
+				memory_mebibytes_capacity = $9, runtime_capabilities = $10,
+				software_version = $11, last_seen_at = $12, updated_at = $12
+			 WHERE id = $13`,
 			nextState,
 			hello.AdvertiseAddr,
+			workloadIPv4Subnet,
 			workloadSubnet,
 			hello.GetWireguardPublicKey(),
 			hello.GetWireguardListenPort(),
@@ -142,10 +159,11 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				prevPhase                    string
 				prevMessage                  string
 				prevHealthy                  bool
-				prevAllocationIP             string
-				prevHealthyPorts             []int32
+				prevAllocationIPv4           string
+				prevAllocationIPv6           string
+				prevHealthyIPv4Ports         []int32
+				prevHealthyIPv6Ports         []int32
 				hasDomain                    bool
-				workloadSubnet               string
 				environmentID                string
 				serviceID                    string
 				prevRestartRaw               []byte
@@ -157,11 +175,12 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				        a.phase,
 				        a.message,
 				        a.healthy,
-				        a.allocation_ip,
-				        a.healthy_ports,
+				        a.allocation_ipv4,
+				        a.allocation_ipv6,
+				        a.healthy_ipv4_ports,
+				        a.healthy_ipv6_ports,
 				        a.restart_observation_json,
 				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id),
-				        ag.workload_ipv6_subnet,
 				        s.environment_id,
 				        a.service_id
 				   FROM allocations a
@@ -176,11 +195,12 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				&prevPhase,
 				&prevMessage,
 				&prevHealthy,
-				&prevAllocationIP,
-				(*jsonInt32Slice)(&prevHealthyPorts),
+				&prevAllocationIPv4,
+				&prevAllocationIPv6,
+				(*jsonInt32Slice)(&prevHealthyIPv4Ports),
+				(*jsonInt32Slice)(&prevHealthyIPv6Ports),
 				&prevRestartRaw,
 				&hasDomain,
-				&workloadSubnet,
 				&environmentID,
 				&serviceID,
 			)
@@ -190,21 +210,32 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				}
 				return fmt.Errorf("load allocation status: %w", err)
 			}
-			healthyPorts, err := encodeHealthyPorts(cond.GetHealthyPorts())
+			healthyIPv4Ports, err := encodeHealthyPorts(cond.GetHealthyIpv4Ports())
 			if err != nil {
-				return fmt.Errorf("encode healthy ports: %w", err)
+				return fmt.Errorf("encode healthy IPv4 ports: %w", err)
 			}
-			allocationIP := strings.TrimSpace(cond.GetAllocationIp())
+			healthyIPv6Ports, err := encodeHealthyPorts(cond.GetHealthyIpv6Ports())
+			if err != nil {
+				return fmt.Errorf("encode healthy IPv6 ports: %w", err)
+			}
+			allocationIPv4 := strings.TrimSpace(cond.GetAllocationIpv4())
+			allocationIPv6 := strings.TrimSpace(cond.GetAllocationIpv6())
 			if s.useReportedAllocationIP {
-				if allocationIP == "" {
-					allocationIP = prevAllocationIP
-				} else if net.ParseIP(allocationIP) == nil {
-					return fmt.Errorf("reported allocation ip %q is invalid", allocationIP)
+				if allocationIPv4 == "" {
+					allocationIPv4 = prevAllocationIPv4
+				}
+				if allocationIPv6 == "" {
+					allocationIPv6 = prevAllocationIPv6
+				}
+				if allocationIPv4 != "" && (net.ParseIP(allocationIPv4) == nil || net.ParseIP(allocationIPv4).To4() == nil) {
+					return fmt.Errorf("reported allocation IPv4 %q is invalid", allocationIPv4)
+				}
+				if allocationIPv6 != "" && (net.ParseIP(allocationIPv6) == nil || net.ParseIP(allocationIPv6).To4() != nil) {
+					return fmt.Errorf("reported allocation IPv6 %q is invalid", allocationIPv6)
 				}
 			} else {
-				allocationIP, err = privateIPv6(workloadSubnet, environmentID, cond.GetAllocationId())
-				if err != nil {
-					return fmt.Errorf("derive allocation ip: %w", err)
+				if allocationIPv4 != prevAllocationIPv4 || allocationIPv6 != prevAllocationIPv6 {
+					return fmt.Errorf("allocation %s reported addresses %q/%q, want %q/%q", cond.GetAllocationId(), allocationIPv4, allocationIPv6, prevAllocationIPv4, prevAllocationIPv6)
 				}
 			}
 			restartRaw, err := encodeRestartObservation(cond.GetRestart())
@@ -215,8 +246,9 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				prevAppliedRolloutGeneration != cond.GetAppliedRolloutGeneration() ||
 				prevPhase != cond.GetPhase() ||
 				prevMessage != cond.GetMessage() ||
-				prevAllocationIP != allocationIP ||
-				!equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) ||
+				prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 ||
+				!equalInt32Slices(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) ||
+				!equalInt32Slices(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) ||
 				prevHealthy != cond.GetHealthy() ||
 				string(prevRestartRaw) != string(restartRaw)
 			if !statusChanged {
@@ -238,13 +270,15 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 				        applied_rollout_generation = $2,
 				        phase = $3,
 				        message = $4,
-				        allocation_ip = $5,
-				        healthy_ports = $6,
-				        healthy = $7,
-				        restart_observation_json = $8,
-				        updated_at = $9
-				  WHERE id = $10 AND agent_id = $11`,
-				appliedSpec, cond.AppliedRolloutGeneration, phase, cond.Message, allocationIP, healthyPorts, healthy, restartRaw, now, cond.AllocationId, agentID,
+				        allocation_ipv4 = $5,
+				        allocation_ipv6 = $6,
+				        healthy_ipv4_ports = $7,
+				        healthy_ipv6_ports = $8,
+				        healthy = $9,
+				        restart_observation_json = $10,
+				        updated_at = $11
+				  WHERE id = $12 AND agent_id = $13`,
+				appliedSpec, cond.AppliedRolloutGeneration, phase, cond.Message, allocationIPv4, allocationIPv6, healthyIPv4Ports, healthyIPv6Ports, healthy, restartRaw, now, cond.AllocationId, agentID,
 			); err != nil {
 				return fmt.Errorf("update allocation status: %w", err)
 			}
@@ -262,7 +296,7 @@ func (s *Store) recordStatusReport(ctx context.Context, agentID string, report *
 			} else if err := s.applyAgentDeploymentObservationTx(ctx, tx, serviceID, cond.GetDesiredRolloutGeneration(), phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), agentID); err != nil {
 				return fmt.Errorf("apply deployment observation: %w", err)
 			}
-			if hasDomain && (prevHealthy != healthy || prevAllocationIP != allocationIP || !equalInt32Slices(prevHealthyPorts, cond.GetHealthyPorts()) || prevPhase != phase) {
+			if hasDomain && (prevHealthy != healthy || prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 || !equalInt32Slices(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) || !equalInt32Slices(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) || prevPhase != phase) {
 				ingressChanged = true
 			}
 		}
@@ -358,6 +392,8 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 	}
 
 	assigned := &agentv1.AssignedNodeConfig{
+		WorkloadIpv4Subnet:     agent.WorkloadIPv4Subnet,
+		WorkloadIpv4Pool:       s.mesh.WorkloadIPv4PoolCIDR,
 		WorkloadIpv6Subnet:     agent.WorkloadIPv6Subnet,
 		WorkloadIpv6Pool:       s.mesh.WorkloadPoolCIDR,
 		WireguardInterfaceName: s.mesh.InterfaceName,
@@ -369,7 +405,7 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 		return nil, err
 	}
 	for _, peer := range agents {
-		if peer.ID == agentID || peer.LifecycleState == agentStateRetired || peer.CredentialRevokedAt.Valid || peer.WireGuardPublicKey == "" || peer.WireGuardListenPort <= 0 || peer.WorkloadIPv6Subnet == "" {
+		if peer.ID == agentID || peer.LifecycleState == agentStateRetired || peer.CredentialRevokedAt.Valid || peer.WireGuardPublicKey == "" || peer.WireGuardListenPort <= 0 || peer.WorkloadIPv4Subnet == "" || peer.WorkloadIPv6Subnet == "" {
 			continue
 		}
 		endpoint, err := endpointForAgent(peer.AdvertiseAddr, peer.WireGuardListenPort)
@@ -381,7 +417,7 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 			Name:                       peer.Name,
 			PublicKey:                  peer.WireGuardPublicKey,
 			Endpoint:                   endpoint,
-			AllowedIps:                 []string{peer.WorkloadIPv6Subnet},
+			AllowedIps:                 []string{peer.WorkloadIPv4Subnet, peer.WorkloadIPv6Subnet},
 			PersistentKeepaliveSeconds: int32(s.mesh.PersistentKeepaliveSeconds),
 		})
 	}
@@ -390,7 +426,7 @@ func (s *Store) assignedNodeConfigForAgent(ctx context.Context, agentID string) 
 
 func (s *Store) listWorkloadIdentities(ctx context.Context) ([]*agentv1.WorkloadIdentity, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.id, s.environment_id, e.network_identity, a.agent_id, ag.advertise_addr, ag.workload_ipv6_subnet
+		`SELECT a.allocation_ipv4, a.allocation_ipv6, s.environment_id, e.network_identity, a.agent_id, ag.advertise_addr
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
 		   JOIN environments e ON e.id = s.environment_id
@@ -407,24 +443,21 @@ func (s *Store) listWorkloadIdentities(ctx context.Context) ([]*agentv1.Workload
 	var identities []*agentv1.WorkloadIdentity
 	for rows.Next() {
 		var (
-			allocationID    string
+			workloadIPv4    string
+			workloadIPv6    string
 			environmentID   string
 			networkIdentity int64
 			hostAgentID     string
 			hostIPv6        string
-			workloadSubnet  string
 		)
-		if err := rows.Scan(&allocationID, &environmentID, &networkIdentity, &hostAgentID, &hostIPv6, &workloadSubnet); err != nil {
+		if err := rows.Scan(&workloadIPv4, &workloadIPv6, &environmentID, &networkIdentity, &hostAgentID, &hostIPv6); err != nil {
 			return nil, err
 		}
 		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
 			return nil, fmt.Errorf("environment %s has invalid network identity %d", environmentID, networkIdentity)
 		}
-		workloadIPv6, err := privateIPv6(workloadSubnet, environmentID, allocationID)
-		if err != nil {
-			return nil, err
-		}
 		identities = append(identities, &agentv1.WorkloadIdentity{
+			WorkloadIpv4:    workloadIPv4,
 			WorkloadIpv6:    workloadIPv6,
 			EnvironmentId:   environmentID,
 			NetworkIdentity: uint32(networkIdentity),
@@ -454,6 +487,209 @@ func (s *Store) allocateWorkloadSubnetTx(ctx context.Context, tx *sql.Tx, agentI
 		return "", err
 	}
 	return nextSubnetFromPool(s.mesh.WorkloadPoolCIDR, 64, used, agentID)
+}
+
+func (s *Store) allocateWorkloadIPv4SubnetTx(ctx context.Context, tx *sql.Tx) (string, error) {
+	pool := s.mesh.WorkloadIPv4PoolCIDR
+	prefixBits := s.mesh.WorkloadIPv4NodePrefixBits
+	var configuredPool string
+	var configuredBits int
+	var nextOrdinal int64
+	err := tx.QueryRowContext(ctx, `SELECT pool_cidr, prefix_bits, next_ordinal
+		FROM workload_ipv4_prefix_allocator WHERE id = TRUE FOR UPDATE`).Scan(&configuredPool, &configuredBits, &nextOrdinal)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO workload_ipv4_prefix_allocator(id, pool_cidr, prefix_bits, next_ordinal)
+			VALUES (TRUE, $1, $2, 0)`, pool, prefixBits); err != nil {
+			return "", err
+		}
+		configuredPool, configuredBits, nextOrdinal = pool, prefixBits, 0
+	} else if err != nil {
+		return "", err
+	}
+	if configuredPool != pool || configuredBits != prefixBits {
+		return "", fmt.Errorf("IPv4 workload pool configuration changed from %s /%d to %s /%d", configuredPool, configuredBits, pool, prefixBits)
+	}
+
+	poolPrefix, err := netip.ParsePrefix(pool)
+	if err != nil || !poolPrefix.Addr().Is4() {
+		return "", fmt.Errorf("invalid IPv4 workload pool %q", pool)
+	}
+	poolPrefix = poolPrefix.Masked()
+	rows, err := tx.QueryContext(ctx, `SELECT workload_ipv4_subnet FROM agents WHERE workload_ipv4_subnet <> '' ORDER BY workload_ipv4_subnet`)
+	if err != nil {
+		return "", err
+	}
+	var used []netip.Prefix
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return "", err
+		}
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != prefixBits || !poolPrefix.Contains(prefix.Masked().Addr()) {
+			rows.Close()
+			return "", fmt.Errorf("allocated IPv4 node prefix %q is outside configured pool %q", raw, pool)
+		}
+		prefix = prefix.Masked()
+		for _, other := range used {
+			if ipv4PrefixesOverlap(prefix, other) {
+				rows.Close()
+				return "", fmt.Errorf("allocated IPv4 node prefixes %s and %s overlap", prefix, other)
+			}
+		}
+		used = append(used, prefix)
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	candidateRaw, err := ipv4SubnetAt(pool, prefixBits, uint64(nextOrdinal))
+	if err != nil {
+		return "", err
+	}
+	candidate, _ := netip.ParsePrefix(candidateRaw)
+	for _, other := range used {
+		if ipv4PrefixesOverlap(candidate, other) {
+			return "", fmt.Errorf("next IPv4 node prefix %s overlaps allocated prefix %s", candidate, other)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE workload_ipv4_prefix_allocator SET next_ordinal = $1 WHERE id = TRUE`, nextOrdinal+1); err != nil {
+		return "", err
+	}
+	return candidateRaw, nil
+}
+
+func (s *Store) validateWorkloadIPv4Pool(ctx context.Context) error {
+	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+		pool := s.mesh.WorkloadIPv4PoolCIDR
+		prefixBits := s.mesh.WorkloadIPv4NodePrefixBits
+		if strings.TrimSpace(pool) == "" || prefixBits == 0 {
+			return errors.New("IPv4 workload pool and per-node prefix size are required")
+		}
+		if _, err := ipv4SubnetAt(pool, prefixBits, 0); err != nil {
+			return err
+		}
+		var configuredPool string
+		var configuredBits int
+		var nextOrdinal int64
+		err := tx.QueryRowContext(ctx, `SELECT pool_cidr, prefix_bits, next_ordinal
+			FROM workload_ipv4_prefix_allocator WHERE id = TRUE FOR UPDATE`).Scan(&configuredPool, &configuredBits, &nextOrdinal)
+		if errors.Is(err, sql.ErrNoRows) {
+			_, err = tx.ExecContext(ctx, `INSERT INTO workload_ipv4_prefix_allocator(id, pool_cidr, prefix_bits, next_ordinal)
+				VALUES (TRUE, $1, $2, 0)`, pool, prefixBits)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if configuredPool != pool || configuredBits != prefixBits {
+			return fmt.Errorf("IPv4 workload pool configuration changed from %s /%d to %s /%d", configuredPool, configuredBits, pool, prefixBits)
+		}
+		poolPrefix, err := netip.ParsePrefix(pool)
+		if err != nil || !poolPrefix.Addr().Is4() {
+			return fmt.Errorf("invalid IPv4 workload pool %q", pool)
+		}
+		poolPrefix = poolPrefix.Masked()
+		rows, err := tx.QueryContext(ctx, `SELECT workload_ipv4_subnet FROM agents WHERE workload_ipv4_subnet <> '' ORDER BY workload_ipv4_subnet FOR UPDATE`)
+		if err != nil {
+			return err
+		}
+		var allocated []netip.Prefix
+		for rows.Next() {
+			var raw string
+			if err := rows.Scan(&raw); err != nil {
+				rows.Close()
+				return err
+			}
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() != prefixBits || !poolPrefix.Contains(prefix.Addr()) {
+				rows.Close()
+				return fmt.Errorf("allocated IPv4 node prefix %q is outside configured pool %q", raw, pool)
+			}
+			for _, other := range allocated {
+				if ipv4PrefixesOverlap(prefix, other) {
+					rows.Close()
+					return fmt.Errorf("allocated IPv4 node prefixes %s and %s overlap", prefix, other)
+				}
+			}
+			allocated = append(allocated, prefix)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if nextOrdinal < 0 {
+			return fmt.Errorf("IPv4 workload allocator has invalid next ordinal %d", nextOrdinal)
+		}
+		if _, err := ipv4SubnetAt(pool, prefixBits, uint64(nextOrdinal)); err != nil && len(allocated) == 0 && nextOrdinal == 0 {
+			return err
+		}
+		return nil
+	})
+}
+
+func (s *Store) allocateWorkloadIPv4AddressTx(ctx context.Context, tx *sql.Tx, agentID string) (string, error) {
+	var subnet string
+	if err := tx.QueryRowContext(ctx, `SELECT workload_ipv4_subnet FROM agents WHERE id = $1 FOR UPDATE`, agentID).Scan(&subnet); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(subnet) == "" {
+		return "", fmt.Errorf("agent %s has no IPv4 workload prefix", agentID)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT allocation_ipv4 FROM allocations
+		WHERE agent_id = $1 AND rollout_state <> $2 AND allocation_ipv4 <> ''`, agentID, allocationRolloutLost)
+	if err != nil {
+		return "", err
+	}
+	used := make(map[string]struct{})
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			rows.Close()
+			return "", err
+		}
+		used[addr] = struct{}{}
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	return nextIPv4AddressFromSubnet(subnet, used)
+}
+
+func (s *Store) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.Tx, agentID, subnet string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, allocation_ipv4 FROM allocations
+		WHERE agent_id = $1 AND rollout_state <> $2 ORDER BY created_at ASC, id ASC FOR UPDATE`, agentID, allocationRolloutLost)
+	if err != nil {
+		return false, err
+	}
+	used := make(map[string]struct{})
+	var missing []string
+	for rows.Next() {
+		var allocationID, address string
+		if err := rows.Scan(&allocationID, &address); err != nil {
+			rows.Close()
+			return false, err
+		}
+		address = strings.TrimSpace(address)
+		if address == "" {
+			missing = append(missing, allocationID)
+			continue
+		}
+		used[address] = struct{}{}
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for _, allocationID := range missing {
+		address, err := nextIPv4AddressFromSubnet(subnet, used)
+		if err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE allocations SET allocation_ipv4 = $1, updated_at = statement_timestamp() WHERE id = $2`, address, allocationID); err != nil {
+			return false, err
+		}
+		used[address] = struct{}{}
+	}
+	return len(missing) > 0, nil
 }
 
 func (s *Store) allocateWireGuardIPv6Tx(ctx context.Context, tx *sql.Tx, agentID string) (string, error) {

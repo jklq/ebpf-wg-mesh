@@ -402,8 +402,8 @@ func markRolloutAllocationReady(t *testing.T, store *Store, alloc allocationReco
 		`UPDATE allocations
 		    SET applied_spec_revision = desired_spec_revision,
 		        applied_rollout_generation = desired_rollout_generation,
-		        phase = 'Healthy', message = '', allocation_ip = $1,
-		        healthy_ports = $2, healthy = TRUE, updated_at = now()
+		        phase = 'Healthy', message = '', allocation_ipv6 = $1,
+		        healthy_ipv6_ports = $2, healthy = TRUE, updated_at = now()
 		  WHERE id = $3`,
 		"fd00:200::"+alloc.ID[len(alloc.ID)-4:], []byte("[8080]"), alloc.ID,
 	); err != nil {
