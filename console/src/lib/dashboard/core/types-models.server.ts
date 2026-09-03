@@ -225,10 +225,8 @@ export interface DashboardServiceSpec {
 }
 
 export interface DashboardRollingStrategy {
-	maxUnavailable: number;
-	maxSurge: number;
-	startupTimeoutSeconds: number;
-	drainTimeoutSeconds: number;
+	healthcheckTimeoutSeconds: number;
+	drainingSeconds: number;
 }
 
 export type DashboardAgentLifecycleState =

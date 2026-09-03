@@ -1,11 +1,12 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { Zap } from "lucide-react";
-
+import { cn } from "#/lib/cn";
 import type {
 	DashboardHomeState,
 	DevLoginIdentity,
 } from "#/lib/dashboard/core/types.server";
+import { errorMsg } from "#/lib/ui-classes";
 
 export interface LoginRouteState {
 	session: DashboardHomeState | null;
@@ -74,171 +75,54 @@ export function LoginPageView({
 	errorDetail?: string;
 }) {
 	return (
-		<main
-			style={{
-				minHeight: "100dvh",
-				display: "flex",
-				alignItems: "center",
-				justifyContent: "center",
-				padding: "24px",
-				background: "var(--bg)",
-				overflow: "auto",
-			}}
-		>
-			<div style={{ width: "100%", maxWidth: 400 }}>
-				{/* Brand */}
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 8,
-						marginBottom: 32,
-					}}
-				>
-					<Zap size={16} color="var(--accent)" />
-					<span
-						style={{
-							fontSize: 18,
-							fontWeight: 700,
-							letterSpacing: "0.14em",
-							textTransform: "uppercase",
-							fontFamily: "'Barlow Condensed', sans-serif",
-							color: "var(--text)",
-						}}
-					>
+		<main className="flex min-h-dvh items-center justify-center overflow-auto bg-canvas p-6">
+			<div className="w-full max-w-[400px]">
+				<div className="mb-8 flex items-center gap-2">
+					<Zap size={16} className="text-accent" />
+					<span className="font-condensed text-lg font-bold uppercase tracking-[0.14em] text-ink">
 						mesh
 					</span>
 				</div>
 
-				<div
-					style={{
-						background: "var(--surface)",
-						border: "1px solid var(--border-bright)",
-						borderRadius: 2,
-						padding: "28px",
-					}}
-				>
-					<h1
-						style={{
-							margin: "0 0 6px",
-							fontSize: 22,
-							fontWeight: 700,
-							color: "var(--text)",
-							letterSpacing: "0.04em",
-							textTransform: "uppercase",
-							fontFamily: "'Barlow Condensed', sans-serif",
-						}}
-					>
+				<div className="rounded-sm border border-line-bright bg-surface p-7">
+					<h1 className="m-0 mb-1.5 font-condensed text-[22px] font-bold uppercase tracking-[0.04em] text-ink">
 						Sign in
 					</h1>
-					<p
-						style={{
-							margin: "0 0 24px",
-							fontSize: 13,
-							color: "var(--text-muted)",
-							lineHeight: 1.5,
-						}}
-					>
+					<p className="mt-0 mb-6 text-[13px] leading-normal text-muted">
 						Deploy services from GitHub repositories.
 					</p>
 
 					{error && (
-						<div className="error-msg" style={{ marginBottom: 20 }}>
+						<div className={cn(errorMsg, "mb-5")}>
 							{loginErrorMessage(error, errorDetail)}
 						</div>
 					)}
 
-					<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+					<div className="flex flex-col gap-2.5">
 						{state.githubLoginEnabled && (
 							<a
 								href={buildGitHubAuthStartURL(
 									state.publicBaseURL,
 									redirectTo ?? "/",
 								)}
-								style={{
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "space-between",
-									padding: "14px 16px",
-									background: "var(--surface-raised)",
-									border: "1px solid var(--border)",
-									borderRadius: 0,
-									textDecoration: "none",
-									transition: "border-color 0.1s ease, background 0.1s ease",
-									cursor: "pointer",
-								}}
-								onMouseEnter={(e) => {
-									(e.currentTarget as HTMLElement).style.borderColor =
-										"var(--accent)";
-									(e.currentTarget as HTMLElement).style.background =
-										"var(--surface-hover)";
-								}}
-								onMouseLeave={(e) => {
-									(e.currentTarget as HTMLElement).style.borderColor =
-										"var(--border)";
-									(e.currentTarget as HTMLElement).style.background =
-										"var(--surface-raised)";
-								}}
+								className="flex cursor-pointer items-center justify-between rounded-none border border-line bg-surface-raised px-4 py-3.5 no-underline transition-[border-color,background-color] duration-100 hover:border-accent hover:bg-surface-hover"
 							>
 								<div>
-									<p
-										style={{
-											margin: 0,
-											fontSize: 14,
-											fontWeight: 600,
-											letterSpacing: "0.04em",
-											color: "var(--text)",
-										}}
-									>
+									<p className="m-0 text-sm font-semibold tracking-[0.04em] text-ink">
 										Continue with GitHub
 									</p>
-									<p
-										style={{
-											margin: "2px 0 0",
-											fontSize: 11,
-											color: "var(--text-muted)",
-										}}
-									>
+									<p className="mt-0.5 mb-0 text-[11px] text-muted">
 										Access your repos and private images
 									</p>
 								</div>
-								<span
-									style={{
-										fontSize: 12,
-										fontWeight: 600,
-										color: "var(--accent)",
-									}}
-								>
-									→
-								</span>
+								<span className="text-xs font-semibold text-accent">→</span>
 							</a>
 						)}
 
 						{state.devUsers.length > 0 && (
-							<div
-								style={{
-									background: "var(--surface-raised)",
-									border: "1px solid var(--border)",
-									borderRadius: 0,
-									overflow: "hidden",
-								}}
-							>
-								<div
-									style={{
-										padding: "8px 16px",
-										borderBottom: "1px solid var(--border)",
-									}}
-								>
-									<span
-										style={{
-											fontSize: 10,
-											fontWeight: 700,
-											letterSpacing: "0.10em",
-											textTransform: "uppercase",
-											fontFamily: "'Barlow Condensed', sans-serif",
-											color: "var(--text-muted)",
-										}}
-									>
+							<div className="overflow-hidden rounded-none border border-line bg-surface-raised">
+								<div className="border-b border-line px-4 py-2">
+									<span className="font-condensed text-[10px] font-bold uppercase tracking-[0.1em] text-muted">
 										Dev logins
 									</span>
 								</div>
@@ -246,84 +130,26 @@ export function LoginPageView({
 									<a
 										key={user.id}
 										href={`/auth/callback?user_id=${encodeURIComponent(user.id)}&email=${encodeURIComponent(user.email)}&redirect=${encodeURIComponent(redirectTo ?? "/")}`}
-										style={{
-											display: "flex",
-											alignItems: "center",
-											justifyContent: "space-between",
-											padding: "12px 16px",
-											borderBottom: "1px solid var(--border)",
-											textDecoration: "none",
-											transition: "background 0.1s ease",
-											cursor: "pointer",
-										}}
-										onMouseEnter={(e) => {
-											(e.currentTarget as HTMLElement).style.background =
-												"var(--surface-hover)";
-										}}
-										onMouseLeave={(e) => {
-											(e.currentTarget as HTMLElement).style.background =
-												"transparent";
-										}}
+										className="flex cursor-pointer items-center justify-between border-b border-line px-4 py-3 no-underline transition-colors duration-100 hover:bg-surface-hover"
 									>
 										<div>
-											<p
-												style={{
-													margin: 0,
-													fontSize: 13,
-													fontWeight: 600,
-													color: "var(--text)",
-												}}
-											>
+											<p className="m-0 text-[13px] font-semibold text-ink">
 												{user.email}
 											</p>
-											<p
-												style={{
-													margin: "1px 0 0",
-													fontSize: 11,
-													color: "var(--text-muted)",
-													fontFamily: "var(--font-mono)",
-												}}
-											>
+											<p className="mt-px mb-0 font-mono text-[11px] text-muted">
 												{user.id}
 											</p>
 										</div>
-										<span
-											style={{
-												fontSize: 12,
-												fontWeight: 600,
-												color: "var(--accent)",
-											}}
-										>
-											→
-										</span>
+										<span className="text-xs font-semibold text-accent">→</span>
 									</a>
 								))}
 							</div>
 						)}
 
 						{state.devUsers.length === 0 && !state.githubLoginEnabled && (
-							<div
-								style={{
-									padding: "16px",
-									background: "var(--surface-raised)",
-									border: "1px solid var(--border)",
-									borderRadius: 0,
-									fontSize: 12,
-									color: "var(--text-muted)",
-									lineHeight: 1.6,
-								}}
-							>
+							<div className="rounded-none border border-line bg-surface-raised p-4 text-xs leading-relaxed text-muted">
 								No sign-in methods are configured. Set{" "}
-								<code
-									style={{
-										fontFamily: "var(--font-mono)",
-										background: "var(--bg)",
-										padding: "1px 5px",
-										borderRadius: 0,
-										border: "1px solid var(--border)",
-										fontSize: 11,
-									}}
-								>
+								<code className="rounded-none border border-line bg-canvas px-1.5 py-px font-mono text-[11px]">
 									DASHBOARD_DEV_USERS
 								</code>{" "}
 								or GitHub OAuth in the environment.

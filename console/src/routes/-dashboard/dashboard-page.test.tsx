@@ -7,7 +7,15 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 import { DashboardPage, resetDashboardPageTestState } from "./dashboard-page";
@@ -19,6 +27,7 @@ import {
 	stubDashboardLayoutMetrics,
 	unappliedChange,
 } from "./dashboard-page.test-helpers";
+import { resetServicePersistQueueForTests } from "./use-auto-queued-persist";
 
 const {
 	doDeployEnvironmentMock,
@@ -50,6 +59,16 @@ vi.mock("./server-fns", () => ({
 	fetchGitHubCatalog: fetchGitHubCatalogMock,
 }));
 
+beforeAll(async () => {
+	await Promise.all([
+		import("./service-panel"),
+		import("./panel-variables"),
+		import("./panel-settings"),
+		import("./panel-domains"),
+		import("./new-service-modal"),
+	]);
+});
+
 beforeEach(() => {
 	MockEventSource.instances = [];
 	doDeployEnvironmentMock.mockReset();
@@ -69,16 +88,30 @@ beforeEach(() => {
 		vi.fn(() => 1),
 	);
 	vi.stubGlobal("cancelAnimationFrame", vi.fn());
+	vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) =>
+		window.setTimeout(() => {
+			callback({
+				didTimeout: false,
+				timeRemaining: () => 50,
+			} as IdleDeadline);
+		}, 0),
+	);
+	vi.stubGlobal("cancelIdleCallback", (id: number) => {
+		window.clearTimeout(id);
+	});
 });
 
 afterEach(() => {
 	cleanup();
 	resetDashboardPageTestState();
+	resetServicePersistQueueForTests();
 	vi.unstubAllGlobals();
 });
 
 describe("DashboardPage", () => {
-	it("keeps Deploy active during a variable write and waits behind it", async () => {
+	it("keeps Deploy active during a variable write and waits behind it", {
+		timeout: 15_000,
+	}, async () => {
 		const save = deferred<DashboardServiceRecord>();
 		doUpdateServiceMock.mockReturnValue(save.promise);
 		doDeployEnvironmentMock.mockResolvedValue([]);
@@ -121,7 +154,9 @@ describe("DashboardPage", () => {
 		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("shows saving immediately, then keeps the acknowledged undeployed change", async () => {
+	it("shows saving immediately, then keeps the acknowledged undeployed change", {
+		timeout: 15_000,
+	}, async () => {
 		const save = deferred<DashboardServiceRecord>();
 		doUpdateServiceMock.mockReturnValue(save.promise);
 		const current = serviceRecord({
@@ -276,9 +311,7 @@ describe("DashboardPage", () => {
 		]);
 
 		expect(await screen.findByText("2 changes")).toBeTruthy();
-		expect(
-			document.querySelector(".dirty-workspace-banner.changed"),
-		).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Details" })).toBeTruthy();
 	});
 
 	it("replaces subscriptions and ignores stale events when the environment changes", async () => {

@@ -223,7 +223,7 @@ export function useDashboardCanvas({
 		});
 	}, [selectedId, servicePositions, selected, setTargetPanOffset]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const updatePromptLeft = () => {
 			const canvas = canvasRef.current;
 			if (!canvas) return;
@@ -262,7 +262,7 @@ export function useDashboardCanvas({
 			const target = event.target as HTMLElement | null;
 			if (
 				target?.closest(
-					".dirty-workspace-banner, input, select, textarea, [role='button']:not(.service-node), button:not(.service-node), a",
+					"[data-workspace-prompt], input, select, textarea, [role='button']:not([data-service-node]), button:not([data-service-node]), a",
 				)
 			) {
 				return;
@@ -314,7 +314,7 @@ export function useDashboardCanvas({
 			const el = event.target as HTMLElement;
 			if (
 				el.closest(
-					".service-node, .dirty-workspace-banner, button, a, input, select, textarea, [role='button']",
+					"[data-service-node], [data-workspace-prompt], button, a, input, select, textarea, [role='button']",
 				)
 			) {
 				return;
@@ -422,14 +422,12 @@ export function useDashboardCanvas({
 		const el = event.target as HTMLElement;
 		if (
 			el.closest(
-				".dirty-workspace-banner, button, a, input, select, textarea, [role='button']",
+				"[data-workspace-prompt], button, a, input, select, textarea, [role='button']",
 			)
 		) {
 			return;
 		}
-		if (!el.closest(".service-node")) {
-			onDeselect();
-		}
+		onDeselect();
 	};
 
 	const selectService = (id: string) => {

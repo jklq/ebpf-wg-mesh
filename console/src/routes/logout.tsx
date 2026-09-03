@@ -30,8 +30,8 @@ export const Route = createFileRoute("/logout")({
 
 function LogoutPage() {
 	return (
-		<main className="flex min-h-screen items-center justify-center px-4">
-			<div className="rounded-2xl border border-[var(--line)] bg-white px-5 py-4 text-sm text-[var(--muted)]">
+		<main className="flex min-h-screen items-center justify-center bg-canvas px-4">
+			<div className="rounded-sm border border-line bg-surface px-5 py-4 text-sm text-muted">
 				Signing out...
 			</div>
 		</main>

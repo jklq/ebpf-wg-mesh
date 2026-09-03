@@ -1,7 +1,8 @@
 import { Server, Terminal } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-
+import { cn } from "#/lib/cn";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import { badgeClass, statusDotClass } from "#/lib/ui-classes";
 
 import { NODE_H, NODE_W } from "./layout";
 import { serviceHealth, shortSha } from "./service-utils";
@@ -31,122 +32,61 @@ export function ServiceNode({
 	return (
 		<button
 			type="button"
-			className={`service-node ${selected ? "selected" : ""}`}
+			data-service-node=""
+			className={cn(
+				"absolute w-[220px] cursor-pointer overflow-hidden rounded-sm border border-line bg-surface-raised p-0 text-left text-inherit select-none transition-[border-color,box-shadow] duration-100",
+				selected
+					? "border-accent shadow-[3px_3px_0_rgba(0,0,0,0.6),0_0_0_1px_var(--color-accent)]"
+					: "hover:border-line-bright hover:shadow-[3px_3px_0_rgba(0,0,0,0.5)]",
+			)}
 			style={{
 				left: pos.x,
 				top: pos.y,
 				width: NODE_W,
 				height: NODE_H,
-				boxSizing: "border-box",
-				padding: 0,
-				color: "inherit",
-				textAlign: "left",
-				overflow: "hidden",
 			}}
 			aria-pressed={selected}
 			onMouseDown={onMouseDown}
 			onClick={onSelect}
 		>
-			<div
-				style={{
-					padding: "10px 14px 8px",
-					borderBottom: "1px solid var(--border)",
-					display: "flex",
-					alignItems: "center",
-					gap: 8,
-				}}
-			>
+			<div className="flex items-center gap-2 border-b border-line px-3.5 pt-2.5 pb-2">
 				<span
-					className={`status-dot ${health}`}
+					className={statusDotClass(health)}
 					style={
 						health === "building" ? { animationDelay: pulseDelay } : undefined
 					}
 				/>
-				<span
-					style={{
-						fontSize: 14,
-						fontWeight: 700,
-						letterSpacing: "0.03em",
-						fontFamily: "'Barlow Condensed', sans-serif",
-						color: "var(--text)",
-						overflow: "hidden",
-						textOverflow: "ellipsis",
-						whiteSpace: "nowrap",
-						flex: 1,
-					}}
-				>
+				<span className="flex-1 overflow-hidden font-condensed text-sm font-bold tracking-[0.03em] text-ellipsis whitespace-nowrap text-ink">
 					{service.name}
 				</span>
 			</div>
 
-			<div
-				style={{
-					padding: "8px 14px 10px",
-					display: "flex",
-					flexDirection: "column",
-					gap: 5,
-				}}
-			>
+			<div className="flex flex-col gap-[5px] px-3.5 pt-2 pb-2.5">
 				{repoShort && (
-					<div
-						style={{
-							display: "flex",
-							alignItems: "center",
-							gap: 5,
-							fontSize: 11,
-							color: "var(--text-muted)",
-							fontFamily: "var(--font-mono)",
-							overflow: "hidden",
-							textOverflow: "ellipsis",
-							whiteSpace: "nowrap",
-						}}
-					>
-						<Server size={10} style={{ flexShrink: 0 }} />
+					<div className="flex items-center gap-[5px] overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
+						<Server size={10} className="shrink-0" />
 						{repoShort}
 					</div>
 				)}
 
 				{source?.trackedRef && (
-					<div
-						style={{
-							display: "flex",
-							alignItems: "center",
-							gap: 5,
-							fontSize: 11,
-							color: "var(--text-dim)",
-							fontFamily: "var(--font-mono)",
-						}}
-					>
-						<Terminal size={10} style={{ flexShrink: 0 }} />
+					<div className="flex items-center gap-[5px] font-mono text-[11px] text-dim">
+						<Terminal size={10} className="shrink-0" />
 						{source.trackedRef}
 					</div>
 				)}
 
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						justifyContent: "space-between",
-						gap: 6,
-						marginTop: 2,
-					}}
-				>
-					<div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+				<div className="mt-0.5 flex items-center justify-between gap-1.5">
+					<div className="flex items-center gap-[5px]">
 						{unappliedCount > 0 && (
-							<span className="badge edited">
+							<span className={badgeClass("edited")}>
 								{unappliedCount} {unappliedCount === 1 ? "change" : "changes"}
 							</span>
 						)}
 					</div>
 
 					{service.latestBuild?.commitSha && (
-						<span
-							style={{
-								fontSize: 10,
-								fontFamily: "var(--font-mono)",
-								color: "var(--text-dim)",
-							}}
-						>
+						<span className="font-mono text-[10px] text-dim">
 							{shortSha(service.latestBuild.commitSha)}
 						</span>
 					)}

@@ -1,7 +1,19 @@
 import { Code2, List, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-
+import { cn } from "#/lib/cn";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import {
+	btnPrimary,
+	btnSecondary,
+	errorMsg,
+	fieldInput,
+	fieldInputUnapplied,
+	fieldLabel,
+	iconBtn,
+	modalCard,
+	panelIconBtn,
+	unappliedSurface,
+} from "#/lib/ui-classes";
 
 import { doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
@@ -180,33 +192,42 @@ export function PanelVariables({
 	};
 
 	return (
-		<div className="variables-panel">
+		<div className="flex flex-col gap-4">
 			<PanelSection
 				title="Environment"
 				lede="These values ship with the next deploy. Highlighted rows are not live yet."
 			>
-				<div className="variables-toolbar">
-					<fieldset className="variables-mode-toggle">
-						<legend>Variable editor mode</legend>
-						<button type="button" className="active">
+				<div className="flex items-center justify-between gap-3">
+					<fieldset className="relative m-0 inline-flex border border-line bg-canvas p-0">
+						<legend className="sr-only">Variable editor mode</legend>
+						<button
+							type="button"
+							className="inline-flex min-h-[30px] cursor-pointer items-center gap-1.5 border-0 border-r border-line bg-surface-raised px-2.5 font-condensed text-[11px] font-bold tracking-[0.08em] text-ink uppercase last:border-r-0"
+						>
 							<List size={13} />
 							Fields
 						</button>
-						<button type="button" onClick={openRawEditor}>
+						<button
+							type="button"
+							className="inline-flex min-h-[30px] cursor-pointer items-center gap-1.5 border-0 border-r border-line bg-transparent px-2.5 font-condensed text-[11px] font-bold tracking-[0.08em] text-muted uppercase last:border-r-0"
+							onClick={openRawEditor}
+						>
 							<Code2 size={13} />
 							Raw
 						</button>
 					</fieldset>
-					<button type="button" className="btn-secondary" onClick={addRow}>
+					<button type="button" className={btnSecondary} onClick={addRow}>
 						<Plus size={13} />
 						Add variable
 					</button>
 				</div>
 
-				<div className="variables-list">
+				<div className="flex flex-col gap-2.5">
 					{rows.length === 0 ? (
-						<div className="variables-empty">
-							<strong>No variables yet</strong>
+						<div className="flex flex-col items-start gap-1.5 border border-dashed border-line-bright bg-black/16 px-[18px] py-[22px] text-[13px] text-muted">
+							<strong className="font-display text-[18px] font-medium text-ink">
+								No variables yet
+							</strong>
 							<span>Add a name and value, or switch to raw KEY=value.</span>
 						</div>
 					) : (
@@ -218,16 +239,23 @@ export function PanelVariables({
 							const isUnapplied = changedEnvKeys.has(row.key) || hasLocalChange;
 							return (
 								<div
-									className={`variable-row ${isUnapplied ? "unapplied-field" : ""}`}
+									className={cn(
+										"grid grid-cols-[minmax(120px,0.8fr)_minmax(160px,1.2fr)_32px] items-end gap-2 px-3 py-2.5 max-sm:grid-cols-[1fr_32px] max-sm:[&>div]:col-span-full max-sm:[&>button]:col-start-2",
+										isUnapplied
+											? cn(unappliedSurface, "border")
+											: "border border-line bg-black/16",
+									)}
+									data-unapplied={isUnapplied || undefined}
 									key={row.id}
 								>
 									<div>
-										<label className="field-label" htmlFor={`${row.id}-key`}>
+										<label className={fieldLabel} htmlFor={`${row.id}-key`}>
 											Name
 										</label>
 										<input
 											id={`${row.id}-key`}
-											className={`field-input ${isUnapplied ? "unapplied-field" : ""}`}
+											className={isUnapplied ? fieldInputUnapplied : fieldInput}
+											data-unapplied={isUnapplied || undefined}
 											value={row.key}
 											onChange={(event) =>
 												updateRow(row.id, "key", event.target.value)
@@ -238,12 +266,13 @@ export function PanelVariables({
 										/>
 									</div>
 									<div>
-										<label className="field-label" htmlFor={`${row.id}-value`}>
+										<label className={fieldLabel} htmlFor={`${row.id}-value`}>
 											Value
 										</label>
 										<input
 											id={`${row.id}-value`}
-											className={`field-input ${isUnapplied ? "unapplied-field" : ""}`}
+											className={isUnapplied ? fieldInputUnapplied : fieldInput}
+											data-unapplied={isUnapplied || undefined}
 											value={row.value}
 											onChange={(event) =>
 												updateRow(row.id, "value", event.target.value)
@@ -255,7 +284,7 @@ export function PanelVariables({
 									</div>
 									<button
 										type="button"
-										className="panel-icon-btn variable-remove"
+										className={cn(panelIconBtn, "h-[34px] w-8 justify-center")}
 										onClick={() => removeRow(row.id)}
 										title="Remove variable"
 										aria-label="Remove variable"
@@ -269,19 +298,23 @@ export function PanelVariables({
 				</div>
 			</PanelSection>
 
-			{error && <p className="error-msg">{error}</p>}
+			{error && <p className={errorMsg}>{error}</p>}
 
 			{rawDialogOpen && (
 				<ModalOverlay onClose={() => setRawDialogOpen(false)}>
-					<div className="modal-card variables-raw-dialog">
-						<div className="unapplied-dialog-header">
+					<div className={cn(modalCard, "max-w-[680px]")}>
+						<div className="flex items-center justify-between gap-3 border-b border-line p-4">
 							<div>
-								<h2>Raw variables</h2>
-								<p>Enter one NAME=value pair per line.</p>
+								<h2 className="m-0 font-display text-[26px] font-medium tracking-tight text-ink">
+									Raw variables
+								</h2>
+								<p className="mt-1 mb-0 text-xs text-muted">
+									Enter one NAME=value pair per line.
+								</p>
 							</div>
 							<button
 								type="button"
-								className="icon-btn"
+								className={iconBtn}
 								aria-label="Close raw variables"
 								onClick={() => setRawDialogOpen(false)}
 							>
@@ -289,7 +322,7 @@ export function PanelVariables({
 							</button>
 						</div>
 						<label
-							className="field-label"
+							className={cn(fieldLabel, "mx-4 mt-4")}
 							htmlFor={`variables-raw-${service.id}`}
 						>
 							Raw variables
@@ -297,7 +330,10 @@ export function PanelVariables({
 						<textarea
 							ref={rawEditorRef}
 							id={`variables-raw-${service.id}`}
-							className="field-input variables-raw-editor"
+							className={cn(
+								fieldInput,
+								"mx-4 mb-4 min-h-[260px] w-[calc(100%-32px)] resize-y px-3.5 py-3 leading-[1.55]",
+							)}
 							value={raw}
 							onChange={(event) => {
 								setRaw(event.target.value);
@@ -306,18 +342,18 @@ export function PanelVariables({
 							placeholder={"DATABASE_URL=postgres://...\nREDIS_URL=redis://..."}
 							spellCheck={false}
 						/>
-						{error && <p className="error-msg">{error}</p>}
-						<div className="unapplied-dialog-footer">
+						{error && <p className={cn(errorMsg, "mx-4")}>{error}</p>}
+						<div className="flex items-center justify-end gap-3 border-t border-line p-4">
 							<button
 								type="button"
-								className="btn-secondary"
+								className={btnSecondary}
 								onClick={() => setRawDialogOpen(false)}
 							>
 								Cancel
 							</button>
 							<button
 								type="button"
-								className="btn-primary"
+								className={btnPrimary}
 								onClick={updateRawVariables}
 							>
 								Update variables

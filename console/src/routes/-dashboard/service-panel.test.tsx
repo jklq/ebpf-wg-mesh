@@ -68,7 +68,7 @@ describe("ServicePanel rename", () => {
 
 describe("ServicePanel deployment badge", () => {
 	it("does not pulse Building while the service has undeployed changes", () => {
-		const { container } = render(
+		render(
 			<ServicePanel
 				service={{
 					...service(),
@@ -108,7 +108,7 @@ describe("ServicePanel deployment badge", () => {
 			/>,
 		);
 
-		expect(container.querySelector(".panel-deploy-badge")).toBeNull();
+		expect(screen.queryByLabelText("Service status")).toBeNull();
 	});
 });
 

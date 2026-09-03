@@ -81,7 +81,7 @@ describe("ServiceNode pulse delay", () => {
 				onSelect={() => {}}
 			/>,
 		);
-		expect(html).toContain("status-dot building");
+		expect(html).toContain("animate-pulse-building");
 		expect(html).toMatch(/animation-delay:0ms/);
 		expect(html).not.toMatch(/animation-delay:-965ms/);
 		now.mockRestore();

@@ -8,12 +8,23 @@ import {
 	X,
 } from "lucide-react";
 import type { RefObject } from "react";
-
+import { cn } from "#/lib/cn";
 import type {
 	DashboardDomainBinding,
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import {
+	btnDanger,
+	btnGhost,
+	btnPrimary,
+	btnSecondary,
+	errorMsg,
+	fieldInput,
+	fieldLabel,
+	modalCard,
+	successMsg,
+} from "#/lib/ui-classes";
 
 import { buildServiceURL } from "./service-utils";
 import { ModalOverlay, PanelSection } from "./ui";
@@ -106,7 +117,7 @@ export function DomainPanelView({
 	openDomainFlow: (flow: "generate" | "custom") => void;
 }) {
 	return (
-		<div className="domains-stack">
+		<div className="flex flex-col gap-7">
 			{domainFlow && (
 				<ModalOverlay
 					ariaLabel={
@@ -115,7 +126,7 @@ export function DomainPanelView({
 					onClose={() => setDomainFlow(null)}
 				>
 					<form
-						className="modal-card"
+						className={cn(modalCard, "flex flex-col gap-4 p-6")}
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (domainFlow === "custom" && platformBinding) {
@@ -126,31 +137,16 @@ export function DomainPanelView({
 								void handleGenerate({ keepFlowOpen: domainFlow === "custom" });
 							}
 						}}
-						style={{
-							padding: 24,
-							display: "flex",
-							flexDirection: "column",
-							gap: 16,
-						}}
 					>
-						<div
-							style={{
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "space-between",
-							}}
-						>
-							<span
-								style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}
-							>
+						<div className="flex items-center justify-between">
+							<span className="text-sm font-semibold text-ink">
 								{domainFlow === "generate"
 									? "Generate Domain"
 									: "Custom Domain"}
 							</span>
 							<button
 								type="button"
-								className="btn-ghost"
-								style={{ padding: "4px 6px" }}
+								className={cn(btnGhost, "px-1.5 py-1")}
 								onClick={() => setDomainFlow(null)}
 								aria-label="Close"
 							>
@@ -160,13 +156,13 @@ export function DomainPanelView({
 
 						{(domainFlow === "generate" || !platformBinding) && (
 							<div>
-								<label className="field-label" htmlFor={targetPortId}>
+								<label className={fieldLabel} htmlFor={targetPortId}>
 									App port
 								</label>
 								<input
 									id={targetPortId}
 									ref={targetPortRef}
-									className="field-input"
+									className={fieldInput}
 									value={targetPort}
 									onChange={(event) => {
 										setTargetPort(event.target.value);
@@ -177,23 +173,14 @@ export function DomainPanelView({
 									)}
 									inputMode="numeric"
 								/>
-								<p
-									style={{
-										fontSize: 11,
-										color: "var(--text-muted)",
-										margin: "6px 0 0",
-									}}
-								>
+								<p className="mt-1.5 mb-0 text-[11px] text-muted">
 									The port your app listens on inside the service.
 								</p>
 							</div>
 						)}
 
 						{domainFlow === "generate" && platformBinding && (
-							<div
-								className="success-msg"
-								style={{ fontFamily: "var(--font-mono)" }}
-							>
+							<div className={cn(successMsg, "font-mono")}>
 								{platformBinding.hostname}
 							</div>
 						)}
@@ -201,13 +188,13 @@ export function DomainPanelView({
 						{domainFlow === "custom" && platformBinding && (
 							<>
 								<div>
-									<label className="field-label" htmlFor={hostnameId}>
+									<label className={fieldLabel} htmlFor={hostnameId}>
 										Custom hostname
 									</label>
 									<input
 										id={hostnameId}
 										ref={hostnameRef}
-										className="field-input"
+										className={fieldInput}
 										value={hostname}
 										onChange={(event) => {
 											setHostname(event.target.value);
@@ -216,16 +203,7 @@ export function DomainPanelView({
 										placeholder="app.customer.com"
 									/>
 								</div>
-								<div
-									style={{
-										fontSize: 11,
-										color: "var(--text-muted)",
-										padding: "10px 12px",
-										background: "var(--surface-raised)",
-										fontFamily: "var(--font-mono)",
-										lineHeight: 1.6,
-									}}
-								>
+								<div className="bg-surface-raised px-3 py-2.5 font-mono text-[11px] leading-[1.6] text-muted">
 									Create this DNS record:
 									<br />
 									{hostname || "app.customer.com"} CNAME{" "}
@@ -234,15 +212,13 @@ export function DomainPanelView({
 							</>
 						)}
 
-						{error && <p className="error-msg">{error}</p>}
-						{success && <p className="success-msg">{success}</p>}
+						{error && <p className={errorMsg}>{error}</p>}
+						{success && <p className={successMsg}>{success}</p>}
 
-						<div
-							style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
-						>
+						<div className="flex justify-end gap-2">
 							<button
 								type="button"
-								className="btn-secondary"
+								className={btnSecondary}
 								onClick={() => setDomainFlow(null)}
 							>
 								Cancel
@@ -251,15 +227,10 @@ export function DomainPanelView({
 								<button
 									type="submit"
 									ref={primaryDomainActionRef}
-									className="btn-primary"
+									className={btnPrimary}
 									disabled={generating}
 								>
-									{generating && (
-										<Loader2
-											size={12}
-											style={{ animation: "spin 1s linear infinite" }}
-										/>
-									)}
+									{generating && <Loader2 size={12} className="animate-spin" />}
 									{domainFlow === "custom"
 										? "Generate & continue"
 										: "Generate Domain"}
@@ -268,15 +239,10 @@ export function DomainPanelView({
 							{domainFlow === "custom" && platformBinding && (
 								<button
 									type="submit"
-									className="btn-primary"
+									className={btnPrimary}
 									disabled={publishing || hostname.trim() === ""}
 								>
-									{publishing && (
-										<Loader2
-											size={12}
-											style={{ animation: "spin 1s linear infinite" }}
-										/>
-									)}
+									{publishing && <Loader2 size={12} className="animate-spin" />}
 									Add domain
 								</button>
 							)}
@@ -291,58 +257,35 @@ export function DomainPanelView({
 					onClose={() => setEditingBinding(null)}
 				>
 					<form
-						className="modal-card"
+						className={cn(modalCard, "flex flex-col gap-4 p-6")}
 						onSubmit={(event) => {
 							event.preventDefault();
 							void handleEditSave();
 						}}
-						style={{
-							padding: 24,
-							display: "flex",
-							flexDirection: "column",
-							gap: 16,
-						}}
 					>
-						<div
-							style={{
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "space-between",
-							}}
-						>
-							<span
-								style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}
-							>
+						<div className="flex items-center justify-between">
+							<span className="text-sm font-semibold text-ink">
 								Edit domain
 							</span>
 							<button
 								type="button"
-								className="btn-ghost"
-								style={{ padding: "4px 6px" }}
+								className={cn(btnGhost, "px-1.5 py-1")}
 								onClick={() => setEditingBinding(null)}
 							>
 								<X size={14} />
 							</button>
 						</div>
 						<div>
-							<p
-								style={{
-									fontSize: 12,
-									color: "var(--text-muted)",
-									margin: "0 0 12px",
-								}}
-							>
-								<span style={{ fontFamily: "var(--font-mono)" }}>
-									{editingBinding.hostname}
-								</span>
+							<p className="mb-3 text-xs text-muted">
+								<span className="font-mono">{editingBinding.hostname}</span>
 							</p>
-							<label className="field-label" htmlFor="edit-port">
+							<label className={fieldLabel} htmlFor="edit-port">
 								App port
 							</label>
 							<input
 								id="edit-port"
 								ref={editPortRef}
-								className="field-input"
+								className={fieldInput}
 								value={editPort}
 								onChange={(e) => {
 									setEditPort(e.target.value);
@@ -352,28 +295,21 @@ export function DomainPanelView({
 								inputMode="numeric"
 							/>
 						</div>
-						{editError && <p className="error-msg">{editError}</p>}
-						<div
-							style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
-						>
+						{editError && <p className={errorMsg}>{editError}</p>}
+						<div className="flex justify-end gap-2">
 							<button
 								type="button"
-								className="btn-secondary"
+								className={btnSecondary}
 								onClick={() => setEditingBinding(null)}
 							>
 								Cancel
 							</button>
 							<button
 								type="submit"
-								className="btn-primary"
+								className={btnPrimary}
 								disabled={editSaving || editPort.trim() === ""}
 							>
-								{editSaving && (
-									<Loader2
-										size={12}
-										style={{ animation: "spin 1s linear infinite" }}
-									/>
-								)}
+								{editSaving && <Loader2 size={12} className="animate-spin" />}
 								Save
 							</button>
 						</div>
@@ -387,35 +323,23 @@ export function DomainPanelView({
 					onClose={() => setDeleteConfirm(null)}
 				>
 					<form
-						className="modal-card"
+						className={cn(modalCard, "flex flex-col gap-4 p-6")}
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!deletingHostname) void handleDelete(deleteConfirm);
 						}}
-						style={{
-							padding: 24,
-							display: "flex",
-							flexDirection: "column",
-							gap: 16,
-						}}
 					>
-						<span
-							style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}
-						>
+						<span className="text-sm font-semibold text-ink">
 							Remove domain?
 						</span>
-						<p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
-							<span style={{ fontFamily: "var(--font-mono)" }}>
-								{deleteConfirm}
-							</span>{" "}
-							will stop routing traffic immediately.
+						<p className="m-0 text-[13px] text-muted">
+							<span className="font-mono">{deleteConfirm}</span> will stop
+							routing traffic immediately.
 						</p>
-						<div
-							style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
-						>
+						<div className="flex justify-end gap-2">
 							<button
 								type="button"
-								className="btn-secondary"
+								className={btnSecondary}
 								onClick={() => setDeleteConfirm(null)}
 								disabled={deletingHostname === deleteConfirm}
 							>
@@ -424,14 +348,11 @@ export function DomainPanelView({
 							<button
 								type="submit"
 								ref={removeDomainRef}
-								className="btn-danger"
+								className={btnDanger}
 								disabled={deletingHostname === deleteConfirm}
 							>
 								{deletingHostname === deleteConfirm && (
-									<Loader2
-										size={12}
-										style={{ animation: "spin 1s linear infinite" }}
-									/>
+									<Loader2 size={12} className="animate-spin" />
 								)}
 								Remove
 							</button>
@@ -444,16 +365,24 @@ export function DomainPanelView({
 				title="Private mesh"
 				lede="Reach this service from anything else in the current environment."
 			>
-				<div className="domain-internal-card">
-					<CircleCheck size={20} aria-hidden="true" />
-					<div className="domain-internal-content">
-						<div className="domain-internal-hostline">
+				<div className="flex items-center gap-3 border border-[rgba(109,190,130,0.28)] bg-[linear-gradient(180deg,rgba(109,190,130,0.08),transparent_55%),var(--color-surface-raised)] p-3.5">
+					<CircleCheck
+						size={20}
+						aria-hidden="true"
+						className="shrink-0 text-healthy"
+					/>
+					<div className="min-w-0">
+						<div className="flex flex-wrap items-center gap-[7px] font-mono text-[13px] text-ink">
 							<span>{internalHostname}</span>
-							<span className="domain-internal-protocol">IPv6</span>
+							<span className="bg-accent-dim px-[5px] py-0.5 font-sans text-[10px] font-semibold text-accent">
+								IPv6
+							</span>
 						</div>
-						<p>
+						<p className="mt-[5px] mb-0 text-[11px] text-muted">
 							Ready to talk privately · You can also simply call me{" "}
-							<code>{internalShortName}</code>
+							<code className="bg-accent-dim px-1 py-px font-mono text-accent">
+								{internalShortName}
+							</code>
 						</p>
 					</div>
 				</div>
@@ -463,49 +392,25 @@ export function DomainPanelView({
 				title="Public domains"
 				lede="Hostnames that route into this service."
 			>
-				<div className="domain-list">
+				<div className="flex flex-col gap-2">
 					{loadingBindings && (
-						<div
-							style={{
-								display: "flex",
-								gap: 6,
-								color: "var(--text-muted)",
-								fontSize: 13,
-							}}
-						>
-							<Loader2
-								size={13}
-								style={{ animation: "spin 1s linear infinite" }}
-							/>
+						<div className="flex gap-1.5 text-[13px] text-muted">
+							<Loader2 size={13} className="animate-spin" />
 							Loading…
 						</div>
 					)}
 					{!loadingBindings &&
 						visibleBindings.length === 0 &&
 						!pendingDomain && (
-							<div className="domain-empty">No public domains yet.</div>
+							<div className="border border-dashed border-line-bright px-4 py-[18px] text-[13px] text-muted">
+								No public domains yet.
+							</div>
 						)}
 					{pendingDomain && !pendingDomain.hostname && (
-						<div className="domain-item domain-item-pending">
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									gap: 6,
-									overflow: "hidden",
-								}}
-							>
-								<Loader2
-									size={12}
-									style={{ animation: "spin 1s linear infinite" }}
-								/>
-								<span
-									style={{
-										fontSize: 13,
-										fontFamily: "var(--font-mono)",
-										color: "var(--text-muted)",
-									}}
-								>
+						<div className="flex items-center justify-between gap-2 border border-dashed border-line bg-surface-raised px-3.5 py-3 text-muted">
+							<div className="flex items-center gap-1.5 overflow-hidden">
+								<Loader2 size={12} className="animate-spin" />
+								<span className="font-mono text-[13px] text-muted">
 									Generating domain…
 								</span>
 							</div>
@@ -519,54 +424,36 @@ export function DomainPanelView({
 						return (
 							<div
 								key={binding.hostname}
-								className={`domain-item ${pending ? "domain-item-pending" : ""} ${unverified ? "domain-item-unverified" : ""}`}
+								className={cn(
+									"flex items-center justify-between gap-2 border bg-surface-raised px-3.5 py-3",
+									pending || unverified
+										? "border-dashed border-line text-muted"
+										: "border-line",
+								)}
 							>
-								<div className="domain-item-body">
-									<div className="domain-item-row">
-										<div
-											style={{
-												display: "flex",
-												alignItems: "center",
-												gap: 6,
-												overflow: "hidden",
-											}}
-										>
+								<div className="flex min-w-0 flex-1 flex-col gap-2">
+									<div className="flex items-center justify-between gap-2">
+										<div className="flex items-center gap-1.5 overflow-hidden">
 											{pending || unverified ? (
-												<Loader2
-													size={12}
-													style={{ animation: "spin 1s linear infinite" }}
-												/>
+												<Loader2 size={12} className="animate-spin" />
 											) : (
-												<Globe size={12} color="var(--healthy)" />
+												<Globe size={12} className="shrink-0 text-healthy" />
 											)}
-											<span
-												style={{
-													fontSize: 13,
-													fontFamily: "var(--font-mono)",
-													color: "var(--text)",
-													overflow: "hidden",
-													textOverflow: "ellipsis",
-													whiteSpace: "nowrap",
-												}}
-											>
+											<span className="overflow-hidden font-mono text-[13px] text-ellipsis whitespace-nowrap text-ink">
 												{binding.hostname}
-												<span style={{ color: "var(--text-muted)" }}>
+												<span className="text-muted">
 													{" "}
 													-&gt; :{binding.targetPort}
 												</span>
 											</span>
 										</div>
-										<div
-											style={{
-												display: "flex",
-												alignItems: "center",
-												gap: 4,
-												flexShrink: 0,
-											}}
-										>
+										<div className="flex shrink-0 items-center gap-1">
 											{!pending && (
 												<span
-													className={`domain-ownership-badge ${unverified ? "unverified" : "verified"}`}
+													className={cn(
+														"text-[10px] font-semibold tracking-[0.04em] whitespace-nowrap uppercase",
+														unverified ? "text-accent" : "text-healthy",
+													)}
 												>
 													{unverified ? "Waiting for CNAME" : "Live"}
 												</span>
@@ -575,15 +462,13 @@ export function DomainPanelView({
 												href={buildServiceURL(state, binding.hostname)}
 												target="_blank"
 												rel="noreferrer"
-												className="btn-ghost"
-												style={{ fontSize: 11 }}
+												className={cn(btnGhost, "text-[11px]")}
 											>
 												Open ↗
 											</a>
 											<button
 												type="button"
-												className="btn-ghost"
-												style={{ padding: "4px 6px" }}
+												className={cn(btnGhost, "px-1.5 py-1")}
 												onClick={() => openEdit(binding)}
 												title="Edit"
 											>
@@ -591,11 +476,7 @@ export function DomainPanelView({
 											</button>
 											<button
 												type="button"
-												className="btn-ghost"
-												style={{
-													padding: "4px 6px",
-													color: "var(--danger, #e05252)",
-												}}
+												className={cn(btnGhost, "px-1.5 py-1 text-failed")}
 												onClick={() => setDeleteConfirm(binding.hostname)}
 												title="Remove"
 											>
@@ -604,8 +485,8 @@ export function DomainPanelView({
 										</div>
 									</div>
 									{unverified && (
-										<div className="domain-ownership-detail">
-											<p>
+										<div className="flex flex-col gap-1">
+											<p className="m-0 flex items-start gap-1.5 text-[11px] leading-[1.45] text-muted">
 												<CircleAlert size={12} aria-hidden="true" />
 												{formatOwnershipMessage(
 													binding.ownershipMessage,
@@ -613,7 +494,7 @@ export function DomainPanelView({
 												)}
 											</p>
 											{platformBinding && (
-												<p className="domain-cname-hint">
+												<p className="border border-line bg-surface px-2.5 py-2 font-mono text-ink">
 													{binding.hostname} CNAME {platformBinding.hostname}
 												</p>
 											)}
@@ -623,20 +504,20 @@ export function DomainPanelView({
 							</div>
 						);
 					})}
-					{!domainFlow && error && <p className="error-msg">{error}</p>}
-					{!domainFlow && success && <p className="success-msg">{success}</p>}
+					{!domainFlow && error && <p className={errorMsg}>{error}</p>}
+					{!domainFlow && success && <p className={successMsg}>{success}</p>}
 				</div>
-				<div className="panel-sticky-actions">
+				<div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 pt-0.5">
 					<button
 						type="button"
-						className="btn-primary"
+						className={btnPrimary}
 						onClick={() => openDomainFlow("generate")}
 					>
 						Generate Domain
 					</button>
 					<button
 						type="button"
-						className="btn-secondary"
+						className={btnSecondary}
 						onClick={() => openDomainFlow("custom")}
 					>
 						Custom Domain

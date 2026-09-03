@@ -81,7 +81,7 @@ describe("DashboardPage canvas", () => {
 		);
 
 		const node = screen.getByRole("button", { name: /hello/i });
-		const world = container.querySelector(".canvas-world") as HTMLElement;
+		const world = container.querySelector("[data-canvas-world]") as HTMLElement;
 		node.dispatchEvent(
 			new WheelEvent("wheel", {
 				bubbles: true,
@@ -101,9 +101,9 @@ describe("DashboardPage canvas", () => {
 			<DashboardPage state={dashboardState(serviceRecord())} />,
 		);
 
-		const canvas = container.querySelector(".canvas-grid") as HTMLElement;
+		const canvas = screen.getByRole("application");
 		const node = screen.getByRole("button", { name: /hello/i });
-		const world = container.querySelector(".canvas-world") as HTMLElement;
+		const world = container.querySelector("[data-canvas-world]") as HTMLElement;
 		canvas.getBoundingClientRect = () =>
 			({
 				left: 0,
@@ -167,10 +167,12 @@ describe("DashboardPage canvas", () => {
 		const { container } = render(
 			<DashboardPage state={dashboardState(serviceRecord())} />,
 		);
-		const world = container.querySelector(".canvas-world") as HTMLElement;
+		const world = container.querySelector("[data-canvas-world]") as HTMLElement;
 		expect(world.style.visibility).toBe("hidden");
 
-		fireEvent.click(container.querySelector(".service-node") as HTMLElement);
+		fireEvent.click(
+			container.querySelector("[data-service-node]") as HTMLElement,
+		);
 		width = 1000;
 		height = 800;
 		fireEvent(window, new Event("resize"));

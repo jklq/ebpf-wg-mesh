@@ -1,11 +1,24 @@
 import { Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { cn } from "#/lib/cn";
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
+import {
+	btnPrimary,
+	errorMsg,
+	fieldInput,
+	iconBtn,
+	modalCard,
+} from "#/lib/ui-classes";
 
 import { doCreateEnvironment, doDuplicateEnvironment } from "./server-fns";
 import { formatError } from "./service-utils";
 import { ModalOverlay } from "./ui";
+
+const envOptionCard =
+	"flex cursor-pointer flex-col gap-2 rounded-sm border p-3 transition-[border-color,background-color] duration-100 ease-out";
+const envOptionIdle = "border-line bg-surface-raised hover:border-line-bright";
+const envOptionSelected = "border-accent bg-accent-dim";
 
 export function EnvironmentDialog({
 	state,
@@ -67,17 +80,22 @@ export function EnvironmentDialog({
 			}}
 		>
 			<form
-				className="modal-card env-dialog"
+				className={cn(
+					modalCard,
+					"flex max-w-[460px] flex-col gap-3.5 p-[18px]",
+				)}
 				onSubmit={(event) => {
 					event.preventDefault();
 					void submit();
 				}}
 			>
-				<div className="env-dialog-head">
-					<h2>New Environment</h2>
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="m-0 font-condensed text-[22px] tracking-[0.02em] text-ink">
+						New Environment
+					</h2>
 					<button
 						type="button"
-						className="icon-btn"
+						className={iconBtn}
 						aria-label="Close"
 						onClick={onClose}
 						disabled={busy}
@@ -86,14 +104,14 @@ export function EnvironmentDialog({
 					</button>
 				</div>
 
-				<p className="env-dialog-lede">
+				<p className="-mt-1.5 mb-0 text-xs leading-normal text-muted">
 					All the changes will be isolated from other environments — deploy,
 					edit, and break things without touching production.
 				</p>
 
 				<input
 					ref={nameInputRef}
-					className="field-input env-dialog-name"
+					className={cn(fieldInput, "font-sans text-sm")}
 					value={name}
 					onChange={(event) => setName(event.target.value)}
 					placeholder="staging"
@@ -105,20 +123,26 @@ export function EnvironmentDialog({
 
 				{canDuplicate && (
 					<label
-						className={`env-option ${mode === "duplicate" ? "selected" : ""}`}
+						className={cn(
+							envOptionCard,
+							mode === "duplicate" ? envOptionSelected : envOptionIdle,
+						)}
 					>
-						<span className="env-option-head">
+						<span className="flex items-center gap-2">
 							<input
 								type="radio"
 								name="environment-mode"
+								className="size-3.5 accent-accent"
 								checked={mode === "duplicate"}
 								onChange={() => setMode("duplicate")}
 								disabled={busy}
 							/>
-							<span className="env-option-title">Duplicate Environment</span>
+							<span className="text-[13px] font-semibold text-ink">
+								Duplicate Environment
+							</span>
 						</span>
 						<select
-							className="field-input env-option-select"
+							className={cn(fieldInput, "cursor-pointer font-sans")}
 							value={sourceId}
 							onChange={(event) => setSourceId(event.target.value)}
 							onClick={(event) => event.stopPropagation()}
@@ -131,21 +155,22 @@ export function EnvironmentDialog({
 								</option>
 							))}
 						</select>
-						<span className="env-option-help">
+						<span className="text-xs leading-normal text-muted">
 							Copy all the services and configuration from an existing
 							environment.
 						</span>
 						{mode === "duplicate" && (
-							<span className="env-option-check">
+							<span className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
 								<input
 									type="checkbox"
+									className="accent-accent"
 									checked={copyVariables}
 									onChange={(event) => setCopyVariables(event.target.checked)}
 									disabled={busy}
 								/>
 								Copy variables
 								{copyVariables && (
-									<span className="env-option-warning">
+									<span className="basis-full text-[11px] text-building">
 										Copied values may contain production credentials.
 									</span>
 								)}
@@ -154,35 +179,38 @@ export function EnvironmentDialog({
 					</label>
 				)}
 
-				<label className={`env-option ${mode === "empty" ? "selected" : ""}`}>
-					<span className="env-option-head">
+				<label
+					className={cn(
+						envOptionCard,
+						mode === "empty" ? envOptionSelected : envOptionIdle,
+					)}
+				>
+					<span className="flex items-center gap-2">
 						<input
 							type="radio"
 							name="environment-mode"
+							className="size-3.5 accent-accent"
 							checked={mode === "empty"}
 							onChange={() => setMode("empty")}
 							disabled={busy}
 						/>
-						<span className="env-option-title">Empty Environment</span>
+						<span className="text-[13px] font-semibold text-ink">
+							Empty Environment
+						</span>
 					</span>
-					<span className="env-option-help">
+					<span className="text-xs leading-normal text-muted">
 						An empty environment with no services or variables included.
 					</span>
 				</label>
 
-				{error && <p className="error-msg">{error}</p>}
+				{error && <p className={errorMsg}>{error}</p>}
 
 				<button
 					type="submit"
-					className="btn-primary env-dialog-submit"
+					className={cn(btnPrimary, "w-full justify-center !py-2.5")}
 					disabled={busy || !name.trim() || !project}
 				>
-					{busy && (
-						<Loader2
-							size={13}
-							style={{ animation: "spin 1s linear infinite" }}
-						/>
-					)}
+					{busy && <Loader2 size={13} className="animate-spin" />}
 					{busy ? "Creating…" : "Create Environment"}
 				</button>
 			</form>

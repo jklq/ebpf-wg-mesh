@@ -59,12 +59,10 @@ describe("variables panel seed", () => {
 			target: { value: "redis://cache" },
 		});
 		expect(
-			nameInputs[nameInputs.length - 1]?.classList.contains("unapplied-field"),
+			nameInputs[nameInputs.length - 1]?.hasAttribute("data-unapplied"),
 		).toBe(true);
 		expect(
-			valueInputs[valueInputs.length - 1]?.classList.contains(
-				"unapplied-field",
-			),
+			valueInputs[valueInputs.length - 1]?.hasAttribute("data-unapplied"),
 		).toBe(true);
 		fireEvent.blur(valueInputs[valueInputs.length - 1]);
 
@@ -140,10 +138,10 @@ describe("variables panel seed", () => {
 
 		expect(onSavingChange).toHaveBeenLastCalledWith(true);
 		expect(
-			screen.getByDisplayValue("TOKEN").classList.contains("unapplied-field"),
+			screen.getByDisplayValue("TOKEN").hasAttribute("data-unapplied"),
 		).toBe(true);
 		expect(
-			screen.getByDisplayValue("secret").classList.contains("unapplied-field"),
+			screen.getByDisplayValue("secret").hasAttribute("data-unapplied"),
 		).toBe(true);
 		await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(true));
 		await waitFor(() => expect(doUpdateServiceMock).toHaveBeenCalledTimes(1));
