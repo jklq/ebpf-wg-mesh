@@ -30,7 +30,9 @@ describe("dashboard production profile", () => {
 	});
 
 	it("accepts the valid minimal production configuration", () => {
-		expect(() => assertProductionDashboardConfig(validProduction)).not.toThrow();
+		expect(() =>
+			assertProductionDashboardConfig(validProduction),
+		).not.toThrow();
 		const contract = formatDashboardStartupContract({
 			profile: "production",
 			githubEnabled: true,
@@ -47,7 +49,11 @@ describe("dashboard production profile", () => {
 	});
 
 	it.each([
-		["development users", { devUsers: [{ id: "dev", email: "dev@example.test" }] }, "DASHBOARD_DEV_USERS"],
+		[
+			"development users",
+			{ devUsers: [{ id: "dev", email: "dev@example.test" }] },
+			"DASHBOARD_DEV_USERS",
+		],
 		[
 			"insecure cookies",
 			{ publicBaseURL: "http://dashboard.example.test" },

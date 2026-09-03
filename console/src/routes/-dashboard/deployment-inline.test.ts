@@ -61,7 +61,7 @@ describe("stageAttemptLabel", () => {
 	it("marks later stages as not attempted after a failure", () => {
 		expect(
 			stageAttemptLabel({
-				state: "pending",
+				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 				detail: "Waiting for build to finish",
 				priorFailed: true,
 			}),
@@ -94,8 +94,8 @@ describe("partitionDeployments", () => {
 			isCurrent: true,
 			status: {
 				deploymentId: "deploy-1",
-				state: "removed" as const,
-				causeKind: "user" as const,
+				state: "DEPLOYMENT_STATE_REMOVED" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
 				causeId: "user-1",
 				reasonCode: "DEPLOYMENT_REMOVED",
 				detail: "Service removed",
@@ -119,8 +119,8 @@ describe("partitionDeployments", () => {
 			isCurrent: true,
 			status: {
 				deploymentId: "deploy-2",
-				state: "building" as const,
-				causeKind: "webhook" as const,
+				state: "DEPLOYMENT_STATE_BUILDING" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK" as const,
 				causeId: "hook",
 				reasonCode: "BUILD_STARTED",
 				detail: "Building image",
@@ -135,8 +135,8 @@ describe("partitionDeployments", () => {
 			isCurrent: false,
 			status: {
 				deploymentId: "deploy-1",
-				state: "active" as const,
-				causeKind: "webhook" as const,
+				state: "DEPLOYMENT_STATE_ACTIVE" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK" as const,
 				causeId: "hook",
 				reasonCode: "DEPLOYMENT_ACTIVE",
 				detail: "Serving traffic",
@@ -151,8 +151,8 @@ describe("partitionDeployments", () => {
 			isCurrent: false,
 			status: {
 				deploymentId: "deploy-0",
-				state: "completed" as const,
-				causeKind: "webhook" as const,
+				state: "DEPLOYMENT_STATE_COMPLETED" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK" as const,
 				causeId: "hook",
 				reasonCode: "DEPLOYMENT_COMPLETED",
 				detail: "Replaced",
@@ -179,8 +179,8 @@ describe("deploymentProgressCopy", () => {
 			deploymentProgressCopy({
 				status: {
 					deploymentId: "deploy-2",
-					state: "building",
-					causeKind: "webhook",
+					state: "DEPLOYMENT_STATE_BUILDING",
+					causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 					causeId: "hook",
 					reasonCode: "BUILD_STARTED",
 					detail: "Publishing image",
@@ -189,14 +189,24 @@ describe("deploymentProgressCopy", () => {
 					rolloutGeneration: 2,
 				},
 				stages: [
-					{ key: "source", label: "Source", detail: "", state: "succeeded" },
+					{
+						key: "source",
+						label: "Source",
+						detail: "",
+						state: "DEPLOYMENT_STAGE_STATE_SUCCEEDED",
+					},
 					{
 						key: "build",
 						label: "Build",
 						detail: "Building",
-						state: "running",
+						state: "DEPLOYMENT_STAGE_STATE_RUNNING",
 					},
-					{ key: "deploy", label: "Deploy", detail: "", state: "pending" },
+					{
+						key: "deploy",
+						label: "Deploy",
+						detail: "",
+						state: "DEPLOYMENT_STAGE_STATE_PENDING",
+					},
 				],
 				stepHint: "step 6 of 7",
 			}),
@@ -208,8 +218,8 @@ describe("deploymentProgressCopy", () => {
 			deploymentProgressCopy({
 				status: {
 					deploymentId: "deploy-1",
-					state: "active",
-					causeKind: "webhook",
+					state: "DEPLOYMENT_STATE_ACTIVE",
+					causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 					causeId: "hook",
 					reasonCode: "DEPLOYMENT_ACTIVE",
 					detail: "Serving traffic",
@@ -225,8 +235,8 @@ describe("deploymentProgressCopy", () => {
 
 describe("deploymentBadgeLabel", () => {
 	it("uses the deployment state for the compact badge", () => {
-		expect(deploymentBadgeLabel("building")).toBe("Building");
-		expect(deploymentBadgeLabel("active")).toBe("Active");
-		expect(deploymentBadgeLabel("draining")).toBe("Draining");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_BUILDING")).toBe("Building");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_ACTIVE")).toBe("Active");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_DRAINING")).toBe("Draining");
 	});
 });

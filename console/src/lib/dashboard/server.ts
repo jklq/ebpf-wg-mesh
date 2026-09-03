@@ -11,11 +11,15 @@ import { Pool } from "pg";
 import { createDashboardService } from "#/lib/dashboard/core/service.server";
 import {
 	type CreateServiceFastResult,
+	type DashboardAgentEnrollment,
+	type DashboardAgentLifecycleState,
 	type DashboardConfig,
 	DashboardConfigError,
 	type DashboardDeploymentRecord,
 	type DashboardDeploymentAction,
 	type DashboardDomainBinding,
+	type DashboardFleet,
+	type DashboardFleetAgent,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardOnboardingDraft,
@@ -28,13 +32,9 @@ import {
 	type DashboardServiceRecord,
 	type DashboardServiceStatus,
 	type DevLoginIdentity,
+	type FleetAgentInput,
 	type GitHubUserRepository,
 	type UpdateServiceInput,
-	type DashboardAgentEnrollment,
-	type DashboardAgentLifecycleState,
-	type DashboardFleet,
-	type DashboardFleetAgent,
-	type FleetAgentInput,
 } from "#/lib/dashboard/core/types.server";
 import {
 	assertProductionDashboardConfig,
@@ -56,9 +56,9 @@ import {
 } from "#/lib/dashboard/store/token-crypto.server";
 import {
 	createPlatformGateway,
+	type IngestGitHubWebhookInput,
 	ingestGitHubWebhook,
 } from "#/lib/platform-grpc/gateway.server";
-import type { IngestGitHubWebhookInput } from "#/lib/platform-grpc/types.server";
 
 interface RuntimeConfig extends DashboardConfig {
 	databaseURL: string;

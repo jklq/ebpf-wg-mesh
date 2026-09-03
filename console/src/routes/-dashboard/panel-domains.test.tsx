@@ -47,7 +47,7 @@ describe("domains panel", () => {
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: true,
-			ownershipState: "verified",
+			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 		};
 		let resolveGenerate: (binding: DashboardDomainBinding) => void = () => {};
 		serverFns.generate.mockReturnValue(
@@ -107,7 +107,7 @@ describe("domains panel", () => {
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: true,
-			ownershipState: "verified",
+			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 		};
 		const customBinding: DashboardDomainBinding = {
 			hostname: "app.customer.com",
@@ -115,7 +115,7 @@ describe("domains panel", () => {
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: false,
-			ownershipState: "unverified",
+			ownershipState: "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
 			ownershipMessage:
 				"domain CNAME does not point to the service platform hostname: lookup app.customer.com: no such host",
 		};
@@ -204,7 +204,7 @@ describe("domains panel", () => {
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: true,
-			ownershipState: "verified",
+			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 		};
 		const customBinding: DashboardDomainBinding = {
 			hostname: "app.customer.com",
@@ -212,7 +212,7 @@ describe("domains panel", () => {
 			serviceId: "service-1",
 			targetPort: 8080,
 			platformGenerated: false,
-			ownershipState: "verified",
+			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 		};
 		serverFns.list.mockResolvedValue([platformBinding, customBinding]);
 

@@ -164,7 +164,11 @@ function state(): DashboardHomeState {
 	};
 	return {
 		user: { id: "user-1", email: "user@example.com" },
-		project: { id: "project-1", name: "test-project", kind: "user" },
+		project: {
+			id: "project-1",
+			name: "test-project",
+			kind: "PROJECT_KIND_USER",
+		},
 		environments: [production, staging],
 		environment: production,
 		onboarding: {

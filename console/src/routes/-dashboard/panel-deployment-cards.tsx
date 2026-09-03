@@ -91,8 +91,12 @@ export function DeploymentCard({
 		status,
 	});
 	const meta = deploymentMeta(build, status, timestamp, nowMs);
-	const failedStage = stages.find((stage) => stage.state === "failed");
-	const runningStage = stages.find((stage) => stage.state === "running");
+	const failedStage = stages.find(
+		(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_FAILED",
+	);
+	const runningStage = stages.find(
+		(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING",
+	);
 	const focusStage = focusDeploymentStage(stages);
 	const { lines: logLines } = useInlineDeploymentLogs({
 		enabled: logsEnabled && Boolean(failedStage || runningStage),
@@ -146,7 +150,7 @@ export function DeploymentCard({
 	const [restartAllocationId, setRestartAllocationId] = useState("");
 	const actions = availableDeploymentActions(record, deploymentInProgress);
 	const displayedActions = failedStage
-		? actions.filter((action) => action !== "retry")
+		? actions.filter((action) => action !== "DEPLOYMENT_ACTION_RETRY")
 		: actions;
 
 	const runAction = async (
@@ -229,7 +233,9 @@ export function DeploymentCard({
 					>
 						{stages.map((stage) => {
 							const segmentState =
-								stage.state === "succeeded" ? "building-done" : stage.state;
+								stage.state === "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
+									? "building-done"
+									: stage.state;
 							return (
 								<span
 									key={stage.key || stage.label}
@@ -297,7 +303,9 @@ export function DeploymentCard({
 						<span
 							className={cn(
 								"whitespace-nowrap font-mono text-[11px]",
-								focusStage.state === "failed" ? "text-failed" : "text-dim",
+								focusStage.state === "DEPLOYMENT_STAGE_STATE_FAILED"
+									? "text-failed"
+									: "text-dim",
 							)}
 						>
 							{stageStatusText(focusStage, nowMs)}
@@ -353,10 +361,12 @@ export function DeploymentCard({
 						<button
 							type="button"
 							className={cn(btnSecondary, "min-h-7 px-[11px]")}
-							onClick={() => void runAction("retry")}
+							onClick={() => void runAction("DEPLOYMENT_ACTION_RETRY")}
 							disabled={Boolean(pendingAction)}
 						>
-							{pendingAction === "retry" ? "Retrying…" : "Retry build"}
+							{pendingAction === "DEPLOYMENT_ACTION_RETRY"
+								? "Retrying…"
+								: "Retry build"}
 						</button>
 					</div>
 				</div>
@@ -505,8 +515,8 @@ export function DeploymentActionsMenu({
 	const [open, setOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const orderedActions = [
-		...actions.filter((action) => action !== "remove"),
-		...actions.filter((action) => action === "remove"),
+		...actions.filter((action) => action !== "DEPLOYMENT_ACTION_REMOVE"),
+		...actions.filter((action) => action === "DEPLOYMENT_ACTION_REMOVE"),
 	];
 
 	useEffect(() => {
@@ -541,7 +551,7 @@ export function DeploymentActionsMenu({
 					className="absolute top-[calc(100%+6px)] right-0 z-30 flex min-w-[184px] flex-col rounded-sm border border-line bg-surface-raised p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.45)]"
 					role="menu"
 				>
-					{actions.includes("restart") &&
+					{actions.includes("DEPLOYMENT_ACTION_RESTART") &&
 						allocations.length > 1 &&
 						onRestartAllocationChange && (
 							<label className="mb-1 flex flex-col gap-1 border-b border-[rgba(80,76,71,0.45)] px-2.5 pt-[7px] pb-2 text-[10px] tracking-[0.05em] text-dim uppercase">
@@ -570,7 +580,7 @@ export function DeploymentActionsMenu({
 							role="menuitem"
 							className={cn(
 								"min-h-9 w-full cursor-pointer border-0 bg-transparent px-2.5 text-left text-[13px] font-medium disabled:cursor-default disabled:opacity-50",
-								action === "remove"
+								action === "DEPLOYMENT_ACTION_REMOVE"
 									? "text-failed hover:bg-[rgba(208,85,85,0.1)] hover:text-[#e08989] focus-visible:bg-[rgba(208,85,85,0.1)] focus-visible:text-[#e08989]"
 									: "text-muted hover:bg-[rgba(255,255,255,0.055)] hover:text-ink focus-visible:bg-[rgba(255,255,255,0.055)] focus-visible:text-ink",
 							)}
@@ -578,7 +588,7 @@ export function DeploymentActionsMenu({
 								setOpen(false);
 								void onAction(
 									action,
-									action === "restart"
+									action === "DEPLOYMENT_ACTION_RESTART"
 										? restartAllocationId || undefined
 										: undefined,
 								);
@@ -685,13 +695,13 @@ function panelBadgeSegmentClass(state: string): string {
 	const base =
 		"rounded-full transition-[background-color] duration-[280ms] ease-in-out";
 	switch (state) {
-		case "succeeded":
+		case "DEPLOYMENT_STAGE_STATE_SUCCEEDED":
 			return cn(base, "bg-healthy");
 		case "building-done":
 			return cn(base, "bg-building");
-		case "running":
+		case "DEPLOYMENT_STAGE_STATE_RUNNING":
 			return cn(base, "bg-building animate-pulse-building");
-		case "failed":
+		case "DEPLOYMENT_STAGE_STATE_FAILED":
 			return cn(base, "bg-failed");
 		default:
 			return cn(base, "bg-[rgba(80,76,71,0.7)]");

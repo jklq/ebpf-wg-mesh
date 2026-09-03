@@ -1,7 +1,10 @@
 import { Loader2, Trash2, UploadCloud, X } from "lucide-react";
 
 import { cn } from "#/lib/cn";
-import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import type {
+	DashboardServiceRecord,
+	DashboardUnappliedChangeAction,
+} from "#/lib/dashboard/core/types.server";
 import { btnPrimary, btnSecondary, iconBtn, modalCard } from "#/lib/ui-classes";
 
 import { ModalOverlay } from "./ui";
@@ -90,17 +93,19 @@ export function UnappliedChangesDialog({
 									<span
 										className={cn(
 											"change-action text-[10px] font-bold tracking-[0.08em] uppercase max-sm:col-span-full",
-											change.action,
-											change.action === "add"
+											unappliedChangeActionLabel(change.action),
+											change.action === "SERVICE_UNAPPLIED_CHANGE_ACTION_ADD"
 												? "text-healthy"
-												: change.action === "remove"
+												: change.action ===
+														"SERVICE_UNAPPLIED_CHANGE_ACTION_REMOVE"
 													? "text-failed"
-													: change.action === "update"
+													: change.action ===
+															"SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE"
 														? "text-building"
 														: "text-muted",
 										)}
 									>
-										{change.action}
+										{unappliedChangeActionLabel(change.action)}
 									</span>
 									<div>
 										<strong className="block text-[13px] text-ink">
@@ -183,6 +188,21 @@ export function UnappliedChangesDialog({
 			</div>
 		</ModalOverlay>
 	);
+}
+
+export function unappliedChangeActionLabel(
+	action: DashboardUnappliedChangeAction,
+): string {
+	switch (action) {
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_ADD":
+			return "add";
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE":
+			return "update";
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_REMOVE":
+			return "remove";
+		case "SERVICE_UNAPPLIED_CHANGE_ACTION_UNSPECIFIED":
+			return "unspecified";
+	}
 }
 
 export function unappliedChangeCount(service: DashboardServiceRecord): number {

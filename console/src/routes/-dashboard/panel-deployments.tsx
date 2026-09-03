@@ -69,7 +69,7 @@ export function PanelDeployments({
 	const publicDomain = domains.find(
 		(binding) =>
 			binding.serviceId === currentService.id &&
-			binding.ownershipState !== "unverified",
+			binding.ownershipState !== "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
 	)?.hostname;
 	const replicaCount = currentService.desiredReplicaCount ?? 1;
 	const rolloutGeneration =
@@ -197,8 +197,8 @@ export function PanelDeployments({
 	const deploymentInProgress = liveDeployments.some(
 		(entry) =>
 			isInProgressDeploymentState(entry.status?.state) ||
-			entry.build?.state === "queued" ||
-			entry.build?.state === "running",
+			entry.build?.state === "BUILD_STATE_QUEUED" ||
+			entry.build?.state === "BUILD_STATE_RUNNING",
 	);
 
 	usePolling(loadDeployments, {

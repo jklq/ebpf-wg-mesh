@@ -5,7 +5,7 @@ export interface DashboardUser {
 	email: string;
 }
 
-export type DashboardProjectKind = "user" | "managed";
+export type DashboardProjectKind = "PROJECT_KIND_USER" | "PROJECT_KIND_MANAGED";
 
 export interface DashboardProject {
 	id: string;
@@ -32,28 +32,28 @@ export type DashboardOnboardingStep =
 	| "domain";
 
 export type RepositoryAccessState =
-	| "available"
-	| "installation_required"
-	| "access_revoked"
-	| "repository_deleted"
-	| "unspecified";
+	| "SOURCE_ACCESS_STATE_AVAILABLE"
+	| "SOURCE_ACCESS_STATE_INSTALLATION_REQUIRED"
+	| "SOURCE_ACCESS_STATE_ACCESS_REVOKED"
+	| "SOURCE_ACCESS_STATE_REPOSITORY_DELETED"
+	| "SOURCE_ACCESS_STATE_UNSPECIFIED";
 
 export type DashboardBuildState =
-	| "queued"
-	| "running"
-	| "succeeded"
-	| "failed"
-	| "superseded"
-	| "cancelled"
-	| "unspecified";
+	| "BUILD_STATE_QUEUED"
+	| "BUILD_STATE_RUNNING"
+	| "BUILD_STATE_SUCCEEDED"
+	| "BUILD_STATE_FAILED"
+	| "BUILD_STATE_SUPERSEDED"
+	| "BUILD_STATE_CANCELLED"
+	| "BUILD_STATE_UNSPECIFIED";
 
 export type DashboardDeploymentAction =
-	| "restart"
-	| "exact_redeploy"
-	| "rollback"
-	| "cancel"
-	| "remove"
-	| "retry";
+	| "DEPLOYMENT_ACTION_RESTART"
+	| "DEPLOYMENT_ACTION_EXACT_REDEPLOY"
+	| "DEPLOYMENT_ACTION_ROLLBACK"
+	| "DEPLOYMENT_ACTION_CANCEL"
+	| "DEPLOYMENT_ACTION_REMOVE"
+	| "DEPLOYMENT_ACTION_RETRY";
 
 export interface DashboardDeploymentActionRecord {
 	id: string;
@@ -66,38 +66,38 @@ export interface DashboardDeploymentActionRecord {
 }
 
 export type DashboardDeploymentStageState =
-	| "pending"
-	| "running"
-	| "succeeded"
-	| "failed"
-	| "skipped"
-	| "unspecified";
+	| "DEPLOYMENT_STAGE_STATE_PENDING"
+	| "DEPLOYMENT_STAGE_STATE_RUNNING"
+	| "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
+	| "DEPLOYMENT_STAGE_STATE_FAILED"
+	| "DEPLOYMENT_STAGE_STATE_SKIPPED"
+	| "DEPLOYMENT_STAGE_STATE_UNSPECIFIED";
 
 export type DashboardDeploymentState =
-	| "staged"
-	| "queued_build"
-	| "building"
-	| "scheduling"
-	| "image_pull"
-	| "starting"
-	| "readiness"
-	| "active"
-	| "draining"
-	| "completed"
-	| "failed"
-	| "cancelled"
-	| "crashed"
-	| "removed"
-	| "superseded"
-	| "unspecified";
+	| "DEPLOYMENT_STATE_STAGED"
+	| "DEPLOYMENT_STATE_QUEUED_BUILD"
+	| "DEPLOYMENT_STATE_BUILDING"
+	| "DEPLOYMENT_STATE_SCHEDULING"
+	| "DEPLOYMENT_STATE_IMAGE_PULL"
+	| "DEPLOYMENT_STATE_STARTING"
+	| "DEPLOYMENT_STATE_READINESS"
+	| "DEPLOYMENT_STATE_ACTIVE"
+	| "DEPLOYMENT_STATE_DRAINING"
+	| "DEPLOYMENT_STATE_COMPLETED"
+	| "DEPLOYMENT_STATE_FAILED"
+	| "DEPLOYMENT_STATE_CANCELLED"
+	| "DEPLOYMENT_STATE_CRASHED"
+	| "DEPLOYMENT_STATE_REMOVED"
+	| "DEPLOYMENT_STATE_SUPERSEDED"
+	| "DEPLOYMENT_STATE_UNSPECIFIED";
 
 export type DashboardDeploymentCauseKind =
-	| "user"
-	| "system"
-	| "agent"
-	| "builder"
-	| "webhook"
-	| "unspecified";
+	| "DEPLOYMENT_CAUSE_KIND_USER"
+	| "DEPLOYMENT_CAUSE_KIND_SYSTEM"
+	| "DEPLOYMENT_CAUSE_KIND_AGENT"
+	| "DEPLOYMENT_CAUSE_KIND_BUILDER"
+	| "DEPLOYMENT_CAUSE_KIND_WEBHOOK"
+	| "DEPLOYMENT_CAUSE_KIND_UNSPECIFIED";
 
 export interface DashboardDeploymentStatus {
 	deploymentId: string;
@@ -113,12 +113,12 @@ export interface DashboardDeploymentStatus {
 }
 
 export type DashboardServiceLogType =
-	| "runtime"
-	| "build"
-	| "deploy"
-	| "http"
-	| "network"
-	| "unspecified";
+	| "SERVICE_LOG_TYPE_RUNTIME"
+	| "SERVICE_LOG_TYPE_BUILD"
+	| "SERVICE_LOG_TYPE_DEPLOY"
+	| "SERVICE_LOG_TYPE_HTTP"
+	| "SERVICE_LOG_TYPE_NETWORK"
+	| "SERVICE_LOG_TYPE_UNSPECIFIED";
 
 export interface DashboardBuildRecipe {
 	dockerfilePath: string;
@@ -187,7 +187,10 @@ export interface DashboardHTTPHealthCheck {
 	timeoutSeconds?: number;
 }
 
-export type DashboardRestartPolicy = "always" | "on-failure" | "never";
+export type DashboardRestartPolicy =
+	| "RESTART_POLICY_ALWAYS"
+	| "RESTART_POLICY_ON_FAILURE"
+	| "RESTART_POLICY_NEVER";
 
 export interface DashboardRestartSpec {
 	policy: DashboardRestartPolicy;
@@ -230,13 +233,13 @@ export interface DashboardRollingStrategy {
 }
 
 export type DashboardAgentLifecycleState =
-	| "enrolling"
-	| "active"
-	| "cordoned"
-	| "draining"
-	| "unavailable"
-	| "retired"
-	| "unspecified";
+	| "AGENT_LIFECYCLE_STATE_ENROLLING"
+	| "AGENT_LIFECYCLE_STATE_ACTIVE"
+	| "AGENT_LIFECYCLE_STATE_CORDONED"
+	| "AGENT_LIFECYCLE_STATE_DRAINING"
+	| "AGENT_LIFECYCLE_STATE_UNAVAILABLE"
+	| "AGENT_LIFECYCLE_STATE_RETIRED"
+	| "AGENT_LIFECYCLE_STATE_UNSPECIFIED";
 
 export interface DashboardFleetAgent {
 	id: string;
@@ -336,10 +339,10 @@ export interface DashboardServicePosition {
 }
 
 export type DashboardUnappliedChangeAction =
-	| "add"
-	| "update"
-	| "remove"
-	| "unspecified";
+	| "SERVICE_UNAPPLIED_CHANGE_ACTION_ADD"
+	| "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE"
+	| "SERVICE_UNAPPLIED_CHANGE_ACTION_REMOVE"
+	| "SERVICE_UNAPPLIED_CHANGE_ACTION_UNSPECIFIED";
 
 export interface DashboardUnappliedChange {
 	id: string;
@@ -461,9 +464,9 @@ export interface CreateServiceFastResult {
 }
 
 export type DashboardDomainOwnershipState =
-	| "unspecified"
-	| "verified"
-	| "unverified";
+	| "DOMAIN_OWNERSHIP_STATE_UNSPECIFIED"
+	| "DOMAIN_OWNERSHIP_STATE_VERIFIED"
+	| "DOMAIN_OWNERSHIP_STATE_UNVERIFIED";
 
 export interface DashboardDomainBinding {
 	hostname: string;

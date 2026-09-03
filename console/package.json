@@ -8,22 +8,25 @@
   },
   "scripts": {
     "dev": "bun --bun vite dev --host 127.0.0.1 --port 3000 --strictPort",
-    "build": "NITRO_PRESET=bun bun --bun vite build",
+    "generate:proto": "bunx buf generate",
+    "build": "bun run generate:proto && NITRO_PRESET=bun bun --bun vite build",
     "preview": "bun --bun vite preview --host 0.0.0.0 --port 3000 --strictPort",
     "start": "bun run .output/server/index.mjs",
     "test": "bun run test:unit",
-    "test:unit": "bunx vitest run --config vitest.unit.config.ts",
+    "test:unit": "bun run generate:proto && bunx vitest run --config vitest.unit.config.ts",
     "test:integration": "bun run test:db-integration",
     "test:db-integration": "bunx vitest run --config vitest.integration.config.ts",
     "test:e2e:local": "bunx playwright test -c playwright.local.config.ts",
     "format": "bunx biome format",
     "lint": "bunx biome lint",
-    "check": "bunx biome check",
-    "typecheck": "bunx tsc --noEmit"
+    "check:input-validators": "if grep -E 'input as |inputValidator\\([^)]*=>[^)]* as ' src/routes/-dashboard/server-fns.ts src/routes/-fleet/server-fns.ts src/routes/auth/start.tsx src/routes/auth/callback.tsx; then exit 1; fi",
+    "check": "bun run generate:proto && bun run check:input-validators && bunx biome check",
+    "typecheck": "bun run generate:proto && bunx tsc --noEmit"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.14.4",
-    "@grpc/proto-loader": "^0.8.0",
+    "@bufbuild/protobuf": "^2.14.1",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
@@ -31,7 +34,6 @@
     "@tanstack/react-router-ssr-query": "latest",
     "@tanstack/react-start": "^1.166.17",
     "@tanstack/router-plugin": "^1.132.0",
-    "google-proto-files": "^5.0.1",
     "lucide-react": "^0.545.0",
     "pg": "^8.16.3",
     "react": "^19.2.0",
@@ -41,6 +43,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
+    "@bufbuild/buf": "^1.72.0",
+    "@bufbuild/protoc-gen-es": "^2.14.1",
     "@playwright/test": "^1.55.0",
     "@tailwindcss/typography": "^0.5.16",
     "@tanstack/devtools-vite": "latest",
@@ -55,6 +59,7 @@
     "nitro": "^3.0.260610-beta",
     "typescript": "^5.7.2",
     "vite": "^8.1.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "zod": "^4.5.4"
   }
 }

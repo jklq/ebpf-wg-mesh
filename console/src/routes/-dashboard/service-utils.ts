@@ -11,16 +11,16 @@ export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
 	const deployment = service.latestDeployment;
 	if (deployment) {
 		switch (deployment.state) {
-			case "active":
-			case "draining":
-			case "completed":
+			case "DEPLOYMENT_STATE_ACTIVE":
+			case "DEPLOYMENT_STATE_DRAINING":
+			case "DEPLOYMENT_STATE_COMPLETED":
 				return "healthy";
-			case "failed":
-			case "crashed":
-			case "cancelled":
+			case "DEPLOYMENT_STATE_FAILED":
+			case "DEPLOYMENT_STATE_CRASHED":
+			case "DEPLOYMENT_STATE_CANCELLED":
 				return "failed";
-			case "removed":
-			case "superseded":
+			case "DEPLOYMENT_STATE_REMOVED":
+			case "DEPLOYMENT_STATE_SUPERSEDED":
 				return "offline";
 			default:
 				return "building";
@@ -31,9 +31,13 @@ export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
 	const stageState = deploymentStageHealth(build.stages ?? []);
 	if (stageState === "failed") return "failed";
 	if (stageState === "active") return "building";
-	if (build.state === "failed") return "failed";
-	if (build.state === "running" || build.state === "queued") return "building";
-	if (build.state === "succeeded") return "healthy";
+	if (build.state === "BUILD_STATE_FAILED") return "failed";
+	if (
+		build.state === "BUILD_STATE_RUNNING" ||
+		build.state === "BUILD_STATE_QUEUED"
+	)
+		return "building";
+	if (build.state === "BUILD_STATE_SUCCEEDED") return "healthy";
 	return "offline";
 }
 
@@ -66,17 +70,21 @@ export function heroStatusLabel(
 	build: DashboardServiceRecord["latestBuild"],
 ): string {
 	if (!build) return "Offline";
-	const failedStage = build.stages?.find((s) => s.state === "failed");
+	const failedStage = build.stages?.find(
+		(s) => s.state === "DEPLOYMENT_STAGE_STATE_FAILED",
+	);
 	if (failedStage) return "Failed";
-	if (build.state === "failed") return "Failed";
+	if (build.state === "BUILD_STATE_FAILED") return "Failed";
 
 	// A running stage always wins — it gives the most precise label (e.g.
 	// "Deploying") and must be checked before the build-level state so we don't
 	// jump to "Healthy" while a deploy stage is still in progress.
-	const runningStage = build.stages?.find((s) => s.state === "running");
+	const runningStage = build.stages?.find(
+		(s) => s.state === "DEPLOYMENT_STAGE_STATE_RUNNING",
+	);
 	if (runningStage?.label) return toActiveLabel(runningStage.label);
 
-	if (build.state === "succeeded") return "Healthy";
+	if (build.state === "BUILD_STATE_SUCCEEDED") return "Healthy";
 
 	// "Waiting for X" is only valid before the build has ever started.
 	// build.startedAt is the authoritative signal — once it's set the build has
@@ -84,14 +92,18 @@ export function heroStatusLabel(
 	// not a real regression. Showing "Waiting for build" after "Building" is the
 	// flicker the user sees; suppressing it here keeps the label monotonic.
 	const hasStarted = Boolean(build.startedAt);
-	if (build.state === "queued" && !hasStarted) {
+	if (build.state === "BUILD_STATE_QUEUED" && !hasStarted) {
 		const pendingStage = nextPendingStage(build.stages ?? []);
 		if (pendingStage?.label)
 			return `Waiting for ${pendingStage.label.toLowerCase()}`;
 		return "Queued";
 	}
 
-	if (build.state === "running" || build.state === "queued") return "Building";
+	if (
+		build.state === "BUILD_STATE_RUNNING" ||
+		build.state === "BUILD_STATE_QUEUED"
+	)
+		return "Building";
 
 	return "Offline";
 }
@@ -99,18 +111,29 @@ export function heroStatusLabel(
 function deploymentStageHealth(
 	stages: Array<{ state: DashboardDeploymentStageState }>,
 ): "active" | "failed" | "complete" | "unknown" {
-	const visibleStages = stages.filter((stage) => stage.state !== "skipped");
-	if (visibleStages.some((stage) => stage.state === "failed")) return "failed";
+	const visibleStages = stages.filter(
+		(stage) => stage.state !== "DEPLOYMENT_STAGE_STATE_SKIPPED",
+	);
 	if (
 		visibleStages.some(
-			(stage) => stage.state === "running" || stage.state === "pending",
+			(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_FAILED",
+		)
+	)
+		return "failed";
+	if (
+		visibleStages.some(
+			(stage) =>
+				stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING" ||
+				stage.state === "DEPLOYMENT_STAGE_STATE_PENDING",
 		)
 	) {
 		return "active";
 	}
 	if (
 		visibleStages.length > 0 &&
-		visibleStages.every((stage) => stage.state === "succeeded")
+		visibleStages.every(
+			(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_SUCCEEDED",
+		)
 	) {
 		return "complete";
 	}
@@ -119,9 +142,13 @@ function deploymentStageHealth(
 
 function nextPendingStage(stages: DashboardDeploymentStage[]) {
 	const firstOpenStage = stages.find(
-		(stage) => stage.state === "running" || stage.state === "pending",
+		(stage) =>
+			stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING" ||
+			stage.state === "DEPLOYMENT_STAGE_STATE_PENDING",
 	);
-	return firstOpenStage?.state === "pending" ? firstOpenStage : undefined;
+	return firstOpenStage?.state === "DEPLOYMENT_STAGE_STATE_PENDING"
+		? firstOpenStage
+		: undefined;
 }
 
 export function shortSha(sha: string): string {

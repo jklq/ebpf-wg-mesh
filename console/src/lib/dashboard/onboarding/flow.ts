@@ -109,7 +109,9 @@ export function applyInspectionDefaults(
 	return {
 		...draft,
 		currentStep: nextOnboardingStep(
-			inspection.accessState === "available" ? "build" : "repository",
+			inspection.accessState === "SOURCE_ACCESS_STATE_AVAILABLE"
+				? "build"
+				: "repository",
 		),
 		trackedRef: draft.trackedRef || inspection.defaultBranch,
 		dockerfilePath: draft.dockerfilePath || recommended?.dockerfilePath || "",

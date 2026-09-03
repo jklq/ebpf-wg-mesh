@@ -197,7 +197,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			const project: DashboardProject = {
 				id: `project-${platform.createProjectCalls.length}`,
 				name,
-				kind: "user",
+				kind: "PROJECT_KIND_USER",
 			};
 			platform.projects = [...platform.projects, project];
 			platform.environments = [
@@ -334,7 +334,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			return (
 				platform.nextRepositoryInspection ?? {
-					accessState: "available",
+					accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
 					defaultBranch: "main",
 					dockerfileCandidates: ["Dockerfile"],
 					recommendedBuildRecipe: {
@@ -355,7 +355,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			}
 			return (
 				platform.nextRepositoryInspection ?? {
-					accessState: "available",
+					accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
 					defaultBranch: "main",
 					dockerfileCandidates: ["Dockerfile"],
 					recommendedBuildRecipe: {
@@ -381,13 +381,13 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					resolvedBinding: {
 						repositorySelector: input.spec.source?.repositorySelector ?? "",
 						trackedRef: input.spec.source?.trackedRef ?? "",
-						accessState: "available",
+						accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
 						buildRecipe: input.spec.source?.buildRecipe,
 					},
 				},
 				latestBuild: {
 					buildId: `build-${platform.createServiceCalls.length}`,
-					state: "queued",
+					state: "BUILD_STATE_QUEUED",
 					commitSha: "",
 					imageDigest: "",
 					failureReason: "",
@@ -435,7 +435,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					resolvedBinding: {
 						repositorySelector: input.spec.source?.repositorySelector ?? "",
 						trackedRef: input.spec.source?.trackedRef ?? "",
-						accessState: "available",
+						accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
 						buildRecipe: input.spec.source?.buildRecipe,
 					},
 				},
@@ -471,10 +471,10 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				path: "desiredReplicaCount",
 				action:
 					input.desiredReplicaCount === liveDesired
-						? ("update" as const)
+						? ("SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE" as const)
 						: input.desiredReplicaCount > liveDesired
-							? ("add" as const)
-							: ("update" as const),
+							? ("SERVICE_UNAPPLIED_CHANGE_ACTION_ADD" as const)
+							: ("SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE" as const),
 				currentValue: String(liveDesired),
 				newValue: String(input.desiredReplicaCount),
 			};
@@ -639,7 +639,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				serviceId: input.serviceId,
 				targetPort: input.targetPort,
 				platformGenerated: true,
-				ownershipState: "verified",
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 			};
 			platform.domainBindings = [
 				...platform.domainBindings.filter(
@@ -660,7 +660,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				serviceId: input.serviceId,
 				targetPort: input.targetPort,
 				platformGenerated: false,
-				ownershipState: "unverified",
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
 				ownershipMessage:
 					"domain CNAME does not point to the service platform hostname",
 			};

@@ -107,7 +107,8 @@ export function stageAttemptLabel(options: {
 }): string | undefined {
 	if (
 		options.priorFailed &&
-		(options.state === "pending" || options.state === "unspecified")
+		(options.state === "DEPLOYMENT_STAGE_STATE_PENDING" ||
+			options.state === "DEPLOYMENT_STAGE_STATE_UNSPECIFIED")
 	) {
 		return "not attempted";
 	}
@@ -133,32 +134,32 @@ export function looksLikeEnvKey(value: string): boolean {
 }
 
 const LIVE_STATES = new Set<DashboardDeploymentState>([
-	"staged",
-	"queued_build",
-	"building",
-	"scheduling",
-	"image_pull",
-	"starting",
-	"readiness",
-	"active",
-	"draining",
+	"DEPLOYMENT_STATE_STAGED",
+	"DEPLOYMENT_STATE_QUEUED_BUILD",
+	"DEPLOYMENT_STATE_BUILDING",
+	"DEPLOYMENT_STATE_SCHEDULING",
+	"DEPLOYMENT_STATE_IMAGE_PULL",
+	"DEPLOYMENT_STATE_STARTING",
+	"DEPLOYMENT_STATE_READINESS",
+	"DEPLOYMENT_STATE_ACTIVE",
+	"DEPLOYMENT_STATE_DRAINING",
 ]);
 
 const IN_PROGRESS_STATES = new Set<DashboardDeploymentState>([
-	"staged",
-	"queued_build",
-	"building",
-	"scheduling",
-	"image_pull",
-	"starting",
-	"readiness",
-	"draining",
+	"DEPLOYMENT_STATE_STAGED",
+	"DEPLOYMENT_STATE_QUEUED_BUILD",
+	"DEPLOYMENT_STATE_BUILDING",
+	"DEPLOYMENT_STATE_SCHEDULING",
+	"DEPLOYMENT_STATE_IMAGE_PULL",
+	"DEPLOYMENT_STATE_STARTING",
+	"DEPLOYMENT_STATE_READINESS",
+	"DEPLOYMENT_STATE_DRAINING",
 ]);
 
 const FAILED_STATES = new Set<DashboardDeploymentState>([
-	"failed",
-	"cancelled",
-	"crashed",
+	"DEPLOYMENT_STATE_FAILED",
+	"DEPLOYMENT_STATE_CANCELLED",
+	"DEPLOYMENT_STATE_CRASHED",
 ]);
 
 export function isLiveDeploymentState(
@@ -182,11 +183,12 @@ export function isFailedDeploymentState(
 export function isPinnedDeployment(
 	entry: Pick<DashboardDeploymentRecord, "isCurrent" | "status" | "build">,
 ): boolean {
-	if (entry.status?.state === "removed") return false;
+	if (entry.status?.state === "DEPLOYMENT_STATE_REMOVED") return false;
 	if (entry.isCurrent) return true;
 	if (isLiveDeploymentState(entry.status?.state)) return true;
 	return Boolean(
-		entry.build?.state === "queued" || entry.build?.state === "running",
+		entry.build?.state === "BUILD_STATE_QUEUED" ||
+			entry.build?.state === "BUILD_STATE_RUNNING",
 	);
 }
 
@@ -210,41 +212,41 @@ export function deploymentBadgeLabel(
 	build?: DashboardBuildStatus,
 ): string {
 	switch (state) {
-		case "staged":
+		case "DEPLOYMENT_STATE_STAGED":
 			return "Staged";
-		case "queued_build":
+		case "DEPLOYMENT_STATE_QUEUED_BUILD":
 			return "Queued";
-		case "building":
+		case "DEPLOYMENT_STATE_BUILDING":
 			return "Building";
-		case "scheduling":
+		case "DEPLOYMENT_STATE_SCHEDULING":
 			return "Scheduling";
-		case "image_pull":
+		case "DEPLOYMENT_STATE_IMAGE_PULL":
 			return "Pulling";
-		case "starting":
+		case "DEPLOYMENT_STATE_STARTING":
 			return "Starting";
-		case "readiness":
+		case "DEPLOYMENT_STATE_READINESS":
 			return "Health";
-		case "active":
+		case "DEPLOYMENT_STATE_ACTIVE":
 			return "Active";
-		case "draining":
+		case "DEPLOYMENT_STATE_DRAINING":
 			return "Draining";
-		case "completed":
+		case "DEPLOYMENT_STATE_COMPLETED":
 			return "Done";
-		case "failed":
+		case "DEPLOYMENT_STATE_FAILED":
 			return "Failed";
-		case "cancelled":
+		case "DEPLOYMENT_STATE_CANCELLED":
 			return "Cancelled";
-		case "crashed":
+		case "DEPLOYMENT_STATE_CRASHED":
 			return "Crashed";
-		case "removed":
+		case "DEPLOYMENT_STATE_REMOVED":
 			return "Removed";
-		case "superseded":
+		case "DEPLOYMENT_STATE_SUPERSEDED":
 			return "Superseded";
 		default:
-			if (build?.state === "queued") return "Queued";
-			if (build?.state === "running") return "Building";
-			if (build?.state === "failed") return "Failed";
-			if (build?.state === "succeeded") return "Active";
+			if (build?.state === "BUILD_STATE_QUEUED") return "Queued";
+			if (build?.state === "BUILD_STATE_RUNNING") return "Building";
+			if (build?.state === "BUILD_STATE_FAILED") return "Failed";
+			if (build?.state === "BUILD_STATE_SUCCEEDED") return "Active";
 			return "Deploy";
 	}
 }
@@ -253,15 +255,15 @@ export function deploymentCauseLabel(
 	causeKind: DashboardDeploymentStatus["causeKind"] | undefined,
 ): string | undefined {
 	switch (causeKind) {
-		case "webhook":
+		case "DEPLOYMENT_CAUSE_KIND_WEBHOOK":
 			return "via GitHub";
-		case "user":
+		case "DEPLOYMENT_CAUSE_KIND_USER":
 			return "via dashboard";
-		case "builder":
+		case "DEPLOYMENT_CAUSE_KIND_BUILDER":
 			return "via builder";
-		case "agent":
+		case "DEPLOYMENT_CAUSE_KIND_AGENT":
 			return "via agent";
-		case "system":
+		case "DEPLOYMENT_CAUSE_KIND_SYSTEM":
 			return "via system";
 		default:
 			return undefined;
@@ -272,9 +274,9 @@ export function focusDeploymentStage(
 	stages: Array<DashboardDeploymentStage>,
 ): DashboardDeploymentStage | undefined {
 	return (
-		stages.find((stage) => stage.state === "failed") ??
-		stages.find((stage) => stage.state === "running") ??
-		stages.find((stage) => stage.state === "pending")
+		stages.find((stage) => stage.state === "DEPLOYMENT_STAGE_STATE_FAILED") ??
+		stages.find((stage) => stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING") ??
+		stages.find((stage) => stage.state === "DEPLOYMENT_STAGE_STATE_PENDING")
 	);
 }
 
@@ -286,14 +288,22 @@ export function deploymentProgressCopy(options: {
 }): string {
 	const state = options.status?.state;
 	const focus = focusDeploymentStage(options.stages);
-	if (state === "active" || state === "completed") {
+	if (
+		state === "DEPLOYMENT_STATE_ACTIVE" ||
+		state === "DEPLOYMENT_STATE_COMPLETED"
+	) {
 		return "Deployment successful";
 	}
-	if (state === "draining") {
+	if (state === "DEPLOYMENT_STATE_DRAINING") {
 		return options.status?.detail?.trim() || "Draining traffic";
 	}
-	if (isFailedDeploymentState(state) || options.build?.state === "failed") {
-		const failed = options.stages.find((stage) => stage.state === "failed");
+	if (
+		isFailedDeploymentState(state) ||
+		options.build?.state === "BUILD_STATE_FAILED"
+	) {
+		const failed = options.stages.find(
+			(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_FAILED",
+		);
 		return (
 			failed?.detail?.trim() ||
 			options.build?.failureReason?.trim() ||
@@ -303,13 +313,14 @@ export function deploymentProgressCopy(options: {
 	}
 	if (
 		isInProgressDeploymentState(state) ||
-		focus?.state === "running" ||
-		options.build?.state === "queued" ||
-		options.build?.state === "running"
+		focus?.state === "DEPLOYMENT_STAGE_STATE_RUNNING" ||
+		options.build?.state === "BUILD_STATE_QUEUED" ||
+		options.build?.state === "BUILD_STATE_RUNNING"
 	) {
 		const step =
 			options.status?.detail?.trim() ||
-			(focus?.state === "running" || focus?.state === "pending"
+			(focus?.state === "DEPLOYMENT_STAGE_STATE_RUNNING" ||
+			focus?.state === "DEPLOYMENT_STAGE_STATE_PENDING"
 				? focus.detail?.trim() || focus.label?.trim()
 				: undefined) ||
 			defaultProgressForState(state, options.build);
@@ -323,7 +334,7 @@ export function deploymentProgressCopy(options: {
 		}
 		return step ? `Deployment in progress: ${step}` : "Deployment in progress";
 	}
-	if (options.build?.state === "succeeded") {
+	if (options.build?.state === "BUILD_STATE_SUCCEEDED") {
 		return "Deployment successful";
 	}
 	if (!state && !options.build) {
@@ -337,23 +348,23 @@ function defaultProgressForState(
 	build?: DashboardBuildStatus,
 ): string | undefined {
 	switch (state) {
-		case "staged":
+		case "DEPLOYMENT_STATE_STAGED":
 			return "Configuration staged";
-		case "queued_build":
+		case "DEPLOYMENT_STATE_QUEUED_BUILD":
 			return "Build queued";
-		case "building":
+		case "DEPLOYMENT_STATE_BUILDING":
 			return "Building image";
-		case "scheduling":
+		case "DEPLOYMENT_STATE_SCHEDULING":
 			return "Scheduling rollout";
-		case "image_pull":
+		case "DEPLOYMENT_STATE_IMAGE_PULL":
 			return "Pulling image";
-		case "starting":
+		case "DEPLOYMENT_STATE_STARTING":
 			return "Starting container";
-		case "readiness":
+		case "DEPLOYMENT_STATE_READINESS":
 			return "Waiting for readiness";
 		default:
-			if (build?.state === "queued") return "Build queued";
-			if (build?.state === "running") return "Building image";
+			if (build?.state === "BUILD_STATE_QUEUED") return "Build queued";
+			if (build?.state === "BUILD_STATE_RUNNING") return "Building image";
 			return undefined;
 	}
 }

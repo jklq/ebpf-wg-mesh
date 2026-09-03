@@ -260,7 +260,11 @@ describe("DashboardPage", () => {
 		rerender(
 			<DashboardPage
 				state={dashboardState(service, {
-					project: { id: "project-1", name: "renamed", kind: "user" },
+					project: {
+						id: "project-1",
+						name: "renamed",
+						kind: "PROJECT_KIND_USER",
+					},
 				})}
 			/>,
 		);

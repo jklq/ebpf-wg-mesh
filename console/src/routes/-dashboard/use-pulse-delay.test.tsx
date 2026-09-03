@@ -29,7 +29,7 @@ function buildingService(): DashboardServiceRecord {
 		},
 		latestBuild: {
 			buildId: "build-1",
-			state: "running",
+			state: "BUILD_STATE_RUNNING",
 			commitSha: "abc1234",
 			imageDigest: "",
 			failureReason: "",
@@ -38,7 +38,7 @@ function buildingService(): DashboardServiceRecord {
 					key: "build",
 					label: "Build",
 					detail: "",
-					state: "running",
+					state: "DEPLOYMENT_STAGE_STATE_RUNNING",
 				},
 			],
 		},

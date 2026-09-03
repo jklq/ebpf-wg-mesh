@@ -60,13 +60,13 @@ function FleetRoute() {
 		agent: DashboardFleetAgent,
 		lifecycleState: DashboardAgentLifecycleState,
 	) => {
-		if (lifecycleState === "draining") {
+		if (lifecycleState === "AGENT_LIFECYCLE_STATE_DRAINING") {
 			const accepted = window.confirm(
 				`Drain ${agent.name}? Stateless allocations will move through failover. Volume-backed allocations remain fenced until stateful handoff is available.`,
 			);
 			if (!accepted) return;
 		}
-		if (lifecycleState === "retired") {
+		if (lifecycleState === "AGENT_LIFECYCLE_STATE_RETIRED") {
 			const accepted = window.confirm(
 				`Retire ${agent.name}? This permanently revokes its credentials and removes its mesh identity.`,
 			);
@@ -228,15 +228,18 @@ function AgentCard({
 }) {
 	const canRetire =
 		agent.allocationCount === 0 &&
-		["enrolling", "cordoned", "draining", "unavailable"].includes(
-			agent.lifecycleState,
-		);
+		[
+			"AGENT_LIFECYCLE_STATE_ENROLLING",
+			"AGENT_LIFECYCLE_STATE_CORDONED",
+			"AGENT_LIFECYCLE_STATE_DRAINING",
+			"AGENT_LIFECYCLE_STATE_UNAVAILABLE",
+		].includes(agent.lifecycleState);
 	return (
 		<article className="border border-line bg-surface p-4">
 			<div className="flex items-start justify-between gap-4 max-[800px]:flex-col">
 				<div>
 					<span className={fleetStateClass(agent.lifecycleState)}>
-						{agent.lifecycleState}
+						{fleetStateLabel(agent.lifecycleState)}
 					</span>
 					<h2 className="mx-[9px] my-0 inline text-lg">{agent.name}</h2>
 					<code className="font-mono text-[11px] text-dim">{agent.id}</code>
@@ -245,39 +248,41 @@ function AgentCard({
 					<button
 						type="button"
 						className={btnGhost}
-						disabled={busy || agent.lifecycleState === "retired"}
+						disabled={
+							busy || agent.lifecycleState === "AGENT_LIFECYCLE_STATE_RETIRED"
+						}
 						onClick={onEdit}
 					>
 						Edit
 					</button>
-					{agent.lifecycleState === "active" && (
+					{agent.lifecycleState === "AGENT_LIFECYCLE_STATE_ACTIVE" && (
 						<button
 							type="button"
 							className={btnGhost}
 							disabled={busy}
-							onClick={() => onLifecycle("cordoned")}
+							onClick={() => onLifecycle("AGENT_LIFECYCLE_STATE_CORDONED")}
 						>
 							Cordon
 						</button>
 					)}
-					{(agent.lifecycleState === "active" ||
-						agent.lifecycleState === "cordoned") && (
+					{(agent.lifecycleState === "AGENT_LIFECYCLE_STATE_ACTIVE" ||
+						agent.lifecycleState === "AGENT_LIFECYCLE_STATE_CORDONED") && (
 						<button
 							type="button"
 							className={btnGhost}
 							disabled={busy}
-							onClick={() => onLifecycle("draining")}
+							onClick={() => onLifecycle("AGENT_LIFECYCLE_STATE_DRAINING")}
 						>
 							Drain
 						</button>
 					)}
-					{(agent.lifecycleState === "cordoned" ||
-						agent.lifecycleState === "draining") && (
+					{(agent.lifecycleState === "AGENT_LIFECYCLE_STATE_CORDONED" ||
+						agent.lifecycleState === "AGENT_LIFECYCLE_STATE_DRAINING") && (
 						<button
 							type="button"
 							className={btnGhost}
 							disabled={busy}
-							onClick={() => onLifecycle("active")}
+							onClick={() => onLifecycle("AGENT_LIFECYCLE_STATE_ACTIVE")}
 						>
 							Return active
 						</button>
@@ -287,7 +292,7 @@ function AgentCard({
 							type="button"
 							className={btnDangerOutline}
 							disabled={busy}
-							onClick={() => onLifecycle("retired")}
+							onClick={() => onLifecycle("AGENT_LIFECYCLE_STATE_RETIRED")}
 						>
 							Retire
 						</button>
@@ -545,18 +550,22 @@ function fleetStateClass(state: DashboardAgentLifecycleState): string {
 	const base =
 		"inline-block border px-1.5 py-0.5 font-mono text-[10px] uppercase";
 	switch (state) {
-		case "active":
+		case "AGENT_LIFECYCLE_STATE_ACTIVE":
 			return cn(base, "border-healthy bg-healthy-dim text-healthy");
-		case "draining":
-		case "cordoned":
-		case "enrolling":
+		case "AGENT_LIFECYCLE_STATE_DRAINING":
+		case "AGENT_LIFECYCLE_STATE_CORDONED":
+		case "AGENT_LIFECYCLE_STATE_ENROLLING":
 			return cn(base, "border-building bg-building-dim text-building");
-		case "unavailable":
-		case "retired":
+		case "AGENT_LIFECYCLE_STATE_UNAVAILABLE":
+		case "AGENT_LIFECYCLE_STATE_RETIRED":
 			return cn(base, "border-failed bg-failed-dim text-failed");
 		default:
 			return cn(base, "border-line-bright text-muted");
 	}
+}
+
+function fleetStateLabel(state: DashboardAgentLifecycleState): string {
+	return state.replace("AGENT_LIFECYCLE_STATE_", "").toLowerCase();
 }
 
 function formatCPU(millis: number): string {

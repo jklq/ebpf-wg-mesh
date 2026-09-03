@@ -163,7 +163,7 @@ describe("deployments panel inline failure", () => {
 				data: expect.objectContaining({
 					serviceId: "service-1",
 					deploymentId: "deploy-1",
-					action: "retry",
+					action: "DEPLOYMENT_ACTION_RETRY",
 					idempotencyKey: expect.any(String),
 				}),
 			});
@@ -284,7 +284,7 @@ describe("deployments panel live rollouts", () => {
 						serviceId: "service-1",
 						targetPort: 8080,
 						platformGenerated: false,
-						ownershipState: "verified",
+						ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
 					},
 				]}
 			/>,
@@ -302,7 +302,7 @@ describe("deployments panel live rollouts", () => {
 			isCurrent: true,
 			status: {
 				...active.status,
-				state: "removed" as const,
+				state: "DEPLOYMENT_STATE_REMOVED" as const,
 				reasonCode: "DEPLOYMENT_REMOVED",
 				detail: "Service removed",
 			},
@@ -330,7 +330,7 @@ describe("deployments panel live rollouts", () => {
 });
 
 function project(): DashboardProject {
-	return { id: "project-1", name: "test-project", kind: "user" };
+	return { id: "project-1", name: "test-project", kind: "PROJECT_KIND_USER" };
 }
 
 function failedService(
@@ -340,7 +340,7 @@ function failedService(
 	const finishedAt = new Date("2026-08-13T10:00:22Z");
 	const build: DashboardBuildStatus = {
 		buildId: "build-1",
-		state: "failed",
+		state: "BUILD_STATE_FAILED",
 		commitSha: "0c19aa4deadbeef",
 		imageDigest: "",
 		failureReason: "STRIPE_KEY is required at build time",
@@ -353,7 +353,7 @@ function failedService(
 				key: "build",
 				label: "Build",
 				detail: "Build failed",
-				state: "failed",
+				state: "DEPLOYMENT_STAGE_STATE_FAILED",
 				startedAt,
 				finishedAt,
 			},
@@ -361,13 +361,13 @@ function failedService(
 				key: "deploy",
 				label: "Deploy",
 				detail: "Waiting for build to finish",
-				state: "pending",
+				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 			},
 			{
 				key: "post-deploy",
 				label: "Post-deploy",
 				detail: "Waiting for rollout",
-				state: "pending",
+				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 			},
 		],
 	};
@@ -387,8 +387,8 @@ function failedService(
 		latestBuild: build,
 		latestDeployment: {
 			deploymentId: "deploy-1",
-			state: "failed",
-			causeKind: "user",
+			state: "DEPLOYMENT_STATE_FAILED",
+			causeKind: "DEPLOYMENT_CAUSE_KIND_USER",
 			causeId: "user-1",
 			reasonCode: "build_failed",
 			detail: "Build failed",
@@ -456,7 +456,7 @@ function buildingDeployment(): DashboardDeploymentRecord {
 	const startedAt = new Date("2026-08-13T10:05:00Z");
 	const build: DashboardBuildStatus = {
 		buildId: "build-2",
-		state: "running",
+		state: "BUILD_STATE_RUNNING",
 		commitSha: "aa11bb22cc",
 		imageDigest: "",
 		failureReason: "",
@@ -468,7 +468,7 @@ function buildingDeployment(): DashboardDeploymentRecord {
 				key: "source",
 				label: "Source",
 				detail: "relay5/billing-worker",
-				state: "succeeded",
+				state: "DEPLOYMENT_STAGE_STATE_SUCCEEDED",
 				startedAt,
 				finishedAt: startedAt,
 			},
@@ -476,20 +476,20 @@ function buildingDeployment(): DashboardDeploymentRecord {
 				key: "build",
 				label: "Build",
 				detail: "Publishing image",
-				state: "running",
+				state: "DEPLOYMENT_STAGE_STATE_RUNNING",
 				startedAt,
 			},
 			{
 				key: "deploy",
 				label: "Deploy",
 				detail: "Waiting for build to finish",
-				state: "pending",
+				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 			},
 			{
 				key: "post-deploy",
 				label: "Post-deploy",
 				detail: "Waiting for rollout",
-				state: "pending",
+				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 			},
 		],
 	};
@@ -501,8 +501,8 @@ function buildingDeployment(): DashboardDeploymentRecord {
 		isCurrent: true,
 		status: {
 			deploymentId: "deploy-2",
-			state: "building",
-			causeKind: "webhook",
+			state: "DEPLOYMENT_STATE_BUILDING",
+			causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 			causeId: "github",
 			reasonCode: "BUILD_STARTED",
 			detail: "Publishing image",
@@ -527,7 +527,7 @@ function activeDeployment(): DashboardDeploymentRecord {
 		createdAt: startedAt,
 		build: {
 			buildId: "build-1",
-			state: "succeeded",
+			state: "BUILD_STATE_SUCCEEDED",
 			commitSha: "cc33dd44ee",
 			imageDigest,
 			failureReason: "",
@@ -540,7 +540,7 @@ function activeDeployment(): DashboardDeploymentRecord {
 					key: "deploy",
 					label: "Deploy",
 					detail: "Serving traffic",
-					state: "succeeded",
+					state: "DEPLOYMENT_STAGE_STATE_SUCCEEDED",
 					startedAt,
 					finishedAt: startedAt,
 				},
@@ -549,8 +549,8 @@ function activeDeployment(): DashboardDeploymentRecord {
 		isCurrent: false,
 		status: {
 			deploymentId: "deploy-1",
-			state: "active",
-			causeKind: "webhook",
+			state: "DEPLOYMENT_STATE_ACTIVE",
+			causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 			causeId: "github",
 			reasonCode: "DEPLOYMENT_ACTIVE",
 			detail: "Serving traffic",
@@ -570,7 +570,7 @@ function completedDeployment(): DashboardDeploymentRecord {
 		createdAt: startedAt,
 		build: {
 			buildId: "build-0",
-			state: "succeeded",
+			state: "BUILD_STATE_SUCCEEDED",
 			commitSha: "ee55ff66aa",
 			imageDigest: "sha256:older",
 			failureReason: "",
@@ -582,8 +582,8 @@ function completedDeployment(): DashboardDeploymentRecord {
 		isCurrent: false,
 		status: {
 			deploymentId: "deploy-0",
-			state: "completed",
-			causeKind: "webhook",
+			state: "DEPLOYMENT_STATE_COMPLETED",
+			causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 			causeId: "github",
 			reasonCode: "DEPLOYMENT_COMPLETED",
 			detail: "Replaced",

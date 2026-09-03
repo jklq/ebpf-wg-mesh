@@ -57,7 +57,7 @@ describe("dashboard service", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{ id: "project-1", name: "project", kind: "user" },
+			{ id: "project-1", name: "project", kind: "PROJECT_KIND_USER" },
 		];
 		harness.platform.services = [
 			{
@@ -100,8 +100,8 @@ describe("dashboard service", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{ id: "project-1", name: "one", kind: "user" },
-			{ id: "project-2", name: "two", kind: "user" },
+			{ id: "project-1", name: "one", kind: "PROJECT_KIND_USER" },
+			{ id: "project-2", name: "two", kind: "PROJECT_KIND_USER" },
 		];
 		harness.platform.environments = [
 			{
@@ -206,7 +206,7 @@ describe("dashboard service", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{ id: "project-1", name: "project", kind: "user" },
+			{ id: "project-1", name: "project", kind: "PROJECT_KIND_USER" },
 		];
 		harness.platform.services = [
 			{
@@ -277,7 +277,7 @@ describe("dashboard service", () => {
 			{
 				id: "project-1",
 				name: "brisk-harbor",
-				kind: "user",
+				kind: "PROJECT_KIND_USER",
 			},
 		];
 		harness.platform.services = [
@@ -358,7 +358,7 @@ describe("dashboard service", () => {
 			redirectTo: "/",
 		});
 		harness.platform.nextRepositoryInspection = {
-			accessState: "available",
+			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
 			defaultBranch: "main",
 			dockerfileCandidates: ["Dockerfile"],
 			recommendedBuildRecipe: {
@@ -447,7 +447,7 @@ describe("dashboard service", () => {
 				rolloutGeneration: 1,
 				sequence: 1,
 				line: "initializing service",
-				logType: "deploy",
+				logType: "SERVICE_LOG_TYPE_DEPLOY",
 				buildId: "build-1",
 				stage: "initialization",
 			},
@@ -456,7 +456,7 @@ describe("dashboard service", () => {
 		const logs = await harness.service.listServiceLogsFromSession({
 			serviceId: "service-1",
 			limit: 500,
-			logType: "deploy",
+			logType: "SERVICE_LOG_TYPE_DEPLOY",
 			buildId: "build-1",
 			search: "initializing",
 		});
@@ -465,7 +465,7 @@ describe("dashboard service", () => {
 		expect(harness.platform.listServiceLogsCalls[0]).toMatchObject({
 			serviceId: "service-1",
 			limit: 500,
-			logType: "deploy",
+			logType: "SERVICE_LOG_TYPE_DEPLOY",
 			buildId: "build-1",
 			search: "initializing",
 		});
@@ -554,7 +554,7 @@ describe("dashboard service", () => {
 			serviceId: "service-1",
 			repositorySelector: " OctoCat / Hello ",
 			restart: {
-				policy: "never",
+				policy: "RESTART_POLICY_NEVER",
 				maxRestarts: 5,
 				windowSeconds: 300,
 			},

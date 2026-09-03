@@ -42,7 +42,11 @@ describe("ServicePanel rename", () => {
 			<ServicePanel
 				service={service()}
 				status={null}
-				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				project={{
+					id: "project-1",
+					name: "test-project",
+					kind: "PROJECT_KIND_USER",
+				}}
 				state={state()}
 				activeTab="deployments"
 				onTabChange={() => {}}
@@ -77,7 +81,7 @@ describe("ServicePanel deployment badge", () => {
 					unappliedChangeCount: 1,
 					latestBuild: {
 						buildId: "build-1",
-						state: "running",
+						state: "BUILD_STATE_RUNNING",
 						commitSha: "",
 						imageDigest: "",
 						failureReason: "",
@@ -89,7 +93,7 @@ describe("ServicePanel deployment badge", () => {
 						specRevision: 1,
 						latestBuild: {
 							buildId: "build-1",
-							state: "running",
+							state: "BUILD_STATE_RUNNING",
 							commitSha: "",
 							imageDigest: "",
 							failureReason: "",
@@ -97,7 +101,11 @@ describe("ServicePanel deployment badge", () => {
 					},
 					allocations: [],
 				}}
-				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				project={{
+					id: "project-1",
+					name: "test-project",
+					kind: "PROJECT_KIND_USER",
+				}}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -118,7 +126,11 @@ describe("ServicePanel replica scaling", () => {
 			<ServicePanel
 				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
 				status={null}
-				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				project={{
+					id: "project-1",
+					name: "test-project",
+					kind: "PROJECT_KIND_USER",
+				}}
 				state={state()}
 				activeTab="deployments"
 				onTabChange={() => {}}
@@ -146,7 +158,11 @@ describe("ServicePanel replica scaling", () => {
 			<ServicePanel
 				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
 				status={null}
-				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				project={{
+					id: "project-1",
+					name: "test-project",
+					kind: "PROJECT_KIND_USER",
+				}}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -196,7 +212,11 @@ describe("ServicePanel replica scaling", () => {
 					},
 				}}
 				status={null}
-				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				project={{
+					id: "project-1",
+					name: "test-project",
+					kind: "PROJECT_KIND_USER",
+				}}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -218,7 +238,11 @@ describe("ServicePanel replica scaling", () => {
 			<ServicePanel
 				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
 				status={null}
-				project={{ id: "project-1", name: "test-project", kind: "user" }}
+				project={{
+					id: "project-1",
+					name: "test-project",
+					kind: "PROJECT_KIND_USER",
+				}}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -267,7 +291,11 @@ function state(): DashboardHomeState {
 	};
 	return {
 		user: { id: "user-1", email: "user@example.com" },
-		project: { id: "project-1", name: "test-project", kind: "user" },
+		project: {
+			id: "project-1",
+			name: "test-project",
+			kind: "PROJECT_KIND_USER",
+		},
 		environments: [environment],
 		environment,
 		onboarding: {

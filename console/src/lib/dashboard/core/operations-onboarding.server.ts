@@ -314,7 +314,7 @@ export async function createServiceFastFromSession(
 				githubUserAccessToken,
 			}),
 	);
-	if (inspection.accessState !== "available") {
+	if (inspection.accessState !== "SOURCE_ACCESS_STATE_AVAILABLE") {
 		throw new DashboardValidationError({
 			message: "Repository access is not available yet.",
 		});
