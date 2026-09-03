@@ -119,15 +119,16 @@ func collectArtifacts(ctx context.Context, repoRoot, artifactRoot, keyPath strin
 			return err
 		}
 		commands := map[string]string{
-			"journal.txt":   "journalctl -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-cockroach --no-pager || true",
+			"journal.txt":   "journalctl -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-controlplane-replica -u ebpf-wg-mesh-ingress-probe -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-cockroach --no-pager || true",
 			"ctr.txt":       "ctr --namespace default containers list || true; ctr --namespace default tasks list || true",
 			"wg.txt":        "wg show || true",
 			"network.txt":   "ip -brief addr || true; ss -ltnup || true",
-			"systemd.txt":   "systemctl status ebpf-wg-mesh-controlplane ebpf-wg-mesh-agent ebpf-wg-mesh-cockroach --no-pager || true",
+			"systemd.txt":   "systemctl status ebpf-wg-mesh-controlplane ebpf-wg-mesh-controlplane-replica ebpf-wg-mesh-ingress-probe ebpf-wg-mesh-agent ebpf-wg-mesh-cockroach --no-pager || true",
 			"processes.txt": "ps aux | grep -E 'controlplane|agent|cockroach|containerd' | grep -v grep || true",
 		}
 		if host.Role == "controlplane" {
-			commands["db.txt"] = "cockroach sql --insecure --host=127.0.0.1:26257 --execute \"SELECT * FROM projects; SELECT * FROM project_memberships; SELECT * FROM agents;\" || true"
+			commands["db.txt"] = "cockroach sql --insecure --host=127.0.0.1:26257 --execute \"SELECT * FROM projects; SELECT * FROM project_memberships; SELECT * FROM agents; SELECT * FROM control_plane_leases; SELECT * FROM control_plane_storage;\" || true"
+			commands["ingress-probe.txt"] = "printf '%s\\n' '=== requests ==='; cat /var/lib/ebpf-wg-mesh/ingress-probe/requests.log 2>/dev/null || true; printf '%s\\n' '=== latest ==='; cat /var/lib/ebpf-wg-mesh/ingress-probe/latest.json 2>/dev/null || true"
 		}
 		for fileName, remoteCmd := range commands {
 			out, err := runRemoteCommand(ctx, keyPath, host.PublicIPv4, remoteCmd)

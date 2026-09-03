@@ -10,6 +10,13 @@ USER_ASSERTION_SECRET=${USER_ASSERTION_SECRET:?USER_ASSERTION_SECRET must be at 
 INTERNAL_LISTEN=${INTERNAL_LISTEN:-0.0.0.0:9443}
 PUBLIC_ADDR=${PUBLIC_ADDR:-platform.local}
 BOOTSTRAP_USER=${BOOTSTRAP_USER:-vm-user:vm@example.com}
+SERVICE_NAME=${SERVICE_NAME:-ebpf-wg-mesh-controlplane}
+INGRESS_ADMIN_URL=${INGRESS_ADMIN_URL:-http://127.0.0.1:2019/load}
+
+if [[ ! "${SERVICE_NAME}" =~ ^[a-zA-Z0-9_.@-]+$ ]]; then
+  echo "invalid SERVICE_NAME: ${SERVICE_NAME}" >&2
+  exit 1
+fi
 
 mkdir -p /opt/ebpf-wg-mesh "${STATE_DIR}" /var/lib/ebpf-wg-mesh/cockroach
 
@@ -37,16 +44,16 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/systemd/system/ebpf-wg-mesh-controlplane.service <<EOF
+cat >"/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
-Description=ebpf-wg-mesh controlplane
+Description=ebpf-wg-mesh controlplane (${SERVICE_NAME})
 After=network-online.target ebpf-wg-mesh-cockroach.service
 Wants=network-online.target
 Requires=ebpf-wg-mesh-cockroach.service
 
 [Service]
 Type=simple
-ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
+ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-admin-url ${INGRESS_ADMIN_URL} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
 Restart=always
 RestartSec=3
 
@@ -56,4 +63,4 @@ EOF
 
 chmod 0755 "${CONTROLPLANE_BIN}" "${INTERNAL_CLIENT_CERT_BIN}"
 systemctl daemon-reload
-systemctl enable --now ebpf-wg-mesh-cockroach.service ebpf-wg-mesh-controlplane.service
+systemctl enable --now ebpf-wg-mesh-cockroach.service "${SERVICE_NAME}.service"
