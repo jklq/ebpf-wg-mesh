@@ -1,28 +1,28 @@
 # 2 — Host untrusted code without a shared disk
 
-These items make the dogfood loop safe to offer a design partner. Control-plane replicas already exist; they still share node-local source and keys. Builds still run as a host process. Ingress is still one Caddy.
+These items make the dogfood loop safe to offer a design partner. Control-plane replicas already exist; they still share node-local source and keys. Builds still run as a host process. Ingress is still one Caddy. Agents still get a full-cluster identity catalog over a full WireGuard mesh.
 
 Do not wait to empty this file before starting 3.x items that have no dependency here. Do wait to invite a second tenant’s source onto a shared builder until 2.4 exists.
 
-Extend the VM harness as each item needs a new topology component; 2.11 is done when the listed topology exists, not before object storage may start.
+Extend the VM harness as each item needs a new topology component; 2.13 is done when the listed topology exists.
 
 ## 2.1 Durable-work package
 
 Was: 2.7
 Status: open
-Depends on: none. Do this early so later GC, webhooks, ingress, backups, and billing do not invent a third claiming scheme.
+Depends on: none
 
 Prompt:
 
 ```text
-Create a small CockroachDB-backed durable-work package used by control-plane background operations instead of allowing each reconciler to invent subtly different claiming behavior. It is not a workflow DSL or general orchestration product. A work record needs a stable kind and ID, schema version, deduplication/idempotency key, scoped resource identity, pending/leased/succeeded/failed/dead state, available time, attempt count and limit, lease owner, monotonically increasing lease epoch used as a fencing token, lease expiry and heartbeat, sanitized last error, result metadata, and created/updated/completed times. Enqueue work atomically with the product-state mutation or transactional outbox that requires it. Claim atomically, and require the current lease epoch on heartbeat, completion, release, cancellation, and every state-changing callback so a stalled worker cannot commit after takeover. Handlers must make external effects idempotent with provider request keys where available, persist intent before performing an effect, record observation afterward, and reconcile ambiguous outcomes instead of assuming exactly-once delivery. Provide bounded exponential retry with jitter, terminal classification, dead-letter inspection/replay, queue lag and attempt metrics, operator drain controls, and cleanup/retention. Migrate GitHub deliveries and source work, build claims, notifications/webhooks, ingress publication, deletion garbage collection, backup/restore operations, billing rollups, scheduled jobs, and other long-running operations onto these primitives where their domain state machine does not require a more specific table. Add multi-replica tests that kill workers before and after each external-effect boundary, force lease expiry and stale completion, replay enqueue requests, and prove eventual convergence without duplicate product effects.
+Create a small CockroachDB-backed durable-work package for control-plane background operations. It is not a workflow DSL. A work record needs a stable kind and ID, deduplication/idempotency key, scoped resource identity, pending/leased/succeeded/failed/dead state, attempt limit, lease owner, monotonically increasing lease epoch used as a fencing token, lease expiry and heartbeat, sanitized last error, and timestamps. Enqueue atomically with the product-state mutation that requires it. Claim atomically, and require the current lease epoch on heartbeat, completion, and every state-changing callback. Handlers persist intent before an external effect, record observation afterward, and reconcile ambiguous outcomes. Provide bounded retry with jitter, dead-letter inspection, and queue-lag metrics. First merge is the package plus one caller (prefer GitHub deliveries or deletion GC). Migrate other loops only when you next touch them. Add multi-replica tests that kill a worker before and after an external-effect boundary and prove a stalled owner cannot commit after takeover.
 ```
 
 ## 2.2 Source object storage
 
 Was: 2.2
 Status: open
-Depends on: 1.6 for deletion grace. Production must stop requiring a shared filesystem of archives across control-plane replicas.
+Depends on: 1.8 for deletion grace. Production must stop requiring a shared filesystem of archives across control-plane replicas.
 
 Prompt:
 
@@ -66,49 +66,50 @@ Prompt:
 Evolve the CockroachDB build queue into a durable, fair lease-based scheduler without introducing Temporal or another general workflow system. Builders claim work transactionally with a lease epoch and expiry, heartbeat that lease, and may complete only with the current fencing token. User cancellation and supersession must prevent late completion from publishing an image or starting a rollout. Retry transient worker loss with a bounded attempt count while treating deterministic source/build failures as terminal. Enforce per-workspace and global concurrent-build quotas, weighted fairness between tenants, maximum queue age, build timeout, and admission rejection when account limits are exhausted. Expose queue position approximately, attempt history, cancellation progress, and operator drain controls. Test worker death, split ownership, late completion, cancellation races, starvation resistance, and quota release.
 ```
 
-## 2.6 Deploy-by-digest and provenance
+## 2.6 Deploy-by-digest
 
 Was: 4.5
 Status: open
-Depends on: 1.5 so Railpack and Dockerfile builds both emit the artifact record.
+Depends on: 1.6 so Railpack and Dockerfile builds both emit the artifact record.
 
 Mutable tags must never be the runtime identity of what is scheduled.
 
 Prompt:
 
 ```text
-Create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, dependency/build plan where available, image manifest digest, target architecture, build actor, timestamps, and isolation executor identity. Generate an SPDX or CycloneDX SBOM, attach provenance using a standard attestations format, and sign the resulting image digest with a configured signing provider. Deployments must resolve and persist a digest before scheduling; mutable tags are accepted only as user input and never as the runtime identity. Add optional policy gates for unsigned images, failed vulnerability scans, forbidden severity, and stale scans, with clear project-level overrides for authorized roles. Preserve exact artifacts needed for rollback according to retention policy and test tag mutation, signature verification failure, multi-arch selection, and policy enforcement.
+Create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, image manifest digest, target architecture, build actor, and timestamps. Deployments must resolve and persist a digest before scheduling; mutable tags are accepted only as user input and never as the runtime identity. Direct-image deploys resolve the tag to a digest at deploy time and store that digest. Preserve exact artifacts needed for rollback according to retention policy. Test tag mutation after resolve (the stored digest still runs) and multi-arch selection against 1.10. Do not add SBOM generation, image signing, or vulnerability-policy gates in this item.
 ```
 
-## 2.7 Highly available convergent ingress
+## 2.7 Envoy ingress fleet
 
-Was: 5.2
+Was: 5.2 (Caddy). Clean cutover: Envoy replaces Caddy as production and local-stack ingress.
+
 Status: open
-Depends on: none. One Caddy is currently a product outage.
+Depends on: none. One Caddy is currently a product outage and the wrong apply protocol.
 
 Prompt:
 
 ```text
-Replace the single mutable Caddy target assumption with a small fleet of interchangeable ingress instances managed through an IngressProvider contract. Keep Caddy as the first implementation. Each instance must receive a versioned complete routing snapshot derived from CockroachDB, acknowledge the applied revision, retain the last known-good configuration on rejection, and converge after restart or network partition. Control-plane replicas may race to reconcile but must produce the same canonical configuration and must not partially publish a rollout. Readiness should require enough ingress instances at the current revision to satisfy the configured availability policy. Route only ready, non-draining allocations; support multiple replicas; and remove a backend before destructive shutdown. Provide per-instance status, config diff diagnostics without secrets, staged validation, rollback to last known good, and failure tests for one ingress down, invalid config, delayed apply, and split control-plane ownership.
+Replace Caddy with a small fleet of interchangeable Envoy instances. The control plane is the xDS authority: it serves a versioned snapshot (CDS/EDS/LDS/RDS, SDS once certificates exist) derived from CockroachDB. Each Envoy ACK/NACKs the applied revision, retains last-known-good on NACK, and converges after restart or partition. Control-plane replicas may race to compute config but must produce the same canonical snapshot and must not partially publish a rollout. Readiness requires enough Envoy instances at the current revision to satisfy the configured availability policy. Route only ready, non-draining allocations; support multiple replicas; remove a backend from EDS before destructive shutdown. Provide per-instance status and a config diff without secrets. Failure tests: one Envoy down, NACK of a bad snapshot, delayed apply, split control-plane ownership. Remove Caddy from the production path, localteststack, and VM harness. Do not implement Envoy, a WAF, or a CDN in this repository.
 ```
 
 ## 2.8 Domain and certificate lifecycle
 
 Was: 5.3
 Status: open
-Depends on: 1.6 so deleted hostnames cannot be rebound during grace.
+Depends on: 1.8 so deleted hostnames cannot be rebound during grace. 2.7 so certs are pushed to Envoy via SDS rather than Caddy automatic HTTPS.
 
 Prompt:
 
 ```text
-Turn domain bindings into an explicit verification and certificate lifecycle. Persist requested, verification-pending, verified, certificate-pending, active, degraded, and removing states with safe reason codes and timestamps. Prevent hostname takeover by proving DNS ownership according to the domain type, recheck ownership periodically, and avoid serving a new customer’s workload on a hostname retained from a deleted project. Integrate certificate issuance through Caddy or a narrow ACME provider contract with rate-limit awareness, renewal monitoring, challenge cleanup, and last-known-good certificate behavior. Show exact DNS records, observed values, certificate expiry, and actionable errors in the console. Generated domains must be collision-resistant and reserved transactionally. Test conflicting claims, dangling CNAMEs, rebinding after deletion grace, issuance failure, renewal failure, wildcard restrictions, and certificate expiry alerts.
+Turn domain bindings into an explicit verification and certificate lifecycle. Persist requested, verification-pending, verified, certificate-pending, active, degraded, and removing states with safe reason codes and timestamps. Prevent hostname takeover by proving DNS ownership according to the domain type, recheck ownership periodically, and avoid serving a new customer’s workload on a hostname retained from a deleted project. Issue certificates through a narrow ACME provider contract (not Caddy); push materials to Envoy over SDS with rate-limit awareness, renewal monitoring, challenge cleanup, and last-known-good certificate behavior. Show exact DNS records, observed values, certificate expiry, and actionable errors in the console. Generated domains must be collision-resistant and reserved transactionally. Test conflicting claims, dangling CNAMEs, rebinding after deletion grace, issuance failure, renewal failure, and certificate expiry alerts.
 ```
 
 ## 2.9 Durable bounded logs
 
 Was: 3.3
 Status: open
-Depends on: none. The ClickHouse path exists; it must survive outage without blocking reconcile or dropping silently.
+Depends on: none
 
 Prompt:
 
@@ -116,21 +117,46 @@ Prompt:
 Harden the existing ClickHouse log path for multi-tenant production use. Preserve runtime, build, deploy, HTTP, and network log types; add structured attributes for known platform events without parsing arbitrary customer output; define ordering and duplicate handling across reconnects; and retain the raw line exactly within a documented size limit. Agents and builders need bounded disk-backed spooling, batching, backpressure, retry, and explicit dropped-line counters so a ClickHouse outage cannot consume unbounded memory or block workload reconciliation. Enforce per-allocation rate and burst limits, tenant retention policies, authorized time-range search, pagination or streaming, and safe deletion after project expiry. The console should offer environment-wide search and deployment-scoped logs with clear gaps when data was dropped. Test backend outage, retry duplication, oversized lines, abusive log rates, retention, and tenant isolation.
 ```
 
-## 2.10 Bound desired-state sync
+## 2.10 Nomad-style per-node allocation sync
 
-Was: 2.6
 Status: open
-Depends on: 1.1 because snapshots now carry two addresses per allocation.
+Depends on: none. Replaces the full desired-state snapshot as the agent wire and recovery format.
 
-Needed before commercial scale, not before the first design partner if the fleet is small. Do not block 2.4–2.8 on this.
+Nomad servers send each client only that client’s allocations. Reconnect is “what I run” reconciled against “what this node should run,” not a cluster dump.
 
 Prompt:
 
 ```text
-Keep agents dumb and the full desired snapshot as the canonical recovery format, but make synchronization safe at commercial scale. Assign a content hash and monotonically increasing revision to each per-node snapshot, compress it on the wire, cap its size, and avoid resending an identical revision after reconnect. Split exceptionally large cluster-wide workload identity catalogs into versioned chunks or a separately hashed section so a single service change does not require unbounded allocation and serialization on every control-plane replica. Agents must assemble and validate a complete revision before applying it, retain the last known-good state across reconnect, reject stale or partial revisions, and report applied revision/hash. The control plane needs sync lag and payload-size metrics plus a fallback full resync when history is unavailable. Preserve fail-closed identity removal semantics and test reconnect storms, missed revisions, corrupt chunks, control-plane failover, catalog growth, and removal convergence.
+Stop sending each agent a full cluster desired-state snapshot. The control plane remains authoritative for placement. The agent stream carries only allocations assigned to that agent: start, update, and stop diffs, each with a monotonically increasing per-node revision. The agent persists its local alloc set, reports observed state, and on reconnect sends the alloc IDs and versions it is running. The control plane replies with the desired set for that node; the agent starts missing allocs, stops extras, and must not restart a healthy alloc whose desired spec and generation still match. Unknown local containers are stopped (fail closed). Other nodes’ allocations never appear as “run this.” Identity/policy (2.11) and WireGuard peers (2.12) are separate messages, not stuffed into the alloc body. Cap payload size per revision and skip a resend when the agent already has that per-node revision. Test reconnect without container restart, missed stop, control-plane failover mid-sync, and a node that comes back with extra containers.
 ```
 
-## 2.11 Production-like topology harness
+## 2.11 Scoped identity policy
+
+Status: open
+Depends on: 2.10 so policy is not piggy-backed on a cluster snapshot. 1.1 if both overlay families are present.
+
+The fail-closed pool deny stays. The cluster-wide identity catalog on every node does not.
+
+Prompt:
+
+```text
+Give each agent a pool deny plus exact allow entries only for network identities in environments that agent currently hosts, including remote allocations in those environments so same-environment east-west still works. Do not send identities for environments the node does not host. Envoy instances receive the backends they route, not the mesh catalog. Adding or removing an allocation updates only agents in that environment and the Envoy instances that publish it. Identity removal must still fail closed: unknown destinations and cross-environment traffic are denied on both overlay families. Test that a node hosting only environment A has no environment-B allows, that growth in B does not change A’s agents, that same-environment cross-node traffic still works, and that removing the last A allocation on a node drops A’s allows.
+```
+
+## 2.12 Environment-scoped WireGuard peering
+
+Status: open
+Depends on: 2.11 so peers follow who is allowed to talk. 2.7 so ingress instances are the north-south peers.
+
+Full mesh does not scale and is not required for fail-closed policy.
+
+Prompt:
+
+```text
+Stop forming a WireGuard peer between every pair of agents. Create and maintain tunnels only (1) between agents that currently share at least one environment and (2) between those agents and the Envoy instances that publish their allocations. AllowedIPs on each peer are only that peer’s overlay prefixes, not the whole cluster. When the last shared environment leaves a pair of nodes, tear the peer down. Control-plane mTLS stays off the mesh. Underlay advertise_addr remains IPv6. Test: disjoint environments produce no agent-agent peer; adding a shared environment creates a peer; removing it destroys the peer; east-west same-environment still works; cross-environment stays denied without a tunnel; Envoy can still reach ready backends.
+```
+
+## 2.13 Production-like topology harness
 
 Was: 9.1
 Status: open
@@ -139,19 +165,19 @@ Depends on: none. Grow the existing testvm as 2.2, 2.4, 2.7, and 2.9 need compon
 Prompt:
 
 ```text
-Extend the OpenTofu/VM harness into a production-like disposable topology with multiple control-plane replicas, a CockroachDB cluster, VictoriaMetrics, ClickHouse, object storage, registry, at least two ingress instances, builders, and at least three agents across distinct failure domains. Keep external managed-provider behaviors behind test doubles or lightweight compatible services where provisioning the real provider is inappropriate. Generate per-run credentials, expose no admin service publicly, collect sanitized artifacts, and guarantee teardown on success, failure, or interruption. The harness must deploy the actual built binaries and configuration profiles rather than alternate test implementations. Produce a machine-readable topology manifest and health summary so scenario tests can target components deterministically.
+Extend the OpenTofu/VM harness into a production-like disposable topology with multiple control-plane replicas, a CockroachDB cluster, VictoriaMetrics, ClickHouse, object storage, registry, at least two Envoy instances, builders, and at least three agents across distinct failure domains. Keep external managed-provider behaviors behind test doubles or lightweight compatible services where provisioning the real provider is inappropriate. Generate per-run credentials, expose no admin service publicly, collect sanitized artifacts, and guarantee teardown on success, failure, or interruption. The harness must deploy the actual built binaries and configuration profiles rather than alternate test implementations. Produce a machine-readable topology manifest and health summary so scenario tests can target components deterministically.
 ```
 
-## 2.12 Core onboarding path
+## 2.14 Core onboarding path
 
 Was: 8.9
 Status: open
-Depends on: 1.4, 1.5, 1.6 so empty states, builder choice, and deletion grace are real.
+Depends on: 1.5, 1.6, 1.7, 1.8 so empty states, builder choice, auto-deploy, and deletion grace are real.
 
-This is the human path through the loop, not decorative templates.
+This is the human path through the loop, not an accessibility program.
 
 Prompt:
 
 ```text
-Refine the console around the platform’s actual supported path: create or choose a project, connect an authorized GitHub repository or direct image, inspect detected build configuration, create a service, review staged changes, deploy, watch state, and reach a healthy endpoint. Add project/workspace navigation, useful empty states, capacity and quota explanations, and error recovery that preserves user input. Every icon button and field needs an accessible name, dialogs need focus management and keyboard behavior, status cannot depend only on color, timestamps and loading states must be truthful, and destructive actions must state scope and recovery. Provide responsive layouts without hiding required controls. Do not add decorative templates before the core path works. Add focused component tests and a Playwright journey covering keyboard-only onboarding, failed build recovery, deploy, rollback, and deletion grace.
+Refine the console around the supported path: create or choose a project, connect an authorized GitHub repository or direct image, inspect detected build configuration, create a service, review staged changes, deploy (or see auto-deploy), watch state including crash evidence, and reach a healthy endpoint. Add useful empty states and error recovery that preserves user input. Destructive actions must state scope and recovery. Do not add decorative templates. Add a Playwright journey covering failed build recovery, deploy, rollback, and deletion grace.
 ```

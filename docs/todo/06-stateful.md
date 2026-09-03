@@ -64,14 +64,4 @@ Prompt:
 Collect volume provisioned bytes, used bytes, inode use where available, read/write bytes, IOPS, latency, attachment errors, backup age, and restore state into VictoriaMetrics using stable volume identity. Add warning and critical capacity monitors with projected exhaustion, and surface them on service and volume views. Prevent shrink operations, warn before configurations that place ephemeral database paths outside the mounted volume, and make common database image mount paths easy to choose without hard-coding database products into the control plane. Production volume deletion requires no attachment, a recent successful backup or an explicit high-risk override according to policy, typed confirmation, grace period, and audit event. Bill provisioned storage and backup storage from authoritative provider/lifecycle records reconciled with VictoriaMetrics, not from mutable console values.
 ```
 
-## 6.6 Honest database templates
 
-Was: 7.6
-Status: open
-Depends on: 6.1–6.5. Templates are ordinary services plus volumes, not a database control plane.
-
-Prompt:
-
-```text
-After durable volumes are production-ready, add maintained templates for selected databases as ordinary container-image services plus volumes, generated credentials, health checks, resource defaults, and documented upgrade/backup paths. Keep the abstraction honest: users should see the image version, mount, variables, network endpoints, resource limits, backup status, and operational ownership. Pin images by digest, stage version upgrades, run compatibility prechecks where practical, and require a recent backup before major upgrades. Do not build a database control plane, automatic clustering system, or pretend a single container is highly available. Templates must be versioned, testable in the VM harness, removable without special scheduler branches, and accompanied by restore and upgrade exercises.
-```
