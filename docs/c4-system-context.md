@@ -14,7 +14,7 @@ flowchart LR
     github["GitHub\n(source repos, App install, webhooks, OAuth)"]
     registry["Container registry"]
     cockroach["CockroachDB cluster"]
-    caddy["Caddy ingress"]
+    envoy["Envoy ingress fleet"]
     buildkit["BuildKit daemon"]
     underlay["Node underlay network / Internet"]
     workloads["Deployed workloads"]
@@ -28,13 +28,13 @@ flowchart LR
     github -->|"OAuth login, repository metadata, installation grants, webhook deliveries"| platform
     platform -->|"GitHub API calls for user auth, repo inspection, installation sync, source snapshot coordination"| github
     platform -->|"stores platform state, dashboard sessions, onboarding metadata"| cockroach
-    platform -->|"replaces public routing config via admin API"| caddy
-    caddy -->|"routes public HTTP(S) traffic for console and deployed service domains"| platform
+    platform -->|"serves versioned xDS snapshots"| envoy
+    envoy -->|"routes public HTTP(S) traffic for console and deployed service domains"| platform
     platform -->|"mints exact-scope tokens; pushes and pulls built images"| registry
     platform -->|"invokes remote/local image builds"| buildkit
-    platform -->|"agents maintain mTLS control stream and node-to-node WireGuard/eBPF fabric over IPv6 underlay"| underlay
+    platform -->|"agents maintain mTLS control stream and environment-scoped WireGuard/eBPF overlay over IPv6 underlay"| underlay
     platform -->|"pulls images, reconciles runtime state, exposes services"| workloads
-    caddy -->|"forwards external traffic to healthy platform-managed service backends"| workloads
+    envoy -->|"forwards external traffic to healthy platform-managed service backends"| workloads
 ```
 
 ## Relationship Notes
@@ -46,13 +46,14 @@ flowchart LR
 - The console signs a 30-second user assertion for each platform RPC and sends it over mTLS. The control plane verifies its signature, issuer, audience, expiry, and subject, then authorizes the operation from user-ID memberships and roles without storing a duplicate user profile.
 - GitHub repository access is linked to a project. Repository inspection and deployment require that project-specific grant rather than any installation grant visible to the platform.
 - Projects own access and grouping; every deployable resource and private network belongs to one environment.
-- Caddy is external to the platform system boundary in this diagram because the control plane drives it through the admin API rather than owning it as an in-process component.
-- The Caddy admin listener and control-plane admin target are loopback-only by default. Remote administration requires an explicit unsafe-network opt-in and an operator-provided protected transport.
+- Envoy is external to the platform system boundary because the control plane is the xDS authority rather than owning the proxy process. Current code still drives a single Caddy via the admin API until that cutover.
+- xDS to Envoy is authenticated. There is no unauthenticated proxy admin API on the public network.
 - BuildKit and the container registry are separate external runtime dependencies used by the builder path.
 - Registry token minting and ACL decisions are embedded in the control plane. The external registry verifies signed access locally from the persisted control-plane trust certificate; no separate credential-broker service is required.
 - The node underlay network is shown as an external system because the retained WireGuard/eBPF mesh rides on top of host/network infrastructure rather than replacing it.
-- Desired state carries every allocated workload's IPv6, environment/network identity, and hosting node identity to every agent. Exact entries override a workload-pool deny prefix in the eBPF LPM trie, making unknown mesh destinations and cross-environment traffic fail closed.
-- Workload health comes from TCP/HTTP probe results rather than container existence. Production probe sockets originate inside the workload network namespace, only healthy ports become ingress backends, and probe failures remain visible as allocation phase and failure detail.
+- Each agent is sent only the allocations assigned to that node. Identity policy is a pool deny plus exact allows for environments the node hosts (including remote allocations in those environments). Unknown destinations and cross-environment traffic fail closed. Current code still floods a cluster-wide catalog to every agent.
+- WireGuard peers exist only between nodes that share an environment and between those nodes and Envoy instances that publish their services. There is no full mesh.
+- Workload health comes from HTTP probe results rather than container existence. Production probe sockets originate inside the workload network namespace, only ready ports become ingress backends, and probe failures remain visible as allocation phase and failure detail.
 
 ## Repo Mapping
 

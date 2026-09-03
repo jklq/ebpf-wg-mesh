@@ -8,7 +8,7 @@ These make a reliable loop pleasant and programmable. They must not jump the que
 
 Was: 8.3
 Status: open
-Depends on: 1.5, 1.3
+Depends on: 1.6, 1.3
 
 Prompt:
 
@@ -32,7 +32,7 @@ Introduce typed variable references so a service can consume another service’s
 
 Was: 8.5
 Status: open
-Depends on: 1.5
+Depends on: 1.6
 
 Prompt:
 
@@ -56,22 +56,10 @@ Add an optional pre-deploy command that runs from the newly built image as a bou
 
 Was: 8.4
 Status: open
-Depends on: 1.6, 3.3, 2.4. Do not copy production secrets onto forked PRs.
+Depends on: 1.8, 3.3, 2.4. Do not copy production secrets onto forked PRs.
 
 Prompt:
 
 ```text
 Extend EnvironmentKind with ephemeral pull-request environments driven by verified GitHub App webhook state. A project may configure a persistent base environment, allowed repositories/target branches, resource/replica caps, secret-copy policy, and automatic expiry. On an eligible PR open or update, create or reconcile one isolated environment, copy only permitted configuration, deploy affected services from the exact head SHA, post or update one GitHub status/comment with URLs and state, and remove the environment after merge/close plus a grace period. Handle webhook replay, force-push, forked PR trust, bot PR policy, revoked installation access, and out-of-order events without deploying untrusted code with production secrets. Budget and quota ephemeral use separately, and test the complete lifecycle with fixture webhooks.
-```
-
-## 4.6 One-off commands and scheduled jobs
-
-Was: 8.8
-Status: open
-Depends on: 2.1, 3.3. Volume-backed jobs wait for 6.4 fencing.
-
-Prompt:
-
-```text
-Support authorized one-off commands against an immutable service image and configuration, plus cron-scheduled jobs for workloads that actually need them. Both use bounded one-shot allocations with explicit CPU/memory/time limits, log capture, exit status, cancellation, concurrency policy, and no public ingress. Cron schedules use a declared timezone, validated syntax, missed-run policy, overlap policy, and durable next-run calculation in CockroachDB; a lease-based reconciler may enqueue due runs without adding a workflow engine. Secrets and volumes require explicit opt-in, and volume-backed jobs must respect single-writer fencing. Meter runs through VictoriaMetrics and quota them separately. Provide history and manual trigger controls, and test daylight-saving transitions, control-plane failover, duplicate scheduling, long runs, cancellation, and quota exhaustion.
 ```
