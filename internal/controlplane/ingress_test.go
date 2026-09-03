@@ -61,20 +61,22 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if len(hosts) != 1 || hosts[0] != "demo.example.com" {
 		t.Fatalf("unexpected ingress host match %+v", hosts)
 	}
-	agent, err := store.agentByID(ctx, "node-1")
+	if got := routes[0].Handle[0].Upstreams[0].Dial; got != "10.0.0.10:8080" {
+		t.Fatalf("expected healthy IPv4 upstream, got %q", got)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `UPDATE allocations SET healthy_ipv4_ports = '[]' WHERE service_id = $1`, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "fd00:200:1::10", 8080); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = syncer.render(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocation, err := store.allocationByServiceID(ctx, service.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedIP, err := privateIPv6(agent.WorkloadIPv6Subnet, service.EnvironmentID, allocation.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := routes[0].Handle[0].Upstreams[0].Dial; got != "["+expectedIP+"]:8080" {
-		t.Fatalf("expected control-plane-derived upstream, got %q", got)
+	if got := cfg.Apps.HTTP.Servers["srv0"].Routes[0].Handle[0].Upstreams[0].Dial; got != "[fd00:200:1::10]:8080" {
+		t.Fatalf("expected healthy IPv6 fallback upstream, got %q", got)
 	}
 }
 
@@ -140,7 +142,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "echo.localtest.me", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "svc-echo", 8080); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -452,6 +454,8 @@ func testMeshConfig() config.ControlPlaneMeshConfig {
 		InterfaceName:              "wg0",
 		ListenPort:                 51820,
 		NetworkCIDR:                "fd00:44::/64",
+		WorkloadIPv4PoolCIDR:       "10.200.0.0/16",
+		WorkloadIPv4NodePrefixBits: 24,
 		WorkloadPoolCIDR:           "fd00:200::/48",
 		PersistentKeepaliveSeconds: 5,
 	}

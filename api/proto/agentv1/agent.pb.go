@@ -445,6 +445,8 @@ type AssignedNodeConfig struct {
 	Peers                  []*WireGuardPeer       `protobuf:"bytes,5,rep,name=peers,proto3" json:"peers,omitempty"`
 	WorkloadIdentities     []*WorkloadIdentity    `protobuf:"bytes,6,rep,name=workload_identities,json=workloadIdentities,proto3" json:"workload_identities,omitempty"`
 	WorkloadIpv6Pool       string                 `protobuf:"bytes,7,opt,name=workload_ipv6_pool,json=workloadIpv6Pool,proto3" json:"workload_ipv6_pool,omitempty"`
+	WorkloadIpv4Subnet     string                 `protobuf:"bytes,8,opt,name=workload_ipv4_subnet,json=workloadIpv4Subnet,proto3" json:"workload_ipv4_subnet,omitempty"`
+	WorkloadIpv4Pool       string                 `protobuf:"bytes,9,opt,name=workload_ipv4_pool,json=workloadIpv4Pool,proto3" json:"workload_ipv4_pool,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -528,6 +530,20 @@ func (x *AssignedNodeConfig) GetWorkloadIpv6Pool() string {
 	return ""
 }
 
+func (x *AssignedNodeConfig) GetWorkloadIpv4Subnet() string {
+	if x != nil {
+		return x.WorkloadIpv4Subnet
+	}
+	return ""
+}
+
+func (x *AssignedNodeConfig) GetWorkloadIpv4Pool() string {
+	if x != nil {
+		return x.WorkloadIpv4Pool
+	}
+	return ""
+}
+
 type WorkloadIdentity struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	WorkloadIpv6    string                 `protobuf:"bytes,1,opt,name=workload_ipv6,json=workloadIpv6,proto3" json:"workload_ipv6,omitempty"`
@@ -535,6 +551,7 @@ type WorkloadIdentity struct {
 	NetworkIdentity uint32                 `protobuf:"varint,3,opt,name=network_identity,json=networkIdentity,proto3" json:"network_identity,omitempty"`
 	HostAgentId     string                 `protobuf:"bytes,4,opt,name=host_agent_id,json=hostAgentId,proto3" json:"host_agent_id,omitempty"`
 	HostIpv6        string                 `protobuf:"bytes,5,opt,name=host_ipv6,json=hostIpv6,proto3" json:"host_ipv6,omitempty"`
+	WorkloadIpv4    string                 `protobuf:"bytes,6,opt,name=workload_ipv4,json=workloadIpv4,proto3" json:"workload_ipv4,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -600,6 +617,13 @@ func (x *WorkloadIdentity) GetHostAgentId() string {
 func (x *WorkloadIdentity) GetHostIpv6() string {
 	if x != nil {
 		return x.HostIpv6
+	}
+	return ""
+}
+
+func (x *WorkloadIdentity) GetWorkloadIpv4() string {
+	if x != nil {
+		return x.WorkloadIpv4
 	}
 	return ""
 }
@@ -739,6 +763,7 @@ type DesiredService struct {
 	OperatorRestartNonce int64                          `protobuf:"varint,16,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
 	Intent               AllocationIntent               `protobuf:"varint,17,opt,name=intent,proto3,enum=agent.v1.AllocationIntent" json:"intent,omitempty"`
 	DrainDeadline        *timestamppb.Timestamp         `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
+	PrivateIpv4          string                         `protobuf:"bytes,19,opt,name=private_ipv4,json=privateIpv4,proto3" json:"private_ipv4,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -899,10 +924,18 @@ func (x *DesiredService) GetDrainDeadline() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *DesiredService) GetPrivateIpv4() string {
+	if x != nil {
+		return x.PrivateIpv4
+	}
+	return ""
+}
+
 type InternalHost struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	Ipv6          string                 `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
+	Ipv4          string                 `protobuf:"bytes,3,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -947,6 +980,13 @@ func (x *InternalHost) GetHostname() string {
 func (x *InternalHost) GetIpv6() string {
 	if x != nil {
 		return x.Ipv6
+	}
+	return ""
+}
+
+func (x *InternalHost) GetIpv4() string {
+	if x != nil {
+		return x.Ipv4
 	}
 	return ""
 }
@@ -1103,12 +1143,14 @@ type ServiceCondition struct {
 	AppliedSpecRevision      int64                          `protobuf:"varint,4,opt,name=applied_spec_revision,json=appliedSpecRevision,proto3" json:"applied_spec_revision,omitempty"`
 	Phase                    string                         `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
 	Message                  string                         `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
-	AllocationIp             string                         `protobuf:"bytes,7,opt,name=allocation_ip,json=allocationIp,proto3" json:"allocation_ip,omitempty"`
+	AllocationIpv4           string                         `protobuf:"bytes,7,opt,name=allocation_ipv4,json=allocationIpv4,proto3" json:"allocation_ipv4,omitempty"`
 	Healthy                  bool                           `protobuf:"varint,8,opt,name=healthy,proto3" json:"healthy,omitempty"`
 	DesiredRolloutGeneration int64                          `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
 	AppliedRolloutGeneration int64                          `protobuf:"varint,10,opt,name=applied_rollout_generation,json=appliedRolloutGeneration,proto3" json:"applied_rollout_generation,omitempty"`
-	HealthyPorts             []int32                        `protobuf:"varint,11,rep,packed,name=healthy_ports,json=healthyPorts,proto3" json:"healthy_ports,omitempty"`
+	HealthyIpv4Ports         []int32                        `protobuf:"varint,11,rep,packed,name=healthy_ipv4_ports,json=healthyIpv4Ports,proto3" json:"healthy_ipv4_ports,omitempty"`
 	Restart                  *platformv1.RestartObservation `protobuf:"bytes,12,opt,name=restart,proto3" json:"restart,omitempty"`
+	AllocationIpv6           string                         `protobuf:"bytes,13,opt,name=allocation_ipv6,json=allocationIpv6,proto3" json:"allocation_ipv6,omitempty"`
+	HealthyIpv6Ports         []int32                        `protobuf:"varint,14,rep,packed,name=healthy_ipv6_ports,json=healthyIpv6Ports,proto3" json:"healthy_ipv6_ports,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -1185,9 +1227,9 @@ func (x *ServiceCondition) GetMessage() string {
 	return ""
 }
 
-func (x *ServiceCondition) GetAllocationIp() string {
+func (x *ServiceCondition) GetAllocationIpv4() string {
 	if x != nil {
-		return x.AllocationIp
+		return x.AllocationIpv4
 	}
 	return ""
 }
@@ -1213,9 +1255,9 @@ func (x *ServiceCondition) GetAppliedRolloutGeneration() int64 {
 	return 0
 }
 
-func (x *ServiceCondition) GetHealthyPorts() []int32 {
+func (x *ServiceCondition) GetHealthyIpv4Ports() []int32 {
 	if x != nil {
-		return x.HealthyPorts
+		return x.HealthyIpv4Ports
 	}
 	return nil
 }
@@ -1223,6 +1265,20 @@ func (x *ServiceCondition) GetHealthyPorts() []int32 {
 func (x *ServiceCondition) GetRestart() *platformv1.RestartObservation {
 	if x != nil {
 		return x.Restart
+	}
+	return nil
+}
+
+func (x *ServiceCondition) GetAllocationIpv6() string {
+	if x != nil {
+		return x.AllocationIpv6
+	}
+	return ""
+}
+
+func (x *ServiceCondition) GetHealthyIpv6Ports() []int32 {
+	if x != nil {
+		return x.HealthyIpv6Ports
 	}
 	return nil
 }
@@ -1678,7 +1734,7 @@ const file_agent_proto_rawDesc = "" +
 	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x03(\tR\n" +
 	"allowedIps\x12@\n" +
-	"\x1cpersistent_keepalive_seconds\x18\x06 \x01(\x05R\x1apersistentKeepaliveSeconds\"\x8f\x03\n" +
+	"\x1cpersistent_keepalive_seconds\x18\x06 \x01(\x05R\x1apersistentKeepaliveSeconds\"\xef\x03\n" +
 	"\x12AssignedNodeConfig\x120\n" +
 	"\x14workload_ipv6_subnet\x18\x01 \x01(\tR\x12workloadIpv6Subnet\x128\n" +
 	"\x18wireguard_interface_name\x18\x02 \x01(\tR\x16wireguardInterfaceName\x12/\n" +
@@ -1686,13 +1742,16 @@ const file_agent_proto_rawDesc = "" +
 	"\x15wireguard_listen_port\x18\x04 \x01(\x05R\x13wireguardListenPort\x12-\n" +
 	"\x05peers\x18\x05 \x03(\v2\x17.agent.v1.WireGuardPeerR\x05peers\x12K\n" +
 	"\x13workload_identities\x18\x06 \x03(\v2\x1a.agent.v1.WorkloadIdentityR\x12workloadIdentities\x12,\n" +
-	"\x12workload_ipv6_pool\x18\a \x01(\tR\x10workloadIpv6Pool\"\xca\x01\n" +
+	"\x12workload_ipv6_pool\x18\a \x01(\tR\x10workloadIpv6Pool\x120\n" +
+	"\x14workload_ipv4_subnet\x18\b \x01(\tR\x12workloadIpv4Subnet\x12,\n" +
+	"\x12workload_ipv4_pool\x18\t \x01(\tR\x10workloadIpv4Pool\"\xef\x01\n" +
 	"\x10WorkloadIdentity\x12#\n" +
 	"\rworkload_ipv6\x18\x01 \x01(\tR\fworkloadIpv6\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12)\n" +
 	"\x10network_identity\x18\x03 \x01(\rR\x0fnetworkIdentity\x12\"\n" +
 	"\rhost_agent_id\x18\x04 \x01(\tR\vhostAgentId\x12\x1b\n" +
-	"\thost_ipv6\x18\x05 \x01(\tR\bhostIpv6\"+\n" +
+	"\thost_ipv6\x18\x05 \x01(\tR\bhostIpv6\x12#\n" +
+	"\rworkload_ipv4\x18\x06 \x01(\tR\fworkloadIpv4\"+\n" +
 	"\x0eAgentHeartbeat\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x86\x01\n" +
 	"\rDesiredVolume\x12\x1b\n" +
@@ -1700,7 +1759,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xe7\x06\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\x8a\a\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1721,10 +1780,12 @@ const file_agent_proto_rawDesc = "" +
 	"\x13restart_observation\x18\x0f \x01(\v2\x1f.platform.v1.RestartObservationR\x12restartObservation\x124\n" +
 	"\x16operator_restart_nonce\x18\x10 \x01(\x03R\x14operatorRestartNonce\x122\n" +
 	"\x06intent\x18\x11 \x01(\x0e2\x1a.agent.v1.AllocationIntentR\x06intent\x12A\n" +
-	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\">\n" +
+	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\x12!\n" +
+	"\fprivate_ipv4\x18\x13 \x01(\tR\vprivateIpv4\"R\n" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
-	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\"\xb0\x02\n" +
+	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x12\n" +
+	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xb0\x02\n" +
 	"\x10DesiredNodeState\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x03R\brevision\x121\n" +
@@ -1736,7 +1797,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0fVolumeCondition\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\x89\x04\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xed\x04\n" +
 	"\x10ServiceCondition\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1744,14 +1805,16 @@ const file_agent_proto_rawDesc = "" +
 	"\x15desired_spec_revision\x18\x03 \x01(\x03R\x13desiredSpecRevision\x122\n" +
 	"\x15applied_spec_revision\x18\x04 \x01(\x03R\x13appliedSpecRevision\x12\x14\n" +
 	"\x05phase\x18\x05 \x01(\tR\x05phase\x12\x18\n" +
-	"\amessage\x18\x06 \x01(\tR\amessage\x12#\n" +
-	"\rallocation_ip\x18\a \x01(\tR\fallocationIp\x12\x18\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\x12'\n" +
+	"\x0fallocation_ipv4\x18\a \x01(\tR\x0eallocationIpv4\x12\x18\n" +
 	"\ahealthy\x18\b \x01(\bR\ahealthy\x12<\n" +
 	"\x1adesired_rollout_generation\x18\t \x01(\x03R\x18desiredRolloutGeneration\x12<\n" +
 	"\x1aapplied_rollout_generation\x18\n" +
-	" \x01(\x03R\x18appliedRolloutGeneration\x12#\n" +
-	"\rhealthy_ports\x18\v \x03(\x05R\fhealthyPorts\x129\n" +
-	"\arestart\x18\f \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\"\x96\x01\n" +
+	" \x01(\x03R\x18appliedRolloutGeneration\x12,\n" +
+	"\x12healthy_ipv4_ports\x18\v \x03(\x05R\x10healthyIpv4Ports\x129\n" +
+	"\arestart\x18\f \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\x12'\n" +
+	"\x0fallocation_ipv6\x18\r \x01(\tR\x0eallocationIpv6\x12,\n" +
+	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\x96\x01\n" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +

@@ -405,12 +405,14 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					appliedSpecRevision: 1,
 					phase: "Pending",
 					message: "",
-					allocationIp: "",
+					allocationIpv4: "",
+					allocationIpv6: "",
 					healthy: false,
 					updatedAt: undefined,
 					desiredRolloutGeneration: 1,
 					appliedRolloutGeneration: 1,
-					healthyPorts: [],
+					healthyIpv4Ports: [],
+					healthyIpv6Ports: [],
 				},
 			});
 			return serviceRecord;

@@ -126,6 +126,46 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 	removed, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || removed.State != deploymentStateDraining {
+		t.Fatalf("remove should wait for drain: %+v ok=%v err=%v", removed, ok, err)
+	}
+	allocs, err = store.listAllocationsByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allocs) == 0 || allocs[0].RolloutState != allocationRolloutWithdrawing {
+		t.Fatalf("remove did not persist ingress withdrawal before drain: %#v", allocs)
+	}
+	if _, _, err := store.recordStatusReport(ctx, allocs[0].AgentID, &agentv1.StatusReport{
+		AgentId: allocs[0].AgentID,
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId: allocs[0].ID, ServiceId: service.ID,
+			AllocationIpv4:           allocs[0].AllocationIPv4,
+			AllocationIpv6:           allocs[0].AllocationIPv6,
+			DesiredRolloutGeneration: allocs[0].DesiredRolloutGeneration,
+			AppliedRolloutGeneration: allocs[0].DesiredRolloutGeneration,
+			Phase:                    "Error", Message: "late runtime response",
+		}},
+	}); err != nil {
+		t.Fatalf("late remove status: %v", err)
+	}
+	removed, ok, err = store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok || removed.State != deploymentStateDraining || removed.ReasonCode != reasonUserRemove {
+		t.Fatalf("late agent overwrote remove: %+v ok=%v err=%v", removed, ok, err)
+	}
+	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("begin remove drain: %v", err)
+	}
+	allocs, err = store.listAllocationsByServiceID(ctx, service.ID)
+	if err != nil || len(allocs) == 0 || allocs[0].RolloutState != allocationRolloutDraining || !allocs[0].DrainDeadline.Valid {
+		t.Fatalf("remove did not produce graceful drain intent: %+v err=%v", allocs, err)
+	}
+	markAllDrainingComplete(t, store, service.ID)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("finish remove drain: %v", err)
+	}
+	removed, ok, err = store.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || removed.State != deploymentStateRemoved {
 		t.Fatalf("removed current: %+v ok=%v err=%v", removed, ok, err)
 	}

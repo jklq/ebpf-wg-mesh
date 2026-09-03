@@ -389,12 +389,14 @@ export interface DashboardAllocationStatus {
 	appliedSpecRevision: number;
 	phase: string;
 	message: string;
-	allocationIp: string;
+	allocationIpv4: string;
+	allocationIpv6: string;
 	healthy: boolean;
 	updatedAt?: Date;
 	desiredRolloutGeneration: number;
 	appliedRolloutGeneration: number;
-	healthyPorts: number[];
+	healthyIpv4Ports: number[];
+	healthyIpv6Ports: number[];
 	operatorRestartNonce?: number;
 	rolloutState?: string;
 	drainStartedAt?: Date;

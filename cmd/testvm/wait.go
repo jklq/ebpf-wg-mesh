@@ -341,8 +341,28 @@ func assertHTTPDeniedFromContainer(ctx context.Context, sshKeyPath, host, contai
 }
 
 func allocationEndpoint(allocation *platformv1.AllocationStatus) string {
-	if allocation == nil || strings.TrimSpace(allocation.GetAllocationIp()) == "" || len(allocation.GetHealthyPorts()) == 0 {
+	if allocation == nil {
 		return ""
 	}
-	return net.JoinHostPort(allocation.GetAllocationIp(), strconv.Itoa(int(allocation.GetHealthyPorts()[0])))
+	if strings.TrimSpace(allocation.GetAllocationIpv4()) != "" && len(allocation.GetHealthyIpv4Ports()) > 0 {
+		return net.JoinHostPort(allocation.GetAllocationIpv4(), strconv.Itoa(int(allocation.GetHealthyIpv4Ports()[0])))
+	}
+	if strings.TrimSpace(allocation.GetAllocationIpv6()) != "" && len(allocation.GetHealthyIpv6Ports()) > 0 {
+		return net.JoinHostPort(allocation.GetAllocationIpv6(), strconv.Itoa(int(allocation.GetHealthyIpv6Ports()[0])))
+	}
+	return ""
+}
+
+func allocationEndpoints(allocation *platformv1.AllocationStatus) []string {
+	if allocation == nil {
+		return nil
+	}
+	var endpoints []string
+	if strings.TrimSpace(allocation.GetAllocationIpv4()) != "" && len(allocation.GetHealthyIpv4Ports()) > 0 {
+		endpoints = append(endpoints, net.JoinHostPort(allocation.GetAllocationIpv4(), strconv.Itoa(int(allocation.GetHealthyIpv4Ports()[0]))))
+	}
+	if strings.TrimSpace(allocation.GetAllocationIpv6()) != "" && len(allocation.GetHealthyIpv6Ports()) > 0 {
+		endpoints = append(endpoints, net.JoinHostPort(allocation.GetAllocationIpv6(), strconv.Itoa(int(allocation.GetHealthyIpv6Ports()[0]))))
+	}
+	return endpoints
 }

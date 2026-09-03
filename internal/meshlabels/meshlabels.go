@@ -22,6 +22,7 @@ const (
 // Default keys for the identity labels, which operators may rename.
 const (
 	DefaultEnvironmentKey = "mesh.environment_id"
+	DefaultIPv4Key        = "mesh.ipv4"
 	DefaultIPv6Key        = "mesh.ipv6"
 )
 
@@ -29,6 +30,7 @@ const (
 // policy is keyed by, and the address it owns inside the mesh.
 type Identity struct {
 	NetworkIdentity uint32
+	IPv4            netip.Addr
 	IPv6            netip.Addr
 }
 
@@ -36,29 +38,38 @@ type Identity struct {
 // the writing and reading sides must be handed the same pair.
 type Keys struct {
 	Environment string
+	IPv4        string
 	IPv6        string
 }
 
 // NewKeys resolves configured label keys, substituting the defaults for empty
 // ones so a partially configured agent and firewall still agree.
-func NewKeys(environmentKey, ipv6Key string) Keys {
+func NewKeys(environmentKey, ipv4Key, ipv6Key string) Keys {
 	if environmentKey == "" {
 		environmentKey = DefaultEnvironmentKey
+	}
+	if ipv4Key == "" {
+		ipv4Key = DefaultIPv4Key
 	}
 	if ipv6Key == "" {
 		ipv6Key = DefaultIPv6Key
 	}
-	return Keys{Environment: environmentKey, IPv6: ipv6Key}
+	return Keys{Environment: environmentKey, IPv4: ipv4Key, IPv6: ipv6Key}
 }
 
 // Encode renders id into the label pair named by k.
 func (k Keys) Encode(id Identity) map[string]string {
+	ipv4 := ""
+	if id.IPv4.IsValid() {
+		ipv4 = id.IPv4.String()
+	}
 	ipv6 := ""
 	if id.IPv6.IsValid() {
 		ipv6 = id.IPv6.String()
 	}
 	return map[string]string{
 		k.Environment: strconv.FormatUint(uint64(id.NetworkIdentity), 10),
+		k.IPv4:        ipv4,
 		k.IPv6:        ipv6,
 	}
 }
@@ -79,6 +90,15 @@ func (k Keys) Decode(labels map[string]string) (Identity, error) {
 		return Identity{}, fmt.Errorf("invalid environment label %q", rawEnvironment)
 	}
 
+	rawIPv4 := labels[k.IPv4]
+	if rawIPv4 == "" {
+		return Identity{}, fmt.Errorf("missing label %q", k.IPv4)
+	}
+	ipv4, err := netip.ParseAddr(rawIPv4)
+	if err != nil || !ipv4.Is4() {
+		return Identity{}, fmt.Errorf("invalid ipv4 label %q", rawIPv4)
+	}
+
 	rawIP := labels[k.IPv6]
 	if rawIP == "" {
 		return Identity{}, fmt.Errorf("missing label %q", k.IPv6)
@@ -88,7 +108,7 @@ func (k Keys) Decode(labels map[string]string) (Identity, error) {
 		return Identity{}, fmt.Errorf("invalid ipv6 label %q", rawIP)
 	}
 
-	return Identity{NetworkIdentity: uint32(networkIdentity), IPv6: ip}, nil
+	return Identity{NetworkIdentity: uint32(networkIdentity), IPv4: ipv4, IPv6: ip}, nil
 }
 
 // NetworkIdentity reports the network identity stamped under k.Environment, or zero when

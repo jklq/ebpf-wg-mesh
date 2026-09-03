@@ -45,7 +45,8 @@ type DockerRuntime struct {
 
 type dockerRolloutReadiness struct {
 	rolloutGeneration int64
-	healthyPorts      []int32
+	healthyIPv4Ports  []int32
+	healthyIPv6Ports  []int32
 }
 
 type dockerContainerState struct {
@@ -63,7 +64,8 @@ type dockerContainerInspect struct {
 	} `json:"Config"`
 	NetworkSettings struct {
 		Networks map[string]struct {
-			IPAddress string `json:"IPAddress"`
+			IPAddress         string `json:"IPAddress"`
+			GlobalIPv6Address string `json:"GlobalIPv6Address"`
 		} `json:"Networks"`
 		Ports map[string][]struct {
 			HostIP   string `json:"HostIp"`
@@ -244,7 +246,8 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 		case restartpolicy.ActionCrashLoop, restartpolicy.ActionStop, restartpolicy.ActionWait:
 			cond.AppliedSpecRevision = status.AppliedSpecRevision
 			cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-			cond.AllocationIp = status.AllocationIP
+			cond.AllocationIpv4 = status.AllocationIPv4
+			cond.AllocationIpv6 = status.AllocationIPv6
 			cond.Healthy = false
 			cond.Phase = decision.Phase
 			cond.Message = decision.Message
@@ -267,11 +270,13 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 		}
 		cond.AppliedSpecRevision = status.AppliedSpecRevision
 		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-		cond.AllocationIp = status.AllocationIP
+		cond.AllocationIpv4 = status.AllocationIPv4
+		cond.AllocationIpv6 = status.AllocationIPv6
 		check := svc.GetSpec().GetRuntime().GetHealthCheck()
 		if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
 			cond.Healthy = true
-			cond.HealthyPorts = dockerReadinessPorts(svc)
+			cond.HealthyIpv4Ports = healthyFamilyPorts(status.AllocationIPv4 != "", dockerReadinessPorts(svc))
+			cond.HealthyIpv6Ports = healthyFamilyPorts(status.AllocationIPv6 != "", dockerReadinessPorts(svc))
 			cond.Phase = "Healthy"
 			cond.Message = "process running; no health check configured"
 			report.Services = append(report.Services, cond)
@@ -282,7 +287,8 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 		}
 		if ready, ok := r.ready[svc.GetAllocationId()]; ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
 			cond.Healthy = true
-			cond.HealthyPorts = append([]int32(nil), ready.healthyPorts...)
+			cond.HealthyIpv4Ports = append([]int32(nil), ready.healthyIPv4Ports...)
+			cond.HealthyIpv6Ports = append([]int32(nil), ready.healthyIPv6Ports...)
 			cond.Phase = "Healthy"
 			cond.Message = "HTTP readiness check passed"
 			report.Services = append(report.Services, cond)
@@ -296,10 +302,12 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 			}
 			r.ready[svc.GetAllocationId()] = dockerRolloutReadiness{
 				rolloutGeneration: svc.GetDesiredRolloutGeneration(),
-				healthyPorts:      append([]int32(nil), ports...),
+				healthyIPv4Ports:  healthyFamilyPorts(status.AllocationIPv4 != "", ports),
+				healthyIPv6Ports:  healthyFamilyPorts(status.AllocationIPv6 != "", ports),
 			}
 			cond.Healthy = true
-			cond.HealthyPorts = ports
+			cond.HealthyIpv4Ports = healthyFamilyPorts(status.AllocationIPv4 != "", ports)
+			cond.HealthyIpv6Ports = healthyFamilyPorts(status.AllocationIPv6 != "", ports)
 			cond.Phase = "Healthy"
 			cond.Message = "HTTP readiness check passed"
 		} else {
@@ -314,7 +322,8 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 type dockerServiceStatus struct {
 	AppliedSpecRevision      int64
 	AppliedRolloutGeneration int64
-	AllocationIP             string
+	AllocationIPv4           string
+	AllocationIPv6           string
 	Running                  bool
 	inspect                  dockerContainerInspect
 }
@@ -374,10 +383,12 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 }
 
 func dockerServiceStatusFor(inspect dockerContainerInspect, svc *agentv1.DesiredService, networkName string) dockerServiceStatus {
+	ipv4, ipv6 := dockerAllocationAddresses(inspect, networkName)
 	return dockerServiceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-		AllocationIP:             dockerAllocationIP(inspect, networkName),
+		AllocationIPv4:           ipv4,
+		AllocationIPv6:           ipv6,
 		Running:                  inspect.State.Running,
 		inspect:                  inspect,
 	}
@@ -433,6 +444,9 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		"--label", meshlabels.ServiceID + "=" + svc.GetServiceId(),
 		"--label", meshlabels.DesiredSpecRevision + "=" + strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
 		"--label", meshlabels.DesiredRolloutGeneration + "=" + strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
+		"--label", meshlabels.DefaultEnvironmentKey + "=" + strconv.FormatUint(uint64(svc.GetNetworkIdentity()), 10),
+		"--label", meshlabels.DefaultIPv4Key + "=" + svc.GetPrivateIpv4(),
+		"--label", meshlabels.DefaultIPv6Key + "=" + svc.GetPrivateIpv6(),
 		"--label", internalHostnameLabel + "=" + svc.GetInternalHostname(),
 	}
 	args = append(args, dockerSandboxArgs()...)

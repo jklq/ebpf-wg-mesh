@@ -159,7 +159,7 @@ func runCrossReplicaNotificationScenario(
 	if err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("generate ingress binding through write replica: %w", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, fmt.Sprintf("grep -Fq %q /var/lib/ebpf-wg-mesh/ingress-probe/latest.json", binding.GetHostname())); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, fmt.Sprintf("grep -Fq %q /var/lib/ebpf-wg-mesh/ingress-probe/latest.json && grep -Fq %q /var/lib/ebpf-wg-mesh/ingress-probe/latest.json", binding.GetHostname(), allocationEndpoint(status.GetAllocation()))); err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("wait for primary ingress publication: %w", err)
 	}
 

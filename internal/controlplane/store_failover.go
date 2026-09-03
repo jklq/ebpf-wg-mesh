@@ -133,8 +133,8 @@ func (s *Store) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, dea
 	}
 
 	state := allocationFailoverState{
-		phase: allocation.Phase, message: allocation.Message, allocationIP: allocation.AllocationIP,
-		healthyPorts: allocation.HealthyPorts, healthy: allocation.Healthy,
+		phase: allocation.Phase, message: allocation.Message,
+		healthyIPv4Ports: allocation.HealthyIPv4Ports, healthyIPv6Ports: allocation.HealthyIPv6Ports, healthy: allocation.Healthy,
 	}
 	blockedMessage := ""
 	switch {
@@ -246,8 +246,10 @@ func markAllocationLostTx(ctx context.Context, tx *sql.Tx, allocationID, message
 		    SET phase = $1,
 		        rollout_state = $2,
 		        message = $3,
-		        allocation_ip = '',
-		        healthy_ports = $4,
+		        allocation_ipv4 = '',
+		        allocation_ipv6 = '',
+		        healthy_ipv4_ports = $4,
+		        healthy_ipv6_ports = $4,
 		        healthy = FALSE,
 		        restart_observation_json = $5,
 		        updated_at = $6

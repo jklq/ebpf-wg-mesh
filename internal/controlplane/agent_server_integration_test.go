@@ -204,8 +204,10 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 			AppliedRolloutGeneration: desiredService.GetDesiredRolloutGeneration(),
 			Phase:                    "Healthy",
 			Healthy:                  true,
-			AllocationIp:             "fd00:200:1::10",
-			HealthyPorts:             []int32{8080},
+			AllocationIpv4:           desiredService.GetPrivateIpv4(),
+			AllocationIpv6:           desiredService.GetPrivateIpv6(),
+			HealthyIpv4Ports:         []int32{8080},
+			HealthyIpv6Ports:         []int32{8080},
 		}},
 	}}}); err != nil {
 		t.Fatalf("send status report: %v", err)

@@ -185,6 +185,8 @@ type ControlPlaneMeshConfig struct {
 	ListenPort                 int
 	NetworkCIDR                string
 	WorkloadPoolCIDR           string
+	WorkloadIPv4PoolCIDR       string
+	WorkloadIPv4NodePrefixBits int
 	PersistentKeepaliveSeconds int
 }
 
@@ -267,12 +269,13 @@ type BuilderConfig struct {
 }
 
 type MeshRuntimeConfig struct {
-	NodeName         string
-	Host             HostConfig
-	Containerd       ContainerdConfig
-	WireGuard        WireGuard
-	Firewall         FirewallConfig
-	WorkloadPoolCIDR string
+	NodeName             string
+	Host                 HostConfig
+	Containerd           ContainerdConfig
+	WireGuard            WireGuard
+	Firewall             FirewallConfig
+	WorkloadPoolCIDR     string
+	WorkloadIPv4PoolCIDR string
 }
 
 type HostConfig struct {
@@ -284,6 +287,7 @@ type ContainerdConfig struct {
 	Namespace         string
 	EnvironmentLabel  string
 	IPv6Label         string
+	IPv4Label         string
 	IdentitySeeds     []IdentitySeed
 	StaticAssignments []ContainerAssignment
 }
@@ -291,10 +295,11 @@ type ContainerdConfig struct {
 // LabelKeys resolves the identity label keys shared by the agent, which stamps
 // them, and the firewall, which reads them back.
 func (cfg ContainerdConfig) LabelKeys() meshlabels.Keys {
-	return meshlabels.NewKeys(cfg.EnvironmentLabel, cfg.IPv6Label)
+	return meshlabels.NewKeys(cfg.EnvironmentLabel, cfg.IPv4Label, cfg.IPv6Label)
 }
 
 type IdentitySeed struct {
+	IPv4            string
 	IPv6            string
 	HostIPv6        string
 	NetworkIdentity uint32
@@ -303,6 +308,7 @@ type IdentitySeed struct {
 type ContainerAssignment struct {
 	ContainerID     string
 	NetworkIdentity uint32
+	IPv4            string
 	IPv6            string
 }
 

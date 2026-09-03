@@ -606,11 +606,13 @@ function allocation(
 		appliedSpecRevision: 2,
 		phase: "Running",
 		message: "",
-		allocationIp: "",
+		allocationIpv4: "10.200.0.2",
+		allocationIpv6: "fd00:200::2",
 		healthy: true,
 		desiredRolloutGeneration: 2,
 		appliedRolloutGeneration: 2,
-		healthyPorts: [8080],
+		healthyIpv4Ports: [8080],
+		healthyIpv6Ports: [8080],
 		...overrides,
 	};
 }

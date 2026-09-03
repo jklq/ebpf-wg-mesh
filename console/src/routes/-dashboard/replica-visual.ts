@@ -222,8 +222,18 @@ export function replicaPhaseLabel(
 		return "Draining";
 	}
 	if (state === "ready") {
-		return allocation.healthyPorts.length > 0
-			? `Healthy · :${allocation.healthyPorts.join(",:")}`
+		const families = [
+			allocation.healthyIpv4Ports.length > 0 ? "IPv4" : "",
+			allocation.healthyIpv6Ports.length > 0 ? "IPv6" : "",
+		].filter(Boolean);
+		const ports = [
+			...new Set([
+				...allocation.healthyIpv4Ports,
+				...allocation.healthyIpv6Ports,
+			]),
+		];
+		return ports.length > 0
+			? `Healthy (${families.join(" + ")}) · :${ports.join(",:")}`
 			: "Healthy";
 	}
 	const phase = allocation.phase.trim().toLowerCase();

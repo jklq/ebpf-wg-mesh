@@ -6,43 +6,42 @@ Minimal PaaS control plane and agent prototype with a WireGuard/eBPF private fab
 
 - `cmd/controlplane`: authoritative control plane
 - `cmd/agent`: node agent that opens an mTLS gRPC stream to the control plane
-- `console`: minimal TanStack Start app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
-- `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, ingress sync
-- `internal/agent`: desired-state loop, local reconcile runtime, containerd inspection, status reporting
+- `cmd/builder`: build worker that claims jobs, materializes source snapshots, runs `buildctl`, and reports status
+- `console`: TanStack Start app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
+- `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, Caddy admin sync
+- `internal/agent`: desired-state loop, local reconcile runtime, containerd runtime, status reporting
 - `internal/mesh`: mesh bootstrap that wraps the WireGuard and eBPF implementation
 - `api/proto`: protobuf definitions and generated gRPC bindings
 
 ## Architecture
 
-Target invariants (see [docs/todo/README.md](docs/todo/README.md)). Current code still sends every agent a full-cluster identity catalog over a full WireGuard mesh, uses a full desired-state snapshot as the wire format, and drives a single Caddy via the admin API. Those shapes are scheduled to go away; do not extend them.
+What the code does today. Target invariants live in [docs/todo/README.md](docs/todo/README.md); do not extend the current shapes called out as going away.
+
+Today every agent still receives a cluster-wide identity catalog and a WireGuard peer for every other enrolled agent, the agent wire format is a full per-node desired-state snapshot (not start/update/stop diffs), and public ingress is a single Caddy driven through the admin API.
 
 - CockroachDB is the authoritative control-plane store for projects, memberships, repository grants, environments, agents, services, revisions, volumes, domains, allocations, and status projections. The console uses its own schema in the same cluster for users, sessions, and onboarding. Probe ticks, logs, and metrics samples do not belong in Cockroach.
-- Agents are dumb. The control plane is authoritative for placement. Each agent should be sent only the allocations assigned to that node (Nomad-style start/update/stop diffs and reconnect reconcile), not a cluster snapshot.
-- Policy is fail-closed and identity-based: a workload-pool deny plus exact allows for environments the node currently hosts, including remote allocations in those environments. Agents do not receive a cluster-wide identity catalog.
-- WireGuard is overlay transport and eBPF is identity policy. Peers exist only between nodes that share an environment and between those nodes and the Envoy instances that publish their services. There is no full mesh.
-- Public ingress is an Envoy fleet. The control plane serves a versioned xDS snapshot; ACK/NACK is the apply protocol. Caddy is not the production data plane.
+- Agents are dumb. The control plane is authoritative for placement. Each agent already receives only the volumes and allocations assigned to that node, inside a full desired-state snapshot that also carries the cluster-wide identity catalog and full-mesh peers. Nomad-style diffs and reconnect reconcile are the replacement wire format, not the current one.
+- Policy is fail-closed and identity-based: a workload-pool deny plus exact allows. Those allows are currently the whole-cluster catalog. The target is exact allows only for environments the node currently hosts, including remote allocations in those environments.
+- WireGuard is overlay transport and eBPF is identity policy. Peering is currently a full mesh of enrolled agents; each peer's AllowedIPs are that peer's overlay IPv4 and IPv6 prefixes. The target is peers only between nodes that share an environment and between those nodes and the Envoy instances that publish their services.
+- Public ingress is currently one Caddy instance. The control plane replaces Caddy config through the admin API. The target is an Envoy fleet: the control plane serves a versioned xDS snapshot and ACK/NACK is the apply protocol. Do not extend Caddy as the production data plane.
+- Overlay dual-stack is live: every allocation gets IPv4 and IPv6, both are routed in AllowedIPs, and both are enforced by the same `network_identity`. That does not change the underlay; `advertise_addr` stays IPv6 until an explicit underlay prompt exists.
 - The console is the current product-facing caller of `platform.v1.PlatformService`. A public API, when it exists, must use the same application services.
 - Agent-facing and console-facing internal gRPC are protected by mTLS with distinct caller identities.
 - The console owns OAuth, canonical user profiles, and browser sessions. For each product RPC it signs a 30-second user assertion with a control-plane audience; the control plane verifies the signature, issuer, audience, lifetime, and subject before applying project membership and role authorization.
-- Immutable source snapshots and deploy-by-digest are the source/runtime trust model. GitHub App grants are the current way to produce snapshots.
+- GitHub repositories are linked to a project only after the console confirms that the signed-in GitHub account can see them. Inspection, service mutation, and background source reconciliation use the project-specific repository grant. GitHub App grants produce immutable source snapshots; scheduled workloads already require a persisted image digest, but the full deploy-by-digest artifact contract is still open.
 - Registry authorization is part of the control-plane process. It mints short-lived Distribution bearer tokens and exact-repository builder/agent capabilities; the registry verifies those tokens locally from the control-plane signing certificate.
-- Control-plane replicas have no node-local authority. Shared `CONTROLPLANE_STATE_DIR` / source-archive disks are a current constraint, not the production contract.
-- Overlay dual-stack does not change the underlay: `advertise_addr` stays IPv6 until an explicit underlay prompt exists.
-
-Architecture decisions:
-
-- Source integration target shape: [docs/adr/0002-source-integration.md](docs/adr/0002-source-integration.md)
+- Control-plane replicas have no node-local authority as a production contract. Shared `CONTROLPLANE_STATE_DIR` / source-archive disks are a current constraint, not that contract.
 
 ## Bootstrap
 
 - `controlplane` bootstraps from flags and environment, then owns node mesh/workload assignment in CockroachDB.
+- `agent` bootstraps from flags and environment, discovers local host facts, persists its own WireGuard private key, enrolls, and waits for assigned node config from the control plane.
 
 ### Multiple control-plane replicas
 
 Control-plane replicas coordinate singleton reconcilers through a fenced CockroachDB lease. Agent streams and platform blocking reads observe durable database revisions, so a write handled by one replica wakes clients connected to another. Replica clocks are not used for lease, rollout, or failover decisions.
 
-Every replica for one database must currently mount the same read-write `CONTROLPLANE_STATE_DIR` and `CONTROLPLANE_SOURCE_ARCHIVES_DIR`. These directories contain the shared internal PKI, registry identity, revocation data, and source objects. Startup binds both mounts to the database using persistent storage markers and fails if a replica is pointed at node-local or replacement storage. That shared-disk contract is scheduled to go away once source object storage and a key provider land. The ingress xDS authority must identify the same Envoy fleet for every replica (today: the same Caddy admin target).
-- `agent` bootstraps from flags and environment, discovers local host facts, persists its own WireGuard private key, enrolls, and waits for assigned node config from the control plane.
+Every replica for one database must currently mount the same read-write `CONTROLPLANE_STATE_DIR` and `CONTROLPLANE_SOURCE_ARCHIVES_DIR`. These directories contain the shared internal PKI, registry identity, revocation data, and source objects. Startup binds both mounts to the database using persistent storage markers and fails if a replica is pointed at node-local or replacement storage. That shared-disk contract is scheduled to go away once source object storage and a key provider land. Every replica must currently point at the same Caddy admin target; when Envoy lands, that becomes a shared xDS snapshot identity.
 
 Common bootstrap inputs:
 
@@ -68,11 +67,11 @@ The supported deployment actions are:
 
 Owners and editors may apply actions; viewers cannot. The console exposes only actions valid for each history row and records each accepted action in that deployment's history. A `NotFound` response means the selected deployment or allocation no longer exists; `FailedPrecondition` means it exists but is stale or is in an incompatible state, so callers should refresh deployment history before deciding whether to issue a new action with a new idempotency key.
 
-Health checks are currently rollout readiness gates, not continuous monitors. With no health check configured, a deployment becomes ready as soon as its process is running. With an explicit HTTP health check, the agent retries the endpoint while the rollout is starting and marks the deployment ready only after an HTTP `200`. The successful result is latched for that rollout; the endpoint is not queried again during ordinary reconciliation. That latch is scheduled to go away (see [docs/todo/01-running-service.md](docs/todo/01-running-service.md#13-continuous-readiness-and-liveness)).
+Readiness checks are currently rollout gates, not continuous monitors. With no health check configured, a deployment becomes ready as soon as its process is running. With an explicit HTTP readiness check, the agent retries the endpoint over both overlay families while the rollout is starting and marks the deployment ready after an HTTP `200` on IPv4, IPv6, or both. That successful readiness result is latched for the rollout and is not queried again during ordinary reconciliation; an optional HTTP liveness check can still run after ready and request a restart. The readiness latch is scheduled to go away (see [docs/todo/01-running-service.md](docs/todo/01-running-service.md#13-continuous-readiness-and-liveness)).
 
 Deployments use a persisted rolling strategy with platform-managed replacement concurrency: healthy capacity is preserved and at most one extra allocation is created at a time. The user-configurable defaults are a 300-second healthcheck timeout and 30 seconds of draining time. The control plane creates replacement allocations alongside the serving generation, waits for readiness, publishes the healthy replacement and withdraws its predecessor from ingress, and only sends the predecessor a drain intent after that ingress update succeeds. Agents send `SIGTERM`, preserve the container and network namespace during the draining window, and use `SIGKILL` only after the absolute deadline. Control-plane and agent restarts resume from the CockroachDB allocation state and desired drain deadline. A readiness or scheduling timeout fails the rollout without removing healthy serving allocations. Services with a single-writer volume reject replacement rollouts until the stateful volume attachment handoff and fencing protocol exists (see [docs/todo/06-stateful.md](docs/todo/06-stateful.md)).
 
-HTTP health-check paths must be absolute request paths beginning with a single `/`. Checks never follow redirects or use proxy environment variables. Production requests originate in the workload's persisted network namespace and target only the control-plane-assigned workload IP and configured port (or the primary declared port when no check port is set). A missing or stale namespace keeps readiness pending; the agent does not fall back to host-network probing.
+HTTP health-check paths must be absolute request paths beginning with a single `/`. Checks never follow redirects or use proxy environment variables. Production requests originate in the workload's persisted network namespace and target only the control-plane-assigned overlay IPv4 and IPv6 addresses and configured port (or the primary declared port when no check port is set). Ingress publishes one upstream per healthy allocation, preferring IPv4 when that family passed the probe. A missing or stale namespace keeps readiness pending; the agent does not fall back to host-network probing.
 
 `runtime.cpu_millis` is enforced with Linux CFS quota using a 100 ms period (for example, `500` millicpu becomes a `50 ms / 100 ms` quota). It is not interpreted as a cpuset.
 
@@ -84,7 +83,7 @@ Operators enroll, cordon, drain, and retire compute nodes from the console **Fle
 
 Each service can generate a stable platform hostname under `CONTROLPLANE_INGRESS_PUBLIC_ADDR`, such as `violet-7k3.platform.example`. The Domains panel exposes separate **Generate Domain** and **Custom Domain** actions. The custom flow creates the platform hostname when needed, then keeps the required record (`app.customer.com CNAME violet-7k3.platform.example`) visible until verification succeeds. The control plane resolves and verifies the CNAME itself before routing the custom hostname; no TXT challenge is required.
 
-Services also receive an environment-private hostname derived from their unique service name, such as `accurate-reflection.mesh.internal`. Workloads in the same environment can use either the full hostname or the short `accurate-reflection` alias; these names resolve directly to the service's private address and are not published externally.
+Services also receive an environment-private hostname derived from their unique service name, such as `accurate-reflection.mesh.internal`. Workloads in the same environment can use either the full hostname or the short `accurate-reflection` alias; these names resolve to the service's private IPv4 and IPv6 addresses and are not published externally.
 
 ## Build
 
@@ -213,7 +212,7 @@ Hostname shape and free SSL:
 One-time operator setup:
 
 - Create the tunnel in Cloudflare.
-- Assign the apex hostname and `*.{apex}` to the tunnel.
+- Assign `CLOUDFLARE_HOSTNAME` and the generated-host wildcard (`*.relay5.com` in the split above) to the tunnel. Do not attach the zone apex if Access or production content lives there.
 - Set the tunnel origin to the local ingress URL exposed by `make dev-ephemeral`.
 - Obtain the tunnel token.
 - Store the token and hostname in 1Password or shell env.
@@ -234,7 +233,7 @@ make test-e2e-vm
 
 - `test-unit-go`: pure Go tests only. Cockroach-backed store coverage is excluded from this tier.
 - `test-unit-console`: Vitest unit tests for console session logic, loaders, and React rendering.
-- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag plus the console local-stack smoke.
+- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag, plus console Vitest tests that run against `cmd/testcockroach`.
 - `test-e2e-local`: thin Playwright smoke against an ephemeral local Cockroach + control plane + console stack.
 - `test-e2e-vm`: Hetzner-backed smoke that provisions disposable VMs, deploys pinned binaries, runs remote checks, collects artifacts, and destroys the environment.
 

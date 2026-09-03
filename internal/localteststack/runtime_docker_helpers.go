@@ -167,21 +167,30 @@ func safeRuntimeChildPath(base, kind, id string) (string, error) {
 	return path, nil
 }
 
-func dockerAllocationIP(inspect dockerContainerInspect, networkName string) string {
+func dockerAllocationAddresses(inspect dockerContainerInspect, networkName string) (string, string) {
 	if inspect.NetworkSettings.Networks == nil {
-		return ""
+		return "", ""
 	}
 	if networkName != "" {
-		if network := inspect.NetworkSettings.Networks[networkName]; strings.TrimSpace(network.IPAddress) != "" {
-			return strings.TrimSpace(network.IPAddress)
+		if network, ok := inspect.NetworkSettings.Networks[networkName]; ok {
+			if ipv4, ipv6 := strings.TrimSpace(network.IPAddress), strings.TrimSpace(network.GlobalIPv6Address); ipv4 != "" || ipv6 != "" {
+				return ipv4, ipv6
+			}
 		}
 	}
 	for _, network := range inspect.NetworkSettings.Networks {
-		if ip := strings.TrimSpace(network.IPAddress); ip != "" {
-			return ip
+		if ipv4, ipv6 := strings.TrimSpace(network.IPAddress), strings.TrimSpace(network.GlobalIPv6Address); ipv4 != "" || ipv6 != "" {
+			return ipv4, ipv6
 		}
 	}
-	return ""
+	return "", ""
+}
+
+func healthyFamilyPorts(healthy bool, ports []int32) []int32 {
+	if !healthy {
+		return nil
+	}
+	return append([]int32(nil), ports...)
 }
 
 type dockerReadinessProbe struct {
@@ -350,6 +359,9 @@ func labelsMatchDesired(labels map[string]string, svc *agentv1.DesiredService) b
 		labels[meshlabels.ServiceID] == svc.GetServiceId() &&
 		labels[meshlabels.DesiredSpecRevision] == strconv.FormatInt(svc.GetDesiredSpecRevision(), 10) &&
 		labels[meshlabels.DesiredRolloutGeneration] == strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10) &&
+		labels[meshlabels.DefaultEnvironmentKey] == strconv.FormatUint(uint64(svc.GetNetworkIdentity()), 10) &&
+		labels[meshlabels.DefaultIPv4Key] == svc.GetPrivateIpv4() &&
+		labels[meshlabels.DefaultIPv6Key] == svc.GetPrivateIpv6() &&
 		labels[internalHostnameLabel] == svc.GetInternalHostname()
 }
 

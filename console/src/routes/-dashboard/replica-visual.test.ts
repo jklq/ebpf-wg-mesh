@@ -87,6 +87,12 @@ describe("replicaSlots", () => {
 				"rolling",
 			),
 		).toBe("Starting");
+		expect(
+			replicaPhaseLabel(
+				allocation({ phase: "Running", healthy: true }),
+				"ready",
+			),
+		).toBe("Healthy (IPv4 + IPv6) · :8080");
 	});
 
 	it("scopes replicas to the deployment they belong to", () => {
@@ -223,6 +229,7 @@ describe("replicaSlots", () => {
 			"draining",
 		]);
 		expect(slots[0]?.label).toBe("Replica 1");
+		expect(slots[0]?.phaseLabel).toBe("Healthy (IPv4 + IPv6) · :8080");
 	});
 
 	it("keeps a single-replica deploy on the shared stage list until a fleet exists", () => {
@@ -264,11 +271,13 @@ function allocation(
 		appliedSpecRevision: 1,
 		phase: "Running",
 		message: "",
-		allocationIp: "",
+		allocationIpv4: "",
+		allocationIpv6: "",
 		healthy: true,
 		desiredRolloutGeneration: 1,
 		appliedRolloutGeneration: 1,
-		healthyPorts: [8080],
+		healthyIpv4Ports: [8080],
+		healthyIpv6Ports: [8080],
 		...overrides,
 	};
 }

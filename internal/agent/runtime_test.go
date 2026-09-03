@@ -97,7 +97,8 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 		status: map[string]serviceStatus{"alloc-1": {
 			AppliedSpecRevision:      2,
 			AppliedRolloutGeneration: 2,
-			AllocationIP:             "fd00::10",
+			AllocationIPv4:           "10.200.0.2",
+			AllocationIPv6:           "fd00::10",
 			NetworkNamespacePath:     "/run/netns/alloc-1",
 		}},
 		created: map[string]bool{"alloc-1": true},
@@ -131,6 +132,7 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 			ServiceId:                "svc-1",
 			DesiredSpecRevision:      2,
 			DesiredRolloutGeneration: 2,
+			PrivateIpv4:              "10.200.0.2",
 			PrivateIpv6:              "fd00::10",
 			Spec: &platformv1.ResolvedServiceSpec{
 				Image: "example.com/test@sha256:abc",
@@ -164,7 +166,9 @@ func TestContainerdRuntimeKeepsRolloutPendingWhileHTTPReadinessFails(t *testing.
 
 	dir := t.TempDir()
 	engine := &fakeEngine{
-		status:  map[string]serviceStatus{"alloc-1": {AllocationIP: "fd00::10", AppliedSpecRevision: 1, AppliedRolloutGeneration: 1}},
+		status: map[string]serviceStatus{"alloc-1": {
+			AllocationIPv4: "10.200.0.2", AllocationIPv6: "fd00::10", AppliedSpecRevision: 1, AppliedRolloutGeneration: 1,
+		}},
 		created: map[string]bool{"alloc-1": false},
 	}
 	runtime := &ContainerdRuntime{
@@ -323,8 +327,55 @@ func TestContainerdRuntimeSkipsHealthProbeWhenNoCheckIsConfigured(t *testing.T) 
 	if !condition.GetHealthy() || condition.GetPhase() != "Healthy" {
 		t.Fatalf("expected running process to make deployment healthy immediately, got %+v", condition)
 	}
-	if len(condition.GetHealthyPorts()) != 1 || condition.GetHealthyPorts()[0] != 8080 {
-		t.Fatalf("expected declared port to become routable, got %+v", condition.GetHealthyPorts())
+	if len(condition.GetHealthyIpv4Ports()) != 1 || condition.GetHealthyIpv4Ports()[0] != 8080 ||
+		len(condition.GetHealthyIpv6Ports()) != 1 || condition.GetHealthyIpv6Ports()[0] != 8080 {
+		t.Fatalf("expected declared port to become routable on both families, got %+v", condition)
+	}
+}
+
+func TestContainerdRuntimeReportsOnlyTheReachableHealthyFamily(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		healthyIP   string
+		wantIPv4    bool
+		wantMessage string
+	}{
+		{name: "IPv4-only bind", healthyIP: "10.200.0.2", wantIPv4: true, wantMessage: "over IPv4"},
+		{name: "IPv6-only bind", healthyIP: "fd00:200::2", wantMessage: "over IPv6"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := &ContainerdRuntime{
+				probeHealth: func(_ context.Context, _ string, allocationIP string, _ *agentv1.DesiredService) serviceHealthProbe {
+					if allocationIP == tc.healthyIP {
+						return serviceHealthProbe{configured: true, healthy: true}
+					}
+					return serviceHealthProbe{configured: true, failureReason: "connection refused"}
+				},
+			}
+			svc := &agentv1.DesiredService{
+				AllocationId:             "alloc-1",
+				DesiredRolloutGeneration: 1,
+				Spec: &platformv1.ResolvedServiceSpec{Runtime: &platformv1.ServiceRuntime{
+					Ports:       []*platformv1.ServiceRuntimePort{{Port: 8080}},
+					HealthCheck: &platformv1.HealthCheck{Type: platformv1.HealthCheck_TYPE_HTTP, Path: "/healthz"},
+				}},
+			}
+			condition := runtime.finishRunningCondition(context.Background(), &agentv1.ServiceCondition{}, svc, serviceStatus{
+				AllocationIPv4:           "10.200.0.2",
+				AllocationIPv6:           "fd00:200::2",
+				AppliedRolloutGeneration: 1,
+			}, false)
+			if !condition.GetHealthy() || condition.GetPhase() != "Healthy" || !strings.Contains(condition.GetMessage(), tc.wantMessage) {
+				t.Fatalf("unexpected condition: %+v", condition)
+			}
+			gotIPv4 := len(condition.GetHealthyIpv4Ports()) == 1 && condition.GetHealthyIpv4Ports()[0] == 8080
+			gotIPv6 := len(condition.GetHealthyIpv6Ports()) == 1 && condition.GetHealthyIpv6Ports()[0] == 8080
+			if gotIPv4 != tc.wantIPv4 || gotIPv6 != !tc.wantIPv4 {
+				t.Fatalf("healthy family ports do not match reachable family: %+v", condition)
+			}
+		})
 	}
 }
 
@@ -345,7 +396,7 @@ func TestContainerdRuntimeStopsCheckingAfterRolloutBecomesReady(t *testing.T) {
 		},
 		probeHealth: func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe {
 			checks++
-			if checks == 1 {
+			if checks <= 2 {
 				return serviceHealthProbe{configured: true, failureReason: "HTTP port 8080: status 503"}
 			}
 			return serviceHealthProbe{configured: true, healthy: true}
@@ -383,7 +434,7 @@ func TestContainerdRuntimeStopsCheckingAfterRolloutBecomesReady(t *testing.T) {
 			t.Fatalf("expected ready rollout, got %+v", report.GetServices()[0])
 		}
 	}
-	if checks != 2 {
+	if checks != 4 {
 		t.Fatalf("expected checks to stop after readiness passes, got %d", checks)
 	}
 
@@ -391,7 +442,7 @@ func TestContainerdRuntimeStopsCheckingAfterRolloutBecomesReady(t *testing.T) {
 	if _, err := runtime.Reconcile(context.Background(), state); err != nil {
 		t.Fatalf("Reconcile new rollout: %v", err)
 	}
-	if checks != 3 {
+	if checks != 6 {
 		t.Fatalf("expected a new rollout to run readiness again, got %d checks", checks)
 	}
 }
@@ -527,7 +578,9 @@ func TestContainerdRuntimeDrainDoesNotEnsureReplacement(t *testing.T) {
 
 	dir := t.TempDir()
 	engine := &fakeEngine{
-		status:  map[string]serviceStatus{"alloc-1": {AllocationIP: "fd00::10"}},
+		status: map[string]serviceStatus{"alloc-1": {
+			AllocationIPv4: "10.200.0.2", AllocationIPv6: "fd00::10",
+		}},
 		created: map[string]bool{"alloc-1": true},
 	}
 	runtime := &ContainerdRuntime{
@@ -545,6 +598,7 @@ func TestContainerdRuntimeDrainDoesNotEnsureReplacement(t *testing.T) {
 			DesiredRolloutGeneration: 1,
 			Intent:                   agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN,
 			DrainDeadline:            timestamppb.New(time.Now().Add(time.Minute)),
+			PrivateIpv4:              "10.200.0.2",
 			PrivateIpv6:              "fd00::10",
 			Spec:                     &platformv1.ResolvedServiceSpec{Image: "example.com/test:1"},
 		}},

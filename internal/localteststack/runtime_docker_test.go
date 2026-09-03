@@ -50,6 +50,9 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 						"platform.service_id":                 "svc-1",
 						"platform.desired_spec_revision":      "2",
 						"platform.desired_rollout_generation": "3",
+						"mesh.environment_id":                 "7",
+						"mesh.ipv4":                           "10.200.0.2",
+						"mesh.ipv6":                           "fd00:200::2",
 						"platform.internal_hostname":          "accurate-reflection.mesh.internal",
 					},
 				},
@@ -76,8 +79,11 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 			AllocationId:             "alloc-1",
 			ServiceId:                "svc-1",
 			EnvironmentId:            "environment-1",
+			NetworkIdentity:          7,
 			Name:                     "echo",
 			InternalHostname:         "accurate-reflection.mesh.internal",
+			PrivateIpv4:              "10.200.0.2",
+			PrivateIpv6:              "fd00:200::2",
 			DesiredSpecRevision:      2,
 			DesiredRolloutGeneration: 3,
 			VolumeId:                 "vol-1",
@@ -108,11 +114,12 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	if !service.Healthy || service.Phase != "Healthy" {
 		t.Fatalf("expected healthy service, got %+v", service)
 	}
-	if service.AllocationIp != "172.18.0.10" {
-		t.Fatalf("unexpected allocation ip %q", service.AllocationIp)
+	if service.AllocationIpv4 != "172.18.0.10" || service.AllocationIpv6 != "fd00:18::10" {
+		t.Fatalf("unexpected allocation addresses %q, %q", service.AllocationIpv4, service.AllocationIpv6)
 	}
-	if len(service.HealthyPorts) != 1 || service.HealthyPorts[0] != 8080 {
-		t.Fatalf("unexpected healthy ports %+v", service.HealthyPorts)
+	if len(service.HealthyIpv4Ports) != 1 || service.HealthyIpv4Ports[0] != 8080 ||
+		len(service.HealthyIpv6Ports) != 1 || service.HealthyIpv6Ports[0] != 8080 {
+		t.Fatalf("unexpected healthy ports %+v", service)
 	}
 	if _, err := runtime.Reconcile(context.Background(), state); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
@@ -245,7 +252,8 @@ func TestDockerRuntimeReconcileWithoutHealthCheckIsReadyAfterStart(t *testing.T)
 	if !report.Services[0].Healthy {
 		t.Fatalf("expected running workload to be ready without a check %+v", report.Services[0])
 	}
-	if len(report.Services[0].HealthyPorts) != 1 || report.Services[0].HealthyPorts[0] != 8080 {
+	if len(report.Services[0].HealthyIpv4Ports) != 1 || report.Services[0].HealthyIpv4Ports[0] != 8080 ||
+		len(report.Services[0].HealthyIpv6Ports) != 1 || report.Services[0].HealthyIpv6Ports[0] != 8080 {
 		t.Fatalf("expected declared port to be routable %+v", report.Services[0])
 	}
 }
@@ -450,7 +458,8 @@ func (f *fakeDockerRunner) hasCommand(items ...string) bool {
 
 func fakeNetworkSettings(hostIP, hostPort string, containerPort int32) struct {
 	Networks map[string]struct {
-		IPAddress string `json:"IPAddress"`
+		IPAddress         string `json:"IPAddress"`
+		GlobalIPv6Address string `json:"GlobalIPv6Address"`
 	} `json:"Networks"`
 	Ports map[string][]struct {
 		HostIP   string `json:"HostIp"`
@@ -459,7 +468,8 @@ func fakeNetworkSettings(hostIP, hostPort string, containerPort int32) struct {
 } {
 	return struct {
 		Networks map[string]struct {
-			IPAddress string `json:"IPAddress"`
+			IPAddress         string `json:"IPAddress"`
+			GlobalIPv6Address string `json:"GlobalIPv6Address"`
 		} `json:"Networks"`
 		Ports map[string][]struct {
 			HostIP   string `json:"HostIp"`
@@ -467,9 +477,10 @@ func fakeNetworkSettings(hostIP, hostPort string, containerPort int32) struct {
 		} `json:"Ports"`
 	}{
 		Networks: map[string]struct {
-			IPAddress string `json:"IPAddress"`
+			IPAddress         string `json:"IPAddress"`
+			GlobalIPv6Address string `json:"GlobalIPv6Address"`
 		}{
-			"mesh-local": {IPAddress: "172.18.0.10"},
+			"mesh-local": {IPAddress: "172.18.0.10", GlobalIPv6Address: "fd00:18::10"},
 		},
 		Ports: map[string][]struct {
 			HostIP   string `json:"HostIp"`

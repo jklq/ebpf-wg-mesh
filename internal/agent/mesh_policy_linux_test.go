@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/firewall"
 	"ebof-wg-mesh/internal/testutil"
@@ -19,21 +20,31 @@ import (
 func TestMeshPolicyAllowDenyUnknown(t *testing.T) {
 	harness := startMeshPolicyHarness(t, true)
 	a := harness.workload("a")
-	waitForMeshHTTP(t, a.netns, harness.workload("b").ip, harness.workload("b").marker)
-	assertMeshUnreachable(t, a.netns, harness.workload("c").ip)
-	assertMeshUnreachable(t, a.netns, harness.unknownIP)
+	b := harness.workload("b")
+	c := harness.workload("c")
+	for _, endpoint := range b.endpoints() {
+		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
+	for _, endpoint := range c.endpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
+	for _, endpoint := range harness.unknownEndpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
 }
 
 func TestMeshPolicyCatalogShrinkUpdatesLivePolicy(t *testing.T) {
 	harness := startMeshPolicyHarness(t, true)
 	a := harness.workload("a")
 	b := harness.workload("b")
-	waitForMeshHTTP(t, a.netns, b.ip, b.marker)
+	for _, endpoint := range b.endpoints() {
+		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
 
 	shrunk := harness.cfg
 	var remaining []config.IdentitySeed
 	for _, seed := range harness.cfg.Containerd.IdentitySeeds {
-		if seed.IPv6 == b.ip {
+		if seed.IPv6 == b.ipv6 {
 			continue
 		}
 		remaining = append(remaining, seed)
@@ -43,28 +54,49 @@ func TestMeshPolicyCatalogShrinkUpdatesLivePolicy(t *testing.T) {
 		t.Fatalf("UpdateIdentityCatalog(shrink): %v", err)
 	}
 
-	assertMeshUnreachable(t, a.netns, b.ip)
-	assertMeshUnreachable(t, a.netns, harness.unknownIP)
+	for _, endpoint := range b.endpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
+	for _, endpoint := range harness.unknownEndpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
 
 	if err := harness.firewall.UpdateIdentityCatalog(harness.cfg); err != nil {
 		t.Fatalf("UpdateIdentityCatalog(restore): %v", err)
 	}
-	waitForMeshHTTP(t, a.netns, b.ip, b.marker)
+	for _, endpoint := range b.endpoints() {
+		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
 }
 
 type meshPolicyHarness struct {
-	cfg       config.MeshRuntimeConfig
-	firewall  *firewall.Manager
-	workloads map[string]meshWorkload
-	unknownIP string
+	cfg         config.MeshRuntimeConfig
+	firewall    *firewall.Manager
+	workloads   map[string]meshWorkload
+	unknownIPv4 string
+	unknownIPv6 string
 }
 
 type meshWorkload struct {
 	name   string
 	alloc  string
-	ip     string
+	ipv4   string
+	ipv6   string
 	netns  string
 	marker string
+}
+
+type meshEndpoint struct {
+	ip   string
+	port int
+}
+
+func (w meshWorkload) endpoints() []meshEndpoint {
+	return []meshEndpoint{{ip: w.ipv4, port: 8080}, {ip: w.ipv6, port: 8081}}
+}
+
+func (h *meshPolicyHarness) unknownEndpoints() []meshEndpoint {
+	return []meshEndpoint{{ip: h.unknownIPv4, port: 8080}, {ip: h.unknownIPv6, port: 8081}}
 }
 
 func (h *meshPolicyHarness) workload(name string) meshWorkload {
@@ -90,24 +122,27 @@ func startMeshPolicyHarness(t *testing.T, includeC bool) *meshPolicyHarness {
 	suffix := uniqueRuntimeID("m")
 	specs := []struct {
 		name     string
-		ip       string
+		ipv4     string
+		ipv6     string
 		identity uint32
 	}{
-		{name: "a", ip: "fd00:200:8::a", identity: idAB},
-		{name: "b", ip: "fd00:200:8::b", identity: idAB},
+		{name: "a", ipv4: "10.200.8.10", ipv6: "fd00:200:0:8::a", identity: idAB},
+		{name: "b", ipv4: "10.200.8.11", ipv6: "fd00:200:0:8::b", identity: idAB},
 	}
 	if includeC {
 		specs = append(specs, struct {
 			name     string
-			ip       string
+			ipv4     string
+			ipv6     string
 			identity uint32
-		}{name: "c", ip: "fd00:200:8::c", identity: idC})
+		}{name: "c", ipv4: "10.200.8.12", ipv6: "fd00:200:0:8::c", identity: idC})
 	}
 
 	seeds := make([]config.IdentitySeed, 0, len(specs))
 	for _, spec := range specs {
 		seeds = append(seeds, config.IdentitySeed{
-			IPv6:            spec.ip,
+			IPv4:            spec.ipv4,
+			IPv6:            spec.ipv6,
 			HostIPv6:        hostIP,
 			NetworkIdentity: spec.identity,
 		})
@@ -120,9 +155,10 @@ func startMeshPolicyHarness(t *testing.T, includeC bool) *meshPolicyHarness {
 			Namespace:     agentCfg.Containerd.Namespace,
 			IdentitySeeds: seeds,
 		},
-		WireGuard:        config.WireGuard{InterfaceName: iface, ListenPort: 51821},
-		Firewall:         config.FirewallConfig{ConntrackInnerEntries: 1024, MaxContainers: 32, ClusterIdentityEntries: 1024},
-		WorkloadPoolCIDR: "fd00:200::/48",
+		WireGuard:            config.WireGuard{InterfaceName: iface, ListenPort: 51821},
+		Firewall:             config.FirewallConfig{ConntrackInnerEntries: 1024, MaxContainers: 32, ClusterIdentityEntries: 1024},
+		WorkloadIPv4PoolCIDR: "10.200.0.0/16",
+		WorkloadPoolCIDR:     "fd00:200::/48",
 	}
 
 	fw, err := firewall.Start(ctx, meshCfg)
@@ -139,7 +175,11 @@ func startMeshPolicyHarness(t *testing.T, includeC bool) *meshPolicyHarness {
 	for _, spec := range specs {
 		alloc := uniqueRuntimeID(spec.name)
 		marker := spec.name + "-" + suffix
-		svc := busyboxHTTPService(alloc, spec.identity, 1, spec.ip, marker)
+		svc := busyboxHTTPService(alloc, spec.identity, 1, spec.ipv4, spec.ipv6, marker)
+		svc.Spec.Runtime.Args = []string{
+			fmt.Sprintf("printf '%%s' '%s' > /tmp/index.html; httpd -f -p 0.0.0.0:8080 -h /tmp & exec httpd -f -p [::]:8081 -h /tmp", marker),
+		}
+		svc.Spec.Runtime.Ports = []*platformv1.ServiceRuntimePort{{Port: 8080}, {Port: 8081}}
 		cleanupContainerdService(t, engine, agentCfg, alloc)
 		if _, _, err := engine.EnsureService(ctx, svc); err != nil {
 			if skippableRuntimeErr(err) {
@@ -148,11 +188,13 @@ func startMeshPolicyHarness(t *testing.T, includeC bool) *meshPolicyHarness {
 			t.Fatalf("EnsureService(%s): %v", spec.name, err)
 		}
 		netns := requirePersistedNetNS(t, engine, alloc)
-		waitForWorkloadMarker(t, ctx, netns, spec.ip, marker)
+		waitForWorkloadMarker(t, ctx, netns, spec.ipv4, marker)
+		waitForMeshHTTP(t, netns, spec.ipv6, 8081, marker)
 		workloads[spec.name] = meshWorkload{
 			name:   spec.name,
 			alloc:  alloc,
-			ip:     spec.ip,
+			ipv4:   spec.ipv4,
+			ipv6:   spec.ipv6,
 			netns:  netns,
 			marker: marker,
 		}
@@ -165,30 +207,31 @@ func startMeshPolicyHarness(t *testing.T, includeC bool) *meshPolicyHarness {
 	}
 
 	return &meshPolicyHarness{
-		cfg:       meshCfg,
-		firewall:  fw,
-		workloads: workloads,
-		unknownIP: "fd00:200:8::d",
+		cfg:         meshCfg,
+		firewall:    fw,
+		workloads:   workloads,
+		unknownIPv4: "10.200.8.13",
+		unknownIPv6: "fd00:200:0:8::d",
 	}
 }
 
-func waitForMeshHTTP(t *testing.T, srcNetNS, dstIP, want string) {
+func waitForMeshHTTP(t *testing.T, srcNetNS, dstIP string, port int, want string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 100 * time.Millisecond}, func(ctx context.Context) (bool, error) {
-		body, err := httpGetInNamespaceErr(ctx, srcNetNS, dstIP, 8080, "/")
+		body, err := httpGetInNamespaceErr(ctx, srcNetNS, dstIP, port, "/")
 		return err == nil && body == want, nil
 	}); err != nil {
 		t.Fatalf("expected %s to serve %q from workload netns: %v", dstIP, want, err)
 	}
 }
 
-func assertMeshUnreachable(t *testing.T, srcNetNS, dstIP string) {
+func assertMeshUnreachable(t *testing.T, srcNetNS, dstIP string, port int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
 	defer cancel()
-	body, err := httpGetInNamespaceErr(ctx, srcNetNS, dstIP, 8080, "/")
+	body, err := httpGetInNamespaceErr(ctx, srcNetNS, dstIP, port, "/")
 	if err == nil {
 		t.Fatalf("expected fail-closed deny to %s, got body %q", dstIP, body)
 	}

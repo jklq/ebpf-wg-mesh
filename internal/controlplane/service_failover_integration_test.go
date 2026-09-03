@@ -48,7 +48,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		`UPDATE allocations
 		    SET applied_spec_revision = desired_spec_revision,
 		        applied_rollout_generation = desired_rollout_generation,
-		        phase = 'Running', message = '', allocation_ip = 'fd00:200::10', healthy_ports = $1, healthy = TRUE
+		        phase = 'Running', message = '', allocation_ipv6 = 'fd00:200::10', healthy_ipv6_ports = $1, healthy = TRUE
 		  WHERE service_id = $2`, []byte("[8080]"), service.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,8 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 	}
 
 	allocation := requireNodeLossReplacement(t, store, service.ID, originalID, "old-node", "new-node")
-	if allocation.Phase != "Pending" || allocation.Healthy || allocation.AllocationIP != "" || len(allocation.HealthyPorts) != 0 {
+	if allocation.Phase != "Pending" || allocation.Healthy || allocation.AllocationIPv4 == "" || allocation.AllocationIPv6 == "" ||
+		len(allocation.HealthyIPv4Ports) != 0 || len(allocation.HealthyIPv6Ports) != 0 {
 		t.Fatalf("replacement was not reset after failover: %+v", allocation)
 	}
 	if allocation.AppliedSpecRevision != 0 || allocation.AppliedRolloutGeneration != 0 {

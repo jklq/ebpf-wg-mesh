@@ -27,6 +27,7 @@ type firewallConnectionKey struct {
 type firewallContainerPolicy struct {
 	_               structs.HostLayout
 	NetworkIdentity uint32
+	Ipv4            [4]uint8
 	Ipv6            [16]uint8
 }
 

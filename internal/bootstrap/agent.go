@@ -45,6 +45,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &cfg.Containerd.Namespace, "containerd-namespace", "AGENT_CONTAINERD_NAMESPACE", "default", "")
 	stringFlag(fs, &cfg.Containerd.EnvironmentLabel, "containerd-environment-label", "AGENT_CONTAINERD_ENVIRONMENT_LABEL", meshlabels.DefaultEnvironmentKey, "")
 	stringFlag(fs, &cfg.Containerd.IPv6Label, "containerd-ipv6-label", "AGENT_CONTAINERD_IPV6_LABEL", meshlabels.DefaultIPv6Key, "")
+	stringFlag(fs, &cfg.Containerd.IPv4Label, "containerd-ipv4-label", "AGENT_CONTAINERD_IPV4_LABEL", meshlabels.DefaultIPv4Key, "")
 	stringFlag(fs, &cfg.Mesh.WireGuard.InterfaceName, "mesh-interface-name", "AGENT_MESH_INTERFACE_NAME", "wg0", "")
 	intFlag(fs, &cfg.Mesh.WireGuard.ListenPort, "mesh-listen-port", "AGENT_MESH_LISTEN_PORT", 51820, "")
 	intFlag(fs, &cfg.Mesh.Firewall.ConntrackInnerEntries, "firewall-conntrack-inner-entries", "AGENT_FIREWALL_CONNTRACK_INNER_ENTRIES", 10000, "")

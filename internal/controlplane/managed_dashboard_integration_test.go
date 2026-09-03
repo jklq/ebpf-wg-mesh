@@ -170,7 +170,7 @@ func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, 
 		`UPDATE allocations
 		    SET applied_spec_revision = desired_spec_revision,
 		        applied_rollout_generation = desired_rollout_generation,
-		        allocation_ip = 'fd00:200::10', phase = 'Healthy', healthy = TRUE,
+		        allocation_ipv6 = 'fd00:200::10', phase = 'Healthy', healthy = TRUE,
 		        rollout_state = $1, updated_at = $2
 		  WHERE id = $3`,
 		allocationRolloutServing, time.Now().UTC(), allocation.ID,

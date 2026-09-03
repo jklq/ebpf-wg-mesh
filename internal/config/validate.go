@@ -161,6 +161,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateCIDR("controlplane.mesh.workloadPoolCidr", cfg.Mesh.WorkloadPoolCIDR, 48); err != nil {
 		return err
 	}
+	if err := validateIPv4Pool("controlplane.mesh.workloadIpv4PoolCidr", cfg.Mesh.WorkloadIPv4PoolCIDR, cfg.Mesh.WorkloadIPv4NodePrefixBits); err != nil {
+		return err
+	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionControlPlane(cfg)
 	}
@@ -203,6 +206,9 @@ func validateAgent(cfg AgentConfig) error {
 		return fmt.Errorf("agent.mesh.host.ipv6 must be IPv6: %q", cfg.Mesh.Host.IPv6)
 	}
 	for _, seed := range cfg.Containerd.IdentitySeeds {
+		if ip := net.ParseIP(seed.IPv4); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("agent.containerd.identitySeeds ipv4 must be IPv4: %q", seed.IPv4)
+		}
 		if ip := net.ParseIP(seed.IPv6); !isIPv6(ip) {
 			return fmt.Errorf("agent.containerd.identitySeeds ipv6 must be IPv6: %q", seed.IPv6)
 		}
@@ -211,6 +217,9 @@ func validateAgent(cfg AgentConfig) error {
 		}
 	}
 	for _, assignment := range cfg.Containerd.StaticAssignments {
+		if ip := net.ParseIP(assignment.IPv4); ip == nil || ip.To4() == nil {
+			return fmt.Errorf("agent.containerd.staticAssignments ipv4 must be IPv4: %q", assignment.IPv4)
+		}
 		if ip := net.ParseIP(assignment.IPv6); !isIPv6(ip) {
 			return fmt.Errorf("agent.containerd.staticAssignments ipv6 must be IPv6: %q", assignment.IPv6)
 		}
@@ -236,10 +245,8 @@ func validateAgent(cfg AgentConfig) error {
 			return fmt.Errorf("agent.mesh.wireguard peer %q invalid endpoint: %w", peer.Name, err)
 		}
 		for _, cidr := range peer.AllowedIPs {
-			if ip, _, err := net.ParseCIDR(cidr); err != nil {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
 				return fmt.Errorf("agent.mesh.wireguard peer %q invalid allowed IP %q: %w", peer.Name, cidr, err)
-			} else if !isIPv6(ip) {
-				return fmt.Errorf("agent.mesh.wireguard peer %q allowedIPs must be IPv6 CIDRs: %q", peer.Name, cidr)
 			}
 		}
 	}
@@ -306,6 +313,23 @@ func validateCIDR(field string, raw string, prefixBits int) error {
 	ones, bits := network.Mask.Size()
 	if bits != 128 || ones != prefixBits {
 		return fmt.Errorf("%s must be an IPv6 /%d CIDR: %q", field, prefixBits, raw)
+	}
+	return nil
+}
+
+func validateIPv4Pool(field, raw string, childPrefixBits int) error {
+	prefix, err := netip.ParsePrefix(raw)
+	if err != nil || !prefix.Addr().Is4() {
+		return fmt.Errorf("%s must be a valid IPv4 CIDR: %q", field, raw)
+	}
+	if prefix != prefix.Masked() {
+		return fmt.Errorf("%s must be a canonical IPv4 CIDR: %q", field, raw)
+	}
+	if childPrefixBits <= prefix.Bits() || childPrefixBits > 30 {
+		return fmt.Errorf("controlplane.mesh.workloadIpv4NodePrefixBits must be greater than /%d and no larger than /30", prefix.Bits())
+	}
+	if childPrefixBits-prefix.Bits() > 24 {
+		return fmt.Errorf("%s has too many per-node prefixes", field)
 	}
 	return nil
 }

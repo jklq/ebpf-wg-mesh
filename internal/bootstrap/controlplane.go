@@ -88,6 +88,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.Mesh.ListenPort, "mesh-listen-port", "CONTROLPLANE_MESH_LISTEN_PORT", 51820, "")
 	stringFlag(fs, &cfg.Mesh.NetworkCIDR, "mesh-network-cidr", "CONTROLPLANE_MESH_NETWORK_CIDR", "fd00:44::/64", "")
 	stringFlag(fs, &cfg.Mesh.WorkloadPoolCIDR, "mesh-workload-pool-cidr", "CONTROLPLANE_MESH_WORKLOAD_POOL_CIDR", "fd00:200::/48", "")
+	stringFlag(fs, &cfg.Mesh.WorkloadIPv4PoolCIDR, "mesh-workload-ipv4-pool-cidr", "CONTROLPLANE_MESH_WORKLOAD_IPV4_POOL_CIDR", "10.200.0.0/16", "")
+	intFlag(fs, &cfg.Mesh.WorkloadIPv4NodePrefixBits, "mesh-workload-ipv4-node-prefix-bits", "CONTROLPLANE_MESH_WORKLOAD_IPV4_NODE_PREFIX_BITS", 24, "")
 	intFlag(fs, &cfg.Mesh.PersistentKeepaliveSeconds, "mesh-persistent-keepalive-seconds", "CONTROLPLANE_MESH_PERSISTENT_KEEPALIVE_SECONDS", 5, "")
 	fs.Var(bootstrapUsersFlag{users: &bootstrapUsers}, "bootstrap-user", "user-id:email[:project1,project2][+operator]")
 	fs.Var(bootstrapUsersFlag{users: &dashboardUsers}, "dashboard-dev-user", "user-id:email")

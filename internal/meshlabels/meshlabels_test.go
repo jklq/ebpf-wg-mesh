@@ -8,12 +8,19 @@ import (
 func TestEncodeDecodeRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	keys := NewKeys("", "")
-	want := Identity{NetworkIdentity: 42, IPv6: netip.MustParseAddr("fd00:44::5")}
+	keys := NewKeys("", "", "")
+	want := Identity{
+		NetworkIdentity: 42,
+		IPv4:            netip.MustParseAddr("10.200.0.10"),
+		IPv6:            netip.MustParseAddr("fd00:44::5"),
+	}
 
 	labels := keys.Encode(want)
 	if labels[DefaultEnvironmentKey] != "42" {
 		t.Fatalf("unexpected environment label %q", labels[DefaultEnvironmentKey])
+	}
+	if labels[DefaultIPv4Key] != "10.200.0.10" {
+		t.Fatalf("unexpected ipv4 label %q", labels[DefaultIPv4Key])
 	}
 	if labels[DefaultIPv6Key] != "fd00:44::5" {
 		t.Fatalf("unexpected ipv6 label %q", labels[DefaultIPv6Key])
@@ -31,12 +38,19 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 func TestEncodeDecodeHonorsCustomKeys(t *testing.T) {
 	t.Parallel()
 
-	keys := NewKeys("custom.project", "custom.ipv6")
-	want := Identity{NetworkIdentity: 7, IPv6: netip.MustParseAddr("fd00:44::1")}
+	keys := NewKeys("custom.project", "custom.ipv4", "custom.ipv6")
+	want := Identity{
+		NetworkIdentity: 7,
+		IPv4:            netip.MustParseAddr("10.200.0.7"),
+		IPv6:            netip.MustParseAddr("fd00:44::1"),
+	}
 
 	labels := keys.Encode(want)
 	if _, ok := labels[DefaultEnvironmentKey]; ok {
 		t.Fatal("custom keys must not write the default project key")
+	}
+	if _, ok := labels[DefaultIPv4Key]; ok {
+		t.Fatal("custom keys must not write the default ipv4 key")
 	}
 	got, err := keys.Decode(labels)
 	if err != nil {
@@ -46,7 +60,7 @@ func TestEncodeDecodeHonorsCustomKeys(t *testing.T) {
 		t.Fatalf("round trip mismatch: got %+v want %+v", got, want)
 	}
 
-	if _, err := NewKeys("", "").Decode(labels); err == nil {
+	if _, err := NewKeys("", "", "").Decode(labels); err == nil {
 		t.Fatal("expected default keys to reject labels written under custom keys")
 	}
 }
@@ -54,16 +68,19 @@ func TestEncodeDecodeHonorsCustomKeys(t *testing.T) {
 func TestDecodeRejectsBadLabels(t *testing.T) {
 	t.Parallel()
 
-	keys := NewKeys("", "")
+	keys := NewKeys("", "", "")
 	cases := map[string]map[string]string{
 		"nil labels":       nil,
 		"empty labels":     {},
-		"missing project":  {DefaultIPv6Key: "fd00:44::5"},
-		"missing ipv6":     {DefaultEnvironmentKey: "42"},
-		"zero project":     {DefaultEnvironmentKey: "0", DefaultIPv6Key: "fd00:44::5"},
-		"unparsed project": {DefaultEnvironmentKey: "abc", DefaultIPv6Key: "fd00:44::5"},
-		"ipv4 address":     {DefaultEnvironmentKey: "42", DefaultIPv6Key: "10.0.0.1"},
-		"unparsed ipv6":    {DefaultEnvironmentKey: "42", DefaultIPv6Key: "not-an-ip"},
+		"missing project":  {DefaultIPv4Key: "10.200.0.10", DefaultIPv6Key: "fd00:44::5"},
+		"missing ipv4":     {DefaultEnvironmentKey: "42", DefaultIPv6Key: "fd00:44::5"},
+		"missing ipv6":     {DefaultEnvironmentKey: "42", DefaultIPv4Key: "10.200.0.10"},
+		"zero project":     {DefaultEnvironmentKey: "0", DefaultIPv4Key: "10.200.0.10", DefaultIPv6Key: "fd00:44::5"},
+		"unparsed project": {DefaultEnvironmentKey: "abc", DefaultIPv4Key: "10.200.0.10", DefaultIPv6Key: "fd00:44::5"},
+		"ipv6 as ipv4":     {DefaultEnvironmentKey: "42", DefaultIPv4Key: "fd00:44::5", DefaultIPv6Key: "fd00:44::5"},
+		"ipv4 as ipv6":     {DefaultEnvironmentKey: "42", DefaultIPv4Key: "10.200.0.10", DefaultIPv6Key: "10.0.0.1"},
+		"unparsed ipv4":    {DefaultEnvironmentKey: "42", DefaultIPv4Key: "not-an-ip", DefaultIPv6Key: "fd00:44::5"},
+		"unparsed ipv6":    {DefaultEnvironmentKey: "42", DefaultIPv4Key: "10.200.0.10", DefaultIPv6Key: "not-an-ip"},
 	}
 	for name, labels := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -75,23 +92,26 @@ func TestDecodeRejectsBadLabels(t *testing.T) {
 	}
 }
 
-func TestEncodeOmitsUnsetIPv6(t *testing.T) {
+func TestEncodeOmitsUnsetAddresses(t *testing.T) {
 	t.Parallel()
 
-	keys := NewKeys("", "")
+	keys := NewKeys("", "", "")
 	labels := keys.Encode(Identity{NetworkIdentity: 42})
+	if labels[DefaultIPv4Key] != "" {
+		t.Fatalf("expected empty ipv4 label, got %q", labels[DefaultIPv4Key])
+	}
 	if labels[DefaultIPv6Key] != "" {
 		t.Fatalf("expected empty ipv6 label, got %q", labels[DefaultIPv6Key])
 	}
 	if _, err := keys.Decode(labels); err == nil {
-		t.Fatal("expected decode to reject an identity without an address")
+		t.Fatal("expected decode to reject an identity without addresses")
 	}
 }
 
 func TestNetworkIdentityIsLenient(t *testing.T) {
 	t.Parallel()
 
-	keys := NewKeys("", "")
+	keys := NewKeys("", "", "")
 	if got := keys.NetworkIdentity(map[string]string{DefaultEnvironmentKey: "42"}); got != 42 {
 		t.Fatalf("unexpected project id %d", got)
 	}
