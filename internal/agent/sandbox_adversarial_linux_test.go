@@ -26,10 +26,10 @@ func TestAdversarialWorkloadCannotReachHostFilesystemSocketsOrDevices(t *testing
 		"for path in /proc/kcore /sys/kernel/security /sys/fs/bpf; do awk -v path=\"$path\" '$5 == path && $0 ~ / - tmpfs / { found=1 } END { exit !found }' /proc/self/mountinfo || ok=masked-path; done",
 		"test \"$(id -u)\" = 0 || ok=image-user",
 		"touch /overlay-write-probe || ok=overlay-read-only",
-		"printf '%s' \"$ok\" > /tmp/index.html",
+		"printf 'ok=%s' \"$ok\" > /tmp/index.html",
 		"exec httpd -f -p [::]:8080 -h /tmp",
 	}, "; ")
-	svc := busyboxProbeService(allocID, "fd00:200:9::40", probe)
+	svc := busyboxProbeService(allocID, "10.200.9.64", "fd00:200:0:9::40", probe)
 	cleanupContainerdService(t, engine, cfg, allocID)
 	if _, _, err := engine.EnsureService(ctx, svc); err != nil {
 		if skippableRuntimeErr(err) {
@@ -50,7 +50,7 @@ func TestAdversarialProcessExhaustionAndMemoryPressureStayContained(t *testing.T
 	engine, cfg := newTestContainerdEngine(t)
 
 	victimID := uniqueRuntimeID("vic")
-	victim := busyboxHTTPService(victimID, 9, 1, "fd00:200:9::41", "neighbor-ok")
+	victim := busyboxHTTPService(victimID, 9, 1, "10.200.9.65", "fd00:200:0:9::41", "neighbor-ok")
 	cleanupContainerdService(t, engine, cfg, victimID)
 	if _, _, err := engine.EnsureService(ctx, victim); err != nil {
 		if skippableRuntimeErr(err) {
@@ -61,7 +61,7 @@ func TestAdversarialProcessExhaustionAndMemoryPressureStayContained(t *testing.T
 	victimNS := requirePersistedNetNS(t, engine, victimID)
 
 	forkID := uniqueRuntimeID("fork")
-	forkBomb := busyboxProbeService(forkID, "fd00:200:9::42", ":(){ :|:& };:; sleep 5; printf contained > /tmp/index.html; exec httpd -f -p [::]:8080 -h /tmp")
+	forkBomb := busyboxProbeService(forkID, "10.200.9.66", "fd00:200:0:9::42", ":(){ :|:& };:; sleep 5; printf contained > /tmp/index.html; exec httpd -f -p [::]:8080 -h /tmp")
 	forkBomb.Spec.Runtime.CpuMillis = 250
 	forkBomb.Spec.Runtime.MemoryMebibytes = 64
 	cleanupContainerdService(t, engine, cfg, forkID)
@@ -70,7 +70,7 @@ func TestAdversarialProcessExhaustionAndMemoryPressureStayContained(t *testing.T
 	}
 
 	memID := uniqueRuntimeID("mem")
-	hog := busyboxProbeService(memID, "fd00:200:9::43", "dd if=/dev/zero of=/tmp/blob bs=1M count=512; printf hog > /tmp/www/index.html; mkdir -p /tmp/www; exec httpd -f -p [::]:8080 -h /tmp/www")
+	hog := busyboxProbeService(memID, "10.200.9.67", "fd00:200:0:9::43", "dd if=/dev/zero of=/tmp/blob bs=1M count=512; printf hog > /tmp/www/index.html; mkdir -p /tmp/www; exec httpd -f -p [::]:8080 -h /tmp/www")
 	hog.Spec.Runtime.MemoryMebibytes = 64
 	cleanupContainerdService(t, engine, cfg, memID)
 	_, _, _ = engine.EnsureService(ctx, hog)
@@ -96,7 +96,7 @@ func TestAdversarialNamespaceEscapePrerequisitesAreAbsent(t *testing.T) {
 		t.Fatalf("host pid ns: %v", err)
 	}
 	probe := fmt.Sprintf("printf '%%s' \"$(readlink /proc/1/ns/pid)|$(readlink /proc/self/ns/pid)|$(readlink /proc/self/ns/mnt)|$(readlink /proc/self/ns/uts)|$(readlink /proc/self/ns/ipc)\" > /tmp/index.html; exec httpd -f -p [::]:8080 -h /tmp")
-	svc := busyboxProbeService(allocID, "fd00:200:9::44", probe)
+	svc := busyboxProbeService(allocID, "10.200.9.68", "fd00:200:0:9::44", probe)
 	cleanupContainerdService(t, engine, cfg, allocID)
 	if _, _, err := engine.EnsureService(ctx, svc); err != nil {
 		if skippableRuntimeErr(err) {
@@ -118,8 +118,8 @@ func TestAdversarialNamespaceEscapePrerequisitesAreAbsent(t *testing.T) {
 	}
 }
 
-func busyboxProbeService(allocationID, ip, command string) *agentv1.DesiredService {
-	svc := busyboxHTTPService(allocationID, 11, 1, ip, "probe")
+func busyboxProbeService(allocationID, ipv4, ipv6, command string) *agentv1.DesiredService {
+	svc := busyboxHTTPService(allocationID, 11, 1, ipv4, ipv6, "probe")
 	svc.Spec.Runtime.Command = []string{"sh", "-c"}
 	svc.Spec.Runtime.Args = []string{command}
 	svc.Spec.Runtime.CpuMillis = 250

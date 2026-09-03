@@ -92,6 +92,7 @@ type agentRecord struct {
 	ReservedCPUMillis       int64
 	ReservedMemoryMebibytes int64
 	AdvertiseAddr           string
+	WorkloadIPv4Subnet      string
 	WorkloadIPv6Subnet      string
 	WireGuardPublicKey      string
 	WireGuardListenPort     int
@@ -134,9 +135,11 @@ type allocationRecord struct {
 	AppliedRolloutGeneration int64
 	Phase                    string
 	Message                  string
-	AllocationIP             string
+	AllocationIPv4           string
+	AllocationIPv6           string
 	Healthy                  bool
-	HealthyPorts             []int32
+	HealthyIPv4Ports         []int32
+	HealthyIPv6Ports         []int32
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	Restart                  *platformv1.RestartObservation

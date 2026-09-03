@@ -156,6 +156,12 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Mesh.WorkloadPoolCIDR == "" {
 		cfg.Mesh.WorkloadPoolCIDR = "fd00:200::/48"
 	}
+	if cfg.Mesh.WorkloadIPv4PoolCIDR == "" {
+		cfg.Mesh.WorkloadIPv4PoolCIDR = "10.200.0.0/16"
+	}
+	if cfg.Mesh.WorkloadIPv4NodePrefixBits == 0 {
+		cfg.Mesh.WorkloadIPv4NodePrefixBits = 24
+	}
 	if cfg.Mesh.PersistentKeepaliveSeconds <= 0 {
 		cfg.Mesh.PersistentKeepaliveSeconds = 5
 	}
@@ -200,6 +206,9 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	}
 	if cfg.Containerd.IPv6Label == "" {
 		cfg.Containerd.IPv6Label = meshlabels.DefaultIPv6Key
+	}
+	if cfg.Containerd.IPv4Label == "" {
+		cfg.Containerd.IPv4Label = meshlabels.DefaultIPv4Key
 	}
 	if cfg.Mesh.WireGuard.InterfaceName == "" {
 		cfg.Mesh.WireGuard.InterfaceName = "wg0"

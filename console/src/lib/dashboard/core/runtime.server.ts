@@ -303,7 +303,11 @@ export function recommendedTargetPort(
 			return port.port;
 		}
 	}
-	for (const port of status?.allocation?.healthyPorts ?? []) {
+	const healthyPorts = new Set([
+		...(status?.allocation?.healthyIpv4Ports ?? []),
+		...(status?.allocation?.healthyIpv6Ports ?? []),
+	]);
+	for (const port of healthyPorts) {
 		if (Number.isInteger(port) && port >= 1 && port <= 65535) {
 			return port;
 		}

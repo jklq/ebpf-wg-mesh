@@ -404,7 +404,7 @@ func (s *Store) confirmRolloutIngressConverged(ctx context.Context, serviceID st
 		for _, alloc := range withdrawing {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE allocations
-				    SET rollout_state = $1, healthy = FALSE, healthy_ports = $2,
+				    SET rollout_state = $1, healthy = FALSE, healthy_ipv4_ports = $2, healthy_ipv6_ports = $2,
 				        phase = 'Draining', message = 'ingress converged; gracefully draining',
 				        drain_started_at = $3, drain_deadline = $4, updated_at = $3
 				  WHERE id = $5 AND rollout_state = $6`,
@@ -501,7 +501,7 @@ func (s *Store) failRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRe
 			continue
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations SET rollout_state = $1, healthy = FALSE, healthy_ports = $2,
+			`UPDATE allocations SET rollout_state = $1, healthy = FALSE, healthy_ipv4_ports = $2, healthy_ipv6_ports = $2,
 			        phase = 'Draining', message = $3, drain_started_at = $4, drain_deadline = $5, updated_at = $4
 			  WHERE id = $6`,
 			allocationRolloutDraining, []byte("[]"), "failed replacement; cleaning up", now, deadline, alloc.ID,

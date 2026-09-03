@@ -3618,17 +3618,19 @@ type AllocationStatus struct {
 	AppliedSpecRevision      int64                  `protobuf:"varint,5,opt,name=applied_spec_revision,json=appliedSpecRevision,proto3" json:"applied_spec_revision,omitempty"`
 	Phase                    string                 `protobuf:"bytes,6,opt,name=phase,proto3" json:"phase,omitempty"`
 	Message                  string                 `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
-	AllocationIp             string                 `protobuf:"bytes,8,opt,name=allocation_ip,json=allocationIp,proto3" json:"allocation_ip,omitempty"`
+	AllocationIpv4           string                 `protobuf:"bytes,8,opt,name=allocation_ipv4,json=allocationIpv4,proto3" json:"allocation_ipv4,omitempty"`
 	Healthy                  bool                   `protobuf:"varint,9,opt,name=healthy,proto3" json:"healthy,omitempty"`
 	UpdatedAt                *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	DesiredRolloutGeneration int64                  `protobuf:"varint,11,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
 	AppliedRolloutGeneration int64                  `protobuf:"varint,12,opt,name=applied_rollout_generation,json=appliedRolloutGeneration,proto3" json:"applied_rollout_generation,omitempty"`
-	HealthyPorts             []int32                `protobuf:"varint,13,rep,packed,name=healthy_ports,json=healthyPorts,proto3" json:"healthy_ports,omitempty"`
+	HealthyIpv4Ports         []int32                `protobuf:"varint,13,rep,packed,name=healthy_ipv4_ports,json=healthyIpv4Ports,proto3" json:"healthy_ipv4_ports,omitempty"`
 	Restart                  *RestartObservation    `protobuf:"bytes,14,opt,name=restart,proto3" json:"restart,omitempty"`
 	OperatorRestartNonce     int64                  `protobuf:"varint,15,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
 	RolloutState             string                 `protobuf:"bytes,16,opt,name=rollout_state,json=rolloutState,proto3" json:"rollout_state,omitempty"`
 	DrainStartedAt           *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=drain_started_at,json=drainStartedAt,proto3" json:"drain_started_at,omitempty"`
 	DrainDeadline            *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
+	AllocationIpv6           string                 `protobuf:"bytes,19,opt,name=allocation_ipv6,json=allocationIpv6,proto3" json:"allocation_ipv6,omitempty"`
+	HealthyIpv6Ports         []int32                `protobuf:"varint,20,rep,packed,name=healthy_ipv6_ports,json=healthyIpv6Ports,proto3" json:"healthy_ipv6_ports,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -3712,9 +3714,9 @@ func (x *AllocationStatus) GetMessage() string {
 	return ""
 }
 
-func (x *AllocationStatus) GetAllocationIp() string {
+func (x *AllocationStatus) GetAllocationIpv4() string {
 	if x != nil {
-		return x.AllocationIp
+		return x.AllocationIpv4
 	}
 	return ""
 }
@@ -3747,9 +3749,9 @@ func (x *AllocationStatus) GetAppliedRolloutGeneration() int64 {
 	return 0
 }
 
-func (x *AllocationStatus) GetHealthyPorts() []int32 {
+func (x *AllocationStatus) GetHealthyIpv4Ports() []int32 {
 	if x != nil {
-		return x.HealthyPorts
+		return x.HealthyIpv4Ports
 	}
 	return nil
 }
@@ -3785,6 +3787,20 @@ func (x *AllocationStatus) GetDrainStartedAt() *timestamppb.Timestamp {
 func (x *AllocationStatus) GetDrainDeadline() *timestamppb.Timestamp {
 	if x != nil {
 		return x.DrainDeadline
+	}
+	return nil
+}
+
+func (x *AllocationStatus) GetAllocationIpv6() string {
+	if x != nil {
+		return x.AllocationIpv6
+	}
+	return ""
+}
+
+func (x *AllocationStatus) GetHealthyIpv6Ports() []int32 {
+	if x != nil {
+		return x.HealthyIpv6Ports
 	}
 	return nil
 }
@@ -7944,7 +7960,7 @@ const file_platform_proto_rawDesc = "" +
 	"\x14version_skew_warning\x18\x16 \x01(\tR\x12versionSkewWarning\x12)\n" +
 	"\x10allocation_count\x18\x17 \x01(\x05R\x0fallocationCount\x12/\n" +
 	"\x13maintenance_message\x18\x18 \x01(\tR\x12maintenanceMessage\x12N\n" +
-	"\x15credential_revoked_at\x18\x19 \x01(\v2\x1a.google.protobuf.TimestampR\x13credentialRevokedAt\"\xc3\x06\n" +
+	"\x15credential_revoked_at\x18\x19 \x01(\v2\x1a.google.protobuf.TimestampR\x13credentialRevokedAt\"\xa7\a\n" +
 	"\x10AllocationStatus\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -7953,20 +7969,22 @@ const file_platform_proto_rawDesc = "" +
 	"\x15desired_spec_revision\x18\x04 \x01(\x03R\x13desiredSpecRevision\x122\n" +
 	"\x15applied_spec_revision\x18\x05 \x01(\x03R\x13appliedSpecRevision\x12\x14\n" +
 	"\x05phase\x18\x06 \x01(\tR\x05phase\x12\x18\n" +
-	"\amessage\x18\a \x01(\tR\amessage\x12#\n" +
-	"\rallocation_ip\x18\b \x01(\tR\fallocationIp\x12\x18\n" +
+	"\amessage\x18\a \x01(\tR\amessage\x12'\n" +
+	"\x0fallocation_ipv4\x18\b \x01(\tR\x0eallocationIpv4\x12\x18\n" +
 	"\ahealthy\x18\t \x01(\bR\ahealthy\x129\n" +
 	"\n" +
 	"updated_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12<\n" +
 	"\x1adesired_rollout_generation\x18\v \x01(\x03R\x18desiredRolloutGeneration\x12<\n" +
-	"\x1aapplied_rollout_generation\x18\f \x01(\x03R\x18appliedRolloutGeneration\x12#\n" +
-	"\rhealthy_ports\x18\r \x03(\x05R\fhealthyPorts\x129\n" +
+	"\x1aapplied_rollout_generation\x18\f \x01(\x03R\x18appliedRolloutGeneration\x12,\n" +
+	"\x12healthy_ipv4_ports\x18\r \x03(\x05R\x10healthyIpv4Ports\x129\n" +
 	"\arestart\x18\x0e \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\x124\n" +
 	"\x16operator_restart_nonce\x18\x0f \x01(\x03R\x14operatorRestartNonce\x12#\n" +
 	"\rrollout_state\x18\x10 \x01(\tR\frolloutState\x12D\n" +
 	"\x10drain_started_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\x0edrainStartedAt\x12A\n" +
-	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\"\xf8\x01\n" +
+	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\x12'\n" +
+	"\x0fallocation_ipv6\x18\x13 \x01(\tR\x0eallocationIpv6\x12,\n" +
+	"\x12healthy_ipv6_ports\x18\x14 \x03(\x05R\x10healthyIpv6Ports\"\xf8\x01\n" +
 	"\rServiceStatus\x12.\n" +
 	"\aservice\x18\x01 \x01(\v2\x14.platform.v1.ServiceR\aservice\x12=\n" +
 	"\n" +

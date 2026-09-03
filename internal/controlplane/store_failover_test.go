@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -134,12 +135,13 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalID := mustAllocationOnAgent(t, store, service.ID, "node-a").ID
+	original := mustAllocationOnAgent(t, store, service.ID, "node-a")
+	originalID := original.ID
 	if _, err := store.db.ExecContext(ctx,
 		`UPDATE allocations
 		    SET applied_spec_revision = desired_spec_revision,
 		        applied_rollout_generation = desired_rollout_generation,
-		        phase = 'Running', message = '', allocation_ip = 'fd00:200::aa', healthy_ports = $1, healthy = TRUE
+		        phase = 'Running', message = '', allocation_ipv6 = 'fd00:200::aa', healthy_ipv6_ports = $1, healthy = TRUE
 		  WHERE service_id = $2`, []byte("[8080]"), service.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +164,44 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 
 	replacement := requireNodeLossReplacement(t, store, service.ID, originalID, "node-a", "node-b")
-	if replacement.Phase != "Pending" || replacement.Healthy || replacement.AllocationIP != "" {
+	if replacement.Phase != "Pending" || replacement.Healthy ||
+		len(replacement.HealthyIPv4Ports) != 0 || len(replacement.HealthyIPv6Ports) != 0 {
 		t.Fatalf("replacement was not reset for the surviving agent: %+v", replacement)
 	}
 	if replacement.AppliedSpecRevision != 0 || replacement.AppliedRolloutGeneration != 0 {
 		t.Fatalf("applied state was not cleared on the replacement: %+v", replacement)
+	}
+	// Addresses come from the owning node's prefixes, so failover must re-address
+	// the workload on both families rather than carry the dead node's addresses over.
+	survivor, err := store.agentByID(ctx, "node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range []struct {
+		name           string
+		subnet         string
+		replaced, lost string
+	}{
+		{"IPv4", survivor.WorkloadIPv4Subnet, replacement.AllocationIPv4, original.AllocationIPv4},
+		{"IPv6", survivor.WorkloadIPv6Subnet, replacement.AllocationIPv6, original.AllocationIPv6},
+	} {
+		if family.replaced == "" {
+			t.Fatalf("replacement has no %s address: %+v", family.name, replacement)
+		}
+		if family.replaced == family.lost {
+			t.Fatalf("replacement reused the lost node's %s address %q", family.name, family.lost)
+		}
+		prefix, err := netip.ParsePrefix(family.subnet)
+		if err != nil {
+			t.Fatalf("parse node-b %s subnet %q: %v", family.name, family.subnet, err)
+		}
+		addr, err := netip.ParseAddr(family.replaced)
+		if err != nil {
+			t.Fatalf("parse replacement %s address %q: %v", family.name, family.replaced, err)
+		}
+		if !prefix.Contains(addr) {
+			t.Fatalf("replacement %s address %q is outside node-b subnet %q", family.name, family.replaced, family.subnet)
+		}
 	}
 
 	oldState, err := store.desiredStateForAgent(ctx, "node-a")

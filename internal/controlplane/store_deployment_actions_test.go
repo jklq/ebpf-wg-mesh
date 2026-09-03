@@ -154,6 +154,8 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		AgentId: allocs[0].AgentID,
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: allocs[0].ID, ServiceId: service.ID,
+			AllocationIpv4:           allocs[0].AllocationIPv4,
+			AllocationIpv6:           allocs[0].AllocationIPv6,
 			DesiredRolloutGeneration: allocs[0].DesiredRolloutGeneration,
 			AppliedRolloutGeneration: allocs[0].DesiredRolloutGeneration,
 			Phase:                    "Error", Message: "late runtime response",

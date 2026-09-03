@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 var schemaUpgrades = map[int][]string{
 	2: {
@@ -133,6 +133,22 @@ var schemaUpgrades = map[int][]string{
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
 	},
+	10: {
+		`CREATE TABLE workload_ipv4_prefix_allocator (
+			id BOOL PRIMARY KEY,
+			pool_cidr STRING NOT NULL,
+			prefix_bits INT8 NOT NULL,
+			next_ordinal INT8 NOT NULL
+		)`,
+		`ALTER TABLE agents ADD COLUMN workload_ipv4_subnet STRING NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX idx_agents_workload_ipv4_subnet ON agents(workload_ipv4_subnet) WHERE workload_ipv4_subnet <> ''`,
+		`ALTER TABLE allocations RENAME COLUMN allocation_ip TO allocation_ipv6`,
+		`ALTER TABLE allocations ADD COLUMN allocation_ipv4 STRING NOT NULL DEFAULT ''`,
+		`ALTER TABLE allocations RENAME COLUMN healthy_ports TO healthy_ipv6_ports`,
+		`ALTER TABLE allocations ADD COLUMN healthy_ipv4_ports JSONB NOT NULL DEFAULT '[]'`,
+		`CREATE UNIQUE INDEX idx_allocations_ipv4 ON allocations(allocation_ipv4) WHERE allocation_ipv4 <> ''`,
+		`CREATE UNIQUE INDEX idx_allocations_ipv6 ON allocations(allocation_ipv6) WHERE allocation_ipv6 <> ''`,
+	},
 }
 
 var currentSchema = []string{
@@ -181,6 +197,12 @@ var currentSchema = []string{
 			next_identity INT8 NOT NULL
 		)`,
 	`INSERT INTO environment_network_identity_counter(id, next_identity) VALUES (TRUE, 1)`,
+	`CREATE TABLE workload_ipv4_prefix_allocator (
+			id BOOL PRIMARY KEY,
+			pool_cidr STRING NOT NULL,
+			prefix_bits INT8 NOT NULL,
+			next_ordinal INT8 NOT NULL
+		)`,
 	`CREATE TABLE environments (
 			id STRING PRIMARY KEY,
 			project_id STRING NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -207,6 +229,7 @@ var currentSchema = []string{
 			reserved_cpu_millis INT8 NOT NULL DEFAULT 0,
 			reserved_memory_mebibytes INT8 NOT NULL DEFAULT 0,
 			advertise_addr STRING NOT NULL DEFAULT '',
+			workload_ipv4_subnet STRING NOT NULL DEFAULT '',
 			workload_ipv6_subnet STRING NOT NULL DEFAULT '',
 			wireguard_public_key STRING NOT NULL DEFAULT '',
 			wireguard_listen_port INT8 NOT NULL DEFAULT 0,
@@ -225,6 +248,7 @@ var currentSchema = []string{
 	`CREATE INDEX idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
 			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
 			         reserved_cpu_millis, reserved_memory_mebibytes)`,
+	`CREATE UNIQUE INDEX idx_agents_workload_ipv4_subnet ON agents(workload_ipv4_subnet) WHERE workload_ipv4_subnet <> ''`,
 	`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
@@ -292,8 +316,10 @@ var currentSchema = []string{
 			applied_rollout_generation INT8 NOT NULL,
 			phase STRING NOT NULL,
 			message STRING NOT NULL,
-			allocation_ip STRING NOT NULL DEFAULT '',
-			healthy_ports JSONB NOT NULL DEFAULT '[]',
+			allocation_ipv4 STRING NOT NULL DEFAULT '',
+			allocation_ipv6 STRING NOT NULL DEFAULT '',
+			healthy_ipv4_ports JSONB NOT NULL DEFAULT '[]',
+			healthy_ipv6_ports JSONB NOT NULL DEFAULT '[]',
 			healthy BOOL NOT NULL,
 			restart_observation_json JSONB NOT NULL DEFAULT '{}',
 			operator_restart_nonce INT8 NOT NULL DEFAULT 0,
@@ -305,6 +331,8 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_allocations_agent ON allocations(agent_id, updated_at, id)`,
 	`CREATE INDEX idx_allocations_service ON allocations(service_id, id)`,
+	`CREATE UNIQUE INDEX idx_allocations_ipv4 ON allocations(allocation_ipv4) WHERE allocation_ipv4 <> ''`,
+	`CREATE UNIQUE INDEX idx_allocations_ipv6 ON allocations(allocation_ipv6) WHERE allocation_ipv6 <> ''`,
 	`CREATE TABLE service_rollouts (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			rollout_generation INT8 NOT NULL,

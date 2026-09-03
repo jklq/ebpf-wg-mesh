@@ -55,6 +55,10 @@ func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfi
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.validateWorkloadIPv4Pool(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 

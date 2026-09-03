@@ -218,8 +218,10 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 			AllocationId:        routedAlloc.ID,
 			AppliedSpecRevision: 1,
 			Phase:               "Running",
-			AllocationIp:        "10.0.0.10",
-			HealthyPorts:        []int32{8080},
+			AllocationIpv4:      routedAlloc.AllocationIPv4,
+			AllocationIpv6:      routedAlloc.AllocationIPv6,
+			HealthyIpv4Ports:    []int32{8080},
+			HealthyIpv6Ports:    []int32{8080},
 			Healthy:             true,
 		}},
 	})
@@ -232,9 +234,9 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	changed, _, err = store.recordStatusReport(ctx, "node-2", &agentv1.StatusReport{
 		AgentId: "node-2",
 		Services: []*agentv1.ServiceCondition{{
-			AllocationId: routedAlloc.ID,
-			AllocationIp: "10.0.0.99",
-			Healthy:      false,
+			AllocationId:   routedAlloc.ID,
+			AllocationIpv4: "10.0.0.99",
+			Healthy:        false,
 		}},
 	})
 	if err != nil {
@@ -248,11 +250,11 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agentByID: %v", err)
 	}
-	expectedAllocationIP, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.EnvironmentID, routedAlloc.ID)
+	expectedAllocationIPv6, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.EnvironmentID, routedAlloc.ID)
 	if err != nil {
 		t.Fatalf("privateIPv6: %v", err)
 	}
-	if routedAllocAfterForeignReport.AllocationIP != expectedAllocationIP || !routedAllocAfterForeignReport.Healthy {
+	if routedAllocAfterForeignReport.AllocationIPv6 != expectedAllocationIPv6 || !routedAllocAfterForeignReport.Healthy {
 		t.Fatalf("foreign agent changed allocation state: %+v", routedAllocAfterForeignReport)
 	}
 	sentinelUpdatedAt := time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
@@ -266,8 +268,10 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 			AllocationId:        routedAlloc.ID,
 			AppliedSpecRevision: 1,
 			Phase:               "Running",
-			AllocationIp:        "10.0.0.10",
-			HealthyPorts:        []int32{8080},
+			AllocationIpv4:      routedAlloc.AllocationIPv4,
+			AllocationIpv6:      routedAlloc.AllocationIPv6,
+			HealthyIpv4Ports:    []int32{8080},
+			HealthyIpv6Ports:    []int32{8080},
 			Healthy:             true,
 		}},
 	})
@@ -288,8 +292,10 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 			AllocationId:        internalAlloc.ID,
 			AppliedSpecRevision: 1,
 			Phase:               "Running",
-			AllocationIp:        "10.0.0.11",
-			HealthyPorts:        []int32{8080},
+			AllocationIpv4:      internalAlloc.AllocationIPv4,
+			AllocationIpv6:      internalAlloc.AllocationIPv6,
+			HealthyIpv4Ports:    []int32{8080},
+			HealthyIpv6Ports:    []int32{8080},
 			Healthy:             true,
 		}},
 	})

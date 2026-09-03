@@ -12,6 +12,41 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
+// preDualStackSchema rewinds the current baseline to its pre-v10 shape. Upgrade
+// tests synthesize their starting database from currentSchema, so without this
+// they would start from a database that already has the dual-stack objects
+// migration 10 is supposed to add, and stop exercising the upgrade at all.
+func preDualStackSchema(stmts []string) []string {
+	rewound := make([]string, 0, len(stmts))
+	for _, stmt := range stmts {
+		if strings.Contains(stmt, "workload_ipv4_prefix_allocator") ||
+			strings.Contains(stmt, "idx_agents_workload_ipv4_subnet") ||
+			strings.Contains(stmt, "idx_allocations_ipv4") ||
+			strings.Contains(stmt, "idx_allocations_ipv6") {
+			continue
+		}
+		stmt = strings.ReplaceAll(stmt, "\n\t\t\tworkload_ipv4_subnet STRING NOT NULL DEFAULT '',", "")
+		stmt = strings.ReplaceAll(stmt, "\n\t\t\tallocation_ipv4 STRING NOT NULL DEFAULT '',", "")
+		stmt = strings.ReplaceAll(stmt, "\n\t\t\thealthy_ipv4_ports JSONB NOT NULL DEFAULT '[]',", "")
+		stmt = strings.ReplaceAll(stmt, "allocation_ipv6", "allocation_ip")
+		stmt = strings.ReplaceAll(stmt, "healthy_ipv6_ports", "healthy_ports")
+		rewound = append(rewound, stmt)
+	}
+	return rewound
+}
+
+// Pre-v10 shapes of the tables migration 10 rewrites. Partial fixtures must
+// declare them or the upgrade fails on a missing relation.
+const (
+	preDualStackAgentsTable = `CREATE TABLE agents (id STRING PRIMARY KEY)`
+
+	preDualStackAllocationsTable = `CREATE TABLE allocations (
+			id STRING PRIMARY KEY,
+			allocation_ip STRING NOT NULL DEFAULT '',
+			healthy_ports JSONB NOT NULL DEFAULT '[]'
+		)`
+)
+
 func TestSchemaVersionFourUpgradesDeploymentActionsToVersionFive(t *testing.T) {
 	ctx := context.Background()
 	dbURL := createTestDatabase(t)
@@ -19,7 +54,7 @@ func TestSchemaVersionFourUpgradesDeploymentActionsToVersionFive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, current := range currentSchema {
+	for _, current := range preDualStackSchema(currentSchema) {
 		if strings.Contains(current, "CREATE TABLE deployment_actions") ||
 			strings.Contains(current, "idx_deployment_actions_target") ||
 			strings.Contains(current, "sandbox_profile_audit") {
@@ -101,6 +136,7 @@ func TestSchemaVersionFiveUpgradesFleetToVersionSix(t *testing.T) {
 		)`,
 		`CREATE INDEX idx_agents_last_seen_id ON agents(last_seen_at DESC, id)
 			STORING (cpu_millis_capacity, memory_mebibytes_capacity)`,
+		preDualStackAllocationsTable,
 		`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
@@ -174,7 +210,7 @@ func TestSchemaVersionSixUpgradesIsolationThroughRailwayDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, current := range currentSchema {
+	for _, current := range preDualStackSchema(currentSchema) {
 		if strings.Contains(current, "sandbox_profile_audit") {
 			continue
 		}
@@ -278,6 +314,8 @@ func TestSchemaVersionSevenCutsPersistedProfilesOverToRailwayDefaults(t *testing
 			spec_revision INT8 NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
+		preDualStackAgentsTable,
+		preDualStackAllocationsTable,
 		`CREATE TABLE schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

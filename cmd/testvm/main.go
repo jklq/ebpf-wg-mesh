@@ -630,7 +630,7 @@ func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.Pla
 		EnvironmentId: environmentID,
 		Service: &platformv1.ServiceInput{
 			Name: "failover-web",
-			Spec: inMemoryHTTPServiceSpec(failoverMarker),
+			Spec: dualStackHTTPServiceSpec(failoverMarker),
 		},
 	})
 	if err != nil {
@@ -647,6 +647,15 @@ func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.Pla
 	failedHost, ok := hosts[failedAgentID]
 	if !ok {
 		return fmt.Errorf("no host metadata for failover agent %q", failedAgentID)
+	}
+	beforeEndpoints := allocationEndpoints(before.GetAllocation())
+	if len(beforeEndpoints) != 2 {
+		return fmt.Errorf("failover service did not become healthy on both families before node loss: %v", beforeEndpoints)
+	}
+	for _, endpoint := range beforeEndpoints {
+		if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, failedHost.PublicIPv4, before.GetAllocation().GetAllocationId(), endpoint, "/", failoverMarker); err != nil {
+			return fmt.Errorf("verify pre-failover service endpoint %s: %w", endpoint, err)
+		}
 	}
 	survivingAgentID := ""
 	for agentID := range hosts {
@@ -681,8 +690,14 @@ func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.Pla
 	if after.GetAllocation().GetAgentId() == failedAgentID {
 		return fmt.Errorf("service remained on failed agent %s", failedAgentID)
 	}
-	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, survivingHost.PublicIPv4, after.GetAllocation().GetAllocationId(), allocationEndpoint(after.GetAllocation()), "/", failoverMarker); err != nil {
-		return fmt.Errorf("verify failover service on surviving agent: %w", err)
+	afterEndpoints := allocationEndpoints(after.GetAllocation())
+	if len(afterEndpoints) != 2 {
+		return fmt.Errorf("failover service did not recover both families on surviving agent: %v", afterEndpoints)
+	}
+	for _, endpoint := range afterEndpoints {
+		if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, survivingHost.PublicIPv4, after.GetAllocation().GetAllocationId(), endpoint, "/", failoverMarker); err != nil {
+			return fmt.Errorf("verify post-failover service endpoint %s: %w", endpoint, err)
+		}
 	}
 	if err := waitForRemoteCommand(ctx, sshKeyPath, survivingHost.PublicIPv4, fmt.Sprintf("ctr --namespace default containers list | awk '{print $1}' | grep -Fx %q >/dev/null", managedContainerName(after.GetAllocation().GetAllocationId()))); err != nil {
 		return fmt.Errorf("verify failover container on %s: %w", survivingHost.Name, err)

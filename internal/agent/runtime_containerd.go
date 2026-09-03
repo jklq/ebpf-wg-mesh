@@ -42,7 +42,8 @@ type serviceEngine interface {
 type serviceStatus struct {
 	AppliedSpecRevision      int64
 	AppliedRolloutGeneration int64
-	AllocationIP             string
+	AllocationIPv4           string
+	AllocationIPv6           string
 	NetworkNamespacePath     string
 	Running                  bool
 	ExitCode                 int32
@@ -63,7 +64,8 @@ type ContainerdRuntime struct {
 
 type rolloutReadiness struct {
 	rolloutGeneration int64
-	healthyPorts      []int32
+	healthyIPv4Ports  []int32
+	healthyIPv6Ports  []int32
 }
 
 func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
@@ -198,6 +200,8 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		ServiceId:                svc.GetServiceId(),
 		DesiredSpecRevision:      svc.GetDesiredSpecRevision(),
 		DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		AllocationIpv4:           svc.GetPrivateIpv4(),
+		AllocationIpv6:           svc.GetPrivateIpv6(),
 		Phase:                    "Pending",
 	}
 	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
@@ -232,7 +236,8 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		}
 		cond.AppliedSpecRevision = svc.GetDesiredSpecRevision()
 		cond.AppliedRolloutGeneration = svc.GetDesiredRolloutGeneration()
-		cond.AllocationIp = svc.GetPrivateIpv6()
+		cond.AllocationIpv4 = svc.GetPrivateIpv4()
+		cond.AllocationIpv6 = svc.GetPrivateIpv6()
 		cond.Healthy = false
 		if drained {
 			cond.Phase = "Drained"
@@ -302,7 +307,8 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 	case restartpolicy.ActionCrashLoop, restartpolicy.ActionStop, restartpolicy.ActionWait:
 		cond.AppliedSpecRevision = status.AppliedSpecRevision
 		cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-		cond.AllocationIp = status.AllocationIP
+		cond.AllocationIpv4 = status.AllocationIPv4
+		cond.AllocationIpv6 = status.AllocationIPv6
 		cond.Healthy = false
 		cond.Phase = decision.Phase
 		cond.Message = decision.Message
@@ -340,11 +346,13 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *agentv1.ServiceCondition, svc *agentv1.DesiredService, status serviceStatus, created bool) *agentv1.ServiceCondition {
 	cond.AppliedSpecRevision = status.AppliedSpecRevision
 	cond.AppliedRolloutGeneration = status.AppliedRolloutGeneration
-	cond.AllocationIp = status.AllocationIP
+	cond.AllocationIpv4 = status.AllocationIPv4
+	cond.AllocationIpv6 = status.AllocationIPv6
 	check := explicitHTTPHealthCheck(svc)
 	if check == nil {
 		cond.Healthy = true
-		cond.HealthyPorts = readinessPorts(svc)
+		cond.HealthyIpv4Ports = readinessPorts(svc)
+		cond.HealthyIpv6Ports = readinessPorts(svc)
 		cond.Phase = "Healthy"
 		cond.Message = "process running; no health check configured"
 		return cond
@@ -354,7 +362,8 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 	}
 	if ready, ok := r.ready[svc.GetAllocationId()]; ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
 		cond.Healthy = true
-		cond.HealthyPorts = append([]int32(nil), ready.healthyPorts...)
+		cond.HealthyIpv4Ports = append([]int32(nil), ready.healthyIPv4Ports...)
+		cond.HealthyIpv6Ports = append([]int32(nil), ready.healthyIPv6Ports...)
 		cond.Phase = "Healthy"
 		cond.Message = "HTTP readiness check passed"
 		return cond
@@ -363,23 +372,26 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 	if probeHealth == nil {
 		probeHealth = probeServiceHealthInNamespace
 	}
-	probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIP, svc)
-	if probe.healthy {
+	ipv4Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv4, svc)
+	ipv6Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv6, svc)
+	if ipv4Probe.healthy || ipv6Probe.healthy {
 		ports := readinessPorts(svc)
 		if r.ready == nil {
 			r.ready = make(map[string]rolloutReadiness)
 		}
 		r.ready[svc.GetAllocationId()] = rolloutReadiness{
 			rolloutGeneration: svc.GetDesiredRolloutGeneration(),
-			healthyPorts:      append([]int32(nil), ports...),
+			healthyIPv4Ports:  healthyFamilyPorts(ipv4Probe.healthy, ports),
+			healthyIPv6Ports:  healthyFamilyPorts(ipv6Probe.healthy, ports),
 		}
 		cond.Healthy = true
-		cond.HealthyPorts = ports
+		cond.HealthyIpv4Ports = healthyFamilyPorts(ipv4Probe.healthy, ports)
+		cond.HealthyIpv6Ports = healthyFamilyPorts(ipv6Probe.healthy, ports)
 		cond.Phase = "Healthy"
-		cond.Message = "HTTP readiness check passed"
+		cond.Message = "HTTP readiness check passed over " + healthyFamilyLabel(ipv4Probe.healthy, ipv6Probe.healthy)
 	} else {
 		cond.Phase = "Starting"
-		cond.Message = "HTTP readiness check not ready: " + probe.failureReason
+		cond.Message = fmt.Sprintf("HTTP readiness check not ready: IPv4: %s; IPv6: %s", ipv4Probe.failureReason, ipv6Probe.failureReason)
 	}
 	return cond
 }
@@ -400,15 +412,31 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 		probeHealth = probeServiceHealthInNamespace
 	}
 	livenessSvc := protoCloneDesiredWithHealth(svc, check)
-	probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIP, livenessSvc)
-	if probe.healthy {
+	ipv4Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv4, livenessSvc)
+	ipv6Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv6, livenessSvc)
+	if ipv4Probe.healthy || ipv6Probe.healthy {
 		return "", false
 	}
-	reason := probe.failureReason
-	if reason == "" {
-		reason = "liveness check failed"
-	}
+	reason := fmt.Sprintf("IPv4: %s; IPv6: %s", ipv4Probe.failureReason, ipv6Probe.failureReason)
 	return reason, true
+}
+
+func healthyFamilyPorts(healthy bool, ports []int32) []int32 {
+	if !healthy {
+		return nil
+	}
+	return append([]int32(nil), ports...)
+}
+
+func healthyFamilyLabel(ipv4, ipv6 bool) string {
+	switch {
+	case ipv4 && ipv6:
+		return "IPv4 and IPv6"
+	case ipv4:
+		return "IPv4"
+	default:
+		return "IPv6"
+	}
 }
 
 func protoCloneDesiredWithHealth(svc *agentv1.DesiredService, check *platformv1.HealthCheck) *agentv1.DesiredService {

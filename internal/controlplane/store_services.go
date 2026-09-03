@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -536,17 +537,18 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 	if err != nil {
 		return err
 	}
+	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations
+			fmt.Sprintf(`UPDATE allocations
 			    SET healthy = TRUE,
-			        allocation_ip = $1,
-			        healthy_ports = $2,
+			        %s = $1,
+			        %s = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
 			        rollout_state = $5,
 			        updated_at = $3
-			  WHERE service_id = $4`,
+			  WHERE service_id = $4`, addressColumn, portsColumn),
 			allocationIP, encodedPorts, time.Now().UTC(), serviceID, allocationRolloutServing,
 		); err != nil {
 			return err
@@ -580,20 +582,21 @@ func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID
 	if err != nil {
 		return err
 	}
+	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		var serviceID string
 		var desiredRollout int64
 		if err := tx.QueryRowContext(ctx,
-			`UPDATE allocations
+			fmt.Sprintf(`UPDATE allocations
 			    SET healthy = TRUE,
-			        allocation_ip = $1,
-			        healthy_ports = $2,
+			        %s = $1,
+			        %s = $2,
 			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
 			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
 			        rollout_state = $5,
 			        updated_at = $3
 			  WHERE id = $4
-			  RETURNING service_id, desired_rollout_generation`,
+			  RETURNING service_id, desired_rollout_generation`, addressColumn, portsColumn),
 			allocationIP, encodedPorts, time.Now().UTC(), allocationID, allocationRolloutServing,
 		).Scan(&serviceID, &desiredRollout); err != nil {
 			return err
@@ -611,6 +614,13 @@ func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID
 		})
 		return err
 	})
+}
+
+func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColumn string) {
+	if addr, err := netip.ParseAddr(strings.TrimSpace(allocationIP)); err == nil && addr.Is4() {
+		return "allocation_ipv4", "healthy_ipv4_ports"
+	}
+	return "allocation_ipv6", "healthy_ipv6_ports"
 }
 
 func (s *Store) countServiceRevisionsForTest(ctx context.Context, serviceID string) (int, error) {

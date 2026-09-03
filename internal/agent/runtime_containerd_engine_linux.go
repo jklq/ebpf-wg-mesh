@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -147,6 +148,12 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	if svc.GetNetworkIdentity() == 0 {
 		return serviceStatus{}, false, fmt.Errorf("service %s missing network identity", svc.GetServiceId())
 	}
+	if ipv4, err := netip.ParseAddr(svc.GetPrivateIpv4()); err != nil || !ipv4.Is4() {
+		return serviceStatus{}, false, fmt.Errorf("service %s has invalid private IPv4 %q", svc.GetServiceId(), svc.GetPrivateIpv4())
+	}
+	if ipv6, err := netip.ParseAddr(svc.GetPrivateIpv6()); err != nil || !ipv6.Is6() {
+		return serviceStatus{}, false, fmt.Errorf("service %s has invalid private IPv6 %q", svc.GetServiceId(), svc.GetPrivateIpv6())
+	}
 	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
 		return serviceStatus{}, false, err
 	}
@@ -176,7 +183,8 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 			return serviceStatus{
 				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 				AppliedRolloutGeneration: rec.rolloutGeneration,
-				AllocationIP:             allocationIPForService(svc),
+				AllocationIPv4:           svc.GetPrivateIpv4(),
+				AllocationIPv6:           svc.GetPrivateIpv6(),
 				NetworkNamespacePath:     netnsPath,
 				Running:                  rec.running,
 				ExitCode:                 rec.exitCode,
@@ -243,7 +251,8 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	return serviceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-		AllocationIP:             allocationIPForService(svc),
+		AllocationIPv4:           svc.GetPrivateIpv4(),
+		AllocationIPv6:           svc.GetPrivateIpv6(),
 		NetworkNamespacePath:     netnsPath,
 		Running:                  true,
 	}, true, nil

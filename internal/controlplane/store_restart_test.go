@@ -56,11 +56,13 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             alloc.ID,
 			ServiceId:                service.ID,
+			AllocationIpv4:           alloc.AllocationIPv4,
+			AllocationIpv6:           alloc.AllocationIPv6,
 			AppliedSpecRevision:      1,
 			AppliedRolloutGeneration: 1,
 			Phase:                    restartpolicy.PhaseCrashLoop,
 			Message:                  "crash loop after non-zero exit",
-			HealthyPorts:             []int32{8080},
+			HealthyIpv6Ports:         []int32{8080},
 			Healthy:                  false,
 			Restart: &platformv1.RestartObservation{
 				RestartCount:             1,
@@ -167,6 +169,7 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: serving[0].ID, ServiceId: service.ID,
+			AllocationIpv4: serving[0].AllocationIPv4, AllocationIpv6: serving[0].AllocationIPv6,
 			Phase: restartpolicy.PhaseCrashLoop, Message: "crash loop",
 			Restart: &platformv1.RestartObservation{CrashLoop: true, RestartCount: 3, AppliedRolloutGeneration: serving[0].DesiredRolloutGeneration},
 		}},
@@ -214,6 +217,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: alloc.ID, ServiceId: service.ID,
+			AllocationIpv4: alloc.AllocationIPv4, AllocationIpv6: alloc.AllocationIPv6,
 			AppliedSpecRevision: 1, AppliedRolloutGeneration: 1,
 			Phase: restartpolicy.PhaseCrashLoop,
 			Restart: &platformv1.RestartObservation{

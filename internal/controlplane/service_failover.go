@@ -20,11 +20,11 @@ type serviceFailoverResult struct {
 }
 
 type allocationFailoverState struct {
-	phase        string
-	message      string
-	allocationIP string
-	healthyPorts jsonInt32Slice
-	healthy      bool
+	phase            string
+	message          string
+	healthyIPv4Ports jsonInt32Slice
+	healthyIPv6Ports jsonInt32Slice
+	healthy          bool
 }
 
 func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, unhealthyThreshold time.Duration) (serviceFailoverResult, error) {
@@ -176,7 +176,8 @@ func finishLostDrainingAllocationTx(ctx context.Context, tx *sql.Tx, allocationI
 		    SET phase = 'Drained',
 		        message = $1,
 		        healthy = FALSE,
-		        healthy_ports = $2,
+		        healthy_ipv4_ports = $2,
+		        healthy_ipv6_ports = $2,
 		        updated_at = $3
 		  WHERE id = $4`,
 		message, []byte("[]"), now, allocationID,
@@ -213,12 +214,12 @@ func listAllocationsForFailover(ctx context.Context, q serviceQueryer, agentID s
 }
 
 func markAllocationUnavailableForFailover(ctx context.Context, q serviceQueryer, allocationID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
-	if current.phase == allocationPhaseUnavailable && current.message == message && current.allocationIP == "" && len(current.healthyPorts) == 0 && !current.healthy {
+	if current.phase == allocationPhaseUnavailable && current.message == message && len(current.healthyIPv4Ports) == 0 && len(current.healthyIPv6Ports) == 0 && !current.healthy {
 		return false, nil
 	}
 	_, err := q.ExecContext(ctx,
 		`UPDATE allocations
-		    SET phase = $1, message = $2, allocation_ip = '', healthy_ports = $3, healthy = FALSE, updated_at = $4
+		    SET phase = $1, message = $2, healthy_ipv4_ports = $3, healthy_ipv6_ports = $3, healthy = FALSE, updated_at = $4
 		  WHERE id = $5`,
 		allocationPhaseUnavailable, message, []byte("[]"), now, allocationID,
 	)
