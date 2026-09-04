@@ -59,9 +59,9 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatalf("seedReadySourceState: %v", err)
 	}
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
@@ -126,9 +126,9 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatalf("seedReadySourceState: %v", err)
 	}
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
@@ -186,9 +186,9 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatalf("seedReadySourceState: %v", err)
 	}
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
@@ -278,9 +278,9 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatalf("seedReadySourceState: %v", err)
 	}
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 

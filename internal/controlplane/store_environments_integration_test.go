@@ -53,7 +53,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatalf("viewer could not read project environments: %#v: %v", environments, err)
 	}
 
-	otherProject, err := store.createProject(ctx, "other", "other")
+	_, err = store.createProject(ctx, "other", "other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,15 +67,15 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("list staging services: %#v: %v", services, err)
 	}
-	updated, _, err := store.updateService(ctx, "editor", "", services[0].ID, "web-editor", services[0].Spec)
+	updated, _, err := store.updateService(ctx, "editor", services[0].ID, "web-editor", services[0].Spec)
 	if err != nil || updated.Name != "web-editor" {
 		t.Fatalf("editor could not mutate environment service: %#v: %v", updated, err)
 	}
 	services[0] = updated
-	if _, err := store.serviceByID(ctx, "other", otherProject.ID, services[0].ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.serviceByID(ctx, "other", services[0].ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("service ID bypassed ancestry authorization: %v", err)
 	}
-	if _, _, err := store.updateService(ctx, "viewer", "", services[0].ID, "web-viewer", services[0].Spec); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := store.updateService(ctx, "viewer", services[0].ID, "web-viewer", services[0].Spec); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("viewer mutated a service: %v", err)
 	}
 }
@@ -105,7 +105,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "owner", project.ID, "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "owner", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -152,7 +152,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	}
 }
 
-func TestEnvironmentDeployAndDeleteAreScoped(t *testing.T) {
+func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -183,20 +183,20 @@ func TestEnvironmentDeployAndDeleteAreScoped(t *testing.T) {
 	}
 	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
 	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
-	deployed, notifiedAgentIDs, err := store.deployEnvironment(ctx, "owner", staging.ID)
+	deployed, notifiedAgentIDs, err := store.releaseEnvironment(ctx, "owner", staging.ID)
 	if err != nil || len(deployed) != 1 || deployed[0].ID != stagingService.ID {
-		t.Fatalf("deploy staging: %#v: %v", deployed, err)
+		t.Fatalf("release staging: %#v: %v", deployed, err)
 	}
 	if !slices.Equal(notifiedAgentIDs, []string{"node-1", "node-2"}) {
 		t.Fatalf("new allocation notified agents %v, want both cluster nodes", notifiedAgentIDs)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
-		t.Fatalf("node-1 revision after deploy = %d, want %d", got, node1Before+1)
+		t.Fatalf("node-1 revision after release = %d, want %d", got, node1Before+1)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
-		t.Fatalf("node-2 revision after deploy = %d, want %d", got, node2Before+1)
+		t.Fatalf("node-2 revision after release = %d, want %d", got, node2Before+1)
 	}
-	productionService, err = store.serviceByID(ctx, "owner", "", productionService.ID)
+	productionService, err = store.serviceByID(ctx, "owner", productionService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

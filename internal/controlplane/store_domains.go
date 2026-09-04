@@ -7,31 +7,31 @@ import (
 	"time"
 )
 
-func (s *Store) createDomainBinding(ctx context.Context, userID, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
-	return s.putDomainBinding(ctx, userID, projectID, hostname, serviceID, targetPort, false, true)
+func (s *Store) createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, false, true)
 }
 
-func (s *Store) createPlatformDomainBinding(ctx context.Context, userID, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
-	if existing, err := s.platformDomainBindingForService(ctx, userID, projectID, serviceID); err == nil {
-		return s.putDomainBinding(ctx, userID, projectID, existing.Hostname, serviceID, targetPort, true, false)
+func (s *Store) createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+	if existing, err := s.platformDomainBindingForService(ctx, userID, serviceID); err == nil {
+		return s.putDomainBinding(ctx, userID, existing.Hostname, serviceID, targetPort, true, false)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return domainBindingRecord{}, false, err
 	}
-	return s.putDomainBinding(ctx, userID, projectID, hostname, serviceID, targetPort, true, true)
+	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, true, true)
 }
 
-func (s *Store) updateDomainBinding(ctx context.Context, userID, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
-	return s.putDomainBinding(ctx, userID, projectID, hostname, serviceID, targetPort, false, false)
+func (s *Store) updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, false, false)
 }
 
-func (s *Store) putDomainBinding(ctx context.Context, userID, projectID, hostname, serviceID string, targetPort int32, platformGenerated, createOnly bool) (domainBindingRecord, bool, error) {
+func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32, platformGenerated, createOnly bool) (domainBindingRecord, bool, error) {
 	if err := validatePort(targetPort); err != nil {
 		return domainBindingRecord{}, false, err
 	}
 	var binding domainBindingRecord
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
@@ -127,7 +127,7 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, projectID, hostnam
 	return binding, changed, nil
 }
 
-func (s *Store) domainBindingByHostname(ctx context.Context, userID, projectID, hostname string) (domainBindingRecord, error) {
+func (s *Store) domainBindingByHostname(ctx context.Context, userID, hostname string) (domainBindingRecord, error) {
 	var binding domainBindingRecord
 	err := s.db.QueryRowContext(ctx,
 		`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port,
@@ -144,8 +144,8 @@ func (s *Store) domainBindingByHostname(ctx context.Context, userID, projectID, 
 	return binding, nil
 }
 
-func (s *Store) listDomainBindings(ctx context.Context, userID, projectID, serviceID string) ([]domainBindingRecord, error) {
-	service, err := s.serviceByID(ctx, userID, projectID, serviceID)
+func (s *Store) listDomainBindings(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
+	service, err := s.serviceByID(ctx, userID, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,8 +169,8 @@ func (s *Store) listDomainBindings(ctx context.Context, userID, projectID, servi
 	return out, rows.Err()
 }
 
-func (s *Store) platformDomainBindingForService(ctx context.Context, userID, projectID, serviceID string) (domainBindingRecord, error) {
-	service, err := s.serviceByID(ctx, userID, projectID, serviceID)
+func (s *Store) platformDomainBindingForService(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
+	service, err := s.serviceByID(ctx, userID, serviceID)
 	if err != nil {
 		return domainBindingRecord{}, err
 	}
@@ -186,10 +186,10 @@ func (s *Store) platformDomainBindingForService(ctx context.Context, userID, pro
 	return binding, err
 }
 
-func (s *Store) deleteDomainBinding(ctx context.Context, userID, projectID, hostname string) (bool, error) {
+func (s *Store) deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error) {
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		binding, err := s.domainBindingByHostname(ctx, userID, projectID, hostname)
+		binding, err := s.domainBindingByHostname(ctx, userID, hostname)
 		if err != nil {
 			return err
 		}
@@ -232,8 +232,8 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, projectID, host
 	return changed, nil
 }
 
-func (s *Store) serviceStatus(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, []allocationRecord, error) {
-	service, err := s.serviceByID(ctx, userID, projectID, serviceID)
+func (s *Store) serviceStatus(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error) {
+	service, err := s.serviceByID(ctx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}

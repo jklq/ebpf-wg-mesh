@@ -13,7 +13,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-func TestDirectImageRedeployUpdatesDesiredImage(t *testing.T) {
+func TestDirectImageEnvironmentReleaseUpdatesDesiredImage(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -34,25 +34,25 @@ func TestDirectImageRedeployUpdatesDesiredImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "", directImageServiceSpec("example.test/web:b", nil)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", directImageServiceSpec("example.test/web:b", nil)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	before, err := store.desiredStateForAgent(ctx, "node-1")
 	if err != nil {
-		t.Fatalf("desiredStateForAgent before redeploy: %v", err)
+		t.Fatalf("desiredStateForAgent before environment release: %v", err)
 	}
 	if got := before.GetServices()[0].GetSpec().GetImage(); got != "example.test/web:a" {
-		t.Fatalf("draft image leaked before redeploy: got %q", got)
+		t.Fatalf("draft image leaked before environment release: got %q", got)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	after, err := store.desiredStateForAgent(ctx, "node-1")
 	if err != nil {
-		t.Fatalf("desiredStateForAgent after redeploy: %v", err)
+		t.Fatalf("desiredStateForAgent after environment release: %v", err)
 	}
 	if got := after.GetServices()[0].GetSpec().GetImage(); got != "example.test/web:b" {
-		t.Fatalf("redeploy kept stale image: got %q", got)
+		t.Fatalf("environment release kept stale image: got %q", got)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 	node1AfterService := mustDesiredRevision(t, store, ctx, "node-1")
 
-	if err := store.deleteService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
+	if err := store.deleteService(ctx, "user-1", service.ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	node1AfterDeleteService := mustDesiredRevision(t, store, ctx, "node-1")
@@ -100,7 +100,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatalf("expected desired state revision %d, got %d", node1AfterDeleteService, got)
 	}
 
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID, 8080); err == nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err == nil {
 		t.Fatal("expected createDomainBinding for deleted service to fail")
 	}
 
@@ -114,7 +114,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 	node1BeforeDomains := mustDesiredRevision(t, store, ctx, "node-1")
 
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDomains+1 {
@@ -129,7 +129,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(third): %v", err)
 	}
-	if _, _, err := store.updateDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", otherService.ID, 8080); err != nil {
+	if _, _, err := store.updateDomainBinding(ctx, "user-1", "web.example.com", otherService.ID, 8080); err != nil {
 		t.Fatalf("updateDomainBinding: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDomains+3 {
@@ -137,7 +137,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 
 	node1BeforeDeleteDomain := mustDesiredRevision(t, store, ctx, "node-1")
-	if _, err := store.deleteDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com"); err != nil {
+	if _, err := store.deleteDomainBinding(ctx, "user-1", "web.example.com"); err != nil {
 		t.Fatalf("deleteDomainBinding: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDeleteDomain+1 {
@@ -201,7 +201,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(routed): %v", err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", routedService.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", routedService.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	internalService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "worker", serviceSpec(), "node-1")
@@ -390,7 +390,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 
 func mustPrimaryAllocation(t *testing.T, store *Store, ctx context.Context, userID, projectID, serviceID string) allocationRecord {
 	t.Helper()
-	_, allocations, err := store.serviceStatus(ctx, userID, projectID, serviceID)
+	_, allocations, err := store.serviceStatus(ctx, userID, serviceID)
 	if err != nil {
 		t.Fatalf("serviceStatus(%s): %v", serviceID, err)
 	}

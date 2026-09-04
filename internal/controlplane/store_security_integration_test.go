@@ -55,18 +55,18 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	if err != nil {
 		t.Fatalf("createScheduledService: %v", err)
 	}
-	deployed, _, err := store.deployEnvironment(ctx, "user-1", environmentsOne[0].ID)
+	deployed, _, err := store.releaseEnvironment(ctx, "user-1", environmentsOne[0].ID)
 	if err != nil || len(deployed) != 1 {
-		t.Fatalf("deployEnvironment: %#v: %v", deployed, err)
+		t.Fatalf("releaseEnvironment: %#v: %v", deployed, err)
 	}
 	service = deployed[0]
 	stagingService, err := store.createScheduledService(ctx, "user-1", staging.ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
 	if err != nil {
 		t.Fatalf("create staging service: %v", err)
 	}
-	stagingDeployed, _, err := store.deployEnvironment(ctx, "user-1", staging.ID)
+	stagingDeployed, _, err := store.releaseEnvironment(ctx, "user-1", staging.ID)
 	if err != nil || len(stagingDeployed) != 1 {
-		t.Fatalf("deploy staging environment: %#v: %v", stagingDeployed, err)
+		t.Fatalf("release staging environment: %#v: %v", stagingDeployed, err)
 	}
 	stagingService = stagingDeployed[0]
 	for label, item := range map[string]serviceRecord{"production": service, "staging": stagingService} {

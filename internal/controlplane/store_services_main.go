@@ -125,7 +125,7 @@ func (s *Store) listVolumes(ctx context.Context, userID, environmentID string) (
 	return out, rows.Err()
 }
 
-func (s *Store) deleteVolume(ctx context.Context, userID, _ string, volumeID string) error {
+func (s *Store) deleteVolume(ctx context.Context, userID, volumeID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		var (
 			volumeName    string
@@ -213,26 +213,26 @@ func (s *Store) createScheduledService(ctx context.Context, userID, environmentI
 	return rec, nil
 }
 
-func (s *Store) updateService(ctx context.Context, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+func (s *Store) updateService(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 	var current serviceRecord
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		current, changed, _, err = s.updateServiceTx(ctx, tx, userID, projectID, serviceID, name, spec)
+		current, changed, _, err = s.updateServiceTx(ctx, tx, userID, serviceID, name, spec)
 		return err
 	})
 	if err != nil {
 		return serviceRecord{}, false, err
 	}
-	current, err = s.serviceByID(ctx, userID, projectID, serviceID)
+	current, err = s.serviceByID(ctx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, false, err
 	}
 	return current, changed, nil
 }
 
-func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, bool, error) {
-	current, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, bool, error) {
+	current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, false, false, err
 	}
@@ -342,85 +342,8 @@ func (s *Store) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, project
 	return nextRecord, true, sourceChanged, nil
 }
 
-func (s *Store) redeployService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
-	var (
-		current                serviceRecord
-		identityCatalogChanged bool
-	)
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		current, identityCatalogChanged, err = s.redeployServiceTx(ctx, tx, userID, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-		if identityCatalogChanged {
-			return s.bumpAllDesiredRevisionsTx(ctx, tx)
-		}
-		return s.bumpDesiredRevisionsTx(ctx, tx, []string{current.AllocatedAgentID})
-	})
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	return current, nil
-}
-
-func (s *Store) restartService(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
-	var current serviceRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		current, err = s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
-			return err
-		}
-		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, true)
-		if err != nil {
-			return err
-		}
-		live, _ := splitLostAllocations(existing)
-		if len(live) == 0 {
-			return fmt.Errorf("service %s has no allocation to restart", serviceID)
-		}
-		target, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errDeploymentStale
-		}
-		_, err = s.restartDeploymentTx(ctx, tx, current, target, "", userID)
-		return err
-	})
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	return s.serviceByID(ctx, userID, projectID, serviceID)
-}
-
-func (s *Store) requestServiceSourceSync(ctx context.Context, userID, projectID, serviceID string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-		if desiredSourceSpec(service.Spec) == nil {
-			return errServiceNotBuildable
-		}
-		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
-		if err != nil {
-			return err
-		}
-		if _, err := s.prepareReplacementRolloutTx(ctx, tx, service, existing, time.Now().UTC()); err != nil {
-			return err
-		}
-		return s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, service.SpecRevision, true)
-	})
-}
-
-func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, projectID, serviceID string) (serviceRecord, bool, error) {
-	current, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+func (s *Store) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, userID, serviceID string) (serviceRecord, bool, error) {
+	current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, false, err
 	}
@@ -475,16 +398,16 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 	if affected == 0 {
 		return serviceRecord{}, false, errConcurrentUpdate
 	}
-	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "redeploy", "", userID, now); err != nil {
+	if err := s.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "environment_release", "", userID, now); err != nil {
 		return serviceRecord{}, false, err
 	}
-	redeployState := deploymentStateScheduling
-	redeployDetail := "Redeploy scheduled"
+	releaseState := deploymentStateScheduling
+	releaseDetail := "Environment release scheduled"
 	if desiredSourceSpec(current.Spec) != nil && resolvedImage == "" {
-		redeployState = deploymentStateStaged
-		redeployDetail = "Redeploy staged; waiting for source build"
+		releaseState = deploymentStateStaged
+		releaseDetail = "Environment release waiting for source build"
 	}
-	dep, err := s.insertDeploymentTx(ctx, tx, serviceID, redeployState, deploymentActor{Kind: deploymentCauseUser, ID: userID}, reasonUserRedeploy, redeployDetail, current.SpecRevision, nextRolloutGeneration, "", resolvedImage, userID, now)
+	dep, err := s.insertDeploymentTx(ctx, tx, serviceID, releaseState, deploymentActor{Kind: deploymentCauseUser, ID: userID}, reasonEnvironmentRelease, releaseDetail, current.SpecRevision, nextRolloutGeneration, "", resolvedImage, userID, now)
 	if err != nil {
 		return serviceRecord{}, false, err
 	}
@@ -503,9 +426,9 @@ func (s *Store) redeployServiceTx(ctx context.Context, tx *sql.Tx, userID, proje
 	return current, identityCatalogChanged, nil
 }
 
-func (s *Store) deleteService(ctx context.Context, userID, projectID, serviceID string) error {
+func (s *Store) deleteService(ctx context.Context, userID, serviceID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
@@ -585,11 +508,11 @@ func (s *Store) listServices(ctx context.Context, userID, environmentID string) 
 	return out, nil
 }
 
-func (s *Store) serviceByID(ctx context.Context, userID, projectID, serviceID string) (serviceRecord, error) {
-	return s.serviceByIDQuerier(ctx, s.db, userID, projectID, serviceID)
+func (s *Store) serviceByID(ctx context.Context, userID, serviceID string) (serviceRecord, error) {
+	return s.serviceByIDQuerier(ctx, s.db, userID, serviceID)
 }
 
-func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, userID, _ string, serviceID string) (serviceRecord, error) {
+func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, userID, serviceID string) (serviceRecord, error) {
 	row := q.QueryRowContext(ctx,
 		serviceSelectSQL+`
 		   JOIN project_memberships m ON m.project_id = e.project_id

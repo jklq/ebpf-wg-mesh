@@ -18,6 +18,15 @@ func TestDeploymentStagesOmitsInitializationForBuildDrivenSourceDeployments(t *t
 		CreatedAt:         now.Add(-10 * time.Minute),
 		RolloutGeneration: 2,
 		Spec:              repositoryServiceSpec(nil, nil),
+		LatestDeployment: &deploymentRecord{
+			ID:                "dep-1",
+			ServiceID:         "service-1",
+			BuildID:           "build-1",
+			RolloutGeneration: 3,
+			State:             deploymentStateBuilding,
+			CreatedAt:         now.Add(-2 * time.Minute),
+			UpdatedAt:         now,
+		},
 	}
 	build := &buildRunRecord{
 		ID:                      "build-1",
@@ -25,15 +34,8 @@ func TestDeploymentStagesOmitsInitializationForBuildDrivenSourceDeployments(t *t
 		QueuedAt:                now.Add(-2 * time.Minute),
 		TargetRolloutGeneration: 3,
 	}
-	alloc := allocationRecord{
-		ID:                       "alloc-1",
-		AgentID:                  "node-1",
-		DesiredRolloutGeneration: 3,
-		AppliedRolloutGeneration: 2,
-		UpdatedAt:                now,
-	}
 
-	stages := deploymentStages(service, build, alloc)
+	stages := deploymentStages(service, build)
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
 	}
@@ -62,16 +64,17 @@ func TestDeploymentStagesKeepsInitializationForDirectImageDeployments(t *testing
 		AllocatedAgentID: "node-1",
 		CreatedAt:        now.Add(-10 * time.Minute),
 		Spec:             directImageServiceSpec("nginx:1.27", nil),
-	}
-	alloc := allocationRecord{
-		ID:                       "alloc-1",
-		AgentID:                  "node-1",
-		DesiredRolloutGeneration: 1,
-		AppliedRolloutGeneration: 0,
-		UpdatedAt:                now,
+		LatestDeployment: &deploymentRecord{
+			ID:                "dep-1",
+			ServiceID:         "service-1",
+			RolloutGeneration: 1,
+			State:             deploymentStateScheduling,
+			CreatedAt:         now.Add(-10 * time.Minute),
+			UpdatedAt:         now,
+		},
 	}
 
-	stages := deploymentStages(service, nil, alloc)
+	stages := deploymentStages(service, nil)
 	if len(stages) != 4 {
 		t.Fatalf("expected 4 stages, got %d", len(stages))
 	}
@@ -90,6 +93,15 @@ func TestDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testing.T) {
 		CreatedAt:         now.Add(-10 * time.Minute),
 		RolloutGeneration: 2,
 		Spec:              repositoryServiceSpec(nil, nil),
+		LatestDeployment: &deploymentRecord{
+			ID:                "dep-1",
+			ServiceID:         "service-1",
+			BuildID:           "build-1",
+			RolloutGeneration: 3,
+			State:             deploymentStateReadiness,
+			CreatedAt:         now.Add(-2 * time.Minute),
+			UpdatedAt:         now,
+		},
 	}
 	build := &buildRunRecord{
 		ID:                      "build-1",
@@ -98,16 +110,8 @@ func TestDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testing.T) {
 		FinishedAt:              sql.NullTime{Time: now.Add(-30 * time.Second), Valid: true},
 		TargetRolloutGeneration: 3,
 	}
-	alloc := allocationRecord{
-		ID:                       "alloc-1",
-		AgentID:                  "node-1",
-		DesiredRolloutGeneration: 3,
-		AppliedRolloutGeneration: 3,
-		Phase:                    "Pending",
-		UpdatedAt:                now,
-	}
 
-	stages := deploymentStages(service, build, alloc)
+	stages := deploymentStages(service, build)
 	deploy := stages[1]
 	if deploy.GetKey() != StageDeploy {
 		t.Fatalf("expected second stage to be deploy, got %q", deploy.GetKey())
@@ -132,15 +136,16 @@ func TestDeploymentStagesSurfacesFailedHealthProbe(t *testing.T) {
 		AllocatedAgentID: "node-1",
 		CreatedAt:        now,
 		Spec:             directImageServiceSpec("nginx:1.27", nil),
-	}, nil, allocationRecord{
-		ID:                       "alloc-1",
-		AgentID:                  "node-1",
-		DesiredRolloutGeneration: 1,
-		AppliedRolloutGeneration: 1,
-		Phase:                    "Unhealthy",
-		Message:                  "health probe failed: HTTP port 8080: status 503",
-		UpdatedAt:                now,
-	})
+		LatestDeployment: &deploymentRecord{
+			ID:                "dep-1",
+			ServiceID:         "service-1",
+			RolloutGeneration: 1,
+			State:             deploymentStateFailed,
+			Detail:            "health probe failed: HTTP port 8080: status 503",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	}, nil)
 	if got := stages[2]; got.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED || got.GetDetail() != "health probe failed: HTTP port 8080: status 503" {
 		t.Fatalf("deploy stage did not surface probe failure: %+v", got)
 	}

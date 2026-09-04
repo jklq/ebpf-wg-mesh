@@ -419,10 +419,10 @@ func (s *Store) loadDeployedServiceSpecQuerier(ctx context.Context, q serviceQue
 	return canonicalServiceSpec(spec), nil
 }
 
-func (s *Store) discardServiceChanges(ctx context.Context, userID, projectID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
+func (s *Store) discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
 	var rec serviceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+		current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
@@ -495,7 +495,7 @@ func (s *Store) discardServiceChanges(ctx context.Context, userID, projectID, se
 	if err != nil {
 		return serviceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}
-	rec, err = s.serviceByID(ctx, userID, projectID, serviceID)
+	rec, err = s.serviceByID(ctx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}

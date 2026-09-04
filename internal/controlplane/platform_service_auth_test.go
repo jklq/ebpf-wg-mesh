@@ -45,7 +45,7 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 
 	t.Run("viewer", func(t *testing.T) {
 		service := NewPlatformService(&fakePlatformStore{
-			serviceByIDFn: func(context.Context, string, string, string) (serviceRecord, error) {
+			serviceByIDFn: func(context.Context, string, string) (serviceRecord, error) {
 				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil
 			},
 			authorizeProjectWriteFn: func(context.Context, string, string) error {
@@ -66,13 +66,13 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 
 	t.Run("stale", func(t *testing.T) {
 		service := NewPlatformService(&fakePlatformStore{
-			serviceByIDFn: func(context.Context, string, string, string) (serviceRecord, error) {
+			serviceByIDFn: func(context.Context, string, string) (serviceRecord, error) {
 				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil
 			},
 			applyDeploymentActionFn: func(context.Context, string, string, string, platformv1.DeploymentAction, string, string) (serviceRecord, deploymentActionRecord, error) {
 				return serviceRecord{}, deploymentActionRecord{}, errDeploymentStale
 			},
-			serviceStatusFn: func(context.Context, string, string, string) (serviceRecord, []allocationRecord, error) {
+			serviceStatusFn: func(context.Context, string, string) (serviceRecord, []allocationRecord, error) {
 				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil, nil
 			},
 		}, noopNotifier{}, noopIngress{})
@@ -169,7 +169,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 
 	store := &fakePlatformStore{
-		updateServiceFn: func(ctx context.Context, userID, projectID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+		updateServiceFn: func(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{}, false, errConcurrentUpdate
 		},
 	}

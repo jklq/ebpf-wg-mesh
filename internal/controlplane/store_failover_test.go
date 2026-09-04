@@ -51,7 +51,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	if len(environmentsChanged) != 1 || environmentsChanged[0] != environmentID {
 		t.Fatalf("changed environments = %v, want %s", environmentsChanged, environmentID)
 	}
-	got, err := store.serviceByID(ctx, "user-1", environmentID, service.ID)
+	got, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

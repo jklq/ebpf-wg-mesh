@@ -87,7 +87,7 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	queued, allocations, err := store.scaleService(ctx, "user-1", "", service.ID, 4)
+	queued, allocations, err := store.scaleService(ctx, "user-1", service.ID, 4)
 	if err != nil {
 		t.Fatalf("scaleService: %v", err)
 	}
@@ -100,10 +100,10 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	if len(allocations) != 1 {
 		t.Fatalf("expected live allocations to stay at 1 until deploy, got %d", len(allocations))
 	}
-	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
-		t.Fatalf("deployEnvironment: %v", err)
+	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	scaled, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	scaled, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(volume): %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", volumeService.ID, 2); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := store.scaleService(ctx, "user-1", volumeService.ID, 2); !errors.Is(err, errVolumeReplicaUnsupported) {
 		t.Fatalf("scale volume service to 2: got %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	volumeSpec.Runtime.CpuMillis = replicaService.Spec.GetRuntime().GetCpuMillis()
 	volumeSpec.Runtime.MemoryMebibytes = replicaService.Spec.GetRuntime().GetMemoryMebibytes()
 	volumeSpec.Runtime.Ports = replicaService.Spec.GetRuntime().GetPorts()
-	if _, _, err := store.updateService(ctx, "user-1", "", replicaService.ID, replicaService.Name, volumeSpec); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := store.updateService(ctx, "user-1", replicaService.ID, replicaService.Name, volumeSpec); !errors.Is(err, errVolumeReplicaUnsupported) {
 		t.Fatalf("attach volume to replicated service: got %v", err)
 	}
 }
@@ -162,7 +162,7 @@ func TestReplicaScaleRejectsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", "", service.ID, 0); !errors.Is(err, errInvalidReplicaCount) {
+	if _, _, err := store.scaleService(ctx, "user-1", service.ID, 0); !errors.Is(err, errInvalidReplicaCount) {
 		t.Fatalf("expected errInvalidReplicaCount, got %v", err)
 	}
 }
@@ -215,7 +215,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	allocations := mustListAllocations(t, store, ctx, service.ID)
@@ -333,7 +333,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		desired := int32(2 + i%2)
 		go func(desired int32) {
 			defer wg.Done()
-			_, _, err := store.scaleService(ctx, "user-1", "", service.ID, desired)
+			_, _, err := store.scaleService(ctx, "user-1", service.ID, desired)
 			if err != nil && !errors.Is(err, errConcurrentUpdate) {
 				errs <- err
 			}
@@ -345,7 +345,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		t.Fatalf("concurrent scale: %v", err)
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	current, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,10 +356,10 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	if current.DesiredReplicaCount != 1 {
 		t.Fatalf("live desired replica count = %d, want 1 until deploy", current.DesiredReplicaCount)
 	}
-	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
-		t.Fatalf("deployEnvironment: %v", err)
+	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	current, err = store.serviceByID(ctx, "user-1", "", service.ID)
+	current, err = store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,11 +374,11 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 
 func mustQueueAndDeployReplicas(t *testing.T, store *Store, ctx context.Context, envID, serviceID string, desired int32) {
 	t.Helper()
-	if _, _, err := store.scaleService(ctx, "user-1", "", serviceID, desired); err != nil {
+	if _, _, err := store.scaleService(ctx, "user-1", serviceID, desired); err != nil {
 		t.Fatalf("scaleService: %v", err)
 	}
-	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
-		t.Fatalf("deployEnvironment: %v", err)
+	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 }
 

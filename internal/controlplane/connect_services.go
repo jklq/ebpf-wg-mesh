@@ -81,8 +81,8 @@ func (a connectPlatformService) DeleteEnvironment(ctx context.Context, req *conn
 	return connect.NewResponse(result), toConnectError(err)
 }
 
-func (a connectPlatformService) DeployEnvironment(ctx context.Context, req *connect.Request[platformv1.DeployEnvironmentRequest]) (*connect.Response[platformv1.DeployEnvironmentResponse], error) {
-	result, err := a.service.DeployEnvironment(ctx, req.Msg)
+func (a connectPlatformService) ReleaseEnvironment(ctx context.Context, req *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error) {
+	result, err := a.service.ReleaseEnvironment(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
 }
 
@@ -106,18 +106,8 @@ func (a connectPlatformService) UpdateService(ctx context.Context, req *connect.
 	return connect.NewResponse(result), toConnectError(err)
 }
 
-func (a connectPlatformService) RedeployService(ctx context.Context, req *connect.Request[platformv1.RedeployServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
-	result, err := a.service.RedeployService(ctx, req.Msg)
-	return connect.NewResponse(result), toConnectError(err)
-}
-
 func (a connectPlatformService) ScaleService(ctx context.Context, req *connect.Request[platformv1.ScaleServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	result, err := a.service.ScaleService(ctx, req.Msg)
-	return connect.NewResponse(result), toConnectError(err)
-}
-
-func (a connectPlatformService) RestartService(ctx context.Context, req *connect.Request[platformv1.RestartServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
-	result, err := a.service.RestartService(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
 }
 

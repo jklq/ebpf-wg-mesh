@@ -41,7 +41,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -101,7 +101,7 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "attacker.example", 9090); err != nil {
@@ -139,7 +139,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "echo.localtest.me", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -210,7 +210,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "a.example.com", serviceA.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10", 8080); err != nil {
@@ -235,7 +235,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "b.example.com", serviceB.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11", 8080); err != nil {
@@ -321,7 +321,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 		}
 	})
 	<-transport.firstStarted
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	syncer.RequestSync()

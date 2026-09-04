@@ -319,7 +319,7 @@ func (s *Store) duplicateEnvironment(ctx context.Context, userID, sourceEnvironm
 	return duplicate, err
 }
 
-func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID string) ([]serviceRecord, []string, error) {
+func (s *Store) releaseEnvironment(ctx context.Context, userID, environmentID string) ([]serviceRecord, []string, error) {
 	var (
 		serviceIDs             []string
 		agentIDs               []string
@@ -355,7 +355,7 @@ func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID str
 			return err
 		}
 		for _, serviceID := range serviceIDs {
-			service, err := s.serviceByIDQuerier(ctx, tx, userID, "", serviceID)
+			service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 			if err != nil {
 				return err
 			}
@@ -384,7 +384,7 @@ func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID str
 			if err != nil {
 				return err
 			}
-			deployed, _, err := s.redeployServiceTx(ctx, tx, userID, "", serviceID)
+			released, _, err := s.releaseServiceRevisionTx(ctx, tx, userID, serviceID)
 			if err != nil {
 				return err
 			}
@@ -393,8 +393,8 @@ func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID str
 					return err
 				}
 			}
-			if deployed.AllocatedAgentID != "" {
-				agentIDs = append(agentIDs, deployed.AllocatedAgentID)
+			if released.AllocatedAgentID != "" {
+				agentIDs = append(agentIDs, released.AllocatedAgentID)
 			}
 		}
 		if identityCatalogChanged {
@@ -413,7 +413,7 @@ func (s *Store) deployEnvironment(ctx context.Context, userID, environmentID str
 	}
 	services := make([]serviceRecord, 0, len(serviceIDs))
 	for _, id := range serviceIDs {
-		service, err := s.serviceByID(ctx, userID, "", id)
+		service, err := s.serviceByID(ctx, userID, id)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -90,9 +90,9 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 		t.Fatalf("archive size = %d, want %d", metadataOnly.ArchiveSizeBytes, len(archive))
 	}
 
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 	stream := &recordingSourceSnapshotServerStream{

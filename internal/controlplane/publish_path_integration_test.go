@@ -62,9 +62,9 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 		t.Fatalf("desired state had %d services before build completion", len(before.GetServices()))
 	}
 
-	build, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	startTestBuilder(t, cp.server, "builder-publish")
 
@@ -120,7 +120,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListServiceDeployments: %v", err)
 	}
-	current, err := store.serviceByID(ctx, "user-1", projects[0].ID, service.ID)
+	current, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	}
 
 	seedDockerfileSourceState(t, store, service, "commit-1", "late-1")
-	build1, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-1")
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
 		t.Fatalf("enqueue build 1: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	}
 
 	seedDockerfileSourceState(t, store, service, "commit-2", "late-2")
-	build2, err := store.enqueueBuildForService(ctx, "user-1", projects[0].ID, service.ID, "commit-2")
+	build2, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
 	if err != nil {
 		t.Fatalf("enqueue build 2: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	if got := after.GetServices()[0].GetSpec().GetImage(); got != winner {
 		t.Fatalf("late complete stole desired image: got %q want %q", got, winner)
 	}
-	current, err := store.serviceByID(ctx, "user-1", projects[0].ID, service.ID)
+	current, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

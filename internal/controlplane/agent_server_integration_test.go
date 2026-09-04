@@ -181,8 +181,8 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateService: %v", err)
 	}
-	if _, err := platformClient.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
-		t.Fatalf("DeployEnvironment: %v", err)
+	if _, err := platformClient.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+		t.Fatalf("ReleaseEnvironment: %v", err)
 	}
 	desired := recvDesiredState(t, stream)
 	if len(desired.GetServices()) != 1 {

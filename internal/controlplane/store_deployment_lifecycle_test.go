@@ -17,7 +17,7 @@ import (
 func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	t.Parallel()
 
-	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Add lifecycle", "Ada"); err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +30,9 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("create state = %q, want staged", current.State)
 	}
 
-	build, err := store.enqueueBuildForService(ctx, userID, projectID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-1")
 	if err != nil {
-		t.Fatalf("enqueueBuildForService: %v", err)
+		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	queued, ok, err := store.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
@@ -81,7 +81,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("active deployment = %+v ok=%v err=%v", active, ok, err)
 	}
 
-	history, err := store.listServiceDeployments(ctx, userID, projectID, service.ID, 10)
+	history, err := store.listServiceDeployments(ctx, userID, service.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments: %v", err)
 	}
@@ -99,11 +99,11 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 	t.Parallel()
 
-	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatal(err)
 	}
-	build, err := store.enqueueBuildForService(ctx, userID, projectID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestDeploymentTransitionRetriesAreIdempotent(t *testing.T) {
 func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	t.Parallel()
 
-	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Race commit", "Ada"); err != nil {
 		t.Fatal(err)
 	}
@@ -187,13 +187,13 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, err := store.enqueueBuildForService(ctx, userID, projectID, service.ID, "commit-1")
+		_, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-1")
 		errs <- err
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, err := store.redeployService(ctx, userID, projectID, service.ID)
+		_, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID)
 		errs <- err
 	}()
 	wg.Wait()
@@ -205,7 +205,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		}
 	}
 	if success == 0 {
-		t.Fatal("expected at least one of webhook enqueue or user redeploy to succeed")
+		t.Fatal("expected at least one of webhook enqueue or environment release to succeed")
 	}
 
 	var currentCount int
@@ -216,7 +216,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		t.Fatalf("expected exactly one current deployment after webhook/user race, got %d", currentCount)
 	}
 
-	build, err := store.enqueueBuildForService(ctx, userID, projectID, service.ID, "commit-1")
+	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-1")
 	if err != nil {
 		t.Fatalf("enqueue for builder/agent race: %v", err)
 	}
@@ -246,6 +246,8 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 				Services: []*agentv1.ServiceCondition{{
 					AllocationId:             alloc.ID,
 					ServiceId:                service.ID,
+					AllocationIpv4:           alloc.AllocationIPv4,
+					AllocationIpv6:           alloc.AllocationIPv6,
 					DesiredRolloutGeneration: current.RolloutGeneration,
 					AppliedRolloutGeneration: current.RolloutGeneration,
 					Phase:                    "Healthy",

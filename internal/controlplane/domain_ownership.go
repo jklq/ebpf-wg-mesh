@@ -61,13 +61,13 @@ func isPlatformHostname(hostname, suffix string) bool {
 	return hostname == suffix || strings.HasSuffix(hostname, "."+suffix)
 }
 
-func (s *PlatformService) annotateDomainBinding(ctx context.Context, userID, projectID string, rec domainBindingRecord) *platformv1.DomainBinding {
+func (s *PlatformService) annotateDomainBinding(ctx context.Context, userID string, rec domainBindingRecord) *platformv1.DomainBinding {
 	binding := toProtoDomainBinding(rec)
 	if rec.PlatformGenerated {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED
 		return binding
 	}
-	state, err := s.inspectDomainOwnership(ctx, userID, projectID, rec.ServiceID, rec.Hostname, rec.PlatformGenerated)
+	state, err := s.inspectDomainOwnership(ctx, userID, rec.ServiceID, rec.Hostname, rec.PlatformGenerated)
 	if err != nil {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED
 		binding.OwnershipMessage = err.Error()
@@ -77,11 +77,11 @@ func (s *PlatformService) annotateDomainBinding(ctx context.Context, userID, pro
 	return binding
 }
 
-func (s *PlatformService) inspectDomainOwnership(ctx context.Context, userID, projectID, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
+func (s *PlatformService) inspectDomainOwnership(ctx context.Context, userID, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
 	if platformGenerated {
 		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
 	}
-	platformBinding, err := s.store.platformDomainBindingForService(ctx, userID, projectID, serviceID)
+	platformBinding, err := s.store.platformDomainBindingForService(ctx, userID, serviceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED, errPlatformDomainNotGenerated
