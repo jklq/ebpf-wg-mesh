@@ -8,7 +8,7 @@ Do not treat this file as a reason to delay 1.x or 2.x. Isolation, secret, domai
 
 Was: 9.5
 Status: open
-Depends on: none. Not a substitute for adversarial tests on 1.8, 1.2, 2.4, and 2.8.
+Depends on: none. Not a substitute for adversarial tests on 1.8, 1.2, 2.4b, 2.15, and 2.8.
 
 Prompt:
 
