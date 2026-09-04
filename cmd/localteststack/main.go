@@ -486,7 +486,7 @@ func main() {
 		if strings.TrimSpace(overlay.PublicBaseURL) == "" {
 			log.Fatalf("local product e2e requires the public Cloudflare tunnel; set LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1 with CLOUDFLARE_TUNNEL_TOKEN and CLOUDFLARE_HOSTNAME")
 		}
-		log.Printf("running local product deploy/redeploy/domain fixture via public tunnel %s", overlay.PublicBaseURL)
+		log.Printf("running local product draft/release/domain fixture via public tunnel %s", overlay.PublicBaseURL)
 		result, err := runProductE2EScenario(
 			ctx,
 			controlPlaneURL,

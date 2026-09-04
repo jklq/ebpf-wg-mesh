@@ -279,7 +279,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 
 	node1BeforeDelete := mustDesiredRevision(t, store, ctx, "node-1")
 	node2BeforeDelete := mustDesiredRevision(t, store, ctx, "node-2")
-	if err := store.deleteService(ctx, "user-1", projects[0].ID, services[0].ID); err != nil {
+	if err := store.deleteService(ctx, "user-1", services[0].ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	for _, item := range []struct {

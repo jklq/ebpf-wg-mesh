@@ -136,7 +136,7 @@ func runCrossReplicaNotificationScenario(
 	}
 	infof("scenario: blocked ListServices on the second replica observed the write")
 
-	if _, err := writer.DeployEnvironment(ctx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+	if _, err := writer.ReleaseEnvironment(ctx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("deploy through write replica: %w", err)
 	}
 	status, err := waitForServiceHealthy(ctx, ctx, reader, service.GetId(), service.GetSpecRevision(), 1)

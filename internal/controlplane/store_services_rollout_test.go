@@ -64,9 +64,9 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 	if second.err != nil {
 		t.Fatalf("second createScheduledService: %v", second.err)
 	}
-	deployed, _, err := store.deployEnvironment(ctx, "user-1", environmentID)
+	deployed, _, err := store.releaseEnvironment(ctx, "user-1", environmentID)
 	if err != nil || len(deployed) != 2 {
-		t.Fatalf("deployEnvironment: %#v: %v", deployed, err)
+		t.Fatalf("releaseEnvironment: %#v: %v", deployed, err)
 	}
 	if deployed[0].AllocatedAgentID == deployed[1].AllocatedAgentID {
 		t.Fatalf("expected placement to spread across agents, both services landed on %q", deployed[0].AllocatedAgentID)
@@ -108,11 +108,12 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		port := port
 		go func() {
 			<-start
-			_, _, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			_, _, err := store.updateService(ctx, "user-1", service.ID, "", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64 + int64(i),
 				Ports:           runtimePortsFromInts([]int32{port}),
 			}))
+
 			errs <- err
 		}()
 	}
@@ -124,7 +125,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		}
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", projects[0].ID, service.ID)
+	current, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		t.Fatalf("expected current spec revision 3, got %d", current.SpecRevision)
 	}
 	if current.RolloutGeneration != 1 {
-		t.Fatalf("expected rollout generation to remain 1 before deploy, got %d", current.RolloutGeneration)
+		t.Fatalf("expected rollout generation to remain 1 before release, got %d", current.RolloutGeneration)
 	}
 	if !current.PendingChanges {
 		t.Fatal("expected updated service to report pending changes")
@@ -174,7 +175,7 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	updated, changed, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "", canonicalServiceSpec(spec))
+	updated, changed, err := store.updateService(ctx, "user-1", service.ID, "", canonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService noop: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 		t.Fatalf("node-2 did not receive the new cross-node identity: %#v", identities)
 	}
 
-	if err := store.deleteService(ctx, "user-1", environmentID, service.ID); err != nil {
+	if err := store.deleteService(ctx, "user-1", service.ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+2 {
@@ -286,7 +287,7 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	}
 	beforeRevision := mustDesiredRevision(t, store, ctx, "node-1")
 
-	updated, changed, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "talented-harmony", canonicalServiceSpec(spec))
+	updated, changed, err := store.updateService(ctx, "user-1", service.ID, "talented-harmony", canonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService rename: %v", err)
 	}
@@ -311,7 +312,7 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	}
 }
 
-func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
+func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -330,7 +331,7 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -339,12 +340,16 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	redeployed, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID)
-	if err != nil {
-		t.Fatalf("redeployService: %v", err)
+	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok {
+		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
 	}
-	if redeployed.SpecRevision != 1 {
-		t.Fatalf("expected spec revision to remain 1, got %d", redeployed.SpecRevision)
+	redeployed, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "exact-redeploy", "")
+	if err != nil {
+		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
+	}
+	if redeployed.SpecRevision != 2 {
+		t.Fatalf("expected copied snapshot at spec revision 2, got %d", redeployed.SpecRevision)
 	}
 	if redeployed.RolloutGeneration != 2 {
 		t.Fatalf("expected rollout generation 2, got %d", redeployed.RolloutGeneration)
@@ -353,8 +358,8 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("countServiceRevisionsForTest: %v", err)
 	}
-	if revisions != 1 {
-		t.Fatalf("expected 1 stored spec revision after redeploy, got %d", revisions)
+	if revisions != 2 {
+		t.Fatalf("expected 2 stored spec revisions after exact redeploy, got %d", revisions)
 	}
 	rollouts, err := store.countServiceRolloutsForTest(ctx, service.ID)
 	if err != nil {
@@ -364,7 +369,7 @@ func TestRedeployServiceAdvancesRolloutOnly(t *testing.T) {
 		t.Fatalf("expected 2 stored rollouts after redeploy, got %d", rollouts)
 	}
 	allocation := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, service.ID)
-	if allocation.DesiredSpecRevision != 1 || allocation.DesiredRolloutGeneration != 2 {
+	if allocation.DesiredSpecRevision != 2 || allocation.DesiredRolloutGeneration != 2 {
 		t.Fatalf("unexpected desired allocation state: %+v", allocation)
 	}
 }

@@ -44,7 +44,7 @@ func runWorkloadIsolationChecks(ctx, userCtx context.Context, client platformv1.
 	}); err != nil {
 		return fmt.Errorf("create pressure service: %w", err)
 	}
-	if _, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+	if _, err := client.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
 		return fmt.Errorf("deploy pressure service: %w", err)
 	}
 	time.Sleep(5 * time.Second)

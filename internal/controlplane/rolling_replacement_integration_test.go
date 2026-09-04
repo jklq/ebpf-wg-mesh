@@ -33,19 +33,19 @@ func (p *rolloutIngressProbe) Sync(ctx context.Context) error {
 func (*rolloutIngressProbe) RequestSync() {}
 
 func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
-	store, projectID, service := createHealthyRollingService(t, 1, 1)
+	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projectID, "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
 
 	next := rollingTestSpec("example.test/web:b", 1, 1)
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", next); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", next); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 2)
 	if len(target) != 1 {
@@ -92,13 +92,13 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 }
 
 func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T) {
-	store, projectID, service := createHealthyRollingService(t, 3, 2)
+	store, _, service := createHealthyRollingService(t, 3, 2)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 3, 2)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 3, 2)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	firstBatch := allocationForGeneration(t, store, service.ID, 2)
 	if len(firstBatch) != 1 {
@@ -160,13 +160,13 @@ func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T)
 }
 
 func TestRollingReplacementReadinessFailureKeepsHealthyGeneration(t *testing.T) {
-	store, projectID, service := createHealthyRollingService(t, 1, 1)
+	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	if _, err := store.db.ExecContext(ctx,
@@ -189,13 +189,13 @@ func TestRollingReplacementReadinessFailureKeepsHealthyGeneration(t *testing.T) 
 }
 
 func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T) {
-	store, projectID, service := createHealthyRollingService(t, 1, 1)
+	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
@@ -223,14 +223,14 @@ func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T
 }
 
 func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
-	store, projectID, service := createHealthyRollingService(t, 1, 1)
+	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
 
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService(b): %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService(b): %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment(b): %v", err)
 	}
 	replacement := allocationForGeneration(t, store, service.ID, 2)
 	if len(replacement) != 1 {
@@ -246,11 +246,11 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 		t.Fatalf("rollout 2 replacement did not enter service: %+v", serving)
 	}
 
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:c", 1, 1)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:c", 1, 1)); err != nil {
 		t.Fatalf("updateService(c): %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService(c): %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment(c): %v", err)
 	}
 
 	assertRolloutState(t, store, service.ID, 2, rolloutStateSuperseded, "newer rollout")
@@ -290,26 +290,26 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	}
 	next := rollingTestSpec("example.test/disk:b", 1, 1)
 	next.Runtime.VolumeName = "data"
-	if _, _, err := store.updateService(ctx, "user-1", projects[0].ID, service.ID, "", next); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", next); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	_, err = store.redeployService(ctx, "user-1", projects[0].ID, service.ID)
+	_, err = releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID)
 	if !errors.Is(err, errVolumeRollingUnsupported) {
-		t.Fatalf("redeploy volume service: got %v, want %v", err, errVolumeRollingUnsupported)
+		t.Fatalf("release volume-backed service: got %v, want %v", err, errVolumeRollingUnsupported)
 	}
 	if got := len(mustRolloutAllocations(t, store, service.ID)); got != 1 {
-		t.Fatalf("volume redeploy overlapped allocations: %d", got)
+		t.Fatalf("volume-backed release overlapped allocations: %d", got)
 	}
 }
 
 func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
-	store, projectID, service := createHealthyRollingService(t, 1, 1)
+	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", projectID, service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	if _, err := store.redeployService(ctx, "user-1", projectID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	originalAgent := target.AgentID

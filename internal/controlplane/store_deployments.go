@@ -5,8 +5,8 @@ import (
 	"strconv"
 )
 
-func (s *Store) listServiceDeployments(ctx context.Context, userID, projectID, serviceID string, limit int32) ([]deploymentRecord, error) {
-	service, err := s.serviceByIDQuerier(ctx, s.db, userID, projectID, serviceID)
+func (s *Store) listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deploymentRecord, error) {
+	service, err := s.serviceByIDQuerier(ctx, s.db, userID, serviceID)
 	if err != nil {
 		return nil, err
 	}

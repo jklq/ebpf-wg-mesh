@@ -20,7 +20,7 @@ func pinnedImage(nibble string) string {
 
 func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	t.Parallel()
-	store, ctx, userID, projectID, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
+	store, ctx, userID, _, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +51,11 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		Ports: runtimePortsFromInts([]int32{8081}),
 		Env:   map[string]string{"STAGE": "two"},
 	})
-	if _, _, err := store.updateService(ctx, userID, projectID, service.ID, "", updatedSpec); err != nil {
+	if _, _, err := store.updateService(ctx, userID, service.ID, "", updatedSpec); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	if _, err := store.redeployService(ctx, userID, projectID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if rolled.ID == first.ID {
 		t.Fatal("rollback reused the historical deployment row")
 	}
-	history, err := store.listServiceDeployments(ctx, userID, projectID, service.ID, 20)
+	history, err := store.listServiceDeployments(ctx, userID, service.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if len(allocs) != 0 {
 		t.Fatalf("expected allocations to be withdrawn, got %#v", allocs)
 	}
-	history, err = store.listServiceDeployments(ctx, userID, projectID, service.ID, 20)
+	history, err = store.listServiceDeployments(ctx, userID, service.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel", "Cancel me", "Ada"); err != nil {
 		t.Fatal(err)
 	}
-	build, err := store.enqueueBuildForService(ctx, userID, projectID, service.ID, "commit-cancel")
+	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-cancel")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestDeploymentActionRetryCancelledUnresolvedSource(t *testing.T) {
 
 func TestDeleteServiceAfterCancelledDeployment(t *testing.T) {
 	t.Parallel()
-	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	staged, ok, err := store.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("staged deployment: ok=%v err=%v", ok, err)
@@ -300,7 +300,7 @@ func TestDeleteServiceAfterCancelledDeployment(t *testing.T) {
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-before-delete", ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if err := store.deleteService(ctx, userID, projectID, service.ID); err != nil {
+	if err := store.deleteService(ctx, userID, service.ID); err != nil {
 		t.Fatalf("delete cancelled service: %v", err)
 	}
 	var remaining int
@@ -319,10 +319,10 @@ func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) 
 	}
 	serving := mustRolloutAllocations(t, store, service.ID)[0]
 	updated := directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
-	if _, _, err := store.updateService(ctx, userID, projectID, service.ID, "", updated); err != nil {
+	if _, _, err := store.updateService(ctx, userID, service.ID, "", updated); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.redeployService(ctx, userID, projectID, service.ID); err != nil {
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	cancelledTarget, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -350,16 +350,16 @@ func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) 
 }
 
 func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t *testing.T) {
-	store, ctx, userID, projectID, service := setupPinnedImageServiceForDeployment(t, "nginx:latest")
+	store, ctx, userID, _, service := setupPinnedImageServiceForDeployment(t, "nginx:latest")
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {
 		t.Fatal(err)
 	}
 	serving := mustRolloutAllocations(t, store, service.ID)[0]
 	updated := directImageServiceSpec("nginx:edge", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
-	if _, _, err := store.updateService(ctx, userID, projectID, service.ID, "", updated); err != nil {
+	if _, _, err := store.updateService(ctx, userID, service.ID, "", updated); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.redeployService(ctx, userID, projectID, service.ID); err != nil {
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	cancelledTarget, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -384,11 +384,11 @@ func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t
 
 func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	t.Parallel()
-	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-retry", "Retry me", "Ada"); err != nil {
 		t.Fatal(err)
 	}
-	build, err := store.enqueueBuildForService(ctx, userID, projectID, service.ID, "commit-retry")
+	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-retry")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	if retried.ID == failed.ID {
 		t.Fatal("retry did not create a new deployment")
 	}
-	history, err := store.listServiceDeployments(ctx, userID, projectID, service.ID, 10)
+	history, err := store.listServiceDeployments(ctx, userID, service.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 
 func deploymentByIDForTest(t *testing.T, store *Store, ctx context.Context, userID, projectID, serviceID, deploymentID string) deploymentRecord {
 	t.Helper()
-	history, err := store.listServiceDeployments(ctx, userID, projectID, serviceID, 50)
+	history, err := store.listServiceDeployments(ctx, userID, serviceID, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

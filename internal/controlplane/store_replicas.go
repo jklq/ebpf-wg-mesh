@@ -48,20 +48,20 @@ func countReadyAllocations(recs []allocationRecord) int32 {
 	return ready
 }
 
-func (s *Store) scaleService(ctx context.Context, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
+func (s *Store) scaleService(ctx context.Context, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
 	var (
 		current     serviceRecord
 		allocations []allocationRecord
 	)
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		current, allocations, err = s.scaleServiceTx(ctx, tx, userID, projectID, serviceID, desired)
+		current, allocations, err = s.scaleServiceTx(ctx, tx, userID, serviceID, desired)
 		return err
 	})
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}
-	current, err = s.serviceByID(ctx, userID, projectID, serviceID)
+	current, err = s.serviceByID(ctx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}
@@ -72,11 +72,11 @@ func (s *Store) scaleService(ctx context.Context, userID, projectID, serviceID s
 	return current, allocations, nil
 }
 
-func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, projectID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
+func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
 	if err := validateDesiredReplicaCount(desired); err != nil {
 		return serviceRecord{}, nil, err
 	}
-	current, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
+	current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}
@@ -97,7 +97,7 @@ func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, projectI
 		nextSpec = proto.Clone(nextSpec).(*platformv1.ServiceSpec)
 	}
 	nextSpec.DesiredReplicaCount = replicaCountPtr(desired)
-	updated, _, _, err := s.updateServiceTx(ctx, tx, userID, projectID, serviceID, current.Name, nextSpec)
+	updated, _, _, err := s.updateServiceTx(ctx, tx, userID, serviceID, current.Name, nextSpec)
 	if err != nil {
 		return serviceRecord{}, nil, err
 	}

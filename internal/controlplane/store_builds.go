@@ -66,22 +66,6 @@ func (s *Store) buildRunByIDQuerier(ctx context.Context, q serviceQueryer, build
 	return rec, err
 }
 
-func (s *Store) enqueueBuildForService(ctx context.Context, userID, projectID, serviceID, commitSHA string) (buildRunRecord, error) {
-	var rec buildRunRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, projectID, serviceID)
-		if err != nil {
-			return err
-		}
-		rec, err = s.enqueueBuildTx(ctx, tx, service, commitSHA, deploymentActor{Kind: deploymentCauseUser, ID: userID})
-		return err
-	})
-	if err != nil {
-		return buildRunRecord{}, err
-	}
-	return rec, nil
-}
-
 func (s *Store) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service serviceRecord, commitSHA string, actor deploymentActor) (buildRunRecord, error) {
 	spec := desiredSourceSpec(service.Spec)
 	if spec == nil {
