@@ -516,11 +516,11 @@ message DeleteEnvironmentRequest {
   string environment_id = 1;
 }
 
-message DeployEnvironmentRequest {
+message ReleaseEnvironmentRequest {
   string environment_id = 1;
 }
 
-message DeployEnvironmentResponse {
+message ReleaseEnvironmentResponse {
   repeated ServiceStatus services = 1;
 }
 
@@ -551,17 +551,9 @@ message UpdateServiceRequest {
   ServiceUpdate service = 2;
 }
 
-message RedeployServiceRequest {
-  string service_id = 1;
-}
-
 message ScaleServiceRequest {
   string service_id = 1;
   int32 desired_replica_count = 2;
-}
-
-message RestartServiceRequest {
-  string service_id = 1;
 }
 
 message ApplyDeploymentActionRequest {
@@ -877,15 +869,13 @@ service PlatformService {
   rpc DuplicateEnvironment(DuplicateEnvironmentRequest) returns (Environment);
   rpc RenameEnvironment(RenameEnvironmentRequest) returns (Environment);
   rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (google.protobuf.Empty);
-  rpc DeployEnvironment(DeployEnvironmentRequest) returns (DeployEnvironmentResponse);
+  rpc ReleaseEnvironment(ReleaseEnvironmentRequest) returns (ReleaseEnvironmentResponse);
   rpc LinkGitHubRepository(LinkGitHubRepositoryRequest) returns (InspectSourceResponse);
   rpc InspectSource(InspectSourceRequest) returns (InspectSourceResponse);
 
   rpc CreateService(CreateServiceRequest) returns (Service);
   rpc UpdateService(UpdateServiceRequest) returns (Service);
-  rpc RedeployService(RedeployServiceRequest) returns (ServiceStatus);
   rpc ScaleService(ScaleServiceRequest) returns (ServiceStatus);
-  rpc RestartService(RestartServiceRequest) returns (ServiceStatus);
   rpc ApplyDeploymentAction(ApplyDeploymentActionRequest) returns (ServiceStatus);
   rpc DiscardServiceChanges(DiscardServiceChangesRequest) returns (Service);
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);

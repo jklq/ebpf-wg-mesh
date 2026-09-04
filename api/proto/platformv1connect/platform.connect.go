@@ -65,9 +65,9 @@ const (
 	// PlatformServiceDeleteEnvironmentProcedure is the fully-qualified name of the PlatformService's
 	// DeleteEnvironment RPC.
 	PlatformServiceDeleteEnvironmentProcedure = "/platform.v1.PlatformService/DeleteEnvironment"
-	// PlatformServiceDeployEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// DeployEnvironment RPC.
-	PlatformServiceDeployEnvironmentProcedure = "/platform.v1.PlatformService/DeployEnvironment"
+	// PlatformServiceReleaseEnvironmentProcedure is the fully-qualified name of the PlatformService's
+	// ReleaseEnvironment RPC.
+	PlatformServiceReleaseEnvironmentProcedure = "/platform.v1.PlatformService/ReleaseEnvironment"
 	// PlatformServiceLinkGitHubRepositoryProcedure is the fully-qualified name of the PlatformService's
 	// LinkGitHubRepository RPC.
 	PlatformServiceLinkGitHubRepositoryProcedure = "/platform.v1.PlatformService/LinkGitHubRepository"
@@ -80,15 +80,9 @@ const (
 	// PlatformServiceUpdateServiceProcedure is the fully-qualified name of the PlatformService's
 	// UpdateService RPC.
 	PlatformServiceUpdateServiceProcedure = "/platform.v1.PlatformService/UpdateService"
-	// PlatformServiceRedeployServiceProcedure is the fully-qualified name of the PlatformService's
-	// RedeployService RPC.
-	PlatformServiceRedeployServiceProcedure = "/platform.v1.PlatformService/RedeployService"
 	// PlatformServiceScaleServiceProcedure is the fully-qualified name of the PlatformService's
 	// ScaleService RPC.
 	PlatformServiceScaleServiceProcedure = "/platform.v1.PlatformService/ScaleService"
-	// PlatformServiceRestartServiceProcedure is the fully-qualified name of the PlatformService's
-	// RestartService RPC.
-	PlatformServiceRestartServiceProcedure = "/platform.v1.PlatformService/RestartService"
 	// PlatformServiceApplyDeploymentActionProcedure is the fully-qualified name of the
 	// PlatformService's ApplyDeploymentAction RPC.
 	PlatformServiceApplyDeploymentActionProcedure = "/platform.v1.PlatformService/ApplyDeploymentAction"
@@ -183,14 +177,12 @@ type PlatformServiceClient interface {
 	DuplicateEnvironment(context.Context, *connect.Request[platformv1.DuplicateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error)
-	DeployEnvironment(context.Context, *connect.Request[platformv1.DeployEnvironmentRequest]) (*connect.Response[platformv1.DeployEnvironmentResponse], error)
+	ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error)
 	LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
 	InspectSource(context.Context, *connect.Request[platformv1.InspectSourceRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
 	CreateService(context.Context, *connect.Request[platformv1.CreateServiceRequest]) (*connect.Response[platformv1.Service], error)
 	UpdateService(context.Context, *connect.Request[platformv1.UpdateServiceRequest]) (*connect.Response[platformv1.Service], error)
-	RedeployService(context.Context, *connect.Request[platformv1.RedeployServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ScaleService(context.Context, *connect.Request[platformv1.ScaleServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error)
-	RestartService(context.Context, *connect.Request[platformv1.RestartServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ApplyDeploymentAction(context.Context, *connect.Request[platformv1.ApplyDeploymentActionRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	DiscardServiceChanges(context.Context, *connect.Request[platformv1.DiscardServiceChangesRequest]) (*connect.Response[platformv1.Service], error)
 	DeleteService(context.Context, *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error)
@@ -276,10 +268,10 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("DeleteEnvironment")),
 			connect.WithClientOptions(opts...),
 		),
-		deployEnvironment: connect.NewClient[platformv1.DeployEnvironmentRequest, platformv1.DeployEnvironmentResponse](
+		releaseEnvironment: connect.NewClient[platformv1.ReleaseEnvironmentRequest, platformv1.ReleaseEnvironmentResponse](
 			httpClient,
-			baseURL+PlatformServiceDeployEnvironmentProcedure,
-			connect.WithSchema(platformServiceMethods.ByName("DeployEnvironment")),
+			baseURL+PlatformServiceReleaseEnvironmentProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ReleaseEnvironment")),
 			connect.WithClientOptions(opts...),
 		),
 		linkGitHubRepository: connect.NewClient[platformv1.LinkGitHubRepositoryRequest, platformv1.InspectSourceResponse](
@@ -306,22 +298,10 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("UpdateService")),
 			connect.WithClientOptions(opts...),
 		),
-		redeployService: connect.NewClient[platformv1.RedeployServiceRequest, platformv1.ServiceStatus](
-			httpClient,
-			baseURL+PlatformServiceRedeployServiceProcedure,
-			connect.WithSchema(platformServiceMethods.ByName("RedeployService")),
-			connect.WithClientOptions(opts...),
-		),
 		scaleService: connect.NewClient[platformv1.ScaleServiceRequest, platformv1.ServiceStatus](
 			httpClient,
 			baseURL+PlatformServiceScaleServiceProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("ScaleService")),
-			connect.WithClientOptions(opts...),
-		),
-		restartService: connect.NewClient[platformv1.RestartServiceRequest, platformv1.ServiceStatus](
-			httpClient,
-			baseURL+PlatformServiceRestartServiceProcedure,
-			connect.WithSchema(platformServiceMethods.ByName("RestartService")),
 			connect.WithClientOptions(opts...),
 		),
 		applyDeploymentAction: connect.NewClient[platformv1.ApplyDeploymentActionRequest, platformv1.ServiceStatus](
@@ -446,14 +426,12 @@ type platformServiceClient struct {
 	duplicateEnvironment   *connect.Client[platformv1.DuplicateEnvironmentRequest, platformv1.Environment]
 	renameEnvironment      *connect.Client[platformv1.RenameEnvironmentRequest, platformv1.Environment]
 	deleteEnvironment      *connect.Client[platformv1.DeleteEnvironmentRequest, emptypb.Empty]
-	deployEnvironment      *connect.Client[platformv1.DeployEnvironmentRequest, platformv1.DeployEnvironmentResponse]
+	releaseEnvironment     *connect.Client[platformv1.ReleaseEnvironmentRequest, platformv1.ReleaseEnvironmentResponse]
 	linkGitHubRepository   *connect.Client[platformv1.LinkGitHubRepositoryRequest, platformv1.InspectSourceResponse]
 	inspectSource          *connect.Client[platformv1.InspectSourceRequest, platformv1.InspectSourceResponse]
 	createService          *connect.Client[platformv1.CreateServiceRequest, platformv1.Service]
 	updateService          *connect.Client[platformv1.UpdateServiceRequest, platformv1.Service]
-	redeployService        *connect.Client[platformv1.RedeployServiceRequest, platformv1.ServiceStatus]
 	scaleService           *connect.Client[platformv1.ScaleServiceRequest, platformv1.ServiceStatus]
-	restartService         *connect.Client[platformv1.RestartServiceRequest, platformv1.ServiceStatus]
 	applyDeploymentAction  *connect.Client[platformv1.ApplyDeploymentActionRequest, platformv1.ServiceStatus]
 	discardServiceChanges  *connect.Client[platformv1.DiscardServiceChangesRequest, platformv1.Service]
 	deleteService          *connect.Client[platformv1.DeleteServiceRequest, emptypb.Empty]
@@ -519,9 +497,9 @@ func (c *platformServiceClient) DeleteEnvironment(ctx context.Context, req *conn
 	return c.deleteEnvironment.CallUnary(ctx, req)
 }
 
-// DeployEnvironment calls platform.v1.PlatformService.DeployEnvironment.
-func (c *platformServiceClient) DeployEnvironment(ctx context.Context, req *connect.Request[platformv1.DeployEnvironmentRequest]) (*connect.Response[platformv1.DeployEnvironmentResponse], error) {
-	return c.deployEnvironment.CallUnary(ctx, req)
+// ReleaseEnvironment calls platform.v1.PlatformService.ReleaseEnvironment.
+func (c *platformServiceClient) ReleaseEnvironment(ctx context.Context, req *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error) {
+	return c.releaseEnvironment.CallUnary(ctx, req)
 }
 
 // LinkGitHubRepository calls platform.v1.PlatformService.LinkGitHubRepository.
@@ -544,19 +522,9 @@ func (c *platformServiceClient) UpdateService(ctx context.Context, req *connect.
 	return c.updateService.CallUnary(ctx, req)
 }
 
-// RedeployService calls platform.v1.PlatformService.RedeployService.
-func (c *platformServiceClient) RedeployService(ctx context.Context, req *connect.Request[platformv1.RedeployServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
-	return c.redeployService.CallUnary(ctx, req)
-}
-
 // ScaleService calls platform.v1.PlatformService.ScaleService.
 func (c *platformServiceClient) ScaleService(ctx context.Context, req *connect.Request[platformv1.ScaleServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	return c.scaleService.CallUnary(ctx, req)
-}
-
-// RestartService calls platform.v1.PlatformService.RestartService.
-func (c *platformServiceClient) RestartService(ctx context.Context, req *connect.Request[platformv1.RestartServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
-	return c.restartService.CallUnary(ctx, req)
 }
 
 // ApplyDeploymentAction calls platform.v1.PlatformService.ApplyDeploymentAction.
@@ -660,14 +628,12 @@ type PlatformServiceHandler interface {
 	DuplicateEnvironment(context.Context, *connect.Request[platformv1.DuplicateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error)
-	DeployEnvironment(context.Context, *connect.Request[platformv1.DeployEnvironmentRequest]) (*connect.Response[platformv1.DeployEnvironmentResponse], error)
+	ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error)
 	LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
 	InspectSource(context.Context, *connect.Request[platformv1.InspectSourceRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
 	CreateService(context.Context, *connect.Request[platformv1.CreateServiceRequest]) (*connect.Response[platformv1.Service], error)
 	UpdateService(context.Context, *connect.Request[platformv1.UpdateServiceRequest]) (*connect.Response[platformv1.Service], error)
-	RedeployService(context.Context, *connect.Request[platformv1.RedeployServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ScaleService(context.Context, *connect.Request[platformv1.ScaleServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error)
-	RestartService(context.Context, *connect.Request[platformv1.RestartServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ApplyDeploymentAction(context.Context, *connect.Request[platformv1.ApplyDeploymentActionRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	DiscardServiceChanges(context.Context, *connect.Request[platformv1.DiscardServiceChangesRequest]) (*connect.Response[platformv1.Service], error)
 	DeleteService(context.Context, *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error)
@@ -749,10 +715,10 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("DeleteEnvironment")),
 		connect.WithHandlerOptions(opts...),
 	)
-	platformServiceDeployEnvironmentHandler := connect.NewUnaryHandler(
-		PlatformServiceDeployEnvironmentProcedure,
-		svc.DeployEnvironment,
-		connect.WithSchema(platformServiceMethods.ByName("DeployEnvironment")),
+	platformServiceReleaseEnvironmentHandler := connect.NewUnaryHandler(
+		PlatformServiceReleaseEnvironmentProcedure,
+		svc.ReleaseEnvironment,
+		connect.WithSchema(platformServiceMethods.ByName("ReleaseEnvironment")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServiceLinkGitHubRepositoryHandler := connect.NewUnaryHandler(
@@ -779,22 +745,10 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("UpdateService")),
 		connect.WithHandlerOptions(opts...),
 	)
-	platformServiceRedeployServiceHandler := connect.NewUnaryHandler(
-		PlatformServiceRedeployServiceProcedure,
-		svc.RedeployService,
-		connect.WithSchema(platformServiceMethods.ByName("RedeployService")),
-		connect.WithHandlerOptions(opts...),
-	)
 	platformServiceScaleServiceHandler := connect.NewUnaryHandler(
 		PlatformServiceScaleServiceProcedure,
 		svc.ScaleService,
 		connect.WithSchema(platformServiceMethods.ByName("ScaleService")),
-		connect.WithHandlerOptions(opts...),
-	)
-	platformServiceRestartServiceHandler := connect.NewUnaryHandler(
-		PlatformServiceRestartServiceProcedure,
-		svc.RestartService,
-		connect.WithSchema(platformServiceMethods.ByName("RestartService")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServiceApplyDeploymentActionHandler := connect.NewUnaryHandler(
@@ -925,8 +879,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceRenameEnvironmentHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteEnvironmentProcedure:
 			platformServiceDeleteEnvironmentHandler.ServeHTTP(w, r)
-		case PlatformServiceDeployEnvironmentProcedure:
-			platformServiceDeployEnvironmentHandler.ServeHTTP(w, r)
+		case PlatformServiceReleaseEnvironmentProcedure:
+			platformServiceReleaseEnvironmentHandler.ServeHTTP(w, r)
 		case PlatformServiceLinkGitHubRepositoryProcedure:
 			platformServiceLinkGitHubRepositoryHandler.ServeHTTP(w, r)
 		case PlatformServiceInspectSourceProcedure:
@@ -935,12 +889,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceCreateServiceHandler.ServeHTTP(w, r)
 		case PlatformServiceUpdateServiceProcedure:
 			platformServiceUpdateServiceHandler.ServeHTTP(w, r)
-		case PlatformServiceRedeployServiceProcedure:
-			platformServiceRedeployServiceHandler.ServeHTTP(w, r)
 		case PlatformServiceScaleServiceProcedure:
 			platformServiceScaleServiceHandler.ServeHTTP(w, r)
-		case PlatformServiceRestartServiceProcedure:
-			platformServiceRestartServiceHandler.ServeHTTP(w, r)
 		case PlatformServiceApplyDeploymentActionProcedure:
 			platformServiceApplyDeploymentActionHandler.ServeHTTP(w, r)
 		case PlatformServiceDiscardServiceChangesProcedure:
@@ -1022,8 +972,8 @@ func (UnimplementedPlatformServiceHandler) DeleteEnvironment(context.Context, *c
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteEnvironment is not implemented"))
 }
 
-func (UnimplementedPlatformServiceHandler) DeployEnvironment(context.Context, *connect.Request[platformv1.DeployEnvironmentRequest]) (*connect.Response[platformv1.DeployEnvironmentResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeployEnvironment is not implemented"))
+func (UnimplementedPlatformServiceHandler) ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ReleaseEnvironment is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error) {
@@ -1042,16 +992,8 @@ func (UnimplementedPlatformServiceHandler) UpdateService(context.Context, *conne
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.UpdateService is not implemented"))
 }
 
-func (UnimplementedPlatformServiceHandler) RedeployService(context.Context, *connect.Request[platformv1.RedeployServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RedeployService is not implemented"))
-}
-
 func (UnimplementedPlatformServiceHandler) ScaleService(context.Context, *connect.Request[platformv1.ScaleServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ScaleService is not implemented"))
-}
-
-func (UnimplementedPlatformServiceHandler) RestartService(context.Context, *connect.Request[platformv1.RestartServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RestartService is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) ApplyDeploymentAction(context.Context, *connect.Request[platformv1.ApplyDeploymentActionRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
