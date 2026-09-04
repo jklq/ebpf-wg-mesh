@@ -282,7 +282,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				(entry) => entry.environmentId !== environmentId,
 			);
 		},
-		async deployEnvironment(user, environmentId) {
+		async releaseEnvironment(user, environmentId) {
 			void user;
 			const services = platform.services.filter(
 				(entry) => entry.environmentId === environmentId,

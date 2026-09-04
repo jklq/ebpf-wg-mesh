@@ -7,8 +7,22 @@ import {
 	setCookie,
 } from "@tanstack/react-start/server";
 import { Pool } from "pg";
-
-import { createDashboardService } from "#/lib/dashboard/core/service.server";
+import * as auth from "#/lib/dashboard/core/auth.server";
+import * as domains from "#/lib/dashboard/core/operations-domains.server";
+import * as fleet from "#/lib/dashboard/core/operations-fleet.server";
+import * as home from "#/lib/dashboard/core/operations-home.server";
+import * as onboarding from "#/lib/dashboard/core/operations-onboarding.server";
+import * as services from "#/lib/dashboard/core/operations-services.server";
+import {
+	assertProductionDashboardConfig,
+	formatDashboardStartupContract,
+	parseRuntimeProfile,
+	usesSecureCookies,
+} from "#/lib/dashboard/core/profile.server";
+import {
+	createDashboardRuntime,
+	type DashboardRuntime,
+} from "#/lib/dashboard/core/runtime.server";
 import {
 	type CreateServiceFastResult,
 	type DashboardAgentEnrollment,
@@ -25,7 +39,6 @@ import {
 	type DashboardOnboardingDraft,
 	type DashboardProject,
 	type DashboardRepositoryInspection,
-	type DashboardService,
 	type DashboardServiceLogLine,
 	type DashboardServiceLogType,
 	type DashboardServicePosition,
@@ -74,11 +87,11 @@ interface RuntimeConfig extends DashboardConfig {
 
 let config: RuntimeConfig | undefined;
 let pool: Pool | undefined;
-let dashboardService: DashboardService | undefined;
+let dashboardRuntime: DashboardRuntime | undefined;
 
-function getDashboardService(): DashboardService {
+function getDashboardRuntime(): DashboardRuntime {
 	const config = getConfig();
-	dashboardService ??= createDashboardService(config, {
+	dashboardRuntime ??= createDashboardRuntime(config, {
 		store: createPostgresDashboardStore(config, getPool()),
 		platform: createPlatformGateway(config),
 		github: config.github
@@ -92,7 +105,7 @@ function getDashboardService(): DashboardService {
 		now: () => new Date(),
 		randomUUID,
 	});
-	return dashboardService;
+	return dashboardRuntime;
 }
 
 function getConfig(): RuntimeConfig {
@@ -129,34 +142,34 @@ export async function checkDashboardReadiness(): Promise<{
 }
 
 export function listDevLogins(): Array<DevLoginIdentity> {
-	return getDashboardService().listDevLogins();
+	return getConfig().devUsers;
 }
 
 export function loadFleetFromSession(): Promise<DashboardFleet> {
-	return getDashboardService().loadFleetFromSession();
+	return fleet.loadFleetFromSession(getDashboardRuntime());
 }
 
 export function createFleetAgentFromSession(
 	input: FleetAgentInput,
 ): Promise<DashboardAgentEnrollment> {
-	return getDashboardService().createFleetAgentFromSession(input);
+	return fleet.createFleetAgentFromSession(getDashboardRuntime(), input);
 }
 
 export function updateFleetAgentFromSession(
 	input: FleetAgentInput,
 ): Promise<DashboardFleetAgent> {
-	return getDashboardService().updateFleetAgentFromSession(input);
+	return fleet.updateFleetAgentFromSession(getDashboardRuntime(), input);
 }
 
 export function setFleetAgentLifecycleFromSession(input: {
 	agentId: string;
 	lifecycleState: DashboardAgentLifecycleState;
 }): Promise<DashboardFleetAgent> {
-	return getDashboardService().setFleetAgentLifecycleFromSession(input);
+	return fleet.setFleetAgentLifecycleFromSession(getDashboardRuntime(), input);
 }
 
 export function isGitHubLoginEnabled(): boolean {
-	return getDashboardService().isGitHubLoginEnabled();
+	return Boolean(getConfig().github);
 }
 
 export function getPublicBaseURL(): string {
@@ -166,7 +179,7 @@ export function getPublicBaseURL(): string {
 export function beginGitHubLogin(input: {
 	redirectTo?: string;
 }): Promise<string> {
-	return getDashboardService().beginGitHubLogin(input);
+	return auth.beginGitHubLogin(getDashboardRuntime(), input);
 }
 
 export function completeAuthCallback(input: {
@@ -176,20 +189,20 @@ export function completeAuthCallback(input: {
 	email?: string;
 	redirectTo?: string;
 }): Promise<string> {
-	return getDashboardService().completeAuthCallback(input);
+	return auth.completeAuthCallback(getDashboardRuntime(), input);
 }
 
 export function loadDashboardHome(
 	environmentId?: string,
 ): Promise<DashboardHomeState | null> {
-	return getDashboardService().loadDashboardHome(environmentId);
+	return home.loadDashboardHome(getDashboardRuntime(), environmentId);
 }
 
 export function createEnvironmentFromSession(input: {
 	projectId: string;
 	name: string;
 }) {
-	return getDashboardService().createEnvironmentFromSession(input);
+	return onboarding.createEnvironmentFromSession(getDashboardRuntime(), input);
 }
 
 export function duplicateEnvironmentFromSession(input: {
@@ -197,47 +210,59 @@ export function duplicateEnvironmentFromSession(input: {
 	name: string;
 	copyVariables: boolean;
 }) {
-	return getDashboardService().duplicateEnvironmentFromSession(input);
+	return onboarding.duplicateEnvironmentFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function renameEnvironmentFromSession(input: {
 	environmentId: string;
 	name: string;
 }) {
-	return getDashboardService().renameEnvironmentFromSession(input);
+	return onboarding.renameEnvironmentFromSession(getDashboardRuntime(), input);
 }
 
 export function deleteEnvironmentFromSession(environmentId: string) {
-	return getDashboardService().deleteEnvironmentFromSession(environmentId);
+	return onboarding.deleteEnvironmentFromSession(
+		getDashboardRuntime(),
+		environmentId,
+	);
 }
 
-export function deployEnvironmentFromSession(environmentId: string) {
-	return getDashboardService().deployEnvironmentFromSession(environmentId);
+export function releaseEnvironmentFromSession(environmentId: string) {
+	return onboarding.releaseEnvironmentFromSession(
+		getDashboardRuntime(),
+		environmentId,
+	);
 }
 
 export function loadGitHubCatalogFromSession(): Promise<{
 	githubAccount?: DashboardGitHubAccount;
 	repositories: Array<GitHubUserRepository>;
 }> {
-	return getDashboardService().loadGitHubCatalogFromSession();
+	return onboarding.loadGitHubCatalogFromSession(getDashboardRuntime());
 }
 
 export function inspectRepositorySourceFromSession(input: {
 	repositorySelector: string;
 }): Promise<DashboardRepositoryInspection | undefined> {
-	return getDashboardService().inspectRepositorySourceFromSession(input);
+	return onboarding.inspectRepositorySourceFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function createProjectFromSession(
 	name: string,
 ): Promise<DashboardProject> {
-	return getDashboardService().createProjectFromSession(name);
+	return onboarding.createProjectFromSession(getDashboardRuntime(), name);
 }
 
 export function inspectRepositoryFromSession(input: {
 	repositorySelector: string;
 }): Promise<DashboardOnboardingDraft> {
-	return getDashboardService().inspectRepositoryFromSession(input);
+	return onboarding.inspectRepositoryFromSession(getDashboardRuntime(), input);
 }
 
 export function confirmRepositoryFromSession(input: {
@@ -249,7 +274,7 @@ export function confirmRepositoryFromSession(input: {
 	cpuMillis?: number;
 	memoryMebibytes?: number;
 }): Promise<DashboardOnboardingDraft> {
-	return getDashboardService().confirmRepositoryFromSession(input);
+	return onboarding.confirmRepositoryFromSession(getDashboardRuntime(), input);
 }
 
 export function createServiceFastFromSession(input: {
@@ -261,29 +286,32 @@ export function createServiceFastFromSession(input: {
 	cpuMillis?: number;
 	memoryMebibytes?: number;
 }): Promise<CreateServiceFastResult> {
-	return getDashboardService().createServiceFastFromSession(input);
+	return onboarding.createServiceFastFromSession(getDashboardRuntime(), input);
 }
 
 export function saveHostnameFromSession(
 	hostname: string,
 ): Promise<DashboardOnboardingDraft> {
-	return getDashboardService().saveHostnameFromSession(hostname);
+	return onboarding.saveHostnameFromSession(getDashboardRuntime(), hostname);
 }
 
 export function publishDomainFromSession(): Promise<DashboardDomainBinding> {
-	return getDashboardService().publishDomainFromSession();
+	return onboarding.publishDomainFromSession(getDashboardRuntime());
 }
 
 export function getServiceStatusFromSession(input: {
 	serviceId: string;
 }): Promise<DashboardServiceStatus> {
-	return getDashboardService().getServiceStatusFromSession(input);
+	return services.getServiceStatusFromSession(getDashboardRuntime(), input);
 }
 
 export function listEnvironmentServicesFromSession(input: {
 	environmentId: string;
 }): Promise<Array<DashboardServiceRecord>> {
-	return getDashboardService().listEnvironmentServicesFromSession(input);
+	return services.listEnvironmentServicesFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function waitForEnvironmentServicesFromSession(input: {
@@ -291,7 +319,10 @@ export function waitForEnvironmentServicesFromSession(input: {
 	waitIndex: number;
 	waitTimeoutSeconds: number;
 }) {
-	return getDashboardService().waitForEnvironmentServicesFromSession(input);
+	return services.waitForEnvironmentServicesFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function waitForServiceStatusFromSession(input: {
@@ -299,7 +330,7 @@ export function waitForServiceStatusFromSession(input: {
 	waitIndex: number;
 	waitTimeoutSeconds: number;
 }) {
-	return getDashboardService().waitForServiceStatusFromSession(input);
+	return services.waitForServiceStatusFromSession(getDashboardRuntime(), input);
 }
 
 export function waitForProjectServicesFromSession(input: {
@@ -307,7 +338,10 @@ export function waitForProjectServicesFromSession(input: {
 	waitIndex: number;
 	waitTimeoutSeconds: number;
 }) {
-	return getDashboardService().waitForProjectServicesFromSession(input);
+	return services.waitForProjectServicesFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function listServiceLogsFromSession(input: {
@@ -320,20 +354,23 @@ export function listServiceLogsFromSession(input: {
 	startTime?: Date;
 	endTime?: Date;
 }): Promise<Array<DashboardServiceLogLine>> {
-	return getDashboardService().listServiceLogsFromSession(input);
+	return services.listServiceLogsFromSession(getDashboardRuntime(), input);
 }
 
 export function listServiceDeploymentsFromSession(input: {
 	serviceId: string;
 	limit?: number;
 }): Promise<Array<DashboardDeploymentRecord>> {
-	return getDashboardService().listServiceDeploymentsFromSession(input);
+	return services.listServiceDeploymentsFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function updateServiceFromSession(
 	input: UpdateServiceInput,
 ): Promise<DashboardServiceRecord> {
-	return getDashboardService().updateServiceFromSession(input);
+	return services.updateServiceFromSession(getDashboardRuntime(), input);
 }
 
 export function applyDeploymentActionFromSession(input: {
@@ -343,14 +380,17 @@ export function applyDeploymentActionFromSession(input: {
 	idempotencyKey: string;
 	allocationId?: string;
 }): Promise<DashboardServiceStatus> {
-	return getDashboardService().applyDeploymentActionFromSession(input);
+	return services.applyDeploymentActionFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function scaleServiceFromSession(input: {
 	serviceId: string;
 	desiredReplicaCount: number;
 }): Promise<DashboardServiceStatus> {
-	return getDashboardService().scaleServiceFromSession(input);
+	return services.scaleServiceFromSession(getDashboardRuntime(), input);
 }
 
 export function discardServiceChangesFromSession(input: {
@@ -358,13 +398,16 @@ export function discardServiceChangesFromSession(input: {
 	changeIds?: Array<string>;
 	discardAll?: boolean;
 }): Promise<DashboardServiceRecord> {
-	return getDashboardService().discardServiceChangesFromSession(input);
+	return services.discardServiceChangesFromSession(
+		getDashboardRuntime(),
+		input,
+	);
 }
 
 export function deleteServiceFromSession(input: {
 	serviceId: string;
 }): Promise<void> {
-	return getDashboardService().deleteServiceFromSession(input);
+	return services.deleteServiceFromSession(getDashboardRuntime(), input);
 }
 
 export function saveServicePositionFromSession(input: {
@@ -372,20 +415,20 @@ export function saveServicePositionFromSession(input: {
 	serviceId: string;
 	position: DashboardServicePosition;
 }): Promise<DashboardServicePosition> {
-	return getDashboardService().saveServicePositionFromSession(input);
+	return services.saveServicePositionFromSession(getDashboardRuntime(), input);
 }
 
 export function listDomainBindingsFromSession(input: {
 	serviceId: string;
 }): Promise<Array<DashboardDomainBinding>> {
-	return getDashboardService().listDomainBindingsFromSession(input);
+	return domains.listDomainBindingsFromSession(getDashboardRuntime(), input);
 }
 
 export function generateDomainBindingFromSession(input: {
 	serviceId: string;
 	targetPort: string | number | undefined;
 }): Promise<DashboardDomainBinding> {
-	return getDashboardService().generateDomainBindingFromSession(input);
+	return domains.generateDomainBindingFromSession(getDashboardRuntime(), input);
 }
 
 export function createDomainBindingFromSession(input: {
@@ -393,7 +436,7 @@ export function createDomainBindingFromSession(input: {
 	hostname: string;
 	targetPort: string | number | undefined;
 }): Promise<DashboardDomainBinding> {
-	return getDashboardService().createDomainBindingFromSession(input);
+	return domains.createDomainBindingFromSession(getDashboardRuntime(), input);
 }
 
 export function updateDomainBindingFromSession(input: {
@@ -401,27 +444,27 @@ export function updateDomainBindingFromSession(input: {
 	hostname: string;
 	targetPort: string | number | undefined;
 }): Promise<DashboardDomainBinding> {
-	return getDashboardService().updateDomainBindingFromSession(input);
+	return domains.updateDomainBindingFromSession(getDashboardRuntime(), input);
 }
 
 export function deleteDomainBindingFromSession(input: {
 	hostname: string;
 }): Promise<void> {
-	return getDashboardService().deleteDomainBindingFromSession(input);
+	return domains.deleteDomainBindingFromSession(getDashboardRuntime(), input);
 }
 
 export function checkDomainDNSFromSession(
 	hostname: string,
 ): Promise<DomainVerificationResult | undefined> {
-	return getDashboardService().checkDomainDNSFromSession(hostname);
+	return domains.checkDomainDNSFromSession(getDashboardRuntime(), hostname);
 }
 
 export function clearSession(): Promise<void> {
-	return getDashboardService().clearSession();
+	return auth.clearSession(getDashboardRuntime());
 }
 
 export function refreshSession(): Promise<void> {
-	return getDashboardService().refreshSession();
+	return auth.refreshSession(getDashboardRuntime());
 }
 
 export function forwardGitHubWebhook(

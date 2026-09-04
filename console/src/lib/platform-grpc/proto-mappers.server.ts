@@ -65,7 +65,6 @@ import {
 	DeleteDomainBindingRequestSchema,
 	DeleteEnvironmentRequestSchema,
 	DeleteServiceRequestSchema,
-	DeployEnvironmentRequestSchema,
 	type DeploymentActionRecord,
 	DeploymentActionSchema,
 	DeploymentCauseKindSchema,
@@ -100,6 +99,7 @@ import {
 	type Project,
 	ProjectKind,
 	ProjectKindSchema,
+	ReleaseEnvironmentRequestSchema,
 	RenameEnvironmentRequestSchema,
 	type ResolvedSourceBinding,
 	RestartCauseSchema,
@@ -849,8 +849,8 @@ export function toDeleteEnvironmentRequest(environmentId: string) {
 	return create(DeleteEnvironmentRequestSchema, { environmentId });
 }
 
-export function toDeployEnvironmentRequest(environmentId: string) {
-	return create(DeployEnvironmentRequestSchema, { environmentId });
+export function toReleaseEnvironmentRequest(environmentId: string) {
+	return create(ReleaseEnvironmentRequestSchema, { environmentId });
 }
 
 export function toInspectSourceRequest(input: {

@@ -17,7 +17,6 @@ import {
 	toDeleteDomainBindingRequest,
 	toDeleteEnvironmentRequest,
 	toDeleteServiceRequest,
-	toDeployEnvironmentRequest,
 	toDeploymentRecords,
 	toDiscardServiceChangesRequest,
 	toDomainBinding,
@@ -44,6 +43,7 @@ import {
 	toListServicesRequest,
 	toProject,
 	toProjects,
+	toReleaseEnvironmentRequest,
 	toRenameEnvironmentRequest,
 	toRepositoryInspection,
 	toScaleServiceRequest,
@@ -207,15 +207,15 @@ export function createPlatformGateway(
 				throw toPlatformGatewayError("DeleteEnvironment", cause);
 			}
 		},
-		async deployEnvironment(user, environmentId) {
+		async releaseEnvironment(user, environmentId) {
 			try {
-				const response = await platform.deployEnvironment(
-					toDeployEnvironmentRequest(environmentId),
+				const response = await platform.releaseEnvironment(
+					toReleaseEnvironmentRequest(environmentId),
 					callOptions(user),
 				);
 				return response.services.map(toServiceStatus);
 			} catch (cause) {
-				throw toPlatformGatewayError("DeployEnvironment", cause);
+				throw toPlatformGatewayError("ReleaseEnvironment", cause);
 			}
 		},
 		async listServices(user, environmentId) {

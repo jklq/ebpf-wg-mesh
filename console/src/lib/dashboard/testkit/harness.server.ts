@@ -1,9 +1,11 @@
-import { createDashboardService } from "#/lib/dashboard/core/service.server";
+import {
+	createDashboardRuntime,
+	type DashboardRuntime,
+} from "#/lib/dashboard/core/runtime.server";
 import {
 	AuthConflictError,
 	type DashboardConfig,
 	type DashboardOnboardingDraft,
-	type DashboardService,
 	type DashboardStore,
 	type DashboardUser,
 	type SessionCookies,
@@ -42,7 +44,7 @@ interface FakeGitHubAccount {
 
 export interface DashboardTestHarness {
 	config: DashboardConfig;
-	service: DashboardService;
+	runtime: DashboardRuntime;
 	store: DashboardStore;
 	platform: FakePlatformGateway;
 	cookies: FakeSessionCookies;
@@ -356,15 +358,15 @@ export function createDashboardTestHarness(
 		get(name) {
 			return cookies.values.get(name);
 		},
-		set(name, value) {
+		set(name, value, _options) {
 			cookies.values.set(name, value);
 		},
-		delete(name) {
+		delete(name, _options) {
 			cookies.values.delete(name);
 		},
 	};
 
-	const service = createDashboardService(config, {
+	const runtime = createDashboardRuntime(config, {
 		store,
 		platform,
 		github,
@@ -375,7 +377,7 @@ export function createDashboardTestHarness(
 
 	return {
 		config,
-		service,
+		runtime,
 		store,
 		platform,
 		github,

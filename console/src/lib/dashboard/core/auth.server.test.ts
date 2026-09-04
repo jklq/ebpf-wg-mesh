@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
 	authStateCookieOptions,
+	beginGitHubLogin,
+	clearSession,
+	completeAuthCallback,
 	refreshCookieOptions,
+	refreshSession,
 	sessionCookieOptions,
 } from "#/lib/dashboard/core/auth.server";
 import {
 	verifyAccessToken,
 	verifyRefreshToken,
 } from "#/lib/dashboard/core/jwt.server";
+import { loadDashboardHome } from "#/lib/dashboard/core/operations-home.server";
+import { loadGitHubCatalogFromSession } from "#/lib/dashboard/core/operations-onboarding.server";
 import {
 	AuthConflictError,
 	GitHubApiError,
@@ -15,11 +21,11 @@ import {
 } from "#/lib/dashboard/core/types.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
 
-describe("dashboard service", () => {
+describe("dashboard authentication", () => {
 	it("creates JWT auth cookies and sanitizes redirects on dev login", async () => {
 		const harness = createDashboardTestHarness();
 
-		const destination = await harness.service.completeAuthCallback({
+		const destination = await completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "https://evil.example.test",
@@ -81,13 +87,13 @@ describe("dashboard service", () => {
 
 	it("clears the current session", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 
-		await harness.service.clearSession();
+		await clearSession(harness.runtime);
 
 		expect(harness.cookies.values.has(harness.config.sessionCookieName)).toBe(
 			false,
@@ -95,12 +101,12 @@ describe("dashboard service", () => {
 		expect(harness.cookies.values.has(harness.config.refreshCookieName)).toBe(
 			false,
 		);
-		await expect(harness.service.loadDashboardHome()).resolves.toBeNull();
+		await expect(loadDashboardHome(harness.runtime)).resolves.toBeNull();
 	});
 
 	it("rotates refresh tokens and issues a new access token on refresh", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -112,7 +118,7 @@ describe("dashboard service", () => {
 			harness.config.refreshCookieName,
 		);
 
-		await harness.service.refreshSession();
+		await refreshSession(harness.runtime);
 
 		const rotatedAccessToken = harness.cookies.values.get(
 			harness.config.sessionCookieName,
@@ -131,13 +137,13 @@ describe("dashboard service", () => {
 				new Date("2026-03-18T12:05:00Z"),
 			).sessionId,
 		).toBe("session-2");
-		await expect(harness.service.loadDashboardHome()).resolves.not.toBeNull();
+		await expect(loadDashboardHome(harness.runtime)).resolves.not.toBeNull();
 	});
 
 	it("starts GitHub App user login by storing auth state and returning an authorization url", async () => {
 		const harness = createDashboardTestHarness();
 
-		const url = await harness.service.beginGitHubLogin({
+		const url = await beginGitHubLogin(harness.runtime, {
 			redirectTo: "/projects",
 		});
 
@@ -149,9 +155,9 @@ describe("dashboard service", () => {
 
 	it("completes GitHub callback for first signup", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.beginGitHubLogin({ redirectTo: "/projects" });
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/projects" });
 
-		const destination = await harness.service.completeAuthCallback({
+		const destination = await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
@@ -163,27 +169,27 @@ describe("dashboard service", () => {
 		const harness = createDashboardTestHarness({
 			operatorGitHubLogin: "OctoCat",
 		});
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
 
-		await harness.service.completeAuthCallback({
+		await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
 
-		const home = await harness.service.loadDashboardHome();
+		const home = await loadDashboardHome(harness.runtime);
 		expect(home?.user.id).toBe("github:octocat");
 	});
 
 	it("stores GitHub token metadata and initializes onboarding state after callback", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.beginGitHubLogin({ redirectTo: "/projects" });
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/projects" });
 
-		await harness.service.completeAuthCallback({
+		await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
 
-		const home = await harness.service.loadDashboardHome();
+		const home = await loadDashboardHome(harness.runtime);
 
 		expect(home).not.toBeNull();
 		expect(home?.githubAccount).toMatchObject({
@@ -216,8 +222,8 @@ describe("dashboard service", () => {
 			scope: "",
 			refreshToken: "github-refresh-token",
 		} as GitHubAppUserToken;
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
@@ -237,11 +243,11 @@ describe("dashboard service", () => {
 			}),
 		);
 
-		const home = await harness.service.loadDashboardHome();
+		const home = await loadDashboardHome(harness.runtime);
 		expect(home?.repositories).toEqual([]);
 		expect(harness.github.listRepositoriesCalls).toEqual([]);
 
-		const catalog = await harness.service.loadGitHubCatalogFromSession();
+		const catalog = await loadGitHubCatalogFromSession(harness.runtime);
 
 		expect(catalog.repositories).toEqual(harness.github.nextRepositories);
 		expect(harness.github.refreshedTokens).toEqual(["github-refresh-token"]);
@@ -262,8 +268,8 @@ describe("dashboard service", () => {
 			scope: "",
 			refreshToken: "single-use-refresh-token",
 		} as GitHubAppUserToken;
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
@@ -286,8 +292,8 @@ describe("dashboard service", () => {
 		}
 
 		const catalogs = await Promise.all([
-			harness.service.loadGitHubCatalogFromSession(),
-			harness.service.loadGitHubCatalogFromSession(),
+			loadGitHubCatalogFromSession(harness.runtime),
+			loadGitHubCatalogFromSession(harness.runtime),
 		]);
 
 		expect(catalogs[0]?.repositories).toEqual(harness.github.nextRepositories);
@@ -302,8 +308,8 @@ describe("dashboard service", () => {
 
 	it("does not let a stale successful refresh overwrite the lease winner", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
@@ -370,9 +376,9 @@ describe("dashboard service", () => {
 	it("auto-links a verified email match when there is exactly one existing user", async () => {
 		const harness = createDashboardTestHarness();
 		await harness.store.upsertDevUser("user-1", "user@example.com");
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
 
-		await harness.service.completeAuthCallback({
+		await completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
@@ -383,14 +389,14 @@ describe("dashboard service", () => {
 
 	it("rejects GitHub callback when there is no verified email", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
 		harness.github.identityError = new AuthConflictError({
 			code: "missing_verified_email",
 			message: "missing_verified_email",
 		});
 
 		await expect(
-			harness.service.completeAuthCallback({
+			completeAuthCallback(harness.runtime, {
 				code: "github-code",
 				state: "session-1",
 			}),

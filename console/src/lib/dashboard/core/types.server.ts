@@ -1,6 +1,5 @@
 export type {
 	DashboardDependencies,
-	DashboardService,
 	DashboardStore,
 	GitHubAccountLoginInput,
 	GitHubAccountLoginResult,

@@ -49,8 +49,8 @@ import {
 import { EnvironmentDialog } from "./environment-dialog";
 import { nextNodePositionNear, nodePosition } from "./layout";
 import {
-	doDeployEnvironment,
 	doDiscardServiceChanges,
+	doReleaseEnvironment,
 	doSaveServicePosition,
 	fetchGitHubCatalog,
 } from "./server-fns";
@@ -523,7 +523,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		setDeployingChanges(true);
 		setApplyingServices((current) => mergeApplyingServices(current, applying));
 		try {
-			const statuses = await doDeployEnvironment({
+			const statuses = await doReleaseEnvironment({
 				data: { environmentId: currentEnvironmentId },
 			});
 			for (const status of statuses) {

@@ -8,7 +8,12 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-
+import {
+	beginGitHubLogin,
+	clearSession,
+	completeAuthCallback,
+} from "#/lib/dashboard/core/auth.server";
+import { loadDashboardHome } from "#/lib/dashboard/core/operations-home.server";
 import type {
 	CreateServiceFastResult,
 	DashboardHomeState,
@@ -73,18 +78,24 @@ describe("dashboard routes", () => {
 	it("redirects home route loads when there is no session", async () => {
 		const harness = createDashboardTestHarness();
 
-		await expect(loadHomeRouteState(harness.service)).rejects.toBeTruthy();
+		await expect(
+			loadHomeRouteState({
+				loadDashboardHome: () => loadDashboardHome(harness.runtime),
+			}),
+		).rejects.toBeTruthy();
 	});
 
 	it("logs out and redirects to /login", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 
-		const response = await logoutRouteResponse(harness.service);
+		const response = await logoutRouteResponse({
+			clearSession: () => clearSession(harness.runtime),
+		});
 
 		expect(response.status).toBe(302);
 		expect(response.headers.get("Location")).toBe("/login");
@@ -98,7 +109,7 @@ describe("dashboard routes", () => {
 
 	it("surfaces GitHub API callback failures as typed route errors", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
+		await beginGitHubLogin(harness.runtime, { redirectTo: "/" });
 		harness.github.identityError = new GitHubApiError({
 			operation: "githubGET:/user/emails",
 			message: "GitHub request failed: 403",
@@ -107,7 +118,7 @@ describe("dashboard routes", () => {
 		});
 
 		await expect(
-			harness.service.completeAuthCallback({
+			completeAuthCallback(harness.runtime, {
 				code: "github-code",
 				state: "session-1",
 			}),

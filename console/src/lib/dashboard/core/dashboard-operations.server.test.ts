@@ -1,18 +1,22 @@
 import { describe, expect, it } from "vitest";
+import * as auth from "#/lib/dashboard/core/auth.server";
 import { createSessionTokenPair } from "#/lib/dashboard/core/jwt.server";
+import * as homeOperations from "#/lib/dashboard/core/operations-home.server";
+import * as onboarding from "#/lib/dashboard/core/operations-onboarding.server";
+import * as services from "#/lib/dashboard/core/operations-services.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
 
-describe("dashboard service", () => {
+describe("dashboard operations", () => {
 	it("returns degraded home state when the control plane is unavailable", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 		harness.platform.errors.listProjects = new Error("control plane down");
 
-		const state = await harness.service.loadDashboardHome();
+		const state = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(state).not.toBeNull();
 		expect(state?.controlPlaneReachable).toBe(false);
@@ -21,7 +25,7 @@ describe("dashboard service", () => {
 
 	it("does not expose fleet management when the user lacks operator access", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -30,7 +34,7 @@ describe("dashboard service", () => {
 			throw new Error("operator access required");
 		};
 
-		const state = await harness.service.loadDashboardHome();
+		const state = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(state?.controlPlaneReachable).toBe(true);
 		expect(state?.canManageFleet).toBe(false);
@@ -38,20 +42,20 @@ describe("dashboard service", () => {
 
 	it("exposes fleet management when the operator probe succeeds", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 
-		const state = await harness.service.loadDashboardHome();
+		const state = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(state?.canManageFleet).toBe(true);
 	});
 
 	it("includes saved service positions in home state", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -81,12 +85,12 @@ describe("dashboard service", () => {
 			hostname: "",
 		});
 
-		await harness.service.saveServicePositionFromSession({
+		await services.saveServicePositionFromSession(harness.runtime, {
 			environmentId: "environment-project-1",
 			serviceId: "service-1",
 			position: { x: 320, y: 256 },
 		});
-		const state = await harness.service.loadDashboardHome();
+		const state = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(state?.services[0]?.layoutPosition).toEqual({ x: 320, y: 256 });
 		expect(state?.service?.layoutPosition).toEqual({ x: 320, y: 256 });
@@ -94,7 +98,7 @@ describe("dashboard service", () => {
 
 	it("uses the URL environment to select its project and services", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -149,7 +153,10 @@ describe("dashboard service", () => {
 			hostname: "",
 		});
 
-		const state = await harness.service.loadDashboardHome("environment-2");
+		const state = await homeOperations.loadDashboardHome(
+			harness.runtime,
+			"environment-2",
+		);
 
 		expect(state?.project?.id).toBe("project-2");
 		expect(state?.environment?.id).toBe("environment-2");
@@ -163,13 +170,16 @@ describe("dashboard service", () => {
 
 	it("creates projects from the active session", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 
-		const project = await harness.service.createProjectFromSession("demo-app");
+		const project = await onboarding.createProjectFromSession(
+			harness.runtime,
+			"demo-app",
+		);
 
 		expect(project.name).toBe("demo-app");
 		expect(harness.platform.createProjectCalls).toEqual([
@@ -185,13 +195,13 @@ describe("dashboard service", () => {
 
 	it("does not list GitHub repositories on initial home load", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await auth.beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await auth.completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
 
-		const home = await harness.service.loadDashboardHome();
+		const home = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(home?.githubAccount?.login).toBe("octocat");
 		expect(home?.repositories).toEqual([]);
@@ -200,7 +210,7 @@ describe("dashboard service", () => {
 
 	it("returns project and services without loading status or domain bindings", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -231,7 +241,7 @@ describe("dashboard service", () => {
 			hostname: "hello.example.test",
 		});
 
-		const home = await harness.service.loadDashboardHome();
+		const home = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(home?.project?.id).toBe("project-1");
 		expect(home?.services).toHaveLength(1);
@@ -260,7 +270,7 @@ describe("dashboard service", () => {
 			session.accessToken,
 		);
 
-		const home = await harness.service.loadDashboardHome();
+		const home = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(home).not.toBeNull();
 		expect(harness.storeEnsureInitializedCalls).toHaveLength(1);
@@ -268,7 +278,7 @@ describe("dashboard service", () => {
 
 	it("creates another service when deploying the same repository again", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -318,10 +328,13 @@ describe("dashboard service", () => {
 			hostname: "",
 		});
 
-		const draft = await harness.service.confirmRepositoryFromSession({
-			repositorySelector: "octocat/hello",
-			serviceName: "talented-harmony",
-		});
+		const draft = await onboarding.confirmRepositoryFromSession(
+			harness.runtime,
+			{
+				repositorySelector: "octocat/hello",
+				serviceName: "talented-harmony",
+			},
+		);
 
 		expect(harness.platform.updateServiceCalls).toHaveLength(0);
 		expect(harness.platform.createServiceCalls).toEqual([
@@ -352,7 +365,7 @@ describe("dashboard service", () => {
 
 	it("seeds service runtime ports from repository inspection", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -368,7 +381,7 @@ describe("dashboard service", () => {
 			recommendedPorts: [3000, 8080],
 		};
 
-		await harness.service.confirmRepositoryFromSession({
+		await onboarding.confirmRepositoryFromSession(harness.runtime, {
 			repositorySelector: "octocat/hello",
 			serviceName: "talented-harmony",
 		});
@@ -381,16 +394,19 @@ describe("dashboard service", () => {
 
 	it("returns fast-created service details for immediate rendering", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
 		});
 
-		const result = await harness.service.createServiceFastFromSession({
-			repositorySelector: "octocat/hello",
-			serviceName: "talented-harmony",
-		});
+		const result = await onboarding.createServiceFastFromSession(
+			harness.runtime,
+			{
+				repositorySelector: "octocat/hello",
+				serviceName: "talented-harmony",
+			},
+		);
 
 		expect(result.project.id).toBe("project-1");
 		expect(result.service).toMatchObject({
@@ -414,14 +430,14 @@ describe("dashboard service", () => {
 
 	it("rejects repositories the signed-in GitHub account cannot access", async () => {
 		const harness = createDashboardTestHarness({ devUsers: [] });
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await auth.beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await auth.completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
 
 		await expect(
-			harness.service.createServiceFastFromSession({
+			onboarding.createServiceFastFromSession(harness.runtime, {
 				repositorySelector: "someone/private-repository",
 			}),
 		).rejects.toThrow(
@@ -434,7 +450,7 @@ describe("dashboard service", () => {
 
 	it("forwards rich service log filters to the platform", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -453,7 +469,7 @@ describe("dashboard service", () => {
 			},
 		];
 
-		const logs = await harness.service.listServiceLogsFromSession({
+		const logs = await services.listServiceLogsFromSession(harness.runtime, {
 			serviceId: "service-1",
 			limit: 500,
 			logType: "SERVICE_LOG_TYPE_DEPLOY",
@@ -473,7 +489,7 @@ describe("dashboard service", () => {
 
 	it("updates a service display name with settings changes", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -515,7 +531,7 @@ describe("dashboard service", () => {
 			},
 		];
 
-		const updated = await harness.service.updateServiceFromSession({
+		const updated = await services.updateServiceFromSession(harness.runtime, {
 			serviceId: "service-1",
 			serviceName: "talented-harmony",
 			repositorySelector: "octocat/hello",
@@ -543,14 +559,14 @@ describe("dashboard service", () => {
 
 	it("does not reload or relink GitHub for settings updates on the same repository", async () => {
 		const harness = createDashboardTestHarness({ devUsers: [] });
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await auth.beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await auth.completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
 		harness.platform.services = [repositoryBackedService()];
 
-		await harness.service.updateServiceFromSession({
+		await services.updateServiceFromSession(harness.runtime, {
 			serviceId: "service-1",
 			repositorySelector: " OctoCat / Hello ",
 			restart: {
@@ -574,8 +590,8 @@ describe("dashboard service", () => {
 			private: false,
 			defaultBranch: "main",
 		});
-		await harness.service.beginGitHubLogin({ redirectTo: "/" });
-		await harness.service.completeAuthCallback({
+		await auth.beginGitHubLogin(harness.runtime, { redirectTo: "/" });
+		await auth.completeAuthCallback(harness.runtime, {
 			code: "github-code",
 			state: "session-1",
 		});
@@ -590,7 +606,7 @@ describe("dashboard service", () => {
 			},
 		];
 
-		await harness.service.updateServiceFromSession({
+		await services.updateServiceFromSession(harness.runtime, {
 			serviceId: "service-1",
 			repositorySelector: "octocat/other",
 		});
@@ -610,7 +626,7 @@ describe("dashboard service", () => {
 
 	it("deletes a service through the platform", async () => {
 		const harness = createDashboardTestHarness();
-		await harness.service.completeAuthCallback({
+		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
 			email: "user@example.com",
 			redirectTo: "/",
@@ -624,7 +640,9 @@ describe("dashboard service", () => {
 			},
 		];
 
-		await harness.service.deleteServiceFromSession({ serviceId: "service-1" });
+		await services.deleteServiceFromSession(harness.runtime, {
+			serviceId: "service-1",
+		});
 
 		expect(harness.platform.deleteServiceCalls).toMatchObject([
 			{ serviceId: "service-1" },

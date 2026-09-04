@@ -1,6 +1,4 @@
-import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
 import type {
-	CreateServiceFastResult,
 	DashboardAgentEnrollment,
 	DashboardAgentLifecycleState,
 	DashboardDeploymentAction,
@@ -9,8 +7,6 @@ import type {
 	DashboardEnvironment,
 	DashboardFleet,
 	DashboardFleetAgent,
-	DashboardGitHubAccount,
-	DashboardHomeState,
 	DashboardIndexedServiceStatus,
 	DashboardIndexedServices,
 	DashboardOnboardingDraft,
@@ -25,7 +21,6 @@ import type {
 	DashboardServiceSpec,
 	DashboardServiceStatus,
 	DashboardUser,
-	DevLoginIdentity,
 	FleetAgentInput,
 	GitHubUserRepository,
 	StoredDashboardGitHubAccount,
@@ -152,7 +147,7 @@ export interface PlatformGateway {
 		input: { environmentId: string; name: string },
 	): Promise<DashboardEnvironment>;
 	deleteEnvironment(user: DashboardUser, environmentId: string): Promise<void>;
-	deployEnvironment(
+	releaseEnvironment(
 		user: DashboardUser,
 		environmentId: string,
 	): Promise<Array<DashboardServiceStatus>>;
@@ -356,161 +351,4 @@ export interface UpdateServiceInput {
 	desiredReplicaCount?: number;
 	placementRegion?: string;
 	rollingStrategy?: DashboardRollingStrategy;
-}
-
-export interface DashboardService {
-	loadFleetFromSession(): Promise<DashboardFleet>;
-	createFleetAgentFromSession(
-		input: FleetAgentInput,
-	): Promise<DashboardAgentEnrollment>;
-	updateFleetAgentFromSession(
-		input: FleetAgentInput,
-	): Promise<DashboardFleetAgent>;
-	setFleetAgentLifecycleFromSession(input: {
-		agentId: string;
-		lifecycleState: DashboardAgentLifecycleState;
-	}): Promise<DashboardFleetAgent>;
-	listDevLogins(): Array<DevLoginIdentity>;
-	isGitHubLoginEnabled(): boolean;
-	getPublicBaseURL(): string;
-	beginGitHubLogin(input: { redirectTo?: string }): Promise<string>;
-	completeAuthCallback(input: {
-		code?: string;
-		state?: string;
-		userId?: string;
-		email?: string;
-		redirectTo?: string;
-	}): Promise<string>;
-	loadDashboardHome(environmentId?: string): Promise<DashboardHomeState | null>;
-	createEnvironmentFromSession(input: {
-		projectId: string;
-		name: string;
-	}): Promise<DashboardEnvironment>;
-	duplicateEnvironmentFromSession(input: {
-		sourceEnvironmentId: string;
-		name: string;
-		copyVariables: boolean;
-	}): Promise<DashboardEnvironment>;
-	renameEnvironmentFromSession(input: {
-		environmentId: string;
-		name: string;
-	}): Promise<DashboardEnvironment>;
-	deleteEnvironmentFromSession(environmentId: string): Promise<void>;
-	deployEnvironmentFromSession(
-		environmentId: string,
-	): Promise<Array<DashboardServiceStatus>>;
-	loadGitHubCatalogFromSession(): Promise<{
-		githubAccount?: DashboardGitHubAccount;
-		repositories: Array<GitHubUserRepository>;
-	}>;
-	inspectRepositorySourceFromSession(input: {
-		repositorySelector: string;
-	}): Promise<DashboardRepositoryInspection | undefined>;
-	createProjectFromSession(name: string): Promise<DashboardProject>;
-	inspectRepositoryFromSession(input: {
-		repositorySelector: string;
-	}): Promise<DashboardOnboardingDraft>;
-	confirmRepositoryFromSession(input: {
-		repositorySelector: string;
-		serviceName?: string;
-		trackedRef?: string;
-		dockerfilePath?: string;
-		contextDir?: string;
-		cpuMillis?: number;
-		memoryMebibytes?: number;
-	}): Promise<DashboardOnboardingDraft>;
-	createServiceFastFromSession(input: {
-		repositorySelector: string;
-		serviceName?: string;
-		trackedRef?: string;
-		dockerfilePath?: string;
-		contextDir?: string;
-		cpuMillis?: number;
-		memoryMebibytes?: number;
-	}): Promise<CreateServiceFastResult>;
-	saveHostnameFromSession(hostname: string): Promise<DashboardOnboardingDraft>;
-	publishDomainFromSession(): Promise<DashboardDomainBinding>;
-	clearSession(): Promise<void>;
-	refreshSession(): Promise<void>;
-	getServiceStatusFromSession(input: {
-		serviceId: string;
-	}): Promise<DashboardServiceStatus>;
-	listEnvironmentServicesFromSession(input: {
-		environmentId: string;
-	}): Promise<Array<DashboardServiceRecord>>;
-	waitForEnvironmentServicesFromSession(input: {
-		environmentId: string;
-		waitIndex: number;
-		waitTimeoutSeconds: number;
-	}): Promise<DashboardIndexedServices>;
-	waitForProjectServicesFromSession(input: {
-		projectId: string;
-		waitIndex: number;
-		waitTimeoutSeconds: number;
-	}): Promise<DashboardIndexedServices>;
-	waitForServiceStatusFromSession(input: {
-		serviceId: string;
-		waitIndex: number;
-		waitTimeoutSeconds: number;
-	}): Promise<DashboardIndexedServiceStatus>;
-	listServiceLogsFromSession(input: {
-		serviceId: string;
-		allocationId?: string;
-		limit?: number;
-		logType?: DashboardServiceLogType;
-		buildId?: string;
-		search?: string;
-		startTime?: Date;
-		endTime?: Date;
-	}): Promise<Array<DashboardServiceLogLine>>;
-	listServiceDeploymentsFromSession(input: {
-		serviceId: string;
-		limit?: number;
-	}): Promise<Array<DashboardDeploymentRecord>>;
-	updateServiceFromSession(
-		input: UpdateServiceInput,
-	): Promise<DashboardServiceRecord>;
-	applyDeploymentActionFromSession(input: {
-		serviceId: string;
-		deploymentId: string;
-		action: DashboardDeploymentAction;
-		idempotencyKey: string;
-		allocationId?: string;
-	}): Promise<DashboardServiceStatus>;
-	scaleServiceFromSession(input: {
-		serviceId: string;
-		desiredReplicaCount: number;
-	}): Promise<DashboardServiceStatus>;
-	discardServiceChangesFromSession(input: {
-		serviceId: string;
-		changeIds?: Array<string>;
-		discardAll?: boolean;
-	}): Promise<DashboardServiceRecord>;
-	deleteServiceFromSession(input: { serviceId: string }): Promise<void>;
-	saveServicePositionFromSession(input: {
-		environmentId: string;
-		serviceId: string;
-		position: DashboardServicePosition;
-	}): Promise<DashboardServicePosition>;
-	listDomainBindingsFromSession(input: {
-		serviceId: string;
-	}): Promise<Array<DashboardDomainBinding>>;
-	generateDomainBindingFromSession(input: {
-		serviceId: string;
-		targetPort: string | number | undefined;
-	}): Promise<DashboardDomainBinding>;
-	createDomainBindingFromSession(input: {
-		serviceId: string;
-		hostname: string;
-		targetPort: string | number | undefined;
-	}): Promise<DashboardDomainBinding>;
-	updateDomainBindingFromSession(input: {
-		serviceId: string;
-		hostname: string;
-		targetPort: string | number | undefined;
-	}): Promise<DashboardDomainBinding>;
-	deleteDomainBindingFromSession(input: { hostname: string }): Promise<void>;
-	checkDomainDNSFromSession(
-		hostname: string,
-	): Promise<DomainVerificationResult | undefined>;
 }
