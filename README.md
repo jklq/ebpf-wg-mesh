@@ -54,7 +54,7 @@ Until the Envoy fleet cutover, the rendered Caddy admin listener and the control
 
 ### Deployment and health semantics
 
-`UpdateService` stages a new service revision. `DeployEnvironment` publishes all staged revisions in dependency order. Deployment-history operations use `ApplyDeploymentAction` with a selected `deployment_id` and a caller-generated `idempotency_key`; reusing a key for the same request is a no-op, while reusing it for different parameters is rejected.
+`UpdateService` stages a new service revision. `ReleaseEnvironment` publishes every staged revision in one transaction. Deployment-history operations use `ApplyDeploymentAction` with a selected `deployment_id` and a caller-generated `idempotency_key`; reusing a key for the same request is a no-op, while reusing it for different parameters is rejected.
 
 The supported deployment actions are:
 
