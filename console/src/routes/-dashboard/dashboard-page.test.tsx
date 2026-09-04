@@ -30,7 +30,7 @@ import {
 import { resetServicePersistQueueForTests } from "./use-auto-queued-persist";
 
 const {
-	doDeployEnvironmentMock,
+	doReleaseEnvironmentMock,
 	doCreateServiceFastMock,
 	doSaveServicePositionMock,
 	doUpdateServiceMock,
@@ -38,7 +38,7 @@ const {
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
-	doDeployEnvironmentMock: vi.fn(),
+	doReleaseEnvironmentMock: vi.fn(),
 	doSaveServicePositionMock: vi.fn(),
 	doUpdateServiceMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
@@ -52,7 +52,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 vi.mock("./server-fns", () => ({
 	doCreateServiceFast: doCreateServiceFastMock,
-	doDeployEnvironment: doDeployEnvironmentMock,
+	doReleaseEnvironment: doReleaseEnvironmentMock,
 	doDiscardServiceChanges: vi.fn(),
 	doSaveServicePosition: doSaveServicePositionMock,
 	doUpdateService: doUpdateServiceMock,
@@ -71,7 +71,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
 	MockEventSource.instances = [];
-	doDeployEnvironmentMock.mockReset();
+	doReleaseEnvironmentMock.mockReset();
 	doCreateServiceFastMock.mockReset();
 	doSaveServicePositionMock.mockReset();
 	doUpdateServiceMock.mockReset();
@@ -114,7 +114,7 @@ describe("DashboardPage", () => {
 	}, async () => {
 		const save = deferred<DashboardServiceRecord>();
 		doUpdateServiceMock.mockReturnValue(save.promise);
-		doDeployEnvironmentMock.mockResolvedValue([]);
+		doReleaseEnvironmentMock.mockResolvedValue([]);
 		render(<DashboardPage state={dashboardState(serviceRecord())} />);
 
 		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
@@ -133,7 +133,7 @@ describe("DashboardPage", () => {
 		expect(
 			await screen.findByRole("button", { name: "Deploying…" }),
 		).toBeTruthy();
-		expect(doDeployEnvironmentMock).not.toHaveBeenCalled();
+		expect(doReleaseEnvironmentMock).not.toHaveBeenCalled();
 
 		save.resolve(
 			serviceRecord({
@@ -147,11 +147,11 @@ describe("DashboardPage", () => {
 		);
 
 		await waitFor(() =>
-			expect(doDeployEnvironmentMock).toHaveBeenCalledWith({
+			expect(doReleaseEnvironmentMock).toHaveBeenCalledWith({
 				data: { environmentId: "environment-1" },
 			}),
 		);
-		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
+		expect(doReleaseEnvironmentMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("shows saving immediately, then keeps the acknowledged undeployed change", {
@@ -403,7 +403,7 @@ describe("DashboardPage", () => {
 	it("keeps deploy single-flight when newer changes arrive", async () => {
 		const firstDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
 		const secondDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
-		doDeployEnvironmentMock
+		doReleaseEnvironmentMock
 			.mockReturnValueOnce(firstDeploy.promise)
 			.mockReturnValueOnce(secondDeploy.promise);
 
@@ -422,7 +422,7 @@ describe("DashboardPage", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
 
 		await screen.findByText("Applying 1 change");
-		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
+		expect(doReleaseEnvironmentMock).toHaveBeenCalledTimes(1);
 
 		const secondEdit = serviceRecord({
 			specRevision: 3,
@@ -451,13 +451,13 @@ describe("DashboardPage", () => {
 		]);
 
 		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
-		expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(1);
+		expect(doReleaseEnvironmentMock).toHaveBeenCalledTimes(1);
 
 		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
 		await waitFor(() =>
-			expect(doDeployEnvironmentMock).toHaveBeenCalledTimes(2),
+			expect(doReleaseEnvironmentMock).toHaveBeenCalledTimes(2),
 		);
-		expect(doDeployEnvironmentMock).toHaveBeenNthCalledWith(2, {
+		expect(doReleaseEnvironmentMock).toHaveBeenNthCalledWith(2, {
 			data: { environmentId: "environment-1" },
 		});
 

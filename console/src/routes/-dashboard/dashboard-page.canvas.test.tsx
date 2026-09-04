@@ -18,7 +18,7 @@ import {
 } from "./dashboard-page.test-helpers";
 
 const {
-	doDeployEnvironmentMock,
+	doReleaseEnvironmentMock,
 	doCreateServiceFastMock,
 	doSaveServicePositionMock,
 	doUpdateServiceMock,
@@ -26,7 +26,7 @@ const {
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
-	doDeployEnvironmentMock: vi.fn(),
+	doReleaseEnvironmentMock: vi.fn(),
 	doSaveServicePositionMock: vi.fn(),
 	doUpdateServiceMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 vi.mock("./server-fns", () => ({
 	doCreateServiceFast: doCreateServiceFastMock,
-	doDeployEnvironment: doDeployEnvironmentMock,
+	doReleaseEnvironment: doReleaseEnvironmentMock,
 	doDiscardServiceChanges: vi.fn(),
 	doSaveServicePosition: doSaveServicePositionMock,
 	doUpdateService: doUpdateServiceMock,
@@ -49,7 +49,7 @@ vi.mock("./server-fns", () => ({
 
 beforeEach(() => {
 	MockEventSource.instances = [];
-	doDeployEnvironmentMock.mockReset();
+	doReleaseEnvironmentMock.mockReset();
 	doCreateServiceFastMock.mockReset();
 	doSaveServicePositionMock.mockReset();
 	doUpdateServiceMock.mockReset();

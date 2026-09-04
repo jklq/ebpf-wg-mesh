@@ -34,7 +34,7 @@ export async function loadLoginRouteState(
 }
 
 const loadLoginState = createServerFn({ method: "GET" }).handler(async () => {
-	const service = await import("#/lib/dashboard/entry.server");
+	const service = await import("#/lib/dashboard/server");
 	return loadLoginRouteState(service);
 });
 

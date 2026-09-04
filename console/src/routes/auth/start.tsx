@@ -10,7 +10,7 @@ const beginLogin = createServerFn({ method: "GET" })
 		};
 	})
 	.handler(async ({ data }) => {
-		const service = await import("#/lib/dashboard/entry.server");
+		const service = await import("#/lib/dashboard/server");
 		return service.beginGitHubLogin({
 			redirectTo: data.redirect,
 		});
