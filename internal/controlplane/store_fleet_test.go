@@ -178,7 +178,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if len(placed) != 1 {
 		t.Fatalf("expected one placed replica before node return, got %d", len(placed))
 	}
-	pending, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	pending, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if len(after) != 2 {
 		t.Fatalf("expected node return to place the pending replica, got %d", len(after))
 	}
-	cleared, err := store.serviceByID(ctx, "user-1", "", service.ID)
+	cleared, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestFleetReplicaSpreadAndRegionPendingReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(region): %v", err)
 	}
-	pending, err := store.serviceByID(ctx, "user-1", "", regionService.ID)
+	pending, err := store.serviceByID(ctx, "user-1", regionService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,8 +402,8 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.deployEnvironment(ctx, "user-1", envID); err != nil {
-		t.Fatalf("deployEnvironment: %v", err)
+	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining); err != nil {
 		t.Fatalf("drain: %v", err)

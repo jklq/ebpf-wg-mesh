@@ -28,11 +28,15 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+		Ports:           runtimePortsFromInts([]int32{8080}),
+		CpuMillis:       250,
+		MemoryMebibytes: 128,
+	}), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -45,7 +49,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if len(backends) != 1 {
 		t.Fatalf("expected healthy backend, got %#v", backends)
 	}
-	_, allocs, err := store.serviceStatus(ctx, "user-1", projects[0].ID, service.ID)
+	_, allocs, err := store.serviceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +101,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}
 }
 
-func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T) {
+func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -113,7 +117,11 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+		Ports:           runtimePortsFromInts([]int32{8080}),
+		CpuMillis:       250,
+		MemoryMebibytes: 128,
+	}), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -128,8 +136,8 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.restartService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
-		t.Fatalf("restartService: %v", err)
+	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
+		t.Fatalf("applyDeploymentAction(RESTART): %v", err)
 	}
 	afterRestart := mustListAllocations(t, store, ctx, service.ID)
 	if len(afterRestart) != 2 {
@@ -177,8 +185,12 @@ func TestRestartServiceIncrementsNonceAndRedeployClearsObservation(t *testing.T)
 		t.Fatal(err)
 	}
 
-	if _, err := store.redeployService(ctx, "user-1", projects[0].ID, service.ID); err != nil {
-		t.Fatalf("redeployService: %v", err)
+	crashed, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	if err != nil || !ok {
+		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
+	}
+	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, crashed.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "clear-crash-loop", ""); err != nil {
+		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 	afterRollout := allocationForGeneration(t, store, service.ID, serving[0].DesiredRolloutGeneration+1)
 	if len(afterRollout) != 1 {
@@ -209,7 +221,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, allocs, err := store.serviceStatus(ctx, "user-1", projects[0].ID, service.ID)
+	_, allocs, err := store.serviceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

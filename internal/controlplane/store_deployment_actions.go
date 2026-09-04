@@ -86,7 +86,7 @@ func (s *Store) applyDeploymentAction(
 
 	var actionRecord deploymentActionRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, "", serviceID)
+		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func (s *Store) applyDeploymentAction(
 	if err != nil {
 		return serviceRecord{}, deploymentActionRecord{}, err
 	}
-	service, err := s.serviceByID(ctx, userID, "", serviceID)
+	service, err := s.serviceByID(ctx, userID, serviceID)
 	return service, actionRecord, err
 }
 

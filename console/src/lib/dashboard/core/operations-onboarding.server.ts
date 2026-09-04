@@ -179,13 +179,13 @@ export async function deleteEnvironmentFromSession(
 	);
 }
 
-export async function deployEnvironmentFromSession(
+export async function releaseEnvironmentFromSession(
 	runtime: DashboardRuntime,
 	environmentId: string,
 ): Promise<Array<DashboardServiceStatus>> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "deployEnvironment", (platform) =>
-		platform.deployEnvironment(session.user, environmentId),
+	return platformCall(runtime, "releaseEnvironment", (platform) =>
+		platform.releaseEnvironment(session.user, environmentId),
 	);
 }
 

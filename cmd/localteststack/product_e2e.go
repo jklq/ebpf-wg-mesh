@@ -111,9 +111,12 @@ func runProductE2EScenario(
 	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("create fixture service: %w", err)
 	}
-	deployed, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID})
-	if err != nil || len(deployed.GetServices()) != 1 {
+	deployed, err := client.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID})
+	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("deploy production environment: %w", err)
+	}
+	if len(deployed.GetServices()) != 1 {
+		return productE2ESummary{}, fmt.Errorf("deploy production environment: expected 1 service, got %d", len(deployed.GetServices()))
 	}
 	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), service.GetSpecRevision(), 1); err != nil {
 		return productE2ESummary{}, fmt.Errorf("wait for initial deploy: %w", err)
@@ -150,22 +153,26 @@ func runProductE2EScenario(
 		},
 	})
 	if err != nil {
-		return productE2ESummary{}, fmt.Errorf("stage fixture redeploy: %w", err)
+		return productE2ESummary{}, fmt.Errorf("release staged fixture: %w", err)
 	}
 	if err := waitForProductRoute(ctx, routeURL, productE2EMarkerV1); err != nil {
-		return productE2ESummary{}, fmt.Errorf("draft changed live route before redeploy: %w", err)
+		return productE2ESummary{}, fmt.Errorf("draft changed live route before release: %w", err)
 	}
 	userCtx, err = productE2EUserContext(ctx, assertionSecret)
 	if err != nil {
 		return productE2ESummary{}, err
 	}
-	redeployed, err := client.RedeployService(userCtx, &platformv1.RedeployServiceRequest{ServiceId: service.GetId()})
+	release, err := client.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID})
 	if err != nil {
-		return productE2ESummary{}, fmt.Errorf("redeploy fixture service: %w", err)
+		return productE2ESummary{}, fmt.Errorf("deploy updated fixture service: %w", err)
 	}
-	healthy, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
+	if len(release.GetServices()) != 1 {
+		return productE2ESummary{}, fmt.Errorf("deploy updated fixture service: expected 1 service, got %d", len(release.GetServices()))
+	}
+	released := release.GetServices()[0]
+	healthy, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), released.GetService().GetRolloutGeneration())
 	if err != nil {
-		return productE2ESummary{}, fmt.Errorf("wait for fixture redeploy: %w", err)
+		return productE2ESummary{}, fmt.Errorf("wait for fixture release: %w", err)
 	}
 	deploymentHistory, err := client.ListServiceDeployments(userCtx, &platformv1.ListServiceDeploymentsRequest{ServiceId: service.GetId(), Limit: 1})
 	if err != nil {
@@ -174,9 +181,9 @@ func runProductE2EScenario(
 	if len(deploymentHistory.GetDeployments()) != 1 {
 		return productE2ESummary{}, fmt.Errorf("list fixture deployment for restart: got %d deployments", len(deploymentHistory.GetDeployments()))
 	}
-	restartAllocation := matchingProductAllocation(healthy, updated.GetSpecRevision(), redeployed.GetService().GetRolloutGeneration())
+	restartAllocation := matchingProductAllocation(healthy, updated.GetSpecRevision(), released.GetService().GetRolloutGeneration())
 	if restartAllocation == nil {
-		return productE2ESummary{}, fmt.Errorf("redeployed service has no matching healthy allocation to restart")
+		return productE2ESummary{}, fmt.Errorf("released service has no matching healthy allocation to restart")
 	}
 	restartRequest := &platformv1.ApplyDeploymentActionRequest{
 		ServiceId:      service.GetId(),
@@ -196,7 +203,7 @@ func runProductE2EScenario(
 		return productE2ESummary{}, fmt.Errorf("wait for fixture restart: %w", err)
 	}
 	if err := waitForProductRoute(ctx, routeURL, productE2EMarkerV2); err != nil {
-		return productE2ESummary{}, fmt.Errorf("verify redeployed domain route via public tunnel: %w", err)
+		return productE2ESummary{}, fmt.Errorf("verify released domain route via public tunnel: %w", err)
 	}
 
 	sessionToken, err := mintDashboardAccessToken(dashboardJWTSecret, productE2EUserID, productE2EUserEmail)

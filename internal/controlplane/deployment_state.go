@@ -58,7 +58,7 @@ const (
 	reasonDeploymentRemoved    = "DEPLOYMENT_REMOVED"
 	reasonDeploymentSuperseded = "DEPLOYMENT_SUPERSEDED"
 	reasonAgentObservation     = "AGENT_OBSERVATION"
-	reasonUserRedeploy         = "USER_REDEPLOY"
+	reasonEnvironmentRelease   = "ENVIRONMENT_RELEASE"
 	reasonExactRedeploy        = "EXACT_REDEPLOY"
 	reasonRollback             = "ROLLBACK"
 	reasonUserRetry            = "USER_RETRY"

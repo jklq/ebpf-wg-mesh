@@ -92,7 +92,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	err = store.deleteVolume(ctx, "user-1", projects[0].ID, volume.ID)
+	err = store.deleteVolume(ctx, "user-1", volume.ID)
 	if !errors.Is(err, errVolumeInUse) {
 		t.Fatalf("expected errVolumeInUse, got %v", err)
 	}
@@ -141,14 +141,14 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			deleteErrCh <- store.deleteVolume(ctx, "user-1", projects[0].ID, volume.ID)
+			deleteErrCh <- store.deleteVolume(ctx, "user-1", volume.ID)
 		}()
 
 		close(start)
 		createErr := <-createErrCh
 		deleteErr := <-deleteErrCh
 		if createErr == nil && deleteErr == nil {
-			if _, _, err := store.deployEnvironment(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID)); err == nil {
+			if _, _, err := store.releaseEnvironment(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID)); err == nil {
 				t.Fatalf("iteration %d: deployed service with deleted volume %q", i, volumeName)
 			}
 		}

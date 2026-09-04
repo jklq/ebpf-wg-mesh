@@ -463,7 +463,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if err != nil {
 		return err
 	}
-	if _, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+	if _, err := client.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
 		return err
 	}
 	status, err := waitForServiceHealthy(ctx, userCtx, client, service.GetId(), 1, 1)
@@ -504,21 +504,27 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if updatedService.GetSpecRevision() < 2 {
 		return fmt.Errorf("expected staged revision after update, got spec_revision=%d rollout_generation=%d", updatedService.GetSpecRevision(), updatedService.GetRolloutGeneration())
 	}
-	redeployCtx, cancelRedeploy := context.WithTimeout(userCtx, 30*time.Second)
-	defer cancelRedeploy()
-	_, err = client.RedeployService(redeployCtx, &platformv1.RedeployServiceRequest{
-		ServiceId: service.GetId(),
+	releaseCtx, cancelRelease := context.WithTimeout(userCtx, 30*time.Second)
+	defer cancelRelease()
+	_, err = client.ReleaseEnvironment(releaseCtx, &platformv1.ReleaseEnvironmentRequest{
+		EnvironmentId: environmentID,
 	})
 	if err == nil {
-		return errors.New("expected FailedPrecondition redeploying a volume-backed service with existing allocations")
+		return errors.New("expected FailedPrecondition deploying a volume-backed service revision with existing allocations")
 	}
 	if grpcstatus.Code(err) != codes.FailedPrecondition {
-		return fmt.Errorf("redeploy volume-backed service: got %v, want FailedPrecondition", err)
+		return fmt.Errorf("deploy volume-backed service revision: got %v, want FailedPrecondition", err)
 	}
 	if !strings.Contains(err.Error(), "volume-backed services cannot overlap rollout generations until volume handoff is supported") {
-		return fmt.Errorf("redeploy volume-backed service: got %v, want volume-handoff rejection", err)
+		return fmt.Errorf("deploy volume-backed service revision: got %v, want volume-handoff rejection", err)
 	}
 	infof("scenario: overlapping volume-backed rollout rejected as FailedPrecondition")
+	if _, err := client.DiscardServiceChanges(userCtx, &platformv1.DiscardServiceChangesRequest{
+		ServiceId:  service.GetId(),
+		DiscardAll: true,
+	}); err != nil {
+		return fmt.Errorf("discard rejected volume-backed service changes: %w", err)
+	}
 
 	status, err = waitForServiceHealthy(ctx, userCtx, client, service.GetId(), 1, 1)
 	if err != nil {
@@ -527,7 +533,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	allocationID = status.GetAllocation().GetAllocationId()
 	endpoint = allocationEndpoint(status.GetAllocation())
 	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV1); err != nil {
-		return fmt.Errorf("verify original service response after rejected redeploy: %w", err)
+		return fmt.Errorf("verify original service response after rejected environment release: %w", err)
 	}
 	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("grep -Fqx %q /var/lib/ebpf-wg-mesh/agent/volumes/%s/index.html", markerV1, volume.GetId())); err != nil {
 		return fmt.Errorf("verify original volume contents on %s: %w", allocatedHost.Name, err)
@@ -554,7 +560,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if err != nil {
 		return err
 	}
-	if _, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: isolationEnvironmentID}); err != nil {
+	if _, err := client.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: isolationEnvironmentID}); err != nil {
 		return err
 	}
 	isolationStatus, err := waitForServiceHealthy(ctx, userCtx, client, isolationService.GetId(), isolationService.GetSpecRevision(), 1)
@@ -636,7 +642,7 @@ func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.Pla
 	if err != nil {
 		return fmt.Errorf("create failover service: %w", err)
 	}
-	if _, err := client.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+	if _, err := client.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
 		return fmt.Errorf("deploy failover service: %w", err)
 	}
 	before, err := waitForServiceHealthy(ctx, userCtx, client, failoverService.GetId(), failoverService.GetSpecRevision(), 1)

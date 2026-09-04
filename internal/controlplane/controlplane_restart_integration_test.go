@@ -58,7 +58,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 		EnvironmentId: envs.GetEnvironments()[0].GetId(),
 		Service: &platformv1.ServiceInput{
 			Name: "web",
-			Spec: directImageServiceSpec("example.test/restart:1", &platformv1.ServiceRuntime{
+			Spec: directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 				CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080}),
 			}),
 		},
@@ -66,8 +66,8 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateService: %v", err)
 	}
-	if _, err := first.dashboard.DeployEnvironment(userCtx, &platformv1.DeployEnvironmentRequest{EnvironmentId: envs.GetEnvironments()[0].GetId()}); err != nil {
-		t.Fatalf("DeployEnvironment: %v", err)
+	if _, err := first.dashboard.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: envs.GetEnvironments()[0].GetId()}); err != nil {
+		t.Fatalf("ReleaseEnvironment: %v", err)
 	}
 	deployed := recvDesiredState(t, stream)
 	if len(deployed.GetServices()) != 1 || deployed.GetServices()[0].GetServiceId() != service.GetId() {
@@ -84,7 +84,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	restream, reCancel := openAgentSync(t, second.server, cert, hello)
 	defer reCancel()
 	restored := recvDesiredState(t, restream)
-	if len(restored.GetServices()) != 1 || restored.GetServices()[0].GetSpec().GetImage() != "example.test/restart:1" {
+	if len(restored.GetServices()) != 1 || restored.GetServices()[0].GetSpec().GetImage() != pinnedImage("a") {
 		t.Fatalf("reconnect did not restore desired state from the store: %+v", restored)
 	}
 	fromStore, err := second.server.store.desiredStateForAgent(ctx, agentID)
@@ -98,11 +98,20 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	surgeStream, surgeCancel := openAgentSync(t, second.server, surgeCert, restartAgentHello(surgeID, "fd00:30::22"))
 	defer surgeCancel()
 	if initialSurge := recvDesiredState(t, surgeStream); len(initialSurge.GetServices()) != 0 {
-		t.Fatalf("surge agent unexpectedly had allocations before redeploy: %+v", initialSurge)
+		t.Fatalf("surge agent unexpectedly had allocations before deployment action: %+v", initialSurge)
+	}
+	released, err := second.dashboard.GetService(userCtx, &platformv1.GetServiceRequest{ServiceId: service.GetId()})
+	if err != nil {
+		t.Fatalf("GetService after restart: %v", err)
 	}
 
-	if _, err := second.dashboard.RedeployService(userCtx, &platformv1.RedeployServiceRequest{ServiceId: service.GetId()}); err != nil {
-		t.Fatalf("RedeployService: %v", err)
+	if _, err := second.dashboard.ApplyDeploymentAction(userCtx, &platformv1.ApplyDeploymentActionRequest{
+		ServiceId:      service.GetId(),
+		DeploymentId:   released.GetLatestDeployment().GetDeploymentId(),
+		Action:         platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY,
+		IdempotencyKey: "restart-resync-exact-redeploy",
+	}); err != nil {
+		t.Fatalf("ApplyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 	var mutated *agentv1.DesiredNodeState
 	for _, candidateID := range []string{agentID, surgeID} {
@@ -116,7 +125,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 		}
 	}
 	if mutated == nil {
-		t.Fatal("redeploy did not persist a newer desired rollout on either eligible agent")
+		t.Fatal("exact redeploy did not persist a newer desired rollout on either eligible agent")
 	}
 	if mutated.GetRevision() <= beforeRev {
 		t.Fatalf("expected a newer revision after redeploy, before=%d after=%d", beforeRev, mutated.GetRevision())
@@ -187,7 +196,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", projects[0].ID, "restart.example.com", ingressSvc.ID, 8080); err != nil {
+	if _, _, err := store.createDomainBinding(ctx, "user-1", "restart.example.com", ingressSvc.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, ingressSvc.ID, "fd00:200:1::10", 8080); err != nil {

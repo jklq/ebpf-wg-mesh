@@ -62,17 +62,17 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 0 {
 		t.Fatalf("expected staged service to queue no work, got %d", got)
 	}
-	if _, err := service.DeployEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeployEnvironmentRequest{
+	if _, err := service.ReleaseEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ReleaseEnvironmentRequest{
 		EnvironmentId: productionEnvironmentID(t, store, projectID),
 	}); err != nil {
-		t.Fatalf("DeployEnvironment: %v", err)
+		t.Fatalf("ReleaseEnvironment: %v", err)
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 1 {
-		t.Fatalf("expected deploy to queue 1 sync item, got %d", got)
+		t.Fatalf("expected release to queue 1 sync item, got %d", got)
 	}
 }
 
-func TestPlatformServiceUpdateAndRedeployQueueSyncWithoutBranchLookup(t *testing.T) {
+func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -122,11 +122,11 @@ func TestPlatformServiceUpdateAndRedeployQueueSyncWithoutBranchLookup(t *testing
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
-	statusResp, err := service.DeployEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeployEnvironmentRequest{
+	statusResp, err := service.ReleaseEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ReleaseEnvironmentRequest{
 		EnvironmentId: productionEnvironmentID(t, store, projectID),
 	})
 	if err != nil {
-		t.Fatalf("DeployEnvironment: %v", err)
+		t.Fatalf("ReleaseEnvironment: %v", err)
 	}
 	if len(statusResp.GetServices()) != 1 {
 		t.Fatalf("expected one deployed service, got %d", len(statusResp.GetServices()))
@@ -138,7 +138,7 @@ func TestPlatformServiceUpdateAndRedeployQueueSyncWithoutBranchLookup(t *testing
 		t.Fatalf("expected no branch head lookup in update/deploy, got %d new calls", got-branchHitsBeforeMutations)
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 1 {
-		t.Fatalf("expected 1 queued sync item after deploy, got %d", got)
+		t.Fatalf("expected 1 queued sync item after release, got %d", got)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 			break
 		}
 	}
-	status, _, err := store.serviceStatus(ctx, "user-1", projectID, service.ID)
+	status, _, err := store.serviceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceStatus: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		commit  string
 	}{{first, "commit-public-main"}, {second, "commit-public-release"}} {
 		service := item.service
-		status, _, err := store.serviceStatus(ctx, "user-1", projectID, service.ID)
+		status, _, err := store.serviceStatus(ctx, "user-1", service.ID)
 		if err != nil {
 			t.Fatalf("serviceStatus(%s): %v", service.Name, err)
 		}

@@ -21,7 +21,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, err
 	}
-	service, allocations, err := s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	service, allocations, err := s.store.serviceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
@@ -36,7 +36,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	// watch. Returning it here would report the state from *before* the change
 	// that woke us, leaving every watcher one event behind — the final "healthy"
 	// status of a rollout would then never reach the client.
-	service, allocations, err = s.store.serviceStatus(ctx, identity.UserID, "", req.GetServiceId())
+	service, allocations, err = s.store.serviceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
@@ -58,7 +58,7 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 	if s.logStore == nil {
 		return nil, status.Error(codes.FailedPrecondition, errLogStoreDisabled.Error())
 	}
-	if _, err := s.store.serviceByID(ctx, identity.UserID, "", req.GetServiceId()); err != nil {
+	if _, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
@@ -86,7 +86,7 @@ func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platf
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
-	items, err := s.store.listServiceDeployments(ctx, identity.UserID, "", req.GetServiceId(), req.GetLimit())
+	items, err := s.store.listServiceDeployments(ctx, identity.UserID, req.GetServiceId(), req.GetLimit())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service deployments: %v", err)
@@ -142,14 +142,8 @@ func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Conte
 		buildRec = &rec
 	}
 	service.ReadyReplicaCount = countReadyAllocations(allocs)
-	summary := summarizeAllocations(allocs, service.DesiredReplicaCount)
-	if service.LatestDeployment == nil {
-		inferred := inferDeploymentFromLegacy(service, buildRec, summary)
-		service.LatestDeployment = &inferred
-	}
-	stages := deploymentStages(service, buildRec, summary)
+	stages := deploymentStages(service, buildRec)
 	if service.LatestBuild == nil && len(stages) > 0 {
-		// Stages still travel on BuildStatus for older console clients.
 		service.LatestBuild = &platformv1.BuildStatus{Stages: stages}
 	} else if service.LatestBuild != nil {
 		service.LatestBuild.Stages = stages
@@ -298,7 +292,7 @@ func validHealthCheckPath(path string) bool {
 	return err == nil && !parsed.IsAbs() && parsed.Host == ""
 }
 
-func (s *PlatformService) notifyServices(ctx context.Context, userID, projectID string, serviceIDs ...string) {
+func (s *PlatformService) notifyServices(ctx context.Context, userID string, serviceIDs ...string) {
 	seen := make(map[string]struct{}, len(serviceIDs))
 	for _, serviceID := range serviceIDs {
 		serviceID = strings.TrimSpace(serviceID)
@@ -309,7 +303,7 @@ func (s *PlatformService) notifyServices(ctx context.Context, userID, projectID 
 			continue
 		}
 		seen[serviceID] = struct{}{}
-		service, err := s.store.serviceByID(ctx, userID, projectID, serviceID)
+		service, err := s.store.serviceByID(ctx, userID, serviceID)
 		if err != nil {
 			slog.Warn("failed to load service for domain notification", "service_id", serviceID, "error", err)
 			continue
