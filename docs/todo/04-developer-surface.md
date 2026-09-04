@@ -56,7 +56,7 @@ Add an optional pre-deploy command that runs from the newly built image as a bou
 
 Was: 8.4
 Status: open
-Depends on: 1.8, 3.3, 2.4. Do not copy production secrets onto forked PRs.
+Depends on: 1.8, 3.3, 2.4b. Do not copy production secrets onto forked PRs.
 
 Prompt:
 
