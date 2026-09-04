@@ -2,35 +2,9 @@
 
 Until these items land, the product does not actually run a typical app, or it lies about whether it did.
 
-Independent items in this file may proceed in parallel. 1.3 should see both overlay families once 1.1 exists.
+Independent items in this file may proceed in parallel. 1.1 is done; see [landed.md](landed.md). 1.2 is parked; see [freeze.md](freeze.md). 1.3 sees both overlay families because 1.1 landed.
 
-## 1.1 Dual-stack workload overlay
 
-Was: 5.1
-Status: open
-Depends on: none
-
-Typical images bind `0.0.0.0` and never become healthy or publicly reachable on an IPv6-only overlay.
-
-Prompt:
-
-```text
-Add IPv4 as a second overlay family next to the existing IPv6 mesh so every allocated workload gets both addresses, both are routed in WireGuard AllowedIPs, and both are enforced by the eBPF identity policy under the same network_identity. Allocate IPv4 from a real sequential pool and non-overlapping per-node prefixes—do not hash it the IPv6 way—and reject pool exhaustion or overlap transactionally. Leave underlay advertise_addr on IPv6. Extend desired state, allocation reports, container labels, CNI setup, internal host entries, service DNS, health probes, metrics labels, and ingress backends to understand both addresses and choose a reachable healthy family without weakening environment isolation. A process binding only 0.0.0.0 must become healthy and publicly reachable, and a process binding only :: must continue to work. Isolation tests must prove same-environment allow, cross-environment deny, unknown-destination deny, identity removal, and node failover on both families.
-```
-
-## 1.2 Encrypted versioned secrets
-
-Was: 2.4
-Status: open
-Depends on: none. May introduce envelope keys against the current file material; 2.3 later replaces the provider with KMS/HSM.
-
-A real service cannot run without credentials that never appear in revision JSON, logs, or the console.
-
-Prompt:
-
-```text
-Separate public configuration variables from secrets. Persist secrets as versioned ciphertext encrypted with per-project or per-environment data-encryption keys wrapped by the configured production key provider; never include plaintext in service revision JSON, change descriptions, audit payloads, API reads, logs, or console loader data. Service specs should reference secret versions, and only the control-plane path assembling desired state may decrypt the exact versions needed for an assigned workload. Agents may receive runtime plaintext only for their assigned allocations, must write no plaintext desired-state JSON to disk, and must discard it when the allocation is removed. The console must support write-only create/update, masked existence, explicit deletion, and safe copy restrictions. Rollback must restore references to historic secret versions without revealing them. Add key rotation, authorization, redaction, compromise-scope, and no-plaintext-at-rest tests.
-```
 
 ## 1.3 Continuous readiness and liveness
 
@@ -75,7 +49,7 @@ Remove impossible timestamps and ambiguous deployment state from the control-pla
 
 Was: 4.1
 Status: open
-Depends on: none. Isolation (2.4) can wrap this later.
+Depends on: none. The build executor boundary (2.4a) can wrap this later.
 
 Most repositories have no Dockerfile. Silent Dockerfile fallback hides why a source deploy failed.
 

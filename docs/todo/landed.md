@@ -2,7 +2,7 @@
 
 These prompts are done. They stay here so the work queue in [README.md](README.md) only lists open product-priority work. Old IDs are in parentheses.
 
-Current code still uses a full-cluster identity catalog, a full WireGuard mesh, a full desired-state snapshot on every agent, and a single Caddy. Those are not the architecture to preserve; [2.7](02-host-untrusted-code.md#27-envoy-ingress-fleet)–[2.12](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) replace them.
+Current code still uses a full-cluster identity catalog, a full WireGuard mesh, a full desired-state snapshot on every agent, and a single Caddy. Those are not the architecture to preserve; [2.7a](02-host-untrusted-code.md#27a-xds-control-plane-and-caddy-cutover)–[2.12](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) replace them.
 
 ## Production configuration profile (0.4)
 
@@ -38,4 +38,18 @@ Single untrusted-workload sandbox, cgroup isolation, no customer-selectable priv
 
 ## Multi-replica control plane (2.1)
 
-Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases. Replicas still share node-local source archives and keys until [2.2](02-host-untrusted-code.md#22-source-object-storage) and [2.3](02-host-untrusted-code.md#23-externalize-platform-keys).
+Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases. Replicas still share node-local source archives and keys until [2.2](02-host-untrusted-code.md#22-source-object-storage), [2.3a](02-host-untrusted-code.md#23a-secret-envelope-key-provider), and [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
+
+## 1.1 Dual-stack workload overlay
+
+Was: 5.1
+Status: done
+Depends on: none
+
+Typical images bind `0.0.0.0` and never become healthy or publicly reachable on an IPv6-only overlay.
+
+Prompt:
+
+```text
+Add IPv4 as a second overlay family next to the existing IPv6 mesh so every allocated workload gets both addresses, both are routed in WireGuard AllowedIPs, and both are enforced by the eBPF identity policy under the same network_identity. Allocate IPv4 from a real sequential pool and non-overlapping per-node prefixes—do not hash it the IPv6 way—and reject pool exhaustion or overlap transactionally. Leave underlay advertise_addr on IPv6. Extend desired state, allocation reports, container labels, CNI setup, internal host entries, service DNS, health probes, metrics labels, and ingress backends to understand both addresses and choose a reachable healthy family without weakening environment isolation. A process binding only 0.0.0.0 must become healthy and publicly reachable, and a process binding only :: must continue to work. Isolation tests must prove same-environment allow, cross-environment deny, unknown-destination deny, identity removal, and node failover on both families.
+```

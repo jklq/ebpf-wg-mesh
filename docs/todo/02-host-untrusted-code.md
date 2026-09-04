@@ -2,7 +2,9 @@
 
 These items make the dogfood loop safe to offer a design partner. Control-plane replicas already exist; they still share node-local source and keys. Builds still run as a host process. Ingress is still one Caddy. Agents still get a full-cluster identity catalog over a full WireGuard mesh.
 
-Do not wait to empty this file before starting 3.x items that have no dependency here. Do wait to invite a second tenant’s source onto a shared builder until 2.4 exists.
+Do not wait to empty this file before starting 3.x items that have no dependency here. Do wait to invite a second tenant’s source onto a shared builder until 2.4b exists.
+
+Not every item here is partner-visible. The **design-partner minimum** is 2.2, 2.4a, 2.4b, 2.6, 2.7a, 2.9, and 2.15 — source that does not live on one disk, someone else’s code that does not run in your host process, digest-pinned images, an ingress that is not one Caddy, logs that survive a backend blip, and a container that cannot reach the platform’s own control surface. Everything else in this file is real work that no design partner will ever see; schedule it accordingly.
 
 Extend the VM harness as each item needs a new topology component; 2.13 is done when the listed topology exists.
 
@@ -12,10 +14,12 @@ Was: 2.7
 Status: open
 Depends on: none
 
+Not partner-visible. This is consolidation of code that already exists in triplicate — `github_work_items`, `source_work_items`, and `github_webhook_deliveries` are the same table written three times, and `claimNextSourceWorkItem` hand-rolls stale reclaim. It unblocks no product gate on its own. Prefer writing it *as* the deletion GC loop 1.8 needs and generalizing on the second caller, over landing it standalone ahead of work a user can see.
+
 Prompt:
 
 ```text
-Create a small CockroachDB-backed durable-work package for control-plane background operations. It is not a workflow DSL. A work record needs a stable kind and ID, deduplication/idempotency key, scoped resource identity, pending/leased/succeeded/failed/dead state, attempt limit, lease owner, monotonically increasing lease epoch used as a fencing token, lease expiry and heartbeat, sanitized last error, and timestamps. Enqueue atomically with the product-state mutation that requires it. Claim atomically, and require the current lease epoch on heartbeat, completion, and every state-changing callback. Handlers persist intent before an external effect, record observation afterward, and reconcile ambiguous outcomes. Provide bounded retry with jitter, dead-letter inspection, and queue-lag metrics. First merge is the package plus one caller (prefer GitHub deliveries or deletion GC). Migrate other loops only when you next touch them. Add multi-replica tests that kill a worker before and after an external-effect boundary and prove a stalled owner cannot commit after takeover.
+Consolidate the duplicated control-plane work queues into one small CockroachDB-backed durable-work package. It replaces github_work_items, source_work_items, and github_webhook_deliveries, and it is not a workflow DSL. A work record needs a stable kind and ID, a unique deduplication key, scoped resource identity, pending/leased/succeeded/failed/dead state, attempt count and limit, owner ID, an owner epoch that increments on every claim, lease expiry with heartbeat, sanitized last error, an available-at time, and timestamps. Enqueue in the same transaction as the product-state mutation that requires it. Claim, heartbeat, complete, and fail must each be a single compare-and-swap on owner and epoch, so a stalled owner cannot commit after takeover without a separate fencing protocol layered on top. Provide bounded retry with jitter, a terminal dead state inspectable by query, and one queue-lag gauge. Document, with one worked handler, the rule that a handler performing an external effect persists intent before the call and records the observed outcome after it — do not build a generic two-phase intent framework to enforce it. First merge is the package plus one caller, deleting that caller's bespoke table. Migrate the others only when you next touch them. Test multi-replica claim contention, worker death before and after an external-effect boundary, and a stalled owner attempting a late commit after takeover.
 ```
 
 ## 2.2 Source object storage
@@ -24,46 +28,82 @@ Was: 2.2
 Status: open
 Depends on: 1.8 for deletion grace. Production must stop requiring a shared filesystem of archives across control-plane replicas.
 
+Design-partner minimum.
+
 Prompt:
 
 ```text
 Keep FileSourceArchiveStore for local development and add a production SourceArchiveStore backed by operator-provided S3-compatible object storage. Store content-addressed immutable archives by verified SHA-256 digest, stream uploads and downloads without loading the whole archive into memory, verify size and digest at both boundaries, and use conditional creation so duplicate snapshots converge safely. Persist object metadata and lifecycle state in CockroachDB, distinguish missing/corrupt/transient retrieval failures, and garbage-collect only objects that are unreferenced after the deletion grace period. Support configurable server-side encryption, endpoint, region, bucket, credential-file or workload-identity auth, timeouts, and bounded retries without logging credentials. Production mode must reject the filesystem provider. Add contract tests shared by file and S3-compatible implementations plus failure tests for partial upload, stale metadata, range reads, deletion races, and digest mismatch.
 ```
 
-## 2.3 Externalize platform keys
+## 2.3a Secret envelope key provider
 
-Was: 2.3
+Was: 2.3 (split)
 Status: open
-Depends on: 1.2 if envelope keys for secrets already exist, so rotation covers them.
+Depends on: 1.2 if it lands first; otherwise this item is where secret ciphertext first gets a real key.
+
+Secrets are the only key material here whose ciphertext outlives the process. That is what justifies a provider contract.
 
 Prompt:
 
 ```text
-Replace production dependence on private keys generated under CONTROLPLANE_STATE_DIR with explicit key providers. Cover the internal CA, registry token signer, user-assertion verifier material, GitHub token encryption, session signing, and any envelope-encryption keys introduced for customer secrets. Support a local file provider for development and a production KMS/HSM or externally mounted signer contract that can sign or unwrap without exporting a long-lived root key into application logs or database rows. Model key IDs and active/retiring/retired states, allow overlapping verification during rotation, make new signatures use the active key, and provide operator commands and runbooks for scheduled rotation and compromise response. Control-plane replicas must see consistent key state. Refuse unsafe key deletion while dependent certificates, tokens, or ciphertext remain valid, and test rotation across live sessions, agent renewal, registry pulls, and replica restarts.
+Give secret material a real key provider so ciphertext is not protected by a key that exists only under CONTROLPLANE_STATE_DIR on one replica. Define one KeyProvider contract that wraps and unwraps data-encryption keys without exporting the root key into logs, database rows, process arguments, or error strings. Ship a local file provider for development and one production KMS provider; production must reject the file provider. Model key IDs and active/retired states, let new wraps use the active key while retired keys still unwrap, and make every control-plane replica see the same key state. Refuse to delete or disable a key while ciphertext wrapped by it still exists. Provide an operator command to introduce a new active key and to rewrap existing data-encryption keys onto it. Do not add an HSM or external-signer contract, a compromise-response program, or customer-facing key management in this item. Test rewrap across replicas, restart with a retired key still needed for unwrap, unwrap failure diagnostics, and refusal to delete a key with live ciphertext.
 ```
 
-## 2.4 Isolate untrusted builds
+## 2.3b Platform signing key lifecycle
 
-Was: 4.2
+Was: 2.3 (split)
+Status: open
+Depends on: 2.3a for the provider contract.
+
+Not partner-visible. Every credential these keys sign is short-lived, so rotation is an overlap window, not a ceremony.
+
+Prompt:
+
+```text
+Stop generating the internal CA, registry token signer, user-assertion verifier material, and session signing keys under CONTROLPLANE_STATE_DIR, where replicas cannot agree on them. Load them through the same KeyProvider contract as 2.3a so key state is shared and consistent across replicas. Because every credential these keys sign is short-lived, rotation is: introduce a new active key, verify against both the active and retiring keys for longer than the longest credential lifetime, then retire. Sign only with the active key. Provide operator commands to start and finish a rotation, and a documented lifetime table showing how long the overlap must be for each credential type. Do not build an HSM or external-signer contract, a compromise-response runbook program, or a certificate-authority product. Test rotation across live sessions, agent certificate renewal, registry pulls, and replica restart, and prove a replica that starts mid-rotation accepts credentials signed by either key.
+```
+
+## 2.4a Build execution boundary
+
+Was: 4.2 (split)
 Status: open
 Depends on: 2.2 so the executor reads a verified snapshot rather than a builder-local checkout.
 
+Design-partner minimum. This item creates the seam and the policy; 2.4b makes the boundary real.
+
 Prompt:
 
 ```text
-Run each customer build inside a disposable isolation boundary stronger than a shared host process. Define a BuildExecutor interface and provide a local executor for development plus a production executor using an operator-selected microVM or hardened sandbox technology. Each execution receives a read-only verified source snapshot, an isolated writable workspace and BuildKit endpoint, scoped push credentials, explicit CPU/memory/disk/PID/time limits, and a restricted network policy. It must not access host sockets, builder credentials, sibling caches, control-plane credentials, or another project’s files. On completion or cancellation, destroy the execution environment and verify cleanup; persistent cache data must be content-addressed and tenant-safe. Do not build a VM orchestration platform in this repository—integrate a narrow executor backend. Add adversarial tests for filesystem escape, host socket access, fork bomb, disk exhaustion, network denial, credential scope, timeout, and cleanup after worker death.
+Define a BuildExecutor interface that every build goes through, and make the current in-process path one implementation behind it. Each execution receives a read-only verified source snapshot, an isolated writable workspace and BuildKit endpoint, push credentials scoped to exactly one repository, explicit CPU/memory/disk/PID/time limits, and a restricted network policy — all expressed as executor inputs rather than ambient host state. The executor destroys its workspace and verifies cleanup on completion, cancellation, and worker death. Persistent cache data must be content-addressed so it cannot carry state between projects. This item does not yet claim a hardened boundary; it establishes the seam, the limits, and the credential scoping that 2.4b enforces, and the development executor must be labeled as non-isolating in production startup output. Test limit enforcement, credential scope, timeout, cancellation, and cleanup after worker death.
 ```
 
-## 2.5 Build leases, cancellation, and fairness
+## 2.4b Hardened build isolation backend
+
+Was: 4.2 (split)
+Status: open
+Depends on: 2.4a
+
+Design-partner minimum, and the largest item in this file. Do not read the queue as uniform units of work.
+
+Prompt:
+
+```text
+Add a production BuildExecutor backed by an operator-selected microVM or hardened sandbox technology, and make production refuse the development executor. A customer build must not reach host sockets, builder credentials, sibling build caches, control-plane credentials, or another project's files, and it must hold up against a hostile build rather than merely an uncooperative one. Do not build a VM orchestration platform in this repository — integrate a narrow backend and keep lifecycle and cleanup in the executor interface from 2.4a. Add adversarial tests for filesystem escape, host socket access, fork bomb, disk exhaustion, network denial, and cross-project cache access, and run the same suite against both executors so the development one is honestly labeled rather than silently weaker.
+```
+
+## 2.5 Build leases and cancellation
 
 Was: 4.3
 Status: open
 Depends on: 2.1 if build claims move onto the shared durable-work package; otherwise keep the existing build-lease table and converge later.
 
+Weighted fairness and quota-driven admission moved to 3.19. There is no second tenant to be fair between yet.
+
 Prompt:
 
 ```text
-Evolve the CockroachDB build queue into a durable, fair lease-based scheduler without introducing Temporal or another general workflow system. Builders claim work transactionally with a lease epoch and expiry, heartbeat that lease, and may complete only with the current fencing token. User cancellation and supersession must prevent late completion from publishing an image or starting a rollout. Retry transient worker loss with a bounded attempt count while treating deterministic source/build failures as terminal. Enforce per-workspace and global concurrent-build quotas, weighted fairness between tenants, maximum queue age, build timeout, and admission rejection when account limits are exhausted. Expose queue position approximately, attempt history, cancellation progress, and operator drain controls. Test worker death, split ownership, late completion, cancellation races, starvation resistance, and quota release.
+Evolve the CockroachDB build queue into a durable lease-based scheduler without introducing Temporal or another general workflow system. Builders claim work transactionally with an owner epoch and lease expiry, heartbeat that lease, and may complete only by compare-and-swap on the current epoch. Fencing matters more here than for control-plane loops because a build's external effect is a registry push that outlives the lease. User cancellation and supersession must prevent a late completion from publishing an image or starting a rollout. Retry transient worker loss with a bounded attempt count while treating deterministic source or build failures as terminal. Enforce a per-workspace and a global concurrent-build cap, a build timeout, and a maximum queue age. Expose attempt history, cancellation progress, and an operator drain control. Test worker death, split ownership, late completion after cancellation, and cap release on every terminal path.
 ```
 
 ## 2.6 Deploy-by-digest
@@ -72,7 +112,7 @@ Was: 4.5
 Status: open
 Depends on: 1.6 so Railpack and Dockerfile builds both emit the artifact record.
 
-Mutable tags must never be the runtime identity of what is scheduled.
+Design-partner minimum. Mutable tags must never be the runtime identity of what is scheduled.
 
 Prompt:
 
@@ -80,24 +120,37 @@ Prompt:
 Create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, image manifest digest, target architecture, build actor, and timestamps. Deployments must resolve and persist a digest before scheduling; mutable tags are accepted only as user input and never as the runtime identity. Direct-image deploys resolve the tag to a digest at deploy time and store that digest. Preserve exact artifacts needed for rollback according to retention policy. Test tag mutation after resolve (the stored digest still runs) and multi-arch selection against 1.10. Do not add SBOM generation, image signing, or vulnerability-policy gates in this item.
 ```
 
-## 2.7 Envoy ingress fleet
+## 2.7a xDS control plane and Caddy cutover
 
-Was: 5.2 (Caddy). Clean cutover: Envoy replaces Caddy as production and local-stack ingress.
-
+Was: 5.2 (split)
 Status: open
 Depends on: none. One Caddy is currently a product outage and the wrong apply protocol.
+
+Design-partner minimum.
 
 Prompt:
 
 ```text
-Replace Caddy with a small fleet of interchangeable Envoy instances. The control plane is the xDS authority: it serves a versioned snapshot (CDS/EDS/LDS/RDS, SDS once certificates exist) derived from CockroachDB. Each Envoy ACK/NACKs the applied revision, retains last-known-good on NACK, and converges after restart or partition. Control-plane replicas may race to compute config but must produce the same canonical snapshot and must not partially publish a rollout. Readiness requires enough Envoy instances at the current revision to satisfy the configured availability policy. Route only ready, non-draining allocations; support multiple replicas; remove a backend from EDS before destructive shutdown. Provide per-instance status and a config diff without secrets. Failure tests: one Envoy down, NACK of a bad snapshot, delayed apply, split control-plane ownership. Remove Caddy from the production path, localteststack, and VM harness. Do not implement Envoy, a WAF, or a CDN in this repository.
+Replace Caddy with Envoy driven by the control plane as xDS authority. The control plane serves a versioned snapshot (CDS/EDS/LDS/RDS, SDS once certificates exist) derived from CockroachDB; Envoy ACK/NACKs the applied revision, retains last-known-good on NACK, and converges after restart or partition. Snapshot computation must be canonical and deterministic so replicas racing to compute it produce identical bytes, and a rollout must never publish partially. Route only ready, non-draining allocations, support multiple replicas per service, and remove a backend from EDS before destructive shutdown. Remove Caddy from the production path, localteststack, and VM harness. A single Envoy instance is acceptable in this item; the fleet is 2.7b. Do not implement Envoy, a WAF, or a CDN in this repository. Failure tests: NACK of a bad snapshot, delayed apply, Envoy restart, and split control-plane ownership of snapshot publication.
+```
+
+## 2.7b Envoy fleet and availability policy
+
+Was: 5.2 (split)
+Status: open
+Depends on: 2.7a
+
+Prompt:
+
+```text
+Run a fleet of interchangeable Envoy instances against the xDS authority from 2.7a. Track per-instance applied revision and health, and define a configured availability policy that makes ingress readiness depend on enough instances sitting at the current revision rather than on any single instance. Provide per-instance status and a config diff without secrets. One instance being down, stale, or NACKing must not withdraw healthy traffic or block a rollout that the policy still satisfies. Extend the VM harness to at least two instances. Failure tests: one Envoy down, one Envoy stuck on an old revision, an instance rejoining behind the current revision, and a rollout that cannot satisfy the availability policy.
 ```
 
 ## 2.8 Domain and certificate lifecycle
 
 Was: 5.3
 Status: open
-Depends on: 1.8 so deleted hostnames cannot be rebound during grace. 2.7 so certs are pushed to Envoy via SDS rather than Caddy automatic HTTPS.
+Depends on: 1.8 so deleted hostnames cannot be rebound during grace. 2.7a so certs are pushed to Envoy via SDS rather than Caddy automatic HTTPS.
 
 Prompt:
 
@@ -111,10 +164,12 @@ Was: 3.3
 Status: open
 Depends on: none
 
+Design-partner minimum. This item is the pipeline; console search surfaces are 3.6.
+
 Prompt:
 
 ```text
-Harden the existing ClickHouse log path for multi-tenant production use. Preserve runtime, build, deploy, HTTP, and network log types; add structured attributes for known platform events without parsing arbitrary customer output; define ordering and duplicate handling across reconnects; and retain the raw line exactly within a documented size limit. Agents and builders need bounded disk-backed spooling, batching, backpressure, retry, and explicit dropped-line counters so a ClickHouse outage cannot consume unbounded memory or block workload reconciliation. Enforce per-allocation rate and burst limits, tenant retention policies, authorized time-range search, pagination or streaming, and safe deletion after project expiry. The console should offer environment-wide search and deployment-scoped logs with clear gaps when data was dropped. Test backend outage, retry duplication, oversized lines, abusive log rates, retention, and tenant isolation.
+Harden the existing ClickHouse log path for multi-tenant production use. Preserve runtime, build, deploy, HTTP, and network log types; add structured attributes for known platform events without parsing arbitrary customer output; define ordering and duplicate handling across reconnects; and retain the raw line exactly within a documented size limit. Agents and builders need bounded disk-backed spooling, batching, backpressure, retry, and explicit dropped-line counters so a ClickHouse outage cannot consume unbounded memory or block workload reconciliation. Enforce per-allocation rate and burst limits, tenant retention policies, and safe deletion after project expiry. Reads need authorized time-range queries with pagination or streaming, and must report an explicit gap where data was dropped rather than silently closing it. Test backend outage, retry duplication, oversized lines, abusive log rates, retention, and tenant isolation.
 ```
 
 ## 2.10 Nomad-style per-node allocation sync
@@ -122,7 +177,7 @@ Harden the existing ClickHouse log path for multi-tenant production use. Preserv
 Status: open
 Depends on: none. Replaces the full desired-state snapshot as the agent wire and recovery format.
 
-Nomad servers send each client only that client’s allocations. Reconnect is “what I run” reconciled against “what this node should run,” not a cluster dump.
+Nomad servers send each client only that client’s allocations. Reconnect is “what I run” reconciled against “what this node should run,” not a cluster dump. This item and 2.11–2.12 remove code rather than add it, and they get harder the longer other code assumes the snapshot.
 
 Prompt:
 
@@ -146,7 +201,7 @@ Give each agent a pool deny plus exact allow entries only for network identities
 ## 2.12 Environment-scoped WireGuard peering
 
 Status: open
-Depends on: 2.11 so peers follow who is allowed to talk. 2.7 so ingress instances are the north-south peers.
+Depends on: 2.11 so peers follow who is allowed to talk. 2.7b so ingress instances are the north-south peers.
 
 Full mesh does not scale and is not required for fail-closed policy.
 
@@ -160,7 +215,7 @@ Stop forming a WireGuard peer between every pair of agents. Create and maintain 
 
 Was: 9.1
 Status: open
-Depends on: none. Grow the existing testvm as 2.2, 2.4, 2.7, and 2.9 need components. Done when the topology below exists.
+Depends on: none. Grow the existing testvm as 2.2, 2.4b, 2.7b, and 2.9 need components. Done when the topology below exists.
 
 Prompt:
 
@@ -180,4 +235,18 @@ Prompt:
 
 ```text
 Refine the console around the supported path: create or choose a project, connect an authorized GitHub repository or direct image, inspect detected build configuration, create a service, review staged changes, deploy (or see auto-deploy), watch state including crash evidence, and reach a healthy endpoint. Add useful empty states and error recovery that preserves user input. Destructive actions must state scope and recovery. Do not add decorative templates. Add a Playwright journey covering failed build recovery, deploy, rollback, and deletion grace.
+```
+
+## 2.15 Workload egress guardrails
+
+Was: part of 5.5, split out of 3.8
+Status: open
+Depends on: 1.1 so enforcement covers both families. Relates to 2.11, which governs same-environment identity.
+
+Design-partner minimum. This is what stops a hostile container from reaching the platform itself. It is not the customer-facing egress product — that is 3.8, and it can wait.
+
+Prompt:
+
+```text
+Make the platform's own attack surface unreachable from a customer container, independently of any customer-facing egress feature. Regardless of workload configuration, deny workload traffic to cloud metadata addresses, host and management networks, control-plane and agent administrative endpoints, registry credential endpoints, and every other tenant's overlay prefixes. Enforce close to the workload on both overlay families, fail closed on agent restart, and cover attempts that route through mapped, translated, or tunneled addresses. Same-environment private traffic continues to be governed by workload identity (2.11) and is not treated as external egress. Denials must be diagnosable by an operator without leaking destination data across tenants. Customer-configurable egress allowlists, egress gateways, SMTP policy, and bandwidth accounting are 3.8 and are explicitly out of scope here. Test metadata-address access, host-network access, cross-tenant overlay access, agent restart, and bypass through an alternate address family.
 ```

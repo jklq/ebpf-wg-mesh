@@ -25,7 +25,7 @@ Depends on: 3.1
 Prompt:
 
 ```text
-Add user, workspace, project, and environment-scoped API credentials with named capabilities, creation metadata, optional expiry, last-used time, and explicit revocation. Store only a strong token hash plus a short lookup prefix, display the plaintext once, use constant-time verification, rate-limit failures, and make revocation effective across all control-plane replicas. Tokens must never gain more capability than their creator and must be rejected for browser-only or support-only actions. Add session inventory and revocation, secure cookie defaults, CSRF protection for browser mutations, configurable idle and absolute expiry, and optional mandatory MFA claims for sensitive production actions. Every use should carry an actor identity into audit events. Provide console management and tests for scope boundaries, expiry, rotation, revocation races, and token leakage through logs/errors.
+Add user, workspace, project, and environment-scoped API credentials with named capabilities, creation metadata, optional expiry, last-used time, and explicit revocation. Store only a strong token hash plus a short lookup prefix, display the plaintext once, use constant-time verification, rate-limit failures, and make revocation effective across all control-plane replicas. Tokens must never gain more capability than their creator and must be rejected for browser-only actions. Add session revocation, secure cookie defaults, CSRF protection for browser mutations, and a configurable absolute session expiry. Every use should carry an actor identity into audit events. Step-up authentication for sensitive production actions is 5.5, not this item. Provide console management and tests for scope boundaries, expiry, rotation, revocation races, and token leakage through logs/errors.
 ```
 
 ## 3.3 Resource quotas
@@ -34,10 +34,12 @@ Was: 6.4
 Status: open
 Depends on: 3.1. Volume-byte quotas stay zero/deny until the stateful provider exists.
 
+Quota only over what the control plane already counts. Dimensions that require a metering system (build minutes, log ingestion, metrics cardinality, network egress, source storage) arrive with 5.1.
+
 Prompt:
 
 ```text
-Create a hierarchical quota model with operator defaults and workspace/project overrides for projects, environments, services, replicas, requested CPU and memory, volume bytes, domains, concurrent builds, build minutes, source storage, image retention, log ingestion, metrics cardinality, network egress, API rate, and webhook delivery. Enforce quotas transactionally at resource creation or scaling, reserve capacity during in-progress changes, and release it reliably on cancellation or tombstoned deletion according to documented semantics. Distinguish product quota from temporary physical-capacity shortage and return machine-readable errors with current use, limit, and remediation. Do not silently overcommit resources whose isolation depends on hard limits. Provide usage views and operator override/audit flows. Test concurrent admission, failed rollout release, project transfer, quota reduction below current use, and enforcement consistency across console and API.
+Create a hierarchical quota model with operator defaults and workspace/project overrides. Cover only dimensions the control plane can already count authoritatively at admission time: projects, environments, services, replicas, requested CPU and memory, volume bytes, domains, concurrent builds, and API rate. Design the model so a metered dimension can be added later without reshaping it, but do not add build minutes, log ingestion, metrics cardinality, network egress, or source storage until 5.1 makes them measurable. Enforce quotas transactionally at resource creation or scaling, reserve capacity during in-progress changes, and release it reliably on cancellation or tombstoned deletion according to documented semantics. Distinguish product quota from temporary physical-capacity shortage and return machine-readable errors with current use, limit, and remediation. Do not silently overcommit resources whose isolation depends on hard limits. Provide usage views and operator override/audit flows. Test concurrent admission, failed rollout release, project transfer, quota reduction below current use, and enforcement consistency across console and API.
 ```
 
 ## 3.4 Audit history
@@ -73,14 +75,14 @@ Depends on: 3.5 and 2.9
 Prompt:
 
 ```text
-Build console observability views backed by VictoriaMetrics for resource series and ClickHouse for logs/events. A service view should correlate deployments with CPU, memory, OOMs, restarts, network traffic, probe transitions, replica count, request volume, error rate, and latency where ingress can observe them. An environment view should aggregate services while allowing drill-down by allocation and deployment generation. Support fixed and custom time ranges, stable downsampling, timezone-aware labels, missing-data explanation, and links from a chart anomaly to the relevant deployment and filtered logs. Query authorization must be enforced server-side from membership, not only by UI filtering. Bound query range, cardinality, and response size to protect shared backends, and test that one project cannot infer another project’s series or labels.
+Build console observability views backed by VictoriaMetrics for resource series and ClickHouse for logs/events, including the environment-wide and deployment-scoped log search surfaces over the 2.9 pipeline, which must show an explicit gap where 2.9 reports dropped lines rather than presenting a continuous stream. A service view should correlate deployments with CPU, memory, OOMs, restarts, network traffic, probe transitions, replica count, request volume, error rate, and latency where ingress can observe them. An environment view should aggregate services while allowing drill-down by allocation and deployment generation. Support fixed and custom time ranges, stable downsampling, timezone-aware labels, missing-data explanation, and links from a chart anomaly to the relevant deployment and filtered logs. Query authorization must be enforced server-side from membership, not only by UI filtering. Bound query range, cardinality, and response size to protect shared backends, and test that one project cannot infer another project’s series or labels.
 ```
 
 ## 3.7 Explicit HTTP exposure
 
 Was: 5.4
 Status: open
-Depends on: 2.7 so exposure is published through the Envoy fleet.
+Depends on: 2.7a so exposure is published through the xDS path.
 
 Prompt:
 
@@ -92,12 +94,14 @@ Model public HTTP endpoints separately from container ports: hostname, target po
 
 Was: 5.5
 Status: open
-Depends on: 1.1 so enforcement covers both families.
+Depends on: 2.15, which already made the platform's own surface unreachable, and 3.5 for accounting series.
+
+The safety half of the old 3.8 is 2.15 and belongs much earlier. What remains here is a customer-facing feature, and it can wait for someone to ask for it.
 
 Prompt:
 
 ```text
-Add per-environment outbound policy enforced close to workloads. The default product policy may allow internet egress, but operators and authorized project roles must be able to deny all external egress, allow selected CIDRs and ports, or require traffic through an operator-provided egress gateway. Private same-environment traffic continues to use workload identities and must not be accidentally governed as public egress. Protect platform metadata addresses, host networks, control-plane/agent administration, registry credentials, and other tenant overlays regardless of customer rules. Add connection and bandwidth accounting to VictoriaMetrics, configurable limits, SMTP and common abuse-sensitive port policy, and visible denial diagnostics that do not leak destination data across tenants. Verify IPv4 and IPv6 enforcement, DNS behavior, rule updates, fail-closed agent restart, and bypass attempts through mapped or tunneled addresses.
+Add per-environment outbound policy as a customer-facing feature on top of the non-negotiable guardrails from 2.15. The default product policy may allow internet egress, but operators and authorized project roles must be able to deny all external egress, allow selected CIDRs and ports, or require traffic through an operator-provided egress gateway. Customer rules may only narrow what 2.15 already permits; they can never widen access to metadata addresses, host networks, control-plane administration, or other tenant overlays. Private same-environment traffic continues to use workload identities and must not be accidentally governed as public egress. Add connection and bandwidth accounting to VictoriaMetrics, configurable limits, SMTP and common abuse-sensitive port policy, and visible denial diagnostics that do not leak destination data across tenants. Verify IPv4 and IPv6 enforcement, DNS behavior, live rule updates, fail-closed agent restart, and that no customer rule can relax a 2.15 guardrail.
 ```
 
 ## 3.9 Monitors, notifications, and webhooks
@@ -116,7 +120,7 @@ Create persisted monitors for deployment failure, crash loop, no healthy replica
 
 Was: 3.5
 Status: open
-Depends on: 2.7, 2.13, 3.5. Backup freshness waits for 3.11.
+Depends on: 2.7b, 2.13, 3.5. Backup freshness waits for 3.11.
 
 Prompt:
 
@@ -128,7 +132,7 @@ Create an operator-only view and API that summarize control-plane replica health
 
 Was: 2.5
 Status: open
-Depends on: 2.1, 2.2, 2.3. Volume restore is out of scope until 6.3.
+Depends on: 2.1, 2.2, 2.3a, 2.3b. Volume restore is out of scope until 6.3.
 
 Prompt:
 
@@ -164,7 +168,7 @@ Add a typed CLI for login/token configuration, context selection, project and en
 
 Was: 4.4
 Status: open
-Depends on: 2.4
+Depends on: 2.4b
 
 Prompt:
 
@@ -212,10 +216,24 @@ Create a focused fault suite against the production-like topology. Kill and rest
 
 Was: 9.3
 Status: open
-Depends on: 3.3, 2.11
+Depends on: 3.3, 2.11, 3.19
 
 Prompt:
 
 ```text
 Define initial supported scale targets for workspaces, projects, environments, services, allocations, agents, concurrent builds, per-node alloc-set size, domains, log lines per second, VictoriaMetrics samples/cardinality, API requests, and ingress connections. Build reproducible load tests that exercise control-plane reads and mutations, scheduler placement, agent reconnect storms, rollout fan-out, log/metrics ingestion, deployment history, and console-critical queries at those targets. Measure latency percentiles, error rate, Cockroach contention, queue age, memory, CPU, and recovery after load. Include one intentionally noisy tenant and prove quotas protect others. Turn discovered cliffs into enforced product limits or engineering fixes; publish the limits and fail admission before undefined behavior. Do not require billing rollups in this item.
+```
+
+## 3.19 Build admission and fairness
+
+Was: part of 4.3, split out of 2.5
+Status: open
+Depends on: 2.5 for the lease scheduler, 3.3 for the quota model.
+
+Deliberately after 3.1/3.3. Weighted fairness between tenants is meaningless until there are tenants; 2.5's flat concurrency caps carry the single-tenant and design-partner stages on their own.
+
+Prompt:
+
+```text
+Add tenant-aware admission and fairness to the build scheduler from 2.5. Claim order must apply weighted fairness across workspaces so one workspace cannot monopolize builders while another starves, and admission must reject new builds when the workspace's quota from 3.3 is exhausted, with a machine-readable error naming the limit and current use. Expose approximate queue position to the user. Keep the flat caps from 2.5 as the floor so removing the fairness policy degrades to correct-but-unfair rather than unbounded. Test starvation resistance with one heavy and several light workspaces, quota-exhausted admission rejection, quota release on every terminal path, and that fairness never delays a build past the maximum queue age from 2.5.
 ```

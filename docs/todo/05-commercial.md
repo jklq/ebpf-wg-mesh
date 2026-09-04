@@ -32,7 +32,7 @@ Model versioned plans and prices separately from measured usage so a price chang
 
 Was: 6.7
 Status: open
-Depends on: 3.3, 3.8, 3.18
+Depends on: 3.3, 3.8, 3.18, 3.19
 
 Prompt:
 
@@ -58,10 +58,12 @@ Was: 6.9
 Status: open
 Depends on: 3.1, 3.4, 3.10
 
+Ship the invariant, not the approval workflow. Multi-approver break-glass is something a customer contract asks for; it is not something you need before there are customers.
+
 Prompt:
 
 ```text
-Separate ordinary operator health access from exceptional customer-resource support access. Operators should diagnose aggregate platform state without automatically reading customer logs, configuration, source metadata, or secrets. Any support access to a customer scope requires an eligible operator role, ticket/reason, bounded duration, least-privilege capability, prominent customer-visible audit event, and automatic expiry; secret plaintext remains unavailable unless a separate break-glass policy explicitly permits it. Break-glass actions require strong re-authentication, a second approver where configured, immediate security notification, and immutable audit export. Do not implement silent impersonation. Add support-session inventory and revocation, ensure all downstream API and query calls retain the true operator actor plus delegated customer scope, and test expiry, revocation, attempted scope expansion, and audit redaction.
+Separate ordinary operator health access from exceptional customer-resource support access. Operators diagnose aggregate platform state without automatically reading customer logs, configuration, source metadata, or secrets. Any support access to a customer scope requires an eligible operator role, a recorded reason, a bounded duration with automatic expiry, least-privilege capability, and an audit event naming the true operator actor. Secret plaintext stays unavailable to support access entirely. Do not implement silent impersonation: all downstream API and query calls retain the true operator actor plus the delegated customer scope. Add step-up re-authentication for support session creation and for sensitive production actions generally — the piece deliberately left out of 3.2. Support-session revocation is required; a second-approver workflow, immutable audit export, and customer-visible support notifications are not, and should be added when a customer contract requires them rather than in advance. Test expiry, revocation, attempted scope expansion, secret access refusal, and audit redaction.
 ```
 
 
