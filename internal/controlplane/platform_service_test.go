@@ -68,16 +68,70 @@ func (c *countingIngress) RequestSync() {
 	c.requests.Add(1)
 }
 
+type fakePlatformDelivery struct {
+	applyDeploymentActionFn  func(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deploymentActionResult, error)
+	releaseEnvironmentFn     func(ctx context.Context, environmentID string) ([]releasedService, error)
+	createScheduledServiceFn func(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
+	updateServiceFn          func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	discardServiceChangesFn  func(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
+	deleteServiceFn          func(ctx context.Context, serviceID string) error
+	scaleServiceFn           func(ctx context.Context, serviceID string, desired int32) (serviceRecord, []allocationRecord, int64, error)
+}
+
+func (f *fakePlatformDelivery) ReleaseEnvironment(ctx context.Context, environmentID string) ([]releasedService, error) {
+	if f.releaseEnvironmentFn != nil {
+		return f.releaseEnvironmentFn(ctx, environmentID)
+	}
+	return nil, nil
+}
+
+func (f *fakePlatformDelivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deploymentActionResult, error) {
+	if f.applyDeploymentActionFn != nil {
+		return f.applyDeploymentActionFn(ctx, serviceID, deploymentID, action, idempotencyKey, allocationID)
+	}
+	return deploymentActionResult{}, nil
+}
+
+func (f *fakePlatformDelivery) CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
+	if f.createScheduledServiceFn != nil {
+		return f.createScheduledServiceFn(ctx, environmentID, name, spec)
+	}
+	return serviceRecord{ID: "service-1", EnvironmentID: environmentID, Name: name, Spec: spec, AllocatedAgentID: "node-1"}, nil
+}
+
+func (f *fakePlatformDelivery) UpdateService(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+	if f.updateServiceFn != nil {
+		return f.updateServiceFn(ctx, serviceID, name, spec)
+	}
+	return serviceRecord{ID: serviceID, EnvironmentID: "environment-1", Name: name, Spec: spec, AllocatedAgentID: "node-1"}, true, nil
+}
+
+func (f *fakePlatformDelivery) DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
+	if f.discardServiceChangesFn != nil {
+		return f.discardServiceChangesFn(ctx, serviceID, changeIDs, discardAll)
+	}
+	return serviceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, nil
+}
+
+func (f *fakePlatformDelivery) DeleteService(ctx context.Context, serviceID string) error {
+	if f.deleteServiceFn != nil {
+		return f.deleteServiceFn(ctx, serviceID)
+	}
+	return nil
+}
+
+func (f *fakePlatformDelivery) ScaleService(ctx context.Context, serviceID string, desired int32) (serviceRecord, []allocationRecord, int64, error) {
+	if f.scaleServiceFn != nil {
+		return f.scaleServiceFn(ctx, serviceID, desired)
+	}
+	return serviceRecord{ID: serviceID, EnvironmentID: "environment-1"}, nil, 0, nil
+}
+
 type fakePlatformStore struct {
 	createProjectFn                   func(ctx context.Context, userID, name string) (projectRecord, error)
 	listProjectsFn                    func(ctx context.Context, userID string) ([]projectRecord, error)
 	projectByIDFn                     func(ctx context.Context, userID, projectID string) (projectRecord, error)
 	authorizeProjectWriteFn           func(ctx context.Context, userID, projectID string) error
-	createScheduledServiceFn          func(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
-	updateServiceFn                   func(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
-	applyDeploymentActionFn           func(ctx context.Context, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (serviceRecord, deploymentActionRecord, error)
-	discardServiceChangesFn           func(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
-	deleteServiceFn                   func(ctx context.Context, userID, serviceID string) error
 	serviceByIDFn                     func(ctx context.Context, userID, serviceID string) (serviceRecord, error)
 	listServicesFn                    func(ctx context.Context, userID, environmentID string) ([]serviceRecord, error)
 	createScheduledVolumeFn           func(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (volumeRecord, error)
@@ -91,7 +145,6 @@ type fakePlatformStore struct {
 	listDomainBindingsFn              func(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBindingFn             func(ctx context.Context, userID, hostname string) (bool, error)
 	serviceStatusFn                   func(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error)
-	scaleServiceFn                    func(ctx context.Context, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error)
 	listServiceDeploymentsFn          func(ctx context.Context, userID, serviceID string, limit int32) ([]deploymentRecord, error)
 	listAllocationsByServiceIDFn      func(ctx context.Context, serviceID string) ([]allocationRecord, error)
 	listAgentsFn                      func(ctx context.Context) ([]agentRecord, error)
@@ -145,41 +198,6 @@ func (f *fakePlatformStore) projectByID(ctx context.Context, userID, projectID s
 func (f *fakePlatformStore) authorizeProjectWrite(ctx context.Context, userID, projectID string) error {
 	if f.authorizeProjectWriteFn != nil {
 		return f.authorizeProjectWriteFn(ctx, userID, projectID)
-	}
-	return nil
-}
-
-func (f *fakePlatformStore) createScheduledService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
-	if f.createScheduledServiceFn != nil {
-		return f.createScheduledServiceFn(ctx, userID, environmentID, name, spec)
-	}
-	return serviceRecord{ID: "service-1", EnvironmentID: environmentID, Name: name, Spec: spec, AllocatedAgentID: "node-1"}, nil
-}
-
-func (f *fakePlatformStore) updateService(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
-	if f.updateServiceFn != nil {
-		return f.updateServiceFn(ctx, userID, serviceID, name, spec)
-	}
-	return serviceRecord{}, false, nil
-}
-
-func (f *fakePlatformStore) applyDeploymentAction(ctx context.Context, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (serviceRecord, deploymentActionRecord, error) {
-	if f.applyDeploymentActionFn != nil {
-		return f.applyDeploymentActionFn(ctx, userID, serviceID, deploymentID, action, idempotencyKey, allocationID)
-	}
-	return serviceRecord{ID: serviceID, ProjectID: "project-1", EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, deploymentActionRecord{ID: "action-1", Action: deploymentActionName(action), TargetDeploymentID: deploymentID, IdempotencyKey: idempotencyKey, AllocationID: allocationID}, nil
-}
-
-func (f *fakePlatformStore) discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
-	if f.discardServiceChangesFn != nil {
-		return f.discardServiceChangesFn(ctx, userID, serviceID, changeIDs, discardAll)
-	}
-	return serviceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, nil
-}
-
-func (f *fakePlatformStore) deleteService(ctx context.Context, userID, serviceID string) error {
-	if f.deleteServiceFn != nil {
-		return f.deleteServiceFn(ctx, userID, serviceID)
 	}
 	return nil
 }
@@ -271,13 +289,6 @@ func (f *fakePlatformStore) deleteDomainBinding(ctx context.Context, userID, hos
 func (f *fakePlatformStore) serviceStatus(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error) {
 	if f.serviceStatusFn != nil {
 		return f.serviceStatusFn(ctx, userID, serviceID)
-	}
-	return serviceRecord{}, nil, nil
-}
-
-func (f *fakePlatformStore) scaleService(ctx context.Context, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
-	if f.scaleServiceFn != nil {
-		return f.scaleServiceFn(ctx, userID, serviceID, desired)
 	}
 	return serviceRecord{}, nil, nil
 }

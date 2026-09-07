@@ -35,13 +35,13 @@ func (*rolloutIngressProbe) RequestSync() {}
 func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
 
 	next := rollingTestSpec("example.test/web:b", 1, 1)
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", next); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", next); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -57,9 +57,10 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	markRolloutAllocationReady(t, store, target[0])
 
 	probe := &rolloutIngressProbe{store: store, err: errors.New("caddy unavailable")}
-	reconciler := NewRolloutReconciler(store, nil, probe, nil, time.Second)
+	delivery := NewDelivery(store, nil, probe, nil)
+	reconciler := NewRolloutReconciler(delivery, time.Second)
 	fixedNow := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
-	reconciler.now = func() time.Time { return fixedNow }
+	delivery.rolloutNow = func() time.Time { return fixedNow }
 	if err := reconciler.Reconcile(ctx); err == nil || !errors.Is(err, probe.err) {
 		t.Fatalf("expected ingress convergence failure, got %v", err)
 	}
@@ -75,8 +76,9 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	// A new reconciler models control-plane restart. The durable withdrawing
 	// state makes it retry Caddy before permitting SIGTERM.
 	probe.err = nil
-	restarted := NewRolloutReconciler(store, nil, probe, nil, time.Second)
-	restarted.now = func() time.Time { return fixedNow }
+	restartedDelivery := NewDelivery(store, nil, probe, nil)
+	restarted := NewRolloutReconciler(restartedDelivery, time.Second)
+	restartedDelivery.rolloutNow = func() time.Time { return fixedNow }
 	if err := restarted.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile after restart: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 3, 2)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 3, 2)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 3, 2)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -111,7 +113,7 @@ func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T)
 		markRolloutAllocationReady(t, store, alloc)
 	}
 	probe := &rolloutIngressProbe{store: store}
-	reconciler := NewRolloutReconciler(store, nil, probe, nil, time.Second)
+	reconciler := NewRolloutReconciler(NewDelivery(store, nil, probe, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile first batch: %v", err)
 	}
@@ -162,7 +164,7 @@ func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T)
 func TestRollingReplacementReadinessFailureKeepsHealthyGeneration(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -174,7 +176,7 @@ func TestRollingReplacementReadinessFailureKeepsHealthyGeneration(t *testing.T) 
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
+	if _, err := NewDelivery(store, nil, nil, nil).advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
 		t.Fatalf("advanceRollout: %v", err)
 	}
 	assertRolloutState(t, store, service.ID, 2, rolloutStateFailed, "readiness HTTP 503")
@@ -191,7 +193,7 @@ func TestRollingReplacementReadinessFailureKeepsHealthyGeneration(t *testing.T) 
 func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -201,8 +203,9 @@ func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
 	markRolloutAllocationReady(t, store, target)
 	fixedNow := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
-	reconciler.now = func() time.Time { return fixedNow }
+	delivery := NewDelivery(store, nil, &rolloutIngressProbe{store: store}, nil)
+	reconciler := NewRolloutReconciler(delivery, time.Second)
+	delivery.rolloutNow = func() time.Time { return fixedNow }
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile to drain: %v", err)
 	}
@@ -210,7 +213,7 @@ func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T
 	if old.RolloutState != allocationRolloutDraining || !old.DrainDeadline.Valid {
 		t.Fatalf("expected drain deadline, got %+v", old)
 	}
-	reconciler.now = func() time.Time { return old.DrainDeadline.Time }
+	delivery.rolloutNow = func() time.Time { return old.DrainDeadline.Time }
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile after shutdown timeout: %v", err)
 	}
@@ -226,7 +229,7 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
 
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService(b): %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -237,7 +240,7 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 		t.Fatalf("rollout 2 allocations = %+v, want one", replacement)
 	}
 	markRolloutAllocationReady(t, store, replacement[0])
-	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
+	reconciler := NewRolloutReconciler(NewDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("promote rollout 2 replacement: %v", err)
 	}
@@ -246,7 +249,7 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 		t.Fatalf("rollout 2 replacement did not enter service: %+v", serving)
 	}
 
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:c", 1, 1)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", rollingTestSpec("example.test/web:c", 1, 1)); err != nil {
 		t.Fatalf("updateService(c): %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -284,13 +287,13 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	}
 	spec := rollingTestSpec("example.test/disk:a", 1, 1)
 	spec.Runtime.VolumeName = "data"
-	service, err := store.createService(ctx, "user-1", envID, "disk", spec, "node-1")
+	service, err := createService(ctx, store, "user-1", envID, "disk", spec, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	next := rollingTestSpec("example.test/disk:b", 1, 1)
 	next.Runtime.VolumeName = "data"
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", next); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", next); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	_, err = releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID)
@@ -305,7 +308,7 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", rollingTestSpec("example.test/web:b", 1, 1)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
@@ -317,7 +320,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().Add(-time.Hour), originalAgent); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.failoverUnhealthyServices(ctx, time.Now().UTC(), time.Minute); err != nil {
+	if _, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), time.Minute); err != nil {
 		t.Fatalf("failoverUnhealthyServices: %v", err)
 	}
 	lost := allocationByID(t, store, service.ID, originalTargetID)
@@ -339,7 +342,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 		t.Fatalf("node loss during rollout disturbed predecessor: %+v", old)
 	}
 	markRolloutAllocationReady(t, store, replacement)
-	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
+	reconciler := NewRolloutReconciler(NewDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile recovered target: %v", err)
 	}
@@ -370,14 +373,14 @@ func createHealthyRollingService(t *testing.T, replicas, _ int32) (*Store, strin
 			t.Fatalf("upsertAgent: %v", err)
 		}
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", rollingTestSpec("example.test/web:a", replicas, 1), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", rollingTestSpec("example.test/web:a", replicas, 1), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	for _, alloc := range allocationForGeneration(t, store, service.ID, 1) {
 		markRolloutAllocationReady(t, store, alloc)
 	}
-	if _, err := store.advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
+	if _, err := NewDelivery(store, nil, nil, nil).advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
 		t.Fatalf("complete initial rollout: %v", err)
 	}
 	assertRolloutState(t, store, service.ID, 1, rolloutStateSucceeded, "")
@@ -480,7 +483,7 @@ func assertRolloutState(t *testing.T, store *Store, serviceID string, generation
 
 func assertDesiredIntent(t *testing.T, store *Store, alloc allocationRecord, draining bool) {
 	t.Helper()
-	services, err := store.listDesiredServices(context.Background(), alloc.AgentID)
+	services, err := testDelivery(store).listDesiredServices(context.Background(), alloc.AgentID)
 	if err != nil {
 		t.Fatalf("listDesiredServices: %v", err)
 	}

@@ -15,10 +15,10 @@ var errGitHubWorkDeferred = errors.New("github work deferred")
 
 type GitHubCoordinator struct {
 	store      *Store
+	delivery   *Delivery
 	catalog    *GitHubCatalog
 	client     *GitHubClient
 	emitter    *LogEmitter
-	events     *PlatformEvents
 	staleAfter time.Duration
 	retryAfter time.Duration
 }
@@ -39,14 +39,8 @@ func WithGitHubCoordinatorLogEmitter(emitter *LogEmitter) GitHubCoordinatorOptio
 	}
 }
 
-func WithGitHubCoordinatorPlatformEvents(events *PlatformEvents) GitHubCoordinatorOption {
-	return func(c *GitHubCoordinator) {
-		c.events = events
-	}
-}
-
-func NewGitHubCoordinator(store *Store, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
-	if store == nil || catalog == nil || client == nil || !client.Enabled() {
+func NewGitHubCoordinator(store *Store, delivery *Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
+	if store == nil || delivery == nil || catalog == nil || client == nil || !client.Enabled() {
 		return nil
 	}
 	if staleAfter <= 0 {
@@ -54,6 +48,7 @@ func NewGitHubCoordinator(store *Store, catalog *GitHubCatalog, client *GitHubCl
 	}
 	c := &GitHubCoordinator{
 		store:      store,
+		delivery:   delivery,
 		catalog:    catalog,
 		client:     client,
 		staleAfter: staleAfter,
@@ -69,6 +64,152 @@ func NewGitHubCoordinator(store *Store, catalog *GitHubCatalog, client *GitHubCl
 
 func (c *GitHubCoordinator) Enabled() bool {
 	return c != nil && c.store != nil && c.catalog != nil && c.client != nil
+}
+
+func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (sourceWorkItemRecord, error) {
+	s := c.store
+	var rec sourceWorkItemRecord
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		now, err := databaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if staleAfter > 0 {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE source_work_items
+				    SET state = $1,
+				        processor_id = '',
+				        updated_at = $2
+				  WHERE state = $3
+				    AND updated_at < $4`,
+				sourceWorkStatePending, now, sourceWorkStateProcessing, now.Add(-staleAfter),
+			); err != nil {
+				return err
+			}
+		}
+		row := tx.QueryRowContext(ctx,
+			`SELECT id, kind, state, processor_id, idempotency_key, service_id, spec_revision, provider,
+			        provider_repository_external_id, provider_scope_external_id, tracked_ref, commit_sha,
+			        commit_message, commit_author, last_error, attempt_count, available_at, created_at, updated_at
+			   FROM source_work_items
+			  WHERE state = $1
+			    AND available_at <= $2
+			  ORDER BY available_at ASC, created_at ASC, id ASC
+			  LIMIT 1`,
+			sourceWorkStatePending, now,
+		)
+		if err := row.Scan(
+			&rec.ID,
+			&rec.Kind,
+			&rec.State,
+			&rec.ProcessorID,
+			&rec.IdempotencyKey,
+			&rec.ServiceID,
+			&rec.SpecRevision,
+			&rec.Provider,
+			&rec.ProviderRepositoryExternalID,
+			&rec.ProviderScopeExternalID,
+			&rec.TrackedRef,
+			&rec.CommitSHA,
+			&rec.CommitMessage,
+			&rec.CommitAuthor,
+			&rec.LastError,
+			&rec.AttemptCount,
+			&rec.AvailableAt,
+			&rec.CreatedAt,
+			&rec.UpdatedAt,
+		); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		rec.State = sourceWorkStateProcessing
+		rec.ProcessorID = processorID
+		rec.UpdatedAt = now
+		_, err = tx.ExecContext(ctx,
+			`UPDATE source_work_items
+			    SET state = $1,
+			        processor_id = $2,
+			        updated_at = $3
+			  WHERE id = $4`,
+			rec.State, rec.ProcessorID, rec.UpdatedAt, rec.ID,
+		)
+		return err
+	})
+	if err != nil {
+		return sourceWorkItemRecord{}, err
+	}
+	return rec, nil
+}
+
+func (c *GitHubCoordinator) CompleteWorkItem(ctx context.Context, id, processorID string) error {
+	result, err := c.store.db.ExecContext(ctx, `DELETE FROM source_work_items WHERE id = $1 AND state = $2 AND processor_id = $3`, id, sourceWorkStateProcessing, processorID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: source work item %s", errLeaseLost, id)
+	}
+	return nil
+}
+
+func (c *GitHubCoordinator) ReleaseWorkItem(ctx context.Context, id, processorID string, processErr error, retryAfter time.Duration) error {
+	message := ""
+	if processErr != nil {
+		message = processErr.Error()
+	}
+	result, err := c.store.db.ExecContext(ctx,
+		`UPDATE source_work_items
+		    SET state = $1,
+		        processor_id = '',
+		        last_error = $2,
+		        attempt_count = attempt_count + 1,
+		        available_at = statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond',
+		        updated_at = statement_timestamp()
+		  WHERE id = $4 AND state = $5 AND processor_id = $6`,
+		sourceWorkStatePending,
+		message,
+		retryAfter.Microseconds(),
+		id,
+		sourceWorkStateProcessing,
+		processorID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("%w: source work item %s", errLeaseLost, id)
+	}
+	return nil
+}
+
+func (c *GitHubCoordinator) RecoverWorkItems(ctx context.Context, staleAfter time.Duration) error {
+	if staleAfter <= 0 {
+		return nil
+	}
+	return c.store.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE source_work_items
+		    SET state = $1,
+		        processor_id = '',
+		        updated_at = statement_timestamp()
+		  WHERE state = $3
+		    AND updated_at < statement_timestamp() - $2::INT8 * INTERVAL '1 microsecond'`,
+			sourceWorkStatePending,
+			staleAfter.Microseconds(),
+			sourceWorkStateProcessing,
+		)
+		return err
+	})
 }
 
 func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, installationID int64) error {
@@ -299,16 +440,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		return err
 	}
 	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
-	// We capture the service + build so we can emit a synthetic log line
-	// *after* the transaction commits. Emitting inside the tx would risk
-	// posting a line for work that actually rolled back, so we thread the
-	// values out via closure captures.
-	var (
-		committedService serviceRecord
-		committedBuild   buildRunRecord
-		committed        bool
-		revision         sourceRevisionRecord
-	)
+	var revision sourceRevisionRecord
 	if err := c.store.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		revision, err = c.store.upsertSourceRevisionTx(ctx, tx, sourceRevisionRecord{
@@ -357,46 +489,15 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		return err
 	}
 
-	if err := c.store.withTx(ctx, func(tx *sql.Tx) error {
-		revision, err := c.store.sourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
-		if err != nil {
-			return err
-		}
-		snapshot, err := c.store.sourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
-		if errors.Is(err, sql.ErrNoRows) {
-			if pendingSnapshot.ObjectKey == "" {
-				return err
-			}
-			snapshot, err = c.store.upsertSourceSnapshotTx(ctx, tx, pendingSnapshot)
-		}
-		if err != nil {
-			return err
-		}
-		service, err := c.store.serviceByIDInternalQuerier(ctx, tx, binding.ServiceID)
-		if err != nil {
-			return err
-		}
-		build, err := c.store.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: deploymentCauseWebhook})
-		if err != nil {
-			return err
-		}
-		slog.InfoContext(ctx, "github build queued", "service_id", service.ID, "build_id", build.ID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID, "source_snapshot_id", snapshot.ID)
-		committedService = service
-		committedBuild = build
-		committed = true
-		return nil
-	}); err != nil {
+	queued, err := c.delivery.queueSourceBuild(ctx, binding, commitSHA, pendingSnapshot)
+	if err != nil {
 		return err
 	}
-	if committed && c.emitter != nil {
-		c.emitter.EmitBuildf(ctx, committedService, committedBuild, StageBuild,
-			"Queued build for commit %s on ref %s", shortSHA(committedBuild.CommitSHA), binding.TrackedRef,
+	slog.InfoContext(ctx, "github build queued", "service_id", queued.Service.ID, "build_id", queued.Build.ID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", queued.Build.CommitSHA, "source_revision_id", revision.ID)
+	if c.emitter != nil {
+		c.emitter.EmitBuildf(ctx, queued.Service, queued.Build, StageBuild,
+			"Queued build for commit %s on ref %s", shortSHA(queued.Build.CommitSHA), binding.TrackedRef,
 		)
-	}
-	if committed {
-		if _, err := c.events.Publish(ctx, committedService.EnvironmentID); err != nil {
-			return fmt.Errorf("publish source event: %w", err)
-		}
 	}
 	return nil
 }

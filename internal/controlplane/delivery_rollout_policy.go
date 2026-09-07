@@ -36,11 +36,12 @@ type rolloutAdvanceResult struct {
 	EnvironmentID           string
 }
 
-func (s *Store) advanceRollout(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+func (d *Delivery) advanceRollout(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+	s := d.store
 	var result rolloutAdvanceResult
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = s.advanceRolloutTx(ctx, tx, serviceID, now.UTC())
+		result, err = d.advanceRolloutTx(ctx, tx, serviceID, now.UTC())
 		if err != nil {
 			return err
 		}
@@ -52,7 +53,8 @@ func (s *Store) advanceRollout(ctx context.Context, serviceID string, now time.T
 	return result, err
 }
 
-func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+	s := d.store
 	result := rolloutAdvanceResult{}
 	if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
 		return result, err
@@ -118,7 +120,7 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 		if failure == "" {
 			continue
 		}
-		if err := s.failRolloutTx(ctx, tx, service, rollout, target, failure, now); err != nil {
+		if err := d.failRolloutTx(ctx, tx, service, rollout, target, failure, now); err != nil {
 			return result, err
 		}
 		result.Changed = true
@@ -194,8 +196,8 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 	servingTarget = filterAllocations(target, func(a allocationRecord) bool {
 		return a.RolloutState == allocationRolloutServing && allocationReady(a)
 	})
-	if int32(len(servingTarget)) >= rollout.DesiredReplicaCount && len(predecessors) == 0 {
-		if err := s.completeRolloutTx(ctx, tx, service, rollout, now); err != nil {
+	if int32(len(servingTarget)) >= desiredTargetCount && len(predecessors) == 0 {
+		if err := d.completeRolloutTx(ctx, tx, service, rollout, now); err != nil {
 			return result, err
 		}
 		result.Changed = true
@@ -221,8 +223,8 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 				occupied[alloc.AgentID] = struct{}{}
 			}
 			for index := 0; index < slots; index++ {
-				agentID, chooseErr := s.chooseReplicaAgentTx(ctx, tx, service, occupied, "", false)
-				if chooseErr == errNoPlacementAvailable {
+				agentID, chooseErr := d.chooseReplicaAgentTx(ctx, tx, service, occupied, "", false)
+				if errors.Is(chooseErr, errNoPlacementAvailable) {
 					break
 				}
 				if chooseErr != nil {
@@ -314,7 +316,7 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 		now.Sub(rollout.ProgressAt) >= defaultRolloutSchedulingWait {
 		reason := fmt.Sprintf("could not schedule a replacement within %s: no eligible agent has spare capacity for a replacement",
 			defaultRolloutSchedulingWait)
-		if err := s.failRolloutTx(ctx, tx, service, rollout, target, reason, now); err != nil {
+		if err := d.failRolloutTx(ctx, tx, service, rollout, target, reason, now); err != nil {
 			return result, err
 		}
 		result.Changed = true
@@ -329,13 +331,14 @@ func (s *Store) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID stri
 			return result, err
 		}
 	}
-	if err := s.updateRolloutProgressDetailTx(ctx, tx, serviceID, rollout, now); err != nil {
+	if err := d.updateRolloutProgressDetailTx(ctx, tx, serviceID, rollout, now); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (s *Store) confirmRolloutIngressConverged(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+	s := d.store
 	result := rolloutAdvanceResult{}
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
@@ -400,8 +403,10 @@ func (s *Store) confirmRolloutIngressConverged(ctx context.Context, serviceID st
 			}
 			result.AgentIDs = append(result.AgentIDs, alloc.agentID)
 		}
-		if err := s.markPredecessorDeploymentsDrainingTx(ctx, tx, serviceID, rollout.Generation, now.UTC()); err != nil {
-			return err
+		if !removing {
+			if err := d.markPredecessorDeploymentsDrainingTx(ctx, tx, serviceID, rollout.Generation, now.UTC()); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE service_rollouts SET progress_at = $1 WHERE service_id = $2 AND rollout_generation = $3`,
@@ -473,7 +478,8 @@ func rolloutAllocationFailure(alloc allocationRecord, now time.Time, strategy *p
 	return ""
 }
 
-func (s *Store) failRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, target []allocationRecord, reason string, now time.Time) error {
+func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, target []allocationRecord, reason string, now time.Time) error {
+	s := d.store
 	deadline := now.Add(time.Duration(rollout.Strategy.GetDrainingSeconds()) * time.Second)
 	for _, alloc := range target {
 		// A partially successful multi-replica rollout may already have healthy
@@ -512,7 +518,8 @@ func (s *Store) failRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRe
 	return err
 }
 
-func (s *Store) completeRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, now time.Time) error {
+func (d *Delivery) completeRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, now time.Time) error {
+	s := d.store
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_rollouts SET state = $1, failure_reason = '', completed_at = $2, progress_at = $2
 		  WHERE service_id = $3 AND rollout_generation = $4`,
@@ -539,7 +546,8 @@ func (s *Store) completeRolloutTx(ctx context.Context, tx *sql.Tx, service servi
 	return s.completeDrainedPredecessorsTx(ctx, tx, service.ID, dep.ID, deploymentActor{Kind: deploymentCauseSystem})
 }
 
-func (s *Store) markPredecessorDeploymentsDrainingTx(ctx context.Context, tx *sql.Tx, serviceID string, generation int64, now time.Time) error {
+func (d *Delivery) markPredecessorDeploymentsDrainingTx(ctx context.Context, tx *sql.Tx, serviceID string, generation int64, now time.Time) error {
+	s := d.store
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM deployments WHERE service_id = $1 AND rollout_generation < $2 AND state = $3 FOR UPDATE`,
 		serviceID, generation, deploymentStateActive)
@@ -570,7 +578,7 @@ func (s *Store) markPredecessorDeploymentsDrainingTx(ctx context.Context, tx *sq
 	return nil
 }
 
-func (s *Store) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx, serviceID string, rollout rolloutRecord, now time.Time) error {
+func (d *Delivery) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx, serviceID string, rollout rolloutRecord, now time.Time) error {
 	var ready, starting, draining int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT
@@ -653,7 +661,8 @@ func splitRolloutAllocations(allocs []allocationRecord, rollout rolloutRecord) (
 	return target, predecessors, unaffected
 }
 
-func (s *Store) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, existing []allocationRecord, now time.Time) (bool, error) {
+func (d *Delivery) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, existing []allocationRecord, now time.Time) (bool, error) {
+	s := d.store
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 		return false, err
 	}
@@ -672,10 +681,11 @@ func (s *Store) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, ser
 	default:
 		return false, nil
 	}
-	return true, s.supersedeCurrentRolloutTx(ctx, tx, service, rollout, existing, now)
+	return true, d.supersedeCurrentRolloutTx(ctx, tx, service, rollout, existing, now)
 }
 
-func (s *Store) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, existing []allocationRecord, now time.Time) error {
+func (d *Delivery) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, rollout rolloutRecord, existing []allocationRecord, now time.Time) error {
+	s := d.store
 	for _, alloc := range existing {
 		// Starting allocations have never entered ingress and can be removed
 		// immediately. Serving allocations become predecessors of the newer

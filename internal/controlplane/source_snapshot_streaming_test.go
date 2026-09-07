@@ -32,7 +32,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -98,7 +98,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	stream := &recordingSourceSnapshotServerStream{
 		ctx: contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 	}
-	if err := NewBuilderService(store, nil, nil, 0).DownloadSourceSnapshot(
+	if err := NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0)).DownloadSourceSnapshot(
 		&platformv1.DownloadSourceSnapshotRequest{SnapshotId: snapshot.ID}, stream,
 	); err != nil {
 		t.Fatalf("DownloadSourceSnapshot: %v", err)

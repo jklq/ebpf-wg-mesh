@@ -18,6 +18,8 @@ type countingFailoverIngress struct {
 	requests atomic.Int32
 }
 
+func (*countingFailoverIngress) Sync(context.Context) error { return nil }
+
 func (i *countingFailoverIngress) RequestSync() {
 	i.requests.Add(1)
 }
@@ -37,7 +39,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		}
 	}
 	store.reserveAgents("reserved-node")
-	service, err := store.createService(ctx, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{
 		CpuMillis: 100, MemoryMebibytes: 128, Ports: runtimePortsFromInts([]int32{8080}),
 	}), "old-node")
 	if err != nil {
@@ -63,8 +65,9 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		watches[id] = ch
 	}
 	ingress := &countingFailoverIngress{}
-	reconciler := NewServiceFailoverReconciler(store, notifier, ingress, nil, time.Second, 30*time.Second)
-	reconciler.now = func() time.Time { return now }
+	delivery := NewDelivery(store, notifier, ingress, nil)
+	delivery.failoverNow = func() time.Time { return now }
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
 
 	result, err := reconciler.Reconcile(ctx)
 	if err != nil {
@@ -92,11 +95,11 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 	if allocation.AppliedSpecRevision != 0 || allocation.AppliedRolloutGeneration != 0 {
 		t.Fatalf("applied replacement state was not reset: %+v", allocation)
 	}
-	oldState, err := store.desiredStateForAgent(ctx, "old-node")
+	oldState, err := desiredStateForAgent(ctx, store, "old-node")
 	if err != nil {
 		t.Fatal(err)
 	}
-	newState, err := store.desiredStateForAgent(ctx, "new-node")
+	newState, err := desiredStateForAgent(ctx, store, "new-node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,13 +137,13 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if _, err := store.createVolume(ctx, "user-1", projectID, "data", 64<<20, "old-node"); err != nil {
 		t.Fatal(err)
 	}
-	volumeService, err := store.createService(ctx, "user-1", projectID, "stateful", directImageServiceSpec("example.test/stateful:1", &platformv1.ServiceRuntime{
+	volumeService, err := createService(ctx, store, "user-1", projectID, "stateful", directImageServiceSpec("example.test/stateful:1", &platformv1.ServiceRuntime{
 		CpuMillis: 10, MemoryMebibytes: 16, VolumeName: "data",
 	}), "old-node")
 	if err != nil {
 		t.Fatal(err)
 	}
-	largeService, err := store.createService(ctx, "user-1", projectID, "large", directImageServiceSpec("example.test/large:1", &platformv1.ServiceRuntime{
+	largeService, err := createService(ctx, store, "user-1", projectID, "large", directImageServiceSpec("example.test/large:1", &platformv1.ServiceRuntime{
 		CpuMillis: 100, MemoryMebibytes: 128,
 	}), "old-node")
 	if err != nil {
@@ -149,8 +152,9 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 	ingress := &countingFailoverIngress{}
-	reconciler := NewServiceFailoverReconciler(store, nil, ingress, nil, time.Second, 30*time.Second)
-	reconciler.now = func() time.Time { return now }
+	delivery := NewDelivery(store, nil, ingress, nil)
+	delivery.failoverNow = func() time.Time { return now }
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
 
 	result, err := reconciler.Reconcile(ctx)
 	if err != nil {
@@ -201,14 +205,15 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
+	service, _, err := NewDelivery(store, nil, nil, nil).ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, trusted.AgentId, now.Add(-2*time.Minute))
-	reconciler := NewServiceFailoverReconciler(store, nil, &countingFailoverIngress{}, nil, time.Second, 30*time.Second)
-	reconciler.now = func() time.Time { return now }
+	delivery := NewDelivery(store, nil, &countingFailoverIngress{}, nil)
+	delivery.failoverNow = func() time.Time { return now }
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
 	if _, err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +236,7 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	service, err := store.createService(ctx, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", nil), "old-node")
+	service, err := createService(ctx, store, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", nil), "old-node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +257,7 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			result, err := store.failoverUnhealthyServices(ctx, now, 30*time.Second)
+			result, err := testDelivery(store).failoverUnhealthyServices(ctx, now, 30*time.Second)
 			results <- result
 			errs <- err
 		}()

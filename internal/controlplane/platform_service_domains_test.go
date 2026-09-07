@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 
@@ -16,11 +15,11 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{
-		updateServiceFn: func(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
+		updateServiceFn: func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, true, nil
 		},
-	}, noopNotifier{}, ingress, nil)
+	})
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
 		ServiceId: "service-1",
@@ -40,11 +39,12 @@ func TestPlatformServiceDeleteServiceRequestsIngressWhenServiceHasDomains(t *tes
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{
-		listDomainBindingsFn: func(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
-			return []domainBindingRecord{{Hostname: "web.example.com", EnvironmentID: "environment-1", ServiceID: serviceID}}, nil
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
+		deleteServiceFn: func(ctx context.Context, serviceID string) error {
+			ingress.RequestSync()
+			return nil
 		},
-	}, noopNotifier{}, ingress, nil)
+	})
 
 	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
 		ServiceId: "service-1",
@@ -61,11 +61,7 @@ func TestPlatformServiceDeleteServiceSkipsIngressWhenServiceHasNoDomains(t *test
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{
-		listDomainBindingsFn: func(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
-			return nil, nil
-		},
-	}, noopNotifier{}, ingress, nil)
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{})
 
 	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
 		ServiceId: "service-1",
@@ -281,92 +277,14 @@ func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 func TestPlatformServiceCreateDomainBindingRequiresPlatformHostname(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
+	service := NewPlatformService(&fakePlatformStore{createDomainBindingFn: func(context.Context, string, string, string, int32) (domainBindingRecord, bool, error) {
+		return domainBindingRecord{}, false, errPlatformDomainNotGenerated
+	}}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
 	_, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
 		Binding: &platformv1.DomainBindingInput{Hostname: "web.example.com", ServiceId: "service-1", TargetPort: 8080},
 	})
 	if got := status.Code(err); got != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition, got %s: %v", got, err)
-	}
-}
-
-func TestPlatformServiceDeleteDomainBindingRemovesGeneratedWhenLastCustomDeleted(t *testing.T) {
-	t.Parallel()
-
-	bindings := []domainBindingRecord{
-		{Hostname: "violet-7k3.platform.example", ServiceID: "service-1", PlatformGenerated: true},
-		{Hostname: "web.example.com", ServiceID: "service-1"},
-	}
-	var deleted []string
-	service := NewPlatformService(&fakePlatformStore{
-		domainBindingByHostFn: func(ctx context.Context, userID, hostname string) (domainBindingRecord, error) {
-			for _, binding := range bindings {
-				if binding.Hostname == hostname {
-					return binding, nil
-				}
-			}
-			return domainBindingRecord{}, sql.ErrNoRows
-		},
-		listDomainBindingsFn: func(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
-			return append([]domainBindingRecord(nil), bindings...), nil
-		},
-		deleteDomainBindingFn: func(ctx context.Context, userID, hostname string) (bool, error) {
-			next := make([]domainBindingRecord, 0, len(bindings))
-			found := false
-			for _, binding := range bindings {
-				if binding.Hostname == hostname {
-					found = true
-					continue
-				}
-				next = append(next, binding)
-			}
-			if !found {
-				return false, sql.ErrNoRows
-			}
-			bindings = next
-			deleted = append(deleted, hostname)
-			return true, nil
-		},
-	}, noopNotifier{}, noopIngress{}, nil)
-
-	if _, err := service.DeleteDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteDomainBindingRequest{
-		Hostname: "web.example.com",
-	}); err != nil {
-		t.Fatalf("DeleteDomainBinding: %v", err)
-	}
-	if len(deleted) != 2 || deleted[0] != "web.example.com" || deleted[1] != "violet-7k3.platform.example" {
-		t.Fatalf("expected custom then generated deletes, got %v", deleted)
-	}
-}
-
-func TestPlatformServiceDeleteDomainBindingRejectsGeneratedWhileCustomExists(t *testing.T) {
-	t.Parallel()
-
-	deleted := 0
-	service := NewPlatformService(&fakePlatformStore{
-		domainBindingByHostFn: func(ctx context.Context, userID, hostname string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: hostname, ServiceID: "service-1", PlatformGenerated: true}, nil
-		},
-		listDomainBindingsFn: func(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
-			return []domainBindingRecord{
-				{Hostname: "violet-7k3.platform.example", ServiceID: serviceID, PlatformGenerated: true},
-				{Hostname: "web.example.com", ServiceID: serviceID},
-			}, nil
-		},
-		deleteDomainBindingFn: func(ctx context.Context, userID, hostname string) (bool, error) {
-			deleted++
-			return true, nil
-		},
-	}, noopNotifier{}, noopIngress{}, nil)
-
-	_, err := service.DeleteDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteDomainBindingRequest{
-		Hostname: "violet-7k3.platform.example",
-	})
-	if got := status.Code(err); got != codes.FailedPrecondition {
-		t.Fatalf("expected FailedPrecondition, got %s: %v", got, err)
-	}
-	if deleted != 0 {
-		t.Fatalf("expected generated domain to stay, got %d deletes", deleted)
 	}
 }
 

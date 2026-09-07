@@ -22,11 +22,11 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.createScheduledService(ctx, "owner", environmentID, "first", directImageServiceSpec("example.test/web:1", nil))
+	first, err := createScheduledService(ctx, store, "owner", environmentID, "first", directImageServiceSpec("example.test/web:1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.createScheduledService(ctx, "owner", environmentID, "second", directImageServiceSpec("example.test/web:1", nil))
+	second, err := createScheduledService(ctx, store, "owner", environmentID, "second", directImageServiceSpec("example.test/web:1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.updateService(ctx, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", &platformv1.ServiceRuntime{VolumeName: "missing"})); err != nil {
+	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", &platformv1.ServiceRuntime{VolumeName: "missing"})); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a resource disappearing after the draft was validated.
@@ -50,7 +50,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		t.Fatal(err)
 	}
 	notifier := &releaseTestNotifier{}
-	delivery := NewDelivery(store, notifier)
+	delivery := NewDelivery(store, notifier, nil, nil)
 	before := mustDesiredRevision(t, store, ctx, "node-1")
 	events := NewPlatformEvents(store, 0)
 	eventBefore, err := events.Current(ctx, environmentID)
@@ -93,7 +93,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if got, err := events.Current(ctx, environmentID); err != nil || got != eventBefore {
 		t.Fatalf("failed release changed event index: %d -> %d (%v)", eventBefore, got, err)
 	}
-	if _, _, err := store.updateService(ctx, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", nil)); err != nil {
+	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", nil)); err != nil {
 		t.Fatal(err)
 	}
 	// Check authorization with valid drafts, so validation cannot mask a bypass.

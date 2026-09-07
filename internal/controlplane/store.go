@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
@@ -211,34 +210,6 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 
 func mustID() string {
 	return uuid.NewString()
-}
-
-func (s *Store) desiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
-	revision, err := s.currentDesiredRevisionForAgent(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state := &agentv1.DesiredNodeState{
-		AgentId:     agentID,
-		Revision:    revision,
-		GeneratedAt: ts(time.Now().UTC()),
-	}
-	vols, err := s.listDesiredVolumes(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state.Volumes = vols
-	services, err := s.listDesiredServices(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state.Services = services
-	nodeConfig, err := s.assignedNodeConfigForAgent(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state.NodeConfig = nodeConfig
-	return state, nil
 }
 
 func (s *Store) currentDesiredRevisionForAgent(ctx context.Context, agentID string) (int64, error) {

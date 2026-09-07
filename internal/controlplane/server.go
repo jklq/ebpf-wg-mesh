@@ -26,6 +26,7 @@ import (
 type Server struct {
 	cfg             config.ControlPlaneConfig
 	store           *Store
+	delivery        *Delivery
 	logStore        *LogStore
 	logEmitter      *LogEmitter
 	notifier        *Notifier
@@ -133,6 +134,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store, ingressOpts...)
 	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
+	delivery := NewDelivery(store, notifier, ingress, platformEvents)
 	var githubClient *GitHubClient
 	var githubCatalog *GitHubCatalog
 	var githubCoordinator *GitHubCoordinator
@@ -145,7 +147,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			return nil, err
 		}
 		githubCatalog = NewGitHubCatalog(store, githubClient)
-		githubCoordinator = NewGitHubCoordinator(store, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter), WithGitHubCoordinatorPlatformEvents(platformEvents))
+		githubCoordinator = NewGitHubCoordinator(store, delivery, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter))
 		githubReconciler = NewGitHubReconciler(store, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
 		webhookProcessor = NewGitHubWebhookProcessor(store, githubCoordinator)
 		webhookHandler = NewGitHubWebhookHandler(store, cfg.GitHub.WebhookSecret, webhookProcessor)
@@ -155,7 +157,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		store,
 		notifier,
 		ingress,
-		NewDelivery(store, notifier),
+		delivery,
 		WithServiceLogs(logStore),
 		WithServiceLogEmitter(logEmitter),
 		WithGitHubSourceInspection(githubCatalog, githubClient),
@@ -163,9 +165,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithPlatformEvents(platformEvents),
 	)
 	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
-	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store, ingress, notifier)
-	rollouts := NewRolloutReconciler(store, notifier, ingress, platformEvents, 2*time.Second)
-	failover := NewServiceFailoverReconciler(store, notifier, ingress, platformEvents,
+	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store, delivery, ingress, notifier)
+	rollouts := NewRolloutReconciler(delivery, 2*time.Second)
+	failover := NewServiceFailoverReconciler(delivery,
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
 	internal := grpc.NewServer(
@@ -173,13 +175,14 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
 	)
 	agentv1.RegisterAgentControlServer(internal, NewAgentService(
-		store, logStore, notifier, ingress, authority, dashboard,
+		store, delivery, logStore, notifier, authority, dashboard,
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
-		WithAgentPlatformEvents(platformEvents), WithAgentRegistry(registry),
+		WithAgentRegistry(registry),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(store, notifier, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter), WithBuilderPlatformEvents(platformEvents)))
-	opsService := NewOpsService(webhookHandler, store, notifier, authority)
+	buildOperations := NewBuildOperations(store, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
+	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(buildOperations))
+	opsService := NewOpsService(webhookHandler, store, delivery, notifier, authority)
 	platformv1.RegisterOpsServiceServer(internal, opsService)
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
@@ -207,6 +210,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	server := &Server{
 		cfg:             cfg,
 		store:           store,
+		delivery:        delivery,
 		logStore:        logStore,
 		logEmitter:      logEmitter,
 		notifier:        notifier,
@@ -372,7 +376,7 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 		interval = time.Second
 	}
 	repair := func() {
-		if err := s.store.recoverExpiredBuilds(ctx, s.buildStaleAfter); err != nil && ctx.Err() == nil {
+		if err := s.delivery.RecoverExpiredBuilds(ctx, s.buildStaleAfter); err != nil && ctx.Err() == nil {
 			slog.Warn("expired build lease repair failed", "error", err)
 		}
 	}

@@ -41,7 +41,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		t.Fatal(err)
 	}
 
-	service, err := store.createScheduledService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createScheduledService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -71,7 +71,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
 	})
-	builderService := NewBuilderService(store, notifier, registry, 0)
+	builderService := NewBuilderService(NewBuildOperations(store, NewDelivery(store, notifier, nil, nil), registry, registry, 0))
 	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
@@ -111,7 +111,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -133,7 +133,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	builderService := NewBuilderService(store, notifier, nil, 0)
+	builderService := NewBuilderService(NewBuildOperations(store, NewDelivery(store, notifier, nil, nil), nil, nil, 0))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -171,7 +171,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -193,7 +193,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
+	builderService := NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
 	observedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	_, err = builderService.ReportBuildLogs(
@@ -263,7 +263,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{80})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -285,7 +285,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	disabledWriter := &recordingLogWriter{enabled: false}
-	builderService := NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: disabledWriter}))
+	builderService := NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: disabledWriter})))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
@@ -297,7 +297,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	}
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService = NewBuilderService(store, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer}))
+	builderService = NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{BuildId: build.ID},

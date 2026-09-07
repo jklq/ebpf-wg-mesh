@@ -129,7 +129,7 @@ func createRepoBackedTestService(t *testing.T, store *Store, ctx context.Context
 			t.Fatalf("replaceGitHubInstallationRepositories: %v", err)
 		}
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",

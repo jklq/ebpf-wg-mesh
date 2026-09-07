@@ -55,7 +55,7 @@ func upsertTestAgent(t *testing.T, store *Store, ctx context.Context, hello *age
 	if err := enrollTestAgent(ctx, store, hello); err != nil {
 		return false, err
 	}
-	return store.upsertAgent(ctx, hello)
+	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 
 func enrollTestAgent(ctx context.Context, store *Store, hello *agentv1.AgentHello) error {

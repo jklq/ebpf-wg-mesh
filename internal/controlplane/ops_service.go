@@ -16,12 +16,13 @@ type OpsService struct {
 	platformv1.UnimplementedOpsServiceServer
 	webhooks  *GitHubWebhookHandler
 	store     *Store
+	delivery  *Delivery
 	notifier  *Notifier
 	authority *TLSAuthority
 }
 
-func NewOpsService(webhooks *GitHubWebhookHandler, store *Store, notifier *Notifier, authority *TLSAuthority) *OpsService {
-	return &OpsService{webhooks: webhooks, store: store, notifier: notifier, authority: authority}
+func NewOpsService(webhooks *GitHubWebhookHandler, store *Store, delivery *Delivery, notifier *Notifier, authority *TLSAuthority) *OpsService {
+	return &OpsService{webhooks: webhooks, store: store, delivery: delivery, notifier: notifier, authority: authority}
 }
 
 func (s *OpsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platformv1.Fleet, error) {
@@ -41,7 +42,7 @@ func (s *OpsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgen
 	if err != nil {
 		return nil, err
 	}
-	rec, token, err := s.store.createFleetAgent(ctx, identity.UserID, req)
+	rec, token, err := s.delivery.createFleetAgent(ctx, identity.UserID, req)
 	if err != nil {
 		return nil, fleetStatusError("create agent", err)
 	}
@@ -53,7 +54,7 @@ func (s *OpsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgen
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.store.updateFleetAgent(ctx, identity.UserID, req)
+	rec, err := s.delivery.updateFleetAgent(ctx, identity.UserID, req)
 	if err != nil {
 		return nil, fleetStatusError("update agent", err)
 	}
@@ -66,7 +67,7 @@ func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetA
 		return nil, err
 	}
 	target := lifecycleStateRecord(req.GetLifecycleState())
-	rec, notify, err := s.store.setAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
+	rec, notify, err := s.delivery.setAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
 	if err != nil {
 		return nil, fleetStatusError("set agent lifecycle", err)
 	}

@@ -7,25 +7,70 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// Delivery owns environment release policy and its transactional effects.
-// CockroachDB and shared fleet/build primitives remain concrete implementation
-// dependencies while delivery operations are migrated out of Store.
+// Delivery owns deployment lifecycle policy, its transactional state changes,
+// and the wake, ingress, and publication effects that follow a commit. Store is
+// its concrete persistence implementation rather than a lifecycle interface
+// exposed to transports and background workers.
 type Delivery struct {
-	store    *Store
-	notifier platformNotifier
+	store       *Store
+	notifier    platformNotifier
+	ingress     platformIngress
+	events      *PlatformEvents
+	rolloutNow  func() time.Time
+	failoverNow func() time.Time
 }
 
-func NewDelivery(store *Store, notifier platformNotifier) *Delivery {
-	return &Delivery{store: store, notifier: notifier}
+func NewDelivery(store *Store, notifier platformNotifier, ingress platformIngress, events *PlatformEvents) *Delivery {
+	return &Delivery{store: store, notifier: notifier, ingress: ingress, events: events}
 }
 
 type releasedService struct {
 	Service     serviceRecord
 	Allocations []allocationRecord
+}
+
+type deploymentActionResult struct {
+	Service     serviceRecord
+	Allocations []allocationRecord
+	EventIndex  int64
+}
+
+// ApplyDeploymentAction applies restart, rollback, cancellation, removal, and
+// retry policy atomically, then performs every wake and publication required to
+// make the committed state observable. Callers do not need to finish the
+// operation themselves.
+func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deploymentActionResult, error) {
+	identity, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return deploymentActionResult{}, err
+	}
+	service, _, agentIDs, err := d.applyDeploymentAction(ctx, identity.UserID, serviceID, deploymentID, action, idempotencyKey, allocationID)
+	if err != nil {
+		return deploymentActionResult{}, err
+	}
+	for _, agentID := range agentIDs {
+		if d.notifier != nil {
+			d.notifier.Notify(agentID)
+		}
+	}
+	if d.ingress != nil {
+		d.ingress.RequestSync()
+	}
+	service, allocations, err := d.store.serviceStatus(ctx, identity.UserID, serviceID)
+	if err != nil {
+		return deploymentActionResult{}, err
+	}
+	var eventIndex int64
+	if d.events != nil {
+		eventIndex, err = d.events.Publish(ctx, service.EnvironmentID)
+		if err != nil {
+			return deploymentActionResult{}, err
+		}
+	}
+	return deploymentActionResult{Service: service, Allocations: allocations, EventIndex: eventIndex}, nil
 }
 
 // ReleaseEnvironment authorizes the delegated user and atomically releases all
@@ -162,10 +207,12 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 		return nil
 	})
 	if err != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "release environment: %v", err)
+		return nil, fmt.Errorf("release environment: %w", err)
 	}
 	for _, agentID := range agentIDs {
-		d.notifier.Notify(agentID)
+		if d.notifier != nil {
+			d.notifier.Notify(agentID)
+		}
 	}
 	return services, nil
 }
@@ -222,7 +269,7 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 		return serviceRecord{}, err
 	}
 	now := time.Now().UTC()
-	if _, err := d.store.prepareReplacementRolloutTx(ctx, tx, current, existing, now); err != nil {
+	if _, err := d.prepareReplacementRolloutTx(ctx, tx, current, existing, now); err != nil {
 		return serviceRecord{}, err
 	}
 	nextRolloutGeneration := current.RolloutGeneration + 1
@@ -269,7 +316,7 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 	current.ResolvedImage = resolvedImage
 	current.PendingChanges = false
 	current.UpdatedAt = now
-	if _, err := d.store.advanceRolloutTx(ctx, tx, serviceID, now); err != nil {
+	if _, err := d.advanceRolloutTx(ctx, tx, serviceID, now); err != nil {
 		return serviceRecord{}, err
 	}
 	return current, nil

@@ -31,7 +31,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 		}
 	}
 	environmentID := productionEnvironmentID(t, store, projects[0].ID)
-	service, err := store.createService(ctx, "user-1", environmentID, "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", environmentID, "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-1'`, staleAt); err != nil {
 		t.Fatal(err)
 	}
-	notified, environmentsChanged, err := store.failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
+	notified, environmentsChanged, err := NewDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestFailoverServicesFromAgentIgnoresFreshNode(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	notified, environmentsChanged, err := store.failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
+	notified, environmentsChanged, err := NewDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +96,9 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reconciler := NewServiceFailoverReconciler(store, nil, nil, nil, time.Second, agentHealthyTTL)
-	reconciler.now = func() time.Time { return now }
+	delivery := NewDelivery(store, nil, nil, nil)
+	delivery.failoverNow = func() time.Time { return now }
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, agentHealthyTTL)
 	_, err := reconciler.Reconcile(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 		}
 	}
 	environmentID := productionEnvironmentID(t, store, projects[0].ID)
-	service, err := store.createService(ctx, "user-1", environmentID, "failover-web", serviceSpec(), "node-a")
+	service, err := createService(ctx, store, "user-1", environmentID, "failover-web", serviceSpec(), "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +154,9 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reconciler := NewServiceFailoverReconciler(store, nil, nil, nil, time.Second, agentHealthyTTL)
-	reconciler.now = func() time.Time { return now }
+	delivery := NewDelivery(store, nil, nil, nil)
+	delivery.failoverNow = func() time.Time { return now }
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, agentHealthyTTL)
 	result, err := reconciler.Reconcile(ctx)
 	if err != nil {
 		t.Fatalf("reconcile failover: %v", err)
@@ -204,11 +206,11 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 		}
 	}
 
-	oldState, err := store.desiredStateForAgent(ctx, "node-a")
+	oldState, err := desiredStateForAgent(ctx, store, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	newState, err := store.desiredStateForAgent(ctx, "node-b")
+	newState, err := desiredStateForAgent(ctx, store, "node-b")
 	if err != nil {
 		t.Fatal(err)
 	}

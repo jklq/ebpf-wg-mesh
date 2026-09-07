@@ -27,7 +27,8 @@ type allocationFailoverState struct {
 	healthy          bool
 }
 
-func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, unhealthyThreshold time.Duration) (serviceFailoverResult, error) {
+func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time, unhealthyThreshold time.Duration) (serviceFailoverResult, error) {
+	s := d.store
 	var result serviceFailoverResult
 	if unhealthyThreshold <= 0 {
 		return result, fmt.Errorf("unhealthy threshold must be greater than zero")
@@ -126,7 +127,7 @@ func (s *Store) failoverUnhealthyServices(ctx context.Context, now time.Time, un
 			if _, healthy := healthyAgents[allocation.AgentID]; healthy {
 				continue
 			}
-			replacement, err := s.replaceLostNodeAllocationTx(ctx, tx, allocation.AgentID, allocation, now.UTC())
+			replacement, err := d.replaceLostNodeAllocationTx(ctx, tx, allocation.AgentID, allocation, now.UTC())
 			if err != nil {
 				return err
 			}
@@ -226,63 +227,63 @@ func markAllocationUnavailableForFailover(ctx context.Context, q serviceQueryer,
 	return err == nil, err
 }
 
-type failoverNotifier interface {
-	Notify(agentID string)
-}
-
-type failoverIngress interface {
-	RequestSync()
+type failoverDelivery interface {
+	ReconcileFailover(context.Context, time.Duration) (serviceFailoverResult, error)
 }
 
 type ServiceFailoverReconciler struct {
-	store              *Store
-	notifier           failoverNotifier
-	ingress            failoverIngress
-	events             *PlatformEvents
+	delivery           failoverDelivery
 	interval           time.Duration
 	unhealthyThreshold time.Duration
-	now                func() time.Time
 }
 
-func NewServiceFailoverReconciler(store *Store, notifier failoverNotifier, ingress failoverIngress, events *PlatformEvents, interval, unhealthyThreshold time.Duration) *ServiceFailoverReconciler {
+func NewServiceFailoverReconciler(delivery failoverDelivery, interval, unhealthyThreshold time.Duration) *ServiceFailoverReconciler {
 	return &ServiceFailoverReconciler{
-		store: store, notifier: notifier, ingress: ingress, events: events,
-		interval: interval, unhealthyThreshold: unhealthyThreshold,
+		delivery: delivery, interval: interval, unhealthyThreshold: unhealthyThreshold,
 	}
 }
 
-func (r *ServiceFailoverReconciler) Reconcile(ctx context.Context) (serviceFailoverResult, error) {
-	if r == nil || r.store == nil {
+// ReconcileFailover detects unhealthy agents, applies placement repair in one
+// transaction, then wakes agents and publishes routing and environment effects.
+func (d *Delivery) ReconcileFailover(ctx context.Context, unhealthyThreshold time.Duration) (serviceFailoverResult, error) {
+	if d == nil || d.store == nil {
 		return serviceFailoverResult{}, nil
 	}
-	now, err := databaseTime(ctx, r.store.db)
-	if r.now != nil {
-		now = r.now().UTC()
+	now, err := databaseTime(ctx, d.store.db)
+	if d.failoverNow != nil {
+		now = d.failoverNow().UTC()
 		err = nil
 	}
 	if err != nil {
 		return serviceFailoverResult{}, fmt.Errorf("read database time: %w", err)
 	}
-	result, err := r.store.failoverUnhealthyServices(ctx, now, r.unhealthyThreshold)
+	result, err := d.failoverUnhealthyServices(ctx, now, unhealthyThreshold)
 	if err != nil {
 		return serviceFailoverResult{}, err
 	}
 	for _, agentID := range result.NotifyAgentIDs {
-		if r.notifier != nil {
-			r.notifier.Notify(agentID)
+		if d.notifier != nil {
+			d.notifier.Notify(agentID)
 		}
 	}
-	if result.IngressChanged && r.ingress != nil {
-		r.ingress.RequestSync()
+	if result.IngressChanged && d.ingress != nil {
+		d.ingress.RequestSync()
 	}
 	for _, environmentID := range result.EnvironmentIDs {
-		if r.events != nil {
-			if _, err := r.events.Publish(ctx, environmentID); err != nil {
+		if d.events != nil {
+			if _, err := d.events.Publish(ctx, environmentID); err != nil {
 				return serviceFailoverResult{}, fmt.Errorf("publish failover event: %w", err)
 			}
 		}
 	}
 	return result, nil
+}
+
+func (r *ServiceFailoverReconciler) Reconcile(ctx context.Context) (serviceFailoverResult, error) {
+	if r == nil || r.delivery == nil {
+		return serviceFailoverResult{}, nil
+	}
+	return r.delivery.ReconcileFailover(ctx, r.unhealthyThreshold)
 }
 
 func (r *ServiceFailoverReconciler) Run(ctx context.Context) error {

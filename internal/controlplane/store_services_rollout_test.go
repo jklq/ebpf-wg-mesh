@@ -46,7 +46,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 		name := name
 		go func() {
 			<-start
-			rec, err := store.createScheduledService(ctx, "user-1", environmentID, name, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			rec, err := createScheduledService(ctx, store, "user-1", environmentID, name, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				Ports:           runtimePortsFromInts([]int32{8080}),
@@ -92,7 +92,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -108,7 +108,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		port := port
 		go func() {
 			<-start
-			_, _, err := store.updateService(ctx, "user-1", service.ID, "", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			_, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64 + int64(i),
 				Ports:           runtimePortsFromInts([]int32{port}),
@@ -171,11 +171,11 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
 	})
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", spec, "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", spec, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	updated, changed, err := store.updateService(ctx, "user-1", service.ID, "", canonicalServiceSpec(spec))
+	updated, changed, err := updateService(ctx, store, "user-1", service.ID, "", canonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService noop: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
 	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
 	environmentID := productionEnvironmentID(t, store, projects[0].ID)
-	service, err := store.createService(ctx, "user-1", environmentID, "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", environmentID, "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
 		t.Fatalf("service create did not refresh node-2 identity catalog: got %d want %d", got, node2Before+1)
 	}
-	node2State, err := store.desiredStateForAgent(ctx, "node-2")
+	node2State, err := desiredStateForAgent(ctx, store, "node-2")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent(node-2): %v", err)
 	}
@@ -246,7 +246,7 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 		t.Fatalf("node-2 did not receive the new cross-node identity: %#v", identities)
 	}
 
-	if err := store.deleteService(ctx, "user-1", service.ID); err != nil {
+	if err := deleteService(ctx, store, "user-1", service.ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+2 {
@@ -281,13 +281,13 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
 	})
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", spec, "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", spec, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	beforeRevision := mustDesiredRevision(t, store, ctx, "node-1")
 
-	updated, changed, err := store.updateService(ctx, "user-1", service.ID, "talented-harmony", canonicalServiceSpec(spec))
+	updated, changed, err := updateService(ctx, store, "user-1", service.ID, "talented-harmony", canonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService rename: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != beforeRevision+1 {
 		t.Fatalf("expected rename to refresh internal hosts, desired revision=%d want %d", got, beforeRevision+1)
 	}
-	desired, err := store.desiredStateForAgent(ctx, "node-1")
+	desired, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -344,7 +344,7 @@ func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
 	}
-	redeployed, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "exact-redeploy", "")
+	redeployed, _, err := applyDeploymentActionForTest(ctx, store, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "exact-redeploy", "")
 	if err != nil {
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}

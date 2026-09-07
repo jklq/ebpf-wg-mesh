@@ -36,7 +36,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
-	_, err = store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	_, err = createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -48,7 +48,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 
 	stateCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	state, err := store.desiredStateForAgent(stateCtx, "node-1")
+	state, err := desiredStateForAgent(stateCtx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
-	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	if _, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		VolumeName: "data",
 	}), "node-1"); err != nil {
 		t.Fatalf("createService: %v", err)
@@ -131,7 +131,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 
 		go func() {
 			<-start
-			_, err := store.createScheduledService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), serviceName, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+			_, err := createScheduledService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), serviceName, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				Ports:           runtimePortsFromInts([]int32{8080}),
@@ -167,7 +167,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			if service.AllocatedAgentID == "" {
 				continue
 			}
-			state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)
+			state, err := desiredStateForAgent(ctx, store, service.AllocatedAgentID)
 			if err != nil {
 				t.Fatalf("desiredStateForAgent(%d): %v", i, err)
 			}

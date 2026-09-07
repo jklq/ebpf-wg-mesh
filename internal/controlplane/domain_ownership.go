@@ -18,6 +18,7 @@ var (
 	errInvalidDomainHostname      = errors.New("hostname must be a valid DNS name")
 	errDomainOwnershipNotProven   = errors.New("domain CNAME does not point to the service platform hostname")
 	errPlatformDomainNotGenerated = errors.New("generate a platform domain for the service first")
+	errPlatformDomainReassignment = errors.New("generated platform domain cannot be reassigned to another service")
 	errPlatformDomainInUse        = errors.New("generated platform domain cannot be deleted while a custom domain is attached")
 )
 
@@ -61,7 +62,7 @@ func isPlatformHostname(hostname, suffix string) bool {
 	return hostname == suffix || strings.HasSuffix(hostname, "."+suffix)
 }
 
-func (s *PlatformService) annotateDomainBinding(ctx context.Context, userID string, rec domainBindingRecord) *platformv1.DomainBinding {
+func (s *Domains) annotateDomainBinding(ctx context.Context, userID string, rec domainBindingRecord) *platformv1.DomainBinding {
 	binding := toProtoDomainBinding(rec)
 	if rec.PlatformGenerated {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED
@@ -77,7 +78,7 @@ func (s *PlatformService) annotateDomainBinding(ctx context.Context, userID stri
 	return binding
 }
 
-func (s *PlatformService) inspectDomainOwnership(ctx context.Context, userID, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
+func (s *Domains) inspectDomainOwnership(ctx context.Context, userID, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
 	if platformGenerated {
 		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
 	}
@@ -96,7 +97,7 @@ func (s *PlatformService) inspectDomainOwnership(ctx context.Context, userID, se
 	return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
 }
 
-func (s *PlatformService) proveDomainOwnership(ctx context.Context, hostname, platformHostname string) error {
+func (s *Domains) proveDomainOwnership(ctx context.Context, hostname, platformHostname string) error {
 	hostname = normalizeDNSName(hostname)
 	platformHostname = normalizeDNSName(platformHostname)
 	target, cnameErr := s.dnsResolver.LookupCNAME(ctx, hostname)
@@ -124,27 +125,6 @@ func (s *PlatformService) proveDomainOwnership(ctx context.Context, hostname, pl
 		return fmt.Errorf("%w: expected CNAME %s", errDomainOwnershipNotProven, platformHostname)
 	}
 	return fmt.Errorf("%w: expected %s, got %s", errDomainOwnershipNotProven, platformHostname, target)
-}
-
-func leftoverPlatformHostname(items []domainBindingRecord) string {
-	var generated string
-	for _, item := range items {
-		if item.PlatformGenerated {
-			generated = item.Hostname
-			continue
-		}
-		return ""
-	}
-	return generated
-}
-
-func hasCustomDomainBinding(items []domainBindingRecord) bool {
-	for _, item := range items {
-		if !item.PlatformGenerated {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeDNSName(raw string) string {
