@@ -15,7 +15,7 @@ import (
 
 func claimBuildForTest(t *testing.T, store *Store, ctx context.Context, builderID, expectedBuildID string) {
 	t.Helper()
-	claimed, err := store.claimNextBuild(ctx, builderID, builderID, 0)
+	claimed, err := claimNextBuild(ctx, store, builderID, builderID, 0)
 	if err != nil {
 		t.Fatalf("claimNextBuild: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -56,7 +56,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	state, err := store.desiredStateForAgent(ctx, "node-1")
+	state, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent(before build): %v", err)
 	}
@@ -72,10 +72,10 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := store.completeBuild(ctx, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:999", ""); !errors.Is(err, errBuildNotOwned) {
+	if err := completeBuildForTest(ctx, store, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:999", ""); !errors.Is(err, errBuildNotOwned) {
 		t.Fatalf("expected foreign builder completion to be rejected, got %v", err)
 	}
-	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("expected rollout generation 1 after first successful build, got %d", current.RolloutGeneration)
 	}
 
-	state, err = store.desiredStateForAgent(ctx, "node-1")
+	state, err = desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent(after build): %v", err)
 	}
@@ -114,7 +114,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", service.ID, 2); err != nil {
+	if _, _, err := scaleService(ctx, store, "user-1", service.ID, 2); err != nil {
 		t.Fatalf("queue replica change: %v", err)
 	}
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", service.EnvironmentID); err != nil {
@@ -154,7 +154,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -174,7 +174,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(first): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", firstBuild.ID)
-	if err := store.completeBuild(ctx, "builder-1", firstBuild.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", firstBuild.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild(first): %v", err)
 	}
 
@@ -186,7 +186,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(second): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", secondBuild.ID)
-	if err := store.completeBuild(ctx, "builder-1", secondBuild.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-2", "", "docker build failed"); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", secondBuild.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-2", "", "docker build failed"); err != nil {
 		t.Fatalf("completeBuild(second): %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -243,7 +243,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest(build1): %v", err)
 	}
-	claimed, err := store.claimNextBuild(ctx, "builder-1", "builder-1", 0)
+	claimed, err := claimNextBuild(ctx, store, "builder-1", "builder-1", 0)
 	if err != nil {
 		t.Fatalf("claimNextBuild: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest(build2): %v", err)
 	}
-	if err := store.completeBuild(ctx, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 
@@ -271,7 +271,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	}
 
 	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
-	if err := store.completeBuild(ctx, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
 	current, err = store.serviceByID(ctx, "user-1", service.ID)
@@ -297,7 +297,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(build1): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
-	if err := store.completeBuild(ctx, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 	assertRolloutState(t, store, service.ID, 1, rolloutStateInProgress, "")
@@ -310,7 +310,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(build2): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
-	if err := store.completeBuild(ctx, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
 
@@ -355,7 +355,7 @@ func TestSupersededDeploymentDoesNotBlockRolloutFinalization(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(build1): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
-	if err := store.completeBuild(ctx, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 1)
@@ -370,7 +370,7 @@ func TestSupersededDeploymentDoesNotBlockRolloutFinalization(t *testing.T) {
 	if _, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2"); err != nil {
 		t.Fatalf("enqueueBuildForTest(build2): %v", err)
 	}
-	if _, err := store.advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
+	if _, err := NewDelivery(store, nil, nil, nil).advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
 		t.Fatalf("advance superseded deployment rollout: %v", err)
 	}
 	assertRolloutState(t, store, service.ID, 1, rolloutStateSucceeded, "")
@@ -449,7 +449,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -486,7 +486,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -536,7 +536,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -557,7 +557,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
@@ -595,7 +595,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatal(err)
 	}
 
-	repoService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "repo-web", repositoryServiceSpec(
+	repoService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "repo-web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -615,7 +615,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
@@ -630,7 +630,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("expected latest repo deployment to include persisted commit message, got %+v", repoDeployments[0].Build)
 	}
 
-	imageService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{
+	imageService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8081}),
 	}), "node-1")
 	if err != nil {
@@ -640,7 +640,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err != nil || !ok {
 		t.Fatalf("currentDeploymentForService(image): ok=%v err=%v", ok, err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, "user-1", imageService.ID, imageDeployment.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "image-history-exact-redeploy", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, "user-1", imageService.ID, imageDeployment.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "image-history-exact-redeploy", ""); err != nil {
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 
@@ -678,7 +678,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -699,7 +699,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
@@ -737,7 +737,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -800,7 +800,7 @@ func newRepoBuildTestService(t *testing.T) (*Store, string, serviceRecord) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",

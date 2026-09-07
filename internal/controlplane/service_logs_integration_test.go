@@ -51,11 +51,11 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	if err != nil || len(projectsB) != 1 {
 		t.Fatalf("projects B: %v", err)
 	}
-	svcA, err := store.createService(ctx, "user-a", productionEnvironmentID(t, store, projectsA[0].ID), "web-a", serviceSpec(), agentID)
+	svcA, err := createService(ctx, store, "user-a", productionEnvironmentID(t, store, projectsA[0].ID), "web-a", serviceSpec(), agentID)
 	if err != nil {
 		t.Fatalf("create A: %v", err)
 	}
-	svcB, err := store.createService(ctx, "user-b", productionEnvironmentID(t, store, projectsB[0].ID), "web-b", serviceSpec(), agentID)
+	svcB, err := createService(ctx, store, "user-b", productionEnvironmentID(t, store, projectsB[0].ID), "web-b", serviceSpec(), agentID)
 	if err != nil {
 		t.Fatalf("create B: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	service, err := store.createService(ctx, "user-a", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), agentID)
+	service, err := createService(ctx, store, "user-a", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), agentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	if err != nil || len(disabledProjects) != 1 {
 		t.Fatalf("disabled projects: %v", err)
 	}
-	disabledSvc, err := disabled.server.store.createService(ctx, "user-a", productionEnvironmentID(t, disabled.server.store, disabledProjects[0].ID), "web", serviceSpec(), "disabled-agent")
+	disabledSvc, err := createService(ctx, disabled.server.store, "user-a", productionEnvironmentID(t, disabled.server.store, disabledProjects[0].ID), "web", serviceSpec(), "disabled-agent")
 	if err != nil {
 		t.Fatal(err)
 	}

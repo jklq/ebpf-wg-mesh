@@ -34,17 +34,17 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
+	if _, action, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
 		t.Fatalf("restart: %v", err)
 	} else if action.Action != deploymentActionRestart || action.ResultDeploymentID == "" {
 		t.Fatalf("restart action = %+v", action)
 	}
-	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
+	if _, action, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
 		t.Fatalf("idempotent restart: %v", err)
 	} else if action.Action != deploymentActionRestart {
 		t.Fatalf("idempotent restart action = %+v", action)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, first.ID,
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "restart-all", ""); !errors.Is(err, errDeploymentActionConflict) {
 		t.Fatalf("idempotency key reuse err = %v", err)
 	}
@@ -65,7 +65,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		Ports: runtimePortsFromInts([]int32{8081}),
 		Env:   map[string]string{"STAGE": "two"},
 	})
-	if _, _, err := store.updateService(ctx, userID, service.ID, "", updatedSpec); err != nil {
+	if _, _, err := updateService(ctx, store, userID, service.ID, "", updatedSpec); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
@@ -77,11 +77,11 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		t.Fatalf("second active: %+v ok=%v err=%v", second, ok, err)
 	}
 
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "stale-restart", ""); !errors.Is(err, errDeploymentStale) {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "stale-restart", ""); !errors.Is(err, errDeploymentStale) {
 		t.Fatalf("stale restart err = %v", err)
 	}
 
-	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK, "rollback-1", ""); err != nil {
+	if _, action, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK, "rollback-1", ""); err != nil {
 		t.Fatalf("rollback: %v", err)
 	} else if action.ResultDeploymentID == "" || action.ResultDeploymentID == first.ID {
 		t.Fatalf("rollback should create a new deployment, got %+v", action)
@@ -121,7 +121,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		t.Fatalf("rollback did not become active: %+v ok=%v err=%v", rolled, ok, err)
 	}
 
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, rolled.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "exact-1", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, rolled.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "exact-1", ""); err != nil {
 		t.Fatalf("exact redeploy: %v", err)
 	}
 	exact, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -136,7 +136,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, active.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_REMOVE, "remove-1", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, active.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_REMOVE, "remove-1", ""); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	removed, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -150,7 +150,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if len(allocs) == 0 || allocs[0].RolloutState != allocationRolloutWithdrawing {
 		t.Fatalf("remove did not persist ingress withdrawal before drain: %#v", allocs)
 	}
-	if _, _, err := store.recordStatusReport(ctx, allocs[0].AgentID, &agentv1.StatusReport{
+	if _, _, err := testDelivery(store).recordStatusReport(ctx, allocs[0].AgentID, &agentv1.StatusReport{
 		AgentId: allocs[0].AgentID,
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: allocs[0].ID, ServiceId: service.ID,
@@ -167,7 +167,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if err != nil || !ok || removed.State != deploymentStateDraining || removed.ReasonCode != reasonUserRemove {
 		t.Fatalf("late agent overwrote remove: %+v ok=%v err=%v", removed, ok, err)
 	}
-	reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
+	reconciler := NewRolloutReconciler(NewDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("begin remove drain: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestDeploymentActionRestartReplacesOnlySelectedAllocation(t *testing.T) {
 		t.Fatalf("active deployment: %+v ok=%v err=%v", target, ok, err)
 	}
 
-	if _, action, err := store.applyDeploymentAction(ctx, "user-1", service.ID, target.ID,
+	if _, action, err := applyDeploymentActionForTest(ctx, store, "user-1", service.ID, target.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-selected", selected.ID); err != nil {
 		t.Fatalf("restart selected allocation: %v", err)
 	} else if action.ResultDeploymentID == "" || action.AllocationID != selected.ID {
@@ -257,13 +257,13 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 		t.Fatalf("building: %+v ok=%v err=%v", current, ok, err)
 	}
 
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-1", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-1", ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-1", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-1", ""); err != nil {
 		t.Fatalf("idempotent cancel: %v", err)
 	}
-	if err := store.completeBuild(ctx, "builder-cancel", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-cancel", pinnedImage("c"), ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-cancel", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-cancel", pinnedImage("c"), ""); err != nil {
 		t.Fatalf("late completeBuild: %v", err)
 	}
 	after, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -277,7 +277,7 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 
 	alloc, err := store.allocationByServiceID(ctx, service.ID)
 	if err == nil {
-		if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+		if _, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 			AgentId: "node-1",
 			Services: []*agentv1.ServiceCondition{{
 				AllocationId:             alloc.ID,
@@ -305,13 +305,13 @@ func TestDeploymentActionRetryCancelledUnresolvedSource(t *testing.T) {
 		t.Fatalf("initial staged deployment: %+v ok=%v err=%v", staged, ok, err)
 	}
 
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, staged.ID,
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, staged.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-unresolved", ""); err != nil {
 		t.Fatalf("cancel unresolved deployment: %v", err)
 	}
 	assertRolloutState(t, store, service.ID, 1, rolloutStateSuperseded, "cancelled by user")
 
-	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, staged.ID,
+	if _, action, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, staged.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY, "retry-unresolved", ""); err != nil {
 		t.Fatalf("retry unresolved deployment: %v", err)
 	} else if action.ResultDeploymentID == "" {
@@ -352,11 +352,11 @@ func TestDeleteServiceAfterCancelledDeployment(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("staged deployment: ok=%v err=%v", ok, err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, staged.ID,
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, staged.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-before-delete", ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if err := store.deleteService(ctx, userID, service.ID); err != nil {
+	if err := deleteService(ctx, store, userID, service.ID); err != nil {
 		t.Fatalf("delete cancelled service: %v", err)
 	}
 	var remaining int
@@ -375,7 +375,7 @@ func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) 
 	}
 	serving := mustRolloutAllocations(t, store, service.ID)[0]
 	updated := directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
-	if _, _, err := store.updateService(ctx, userID, service.ID, "", updated); err != nil {
+	if _, _, err := updateService(ctx, store, userID, service.ID, "", updated); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
@@ -386,7 +386,7 @@ func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) 
 		t.Fatalf("deploying target: %+v ok=%v err=%v", cancelledTarget, ok, err)
 	}
 
-	if _, action, err := store.applyDeploymentAction(ctx, userID, service.ID, cancelledTarget.ID,
+	if _, action, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, cancelledTarget.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-deploying", ""); err != nil {
 		t.Fatalf("cancel deploying rollout: %v", err)
 	} else if action.ResultDeploymentID == "" {
@@ -412,7 +412,7 @@ func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t
 	}
 	serving := mustRolloutAllocations(t, store, service.ID)[0]
 	updated := directImageServiceSpec("nginx:edge", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
-	if _, _, err := store.updateService(ctx, userID, service.ID, "", updated); err != nil {
+	if _, _, err := updateService(ctx, store, userID, service.ID, "", updated); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
@@ -423,7 +423,7 @@ func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t
 		t.Fatalf("deploying target: %+v ok=%v err=%v", cancelledTarget, ok, err)
 	}
 
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, cancelledTarget.ID,
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, cancelledTarget.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-unpinned", ""); err != nil {
 		t.Fatalf("cancel deploying rollout: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-retry", build.ID)
-	if err := store.completeBuild(ctx, "builder-retry", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-retry", "", "boom"); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-retry", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-retry", "", "boom"); err != nil {
 		t.Fatal(err)
 	}
 	failed, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -457,7 +457,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 		t.Fatalf("failed: %+v ok=%v err=%v", failed, ok, err)
 	}
 
-	if _, _, err := store.applyDeploymentAction(ctx, userID, service.ID, "missing-id", platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY, "retry-stale", ""); err == nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, "missing-id", platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY, "retry-stale", ""); err == nil {
 		t.Fatal("expected missing deployment to fail")
 	}
 
@@ -467,7 +467,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, err := store.applyDeploymentAction(ctx, userID, service.ID, failed.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY, "retry-same", "")
+			_, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, failed.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY, "retry-same", "")
 			errs <- err
 		}()
 	}
@@ -542,7 +542,7 @@ func setupPinnedImageServiceForDeployment(t *testing.T, image string) (*Store, c
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-2")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec(image, &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec(image, &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8081}),
 		Env:   map[string]string{"STAGE": "one"},
 	}), "node-1")
@@ -574,7 +574,7 @@ func completeActionRollout(t *testing.T, store *Store, serviceID string) {
 				markRolloutAllocationReady(t, store, alloc)
 			}
 		}
-		reconciler := NewRolloutReconciler(store, nil, &rolloutIngressProbe{store: store}, nil, time.Second)
+		reconciler := NewRolloutReconciler(NewDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
 		if err := reconciler.Reconcile(ctx); err != nil {
 			t.Fatalf("advance action rollout: %v", err)
 		}

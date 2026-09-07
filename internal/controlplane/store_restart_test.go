@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -28,7 +29,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 		Ports:           runtimePortsFromInts([]int32{8080}),
 		CpuMillis:       250,
 		MemoryMebibytes: 128,
@@ -36,7 +37,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -55,7 +56,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}
 	alloc := primaryAllocation(allocs)
 
-	changed, envs, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	report := &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             alloc.ID,
@@ -75,15 +76,19 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 				LastCause:                platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO,
 			},
 		}},
-	})
+	}
+	ingress := &countingIngress{}
+	eventStore := newMemoryEnvironmentEvents()
+	delivery := NewDelivery(store, nil, ingress, NewPlatformEvents(eventStore, time.Millisecond))
+	err = delivery.ObserveAgentStatus(ctx, "node-1", report)
 	if err != nil {
-		t.Fatalf("recordStatusReport: %v", err)
+		t.Fatalf("ObserveAgentStatus: %v", err)
 	}
-	if !changed {
-		t.Fatal("expected ingress change when crash-loop withdraws the backend")
+	if ingress.requests.Load() != 1 {
+		t.Fatalf("expected one ingress request, got %d", ingress.requests.Load())
 	}
-	if len(envs) != 1 {
-		t.Fatalf("expected environment event, got %v", envs)
+	if got, err := eventStore.currentEnvironmentEvent(ctx, service.EnvironmentID); err != nil || got != initialEnvironmentRevision+1 {
+		t.Fatalf("published environment revision = %d, %v", got, err)
 	}
 	updated, err := store.allocationByServiceID(ctx, service.ID)
 	if err != nil {
@@ -117,7 +122,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 		Ports:           runtimePortsFromInts([]int32{8080}),
 		CpuMillis:       250,
 		MemoryMebibytes: 128,
@@ -136,7 +141,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART, "restart-all", ""); err != nil {
 		t.Fatalf("applyDeploymentAction(RESTART): %v", err)
 	}
 	afterRestart := mustListAllocations(t, store, ctx, service.ID)
@@ -158,7 +163,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 		t.Fatalf("expected a starting replacement allocation, got %+v", afterRestart)
 	}
 
-	desired, err := store.desiredStateForAgent(ctx, "node-1")
+	desired, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +179,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if serving[0].ID == original.ID {
 		t.Fatal("original allocation survived rolling restart")
 	}
-	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	if _, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: serving[0].ID, ServiceId: service.ID,
 			AllocationIpv4: serving[0].AllocationIPv4, AllocationIpv6: serving[0].AllocationIPv6,
@@ -189,7 +194,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if err != nil || !ok {
 		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
 	}
-	if _, _, err := store.applyDeploymentAction(ctx, "user-1", service.ID, crashed.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "clear-crash-loop", ""); err != nil {
+	if _, _, err := applyDeploymentActionForTest(ctx, store, "user-1", service.ID, crashed.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "clear-crash-loop", ""); err != nil {
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 	afterRollout := allocationForGeneration(t, store, service.ID, serving[0].DesiredRolloutGeneration+1)
@@ -217,7 +222,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +231,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	alloc := primaryAllocation(allocs)
-	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	if _, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId: alloc.ID, ServiceId: service.ID,
 			AllocationIpv4: alloc.AllocationIPv4, AllocationIpv6: alloc.AllocationIPv6,
@@ -242,7 +247,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	desired, err := store.desiredStateForAgent(ctx, "node-1")
+	desired, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}

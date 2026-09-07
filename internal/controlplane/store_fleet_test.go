@@ -20,7 +20,7 @@ func TestUnenrolledAgentCannotSelfRegister(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.upsertAgent(ctx, agentHello("ghost")); !errors.Is(err, errAgentNotEnrolled) {
+	if _, err := registerAgent(ctx, store, agentHello("ghost")); !errors.Is(err, errAgentNotEnrolled) {
 		t.Fatalf("upsertAgent(ghost): got %v, want %v", err, errAgentNotEnrolled)
 	}
 }
@@ -33,7 +33,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
 	seedFleetOperator(t, store, ctx)
 
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -45,10 +45,10 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	}
 	originalID := original[0].ID
 
-	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
+	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
 		t.Fatalf("cordon node-b: %v", err)
 	}
-	draining, _, err := store.setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining)
+	draining, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining)
 	if err != nil {
 		t.Fatalf("drain node-a without alternate capacity: %v", err)
 	}
@@ -59,10 +59,10 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 		t.Fatalf("drain without capacity moved the replica: %v", agents)
 	}
 
-	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateActive); err != nil {
+	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-b", agentStateActive); err != nil {
 		t.Fatalf("return node-b: %v", err)
 	}
-	if _, err := store.reconcileDrainingAgent(ctx, "node-a"); err != nil {
+	if _, err := NewDelivery(store, nil, nil, nil).reconcileDrainingAgent(ctx, "node-a"); err != nil {
 		t.Fatalf("retry drain: %v", err)
 	}
 	afterStart := mustListAllocations(t, store, ctx, service.ID)
@@ -97,7 +97,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 
 	markRolloutAllocationReady(t, store, replacement)
 	probe := &rolloutIngressProbe{store: store}
-	reconciler := NewRolloutReconciler(store, nil, probe, nil, time.Second)
+	reconciler := NewRolloutReconciler(NewDelivery(store, nil, probe, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("promote replacement: %v", err)
 	}
@@ -121,20 +121,21 @@ func completeServingAllocations(t *testing.T, store *Store, serviceID string) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC()
+	delivery := NewDelivery(store, nil, nil, nil)
 	for step := 0; step < 8; step++ {
 		for _, alloc := range mustListAllocations(t, store, ctx, serviceID) {
 			if alloc.RolloutState == allocationRolloutStarting {
 				markRolloutAllocationReady(t, store, alloc)
 			}
 		}
-		if _, err := store.advanceRollout(ctx, serviceID, now); err != nil {
+		if _, err := delivery.advanceRollout(ctx, serviceID, now); err != nil {
 			t.Fatalf("advance rollout: %v", err)
 		}
-		if _, err := store.confirmRolloutIngressConverged(ctx, serviceID, now); err != nil {
+		if _, err := delivery.confirmRolloutIngressConverged(ctx, serviceID, now); err != nil {
 			t.Fatalf("confirm ingress: %v", err)
 		}
 		markAllDrainingComplete(t, store, serviceID)
-		if _, err := store.advanceRollout(ctx, serviceID, now); err != nil {
+		if _, err := delivery.advanceRollout(ctx, serviceID, now); err != nil {
 			t.Fatalf("remove drained allocations: %v", err)
 		}
 		remaining := mustListAllocations(t, store, ctx, serviceID)
@@ -170,7 +171,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 
 	spec := replicaSpec(100, 64)
 	spec.DesiredReplicaCount = replicaCountPtr(2)
-	service, err := store.createService(ctx, "user-1", envID, "web", spec, "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", spec, "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-b")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.reconcileFleetCapacity(ctx); err != nil {
+	if err := NewDelivery(store, nil, nil, nil).ReconcileFleetCapacity(ctx); err != nil {
 		t.Fatalf("reconcileFleetCapacity: %v", err)
 	}
 	after := mustListAllocations(t, store, ctx, service.ID)
@@ -217,12 +218,12 @@ func TestFleetReplicaSpreadAndRegionPendingReason(t *testing.T) {
 		{AgentId: "node-b", Name: "node-b", Region: "us-east", FailureDomain: "zone-1"},
 		{AgentId: "node-c", Name: "node-c", Region: "us-east", FailureDomain: "zone-2"},
 	} {
-		if _, err := store.updateFleetAgent(ctx, "ops", req); err != nil {
+		if _, err := testDelivery(store).updateFleetAgent(ctx, "ops", req); err != nil {
 			t.Fatalf("updateFleetAgent(%s): %v", req.AgentId, err)
 		}
 	}
 
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -238,7 +239,7 @@ func TestFleetReplicaSpreadAndRegionPendingReason(t *testing.T) {
 
 	regionSpec := replicaSpec(100, 64)
 	regionSpec.PlacementRegion = "eu-west"
-	regionService, err := store.createService(ctx, "user-1", envID, "eu-web", regionSpec, "node-a")
+	regionService, err := createService(ctx, store, "user-1", envID, "eu-web", regionSpec, "node-a")
 	if err != nil {
 		t.Fatalf("createService(region): %v", err)
 	}
@@ -269,7 +270,7 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewOpsService(nil, store, nil, &TLSAuthority{revocations: revocations})
+	service := NewOpsService(nil, store, NewDelivery(store, nil, nil, nil), nil, &TLSAuthority{revocations: revocations})
 	opsContext := contextWithDelegatedUser("ops", "ops@example.com")
 	if _, err := service.SetAgentLifecycle(opsContext, &platformv1.SetAgentLifecycleRequest{
 		AgentId:        "node-retire",
@@ -300,7 +301,7 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if err := store.authorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, errAgentCredentialRevoked) {
 		t.Fatalf("authorizeAgentCredential: got %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, hello); !errors.Is(err, errAgentCredentialRevoked) {
+	if _, err := registerAgent(ctx, store, hello); !errors.Is(err, errAgentCredentialRevoked) {
 		t.Fatalf("upsert after retire: got %v", err)
 	}
 	serials, err := store.listAgentCertificateSerials(ctx, "node-retire")
@@ -330,7 +331,7 @@ func TestFleetViewReportsHeadroomAndVersionSkew(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, right); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.updateFleetAgent(ctx, "ops", &platformv1.UpdateAgentRequest{
+	if _, err := testDelivery(store).updateFleetAgent(ctx, "ops", &platformv1.UpdateAgentRequest{
 		AgentId: "node-a", Name: "node-a", Region: "us-east", FailureDomain: "zone-1", ReservedCpuMillis: 500,
 	}); err != nil {
 		t.Fatalf("reserve CPU: %v", err)
@@ -363,10 +364,10 @@ func TestCordonedNodesAreExcludedFromNewPlacement(t *testing.T) {
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
 	seedFleetOperator(t, store, ctx)
-	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
+	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -398,14 +399,14 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	}
 	spec := replicaSpec(100, 64)
 	spec.Runtime.VolumeName = "data"
-	service, err := store.createService(ctx, "user-1", envID, "disk", spec, "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "disk", spec, "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining); err != nil {
+	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
 	agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID))

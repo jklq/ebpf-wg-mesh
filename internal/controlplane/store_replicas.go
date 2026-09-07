@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -11,8 +10,6 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -45,144 +42,6 @@ func countReadyAllocations(recs []allocationRecord) int32 {
 		}
 	}
 	return ready
-}
-
-func (s *Store) scaleService(ctx context.Context, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
-	var (
-		current     serviceRecord
-		allocations []allocationRecord
-	)
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		current, allocations, err = s.scaleServiceTx(ctx, tx, userID, serviceID, desired)
-		return err
-	})
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	current, err = s.serviceByID(ctx, userID, serviceID)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	allocations, err = s.listAllocationsByServiceID(ctx, serviceID)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	return current, allocations, nil
-}
-
-func (s *Store) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error) {
-	if err := validateDesiredReplicaCount(desired); err != nil {
-		return serviceRecord{}, nil, err
-	}
-	current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
-		return serviceRecord{}, nil, err
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE id = $1 FOR UPDATE`, serviceID).Scan(&serviceID); err != nil {
-		return serviceRecord{}, nil, err
-	}
-	if err := validateVolumeReplicaCompatibility(current.Spec, desired); err != nil {
-		return serviceRecord{}, nil, err
-	}
-
-	nextSpec := current.Spec
-	if nextSpec == nil {
-		nextSpec = &platformv1.ServiceSpec{}
-	} else {
-		nextSpec = proto.Clone(nextSpec).(*platformv1.ServiceSpec)
-	}
-	nextSpec.DesiredReplicaCount = replicaCountPtr(desired)
-	updated, _, _, err := s.updateServiceTx(ctx, tx, userID, serviceID, current.Name, nextSpec)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	allocations, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, false)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	return updated, allocations, nil
-}
-
-func (s *Store) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, service serviceRecord, preferredAgentID string, now time.Time) ([]allocationRecord, error) {
-	desired := service.DesiredReplicaCount
-	if err := validateVolumeReplicaCompatibility(service.Spec, desired); err != nil {
-		return nil, err
-	}
-	if desired <= 0 && service.RolloutGeneration == 0 {
-		if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, "", now); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-	existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
-	if err != nil {
-		return nil, err
-	}
-	if service.RolloutGeneration == 0 {
-		if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, "", now); err != nil {
-			return nil, err
-		}
-		return existing, nil
-	}
-
-	live, lost := splitLostAllocations(existing)
-	existing = live
-
-	if int32(len(existing)) > desired {
-		removed, remaining := selectAllocationsToRemove(existing, int(desired))
-		for _, alloc := range removed {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE id = $1`, alloc.ID); err != nil {
-				return nil, err
-			}
-		}
-		existing = remaining
-	}
-
-	if int32(len(existing)) < desired {
-		needed := int(desired) - len(existing)
-		occupied := make(map[string]struct{}, len(existing))
-		for _, alloc := range existing {
-			occupied[alloc.AgentID] = struct{}{}
-		}
-		placed := 0
-		failureReason := "no active healthy node satisfies the placement constraints"
-		for i := 0; i < needed; i++ {
-			agentID, err := s.chooseReplicaAgentTx(ctx, tx, service, occupied, preferredAgentID, i == 0 && preferredAgentID != "")
-			if errors.Is(err, errNoPlacementAvailable) {
-				failureReason = strings.TrimSpace(strings.TrimPrefix(err.Error(), errNoPlacementAvailable.Error()+": "))
-				break
-			}
-			if err != nil {
-				return nil, err
-			}
-			alloc, err := s.insertAllocationTx(ctx, tx, service, agentID, now)
-			if err != nil {
-				return nil, err
-			}
-			existing = append(existing, alloc)
-			occupied[agentID] = struct{}{}
-			placed++
-			preferredAgentID = ""
-		}
-		if placed < needed {
-			message := pendingPlacementMessage(len(existing), int(desired), failureReason)
-			if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, message, now); err != nil {
-				return nil, err
-			}
-			service.PlacementMessage = message
-			return append(existing, lost...), nil
-		}
-	}
-
-	if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, "", now); err != nil {
-		return nil, err
-	}
-	service.PlacementMessage = ""
-	return append(existing, lost...), nil
 }
 
 func splitLostAllocations(existing []allocationRecord) (live, lost []allocationRecord) {
@@ -275,45 +134,6 @@ func selectAllocationsToRemove(existing []allocationRecord, keep int) (removed, 
 		return nil, sorted
 	}
 	return sorted[keep:], sorted[:keep]
-}
-
-func (s *Store) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, occupied map[string]struct{}, preferredAgentID string, usePreferred bool) (string, error) {
-	if volumeName := serviceVolumeName(service.Spec); volumeName != "" {
-		if err := s.requireVolumeQuerier(ctx, tx, service.EnvironmentID, volumeName); err != nil {
-			return "", err
-		}
-	}
-	if usePreferred && preferredAgentID != "" {
-		if _, taken := occupied[preferredAgentID]; !taken {
-			candidates, err := s.placementCandidatesQuerier(ctx, tx)
-			if err != nil {
-				return "", err
-			}
-			for _, candidate := range candidates {
-				if candidate.ID == preferredAgentID && candidateEligible(candidate, service.Spec) {
-					return preferredAgentID, nil
-				}
-			}
-		}
-	}
-	return s.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied)
-}
-
-func (s *Store) chooseAgentForReplicaQuerier(ctx context.Context, q serviceQueryer, spec *platformv1.ServiceSpec, occupied map[string]struct{}) (string, error) {
-	candidates, err := s.placementCandidatesQuerier(ctx, q)
-	if err != nil {
-		return "", err
-	}
-	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, true, true); agentID != "" {
-		return agentID, nil
-	}
-	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, true, false); agentID != "" {
-		return agentID, nil
-	}
-	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, false, false); agentID != "" {
-		return agentID, nil
-	}
-	return "", fmt.Errorf("%w: %s", errNoPlacementAvailable, placementFailureReason(candidates, spec, s.reservedAgentIDs))
 }
 
 func firstEligibleReplicaAgent(candidates []placementCandidate, spec *platformv1.ServiceSpec, reserved []string, occupied map[string]struct{}, avoidOccupied, avoidFailureDomain bool) string {
@@ -418,10 +238,6 @@ func candidateHasCapacity(candidate placementCandidate, spec *platformv1.Service
 		return false
 	}
 	return true
-}
-
-func (s *Store) chooseAgentForPlacementQuerier(ctx context.Context, q serviceQueryer, spec *platformv1.ServiceSpec) (string, error) {
-	return s.chooseAgentForReplicaQuerier(ctx, q, spec, nil)
 }
 
 func (s *Store) listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error) {

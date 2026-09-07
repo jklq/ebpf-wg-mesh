@@ -25,7 +25,8 @@ type nodeLossReplacementResult struct {
 // Existing allocation rows are never rewritten onto another agent. The dead
 // node's allocation is marked lost/unavailable and a new allocation is placed
 // through rolling replacement, matching fleet drain.
-func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, cutoff time.Time) ([]string, []string, error) {
+func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string, cutoff time.Time) ([]string, []string, error) {
+	s := d.store
 	var notifyAgentIDs []string
 	var changedEnvironmentIDs []string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -59,7 +60,7 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 		alreadyBumped := false
 		changedEnvironments := make(map[string]struct{})
 		for _, allocation := range allocations {
-			result, err := s.replaceLostNodeAllocationTx(ctx, tx, agentID, allocation, now)
+			result, err := d.replaceLostNodeAllocationTx(ctx, tx, agentID, allocation, now)
 			if err != nil {
 				return err
 			}
@@ -106,7 +107,8 @@ func (s *Store) failoverServicesFromAgent(ctx context.Context, agentID string, c
 // replaceLostNodeAllocationTx fences or replaces one allocation on a dead node.
 // It never rewrites allocations.agent_id. Volume-backed and managed workloads
 // stay pinned; stateless replacements use the same targeted rolling path as drain.
-func (s *Store) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, deadAgentID string, allocation allocationRecord, now time.Time) (nodeLossReplacementResult, error) {
+func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, deadAgentID string, allocation allocationRecord, now time.Time) (nodeLossReplacementResult, error) {
+	s := d.store
 	var result nodeLossReplacementResult
 	if allocation.AgentID != deadAgentID {
 		return result, nil
@@ -169,7 +171,7 @@ func (s *Store) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, dea
 	if err := rows.Close(); err != nil {
 		return result, err
 	}
-	if _, err := s.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied); errors.Is(err, errNoPlacementAvailable) {
+	if _, err := d.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied); errors.Is(err, errNoPlacementAvailable) {
 		message := "agent unhealthy; automatic failover blocked because no healthy non-reserved agent has sufficient capacity"
 		if detail := strings.TrimSpace(strings.TrimPrefix(err.Error(), errNoPlacementAvailable.Error()+": ")); detail != "" {
 			message = "agent unhealthy; automatic failover blocked because " + detail
@@ -218,7 +220,7 @@ func (s *Store) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, dea
 		return result, err
 	}
 	if inProgress {
-		if _, err := s.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
+		if _, err := d.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
 			return result, err
 		}
 		result.Replaced = true
@@ -227,7 +229,7 @@ func (s *Store) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, dea
 	}
 
 	detail := fmt.Sprintf("Node loss replacing allocation %s from %s", allocation.ID, deadAgentID)
-	if _, err := s.copyDeploymentRolloutTargetTx(ctx, tx, service, current, "", reasonFailoverRescheduled, detail, allocation.ID); err != nil {
+	if _, err := d.copyDeploymentRolloutTargetTx(ctx, tx, service, current, "", reasonFailoverRescheduled, detail, allocation.ID); err != nil {
 		return result, err
 	}
 	result.Replaced = true

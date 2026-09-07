@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -15,7 +14,9 @@ import (
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store                platformStore
-	delivery             *Delivery
+	domains              *Domains
+	environments         *EnvironmentOperations
+	delivery             platformDelivery
 	logStore             serviceLogStore
 	emitter              *LogEmitter
 	notifier             platformNotifier
@@ -32,11 +33,6 @@ type platformStore interface {
 	listProjects(ctx context.Context, userID string) ([]projectRecord, error)
 	projectByID(ctx context.Context, userID, projectID string) (projectRecord, error)
 	authorizeProjectWrite(ctx context.Context, userID, projectID string) error
-	createScheduledService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
-	updateService(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
-	applyDeploymentAction(ctx context.Context, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (serviceRecord, deploymentActionRecord, error)
-	discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
-	deleteService(ctx context.Context, userID, serviceID string) error
 	serviceByID(ctx context.Context, userID, serviceID string) (serviceRecord, error)
 	listServices(ctx context.Context, userID, environmentID string) ([]serviceRecord, error)
 	createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (volumeRecord, error)
@@ -50,10 +46,19 @@ type platformStore interface {
 	listDomainBindings(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error)
 	serviceStatus(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error)
-	scaleService(ctx context.Context, userID, serviceID string, desired int32) (serviceRecord, []allocationRecord, error)
 	listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deploymentRecord, error)
 	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error)
 	listAgents(ctx context.Context) ([]agentRecord, error)
+}
+
+type platformDelivery interface {
+	ReleaseEnvironment(ctx context.Context, environmentID string) ([]releasedService, error)
+	ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deploymentActionResult, error)
+	CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
+	UpdateService(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
+	DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
+	DeleteService(ctx context.Context, serviceID string) error
+	ScaleService(ctx context.Context, serviceID string, desired int32) (serviceRecord, []allocationRecord, int64, error)
 }
 
 type environmentStore interface {
@@ -128,13 +133,15 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 	}
 }
 
-func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, delivery *Delivery, opts ...PlatformServiceOption) *PlatformService {
+func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, delivery platformDelivery, opts ...PlatformServiceOption) *PlatformService {
 	service := &PlatformService{store: store, delivery: delivery, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
 		}
 	}
+	service.domains = NewDomains(store, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
+	service.environments = NewEnvironmentOperations(store, notifier, ingress)
 	return service
 }
 
@@ -243,31 +250,19 @@ func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1
 }
 
 func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
-	identity, err := DelegatedUserFromContext(ctx)
-	if err != nil {
+	if _, err := DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
-	agentIDs, err := s.store.deleteEnvironment(ctx, identity.UserID, req.GetEnvironmentId())
-	if err != nil {
-		if errors.Is(err, errProductionEnvironment) {
-			return nil, status.Error(codes.FailedPrecondition, err.Error())
-		}
-		return nil, status.Errorf(codes.Internal, "delete environment: %v", err)
-	}
-	for _, agentID := range agentIDs {
-		s.notifier.Notify(agentID)
-	}
-	s.ingress.RequestSync()
-	if _, err := s.events.Publish(ctx, req.GetEnvironmentId()); err != nil {
-		return nil, status.Errorf(codes.Internal, "publish environment event: %v", err)
-	}
-	return &emptypb.Empty{}, nil
+	return s.environments.DeleteEnvironment(ctx, req)
 }
 
 func (s *PlatformService) ReleaseEnvironment(ctx context.Context, req *platformv1.ReleaseEnvironmentRequest) (*platformv1.ReleaseEnvironmentResponse, error) {
 	services, err := s.delivery.ReleaseEnvironment(ctx, req.GetEnvironmentId())
 	if err != nil {
-		return nil, err
+		if status.Code(err) != codes.Unknown {
+			return nil, err
+		}
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
 	resp := &platformv1.ReleaseEnvironmentResponse{Services: make([]*platformv1.ServiceStatus, 0, len(services))}
 	for _, released := range services {

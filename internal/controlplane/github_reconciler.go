@@ -35,13 +35,13 @@ func (r *GitHubReconciler) Bootstrap(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	if err := r.store.recoverExpiredBuilds(ctx, r.buildStaleAfter); err != nil {
+	if err := r.coordinator.delivery.RecoverExpiredBuilds(ctx, r.buildStaleAfter); err != nil {
 		return err
 	}
 	if err := r.store.recoverGitHubWebhookDeliveries(ctx, r.webhookStaleAfter); err != nil {
 		return err
 	}
-	if err := r.store.recoverSourceWorkItems(ctx, r.workStaleAfter); err != nil {
+	if err := r.coordinator.RecoverWorkItems(ctx, r.workStaleAfter); err != nil {
 		return err
 	}
 	installationIDs, err := r.store.listActiveGitHubInstallationIDs(ctx)
@@ -89,7 +89,7 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 }
 
 func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
-	rec, err := r.store.claimNextSourceWorkItem(ctx, r.workerID, r.workStaleAfter)
+	rec, err := r.coordinator.ClaimNextWorkItem(ctx, r.workerID, r.workStaleAfter)
 	if err != nil {
 		return false, err
 	}
@@ -98,7 +98,7 @@ func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
 	}
 	slog.InfoContext(ctx, "github work item claimed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
 	if err := r.coordinator.processWorkItem(ctx, rec); err != nil {
-		if releaseErr := r.store.releaseSourceWorkItem(ctx, rec.ID, r.workerID, err, r.coordinator.retryAfter); releaseErr != nil {
+		if releaseErr := r.coordinator.ReleaseWorkItem(ctx, rec.ID, r.workerID, err, r.coordinator.retryAfter); releaseErr != nil {
 			return false, releaseErr
 		}
 		if err != errGitHubWorkDeferred {
@@ -106,7 +106,7 @@ func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
-	if err := r.store.completeSourceWorkItem(ctx, rec.ID, r.workerID); err != nil {
+	if err := r.coordinator.CompleteWorkItem(ctx, rec.ID, r.workerID); err != nil {
 		return false, err
 	}
 	slog.InfoContext(ctx, "github work item completed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)

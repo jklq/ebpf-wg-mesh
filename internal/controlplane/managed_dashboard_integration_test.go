@@ -35,7 +35,7 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 		CpuMillis:       10_000,
 		MemoryMebibytes: 10_000,
 	})
-	service, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", spec, trusted.AgentId)
+	service, _, err := NewDelivery(store, nil, nil, nil).ensureManagedService(ctx, project.ID, "dashboard", spec, trusted.AgentId)
 	if err != nil {
 		t.Fatalf("ensureManagedService: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v (%d projects)", err, len(projects))
 	}
-	userService, err := store.createScheduledService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "app", directImageServiceSpec("example.test/app:latest", nil))
+	userService, err := createScheduledService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "app", directImageServiceSpec("example.test/app:latest", nil))
 	if err != nil {
 		t.Fatalf("createScheduledService: %v", err)
 	}
@@ -75,13 +75,14 @@ func TestManagedDashboardSameAgentSyncPreservesServingAllocationState(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
+	delivery := NewDelivery(store, nil, nil, nil)
+	service, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serving := completeManagedAllocation(t, store, ctx, service.ID)
 
-	updated, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:2", nil), trusted.AgentId)
+	updated, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:2", nil), trusted.AgentId)
 	if err != nil {
 		t.Fatalf("ensureManagedService(update): %v", err)
 	}
@@ -120,13 +121,14 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 		t.Fatal(err)
 	}
 	spec := directImageServiceSpec("example.test/dashboard:1", nil)
-	service, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId)
+	delivery := NewDelivery(store, nil, nil, nil)
+	service, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	predecessor := completeManagedAllocation(t, store, ctx, service.ID)
 
-	updated, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId)
+	updated, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId)
 	if err != nil {
 		t.Fatalf("ensureManagedService(move): %v", err)
 	}
@@ -152,7 +154,7 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 	if replacement.DesiredSpecRevision != updated.SpecRevision || replacement.DesiredRolloutGeneration != updated.RolloutGeneration {
 		t.Fatalf("replacement generation = %+v, service = %+v", replacement, updated)
 	}
-	if _, _, err := store.ensureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId); err != nil {
+	if _, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId); err != nil {
 		t.Fatalf("idempotent ensureManagedService(move): %v", err)
 	}
 	if got := mustListAllocations(t, store, ctx, service.ID); len(got) != 2 {
@@ -177,7 +179,7 @@ func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, 
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.advanceRollout(ctx, serviceID, time.Now().UTC()); err != nil {
+	if _, err := NewDelivery(store, nil, nil, nil).advanceRollout(ctx, serviceID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	allocation, err = store.allocationByServiceID(ctx, serviceID)

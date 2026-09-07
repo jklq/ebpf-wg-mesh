@@ -27,6 +27,7 @@ const (
 var (
 	errDeploymentActionConflict = errors.New("idempotency key was already used for a different deployment action")
 	errDeploymentActionInvalid  = errors.New("deployment action is not valid for the selected deployment")
+	errDeploymentActionDenied   = errors.New("deployment action is not authorized")
 	errDeploymentStale          = errors.New("selected deployment is no longer current")
 )
 
@@ -68,30 +69,32 @@ func toProtoDeploymentAction(action string) platformv1.DeploymentAction {
 	}
 }
 
-func (s *Store) applyDeploymentAction(
+func (d *Delivery) applyDeploymentAction(
 	ctx context.Context,
 	userID, serviceID, deploymentID string,
 	action platformv1.DeploymentAction,
 	idempotencyKey, allocationID string,
-) (serviceRecord, deploymentActionRecord, error) {
+) (serviceRecord, deploymentActionRecord, []string, error) {
+	s := d.store
 	actionName := deploymentActionName(action)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	allocationID = strings.TrimSpace(allocationID)
 	if actionName == "" || idempotencyKey == "" || strings.TrimSpace(deploymentID) == "" {
-		return serviceRecord{}, deploymentActionRecord{}, errDeploymentActionInvalid
+		return serviceRecord{}, deploymentActionRecord{}, nil, errDeploymentActionInvalid
 	}
 	if actionName != deploymentActionRestart && allocationID != "" {
-		return serviceRecord{}, deploymentActionRecord{}, errDeploymentActionInvalid
+		return serviceRecord{}, deploymentActionRecord{}, nil, errDeploymentActionInvalid
 	}
 
 	var actionRecord deploymentActionRecord
+	var agentIDs []string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
 		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
-			return err
+			return fmt.Errorf("%w: %v", errDeploymentActionDenied, err)
 		}
 		if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
 			return err
@@ -117,7 +120,7 @@ func (s *Store) applyDeploymentAction(
 			return sql.ErrNoRows
 		}
 
-		resultDeploymentID, err := s.applyDeploymentActionTx(ctx, tx, service, target, actionName, allocationID, userID)
+		resultDeploymentID, err := d.applyDeploymentActionTx(ctx, tx, service, target, actionName, allocationID, userID)
 		if err != nil {
 			return err
 		}
@@ -155,21 +158,25 @@ func (s *Store) applyDeploymentAction(
 		return err
 	})
 	if err != nil {
-		return serviceRecord{}, deploymentActionRecord{}, err
+		return serviceRecord{}, deploymentActionRecord{}, nil, err
 	}
 	service, err := s.serviceByID(ctx, userID, serviceID)
-	return service, actionRecord, err
+	if err != nil {
+		return serviceRecord{}, deploymentActionRecord{}, nil, err
+	}
+	agentIDs, err = s.agentIDs(ctx)
+	return service, actionRecord, agentIDs, err
 }
 
-func (s *Store) applyDeploymentActionTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, action, allocationID, userID string) (string, error) {
+func (d *Delivery) applyDeploymentActionTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, action, allocationID, userID string) (string, error) {
 	switch action {
 	case deploymentActionRestart:
-		return s.restartDeploymentTx(ctx, tx, service, target, allocationID, userID)
+		return d.restartDeploymentTx(ctx, tx, service, target, allocationID, userID)
 	case deploymentActionExactRedeploy:
 		if !immutableImageReference(target.ImageDigest) {
 			return "", fmt.Errorf("%w: selected deployment image is not digest-pinned", errDeploymentActionInvalid)
 		}
-		return s.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonExactRedeploy, "Exact redeploy scheduled")
+		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonExactRedeploy, "Exact redeploy scheduled")
 	case deploymentActionRollback:
 		if target.IsCurrent || !deploymentReusableForRollback(target.State) {
 			return "", errDeploymentActionInvalid
@@ -177,13 +184,13 @@ func (s *Store) applyDeploymentActionTx(ctx context.Context, tx *sql.Tx, service
 		if !immutableImageReference(target.ImageDigest) {
 			return "", fmt.Errorf("%w: selected deployment image is not digest-pinned", errDeploymentActionInvalid)
 		}
-		return s.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonRollback, "Rollback scheduled")
+		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonRollback, "Rollback scheduled")
 	case deploymentActionCancel:
-		return s.cancelDeploymentTx(ctx, tx, service, target, userID)
+		return d.cancelDeploymentTx(ctx, tx, service, target, userID)
 	case deploymentActionRemove:
-		return "", s.removeDeploymentTx(ctx, tx, service, target, userID)
+		return "", d.removeDeploymentTx(ctx, tx, service, target, userID)
 	case deploymentActionRetry:
-		return s.retryDeploymentTx(ctx, tx, service, target, userID)
+		return d.retryDeploymentTx(ctx, tx, service, target, userID)
 	default:
 		return "", errDeploymentActionInvalid
 	}
@@ -212,11 +219,12 @@ func immutableImageReference(image string) bool {
 	return err == nil
 }
 
-func (s *Store) copyDeploymentRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID, reasonCode, detail string) (string, error) {
-	return s.copyDeploymentRolloutTargetTx(ctx, tx, service, target, userID, reasonCode, detail, "")
+func (d *Delivery) copyDeploymentRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID, reasonCode, detail string) (string, error) {
+	return d.copyDeploymentRolloutTargetTx(ctx, tx, service, target, userID, reasonCode, detail, "")
 }
 
-func (s *Store) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID, reasonCode, detail, targetAllocationID string) (string, error) {
+func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID, reasonCode, detail, targetAllocationID string) (string, error) {
+	s := d.store
 	if target.ResolvedSpec == nil || strings.TrimSpace(target.ImageDigest) == "" {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image snapshot", errDeploymentActionInvalid)
 	}
@@ -239,7 +247,7 @@ func (s *Store) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx, s
 	now := time.Now().UTC()
 	rolloutService := service
 	rolloutService.Spec = target.ResolvedSpec
-	if _, err := s.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
+	if _, err := d.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
 		return "", err
 	}
 	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
@@ -309,7 +317,7 @@ func (s *Store) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx, s
 	service.RolloutGeneration = nextRollout
 	service.ResolvedImage = target.ImageDigest
 	service.DesiredReplicaCount = desiredReplicas
-	if _, err := s.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
+	if _, err := d.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
 		return "", err
 	}
 	if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
@@ -334,7 +342,7 @@ func (s *Store) insertCopiedServiceRevisionTx(ctx context.Context, tx *sql.Tx, s
 	return revision, err
 }
 
-func (s *Store) restartDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, allocationID, userID string) (string, error) {
+func (d *Delivery) restartDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, allocationID, userID string) (string, error) {
 	if !target.IsCurrent || target.State != deploymentStateActive {
 		return "", errDeploymentStale
 	}
@@ -342,10 +350,11 @@ func (s *Store) restartDeploymentTx(ctx context.Context, tx *sql.Tx, service ser
 	if allocationID != "" {
 		detail = "Rolling restart scheduled for allocation " + allocationID
 	}
-	return s.copyDeploymentRolloutTargetTx(ctx, tx, service, target, userID, reasonOperatorRestart, detail, allocationID)
+	return d.copyDeploymentRolloutTargetTx(ctx, tx, service, target, userID, reasonOperatorRestart, detail, allocationID)
 }
 
-func (s *Store) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+	s := d.store
 	if !target.IsCurrent {
 		return "", errDeploymentStale
 	}
@@ -378,17 +387,17 @@ func (s *Store) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service serv
 		return "", err
 	}
 	if ok && immutableImageReference(fallback.ImageDigest) && fallback.ResolvedSpec != nil {
-		if err := s.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
+		if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 			return "", err
 		}
-		return s.copyDeploymentRolloutTx(ctx, tx, service, fallback, userID, reasonUserCancel, "Restoring the last successful deployment after cancellation")
+		return d.copyDeploymentRolloutTx(ctx, tx, service, fallback, userID, reasonUserCancel, "Restoring the last successful deployment after cancellation")
 	}
 	allocs, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
 	if err != nil {
 		return "", err
 	}
 	if allocationsHaveServedTraffic(allocs) {
-		if err := s.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
+		if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 			return "", err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -402,7 +411,7 @@ func (s *Store) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service serv
 		}
 		return "", s.bumpAllDesiredRevisionsTx(ctx, tx)
 	}
-	if err := s.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
+	if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 		return "", err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -427,7 +436,7 @@ func allocationsHaveServedTraffic(allocs []allocationRecord) bool {
 	return false
 }
 
-func (s *Store) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, now time.Time) error {
+func (d *Delivery) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, service serviceRecord, now time.Time) error {
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM allocations
 		  WHERE service_id = $1 AND desired_rollout_generation = $2 AND rollout_state = $3`,
@@ -445,7 +454,8 @@ func (s *Store) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, ser
 	return err
 }
 
-func (s *Store) removeDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) error {
+func (d *Delivery) removeDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) error {
+	s := d.store
 	if !target.IsCurrent || (target.State != deploymentStateActive && target.State != deploymentStateDraining) {
 		return errDeploymentStale
 	}
@@ -502,15 +512,16 @@ func (s *Store) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.Tx, ser
 	return err
 }
 
-func (s *Store) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+	s := d.store
 	if target.State != deploymentStateFailed && target.State != deploymentStateCancelled && target.State != deploymentStateCrashed {
 		return "", errDeploymentActionInvalid
 	}
 	if target.ImageDigest != "" {
-		return s.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonUserRetry, "Deployment retry scheduled")
+		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonUserRetry, "Deployment retry scheduled")
 	}
 	if target.BuildID == "" {
-		return s.retryUnresolvedSourceDeploymentTx(ctx, tx, service, target, userID)
+		return d.retryUnresolvedSourceDeploymentTx(ctx, tx, service, target, userID)
 	}
 	build, err := s.buildRunByIDQuerier(ctx, tx, target.BuildID)
 	if err != nil {
@@ -533,7 +544,7 @@ func (s *Store) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service servi
 	}
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
-	retried, err := s.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: deploymentCauseUser, ID: userID})
+	retried, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: deploymentCauseUser, ID: userID})
 	if err != nil {
 		return "", err
 	}
@@ -547,7 +558,8 @@ func (s *Store) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service servi
 	return dep.ID, nil
 }
 
-func (s *Store) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sql.Tx, service serviceRecord, target deploymentRecord, userID string) (string, error) {
+	s := d.store
 	if target.ResolvedSpec == nil || desiredSourceSpec(target.ResolvedSpec) == nil {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image or source configuration", errDeploymentActionInvalid)
 	}
@@ -558,7 +570,7 @@ func (s *Store) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sql.T
 	rolloutService := service
 	rolloutService.Spec = target.ResolvedSpec
 	now := time.Now().UTC()
-	if _, err := s.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
+	if _, err := d.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
 		return "", err
 	}
 	desiredReplicas := specReplicaCount(target.ResolvedSpec, service.DesiredReplicaCount)

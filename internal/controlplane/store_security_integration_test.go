@@ -51,7 +51,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatalf("upsertAgent: %v", err)
 	}
-	service, err := store.createScheduledService(ctx, "user-1", environmentsOne[0].ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
+	service, err := createScheduledService(ctx, store, "user-1", environmentsOne[0].ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
 	if err != nil {
 		t.Fatalf("createScheduledService: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		t.Fatalf("releaseEnvironment: %#v: %v", deployed, err)
 	}
 	service = deployed[0]
-	stagingService, err := store.createScheduledService(ctx, "user-1", staging.ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
+	stagingService, err := createScheduledService(ctx, store, "user-1", staging.ID, "web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}))
 	if err != nil {
 		t.Fatalf("create staging service: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 			t.Fatalf("mark %s IPv6 healthy: %v", label, err)
 		}
 	}
-	state, err := store.desiredStateForAgent(ctx, service.AllocatedAgentID)
+	state, err := desiredStateForAgent(ctx, store, service.AllocatedAgentID)
 	if err != nil {
 		t.Fatalf("desiredStateForAgent: %v", err)
 	}

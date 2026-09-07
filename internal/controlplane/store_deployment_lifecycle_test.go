@@ -48,7 +48,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("building deployment = %+v ok=%v err=%v", building, ok, err)
 	}
 
-	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 	scheduled, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -60,7 +60,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if err != nil || alloc.ID == "" {
 		t.Fatalf("allocation: %+v err=%v", alloc, err)
 	}
-	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	if _, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             alloc.ID,
@@ -108,7 +108,7 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := store.completeBuild(ctx, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
 		t.Fatal(err)
 	}
 	failed, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -120,7 +120,7 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	if _, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             alloc.ID,
@@ -236,12 +236,12 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		raceWG.Add(1)
 		go func() {
 			defer raceWG.Done()
-			raceErrs <- store.completeBuild(ctx, "builder-race", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:race", "")
+			raceErrs <- completeBuildForTest(ctx, store, "builder-race", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:race", "")
 		}()
 		raceWG.Add(1)
 		go func() {
 			defer raceWG.Done()
-			_, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+			_, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 				AgentId: "node-1",
 				Services: []*agentv1.ServiceCondition{{
 					AllocationId:             alloc.ID,
@@ -309,7 +309,7 @@ func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, str
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -340,7 +340,7 @@ func setupDirectImageServiceForDeployment(t *testing.T) (*Store, context.Context
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "img-web", directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8081}),
 	}), "node-1")
 	if err != nil {

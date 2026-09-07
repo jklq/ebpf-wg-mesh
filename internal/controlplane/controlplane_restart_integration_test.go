@@ -87,7 +87,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if len(restored.GetServices()) != 1 || restored.GetServices()[0].GetSpec().GetImage() != pinnedImage("a") {
 		t.Fatalf("reconnect did not restore desired state from the store: %+v", restored)
 	}
-	fromStore, err := second.server.store.desiredStateForAgent(ctx, agentID)
+	fromStore, err := desiredStateForAgent(ctx, second.server.store, agentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	}
 	var mutated *agentv1.DesiredNodeState
 	for _, candidateID := range []string{agentID, surgeID} {
-		candidate, err := second.server.store.desiredStateForAgent(ctx, candidateID)
+		candidate, err := desiredStateForAgent(ctx, second.server.store, candidateID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,15 +188,15 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		t.Fatalf("listProjects: %v", err)
 	}
 	envID := productionEnvironmentID(t, store, projects[0].ID)
-	failing, err := store.createService(ctx, "user-1", envID, "failover-web", serviceSpec(), deadID)
+	failing, err := createService(ctx, store, "user-1", envID, "failover-web", serviceSpec(), deadID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ingressSvc, err := store.createService(ctx, "user-1", envID, "ingress-web", serviceSpec(), liveID)
+	ingressSvc, err := createService(ctx, store, "user-1", envID, "ingress-web", serviceSpec(), liveID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "restart.example.com", ingressSvc.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "restart.example.com", ingressSvc.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, ingressSvc.ID, "fd00:200:1::10", 8080); err != nil {
@@ -212,7 +212,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 
 	second := startSystemControlPlane(t, opts)
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
-		state, err := second.server.store.desiredStateForAgent(ctx, liveID)
+		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
 			return false, err
 		}
@@ -225,7 +225,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failover did not move the stateless service onto the surviving agent: %v", err)
 	}
-	deadState, err := second.server.store.desiredStateForAgent(ctx, deadID)
+	deadState, err := desiredStateForAgent(ctx, second.server.store, deadID)
 	if err != nil {
 		t.Fatal(err)
 	}
