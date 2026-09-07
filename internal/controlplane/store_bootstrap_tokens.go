@@ -2,14 +2,13 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
+	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"ebof-wg-mesh/internal/config"
 )
 
 var errInvalidBootstrapToken = errors.New("invalid, consumed, or incorrectly bound bootstrap token")
@@ -39,7 +38,7 @@ func (s *Store) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.
 					return '-'
 				}, failureDomain)
 			}
-			if err := validateFleetAgentInput(agentID, name, region, bootstrap.Zone, failureDomain, bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes); err != nil {
+			if err := deliverycore.ValidateFleetAgentInput(agentID, name, region, bootstrap.Zone, failureDomain, bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes); err != nil {
 				return fmt.Errorf("configured agent %s: %w", agentID, err)
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO agents(
@@ -50,7 +49,7 @@ func (s *Store) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.
 				bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes, time.Unix(0, 0).UTC(), now); err != nil {
 				return fmt.Errorf("store configured fleet agent %s: %w", agentID, err)
 			}
-			hash := bootstrapTokenHash(token)
+			hash := deliverycore.BootstrapTokenHash(token)
 			configured[string(hash[:])] = struct{}{}
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO agent_bootstrap_tokens(token_hash, agent_id, origin, created_at, consumed_at)
@@ -112,7 +111,7 @@ func (s *Store) consumeAgentBootstrapToken(ctx context.Context, agentID, token s
 	if agentID == "" || token == "" {
 		return errInvalidBootstrapToken
 	}
-	hash := bootstrapTokenHash(token)
+	hash := deliverycore.BootstrapTokenHash(token)
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE agent_bootstrap_tokens
 		    SET consumed_at = $1
@@ -132,8 +131,4 @@ func (s *Store) consumeAgentBootstrapToken(ctx context.Context, agentID, token s
 		return errInvalidBootstrapToken
 	}
 	return nil
-}
-
-func bootstrapTokenHash(token string) [sha256.Size]byte {
-	return sha256.Sum256([]byte(strings.TrimSpace(token)))
 }

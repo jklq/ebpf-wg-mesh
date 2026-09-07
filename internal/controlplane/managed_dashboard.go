@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -17,7 +18,7 @@ type ManagedDashboardReconciler struct {
 	cfg      config.ManagedDashboardConfig
 	profile  config.Profile
 	store    *Store
-	delivery *Delivery
+	delivery *deliverycore.Delivery
 	ingress  *IngressSyncer
 	notifier *Notifier
 }
@@ -27,7 +28,7 @@ func (r *ManagedDashboardReconciler) Run(ctx context.Context) error {
 		return nil
 	}
 	reconcile := func() {
-		if err := r.Reconcile(ctx); err != nil && ctx.Err() == nil && err != errNoPlacementAvailable {
+		if err := r.Reconcile(ctx); err != nil && ctx.Err() == nil && err != deliverycore.ErrNoPlacementAvailable {
 			slog.Warn("managed dashboard reconcile failed", "error", err)
 		}
 	}
@@ -48,7 +49,7 @@ func NewManagedDashboardReconciler(
 	cfg config.ManagedDashboardConfig,
 	profile config.Profile,
 	store *Store,
-	delivery *Delivery,
+	delivery *deliverycore.Delivery,
 	ingress *IngressSyncer,
 	notifier *Notifier,
 ) *ManagedDashboardReconciler {
@@ -92,7 +93,7 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 			TimeoutSeconds: 2,
 		}
 	}
-	service, affectedAgentIDs, err := r.delivery.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec, r.cfg.TrustedAgentID)
+	service, affectedAgentIDs, err := r.delivery.EnsureManagedService(ctx, project.ID, r.cfg.ServiceName, spec, r.cfg.TrustedAgentID)
 	if err != nil {
 		return fmt.Errorf("ensure dashboard managed service: %w", err)
 	}

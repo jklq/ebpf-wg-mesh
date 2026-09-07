@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/builder"
 	"ebof-wg-mesh/internal/config"
@@ -64,13 +66,13 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		},
 		UserAssertions: config.UserAssertionConfig{HMACSecret: testUserAssertionSecret},
 		Database: config.DatabaseConfig{
-			URL:          firstNonEmpty(opts.databaseURL, createTestDatabase(t)),
+			URL:          deliverycore.FirstNonEmpty(opts.databaseURL, createTestDatabase(t)),
 			MaxOpenConns: 4,
 			MaxIdleConns: 4,
 		},
 		Logs:      config.LogCaptureConfig{ClickHouse: config.ClickHouseConfig{URL: opts.clickhouseURL}},
-		StateDir:  firstNonEmpty(opts.stateDir, stateDir),
-		Ingress:   config.IngressConfig{PublicAddr: "platform.local", AdminURL: firstNonEmpty(opts.ingressAdminURL, "http://127.0.0.1:9/load")},
+		StateDir:  deliverycore.FirstNonEmpty(opts.stateDir, stateDir),
+		Ingress:   config.IngressConfig{PublicAddr: "platform.local", AdminURL: deliverycore.FirstNonEmpty(opts.ingressAdminURL, "http://127.0.0.1:9/load")},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: systemTestDashboardID},
 		Bootstrap: opts.bootstrap,
 		Registry:  opts.registry,
@@ -311,7 +313,7 @@ func dockerfileMarkerArchive(marker string) []byte {
 	return buf.Bytes()
 }
 
-func seedDockerfileSourceState(t *testing.T, store *Store, service serviceRecord, commitSHA, marker string) {
+func seedDockerfileSourceState(t *testing.T, store *Store, service deliverycore.ServiceRecord, commitSHA, marker string) {
 	t.Helper()
 	archive := dockerfileMarkerArchive(marker)
 	digest, objectKey, err := store.storeSourceArchive(context.Background(), archive)
@@ -319,14 +321,14 @@ func seedDockerfileSourceState(t *testing.T, store *Store, service serviceRecord
 		t.Fatalf("storeSourceArchive: %v", err)
 	}
 	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {
-		binding, err := store.upsertSourceBindingTx(context.Background(), tx, sourceBindingRecord{
+		binding, err := store.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,
 			Provider:                     "github",
 			RepositorySelector:           "octocat/hello",
 			TrackedRef:                   "main",
 			ProviderRepositoryExternalID: "repo-1",
-			AccessState:                  sourceAccessStateAvailable,
+			AccessState:                  deliverycore.SourceAccessStateAvailable,
 			BuildRecipe:                  &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
 			ResolvedAt:                   time.Now().UTC(),
 			FreshUntil:                   time.Now().UTC().Add(time.Hour),
@@ -334,7 +336,7 @@ func seedDockerfileSourceState(t *testing.T, store *Store, service serviceRecord
 		if err != nil {
 			return err
 		}
-		revision, err := store.upsertSourceRevisionTx(context.Background(), tx, sourceRevisionRecord{
+		revision, err := store.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -348,7 +350,7 @@ func seedDockerfileSourceState(t *testing.T, store *Store, service serviceRecord
 		if err != nil {
 			return err
 		}
-		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, sourceSnapshotRecord{
+		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,

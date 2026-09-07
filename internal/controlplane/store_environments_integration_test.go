@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"slices"
 	"testing"
@@ -57,7 +58,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.environmentByID(ctx, "other", staging.ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.deliveryQueries().EnvironmentByID(ctx, "other", staging.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("cross-project environment access: %v", err)
 	}
 	if _, err := store.createStagedServiceForTest(ctx, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", nil)); err != nil {
@@ -233,11 +234,11 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if err != nil || len(state.GetServices()) != 0 {
 		t.Fatalf("deleted environment retained desired workloads: %#v: %v", state.GetServices(), err)
 	}
-	if _, err := store.environmentByID(ctx, "owner", production.ID); err != nil {
+	if _, err := store.deliveryQueries().EnvironmentByID(ctx, "owner", production.ID); err != nil {
 		t.Fatalf("staging delete affected production: %v", err)
 	}
 }
 
-func (s *Store) createStagedServiceForTest(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
+func (s *Store) createStagedServiceForTest(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error) {
 	return createScheduledService(ctx, s, userID, environmentID, name, spec)
 }

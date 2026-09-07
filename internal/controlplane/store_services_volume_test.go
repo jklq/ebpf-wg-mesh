@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"testing"
@@ -93,7 +94,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	}
 
 	err = store.deleteVolume(ctx, "user-1", volume.ID)
-	if !errors.Is(err, errVolumeInUse) {
+	if !errors.Is(err, deliverycore.ErrVolumeInUse) {
 		t.Fatalf("expected errVolumeInUse, got %v", err)
 	}
 }
@@ -161,7 +162,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			if service.Name != serviceName {
 				continue
 			}
-			if service.Spec == nil || serviceVolumeName(service.Spec) != volumeName {
+			if service.Spec == nil || deliverycore.ServiceVolumeName(service.Spec) != volumeName {
 				t.Fatalf("iteration %d: service %q lost its volume reference", i, serviceName)
 			}
 			if service.AllocatedAgentID == "" {

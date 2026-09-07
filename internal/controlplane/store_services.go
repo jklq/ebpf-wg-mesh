@@ -6,12 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
 	"sort"
 	"strings"
-	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -181,7 +180,7 @@ func validateServicePlacement(spec *platformv1.ServiceSpec) error {
 	if region == "" {
 		return nil
 	}
-	if !fleetLabelPattern.MatchString(region) {
+	if !deliverycore.FleetLabelPattern.MatchString(region) {
 		return errors.New("placement region must be a lowercase operator region label")
 	}
 	return nil
@@ -313,7 +312,7 @@ func unionRuntimePorts(runtimePorts []*platformv1.ServiceRuntimePort, extraPorts
 	hasPrimary := false
 	for _, item := range runtimePorts {
 		port := item.GetPort()
-		if validatePort(port) != nil {
+		if deliverycore.ValidatePort(port) != nil {
 			continue
 		}
 		if _, ok := seen[port]; ok {
@@ -331,7 +330,7 @@ func unionRuntimePorts(runtimePorts []*platformv1.ServiceRuntimePort, extraPorts
 		out = append(out, next)
 	}
 	for _, port := range extraPorts {
-		if validatePort(port) != nil {
+		if deliverycore.ValidatePort(port) != nil {
 			continue
 		}
 		if _, ok := seen[port]; ok {
@@ -531,88 +530,6 @@ func loadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
 		return nil, err
 	}
 	return canonicalServiceSpec(spec), nil
-}
-
-func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
-	encodedPorts, err := encodeHealthyPorts(healthyPorts)
-	if err != nil {
-		return err
-	}
-	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE allocations
-			    SET healthy = TRUE,
-			        %s = $1,
-			        %s = $2,
-			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-			        rollout_state = $5,
-			        updated_at = $3
-			  WHERE service_id = $4`, addressColumn, portsColumn),
-			allocationIP, encodedPorts, time.Now().UTC(), serviceID, allocationRolloutServing,
-		); err != nil {
-			return err
-		}
-		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
-		if err != nil || !ok {
-			return err
-		}
-		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
-			ToState:          deploymentStateActive,
-			Actor:            deploymentActor{Kind: deploymentCauseSystem},
-			ReasonCode:       reasonDeploymentActive,
-			Detail:           "Marked healthy for test",
-			IgnoreIfTerminal: false,
-		})
-		return err
-	})
-}
-
-func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
-	encodedPorts, err := encodeHealthyPorts(healthyPorts)
-	if err != nil {
-		return err
-	}
-	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		var serviceID string
-		var desiredRollout int64
-		if err := tx.QueryRowContext(ctx,
-			fmt.Sprintf(`UPDATE allocations
-			    SET healthy = TRUE,
-			        %s = $1,
-			        %s = $2,
-			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-			        rollout_state = $5,
-			        updated_at = $3
-			  WHERE id = $4
-			  RETURNING service_id, desired_rollout_generation`, addressColumn, portsColumn),
-			allocationIP, encodedPorts, time.Now().UTC(), allocationID, allocationRolloutServing,
-		).Scan(&serviceID, &desiredRollout); err != nil {
-			return err
-		}
-		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
-		if err != nil || !ok {
-			return err
-		}
-		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
-			ToState:          deploymentStateActive,
-			Actor:            deploymentActor{Kind: deploymentCauseSystem},
-			ReasonCode:       reasonDeploymentActive,
-			Detail:           "Marked healthy for test",
-			IgnoreIfTerminal: true,
-		})
-		return err
-	})
-}
-
-func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColumn string) {
-	if addr, err := netip.ParseAddr(strings.TrimSpace(allocationIP)); err == nil && addr.Is4() {
-		return "allocation_ipv4", "healthy_ipv4_ports"
-	}
-	return "allocation_ipv6", "healthy_ipv6_ports"
 }
 
 func (s *Store) countServiceRevisionsForTest(ctx context.Context, serviceID string) (int, error) {

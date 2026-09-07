@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
 	"time"
 
@@ -12,25 +13,25 @@ func TestDeploymentStagesOmitsInitializationForBuildDrivenSourceDeployments(t *t
 	t.Parallel()
 
 	now := time.Now().UTC()
-	service := serviceRecord{
+	service := deliverycore.ServiceRecord{
 		ID:                "service-1",
 		AllocatedAgentID:  "node-1",
 		CreatedAt:         now.Add(-10 * time.Minute),
 		RolloutGeneration: 2,
 		Spec:              repositoryServiceSpec(nil, nil),
-		LatestDeployment: &deploymentRecord{
+		LatestDeployment: &deliverycore.DeploymentRecord{
 			ID:                "dep-1",
 			ServiceID:         "service-1",
 			BuildID:           "build-1",
 			RolloutGeneration: 3,
-			State:             deploymentStateBuilding,
+			State:             deliverycore.DeploymentStateBuilding,
 			CreatedAt:         now.Add(-2 * time.Minute),
 			UpdatedAt:         now,
 		},
 	}
-	build := &buildRunRecord{
+	build := &deliverycore.BuildRunRecord{
 		ID:                      "build-1",
-		State:                   buildStateRunning,
+		State:                   deliverycore.BuildStateRunning,
 		QueuedAt:                now.Add(-2 * time.Minute),
 		TargetRolloutGeneration: 3,
 	}
@@ -59,16 +60,16 @@ func TestDeploymentStagesKeepsInitializationForDirectImageDeployments(t *testing
 	t.Parallel()
 
 	now := time.Now().UTC()
-	service := serviceRecord{
+	service := deliverycore.ServiceRecord{
 		ID:               "service-1",
 		AllocatedAgentID: "node-1",
 		CreatedAt:        now.Add(-10 * time.Minute),
 		Spec:             directImageServiceSpec("nginx:1.27", nil),
-		LatestDeployment: &deploymentRecord{
+		LatestDeployment: &deliverycore.DeploymentRecord{
 			ID:                "dep-1",
 			ServiceID:         "service-1",
 			RolloutGeneration: 1,
-			State:             deploymentStateScheduling,
+			State:             deliverycore.DeploymentStateScheduling,
 			CreatedAt:         now.Add(-10 * time.Minute),
 			UpdatedAt:         now,
 		},
@@ -87,25 +88,25 @@ func TestDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
-	service := serviceRecord{
+	service := deliverycore.ServiceRecord{
 		ID:                "service-1",
 		AllocatedAgentID:  "node-1",
 		CreatedAt:         now.Add(-10 * time.Minute),
 		RolloutGeneration: 2,
 		Spec:              repositoryServiceSpec(nil, nil),
-		LatestDeployment: &deploymentRecord{
+		LatestDeployment: &deliverycore.DeploymentRecord{
 			ID:                "dep-1",
 			ServiceID:         "service-1",
 			BuildID:           "build-1",
 			RolloutGeneration: 3,
-			State:             deploymentStateReadiness,
+			State:             deliverycore.DeploymentStateReadiness,
 			CreatedAt:         now.Add(-2 * time.Minute),
 			UpdatedAt:         now,
 		},
 	}
-	build := &buildRunRecord{
+	build := &deliverycore.BuildRunRecord{
 		ID:                      "build-1",
-		State:                   buildStateSucceeded,
+		State:                   deliverycore.BuildStateSucceeded,
 		QueuedAt:                now.Add(-2 * time.Minute),
 		FinishedAt:              sql.NullTime{Time: now.Add(-30 * time.Second), Valid: true},
 		TargetRolloutGeneration: 3,
@@ -132,15 +133,15 @@ func TestDeploymentStagesSurfacesFailedHealthProbe(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
-	stages := deploymentStages(serviceRecord{
+	stages := deploymentStages(deliverycore.ServiceRecord{
 		AllocatedAgentID: "node-1",
 		CreatedAt:        now,
 		Spec:             directImageServiceSpec("nginx:1.27", nil),
-		LatestDeployment: &deploymentRecord{
+		LatestDeployment: &deliverycore.DeploymentRecord{
 			ID:                "dep-1",
 			ServiceID:         "service-1",
 			RolloutGeneration: 1,
-			State:             deploymentStateFailed,
+			State:             deliverycore.DeploymentStateFailed,
 			Detail:            "health probe failed: HTTP port 8080: status 503",
 			CreatedAt:         now,
 			UpdatedAt:         now,

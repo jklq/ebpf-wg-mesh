@@ -165,7 +165,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, notifyCh)
 	}()
 	if changed {
-		ids, err := s.store.agentIDs(ctx)
+		ids, err := s.store.deliveryQueries().AgentIDs(ctx)
 		if err != nil {
 			return status.Errorf(codes.Internal, "list agents for notify: %v", err)
 		}

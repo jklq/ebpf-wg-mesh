@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,7 +66,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		watches[id] = ch
 	}
 	ingress := &countingFailoverIngress{}
-	delivery := NewDelivery(store, notifier, ingress, nil)
+	delivery := newTestDelivery(store, notifier, ingress, nil)
 	delivery.failoverNow = func() time.Time { return now }
 	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
 
@@ -152,7 +153,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 	ingress := &countingFailoverIngress{}
-	delivery := NewDelivery(store, nil, ingress, nil)
+	delivery := newTestDelivery(store, nil, ingress, nil)
 	delivery.failoverNow = func() time.Time { return now }
 	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
 
@@ -167,14 +168,14 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != allocationPhaseUnavailable || !strings.Contains(volumeAllocation.Message, "replicated storage") {
+	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != "Unavailable" || !strings.Contains(volumeAllocation.Message, "replicated storage") {
 		t.Fatalf("volume allocation did not surface a pinned-storage reason: %+v", volumeAllocation)
 	}
 	largeAllocation, err := store.allocationByServiceID(ctx, largeService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != allocationPhaseUnavailable || !strings.Contains(largeAllocation.Message, "blocked") || !(strings.Contains(largeAllocation.Message, "capacity") || strings.Contains(largeAllocation.Message, "CPU") || strings.Contains(largeAllocation.Message, "memory")) {
+	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != "Unavailable" || !strings.Contains(largeAllocation.Message, "blocked") || !(strings.Contains(largeAllocation.Message, "capacity") || strings.Contains(largeAllocation.Message, "CPU") || strings.Contains(largeAllocation.Message, "memory")) {
 		t.Fatalf("capacity allocation did not surface a no-capacity reason: %+v", largeAllocation)
 	}
 	if ingress.requests.Load() != 1 {
@@ -205,13 +206,13 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, _, err := NewDelivery(store, nil, nil, nil).ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
+	service, _, err := newTestDelivery(store, nil, nil, nil).EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, trusted.AgentId, now.Add(-2*time.Minute))
-	delivery := NewDelivery(store, nil, &countingFailoverIngress{}, nil)
+	delivery := newTestDelivery(store, nil, &countingFailoverIngress{}, nil)
 	delivery.failoverNow = func() time.Time { return now }
 	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
 	if _, err := reconciler.Reconcile(ctx); err != nil {
@@ -221,7 +222,7 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allocation.AgentID != trusted.AgentId || allocation.Phase != allocationPhaseUnavailable || !strings.Contains(allocation.Message, "trusted") {
+	if allocation.AgentID != trusted.AgentId || allocation.Phase != "Unavailable" || !strings.Contains(allocation.Message, "trusted") {
 		t.Fatalf("managed allocation migrated or lacked a trust failure: %+v", allocation)
 	}
 }
@@ -249,7 +250,7 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 	}
 
 	start := make(chan struct{})
-	results := make(chan serviceFailoverResult, 2)
+	results := make(chan deliverycore.ServiceFailoverResult, 2)
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {

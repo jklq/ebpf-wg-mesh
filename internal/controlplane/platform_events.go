@@ -35,13 +35,6 @@ func NewPlatformEvents(store environmentEventStore, pollInterval time.Duration) 
 	return &PlatformEvents{store: store, pollInterval: pollInterval}
 }
 
-func (e *PlatformEvents) Publish(ctx context.Context, environmentID string) (int64, error) {
-	if e == nil || e.store == nil || environmentID == "" {
-		return 0, nil
-	}
-	return e.store.publishEnvironmentEvent(ctx, environmentID)
-}
-
 func (s *Store) publishEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
 	// Visible store mutations advance the global revision in Store.withTx in the
 	// same transaction as the state change. Publishing is therefore a durable
@@ -113,4 +106,11 @@ func platformWaitDuration(seconds int32) time.Duration {
 		return maxPlatformBlockingWait
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func (e *PlatformEvents) Publish(ctx context.Context, environmentID string) (int64, error) {
+	if e == nil || e.store == nil || environmentID == "" {
+		return 0, nil
+	}
+	return e.store.publishEnvironmentEvent(ctx, environmentID)
 }

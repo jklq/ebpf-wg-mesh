@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/testutil"
@@ -204,7 +206,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 
 	deadCancel()
 	liveCancel()
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().UTC().Add(-2*agentHealthyTTL), deadID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL), deadID); err != nil {
 		t.Fatalf("mark stale: %v", err)
 	}
 	first.stop()

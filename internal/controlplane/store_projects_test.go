@@ -5,9 +5,9 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"testing"
-
 	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"testing"
 )
 
 func TestListProjectsExcludesManagedProjects(t *testing.T) {
@@ -30,7 +30,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureManagedProject: %v", err)
 	}
-	if managed.Kind != projectKindManaged {
+	if managed.Kind != deliverycore.ProjectKindManaged {
 		t.Fatalf("expected managed project kind, got %s", managed.Kind)
 	}
 

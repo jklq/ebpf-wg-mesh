@@ -17,6 +17,7 @@ import (
 )
 
 type serviceCallerContextKey struct{}
+
 type delegatedUserContextKey struct{}
 
 // verifiedClientCertificateContextKey carries the verified client certificate

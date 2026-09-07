@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -50,7 +51,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		t.Fatal(err)
 	}
 	notifier := &releaseTestNotifier{}
-	delivery := NewDelivery(store, notifier, nil, nil)
+	delivery := newTestDelivery(store, notifier, nil, nil)
 	before := mustDesiredRevision(t, store, ctx, "node-1")
 	events := NewPlatformEvents(store, 0)
 	eventBefore, err := events.Current(ctx, environmentID)

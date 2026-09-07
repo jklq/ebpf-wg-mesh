@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"strings"
 	"time"
@@ -52,7 +53,7 @@ func (c *GitHubCatalog) RepositoryView(ctx context.Context, owner, repo string, 
 				Private:        rec.Private,
 				DefaultBranch:  rec.DefaultBranch,
 				InstallationID: rec.InstallationID,
-				AccessState:    sourceAccessStateAvailable,
+				AccessState:    deliverycore.SourceAccessStateAvailable,
 				GrantUpdatedAt: rec.UpdatedAt,
 			}, nil
 		case !errors.Is(err, sql.ErrNoRows):
@@ -60,15 +61,15 @@ func (c *GitHubCatalog) RepositoryView(ctx context.Context, owner, repo string, 
 		case snapshotErr == nil:
 			view := repositoryViewFromSnapshot(snapshot, installationID)
 			if snapshot.Deleted {
-				view.AccessState = sourceAccessStateRepositoryDeleted
+				view.AccessState = deliverycore.SourceAccessStateRepositoryDeleted
 			} else if snapshot.Private {
-				view.AccessState = sourceAccessStateAccessRevoked
+				view.AccessState = deliverycore.SourceAccessStateAccessRevoked
 			} else {
-				view.AccessState = sourceAccessStateAvailable
+				view.AccessState = deliverycore.SourceAccessStateAvailable
 			}
 			return view, nil
 		default:
-			return emptyGitHubRepositoryView(owner, repo, installationID, sourceAccessStateInstallationRequired), nil
+			return emptyGitHubRepositoryView(owner, repo, installationID, deliverycore.SourceAccessStateInstallationRequired), nil
 		}
 	}
 
@@ -86,22 +87,22 @@ func (c *GitHubCatalog) RepositoryView(ctx context.Context, owner, repo string, 
 			Private:        rec.Private,
 			DefaultBranch:  rec.DefaultBranch,
 			InstallationID: rec.InstallationID,
-			AccessState:    sourceAccessStateAvailable,
+			AccessState:    deliverycore.SourceAccessStateAvailable,
 			GrantUpdatedAt: rec.UpdatedAt,
 		}, nil
 	}
 	if snapshotErr == nil {
 		view := repositoryViewFromSnapshot(snapshot, 0)
 		if snapshot.Deleted {
-			view.AccessState = sourceAccessStateRepositoryDeleted
+			view.AccessState = deliverycore.SourceAccessStateRepositoryDeleted
 		} else if snapshot.Private {
-			view.AccessState = sourceAccessStateInstallationRequired
+			view.AccessState = deliverycore.SourceAccessStateInstallationRequired
 		} else {
-			view.AccessState = sourceAccessStateAvailable
+			view.AccessState = deliverycore.SourceAccessStateAvailable
 		}
 		return view, nil
 	}
-	return emptyGitHubRepositoryView(owner, repo, 0, sourceAccessStateInstallationRequired), nil
+	return emptyGitHubRepositoryView(owner, repo, 0, deliverycore.SourceAccessStateInstallationRequired), nil
 }
 
 func (c *GitHubCatalog) ResolveRepositoryView(ctx context.Context, owner, repo string) (GitHubRepositoryView, error) {
@@ -109,7 +110,7 @@ func (c *GitHubCatalog) ResolveRepositoryView(ctx context.Context, owner, repo s
 	if err != nil {
 		return GitHubRepositoryView{}, err
 	}
-	if view.AccessState == sourceAccessStateAvailable {
+	if view.AccessState == deliverycore.SourceAccessStateAvailable {
 		return view, nil
 	}
 
@@ -207,7 +208,7 @@ func (c *GitHubCatalog) BuildRepositoryView(ctx context.Context, source *platfor
 	if err != nil {
 		return GitHubRepositoryView{}, err
 	}
-	if view.AccessState != sourceAccessStateAvailable {
+	if view.AccessState != deliverycore.SourceAccessStateAvailable {
 		return GitHubRepositoryView{}, errors.New("repository is not deployable")
 	}
 	return view, nil

@@ -4,14 +4,16 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func domainOperationFixture(t *testing.T, store *Store, owner string) serviceRecord {
+func domainOperationFixture(t *testing.T, store *Store, owner string) deliverycore.ServiceRecord {
 	t.Helper()
 	ctx := context.Background()
 	project, err := store.createProject(ctx, owner, owner+"-project")
@@ -108,7 +110,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	attacker := contextWithDelegatedUser("attacker", "attacker@example.com")
 	for _, entry := range []struct {
 		ctx     context.Context
-		service serviceRecord
+		service deliverycore.ServiceRecord
 	}{{owner, source}, {attacker, target}} {
 		if _, err := operations.GenerateDomainBinding(entry.ctx, &platformv1.GenerateDomainBindingRequest{ServiceId: entry.service.ID, TargetPort: 8080}); err != nil {
 			t.Fatal(err)

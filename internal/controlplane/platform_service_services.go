@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"log/slog"
 	"strings"
@@ -22,7 +23,7 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if req.GetService() == nil {
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
-	spec := canonicalServiceSpec(req.GetService().GetSpec())
+	spec := deliverycore.CanonicalServiceSpec(req.GetService().GetSpec())
 	if err := validateServiceSpecResources(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service resources: %v", err)
 	}
@@ -32,10 +33,10 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := validateServiceSpecRestart(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
-	if err := validateServicePlacement(spec); err != nil {
+	if err := deliverycore.ValidateServicePlacement(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service placement: %v", err)
 	}
-	if err := validateRollingStrategy(spec); err != nil {
+	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
 	}
 	environment, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId())
@@ -47,7 +48,7 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	}
 	service, err := s.delivery.CreateScheduledService(ctx, req.GetEnvironmentId(), req.GetService().GetName(), spec)
 	if err != nil {
-		if errors.Is(err, errNoPlacementAvailable) || errors.Is(err, errVolumeNotFound) || errors.Is(err, errVolumeAgentMismatch) {
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "create service: %v", err)
@@ -73,7 +74,7 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 // service scheduling decision. It is a small convenience that keeps the
 // platform service methods concise and the phrasing consistent whenever a
 // service is first scheduled.
-func (s *PlatformService) emitInitialization(ctx context.Context, service serviceRecord) {
+func (s *PlatformService) emitInitialization(ctx context.Context, service deliverycore.ServiceRecord) {
 	if s.emitter == nil || !s.emitter.Enabled() {
 		return
 	}
@@ -92,7 +93,7 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if req.GetService() == nil {
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
-	spec := canonicalServiceSpec(req.GetService().GetSpec())
+	spec := deliverycore.CanonicalServiceSpec(req.GetService().GetSpec())
 	if err := validateServiceSpecResources(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service resources: %v", err)
 	}
@@ -102,10 +103,10 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := validateServiceSpecRestart(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service restart: %v", err)
 	}
-	if err := validateServicePlacement(spec); err != nil {
+	if err := deliverycore.ValidateServicePlacement(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service placement: %v", err)
 	}
-	if err := validateRollingStrategy(spec); err != nil {
+	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
 	}
 	current, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
@@ -123,10 +124,10 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		if errors.Is(err, errConcurrentUpdate) {
+		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "update service: %v", err)
 		}
-		if errors.Is(err, errVolumeNotFound) || errors.Is(err, errVolumeAgentMismatch) || errors.Is(err, errVolumeReplicaUnsupported) {
+		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) {
 			return nil, status.Errorf(codes.FailedPrecondition, "update service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "update service: %v", err)
@@ -140,21 +141,21 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 
 func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platformv1.ApplyDeploymentActionRequest) (*platformv1.ServiceStatus, error) {
 	if strings.TrimSpace(req.GetServiceId()) == "" || strings.TrimSpace(req.GetDeploymentId()) == "" ||
-		strings.TrimSpace(req.GetIdempotencyKey()) == "" || deploymentActionName(req.GetAction()) == "" {
+		strings.TrimSpace(req.GetIdempotencyKey()) == "" || deliverycore.DeploymentActionName(req.GetAction()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id, deployment_id, action, and idempotency_key are required")
 	}
 	result, err := s.delivery.ApplyDeploymentAction(ctx, req.GetServiceId(), req.GetDeploymentId(), req.GetAction(), req.GetIdempotencyKey(), req.GetAllocationId())
 	if err != nil {
 		switch {
-		case errors.Is(err, errDeploymentActionDenied):
+		case errors.Is(err, deliverycore.ErrDeploymentActionDenied):
 			return nil, status.Errorf(codes.PermissionDenied, "deployment action: %v", err)
 		case errors.Is(err, sql.ErrNoRows):
 			return nil, status.Errorf(codes.NotFound, "deployment action target: %v", err)
-		case errors.Is(err, errDeploymentActionConflict), errors.Is(err, errConcurrentUpdate):
+		case errors.Is(err, deliverycore.ErrDeploymentActionConflict), errors.Is(err, deliverycore.ErrConcurrentUpdate):
 			return nil, status.Errorf(codes.Aborted, "deployment action: %v", err)
-		case errors.Is(err, errDeploymentActionInvalid), errors.Is(err, errDeploymentStale),
-			errors.Is(err, errInvalidReplicaCount), errors.Is(err, errVolumeReplicaUnsupported),
-			errors.Is(err, errRolloutInProgress), errors.Is(err, errVolumeRollingUnsupported):
+		case errors.Is(err, deliverycore.ErrDeploymentActionInvalid), errors.Is(err, deliverycore.ErrDeploymentStale),
+			errors.Is(err, deliverycore.ErrInvalidReplicaCount), errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported),
+			errors.Is(err, deliverycore.ErrRolloutInProgress), errors.Is(err, deliverycore.ErrVolumeRollingUnsupported):
 			return nil, status.Errorf(codes.FailedPrecondition, "deployment action: %v", err)
 		default:
 			return nil, status.Errorf(codes.Internal, "deployment action: %v", err)
@@ -190,10 +191,10 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		if errors.Is(err, errConcurrentUpdate) {
+		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "scale service: %v", err)
 		}
-		if errors.Is(err, errInvalidReplicaCount) || errors.Is(err, errVolumeReplicaUnsupported) {
+		if errors.Is(err, deliverycore.ErrInvalidReplicaCount) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) {
 			return nil, status.Errorf(codes.FailedPrecondition, "scale service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "scale service: %v", err)
@@ -222,7 +223,7 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		if errors.Is(err, errConcurrentUpdate) {
+		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "discard service changes: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "discard service changes: %v", err)

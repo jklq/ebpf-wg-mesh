@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -19,8 +20,8 @@ type PlatformService struct {
 	delivery             platformDelivery
 	logStore             serviceLogStore
 	emitter              *LogEmitter
-	notifier             platformNotifier
-	ingress              platformIngress
+	notifier             deliverycore.PlatformNotifier
+	ingress              deliverycore.PlatformIngress
 	inspector            *gitHubSourceInspector
 	dnsResolver          domainCNAMEResolver
 	platformDomainSuffix string
@@ -29,58 +30,49 @@ type PlatformService struct {
 
 type platformStore interface {
 	environmentStore
-	createProject(ctx context.Context, userID, name string) (projectRecord, error)
-	listProjects(ctx context.Context, userID string) ([]projectRecord, error)
-	projectByID(ctx context.Context, userID, projectID string) (projectRecord, error)
+	createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error)
+	listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error)
+	projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error)
 	authorizeProjectWrite(ctx context.Context, userID, projectID string) error
-	serviceByID(ctx context.Context, userID, serviceID string) (serviceRecord, error)
-	listServices(ctx context.Context, userID, environmentID string) ([]serviceRecord, error)
-	createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (volumeRecord, error)
-	listVolumes(ctx context.Context, userID, environmentID string) ([]volumeRecord, error)
+	serviceByID(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, error)
+	listServices(ctx context.Context, userID, environmentID string) ([]deliverycore.ServiceRecord, error)
+	createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
+	listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error)
 	deleteVolume(ctx context.Context, userID, volumeID string) error
-	createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
-	createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
-	platformDomainBindingForService(ctx context.Context, userID, serviceID string) (domainBindingRecord, error)
-	updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error)
-	domainBindingByHostname(ctx context.Context, userID, hostname string) (domainBindingRecord, error)
-	listDomainBindings(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error)
+	createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
+	createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
+	platformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error)
+	updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
+	domainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error)
+	listDomainBindings(ctx context.Context, userID, serviceID string) ([]deliverycore.DomainBindingRecord, error)
 	deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error)
-	serviceStatus(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error)
-	listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deploymentRecord, error)
-	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]allocationRecord, error)
-	listAgents(ctx context.Context) ([]agentRecord, error)
+	serviceStatus(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
+	listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
+	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error)
+	listAgents(ctx context.Context) ([]deliverycore.AgentRecord, error)
 }
 
 type platformDelivery interface {
-	ReleaseEnvironment(ctx context.Context, environmentID string) ([]releasedService, error)
-	ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deploymentActionResult, error)
-	CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error)
-	UpdateService(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error)
-	DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error)
+	ReleaseEnvironment(ctx context.Context, environmentID string) ([]deliverycore.ReleasedService, error)
+	ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.DeploymentActionResult, error)
+	CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error)
+	UpdateService(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
+	DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	DeleteService(ctx context.Context, serviceID string) error
-	ScaleService(ctx context.Context, serviceID string, desired int32) (serviceRecord, []allocationRecord, int64, error)
+	ScaleService(ctx context.Context, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
 }
 
 type environmentStore interface {
-	listEnvironments(ctx context.Context, userID, projectID string) ([]environmentRecord, error)
-	environmentByID(ctx context.Context, userID, environmentID string) (environmentRecord, error)
-	createEnvironment(ctx context.Context, userID, projectID, name string) (environmentRecord, error)
-	duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (environmentRecord, error)
-	renameEnvironment(ctx context.Context, userID, environmentID, name string) (environmentRecord, error)
+	listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error)
+	environmentByID(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error)
+	createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error)
+	duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
+	renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error)
 	deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error)
 }
 
-func (s *PlatformService) environmentForUser(ctx context.Context, userID, environmentID string) (environmentRecord, error) {
+func (s *PlatformService) environmentForUser(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
 	return s.store.environmentByID(ctx, userID, environmentID)
-}
-
-type platformNotifier interface {
-	Notify(agentID string)
-}
-
-type platformIngress interface {
-	Sync(ctx context.Context) error
-	RequestSync()
 }
 
 type serviceLogStore interface {
@@ -133,7 +125,7 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 	}
 }
 
-func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, delivery platformDelivery, opts ...PlatformServiceOption) *PlatformService {
+func NewPlatformService(store platformStore, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, delivery platformDelivery, opts ...PlatformServiceOption) *PlatformService {
 	service := &PlatformService{store: store, delivery: delivery, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
 	for _, opt := range opts {
 		if opt != nil {

@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -38,7 +39,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 
 	start := make(chan struct{})
 	type result struct {
-		rec serviceRecord
+		rec deliverycore.ServiceRecord
 		err error
 	}
 	results := make(chan result, 2)
@@ -175,7 +176,7 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	updated, changed, err := updateService(ctx, store, "user-1", service.ID, "", canonicalServiceSpec(spec))
+	updated, changed, err := updateService(ctx, store, "user-1", service.ID, "", deliverycore.CanonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService noop: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	}
 	beforeRevision := mustDesiredRevision(t, store, ctx, "node-1")
 
-	updated, changed, err := updateService(ctx, store, "user-1", service.ID, "talented-harmony", canonicalServiceSpec(spec))
+	updated, changed, err := updateService(ctx, store, "user-1", service.ID, "talented-harmony", deliverycore.CanonicalServiceSpec(spec))
 	if err != nil {
 		t.Fatalf("updateService rename: %v", err)
 	}

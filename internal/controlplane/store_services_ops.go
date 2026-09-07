@@ -3,111 +3,17 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"strings"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"time"
-
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
-func (s *Store) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (volumeRecord, error) {
-	environment, err := s.environmentByIDQuerier(ctx, tx, userID, environmentID)
-	if err != nil {
-		return volumeRecord{}, err
+func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, error) {
+	if err := deliverycore.ValidatePort(targetPort); err != nil {
+		return deliverycore.DomainBindingRecord{}, err
 	}
-	rec := volumeRecord{
-		ID:            mustID(),
-		EnvironmentID: environment.ID,
-		Name:          name,
-		SizeBytes:     sizeBytes,
-		CreatedAt:     time.Now().UTC(),
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO volumes(id, environment_id, name, size_bytes, created_at) VALUES ($1, $2, $3, $4, $5)`,
-		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
-	); err != nil {
-		return volumeRecord{}, err
-	}
-	return rec, nil
-}
-
-func (s *Store) createStagedServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, actorUserID string) (serviceRecord, error) {
-	rec, err := s.insertServiceTx(ctx, tx, environment, name, spec, "", actorUserID)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	dep, err := s.insertDeploymentTx(ctx, tx, rec.ID, deploymentStateStaged, deploymentActor{Kind: deploymentCauseUser}, reasonServiceStaged, "Configuration staged", rec.SpecRevision, 0, "", "", "", rec.CreatedAt)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	rec.LatestDeployment = &dep
-	return rec, nil
-}
-
-func (s *Store) insertServiceTx(ctx context.Context, tx *sql.Tx, environment environmentRecord, name string, spec *platformv1.ServiceSpec, agentID, actorUserID string) (serviceRecord, error) {
-	now := time.Now().UTC()
-	spec = canonicalServiceSpec(spec)
-	if spec == nil {
-		spec = &platformv1.ServiceSpec{}
-	}
-	if err := validateServicePlacement(spec); err != nil {
-		return serviceRecord{}, err
-	}
-	if !specHasDesiredReplicaCount(spec) {
-		spec.DesiredReplicaCount = replicaCountPtr(defaultDesiredReplicaCount)
-	}
-	if err := validateRollingStrategy(spec); err != nil {
-		return serviceRecord{}, err
-	}
-	rec := serviceRecord{
-		ID:                  mustID(),
-		EnvironmentID:       environment.ID,
-		ProjectID:           environment.ProjectID,
-		Name:                strings.TrimSpace(name),
-		Spec:                spec,
-		SpecRevision:        1,
-		AllocatedAgentID:    agentID,
-		DesiredReplicaCount: specReplicaCount(spec, defaultDesiredReplicaCount),
-		CreatedAt:           now,
-		UpdatedAt:           now,
-		PendingChanges:      true,
-	}
-	if source := desiredSourceSpec(spec); source != nil {
-		rec.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
-	} else {
-		rec.SourceSummary = buildSourceSummary(spec)
-	}
-	specJSON, err := protojson.Marshal(spec)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO services(
-			id, environment_id, name, current_spec_revision, current_rollout_generation,
-			current_resolved_image, last_successful_commit_sha, latest_build_id,
-			desired_replica_count, placement_message, created_at, updated_at
-		) VALUES ($1, $2, $3, 1, 0, '', '', '', $4, '', $5, $5)`,
-		rec.ID, rec.EnvironmentID, rec.Name, rec.DesiredReplicaCount, now,
-	); err != nil {
-		return serviceRecord{}, err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-		rec.ID, rec.SpecRevision, specJSON, now,
-	); err != nil {
-		return serviceRecord{}, err
-	}
-	return rec, nil
-}
-
-func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostname, serviceID string, targetPort int32) (domainBindingRecord, error) {
-	if err := validatePort(targetPort); err != nil {
-		return domainBindingRecord{}, err
-	}
-	var binding domainBindingRecord
+	var binding deliverycore.DomainBindingRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
+		if _, err := s.deliveryQueries().ProjectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 			return err
 		}
 		var agentID, environmentID string
@@ -137,7 +43,7 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 			if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{agentID}); err != nil {
 				return err
 			}
-			binding = domainBindingRecord{
+			binding = deliverycore.DomainBindingRecord{
 				Hostname:      hostname,
 				ProjectID:     projectID,
 				EnvironmentID: environmentID,
@@ -150,7 +56,7 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 		case err != nil:
 			return err
 		case binding.ProjectID != projectID:
-			return errDomainAlreadyExists
+			return deliverycore.ErrDomainAlreadyExists
 		case binding.ServiceID == serviceID && binding.TargetPort == targetPort:
 			return nil
 		default:
@@ -182,7 +88,28 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 		}
 	})
 	if err != nil {
-		return domainBindingRecord{}, err
+		return deliverycore.DomainBindingRecord{}, err
 	}
 	return binding, nil
+}
+
+func (s *Store) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	environment, err := s.deliveryQueries().EnvironmentByIDQuerier(ctx, tx, userID, environmentID)
+	if err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	rec := deliverycore.VolumeRecord{
+		ID:            deliverycore.MustID(),
+		EnvironmentID: environment.ID,
+		Name:          name,
+		SizeBytes:     sizeBytes,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO volumes(id, environment_id, name, size_bytes, created_at) VALUES ($1, $2, $3, $4, $5)`,
+		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
+	); err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	return rec, nil
 }

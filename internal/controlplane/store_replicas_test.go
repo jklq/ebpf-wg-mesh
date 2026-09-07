@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"strings"
 	"sync"
@@ -135,7 +136,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(volume): %v", err)
 	}
-	if _, _, err := scaleService(ctx, store, "user-1", volumeService.ID, 2); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := scaleService(ctx, store, "user-1", volumeService.ID, 2); !errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) {
 		t.Fatalf("scale volume service to 2: got %v", err)
 	}
 
@@ -147,7 +148,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	volumeSpec.Runtime.CpuMillis = replicaService.Spec.GetRuntime().GetCpuMillis()
 	volumeSpec.Runtime.MemoryMebibytes = replicaService.Spec.GetRuntime().GetMemoryMebibytes()
 	volumeSpec.Runtime.Ports = replicaService.Spec.GetRuntime().GetPorts()
-	if _, _, err := updateService(ctx, store, "user-1", replicaService.ID, replicaService.Name, volumeSpec); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := updateService(ctx, store, "user-1", replicaService.ID, replicaService.Name, volumeSpec); !errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) {
 		t.Fatalf("attach volume to replicated service: got %v", err)
 	}
 }
@@ -162,7 +163,7 @@ func TestReplicaScaleRejectsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := scaleService(ctx, store, "user-1", service.ID, 0); !errors.Is(err, errInvalidReplicaCount) {
+	if _, _, err := scaleService(ctx, store, "user-1", service.ID, 0); !errors.Is(err, deliverycore.ErrInvalidReplicaCount) {
 		t.Fatalf("expected errInvalidReplicaCount, got %v", err)
 	}
 }
@@ -293,7 +294,7 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	activeAgents := make(map[string]int)
 	lostNodeAllocationFound := false
 	for _, allocation := range allocations {
-		if allocation.RolloutState == allocationRolloutLost {
+		if allocation.RolloutState == deliverycore.AllocationRolloutLost {
 			if allocation.AgentID == "node-b" {
 				lostNodeAllocationFound = true
 			}
@@ -334,7 +335,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		go func(desired int32) {
 			defer wg.Done()
 			_, _, err := scaleService(ctx, store, "user-1", service.ID, desired)
-			if err != nil && !errors.Is(err, errConcurrentUpdate) {
+			if err != nil && !errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 				errs <- err
 			}
 		}(desired)
@@ -411,16 +412,16 @@ func seedReplicaFixture(t *testing.T, store *Store, ctx context.Context, agentID
 	return productionEnvironmentID(t, store, projects[0].ID)
 }
 
-func mustListAllocations(t *testing.T, store *Store, ctx context.Context, serviceID string) []allocationRecord {
+func mustListAllocations(t *testing.T, store *Store, ctx context.Context, serviceID string) []deliverycore.AllocationRecord {
 	t.Helper()
-	allocations, err := store.listAllocationsByServiceID(ctx, serviceID)
+	allocations, err := store.deliveryQueries().ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		t.Fatalf("listAllocationsByServiceID: %v", err)
 	}
 	return allocations
 }
 
-func allocationAgentIDs(allocations []allocationRecord) map[string]int {
+func allocationAgentIDs(allocations []deliverycore.AllocationRecord) map[string]int {
 	out := map[string]int{}
 	for _, alloc := range allocations {
 		out[alloc.AgentID]++

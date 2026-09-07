@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"time"
@@ -27,7 +28,7 @@ func (s *Store) storeSourceArchive(ctx context.Context, archive []byte) (string,
 	return digest, key, nil
 }
 
-func (s *Store) loadSourceArchive(ctx context.Context, snapshot sourceSnapshotRecord) ([]byte, error) {
+func (s *Store) loadSourceArchive(ctx context.Context, snapshot deliverycore.SourceSnapshotRecord) ([]byte, error) {
 	if s.sourceArchives == nil {
 		return nil, errors.New("source archive store is not configured")
 	}

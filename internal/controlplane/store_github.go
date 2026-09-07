@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"strings"
@@ -193,7 +194,7 @@ func (s *Store) listGitHubInstallationRepositoryViews(ctx context.Context, insta
 			Private:        rec.Private,
 			DefaultBranch:  rec.DefaultBranch,
 			InstallationID: rec.InstallationID,
-			AccessState:    sourceAccessStateAvailable,
+			AccessState:    deliverycore.SourceAccessStateAvailable,
 			GrantUpdatedAt: rec.UpdatedAt,
 		})
 	}
@@ -282,7 +283,7 @@ func (s *Store) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, ev
 			id, delivery_id, event_type, state, processor_id, payload, last_error, received_at, updated_at, processed_at
 		) VALUES ($1, $2, $3, $4, '', $5, '', $6, $6, NULL)
 		ON CONFLICT(delivery_id) DO NOTHING`,
-		mustID(), deliveryID, eventType, githubWebhookStatePending, payload, now,
+		deliverycore.MustID(), deliveryID, eventType, githubWebhookStatePending, payload, now,
 	)
 	if err != nil {
 		return false, err
@@ -297,7 +298,7 @@ func (s *Store) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, ev
 func (s *Store) claimNextGitHubWebhookDelivery(ctx context.Context, processorID string, staleAfter time.Duration) (githubWebhookDeliveryRecord, error) {
 	var rec githubWebhookDeliveryRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now, err := databaseTime(ctx, tx)
+		now, err := deliverycore.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -389,7 +390,7 @@ func (s *Store) enqueueGitHubWorkItem(ctx context.Context, rec githubWorkItemRec
 func (s *Store) enqueueGitHubWorkItemTx(ctx context.Context, tx *sql.Tx, rec githubWorkItemRecord) (bool, error) {
 	now := time.Now().UTC()
 	if rec.ID == "" {
-		rec.ID = mustID()
+		rec.ID = deliverycore.MustID()
 	}
 	if rec.AvailableAt.IsZero() {
 		rec.AvailableAt = now
@@ -420,7 +421,7 @@ func (s *Store) enqueueGitHubWorkItemTx(ctx context.Context, tx *sql.Tx, rec git
 func (s *Store) claimNextGitHubWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (githubWorkItemRecord, error) {
 	var rec githubWorkItemRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now, err := databaseTime(ctx, tx)
+		now, err := deliverycore.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}

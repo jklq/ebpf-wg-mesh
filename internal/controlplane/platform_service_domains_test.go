@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"strings"
 	"testing"
 
@@ -16,8 +17,8 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
-		updateServiceFn: func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
-			return serviceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, true, nil
+		updateServiceFn: func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
+			return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, true, nil
 		},
 	})
 
@@ -79,8 +80,8 @@ func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
 
 	ingress := &countingIngress{}
 	service := NewPlatformService(&fakePlatformStore{
-		updateDomainBindingFn: func(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
-			return domainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort}, true, nil
+		updateDomainBindingFn: func(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+			return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort}, true, nil
 		},
 	}, noopNotifier{}, ingress, nil)
 
@@ -100,8 +101,8 @@ func TestPlatformServiceGenerateDomainBindingCreatesStablePlatformHostname(t *te
 	t.Parallel()
 
 	store := &fakePlatformStore{
-		createPlatformDomainBindingFn: func(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
-			return domainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort, PlatformGenerated: true}, true, nil
+		createPlatformDomainBindingFn: func(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+			return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort, PlatformGenerated: true}, true, nil
 		},
 	}
 	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
@@ -125,8 +126,8 @@ func TestPlatformServiceCreateDomainBindingVerifiesCNAMEToPlatformHostname(t *te
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
+		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{
 		"web.example.com": "violet-7k3.platform.example.",
@@ -149,8 +150,8 @@ func TestPlatformServiceCreateDomainBindingSucceedsWhenCNAMELookupFails(t *testi
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
+		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{}))
 	binding, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
@@ -171,8 +172,8 @@ func TestPlatformServiceCreateDomainBindingVerifiesSharedCanonicalName(t *testin
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
+		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticDNSResolver{
 		cname: map[string]string{
@@ -195,8 +196,8 @@ func TestPlatformServiceCreateDomainBindingVerifiesMatchingAddresses(t *testing.
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
+		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticDNSResolver{
 		hosts: map[string][]string{
@@ -219,8 +220,8 @@ func TestPlatformServiceCreateDomainBindingRecordsUnverifiedCNAME(t *testing.T) 
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
+		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{
 		"web.example.com": "wrong.platform.example.",
@@ -243,11 +244,11 @@ func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-			return domainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
+		platformDomainBindingForServiceFn: func(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-		listDomainBindingsFn: func(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
-			return []domainBindingRecord{
+		listDomainBindingsFn: func(ctx context.Context, userID, serviceID string) ([]deliverycore.DomainBindingRecord, error) {
+			return []deliverycore.DomainBindingRecord{
 				{Hostname: "violet-7k3.platform.example", ProjectID: "project-1", ServiceID: serviceID, TargetPort: 8080, PlatformGenerated: true},
 				{Hostname: "web.example.com", ProjectID: "project-1", ServiceID: serviceID, TargetPort: 8080},
 			}, nil
@@ -277,8 +278,8 @@ func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 func TestPlatformServiceCreateDomainBindingRequiresPlatformHostname(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{createDomainBindingFn: func(context.Context, string, string, string, int32) (domainBindingRecord, bool, error) {
-		return domainBindingRecord{}, false, errPlatformDomainNotGenerated
+	service := NewPlatformService(&fakePlatformStore{createDomainBindingFn: func(context.Context, string, string, string, int32) (deliverycore.DomainBindingRecord, bool, error) {
+		return deliverycore.DomainBindingRecord{}, false, errPlatformDomainNotGenerated
 	}}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
 	_, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
 		Binding: &platformv1.DomainBindingInput{Hostname: "web.example.com", ServiceId: "service-1", TargetPort: 8080},

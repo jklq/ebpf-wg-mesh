@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 	now := time.Now().UTC()
 	var reads atomic.Int32
 	service := NewPlatformService(&fakePlatformStore{
-		serviceStatusFn: func(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error) {
+		serviceStatusFn: func(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
 			// The first read only resolves the environment to watch; by the time
 			// the wait returns, the rollout has completed.
 			applied := int64(1)
@@ -24,24 +25,24 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				applied = 2
 				healthy = true
 			}
-			return serviceRecord{
-				ID:               serviceID,
-				ProjectID:        "project-1",
-				AllocatedAgentID: "node-1",
-				CreatedAt:        now.Add(-10 * time.Minute),
-				Spec:             directImageServiceSpec("nginx:1.27", nil),
-				LatestBuild: &platformv1.BuildStatus{
-					BuildId: "build-1",
-				},
-			}, []allocationRecord{{
-				ID:                       "alloc-status",
-				ServiceID:                serviceID,
-				AgentID:                  "node-1",
-				DesiredRolloutGeneration: 2,
-				AppliedRolloutGeneration: applied,
-				Healthy:                  healthy,
-				UpdatedAt:                now,
-			}}, nil
+			return deliverycore.ServiceRecord{
+					ID:               serviceID,
+					ProjectID:        "project-1",
+					AllocatedAgentID: "node-1",
+					CreatedAt:        now.Add(-10 * time.Minute),
+					Spec:             directImageServiceSpec("nginx:1.27", nil),
+					LatestBuild: &platformv1.BuildStatus{
+						BuildId: "build-1",
+					},
+				}, []deliverycore.AllocationRecord{{
+					ID:                       "alloc-status",
+					ServiceID:                serviceID,
+					AgentID:                  "node-1",
+					DesiredRolloutGeneration: 2,
+					AppliedRolloutGeneration: applied,
+					Healthy:                  healthy,
+					UpdatedAt:                now,
+				}}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 

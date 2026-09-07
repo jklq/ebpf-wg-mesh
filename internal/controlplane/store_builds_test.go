@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := completeBuildForTest(ctx, store, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:999", ""); !errors.Is(err, errBuildNotOwned) {
+	if err := completeBuildForTest(ctx, store, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:999", ""); !errors.Is(err, deliverycore.ErrBuildNotOwned) {
 		t.Fatalf("expected foreign builder completion to be rejected, got %v", err)
 	}
 	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
@@ -120,7 +121,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", service.EnvironmentID); err != nil {
 		t.Fatalf("deploy replica change: %v", err)
 	}
-	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 0 {
+	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 0 {
 		t.Fatalf("replica-only deploy queued %d source builds, want 0", got)
 	}
 	current, err = store.serviceByID(ctx, "user-1", service.ID)
@@ -300,7 +301,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
-	assertRolloutState(t, store, service.ID, 1, rolloutStateInProgress, "")
+	assertRolloutState(t, store, service.ID, 1, "in_progress", "")
 
 	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
 		t.Fatalf("seedReadySourceState(commit-2): %v", err)
@@ -314,8 +315,8 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
 
-	assertRolloutState(t, store, service.ID, 1, rolloutStateSuperseded, "newer rollout")
-	assertRolloutState(t, store, service.ID, 2, rolloutStateInProgress, "")
+	assertRolloutState(t, store, service.ID, 1, "superseded", "newer rollout")
+	assertRolloutState(t, store, service.ID, 2, "in_progress", "")
 	current, err := store.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
@@ -326,7 +327,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 	if old := allocationForGeneration(t, store, service.ID, 1); len(old) != 0 {
 		t.Fatalf("superseded rollout retained unrouted allocations: %+v", old)
 	}
-	if next := allocationForGeneration(t, store, service.ID, 2); len(next) != 1 || next[0].RolloutState != allocationRolloutStarting {
+	if next := allocationForGeneration(t, store, service.ID, 2); len(next) != 1 || next[0].RolloutState != deliverycore.AllocationRolloutStarting {
 		t.Fatalf("new rollout allocations = %+v, want one starting allocation", next)
 	}
 	var deploymentState string
@@ -336,7 +337,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 	).Scan(&deploymentState); err != nil {
 		t.Fatalf("load build2 deployment: %v", err)
 	}
-	if deploymentState == deploymentStateFailed {
+	if deploymentState == deliverycore.DeploymentStateFailed {
 		t.Fatal("successful build was rejected")
 	}
 }
@@ -370,10 +371,10 @@ func TestSupersededDeploymentDoesNotBlockRolloutFinalization(t *testing.T) {
 	if _, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2"); err != nil {
 		t.Fatalf("enqueueBuildForTest(build2): %v", err)
 	}
-	if _, err := NewDelivery(store, nil, nil, nil).advanceRollout(ctx, service.ID, time.Now().UTC()); err != nil {
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatalf("advance superseded deployment rollout: %v", err)
 	}
-	assertRolloutState(t, store, service.ID, 1, rolloutStateSucceeded, "")
+	assertRolloutState(t, store, service.ID, 1, "succeeded", "")
 }
 
 func TestConcurrentBuildEnqueuesHaveOneCurrentWinner(t *testing.T) {
@@ -408,7 +409,7 @@ func TestConcurrentBuildEnqueuesHaveOneCurrentWinner(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx,
 		`SELECT count(*) FILTER (WHERE state = $1), count(*) FILTER (WHERE state = $2)
 		   FROM build_runs WHERE service_id = $3`,
-		buildStateQueued, buildStateSuperseded, service.ID,
+		deliverycore.BuildStateQueued, deliverycore.BuildStateSuperseded, service.ID,
 	).Scan(&queued, &superseded); err != nil {
 		t.Fatalf("count build states: %v", err)
 	}
@@ -421,7 +422,7 @@ func TestConcurrentBuildEnqueuesHaveOneCurrentWinner(t *testing.T) {
 		   FROM deployments d
 		   JOIN build_runs b ON b.service_id = d.service_id AND b.state = $1
 		  WHERE d.service_id = $2 AND d.is_current = TRUE`,
-		buildStateQueued, service.ID,
+		deliverycore.BuildStateQueued, service.ID,
 	).Scan(&currentBuildID, &queuedBuildID); err != nil {
 		t.Fatalf("load current queued deployment: %v", err)
 	}
@@ -654,8 +655,8 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if imageDeployments[0].Build != nil {
 		t.Fatalf("expected direct-image redeploy to have no build row, got %+v", imageDeployments[0].Build)
 	}
-	if imageDeployments[0].ReasonCode != reasonExactRedeploy && imageDeployments[0].Reason != reasonExactRedeploy {
-		t.Fatalf("expected latest direct-image deployment reason %q, got %q", reasonExactRedeploy, imageDeployments[0].Reason)
+	if imageDeployments[0].ReasonCode != "EXACT_REDEPLOY" && imageDeployments[0].Reason != "EXACT_REDEPLOY" {
+		t.Fatalf("expected latest direct-image deployment reason %q, got %q", "EXACT_REDEPLOY", imageDeployments[0].Reason)
 	}
 }
 
@@ -710,7 +711,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	if len(deployments) == 0 {
 		t.Fatal("expected failed build deployment history")
 	}
-	if deployments[0].Build == nil || deployments[0].Build.State != buildStateFailed {
+	if deployments[0].Build == nil || deployments[0].Build.State != deliverycore.BuildStateFailed {
 		t.Fatalf("expected latest history entry to be failed build, got %+v", deployments[0].Build)
 	}
 	if deployments[0].Build.CommitMessage != "Break deploy history" {
@@ -780,11 +781,11 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	}
 }
 
-func seedReadySourceState(t *testing.T, store *Store, service serviceRecord, commitSHA string) error {
+func seedReadySourceState(t *testing.T, store *Store, service deliverycore.ServiceRecord, commitSHA string) error {
 	return seedReadySourceStateWithMetadata(t, store, service, commitSHA, "", "")
 }
 
-func newRepoBuildTestService(t *testing.T) (*Store, string, serviceRecord) {
+func newRepoBuildTestService(t *testing.T) (*Store, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -815,7 +816,7 @@ func newRepoBuildTestService(t *testing.T) (*Store, string, serviceRecord) {
 	return store, projects[0].ID, service
 }
 
-func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service serviceRecord, commitSHA, commitMessage, commitAuthor string) error {
+func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string) error {
 	t.Helper()
 	archive := []byte("snapshot-" + commitSHA)
 	digest, objectKey, err := store.storeSourceArchive(context.Background(), archive)
@@ -824,7 +825,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service servic
 	}
 
 	return store.withTx(context.Background(), func(tx *sql.Tx) error {
-		binding, err := store.upsertSourceBindingTx(context.Background(), tx, sourceBindingRecord{
+		binding, err := store.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,
 			Provider:                     "github",
@@ -832,7 +833,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service servic
 			TrackedRef:                   "main",
 			ProviderRepositoryExternalID: "repo-1",
 			ProviderScopeExternalID:      "",
-			AccessState:                  sourceAccessStateAvailable,
+			AccessState:                  deliverycore.SourceAccessStateAvailable,
 			BuildRecipe:                  &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
 			ResolvedAt:                   time.Now().UTC(),
 			FreshUntil:                   time.Now().UTC().Add(time.Hour),
@@ -840,7 +841,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service servic
 		if err != nil {
 			return err
 		}
-		revision, err := store.upsertSourceRevisionTx(context.Background(), tx, sourceRevisionRecord{
+		revision, err := store.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -854,7 +855,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service servic
 		if err != nil {
 			return err
 		}
-		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, sourceSnapshotRecord{
+		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,

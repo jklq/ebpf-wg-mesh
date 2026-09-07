@@ -3,11 +3,13 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"log/slog"
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -19,25 +21,25 @@ import (
 // are hints emitted only after that commit.
 type Domains struct {
 	store                domainStore
-	notifier             platformNotifier
-	ingress              platformIngress
+	notifier             deliverycore.PlatformNotifier
+	ingress              deliverycore.PlatformIngress
 	platformDomainSuffix string
 	dnsResolver          domainCNAMEResolver
 }
 
 type domainStore interface {
-	createDomainBinding(context.Context, string, string, string, int32) (domainBindingRecord, bool, error)
-	createPlatformDomainBinding(context.Context, string, string, string, int32) (domainBindingRecord, bool, error)
-	updateDomainBinding(context.Context, string, string, string, int32) (domainBindingRecord, bool, error)
+	createDomainBinding(context.Context, string, string, string, int32) (deliverycore.DomainBindingRecord, bool, error)
+	createPlatformDomainBinding(context.Context, string, string, string, int32) (deliverycore.DomainBindingRecord, bool, error)
+	updateDomainBinding(context.Context, string, string, string, int32) (deliverycore.DomainBindingRecord, bool, error)
 	deleteDomainBinding(context.Context, string, string) (bool, error)
-	domainBindingByHostname(context.Context, string, string) (domainBindingRecord, error)
-	platformDomainBindingForService(context.Context, string, string) (domainBindingRecord, error)
-	serviceByID(context.Context, string, string) (serviceRecord, error)
-	listAllocationsByServiceID(context.Context, string) ([]allocationRecord, error)
-	listAgents(context.Context) ([]agentRecord, error)
+	domainBindingByHostname(context.Context, string, string) (deliverycore.DomainBindingRecord, error)
+	platformDomainBindingForService(context.Context, string, string) (deliverycore.DomainBindingRecord, error)
+	serviceByID(context.Context, string, string) (deliverycore.ServiceRecord, error)
+	listAllocationsByServiceID(context.Context, string) ([]deliverycore.AllocationRecord, error)
+	listAgents(context.Context) ([]deliverycore.AgentRecord, error)
 }
 
-func NewDomains(store domainStore, notifier platformNotifier, ingress platformIngress, suffix string, resolver domainCNAMEResolver) *Domains {
+func NewDomains(store domainStore, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, suffix string, resolver domainCNAMEResolver) *Domains {
 	return &Domains{store: store, notifier: notifier, ingress: ingress, platformDomainSuffix: suffix, dnsResolver: resolver}
 }
 
@@ -54,7 +56,7 @@ func (s *Domains) CreateDomainBinding(ctx context.Context, req *platformv1.Creat
 		return nil, status.Errorf(codes.InvalidArgument, "hostname: %v", err)
 	}
 	targetPort := req.GetBinding().GetTargetPort()
-	if err := validatePort(targetPort); err != nil {
+	if err := deliverycore.ValidatePort(targetPort); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 	}
 	if isPlatformHostname(hostname, s.platformDomainSuffix) {
@@ -69,10 +71,10 @@ func (s *Domains) CreateDomainBinding(ctx context.Context, req *platformv1.Creat
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		if errors.Is(err, errDomainAlreadyExists) {
+		if errors.Is(err, deliverycore.ErrDomainAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create domain binding: %v", err)
 		}
-		if errors.Is(err, errInvalidPort) {
+		if errors.Is(err, deliverycore.ErrInvalidPort) {
 			return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "create domain binding: %v", err)
@@ -90,7 +92,7 @@ func (s *Domains) GenerateDomainBinding(ctx context.Context, req *platformv1.Gen
 		return nil, err
 	}
 	targetPort := req.GetTargetPort()
-	if err := validatePort(targetPort); err != nil {
+	if err := deliverycore.ValidatePort(targetPort); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 	}
 	service, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
@@ -109,7 +111,7 @@ func (s *Domains) GenerateDomainBinding(ctx context.Context, req *platformv1.Gen
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
-		if errors.Is(err, errDomainAlreadyExists) {
+		if errors.Is(err, deliverycore.ErrDomainAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "generate domain binding: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "generate domain binding: %v", err)
@@ -130,7 +132,7 @@ func (s *Domains) UpdateDomainBinding(ctx context.Context, req *platformv1.Updat
 		return nil, status.Error(codes.InvalidArgument, "binding is required")
 	}
 	targetPort := req.GetBinding().GetTargetPort()
-	if err := validatePort(targetPort); err != nil {
+	if err := deliverycore.ValidatePort(targetPort); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 	}
 	var previousServiceID string
@@ -145,7 +147,7 @@ func (s *Domains) UpdateDomainBinding(ctx context.Context, req *platformv1.Updat
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
 		}
-		if errors.Is(err, errInvalidPort) {
+		if errors.Is(err, deliverycore.ErrInvalidPort) {
 			return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "update domain binding: %v", err)

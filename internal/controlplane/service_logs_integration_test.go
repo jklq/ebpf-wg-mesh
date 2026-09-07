@@ -4,11 +4,13 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"strings"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/testutil"
@@ -195,7 +197,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	deployLine := "deploy-line-" + suffix
 	runtimeLine := "runtime-line-" + suffix
 
-	cp.server.logEmitter.EmitBuild(ctx, service, buildRunRecord{ID: "build-" + suffix}, StageBuild, buildLine)
+	cp.server.logEmitter.EmitBuild(ctx, service, deliverycore.BuildRunRecord{ID: "build-" + suffix}, StageBuild, buildLine)
 	cp.server.logEmitter.EmitDeploy(ctx, service, allocID, "build-"+suffix, StageDeploy, deployLine)
 
 	cert := enrollAgentTLS(t, cp.server, agentID, token)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -61,7 +62,7 @@ func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSn
 		}
 		return status.Errorf(codes.Internal, "load source snapshot metadata: %v", err)
 	}
-	if err := ensureReadySnapshot(snapshot); err != nil {
+	if err := deliverycore.EnsureReadySnapshot(snapshot); err != nil {
 		return status.Errorf(codes.FailedPrecondition, "source snapshot not ready: %v", err)
 	}
 	if snapshot.ArchiveSizeBytes > maxSourceArchiveCompressedBytes {

@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"net/http"
 	"testing"
@@ -46,7 +47,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RepositoryView(empty): %v", err)
 	}
-	if repo.AccessState != sourceAccessStateInstallationRequired {
+	if repo.AccessState != deliverycore.SourceAccessStateInstallationRequired {
 		t.Fatalf("expected installation required for empty catalog, got %s", repo.AccessState)
 	}
 	if server.requestCount() != 0 {
@@ -67,7 +68,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RepositoryView(snapshot): %v", err)
 	}
-	if repo.AccessState != sourceAccessStateAvailable {
+	if repo.AccessState != deliverycore.SourceAccessStateAvailable {
 		t.Fatalf("expected available repo from stored snapshot, got %s", repo.AccessState)
 	}
 
@@ -93,7 +94,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RepositoryView(private): %v", err)
 	}
-	if view.AccessState != sourceAccessStateAvailable {
+	if view.AccessState != deliverycore.SourceAccessStateAvailable {
 		t.Fatalf("expected available repository view, got %+v", view)
 	}
 	if server.requestCount() != 0 {
@@ -115,7 +116,7 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 		store,
 		noopNotifier{},
 		noopIngress{},
-		NewDelivery(store, noopNotifier{}, noopIngress{}, nil),
+		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -158,7 +159,7 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 		store,
 		noopNotifier{},
 		noopIngress{},
-		NewDelivery(store, noopNotifier{}, noopIngress{}, nil),
+		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
 		WithGitHubSourceInspection(NewGitHubCatalog(store, client), client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -248,7 +249,7 @@ func TestPlatformServiceInspectSourceReturnsInstallationRequiredForPrivateRepoWi
 		store,
 		noopNotifier{},
 		noopIngress{},
-		NewDelivery(store, noopNotifier{}, noopIngress{}, nil),
+		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -286,7 +287,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 		store,
 		noopNotifier{},
 		noopIngress{},
-		NewDelivery(store, noopNotifier{}, noopIngress{}, nil),
+		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -321,7 +322,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 	if err != nil {
 		t.Fatalf("RepositoryView: %v", err)
 	}
-	if view.AccessState != sourceAccessStateAvailable || view.InstallationID != 7 {
+	if view.AccessState != deliverycore.SourceAccessStateAvailable || view.InstallationID != 7 {
 		t.Fatalf("unexpected stored repository view %+v", view)
 	}
 }
@@ -341,7 +342,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterForbiddenRepo
 		store,
 		noopNotifier{},
 		noopIngress{},
-		NewDelivery(store, noopNotifier{}, noopIngress{}, nil),
+		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
