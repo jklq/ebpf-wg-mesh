@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -14,13 +15,14 @@ import (
 // EnvironmentOperations owns environment removal, including cluster and ingress wakes.
 type EnvironmentOperations struct {
 	store    environmentStore
-	notifier platformNotifier
-	ingress  platformIngress
+	notifier deliverycore.PlatformNotifier
+	ingress  deliverycore.PlatformIngress
 }
 
-func NewEnvironmentOperations(store environmentStore, notifier platformNotifier, ingress platformIngress) *EnvironmentOperations {
+func NewEnvironmentOperations(store environmentStore, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress) *EnvironmentOperations {
 	return &EnvironmentOperations{store: store, notifier: notifier, ingress: ingress}
 }
+
 func (s *EnvironmentOperations) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
 	identity, err := DelegatedUserFromContext(ctx)
 	if err != nil {

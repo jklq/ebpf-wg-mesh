@@ -14,7 +14,6 @@ import (
 	"ebof-wg-mesh/internal/config"
 
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
-	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -173,14 +172,6 @@ func (s *Store) withTxUnfenced(ctx context.Context, fn func(*sql.Tx) error) erro
 	return crdb.ExecuteTx(ctx, s.db, nil, fn)
 }
 
-func databaseTime(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}) (time.Time, error) {
-	var now time.Time
-	err := q.QueryRowContext(ctx, `SELECT statement_timestamp()`).Scan(&now)
-	return now.UTC(), err
-}
-
 func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, user := range bootstrap.Users {
@@ -206,18 +197,6 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 		}
 		return nil
 	})
-}
-
-func mustID() string {
-	return uuid.NewString()
-}
-
-func (s *Store) currentDesiredRevisionForAgent(ctx context.Context, agentID string) (int64, error) {
-	var value int64
-	if err := s.db.QueryRowContext(ctx, `SELECT desired_revision FROM agents WHERE id = $1`, agentID).Scan(&value); err != nil {
-		return 0, err
-	}
-	return value, nil
 }
 
 func (s *Store) bumpDesiredRevisionsTx(ctx context.Context, tx *sql.Tx, agentIDs []string) error {

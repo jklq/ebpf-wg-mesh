@@ -50,10 +50,15 @@ type registryTokenClaims struct {
 }
 
 func (c registryTokenClaims) GetExpirationTime() (*jwt.NumericDate, error) { return c.ExpiresAt, nil }
-func (c registryTokenClaims) GetIssuedAt() (*jwt.NumericDate, error)       { return c.IssuedAt, nil }
-func (c registryTokenClaims) GetNotBefore() (*jwt.NumericDate, error)      { return c.NotBefore, nil }
-func (c registryTokenClaims) GetIssuer() (string, error)                   { return c.Issuer, nil }
-func (c registryTokenClaims) GetSubject() (string, error)                  { return c.Subject, nil }
+
+func (c registryTokenClaims) GetIssuedAt() (*jwt.NumericDate, error) { return c.IssuedAt, nil }
+
+func (c registryTokenClaims) GetNotBefore() (*jwt.NumericDate, error) { return c.NotBefore, nil }
+
+func (c registryTokenClaims) GetIssuer() (string, error) { return c.Issuer, nil }
+
+func (c registryTokenClaims) GetSubject() (string, error) { return c.Subject, nil }
+
 func (c registryTokenClaims) GetAudience() (jwt.ClaimStrings, error) {
 	return jwt.ClaimStrings{c.Audience}, nil
 }

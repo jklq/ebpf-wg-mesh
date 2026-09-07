@@ -4,11 +4,13 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
@@ -253,14 +255,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatal("expected foreign agent report to leave ingress unchanged")
 	}
 	routedAllocAfterForeignReport := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, routedService.ID)
-	agent, err := store.agentByID(ctx, "node-1")
-	if err != nil {
-		t.Fatalf("agentByID: %v", err)
-	}
-	expectedAllocationIPv6, err := privateIPv6(agent.WorkloadIPv6Subnet, routedService.EnvironmentID, routedAlloc.ID)
-	if err != nil {
-		t.Fatalf("privateIPv6: %v", err)
-	}
+	expectedAllocationIPv6 := routedAlloc.AllocationIPv6
 	if routedAllocAfterForeignReport.AllocationIPv6 != expectedAllocationIPv6 || !routedAllocAfterForeignReport.Healthy {
 		t.Fatalf("foreign agent changed allocation state: %+v", routedAllocAfterForeignReport)
 	}
@@ -390,12 +385,12 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 		MemoryMebibytes: 300,
 		Ports:           runtimePortsFromInts([]int32{8080}),
 	}))
-	if !errors.Is(err, errNoPlacementAvailable) {
+	if !errors.Is(err, deliverycore.ErrNoPlacementAvailable) {
 		t.Fatalf("expected errNoPlacementAvailable, got %v", err)
 	}
 }
 
-func mustPrimaryAllocation(t *testing.T, store *Store, ctx context.Context, userID, projectID, serviceID string) allocationRecord {
+func mustPrimaryAllocation(t *testing.T, store *Store, ctx context.Context, userID, projectID, serviceID string) deliverycore.AllocationRecord {
 	t.Helper()
 	_, allocations, err := store.serviceStatus(ctx, userID, serviceID)
 	if err != nil {

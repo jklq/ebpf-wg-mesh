@@ -4,11 +4,11 @@ package controlplane
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"net/netip"
 	"testing"
 	"time"
-
-	"ebof-wg-mesh/internal/config"
 )
 
 func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
@@ -37,11 +37,11 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	}
 	originalID := mustAllocationOnAgent(t, store, service.ID, "node-1").ID
 
-	staleAt := time.Now().UTC().Add(-2 * agentHealthyTTL)
+	staleAt := time.Now().UTC().Add(-2 * deliverycore.AgentHealthyTTL)
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-1'`, staleAt); err != nil {
 		t.Fatal(err)
 	}
-	notified, environmentsChanged, err := NewDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
+	notified, environmentsChanged, err := newTestDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-deliverycore.AgentHealthyTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestFailoverServicesFromAgentIgnoresFreshNode(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	notified, environmentsChanged, err := NewDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-agentHealthyTTL))
+	notified, environmentsChanged, err := newTestDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-deliverycore.AgentHealthyTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,23 +91,23 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	lastSeen := now.Add(-2 * agentHealthyTTL)
+	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-stale'`, lastSeen); err != nil {
 		t.Fatal(err)
 	}
 
-	delivery := NewDelivery(store, nil, nil, nil)
+	delivery := newTestDelivery(store, nil, nil, nil)
 	delivery.failoverNow = func() time.Time { return now }
-	reconciler := NewServiceFailoverReconciler(delivery, time.Second, agentHealthyTTL)
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, deliverycore.AgentHealthyTTL)
 	_, err := reconciler.Reconcile(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, err := store.listAgents(ctx)
+	agents, err := store.deliveryQueries().ListAgents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agents) != 1 || agents[0].ID != "node-stale" || agents[0].LifecycleState != agentStateUnavailable {
+	if len(agents) != 1 || agents[0].ID != "node-stale" || agents[0].LifecycleState != deliverycore.AgentStateUnavailable {
 		t.Fatalf("agents after reconcile = %+v, want node-stale unavailable", agents)
 	}
 }
@@ -149,14 +149,14 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 
 	// Simulate a dead agent whose last heartbeat is already past the healthy TTL.
 	now := time.Now().UTC()
-	lastSeen := now.Add(-2 * agentHealthyTTL)
+	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-a'`, lastSeen); err != nil {
 		t.Fatal(err)
 	}
 
-	delivery := NewDelivery(store, nil, nil, nil)
+	delivery := newTestDelivery(store, nil, nil, nil)
 	delivery.failoverNow = func() time.Time { return now }
-	reconciler := NewServiceFailoverReconciler(delivery, time.Second, agentHealthyTTL)
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, deliverycore.AgentHealthyTTL)
 	result, err := reconciler.Reconcile(ctx)
 	if err != nil {
 		t.Fatalf("reconcile failover: %v", err)
@@ -175,7 +175,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 	// Addresses come from the owning node's prefixes, so failover must re-address
 	// the workload on both families rather than carry the dead node's addresses over.
-	survivor, err := store.agentByID(ctx, "node-b")
+	survivor, err := store.deliveryQueries().AgentByID(ctx, "node-b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 }
 
-func mustAllocationOnAgent(t *testing.T, store *Store, serviceID, agentID string) allocationRecord {
+func mustAllocationOnAgent(t *testing.T, store *Store, serviceID, agentID string) deliverycore.AllocationRecord {
 	t.Helper()
 	for _, alloc := range mustListAllocations(t, store, context.Background(), serviceID) {
 		if alloc.AgentID == agentID {
@@ -233,21 +233,21 @@ func mustAllocationOnAgent(t *testing.T, store *Store, serviceID, agentID string
 		}
 	}
 	t.Fatalf("no allocation for service %s on %s", serviceID, agentID)
-	return allocationRecord{}
+	return deliverycore.AllocationRecord{}
 }
 
-func requireNodeLossReplacement(t *testing.T, store *Store, serviceID, originalID, deadAgent, liveAgent string) allocationRecord {
+func requireNodeLossReplacement(t *testing.T, store *Store, serviceID, originalID, deadAgent, liveAgent string) deliverycore.AllocationRecord {
 	t.Helper()
 	allocs := mustListAllocations(t, store, context.Background(), serviceID)
-	var lost, live []allocationRecord
+	var lost, live []deliverycore.AllocationRecord
 	for _, alloc := range allocs {
 		switch {
 		case alloc.ID == originalID:
-			if alloc.AgentID != deadAgent || alloc.RolloutState != allocationRolloutLost || alloc.Phase != allocationPhaseUnavailable {
+			if alloc.AgentID != deadAgent || alloc.RolloutState != deliverycore.AllocationRolloutLost || alloc.Phase != "Unavailable" {
 				t.Fatalf("original allocation was rewritten instead of marked lost: %+v", alloc)
 			}
 			lost = append(lost, alloc)
-		case alloc.AgentID == liveAgent && alloc.RolloutState != allocationRolloutLost:
+		case alloc.AgentID == liveAgent && alloc.RolloutState != deliverycore.AllocationRolloutLost:
 			live = append(live, alloc)
 		}
 	}

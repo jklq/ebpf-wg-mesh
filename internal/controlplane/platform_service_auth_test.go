@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
 	"time"
 
@@ -17,14 +18,14 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 	t.Parallel()
 
 	store := &fakePlatformStore{
-		listProjectsFn: func(ctx context.Context, userID string) ([]projectRecord, error) {
+		listProjectsFn: func(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error) {
 			if userID != "user-1" {
 				t.Fatalf("unexpected userID %q", userID)
 			}
-			return []projectRecord{{
+			return []deliverycore.ProjectRecord{{
 				ID:        "project-1",
 				Name:      "demo",
-				Kind:      projectKindUser,
+				Kind:      deliverycore.ProjectKindUser,
 				CreatedAt: time.Now().UTC(),
 			}}, nil
 		},
@@ -45,8 +46,8 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 
 	t.Run("viewer", func(t *testing.T) {
 		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
-			applyDeploymentActionFn: func(context.Context, string, string, platformv1.DeploymentAction, string, string) (deploymentActionResult, error) {
-				return deploymentActionResult{}, errDeploymentActionDenied
+			applyDeploymentActionFn: func(context.Context, string, string, platformv1.DeploymentAction, string, string) (deliverycore.DeploymentActionResult, error) {
+				return deliverycore.DeploymentActionResult{}, deliverycore.ErrDeploymentActionDenied
 			},
 		})
 		_, err := service.ApplyDeploymentAction(
@@ -63,8 +64,8 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 
 	t.Run("stale", func(t *testing.T) {
 		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
-			applyDeploymentActionFn: func(context.Context, string, string, platformv1.DeploymentAction, string, string) (deploymentActionResult, error) {
-				return deploymentActionResult{}, errDeploymentStale
+			applyDeploymentActionFn: func(context.Context, string, string, platformv1.DeploymentAction, string, string) (deliverycore.DeploymentActionResult, error) {
+				return deliverycore.DeploymentActionResult{}, deliverycore.ErrDeploymentStale
 			},
 		})
 		_, err := service.ApplyDeploymentAction(
@@ -101,8 +102,8 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 	t.Parallel()
 
 	delivery := &fakePlatformDelivery{
-		createScheduledServiceFn: func(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
-			return serviceRecord{}, errNoPlacementAvailable
+		createScheduledServiceFn: func(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error) {
+			return deliverycore.ServiceRecord{}, deliverycore.ErrNoPlacementAvailable
 		},
 	}
 	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
@@ -160,8 +161,8 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 
 	delivery := &fakePlatformDelivery{
-		updateServiceFn: func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
-			return serviceRecord{}, false, errConcurrentUpdate
+		updateServiceFn: func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
+			return deliverycore.ServiceRecord{}, false, deliverycore.ErrConcurrentUpdate
 		},
 	}
 	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
@@ -181,8 +182,8 @@ func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		listVolumesFn: func(ctx context.Context, userID, projectID string) ([]volumeRecord, error) {
-			return []volumeRecord{}, nil
+		listVolumesFn: func(ctx context.Context, userID, projectID string) ([]deliverycore.VolumeRecord, error) {
+			return []deliverycore.VolumeRecord{}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 
@@ -198,8 +199,8 @@ func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		projectByIDFn: func(ctx context.Context, userID, projectID string) (projectRecord, error) {
-			return projectRecord{}, sql.ErrNoRows
+		projectByIDFn: func(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error) {
+			return deliverycore.ProjectRecord{}, sql.ErrNoRows
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 

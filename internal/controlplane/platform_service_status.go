@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -117,13 +118,13 @@ func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*pl
 	return resp, nil
 }
 
-func (s *PlatformService) decorateServiceRecord(ctx context.Context, service serviceRecord) (serviceRecord, error) {
+func (s *PlatformService) decorateServiceRecord(ctx context.Context, service deliverycore.ServiceRecord) (deliverycore.ServiceRecord, error) {
 	return s.decorateServiceRecordWithAllocations(ctx, service, nil)
 }
 
-func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Context, service serviceRecord, allocs []allocationRecord) (serviceRecord, error) {
+func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Context, service deliverycore.ServiceRecord, allocs []deliverycore.AllocationRecord) (deliverycore.ServiceRecord, error) {
 	if service.SourceSummary == nil {
-		service.SourceSummary = buildSourceSummary(service.Spec)
+		service.SourceSummary = deliverycore.BuildSourceSummary(service.Spec)
 	}
 	// Stages are projected from the allocations + latest build; if we cannot
 	// load allocations we still return the stages derived from just the
@@ -133,10 +134,10 @@ func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Conte
 		var err error
 		allocs, err = s.store.listAllocationsByServiceID(ctx, service.ID)
 		if err != nil {
-			return serviceRecord{}, err
+			return deliverycore.ServiceRecord{}, err
 		}
 	}
-	var buildRec *buildRunRecord
+	var buildRec *deliverycore.BuildRunRecord
 	if service.LatestBuild != nil {
 		rec := buildRunRecordFromProto(service.LatestBuild)
 		buildRec = &rec
@@ -182,8 +183,8 @@ func (s *PlatformService) notifyServiceAgents(ctx context.Context, serviceID str
 // round-trip every field — the projector only reads state and timestamps, so
 // we only reconstruct those. Keeping this narrow avoids accidentally widening
 // the implicit contract between decorator and projector.
-func buildRunRecordFromProto(status *platformv1.BuildStatus) buildRunRecord {
-	rec := buildRunRecord{
+func buildRunRecordFromProto(status *platformv1.BuildStatus) deliverycore.BuildRunRecord {
+	rec := deliverycore.BuildRunRecord{
 		ID:            status.GetBuildId(),
 		CommitSHA:     status.GetCommitSha(),
 		CommitMessage: status.GetCommitMessage(),
@@ -193,17 +194,17 @@ func buildRunRecordFromProto(status *platformv1.BuildStatus) buildRunRecord {
 	}
 	switch status.GetState() {
 	case platformv1.BuildState_BUILD_STATE_QUEUED:
-		rec.State = buildStateQueued
+		rec.State = deliverycore.BuildStateQueued
 	case platformv1.BuildState_BUILD_STATE_RUNNING:
-		rec.State = buildStateRunning
+		rec.State = deliverycore.BuildStateRunning
 	case platformv1.BuildState_BUILD_STATE_SUCCEEDED:
-		rec.State = buildStateSucceeded
+		rec.State = deliverycore.BuildStateSucceeded
 	case platformv1.BuildState_BUILD_STATE_FAILED:
-		rec.State = buildStateFailed
+		rec.State = deliverycore.BuildStateFailed
 	case platformv1.BuildState_BUILD_STATE_SUPERSEDED:
-		rec.State = buildStateSuperseded
+		rec.State = deliverycore.BuildStateSuperseded
 	case platformv1.BuildState_BUILD_STATE_CANCELLED:
-		rec.State = buildStateCancelled
+		rec.State = deliverycore.BuildStateCancelled
 	}
 	if queued := status.GetQueuedAt(); queued != nil {
 		rec.QueuedAt = queued.AsTime()
@@ -224,7 +225,7 @@ func validateServiceSpecRestart(spec *platformv1.ServiceSpec) error {
 	}
 	if check := runtime.GetLivenessCheck(); check != nil {
 		if check.GetPort() > 0 {
-			if err := validatePort(check.GetPort()); err != nil {
+			if err := deliverycore.ValidatePort(check.GetPort()); err != nil {
 				return err
 			}
 		}
@@ -250,7 +251,7 @@ func validateServiceSpecRestart(spec *platformv1.ServiceSpec) error {
 func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {
 	runtime := spec.GetRuntime()
 	for _, port := range runtime.GetPorts() {
-		if err := validatePort(port.GetPort()); err != nil {
+		if err := deliverycore.ValidatePort(port.GetPort()); err != nil {
 			return err
 		}
 	}
@@ -259,7 +260,7 @@ func validateServiceSpecPorts(spec *platformv1.ServiceSpec) error {
 		return nil
 	}
 	if check.GetPort() > 0 {
-		if err := validatePort(check.GetPort()); err != nil {
+		if err := deliverycore.ValidatePort(check.GetPort()); err != nil {
 			return err
 		}
 	}

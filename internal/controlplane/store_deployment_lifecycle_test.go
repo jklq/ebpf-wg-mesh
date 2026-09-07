@@ -4,12 +4,13 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"sync"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
@@ -26,7 +27,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("current deployment after create: ok=%v err=%v", ok, err)
 	}
-	if current.State != deploymentStateStaged {
+	if current.State != deliverycore.DeploymentStateStaged {
 		t.Fatalf("create state = %q, want staged", current.State)
 	}
 
@@ -38,13 +39,13 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("current after enqueue: ok=%v err=%v", ok, err)
 	}
-	if queued.State != deploymentStateQueuedBuild || queued.BuildID != build.ID {
+	if queued.State != deliverycore.DeploymentStateQueuedBuild || queued.BuildID != build.ID {
 		t.Fatalf("queued deployment = %+v", queued)
 	}
 
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 	building, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || building.State != deploymentStateBuilding {
+	if err != nil || !ok || building.State != deliverycore.DeploymentStateBuilding {
 		t.Fatalf("building deployment = %+v ok=%v err=%v", building, ok, err)
 	}
 
@@ -52,7 +53,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("completeBuild: %v", err)
 	}
 	scheduled, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || scheduled.State != deploymentStateScheduling || scheduled.ImageDigest == "" {
+	if err != nil || !ok || scheduled.State != deliverycore.DeploymentStateScheduling || scheduled.ImageDigest == "" {
 		t.Fatalf("scheduled deployment = %+v ok=%v err=%v", scheduled, ok, err)
 	}
 
@@ -77,7 +78,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("recordStatusReport: %v", err)
 	}
 	active, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || active.State != deploymentStateActive {
+	if err != nil || !ok || active.State != deliverycore.DeploymentStateActive {
 		t.Fatalf("active deployment = %+v ok=%v err=%v", active, ok, err)
 	}
 
@@ -88,10 +89,10 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if len(history) < 2 {
 		t.Fatalf("expected create + build deployments, got %d", len(history))
 	}
-	if history[0].State != deploymentStateActive || history[0].Build == nil || history[0].Build.CommitMessage != "Add lifecycle" {
+	if history[0].State != deliverycore.DeploymentStateActive || history[0].Build == nil || history[0].Build.CommitMessage != "Add lifecycle" {
 		t.Fatalf("latest history = %+v", history[0])
 	}
-	if history[0].ReasonCode != reasonDeploymentActive || history[0].CauseKind != deploymentCauseSystem {
+	if history[0].ReasonCode != "DEPLOYMENT_ACTIVE" || history[0].CauseKind != deliverycore.DeploymentCauseSystem {
 		t.Fatalf("latest transition metadata = %+v", history[0])
 	}
 }
@@ -112,7 +113,7 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || failed.State != deploymentStateFailed {
+	if err != nil || !ok || failed.State != deliverycore.DeploymentStateFailed {
 		t.Fatalf("failed deployment = %+v ok=%v err=%v", failed, ok, err)
 	}
 
@@ -137,7 +138,7 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 		t.Fatalf("recordStatusReport: %v", err)
 	}
 	stillFailed, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || stillFailed.State != deploymentStateFailed {
+	if err != nil || !ok || stillFailed.State != deliverycore.DeploymentStateFailed {
 		t.Fatalf("agent resurrected terminal deployment: %+v", stillFailed)
 	}
 }
@@ -146,21 +147,11 @@ func TestDeploymentTransitionRetriesAreIdempotent(t *testing.T) {
 	t.Parallel()
 
 	store, ctx, _, _, service := setupDirectImageServiceForDeployment(t)
-	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	_, ok, err := store.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("current: ok=%v err=%v", ok, err)
 	}
-	activate := func() error {
-		return store.withTx(ctx, func(tx *sql.Tx) error {
-			_, err := store.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
-				ToState:    deploymentStateActive,
-				Actor:      deploymentActor{Kind: deploymentCauseSystem},
-				ReasonCode: reasonDeploymentActive,
-				Detail:     "activate",
-			})
-			return err
-		})
-	}
+	activate := func() error { return reportActiveForTest(ctx, store, service.ID) }
 	if err := activate(); err != nil {
 		t.Fatalf("first activate: %v", err)
 	}
@@ -168,7 +159,7 @@ func TestDeploymentTransitionRetriesAreIdempotent(t *testing.T) {
 		t.Fatalf("idempotent retry: %v", err)
 	}
 	active, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || active.State != deploymentStateActive {
+	if err != nil || !ok || active.State != deliverycore.DeploymentStateActive {
 		t.Fatalf("after retries: %+v ok=%v err=%v", active, ok, err)
 	}
 }
@@ -261,7 +252,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	raceWG.Wait()
 	close(raceErrs)
 	for err := range raceErrs {
-		if err != nil && !errors.Is(err, errBuildNotOwned) {
+		if err != nil && !errors.Is(err, deliverycore.ErrBuildNotOwned) {
 			t.Fatalf("builder/agent race: %v", err)
 		}
 	}
@@ -270,20 +261,11 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("final current: ok=%v err=%v", ok, err)
 	}
-	if deploymentStateTerminal(final.State) && final.State != deploymentStateFailed && final.State != deploymentStateSuperseded {
+	if deploymentStateTerminal(final.State) && final.State != deliverycore.DeploymentStateFailed && final.State != deliverycore.DeploymentStateSuperseded {
 		// terminal is allowed; agent must not have moved a failed/superseded row back to active
 	}
-	if final.State == deploymentStateFailed || final.State == deploymentStateSuperseded || final.State == deploymentStateCancelled || final.State == deploymentStateCrashed || final.State == deploymentStateRemoved {
-		if err := store.withTx(ctx, func(tx *sql.Tx) error {
-			_, err := store.applyDeploymentTransitionTx(ctx, tx, final.ID, deploymentTransitionInput{
-				ToState:          deploymentStateActive,
-				Actor:            deploymentActor{Kind: deploymentCauseAgent, ID: "node-1"},
-				ReasonCode:       reasonDeploymentActive,
-				Detail:           "post-race resurrect",
-				IgnoreIfTerminal: true,
-			})
-			return err
-		}); err != nil {
+	if final.State == deliverycore.DeploymentStateFailed || final.State == deliverycore.DeploymentStateSuperseded || final.State == deliverycore.DeploymentStateCancelled || final.State == deliverycore.DeploymentStateCrashed || final.State == deliverycore.DeploymentStateRemoved {
+		if err := reportActiveForTest(ctx, store, service.ID); err != nil {
 			t.Fatalf("agent resurrect after race: %v", err)
 		}
 		after, ok, err := store.currentDeploymentForService(ctx, service.ID)
@@ -293,7 +275,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	}
 }
 
-func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, string, string, serviceRecord) {
+func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, string, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -324,7 +306,7 @@ func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, str
 	return store, ctx, "user-1", projects[0].ID, service
 }
 
-func setupDirectImageServiceForDeployment(t *testing.T) (*Store, context.Context, string, string, serviceRecord) {
+func setupDirectImageServiceForDeployment(t *testing.T) (*Store, context.Context, string, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()

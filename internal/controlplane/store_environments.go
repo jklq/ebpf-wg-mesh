@@ -3,68 +3,29 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 var errProductionEnvironment = errors.New("production environment cannot be deleted")
 
-func (s *Store) createEnvironmentQuerier(ctx context.Context, q serviceQueryer, projectID, name string, production bool, copiedFrom string) (environmentRecord, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return environmentRecord{}, fmt.Errorf("environment name is required")
-	}
-	networkIdentity, err := allocateEnvironmentNetworkIdentity(ctx, q)
-	if err != nil {
-		return environmentRecord{}, err
-	}
-	now := time.Now().UTC()
-	rec := environmentRecord{
-		ID:                      mustID(),
-		ProjectID:               projectID,
-		Name:                    name,
-		Kind:                    environmentKindPersistent,
-		IsProduction:            production,
-		NetworkIdentity:         networkIdentity,
-		CopiedFromEnvironmentID: copiedFrom,
-		CreatedAt:               now,
-		UpdatedAt:               now,
-	}
-	_, err = q.ExecContext(ctx, `
-		INSERT INTO environments(
-			id, project_id, name, kind, is_production, network_identity,
-			copied_from_environment_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		rec.ID, rec.ProjectID, rec.Name, string(rec.Kind), rec.IsProduction,
-		rec.NetworkIdentity, nullIfEmpty(rec.CopiedFromEnvironmentID), rec.CreatedAt, rec.UpdatedAt,
-	)
-	if err != nil {
-		return environmentRecord{}, err
-	}
-	return rec, nil
-}
-
-func (s *Store) ensureProductionEnvironmentQuerier(ctx context.Context, q serviceQueryer, projectID string) (environmentRecord, error) {
-	rec, err := scanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
+func (s *Store) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
+	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, deliverycore.EnvironmentSelect+`
 		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if err == nil {
 		return rec, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return environmentRecord{}, err
+		return deliverycore.EnvironmentRecord{}, err
 	}
 	return s.createEnvironmentQuerier(ctx, q, projectID, "Production", true, "")
 }
 
-func (s *Store) createEnvironment(ctx context.Context, userID, projectID, name string) (environmentRecord, error) {
-	var rec environmentRecord
+func (s *Store) createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error) {
+	var rec deliverycore.EnvironmentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.authorizeProjectWriteQuerier(ctx, tx, userID, projectID); err != nil {
 			return err
@@ -76,20 +37,20 @@ func (s *Store) createEnvironment(ctx context.Context, userID, projectID, name s
 	return rec, err
 }
 
-func (s *Store) listEnvironments(ctx context.Context, userID, projectID string) ([]environmentRecord, error) {
+func (s *Store) listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error) {
 	if _, err := s.projectByID(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, environmentSelect+`
+	rows, err := s.db.QueryContext(ctx, deliverycore.EnvironmentSelect+`
 		 WHERE e.project_id = $1
 		 ORDER BY e.is_production DESC, e.created_at ASC, e.id ASC`, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []environmentRecord
+	var out []deliverycore.EnvironmentRecord
 	for rows.Next() {
-		rec, err := scanEnvironmentRow(rows)
+		rec, err := deliverycore.ScanEnvironmentRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -98,80 +59,36 @@ func (s *Store) listEnvironments(ctx context.Context, userID, projectID string) 
 	return out, rows.Err()
 }
 
-const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
-	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
-	FROM environments e`
-
-func (s *Store) environmentByID(ctx context.Context, userID, environmentID string) (environmentRecord, error) {
-	return s.environmentByIDQuerier(ctx, s.db, userID, environmentID)
+func (s *Store) environmentByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	return deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, deliverycore.EnvironmentSelect+` WHERE e.id = $1`, environmentID))
 }
 
-func (s *Store) environmentByIDQuerier(ctx context.Context, q serviceQueryer, userID, environmentID string) (environmentRecord, error) {
-	row := q.QueryRowContext(ctx, environmentSelect+`
-		 JOIN project_memberships m ON m.project_id = e.project_id
-		 JOIN projects p ON p.id = e.project_id
-		 WHERE e.id = $1 AND m.user_id = $2
-		   AND m.role IN ('owner', 'editor', 'viewer') AND p.kind = $3`,
-		environmentID, userID, string(projectKindUser))
-	return scanEnvironmentRow(row)
-}
-
-func (s *Store) environmentByIDInternalQuerier(ctx context.Context, q serviceQueryer, environmentID string) (environmentRecord, error) {
-	return scanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+` WHERE e.id = $1`, environmentID))
-}
-
-func (s *Store) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (environmentRecord, error) {
-	return scanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+`
+func (s *Store) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
+	return deliverycore.ScanEnvironmentRow(s.db.QueryRowContext(ctx, deliverycore.EnvironmentSelect+`
 		 WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 }
 
-func (s *Store) authorizeEnvironmentWrite(ctx context.Context, userID, environmentID string) (environmentRecord, error) {
-	return s.authorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
+func (s *Store) authorizeEnvironmentWrite(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	return s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
 }
 
-func (s *Store) authorizeEnvironmentWriteQuerier(ctx context.Context, q serviceQueryer, userID, environmentID string) (environmentRecord, error) {
-	row := q.QueryRowContext(ctx, environmentSelect+`
-		 JOIN project_memberships m ON m.project_id = e.project_id
-		 JOIN projects p ON p.id = e.project_id
-		 WHERE e.id = $1 AND m.user_id = $2
-		   AND m.role IN ('owner', 'editor') AND p.kind = $3`,
-		environmentID, userID, string(projectKindUser))
-	return scanEnvironmentRow(row)
-}
-
-func (s *Store) authorizeProjectWriteQuerier(ctx context.Context, q serviceQueryer, userID, projectID string) error {
+func (s *Store) authorizeProjectWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
 	var allowed bool
 	return q.QueryRowContext(ctx, `SELECT TRUE FROM projects p
 		JOIN project_memberships m ON m.project_id = p.id
 		WHERE p.id = $1 AND m.user_id = $2
 		  AND m.role IN ('owner', 'editor') AND p.kind = $3`,
-		projectID, userID, string(projectKindUser)).Scan(&allowed)
+		projectID, userID, string(deliverycore.ProjectKindUser)).Scan(&allowed)
 }
 
-func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (environmentRecord, error) {
-	var rec environmentRecord
-	var kind string
-	var networkIdentity int64
-	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction,
-		&networkIdentity, &rec.CopiedFromEnvironmentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
-		return environmentRecord{}, err
-	}
-	if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
-		return environmentRecord{}, fmt.Errorf("environment %s has invalid network identity %d", rec.ID, networkIdentity)
-	}
-	rec.NetworkIdentity = uint32(networkIdentity)
-	rec.Kind = environmentKind(kind)
-	return rec, nil
-}
-
-func (s *Store) renameEnvironment(ctx context.Context, userID, environmentID, name string) (environmentRecord, error) {
+func (s *Store) renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return environmentRecord{}, fmt.Errorf("environment name is required")
+		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
 	}
-	var rec environmentRecord
+	var rec deliverycore.EnvironmentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		current, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -193,7 +110,7 @@ func (s *Store) deleteEnvironment(ctx context.Context, userID, environmentID str
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		agentIDs = nil
 		identityCatalogChanged = false
-		rec, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		rec, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -233,88 +150,66 @@ func (s *Store) deleteEnvironment(ctx context.Context, userID, environmentID str
 		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
 			return err
 		}
-		agentIDs, err = s.agentIDsQuerier(ctx, tx)
+		agentIDs, err = s.deliveryQueries().AgentIDsQuerier(ctx, tx)
 		return err
 	})
 	return agentIDs, err
 }
 
-func (s *Store) duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (environmentRecord, error) {
-	var duplicate environmentRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		source, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, sourceEnvironmentID)
-		if err != nil {
-			return err
-		}
-		duplicate, err = s.createEnvironmentQuerier(ctx, tx, source.ProjectID, name, false, source.ID)
-		if err != nil {
-			return err
-		}
+func (s *Store) createEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string, production bool, copiedFrom string) (deliverycore.EnvironmentRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
+	}
+	networkIdentity, err := allocateEnvironmentNetworkIdentity(ctx, q)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	now := time.Now().UTC()
+	rec := deliverycore.EnvironmentRecord{
+		ID:                      deliverycore.MustID(),
+		ProjectID:               projectID,
+		Name:                    name,
+		Kind:                    deliverycore.EnvironmentKindPersistent,
+		IsProduction:            production,
+		NetworkIdentity:         networkIdentity,
+		CopiedFromEnvironmentID: copiedFrom,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	_, err = q.ExecContext(ctx, `
+		INSERT INTO environments(
+			id, project_id, name, kind, is_production, network_identity,
+			copied_from_environment_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		rec.ID, rec.ProjectID, rec.Name, string(rec.Kind), rec.IsProduction,
+		rec.NetworkIdentity, nullIfEmpty(rec.CopiedFromEnvironmentID), rec.CreatedAt, rec.UpdatedAt,
+	)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	return rec, nil
+}
 
-		type volumeCopy struct {
-			name string
-			size int64
+func allocateEnvironmentNetworkIdentity(ctx context.Context, q deliverycore.ServiceQueryer) (uint32, error) {
+	var identity int64
+	if err := q.QueryRowContext(ctx,
+		`UPDATE environment_network_identity_counter
+		    SET next_identity = next_identity + 1
+		  WHERE id = TRUE AND next_identity <= 4294967295
+		  RETURNING next_identity - 1`,
+	).Scan(&identity); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("environment network identity space exhausted")
 		}
-		var volumes []volumeCopy
-		rows, err := tx.QueryContext(ctx, `SELECT name, size_bytes FROM volumes
-			WHERE environment_id = $1 ORDER BY created_at, id`, source.ID)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var volume volumeCopy
-			if err := rows.Scan(&volume.name, &volume.size); err != nil {
-				rows.Close()
-				return err
-			}
-			volumes = append(volumes, volume)
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		for _, volume := range volumes {
-			if _, err := s.createVolumeTx(ctx, tx, userID, duplicate.ID, volume.name, volume.size); err != nil {
-				return err
-			}
-		}
+		return 0, fmt.Errorf("allocate environment network identity: %w", err)
+	}
+	return uint32(identity), nil
+}
 
-		type serviceCopy struct {
-			name string
-			raw  []byte
-		}
-		var services []serviceCopy
-		serviceRows, err := tx.QueryContext(ctx, `SELECT s.name, r.spec_json
-			FROM services s JOIN service_revisions r
-			  ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
-			WHERE s.environment_id = $1 ORDER BY s.created_at, s.id`, source.ID)
-		if err != nil {
-			return err
-		}
-		for serviceRows.Next() {
-			var service serviceCopy
-			if err := serviceRows.Scan(&service.name, &service.raw); err != nil {
-				serviceRows.Close()
-				return err
-			}
-			services = append(services, service)
-		}
-		if err := serviceRows.Close(); err != nil {
-			return err
-		}
-		for _, service := range services {
-			spec := &platformv1.ServiceSpec{}
-			if err := protojson.Unmarshal(service.raw, spec); err != nil {
-				return err
-			}
-			spec = proto.Clone(spec).(*platformv1.ServiceSpec)
-			if !copyVariables && spec.GetRuntime() != nil {
-				spec.Runtime.Env = nil
-			}
-			if _, err := s.createStagedServiceTx(ctx, tx, duplicate, service.name, spec, userID); err != nil {
-				return err
-			}
-		}
+func nullIfEmpty(value string) any {
+	if value == "" {
 		return nil
-	})
-	return duplicate, err
+	}
+	return value
 }

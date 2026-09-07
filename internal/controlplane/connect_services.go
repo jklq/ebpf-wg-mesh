@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"connectrpc.com/connect"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )

@@ -75,7 +75,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summary, err := store.loadServiceSourceSummaryQuerier(ctx, store.db, service.Spec, service.ID)
+	summary, err := sourceSummaryForTest(ctx, store, service.ID)
 	if err != nil {
 		t.Fatalf("loadServiceSourceSummaryQuerier: %v", err)
 	}
@@ -133,10 +133,14 @@ func (s *recordingSourceSnapshotServerStream) Send(chunk *platformv1.SourceSnaps
 	return nil
 }
 
-func (s *recordingSourceSnapshotServerStream) SetHeader(metadata.MD) error  { return nil }
+func (s *recordingSourceSnapshotServerStream) SetHeader(metadata.MD) error { return nil }
+
 func (s *recordingSourceSnapshotServerStream) SendHeader(metadata.MD) error { return nil }
-func (s *recordingSourceSnapshotServerStream) SetTrailer(metadata.MD)       {}
-func (s *recordingSourceSnapshotServerStream) Context() context.Context     { return s.ctx }
+
+func (s *recordingSourceSnapshotServerStream) SetTrailer(metadata.MD) {}
+
+func (s *recordingSourceSnapshotServerStream) Context() context.Context { return s.ctx }
+
 func (s *recordingSourceSnapshotServerStream) SendMsg(message any) error {
 	chunk, ok := message.(*platformv1.SourceSnapshotChunk)
 	if !ok {
@@ -144,4 +148,5 @@ func (s *recordingSourceSnapshotServerStream) SendMsg(message any) error {
 	}
 	return s.Send(chunk)
 }
+
 func (s *recordingSourceSnapshotServerStream) RecvMsg(any) error { return io.EOF }

@@ -4,10 +4,12 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/restartpolicy"
@@ -78,7 +80,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}
 	ingress := &countingIngress{}
 	eventStore := newMemoryEnvironmentEvents()
-	delivery := NewDelivery(store, nil, ingress, NewPlatformEvents(eventStore, time.Millisecond))
+	delivery := newTestDelivery(store, nil, ingress, NewPlatformEvents(eventStore, time.Millisecond))
 	err = delivery.ObserveAgentStatus(ctx, "node-1", report)
 	if err != nil {
 		t.Fatalf("ObserveAgentStatus: %v", err)
@@ -133,7 +135,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 		t.Fatal(err)
 	}
 	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || current.State != deploymentStateActive {
+	if err != nil || !ok || current.State != deliverycore.DeploymentStateActive {
 		t.Fatalf("current deployment: %+v ok=%v err=%v", current, ok, err)
 	}
 	original, err := store.allocationByServiceID(ctx, service.ID)
@@ -148,17 +150,17 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 		t.Fatalf("rolling restart should overlap a replacement: %+v", afterRestart)
 	}
 	kept := allocationByID(t, store, service.ID, original.ID)
-	if kept.ID != original.ID || kept.OperatorRestartNonce != 0 || kept.RolloutState != allocationRolloutServing || !kept.Healthy {
+	if kept.ID != original.ID || kept.OperatorRestartNonce != 0 || kept.RolloutState != deliverycore.AllocationRolloutServing || !kept.Healthy {
 		t.Fatalf("restart mutated the serving allocation in place: %+v", kept)
 	}
-	var replacement allocationRecord
+	var replacement deliverycore.AllocationRecord
 	for _, alloc := range afterRestart {
 		if alloc.ID != original.ID {
 			replacement = alloc
 			break
 		}
 	}
-	if replacement.ID == "" || replacement.RolloutState != allocationRolloutStarting {
+	if replacement.ID == "" || replacement.RolloutState != deliverycore.AllocationRolloutStarting {
 		t.Fatalf("expected a starting replacement allocation, got %+v", afterRestart)
 	}
 

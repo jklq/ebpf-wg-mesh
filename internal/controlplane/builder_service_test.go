@@ -71,7 +71,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
 	})
-	builderService := NewBuilderService(NewBuildOperations(store, NewDelivery(store, notifier, nil, nil), registry, registry, 0))
+	builderService := NewBuilderService(NewBuildOperations(store, newDelivery(store, notifier, nil, nil), registry, registry, 0))
 	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
@@ -133,7 +133,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	builderService := NewBuilderService(NewBuildOperations(store, NewDelivery(store, notifier, nil, nil), nil, nil, 0))
+	builderService := NewBuilderService(NewBuildOperations(store, newDelivery(store, notifier, nil, nil), nil, nil, 0))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),

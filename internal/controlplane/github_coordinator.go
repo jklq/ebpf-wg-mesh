@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +16,7 @@ var errGitHubWorkDeferred = errors.New("github work deferred")
 
 type GitHubCoordinator struct {
 	store      *Store
-	delivery   *Delivery
+	delivery   *deliverycore.Delivery
 	catalog    *GitHubCatalog
 	client     *GitHubClient
 	emitter    *LogEmitter
@@ -39,7 +40,7 @@ func WithGitHubCoordinatorLogEmitter(emitter *LogEmitter) GitHubCoordinatorOptio
 	}
 }
 
-func NewGitHubCoordinator(store *Store, delivery *Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
+func NewGitHubCoordinator(store *Store, delivery *deliverycore.Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
 	if store == nil || delivery == nil || catalog == nil || client == nil || !client.Enabled() {
 		return nil
 	}
@@ -66,11 +67,11 @@ func (c *GitHubCoordinator) Enabled() bool {
 	return c != nil && c.store != nil && c.catalog != nil && c.client != nil
 }
 
-func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (sourceWorkItemRecord, error) {
+func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (deliverycore.SourceWorkItemRecord, error) {
 	s := c.store
-	var rec sourceWorkItemRecord
+	var rec deliverycore.SourceWorkItemRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now, err := databaseTime(ctx, tx)
+		now, err := deliverycore.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -82,7 +83,7 @@ func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID s
 				        updated_at = $2
 				  WHERE state = $3
 				    AND updated_at < $4`,
-				sourceWorkStatePending, now, sourceWorkStateProcessing, now.Add(-staleAfter),
+				deliverycore.SourceWorkStatePending, now, deliverycore.SourceWorkStateProcessing, now.Add(-staleAfter),
 			); err != nil {
 				return err
 			}
@@ -96,7 +97,7 @@ func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID s
 			    AND available_at <= $2
 			  ORDER BY available_at ASC, created_at ASC, id ASC
 			  LIMIT 1`,
-			sourceWorkStatePending, now,
+			deliverycore.SourceWorkStatePending, now,
 		)
 		if err := row.Scan(
 			&rec.ID,
@@ -124,7 +125,7 @@ func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID s
 			}
 			return err
 		}
-		rec.State = sourceWorkStateProcessing
+		rec.State = deliverycore.SourceWorkStateProcessing
 		rec.ProcessorID = processorID
 		rec.UpdatedAt = now
 		_, err = tx.ExecContext(ctx,
@@ -138,13 +139,13 @@ func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID s
 		return err
 	})
 	if err != nil {
-		return sourceWorkItemRecord{}, err
+		return deliverycore.SourceWorkItemRecord{}, err
 	}
 	return rec, nil
 }
 
 func (c *GitHubCoordinator) CompleteWorkItem(ctx context.Context, id, processorID string) error {
-	result, err := c.store.db.ExecContext(ctx, `DELETE FROM source_work_items WHERE id = $1 AND state = $2 AND processor_id = $3`, id, sourceWorkStateProcessing, processorID)
+	result, err := c.store.db.ExecContext(ctx, `DELETE FROM source_work_items WHERE id = $1 AND state = $2 AND processor_id = $3`, id, deliverycore.SourceWorkStateProcessing, processorID)
 	if err != nil {
 		return err
 	}
@@ -172,11 +173,11 @@ func (c *GitHubCoordinator) ReleaseWorkItem(ctx context.Context, id, processorID
 		        available_at = statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond',
 		        updated_at = statement_timestamp()
 		  WHERE id = $4 AND state = $5 AND processor_id = $6`,
-		sourceWorkStatePending,
+		deliverycore.SourceWorkStatePending,
 		message,
 		retryAfter.Microseconds(),
 		id,
-		sourceWorkStateProcessing,
+		deliverycore.SourceWorkStateProcessing,
 		processorID,
 	)
 	if err != nil {
@@ -204,9 +205,9 @@ func (c *GitHubCoordinator) RecoverWorkItems(ctx context.Context, staleAfter tim
 		        updated_at = statement_timestamp()
 		  WHERE state = $3
 		    AND updated_at < statement_timestamp() - $2::INT8 * INTERVAL '1 microsecond'`,
-			sourceWorkStatePending,
+			deliverycore.SourceWorkStatePending,
 			staleAfter.Microseconds(),
-			sourceWorkStateProcessing,
+			deliverycore.SourceWorkStateProcessing,
 		)
 		return err
 	})
@@ -219,9 +220,9 @@ func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, inst
 	if installationID <= 0 {
 		return errors.New("installation id is required")
 	}
-	inserted, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
-		Kind:                    sourceWorkKindProviderAccessChanged,
-		IdempotencyKey:          fmt.Sprintf("%s:github:%d", sourceWorkKindProviderAccessChanged, installationID),
+	inserted, err := c.store.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
+		Kind:                    deliverycore.SourceWorkKindProviderAccessChanged,
+		IdempotencyKey:          fmt.Sprintf("%s:github:%d", deliverycore.SourceWorkKindProviderAccessChanged, installationID),
 		Provider:                "github",
 		ProviderScopeExternalID: scopeExternalID(installationID),
 	})
@@ -246,9 +247,9 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	if repositoryExternalID == "" || trackedRef == "" || commitSHA == "" {
 		return errors.New("repository id, tracked ref, and commit sha are required")
 	}
-	inserted, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
-		Kind:                         sourceWorkKindRevisionObserved,
-		IdempotencyKey:               fmt.Sprintf("%s:github:%s:%s:%s", sourceWorkKindRevisionObserved, repositoryExternalID, trackedRef, commitSHA),
+	inserted, err := c.store.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
+		Kind:                         deliverycore.SourceWorkKindRevisionObserved,
+		IdempotencyKey:               fmt.Sprintf("%s:github:%s:%s:%s", deliverycore.SourceWorkKindRevisionObserved, repositoryExternalID, trackedRef, commitSHA),
 		Provider:                     "github",
 		ProviderRepositoryExternalID: repositoryExternalID,
 		TrackedRef:                   trackedRef,
@@ -267,13 +268,13 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	return nil
 }
 
-func (c *GitHubCoordinator) processWorkItem(ctx context.Context, rec sourceWorkItemRecord) error {
+func (c *GitHubCoordinator) processWorkItem(ctx context.Context, rec deliverycore.SourceWorkItemRecord) error {
 	switch rec.Kind {
-	case sourceWorkKindProviderAccessChanged:
+	case deliverycore.SourceWorkKindProviderAccessChanged:
 		return c.handleProviderAccessChanged(ctx, rec.ProviderScopeExternalID)
-	case sourceWorkKindSourceSpecChanged:
+	case deliverycore.SourceWorkKindSourceSpecChanged:
 		return c.syncServiceSource(ctx, rec.ServiceID, rec.SpecRevision)
-	case sourceWorkKindRevisionObserved:
+	case deliverycore.SourceWorkKindRevisionObserved:
 		return c.handleRevisionObserved(ctx, rec)
 	default:
 		return nil
@@ -293,9 +294,9 @@ func (c *GitHubCoordinator) handleProviderAccessChanged(ctx context.Context, pro
 		return err
 	}
 	for _, binding := range bindings {
-		if _, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
-			Kind:           sourceWorkKindSourceSpecChanged,
-			IdempotencyKey: fmt.Sprintf("%s:%s", sourceWorkKindSourceSpecChanged, binding.ServiceID),
+		if _, err := c.store.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
+			Kind:           deliverycore.SourceWorkKindSourceSpecChanged,
+			IdempotencyKey: fmt.Sprintf("%s:%s", deliverycore.SourceWorkKindSourceSpecChanged, binding.ServiceID),
 			ServiceID:      binding.ServiceID,
 		}); err != nil {
 			return err
@@ -324,7 +325,7 @@ func (c *GitHubCoordinator) refreshInstallation(ctx context.Context, installatio
 }
 
 func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID string, specRevision int64) error {
-	service, err := c.store.serviceByIDInternalQuerier(ctx, c.store.db, serviceID)
+	service, err := c.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, c.store.db, serviceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -334,7 +335,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if specRevision > 0 && service.SpecRevision != specRevision {
 		return nil
 	}
-	source := desiredSourceSpec(service.Spec)
+	source := deliverycore.DesiredSourceSpec(service.Spec)
 	if source == nil {
 		return nil
 	}
@@ -371,7 +372,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	}
 	now := time.Now().UTC()
 	trackedRef := sourceTrackedRef(source, view.DefaultBranch)
-	binding, err := c.store.upsertSourceBinding(ctx, sourceBindingRecord{
+	binding, err := c.store.upsertSourceBinding(ctx, deliverycore.SourceBindingRecord{
 		ServiceID:                    service.ID,
 		ProjectID:                    service.ProjectID,
 		Provider:                     "github",
@@ -387,7 +388,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
-	if binding.AccessState != sourceAccessStateAvailable {
+	if binding.AccessState != deliverycore.SourceAccessStateAvailable {
 		return nil
 	}
 	commitSHA, err := c.client.GetBranchHead(ctx, view.Owner, view.Repo, trackedRef, providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID))
@@ -401,7 +402,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author)
 }
 
-func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sourceWorkItemRecord) error {
+func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec deliverycore.SourceWorkItemRecord) error {
 	bindings, err := c.store.sourceBindingsForGitHubRepositoryAndRef(ctx, rec.ProviderRepositoryExternalID, rec.TrackedRef)
 	if err != nil {
 		return err
@@ -413,16 +414,16 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sour
 	for _, binding := range bindings {
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
-			if _, err := c.store.enqueueSourceWorkItem(ctx, sourceWorkItemRecord{
-				Kind:           sourceWorkKindSourceSpecChanged,
-				IdempotencyKey: fmt.Sprintf("%s:%s:%d", sourceWorkKindSourceSpecChanged, binding.ServiceID, time.Now().UTC().UnixNano()),
+			if _, err := c.store.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
+				Kind:           deliverycore.SourceWorkKindSourceSpecChanged,
+				IdempotencyKey: fmt.Sprintf("%s:%s:%d", deliverycore.SourceWorkKindSourceSpecChanged, binding.ServiceID, time.Now().UTC().UnixNano()),
 				ServiceID:      binding.ServiceID,
 			}); err != nil {
 				return err
 			}
 			continue
 		}
-		if binding.AccessState != sourceAccessStateAvailable {
+		if binding.AccessState != deliverycore.SourceAccessStateAvailable {
 			slog.InfoContext(ctx, "github source binding unavailable", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA, "access_state", binding.AccessState)
 			continue
 		}
@@ -434,16 +435,16 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec sour
 	return nil
 }
 
-func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding sourceBindingRecord, commitSHA, commitMessage, commitAuthor string) error {
+func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding deliverycore.SourceBindingRecord, commitSHA, commitMessage, commitAuthor string) error {
 	owner, repo, err := splitGitHubRepositorySelector(binding.RepositorySelector)
 	if err != nil {
 		return err
 	}
 	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
-	var revision sourceRevisionRecord
+	var revision deliverycore.SourceRevisionRecord
 	if err := c.store.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		revision, err = c.store.upsertSourceRevisionTx(ctx, tx, sourceRevisionRecord{
+		revision, err = c.store.upsertSourceRevisionTx(ctx, tx, deliverycore.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    binding.ServiceID,
 			Provider:                     binding.Provider,
@@ -462,7 +463,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		return err
 	}
 
-	var pendingSnapshot sourceSnapshotRecord
+	var pendingSnapshot deliverycore.SourceSnapshotRecord
 	if _, err := c.store.sourceSnapshotByRevisionID(ctx, revision.ID); errors.Is(err, sql.ErrNoRows) {
 		// Network download, validation, and object storage deliberately happen
 		// outside the serializable CockroachDB transaction.
@@ -474,7 +475,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		if err != nil {
 			return err
 		}
-		pendingSnapshot = sourceSnapshotRecord{
+		pendingSnapshot = deliverycore.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
@@ -489,7 +490,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding so
 		return err
 	}
 
-	queued, err := c.delivery.queueSourceBuild(ctx, binding, commitSHA, pendingSnapshot)
+	queued, err := c.delivery.QueueSourceBuild(ctx, binding, commitSHA, pendingSnapshot)
 	if err != nil {
 		return err
 	}
@@ -506,15 +507,15 @@ func (c *GitHubCoordinator) refreshRepositorySnapshot(ctx context.Context, owner
 	return c.catalog.RefreshRepositorySnapshot(ctx, owner, repo)
 }
 
-func (s *Store) upsertSourceBinding(ctx context.Context, rec sourceBindingRecord) (sourceBindingRecord, error) {
-	var out sourceBindingRecord
+func (s *Store) upsertSourceBinding(ctx context.Context, rec deliverycore.SourceBindingRecord) (deliverycore.SourceBindingRecord, error) {
+	var out deliverycore.SourceBindingRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		out, err = s.upsertSourceBindingTx(ctx, tx, rec)
 		return err
 	})
 	if err != nil {
-		return sourceBindingRecord{}, err
+		return deliverycore.SourceBindingRecord{}, err
 	}
 	return out, nil
 }
