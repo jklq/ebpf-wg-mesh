@@ -27,7 +27,7 @@ func enqueueBuildForTest(ctx context.Context, store *Store, userID, serviceID, c
 }
 
 func releaseEnvironmentServiceForTest(ctx context.Context, store *Store, userID, environmentID, serviceID string) (serviceRecord, error) {
-	services, _, err := store.releaseEnvironment(ctx, userID, environmentID)
+	services, _, err := releaseEnvironmentForTest(ctx, store, userID, environmentID)
 	if err != nil {
 		return serviceRecord{}, err
 	}
@@ -38,3 +38,18 @@ func releaseEnvironmentServiceForTest(ctx context.Context, store *Store, userID,
 	}
 	return serviceRecord{}, sql.ErrNoRows
 }
+
+// Release fixtures use the same authorized operation as the transport.
+func releaseEnvironmentForTest(ctx context.Context, store *Store, userID, environmentID string) ([]serviceRecord, []string, error) {
+	notifier := &releaseTestNotifier{}
+	released, err := NewDelivery(store, notifier).ReleaseEnvironment(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), environmentID)
+	services := make([]serviceRecord, 0, len(released))
+	for _, result := range released {
+		services = append(services, result.Service)
+	}
+	return services, notifier.agentIDs, err
+}
+
+type releaseTestNotifier struct{ agentIDs []string }
+
+func (n *releaseTestNotifier) Notify(id string) { n.agentIDs = append(n.agentIDs, id) }

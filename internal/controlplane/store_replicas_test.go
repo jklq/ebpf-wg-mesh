@@ -100,7 +100,7 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	if len(allocations) != 1 {
 		t.Fatalf("expected live allocations to stay at 1 until deploy, got %d", len(allocations))
 	}
-	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	scaled, err := store.serviceByID(ctx, "user-1", service.ID)
@@ -356,7 +356,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	if current.DesiredReplicaCount != 1 {
 		t.Fatalf("live desired replica count = %d, want 1 until deploy", current.DesiredReplicaCount)
 	}
-	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	current, err = store.serviceByID(ctx, "user-1", service.ID)
@@ -377,7 +377,7 @@ func mustQueueAndDeployReplicas(t *testing.T, store *Store, ctx context.Context,
 	if _, _, err := store.scaleService(ctx, "user-1", serviceID, desired); err != nil {
 		t.Fatalf("scaleService: %v", err)
 	}
-	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
 }

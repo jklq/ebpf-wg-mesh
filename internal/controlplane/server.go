@@ -155,6 +155,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		store,
 		notifier,
 		ingress,
+		NewDelivery(store, notifier),
 		WithServiceLogs(logStore),
 		WithServiceLogEmitter(logEmitter),
 		WithGitHubSourceInspection(githubCatalog, githubClient),

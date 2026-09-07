@@ -55,7 +55,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	if err != nil {
 		t.Fatalf("createScheduledService: %v", err)
 	}
-	deployed, _, err := store.releaseEnvironment(ctx, "user-1", environmentsOne[0].ID)
+	deployed, _, err := releaseEnvironmentForTest(ctx, store, "user-1", environmentsOne[0].ID)
 	if err != nil || len(deployed) != 1 {
 		t.Fatalf("releaseEnvironment: %#v: %v", deployed, err)
 	}
@@ -64,7 +64,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	if err != nil {
 		t.Fatalf("create staging service: %v", err)
 	}
-	stagingDeployed, _, err := store.releaseEnvironment(ctx, "user-1", staging.ID)
+	stagingDeployed, _, err := releaseEnvironmentForTest(ctx, store, "user-1", staging.ID)
 	if err != nil || len(stagingDeployed) != 1 {
 		t.Fatalf("release staging environment: %#v: %v", stagingDeployed, err)
 	}

@@ -29,7 +29,7 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 			}}, nil
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
 
 	resp, err := service.ListProjects(contextWithDelegatedUser("user-1", "user@example.com"), &emptypb.Empty{})
 	if err != nil {
@@ -51,7 +51,7 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 			authorizeProjectWriteFn: func(context.Context, string, string) error {
 				return sql.ErrNoRows
 			},
-		}, noopNotifier{}, noopIngress{})
+		}, noopNotifier{}, noopIngress{}, nil)
 		_, err := service.ApplyDeploymentAction(
 			contextWithDelegatedUser("user-1", ""),
 			&platformv1.ApplyDeploymentActionRequest{
@@ -75,7 +75,7 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 			serviceStatusFn: func(context.Context, string, string) (serviceRecord, []allocationRecord, error) {
 				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil, nil
 			},
-		}, noopNotifier{}, noopIngress{})
+		}, noopNotifier{}, noopIngress{}, nil)
 		_, err := service.ApplyDeploymentAction(
 			contextWithDelegatedUser("user-1", ""),
 			&platformv1.ApplyDeploymentActionRequest{
@@ -96,7 +96,7 @@ func TestPlatformServiceRejectsViewerWrites(t *testing.T) {
 		authorizeProjectWriteFn: func(context.Context, string, string) error {
 			return sql.ErrNoRows
 		},
-	}, noopNotifier{}, noopIngress{})
+	}, noopNotifier{}, noopIngress{}, nil)
 	_, err := service.DeleteService(
 		contextWithDelegatedUser("user-1", ""),
 		&platformv1.DeleteServiceRequest{ServiceId: "service-1"},
@@ -114,7 +114,7 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 			return serviceRecord{}, errNoPlacementAvailable
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
 
 	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 		EnvironmentId: "project-1",
@@ -131,7 +131,7 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 func TestPlatformServiceRejectsUnsafeHTTPHealthPaths(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil)
 	for _, path := range []string{"healthz", "//redirect.example/healthz", "/healthz\r\nX-Test: injected"} {
 		_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 			EnvironmentId: "project-1",
@@ -149,7 +149,7 @@ func TestPlatformServiceRejectsUnsafeHTTPHealthPaths(t *testing.T) {
 func TestPlatformServiceRejectsUnknownHealthCheckType(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil)
 	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 		EnvironmentId: "project-1",
 		Service: &platformv1.ServiceInput{Name: "web", Spec: directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
@@ -173,7 +173,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 			return serviceRecord{}, false, errConcurrentUpdate
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{})
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
 		ServiceId: "service-1",
@@ -193,7 +193,7 @@ func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 		listVolumesFn: func(ctx context.Context, userID, projectID string) ([]volumeRecord, error) {
 			return []volumeRecord{}, nil
 		},
-	}, noopNotifier{}, noopIngress{})
+	}, noopNotifier{}, noopIngress{}, nil)
 
 	_, err := service.DeleteVolume(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteVolumeRequest{
 		VolumeId: "missing",
@@ -210,7 +210,7 @@ func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 		projectByIDFn: func(ctx context.Context, userID, projectID string) (projectRecord, error) {
 			return projectRecord{}, sql.ErrNoRows
 		},
-	}, noopNotifier{}, noopIngress{})
+	}, noopNotifier{}, noopIngress{}, nil)
 
 	_, err := service.GetProject(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GetProjectRequest{})
 	if status.Code(err) != codes.NotFound {

@@ -64,7 +64,7 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 	if second.err != nil {
 		t.Fatalf("second createScheduledService: %v", second.err)
 	}
-	deployed, _, err := store.releaseEnvironment(ctx, "user-1", environmentID)
+	deployed, _, err := releaseEnvironmentForTest(ctx, store, "user-1", environmentID)
 	if err != nil || len(deployed) != 2 {
 		t.Fatalf("releaseEnvironment: %#v: %v", deployed, err)
 	}

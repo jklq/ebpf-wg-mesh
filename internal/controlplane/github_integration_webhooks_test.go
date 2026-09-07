@@ -26,7 +26,7 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store, client)
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, WithGitHubSourceInspection(catalog, client))
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, NewDelivery(store, noopNotifier{}), WithGitHubSourceInspection(catalog, client))
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -82,7 +82,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store, client)
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, WithGitHubSourceInspection(catalog, client))
+	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, NewDelivery(store, noopNotifier{}), WithGitHubSourceInspection(catalog, client))
 	ctx := context.Background()
 
 	projectID, serviceID := createRepoBackedTestService(t, store, ctx, "public/hello", 0, "main")

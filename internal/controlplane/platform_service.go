@@ -15,6 +15,7 @@ import (
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store                platformStore
+	delivery             *Delivery
 	logStore             serviceLogStore
 	emitter              *LogEmitter
 	notifier             platformNotifier
@@ -62,7 +63,6 @@ type environmentStore interface {
 	duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (environmentRecord, error)
 	renameEnvironment(ctx context.Context, userID, environmentID, name string) (environmentRecord, error)
 	deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error)
-	releaseEnvironment(ctx context.Context, userID, environmentID string) ([]serviceRecord, []string, error)
 }
 
 func (s *PlatformService) environmentForUser(ctx context.Context, userID, environmentID string) (environmentRecord, error) {
@@ -128,8 +128,8 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 	}
 }
 
-func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, opts ...PlatformServiceOption) *PlatformService {
-	service := &PlatformService{store: store, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
+func NewPlatformService(store platformStore, notifier platformNotifier, ingress platformIngress, delivery *Delivery, opts ...PlatformServiceOption) *PlatformService {
+	service := &PlatformService{store: store, delivery: delivery, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
@@ -265,27 +265,13 @@ func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1
 }
 
 func (s *PlatformService) ReleaseEnvironment(ctx context.Context, req *platformv1.ReleaseEnvironmentRequest) (*platformv1.ReleaseEnvironmentResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	services, err := s.delivery.ReleaseEnvironment(ctx, req.GetEnvironmentId())
 	if err != nil {
 		return nil, err
 	}
-	services, agentIDs, err := s.store.releaseEnvironment(ctx, identity.UserID, req.GetEnvironmentId())
-	if err != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "release environment: %v", err)
-	}
-	for _, agentID := range agentIDs {
-		s.notifier.Notify(agentID)
-	}
 	resp := &platformv1.ReleaseEnvironmentResponse{Services: make([]*platformv1.ServiceStatus, 0, len(services))}
-	for _, service := range services {
-		allocations, err := s.store.listAllocationsByServiceID(ctx, service.ID)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "load release allocations: %v", err)
-		}
-		resp.Services = append(resp.Services, toProtoServiceStatus(service, allocations, 0))
-	}
-	if _, err := s.events.Publish(ctx, req.GetEnvironmentId()); err != nil {
-		return nil, status.Errorf(codes.Internal, "publish environment event: %v", err)
+	for _, released := range services {
+		resp.Services = append(resp.Services, toProtoServiceStatus(released.Service, released.Allocations, 0))
 	}
 	return resp, nil
 }
