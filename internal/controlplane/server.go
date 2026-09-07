@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +16,9 @@ import (
 	"connectrpc.com/connect"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
 	platformv1connect "ebof-wg-mesh/api/proto/platformv1connect"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
@@ -26,7 +29,7 @@ import (
 type Server struct {
 	cfg             config.ControlPlaneConfig
 	store           *Store
-	delivery        *Delivery
+	delivery        *deliverycore.Delivery
 	logStore        *LogStore
 	logEmitter      *LogEmitter
 	notifier        *Notifier
@@ -134,7 +137,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store, ingressOpts...)
 	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
-	delivery := NewDelivery(store, notifier, ingress, platformEvents)
+	delivery := newDelivery(store, notifier, ingress, platformEvents)
 	var githubClient *GitHubClient
 	var githubCatalog *GitHubCatalog
 	var githubCoordinator *GitHubCoordinator
@@ -395,7 +398,7 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 
 func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 	prune := func() {
-		now, err := databaseTime(ctx, s.store.db)
+		now, err := deliverycore.DatabaseTime(ctx, s.store.db)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("source archive retention database time failed", "error", err)
@@ -521,14 +524,14 @@ func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, err
 	if s == nil || s.store == nil {
 		return false, errors.New("controlplane store is not initialized")
 	}
-	rec, err := s.store.agentByID(ctx, agentID)
+	rec, err := s.store.deliveryQueries().AgentByID(ctx, agentID)
 	switch {
 	case err == nil:
-		now, err := databaseTime(ctx, s.store.db)
+		now, err := deliverycore.DatabaseTime(ctx, s.store.db)
 		if err != nil {
 			return false, err
 		}
-		return rec.LastSeenAt.After(now.Add(-agentHealthyTTL)), nil
+		return rec.LastSeenAt.After(now.Add(-deliverycore.AgentHealthyTTL)), nil
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil
 	default:

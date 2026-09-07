@@ -3,38 +3,39 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"time"
 )
 
-func (s *Store) createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+func (s *Store) createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, false, true)
 }
 
-func (s *Store) createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+func (s *Store) createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, true, true)
 }
 
-func (s *Store) updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
+func (s *Store) updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, false, false)
 }
 
-func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32, platformGenerated, createOnly bool) (domainBindingRecord, bool, error) {
-	if err := validatePort(targetPort); err != nil {
-		return domainBindingRecord{}, false, err
+func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32, platformGenerated, createOnly bool) (deliverycore.DomainBindingRecord, bool, error) {
+	if err := deliverycore.ValidatePort(targetPort); err != nil {
+		return deliverycore.DomainBindingRecord{}, false, err
 	}
-	var binding domainBindingRecord
+	var binding deliverycore.DomainBindingRecord
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		changed = false
-		binding = domainBindingRecord{}
+		binding = deliverycore.DomainBindingRecord{}
 		attemptHostname, attemptCreateOnly := hostname, createOnly
 		attemptPlatformGenerated := platformGenerated
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
+		service, err := s.deliveryQueries().ServiceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
+		if _, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
 			return err
 		}
 		if attemptPlatformGenerated {
@@ -46,7 +47,7 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 			}
 		}
 		now := time.Now().UTC()
-		var existing domainBindingRecord
+		var existing deliverycore.DomainBindingRecord
 		err = tx.QueryRowContext(ctx,
 			`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port, d.platform_generated, d.created_at, d.updated_at
 			   FROM domain_bindings d
@@ -58,9 +59,9 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 		switch {
 		case err == nil:
 			if attemptCreateOnly {
-				return errDomainAlreadyExists
+				return deliverycore.ErrDomainAlreadyExists
 			}
-			if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, existing.EnvironmentID); err != nil {
+			if _, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, existing.EnvironmentID); err != nil {
 				return err
 			}
 			if existing.PlatformGenerated && existing.ServiceID != serviceID {
@@ -138,7 +139,7 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 		if err := s.bumpDesiredRevisionsTx(ctx, tx, createAgentIDs); err != nil {
 			return err
 		}
-		binding = domainBindingRecord{
+		binding = deliverycore.DomainBindingRecord{
 			Hostname:          attemptHostname,
 			ProjectID:         service.ProjectID,
 			EnvironmentID:     service.EnvironmentID,
@@ -152,17 +153,17 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 		return nil
 	})
 	if err != nil {
-		return domainBindingRecord{}, false, err
+		return deliverycore.DomainBindingRecord{}, false, err
 	}
 	return binding, changed, nil
 }
 
-func (s *Store) domainBindingByHostname(ctx context.Context, userID, hostname string) (domainBindingRecord, error) {
+func (s *Store) domainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error) {
 	return s.domainBindingByHostnameQuerier(ctx, s.db, userID, hostname)
 }
 
-func (s *Store) domainBindingByHostnameQuerier(ctx context.Context, q serviceQueryer, userID, hostname string) (domainBindingRecord, error) {
-	var binding domainBindingRecord
+func (s *Store) domainBindingByHostnameQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, hostname string) (deliverycore.DomainBindingRecord, error) {
+	var binding deliverycore.DomainBindingRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port,
 		        d.platform_generated, d.created_at, d.updated_at
@@ -173,46 +174,21 @@ func (s *Store) domainBindingByHostnameQuerier(ctx context.Context, q serviceQue
 		hostname, userID,
 	).Scan(&binding.Hostname, &binding.ProjectID, &binding.EnvironmentID, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt)
 	if err != nil {
-		return domainBindingRecord{}, err
+		return deliverycore.DomainBindingRecord{}, err
 	}
 	return binding, nil
 }
 
-func (s *Store) listDomainBindings(ctx context.Context, userID, serviceID string) ([]domainBindingRecord, error) {
-	service, err := s.serviceByID(ctx, userID, serviceID)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT hostname, service_id, target_port, platform_generated, created_at, updated_at
-		FROM domain_bindings WHERE service_id = $1 ORDER BY hostname ASC`, serviceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []domainBindingRecord
-	for rows.Next() {
-		var binding domainBindingRecord
-		binding.ProjectID = service.ProjectID
-		binding.EnvironmentID = service.EnvironmentID
-		if err := rows.Scan(&binding.Hostname, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, binding)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) platformDomainBindingForService(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
+func (s *Store) platformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
 	return s.platformDomainBindingForServiceQuerier(ctx, s.db, userID, serviceID)
 }
 
-func (s *Store) platformDomainBindingForServiceQuerier(ctx context.Context, q serviceQueryer, userID, serviceID string) (domainBindingRecord, error) {
-	service, err := s.serviceByIDQuerier(ctx, q, userID, serviceID)
+func (s *Store) platformDomainBindingForServiceQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+	service, err := s.deliveryQueries().ServiceByIDQuerier(ctx, q, userID, serviceID)
 	if err != nil {
-		return domainBindingRecord{}, err
+		return deliverycore.DomainBindingRecord{}, err
 	}
-	var binding domainBindingRecord
+	var binding deliverycore.DomainBindingRecord
 	err = q.QueryRowContext(ctx,
 		`SELECT hostname, service_id, target_port, platform_generated, created_at, updated_at
 		   FROM domain_bindings d
@@ -232,7 +208,7 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, hostname string
 		if err != nil {
 			return err
 		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, binding.EnvironmentID); err != nil {
+		if _, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, binding.EnvironmentID); err != nil {
 			return err
 		}
 		if binding.PlatformGenerated {
@@ -285,26 +261,14 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, hostname string
 	return changed, nil
 }
 
-func (s *Store) serviceStatus(ctx context.Context, userID, serviceID string) (serviceRecord, []allocationRecord, error) {
-	service, err := s.serviceByID(ctx, userID, serviceID)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	allocs, err := s.listAllocationsByServiceID(ctx, serviceID)
-	if err != nil {
-		return serviceRecord{}, nil, err
-	}
-	return service, allocs, nil
-}
-
 // allocationByServiceID returns the first allocation row associated with a
 // service, if any. A missing allocation is treated as a non-error empty record
 // so callers that just want stage projections can keep going without
 // special-casing the not-yet-scheduled path.
-func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (allocationRecord, error) {
-	allocs, err := s.listAllocationsByServiceID(ctx, serviceID)
+func (s *Store) allocationByServiceID(ctx context.Context, serviceID string) (deliverycore.AllocationRecord, error) {
+	allocs, err := s.deliveryQueries().ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
-		return allocationRecord{}, err
+		return deliverycore.AllocationRecord{}, err
 	}
 	return primaryAllocation(allocs), nil
 }

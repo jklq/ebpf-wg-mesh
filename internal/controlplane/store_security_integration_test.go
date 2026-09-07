@@ -4,10 +4,12 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
@@ -69,7 +71,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		t.Fatalf("release staging environment: %#v: %v", stagingDeployed, err)
 	}
 	stagingService = stagingDeployed[0]
-	for label, item := range map[string]serviceRecord{"production": service, "staging": stagingService} {
+	for label, item := range map[string]deliverycore.ServiceRecord{"production": service, "staging": stagingService} {
 		allocation, err := store.allocationByServiceID(ctx, item.ID)
 		if err != nil {
 			t.Fatalf("load %s allocation: %v", label, err)

@@ -1,32 +1,32 @@
 package controlplane
 
 import (
-	"google.golang.org/protobuf/proto"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func toProtoProject(rec projectRecord) *platformv1.Project {
+func toProtoProject(rec deliverycore.ProjectRecord) *platformv1.Project {
 	return &platformv1.Project{
 		Id:        rec.ID,
 		Name:      rec.Name,
-		CreatedAt: ts(rec.CreatedAt),
+		CreatedAt: deliverycore.Ts(rec.CreatedAt),
 		Kind:      toProtoProjectKind(rec.Kind),
 		SystemKey: rec.SystemKey,
 	}
 }
 
-func toProtoProjectKind(kind projectKind) platformv1.ProjectKind {
+func toProtoProjectKind(kind deliverycore.ProjectKind) platformv1.ProjectKind {
 	switch kind {
-	case projectKindManaged:
+	case deliverycore.ProjectKindManaged:
 		return platformv1.ProjectKind_PROJECT_KIND_MANAGED
 	default:
 		return platformv1.ProjectKind_PROJECT_KIND_USER
 	}
 }
 
-func toProtoEnvironment(rec environmentRecord) *platformv1.Environment {
+func toProtoEnvironment(rec deliverycore.EnvironmentRecord) *platformv1.Environment {
 	return &platformv1.Environment{
 		Id:                      rec.ID,
 		ProjectId:               rec.ProjectID,
@@ -34,20 +34,20 @@ func toProtoEnvironment(rec environmentRecord) *platformv1.Environment {
 		Kind:                    platformv1.EnvironmentKind_ENVIRONMENT_KIND_PERSISTENT,
 		IsProduction:            rec.IsProduction,
 		CopiedFromEnvironmentId: rec.CopiedFromEnvironmentID,
-		CreatedAt:               ts(rec.CreatedAt),
-		UpdatedAt:               ts(rec.UpdatedAt),
+		CreatedAt:               deliverycore.Ts(rec.CreatedAt),
+		UpdatedAt:               deliverycore.Ts(rec.UpdatedAt),
 	}
 }
 
-func toProtoService(rec serviceRecord) *platformv1.Service {
+func toProtoService(rec deliverycore.ServiceRecord) *platformv1.Service {
 	return &platformv1.Service{
 		Id:                      rec.ID,
 		EnvironmentId:           rec.EnvironmentID,
 		Name:                    rec.Name,
 		Spec:                    rec.Spec,
 		SpecRevision:            rec.SpecRevision,
-		CreatedAt:               ts(rec.CreatedAt),
-		UpdatedAt:               ts(rec.UpdatedAt),
+		CreatedAt:               deliverycore.Ts(rec.CreatedAt),
+		UpdatedAt:               deliverycore.Ts(rec.UpdatedAt),
 		RolloutGeneration:       rec.RolloutGeneration,
 		SourceSummary:           rec.SourceSummary,
 		LastSuccessfulCommitSha: rec.LastSuccessfulCommitSHA,
@@ -56,7 +56,7 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 		PendingChanges:          rec.PendingChanges,
 		UnappliedChangeCount:    int32(len(rec.UnappliedChanges)),
 		UnappliedChanges:        rec.UnappliedChanges,
-		InternalHostname:        internalServiceHostname(rec.Name, rec.ID),
+		InternalHostname:        deliverycore.InternalServiceHostname(rec.Name, rec.ID),
 		LatestDeployment:        toProtoDeploymentStatus(rec.LatestDeployment),
 		DesiredReplicaCount:     rec.DesiredReplicaCount,
 		ReadyReplicaCount:       rec.ReadyReplicaCount,
@@ -64,15 +64,15 @@ func toProtoService(rec serviceRecord) *platformv1.Service {
 	}
 }
 
-func toProtoServiceWithAllocations(rec serviceRecord, allocations []allocationRecord) *platformv1.Service {
+func toProtoServiceWithAllocations(rec deliverycore.ServiceRecord, allocations []deliverycore.AllocationRecord) *platformv1.Service {
 	rec.ReadyReplicaCount = countReadyAllocations(allocations)
 	if rec.DesiredReplicaCount <= 0 && rec.RolloutGeneration > 0 {
-		rec.DesiredReplicaCount = defaultDesiredReplicaCount
+		rec.DesiredReplicaCount = deliverycore.DefaultDesiredReplicaCount
 	}
 	return toProtoService(rec)
 }
 
-func toProtoServiceStatus(rec serviceRecord, allocations []allocationRecord, index int64) *platformv1.ServiceStatus {
+func toProtoServiceStatus(rec deliverycore.ServiceRecord, allocations []deliverycore.AllocationRecord, index int64) *platformv1.ServiceStatus {
 	return &platformv1.ServiceStatus{
 		Service:     toProtoServiceWithAllocations(rec, allocations),
 		Allocation:  toProtoAllocation(primaryAllocation(allocations)),
@@ -81,36 +81,36 @@ func toProtoServiceStatus(rec serviceRecord, allocations []allocationRecord, ind
 	}
 }
 
-func toProtoDomainBinding(rec domainBindingRecord) *platformv1.DomainBinding {
+func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
 	return &platformv1.DomainBinding{
 		Hostname:          rec.Hostname,
 		ServiceId:         rec.ServiceID,
 		TargetPort:        rec.TargetPort,
 		PlatformGenerated: rec.PlatformGenerated,
-		CreatedAt:         ts(rec.CreatedAt),
-		UpdatedAt:         ts(rec.UpdatedAt),
+		CreatedAt:         deliverycore.Ts(rec.CreatedAt),
+		UpdatedAt:         deliverycore.Ts(rec.UpdatedAt),
 	}
 }
 
-func toProtoVolume(rec volumeRecord) *platformv1.Volume {
+func toProtoVolume(rec deliverycore.VolumeRecord) *platformv1.Volume {
 	return &platformv1.Volume{
 		Id:            rec.ID,
 		EnvironmentId: rec.EnvironmentID,
 		Name:          rec.Name,
 		SizeBytes:     rec.SizeBytes,
-		CreatedAt:     ts(rec.CreatedAt),
+		CreatedAt:     deliverycore.Ts(rec.CreatedAt),
 	}
 }
 
-func toProtoAgent(rec agentRecord) *platformv1.Agent {
+func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {
 	out := &platformv1.Agent{
 		Id:                         rec.ID,
 		Name:                       rec.Name,
 		AdvertiseAddr:              rec.AdvertiseAddr,
-		Healthy:                    rec.healthy(time.Now().UTC()),
+		Healthy:                    rec.Healthy(time.Now().UTC()),
 		CpuMillisCapacity:          rec.CPUMillisCapacity,
 		MemoryMebibytesCapacity:    rec.MemoryMebibytesCapcity,
-		LastSeenAt:                 ts(rec.LastSeenAt),
+		LastSeenAt:                 deliverycore.Ts(rec.LastSeenAt),
 		LifecycleState:             lifecycleStateProto(rec.LifecycleState),
 		Region:                     rec.Region,
 		Zone:                       rec.Zone,
@@ -124,12 +124,12 @@ func toProtoAgent(rec agentRecord) *platformv1.Agent {
 		MaintenanceMessage:         rec.MaintenanceMessage,
 	}
 	if rec.CredentialRevokedAt.Valid {
-		out.CredentialRevokedAt = ts(rec.CredentialRevokedAt.Time)
+		out.CredentialRevokedAt = deliverycore.Ts(rec.CredentialRevokedAt.Time)
 	}
 	return out
 }
 
-func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
+func toProtoAllocation(rec deliverycore.AllocationRecord) *platformv1.AllocationStatus {
 	out := &platformv1.AllocationStatus{
 		AllocationId:             rec.ID,
 		ServiceId:                rec.ServiceID,
@@ -143,7 +143,7 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		Healthy:                  rec.Healthy,
 		HealthyIpv4Ports:         append([]int32(nil), rec.HealthyIPv4Ports...),
 		HealthyIpv6Ports:         append([]int32(nil), rec.HealthyIPv6Ports...),
-		UpdatedAt:                ts(rec.UpdatedAt),
+		UpdatedAt:                deliverycore.Ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
 		Restart:                  rec.Restart,
@@ -151,15 +151,15 @@ func toProtoAllocation(rec allocationRecord) *platformv1.AllocationStatus {
 		RolloutState:             rec.RolloutState,
 	}
 	if rec.DrainStartedAt.Valid {
-		out.DrainStartedAt = ts(rec.DrainStartedAt.Time)
+		out.DrainStartedAt = deliverycore.Ts(rec.DrainStartedAt.Time)
 	}
 	if rec.DrainDeadline.Valid {
-		out.DrainDeadline = ts(rec.DrainDeadline.Time)
+		out.DrainDeadline = deliverycore.Ts(rec.DrainDeadline.Time)
 	}
 	return out
 }
 
-func toProtoAllocations(recs []allocationRecord) []*platformv1.AllocationStatus {
+func toProtoAllocations(recs []deliverycore.AllocationRecord) []*platformv1.AllocationStatus {
 	if len(recs) == 0 {
 		return nil
 	}
@@ -170,16 +170,16 @@ func toProtoAllocations(recs []allocationRecord) []*platformv1.AllocationStatus 
 	return out
 }
 
-func primaryAllocation(recs []allocationRecord) allocationRecord {
+func primaryAllocation(recs []deliverycore.AllocationRecord) deliverycore.AllocationRecord {
 	if len(recs) == 0 {
-		return allocationRecord{}
+		return deliverycore.AllocationRecord{}
 	}
 	return recs[0]
 }
 
 func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
 	return &platformv1.ServiceLogLine{
-		ObservedAt:        ts(rec.ObservedAt),
+		ObservedAt:        deliverycore.Ts(rec.ObservedAt),
 		EnvironmentId:     rec.EnvironmentID,
 		ServiceId:         rec.ServiceID,
 		AllocationId:      rec.AllocationID,
@@ -194,30 +194,7 @@ func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
 	}
 }
 
-func toProtoBuildStatus(rec buildRunRecord) *platformv1.BuildStatus {
-	if rec.ID == "" {
-		return nil
-	}
-	status := &platformv1.BuildStatus{
-		BuildId:       rec.ID,
-		State:         toProtoBuildState(rec.State),
-		CommitSha:     rec.CommitSHA,
-		ImageDigest:   rec.ImageDigest,
-		QueuedAt:      ts(rec.QueuedAt),
-		FailureReason: rec.FailureReason,
-		CommitMessage: rec.CommitMessage,
-		CommitAuthor:  rec.CommitAuthor,
-	}
-	if rec.StartedAt.Valid {
-		status.StartedAt = ts(rec.StartedAt.Time)
-	}
-	if rec.FinishedAt.Valid {
-		status.FinishedAt = ts(rec.FinishedAt.Time)
-	}
-	return status
-}
-
-func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord {
+func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.DeploymentRecord {
 	status := toProtoDeploymentStatus(&rec)
 	protoRec := &platformv1.DeploymentRecord{
 		Id:                rec.ID,
@@ -225,7 +202,7 @@ func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord 
 		RolloutGeneration: rec.RolloutGeneration,
 		SpecRevision:      rec.SpecRevision,
 		Reason:            rec.Reason,
-		CreatedAt:         ts(rec.CreatedAt),
+		CreatedAt:         deliverycore.Ts(rec.CreatedAt),
 		Build:             toProtoMaybeBuildStatus(rec.Build),
 		IsCurrent:         rec.IsCurrent,
 		RequestedByUserId: rec.RequestedByUserID,
@@ -235,28 +212,28 @@ func toProtoDeploymentRecord(rec deploymentRecord) *platformv1.DeploymentRecord 
 	}
 	for _, action := range rec.Actions {
 		protoRec.Actions = append(protoRec.Actions, &platformv1.DeploymentActionRecord{
-			Id: action.ID, Action: toProtoDeploymentAction(action.Action),
+			Id: action.ID, Action: deliverycore.ToProtoDeploymentAction(action.Action),
 			TargetDeploymentId: action.TargetDeploymentID, ResultDeploymentId: action.ResultDeploymentID,
 			AllocationId: action.AllocationID, RequestedByUserId: action.RequestedByUserID,
-			CreatedAt: ts(action.CreatedAt),
+			CreatedAt: deliverycore.Ts(action.CreatedAt),
 		})
 	}
 	if rec.Build != nil {
-		protoRec.Stages = deploymentStagesFromLifecycle(rec, serviceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision, AllocatedAgentID: ""}, rec.Build)
+		protoRec.Stages = deploymentStagesFromLifecycle(rec, deliverycore.ServiceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision, AllocatedAgentID: ""}, rec.Build)
 	} else {
-		protoRec.Stages = deploymentStagesFromLifecycle(rec, serviceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision}, nil)
+		protoRec.Stages = deploymentStagesFromLifecycle(rec, deliverycore.ServiceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision}, nil)
 	}
 	return protoRec
 }
 
-func toProtoDeploymentStatus(rec *deploymentRecord) *platformv1.DeploymentStatus {
+func toProtoDeploymentStatus(rec *deliverycore.DeploymentRecord) *platformv1.DeploymentStatus {
 	if rec == nil || rec.ID == "" && rec.State == "" {
 		return nil
 	}
 	return &platformv1.DeploymentStatus{
 		DeploymentId:      rec.ID,
 		State:             toProtoDeploymentState(rec.State),
-		TransitionedAt:    ts(rec.UpdatedAt),
+		TransitionedAt:    deliverycore.Ts(rec.UpdatedAt),
 		CauseKind:         toProtoDeploymentCauseKind(rec.CauseKind),
 		CauseId:           rec.CauseID,
 		ReasonCode:        rec.ReasonCode,
@@ -267,102 +244,9 @@ func toProtoDeploymentStatus(rec *deploymentRecord) *platformv1.DeploymentStatus
 	}
 }
 
-func toProtoMaybeBuildStatus(rec *buildRunRecord) *platformv1.BuildStatus {
+func toProtoMaybeBuildStatus(rec *deliverycore.BuildRunRecord) *platformv1.BuildStatus {
 	if rec == nil {
 		return nil
 	}
-	return toProtoBuildStatus(*rec)
-}
-
-func toProtoBuildState(state string) platformv1.BuildState {
-	switch state {
-	case "queued":
-		return platformv1.BuildState_BUILD_STATE_QUEUED
-	case "running":
-		return platformv1.BuildState_BUILD_STATE_RUNNING
-	case "succeeded":
-		return platformv1.BuildState_BUILD_STATE_SUCCEEDED
-	case "failed":
-		return platformv1.BuildState_BUILD_STATE_FAILED
-	case "superseded":
-		return platformv1.BuildState_BUILD_STATE_SUPERSEDED
-	case "cancelled":
-		return platformv1.BuildState_BUILD_STATE_CANCELLED
-	default:
-		return platformv1.BuildState_BUILD_STATE_UNSPECIFIED
-	}
-}
-
-func toProtoResolvedSourceBinding(rec sourceBindingRecord) *platformv1.ResolvedSourceBinding {
-	if rec.ID == "" {
-		return nil
-	}
-	return &platformv1.ResolvedSourceBinding{
-		Id:                           rec.ID,
-		ServiceId:                    rec.ServiceID,
-		Provider:                     rec.Provider,
-		RepositorySelector:           rec.RepositorySelector,
-		TrackedRef:                   rec.TrackedRef,
-		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
-		ProviderScopeExternalId:      rec.ProviderScopeExternalID,
-		AccessState:                  toProtoSourceAccessState(rec.AccessState),
-		ResolvedAt:                   ts(rec.ResolvedAt),
-		FreshUntil:                   ts(rec.FreshUntil),
-		BuildRecipe:                  cloneBuildRecipe(rec.BuildRecipe),
-	}
-}
-
-func toProtoSourceRevision(rec sourceRevisionRecord) *platformv1.SourceRevision {
-	if rec.ID == "" {
-		return nil
-	}
-	return &platformv1.SourceRevision{
-		Id:                           rec.ID,
-		SourceBindingId:              rec.SourceBindingID,
-		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
-		TrackedRef:                   rec.TrackedRef,
-		CommitSha:                    rec.CommitSHA,
-		ObservedAt:                   ts(rec.ObservedAt),
-	}
-}
-
-func toProtoSourceSnapshot(rec sourceSnapshotRecord) *platformv1.SourceSnapshot {
-	if rec.ID == "" {
-		return nil
-	}
-	snapshot := &platformv1.SourceSnapshot{
-		Id:                           rec.ID,
-		SourceRevisionId:             rec.SourceRevisionID,
-		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
-		CommitSha:                    rec.CommitSHA,
-		Digest:                       rec.Digest,
-		Ready:                        rec.Ready,
-	}
-	if rec.FetchedAt.Valid {
-		snapshot.FetchedAt = ts(rec.FetchedAt.Time)
-	}
-	return snapshot
-}
-
-func toProtoSourceStateSummary(desired *platformv1.ServiceSourceSpec, binding *sourceBindingRecord, revision *sourceRevisionRecord, snapshot *sourceSnapshotRecord) *platformv1.ServiceSourceSummary {
-	if desired == nil {
-		return nil
-	}
-	state := &platformv1.SourceStateSummary{
-		DesiredSpec: proto.Clone(desired).(*platformv1.ServiceSourceSpec),
-	}
-	if binding != nil {
-		state.ResolvedBinding = toProtoResolvedSourceBinding(*binding)
-	}
-	if revision != nil {
-		state.LatestRevision = toProtoSourceRevision(*revision)
-	}
-	if snapshot != nil {
-		state.LatestSnapshot = toProtoSourceSnapshot(*snapshot)
-	}
-	return &platformv1.ServiceSourceSummary{
-		Source: &platformv1.ServiceSourceSummary_SourceState{
-			SourceState: state,
-		},
-	}
+	return deliverycore.ToProtoBuildStatus(*rec)
 }

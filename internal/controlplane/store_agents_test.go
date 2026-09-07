@@ -4,12 +4,14 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
@@ -28,7 +30,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 					if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 						t.Fatalf("upsertAgent(%s): %v", hello.GetAgentId(), err)
 					}
-					agent, err := store.agentByID(ctx, hello.GetAgentId())
+					agent, err := store.deliveryQueries().AgentByID(ctx, hello.GetAgentId())
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -235,7 +237,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 			t.Fatalf("upsertAgent: %v", err)
 		}
 	}
-	services := make([]serviceRecord, 0, 2)
+	services := make([]deliverycore.ServiceRecord, 0, 2)
 	for i, agentID := range []string{"node-1", "node-2"} {
 		service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), fmt.Sprintf("web-%d", i+1), directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 			Ports: runtimePortsFromInts([]int32{8080}),

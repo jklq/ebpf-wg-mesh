@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/base32"
 	"errors"
 	"fmt"
@@ -62,7 +63,7 @@ func isPlatformHostname(hostname, suffix string) bool {
 	return hostname == suffix || strings.HasSuffix(hostname, "."+suffix)
 }
 
-func (s *Domains) annotateDomainBinding(ctx context.Context, userID string, rec domainBindingRecord) *platformv1.DomainBinding {
+func (s *Domains) annotateDomainBinding(ctx context.Context, userID string, rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
 	binding := toProtoDomainBinding(rec)
 	if rec.PlatformGenerated {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED

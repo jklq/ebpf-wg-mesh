@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +63,7 @@ func (i *gitHubSourceInspector) LinkAndInspect(ctx context.Context, projectID, u
 	if err := i.authorizeUserRepository(ctx, owner, repo, userAccessToken, view); err != nil {
 		return nil, err
 	}
-	if view.AccessState != sourceAccessStateAvailable {
+	if view.AccessState != deliverycore.SourceAccessStateAvailable {
 		return inspectionResponseForView(view), nil
 	}
 	if err := i.catalog.store.linkProjectGitHubRepository(ctx, projectID, userID, view); err != nil {
@@ -98,7 +99,7 @@ func (i *gitHubSourceInspector) authorizeUserRepository(ctx context.Context, own
 	if err != nil || !strings.EqualFold(userOwner, owner) || !strings.EqualFold(userRepo, repo) {
 		return &gitHubUserRepositoryAuthorizationError{cause: errGitHubRepositoryIdentityMismatch}
 	}
-	if appView.AccessState == sourceAccessStateAvailable && (appView.RepositoryID <= 0 || userView.RepositoryID != appView.RepositoryID) {
+	if appView.AccessState == deliverycore.SourceAccessStateAvailable && (appView.RepositoryID <= 0 || userView.RepositoryID != appView.RepositoryID) {
 		return &gitHubUserRepositoryAuthorizationError{cause: errGitHubRepositoryIdentityMismatch}
 	}
 	return nil
@@ -112,7 +113,7 @@ func (i *gitHubSourceInspector) Authorize(ctx context.Context, projectID string,
 	if err != nil {
 		return err
 	}
-	if view.AccessState != sourceAccessStateAvailable {
+	if view.AccessState != deliverycore.SourceAccessStateAvailable {
 		return fmt.Errorf("repository is not authorized for project")
 	}
 	return nil
@@ -174,7 +175,7 @@ func (i *gitHubSourceInspector) inspectView(ctx context.Context, view GitHubRepo
 
 func inspectionResponseForView(view GitHubRepositoryView) *platformv1.InspectSourceResponse {
 	return &platformv1.InspectSourceResponse{
-		AccessState:   toProtoSourceAccessState(sourceAccessStateFromGitHubView(view)),
+		AccessState:   deliverycore.ToProtoSourceAccessState(sourceAccessStateFromGitHubView(view)),
 		DefaultBranch: strings.TrimSpace(view.DefaultBranch),
 	}
 }
@@ -310,7 +311,7 @@ func parseDockerfileExposePorts(body []byte) []int32 {
 				continue
 			}
 			port := int32(value)
-			if validatePort(port) != nil {
+			if deliverycore.ValidatePort(port) != nil {
 				continue
 			}
 			if _, ok := seen[port]; ok {

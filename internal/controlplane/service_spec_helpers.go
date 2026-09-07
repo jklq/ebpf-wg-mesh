@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -11,18 +12,11 @@ const (
 	defaultServiceMemoryMebibytes int64 = 256
 )
 
-func validatePort(port int32) error {
-	if port < 1 || port > 65535 {
-		return errInvalidPort
-	}
-	return nil
-}
-
 func runtimePortsFromInts(ports []int32) []*platformv1.ServiceRuntimePort {
 	out := make([]*platformv1.ServiceRuntimePort, 0, len(ports))
 	seen := make(map[int32]struct{}, len(ports))
 	for _, port := range ports {
-		if validatePort(port) != nil {
+		if deliverycore.ValidatePort(port) != nil {
 			continue
 		}
 		if _, ok := seen[port]; ok {

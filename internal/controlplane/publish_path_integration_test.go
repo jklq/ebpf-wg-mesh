@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/testutil"
@@ -89,11 +91,11 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 		t.Fatalf("desired image used a mutable tag: %q", desiredImage)
 	}
 
-	completed, err := store.buildRunByIDQuerier(ctx, store.db, build.ID)
+	completed, err := store.deliveryQueries().BuildRunByIDQuerier(ctx, store.db, build.ID)
 	if err != nil {
 		t.Fatalf("load completed build: %v", err)
 	}
-	if completed.State != buildStateSucceeded || completed.ImageDigest != desiredImage {
+	if completed.State != deliverycore.BuildStateSucceeded || completed.ImageDigest != desiredImage {
 		t.Fatalf("build record %+v does not match desired image %q", completed, desiredImage)
 	}
 
@@ -194,7 +196,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("wait for build 2 digest: %v", err)
 	}
-	completed2, err := store.buildRunByIDQuerier(ctx, store.db, build2.ID)
+	completed2, err := store.deliveryQueries().BuildRunByIDQuerier(ctx, store.db, build2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,7 +21,7 @@ import (
 // BuildOperations owns builder authorization, job preparation, and committed build effects.
 type BuildOperations struct {
 	store       *Store
-	delivery    *Delivery
+	delivery    *deliverycore.Delivery
 	registry    buildRegistry
 	credentials buildCredentials
 
@@ -49,7 +50,7 @@ func WithBuilderLogEmitter(emitter *LogEmitter) BuildOperationsOption {
 	}
 }
 
-func NewBuildOperations(store *Store, delivery *Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
+func NewBuildOperations(store *Store, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
 	service := &BuildOperations{
 		store:       store,
 		delivery:    delivery,
@@ -77,7 +78,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 	if s.store == nil || s.delivery == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
-	build, err := s.delivery.claimNextBuild(ctx, builderID, req.GetBuilderName(), s.staleAfter)
+	build, err := s.delivery.ClaimNextBuild(ctx, builderID, req.GetBuilderName(), s.staleAfter)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "claim build: %v", err)
 	}
@@ -85,7 +86,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 		return &platformv1.BuildJob{}, nil
 	}
 	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
-	service, err := s.store.serviceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build service: %v", err)
 	}
@@ -122,7 +123,7 @@ func (s *BuildOperations) ReportBuildHeartbeat(ctx context.Context, req *platfor
 		return nil, err
 	}
 	if err := s.store.recordBuilderHeartbeat(ctx, builderID, req.GetBuildId()); err != nil {
-		if errors.Is(err, errBuildNotOwned) {
+		if errors.Is(err, deliverycore.ErrBuildNotOwned) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "builder heartbeat: %v", err)
@@ -145,17 +146,17 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if len(req.GetLines()) == 0 {
 		return &emptypb.Empty{}, nil
 	}
-	build, err := s.store.buildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
+	build, err := s.store.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Error(codes.Internal, "build not found")
 		}
 		return nil, status.Errorf(codes.Internal, "load build for log report: %v", err)
 	}
-	if build.State != buildStateRunning || build.BuilderID != builderID {
+	if build.State != deliverycore.BuildStateRunning || build.BuilderID != builderID {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
-	service, err := s.store.serviceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service for log report: %v", err)
 	}
@@ -179,23 +180,23 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	}
 	// Load build + service up-front so we can emit synthetic logs keyed to
 	// the correct service/allocation regardless of the terminal state.
-	build, err := s.store.buildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
+	build, err := s.store.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
 	}
 	if build.BuilderID != builderID {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
-	if buildStateTerminal(build.State) {
+	if deliverycore.BuildStateTerminal(build.State) {
 		return &emptypb.Empty{}, nil
 	}
-	if build.State != buildStateRunning {
+	if build.State != deliverycore.BuildStateRunning {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
 	if req.GetCommitSha() != build.CommitSHA {
 		return nil, status.Error(codes.InvalidArgument, "commit_sha does not match the claimed build")
 	}
-	service, err := s.store.serviceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service before completion: %v", err)
 	}
@@ -208,12 +209,12 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 			return nil, status.Errorf(codes.InvalidArgument, "image_digest: %v", err)
 		}
 	}
-	completion, err := s.delivery.completeBuild(ctx, builderID, req.GetBuildId(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason())
+	completion, err := s.delivery.CompleteBuild(ctx, builderID, req.GetBuildId(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason())
 	if err != nil {
-		if errors.Is(err, errBuildCommitMismatch) {
+		if errors.Is(err, deliverycore.ErrBuildCommitMismatch) {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
-		if errors.Is(err, errBuildNotOwned) {
+		if errors.Is(err, deliverycore.ErrBuildNotOwned) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "complete build: %v", err)
@@ -222,7 +223,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 		return &emptypb.Empty{}, nil
 	}
 	build = completion.Build
-	if build.State == buildStateCancelled {
+	if build.State == deliverycore.BuildStateCancelled {
 		return &emptypb.Empty{}, nil
 	}
 	var allocationAgentIDs []string
@@ -230,7 +231,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 		// A first source build has no allocation before completion. Completing the
 		// build creates its rollout allocations, so use the durable post-completion
 		// allocation set when describing the rollout in synthetic logs.
-		allocations, err := s.store.listAllocationsByServiceID(ctx, build.ServiceID)
+		allocations, err := s.store.deliveryQueries().ListAllocationsByServiceID(ctx, build.ServiceID)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "load build allocations after completion: %v", err)
 		}
@@ -273,6 +274,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 
 	return &emptypb.Empty{}, nil
 }
+
 func validateRuntimeImageRef(pushRef, imageRef string) error {
 	lastSlash := strings.LastIndexByte(pushRef, '/')
 	tagSeparator := strings.LastIndexByte(pushRef, ':')

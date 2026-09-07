@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 		CpuMillis:       10_000,
 		MemoryMebibytes: 10_000,
 	})
-	service, _, err := NewDelivery(store, nil, nil, nil).ensureManagedService(ctx, project.ID, "dashboard", spec, trusted.AgentId)
+	service, _, err := newTestDelivery(store, nil, nil, nil).EnsureManagedService(ctx, project.ID, "dashboard", spec, trusted.AgentId)
 	if err != nil {
 		t.Fatalf("ensureManagedService: %v", err)
 	}
@@ -75,14 +76,14 @@ func TestManagedDashboardSameAgentSyncPreservesServingAllocationState(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	delivery := NewDelivery(store, nil, nil, nil)
-	service, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
+	delivery := newTestDelivery(store, nil, nil, nil)
+	service, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serving := completeManagedAllocation(t, store, ctx, service.ID)
 
-	updated, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:2", nil), trusted.AgentId)
+	updated, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:2", nil), trusted.AgentId)
 	if err != nil {
 		t.Fatalf("ensureManagedService(update): %v", err)
 	}
@@ -94,7 +95,7 @@ func TestManagedDashboardSameAgentSyncPreservesServingAllocationState(t *testing
 	if got.ID != serving.ID || got.AgentID != trusted.AgentId {
 		t.Fatalf("same-agent sync replaced or moved allocation: %+v", got)
 	}
-	if got.Phase != "Healthy" || !got.Healthy || got.RolloutState != allocationRolloutServing {
+	if got.Phase != "Healthy" || !got.Healthy || got.RolloutState != deliverycore.AllocationRolloutServing {
 		t.Fatalf("same-agent sync punched serving state: %+v", got)
 	}
 	if got.DesiredSpecRevision != updated.SpecRevision || got.DesiredRolloutGeneration != updated.RolloutGeneration {
@@ -121,14 +122,14 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 		t.Fatal(err)
 	}
 	spec := directImageServiceSpec("example.test/dashboard:1", nil)
-	delivery := NewDelivery(store, nil, nil, nil)
-	service, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId)
+	delivery := newTestDelivery(store, nil, nil, nil)
+	service, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId)
 	if err != nil {
 		t.Fatal(err)
 	}
 	predecessor := completeManagedAllocation(t, store, ctx, service.ID)
 
-	updated, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId)
+	updated, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId)
 	if err != nil {
 		t.Fatalf("ensureManagedService(move): %v", err)
 	}
@@ -136,7 +137,7 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 	if len(allocations) != 2 {
 		t.Fatalf("expected overlapping replacement, got %+v", allocations)
 	}
-	var oldAllocation, replacement allocationRecord
+	var oldAllocation, replacement deliverycore.AllocationRecord
 	for _, allocation := range allocations {
 		switch allocation.AgentID {
 		case oldTrusted.AgentId:
@@ -145,16 +146,16 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 			replacement = allocation
 		}
 	}
-	if oldAllocation.ID != predecessor.ID || oldAllocation.RolloutState != allocationRolloutServing || oldAllocation.Phase != "Healthy" {
+	if oldAllocation.ID != predecessor.ID || oldAllocation.RolloutState != deliverycore.AllocationRolloutServing || oldAllocation.Phase != "Healthy" {
 		t.Fatalf("predecessor was teleported or withdrawn before replacement readiness: %+v", oldAllocation)
 	}
-	if replacement.ID == "" || replacement.ID == predecessor.ID || replacement.RolloutState != allocationRolloutStarting || replacement.Phase != "Pending" {
+	if replacement.ID == "" || replacement.ID == predecessor.ID || replacement.RolloutState != deliverycore.AllocationRolloutStarting || replacement.Phase != "Pending" {
 		t.Fatalf("trusted-agent replacement was not started honestly: %+v", replacement)
 	}
 	if replacement.DesiredSpecRevision != updated.SpecRevision || replacement.DesiredRolloutGeneration != updated.RolloutGeneration {
 		t.Fatalf("replacement generation = %+v, service = %+v", replacement, updated)
 	}
-	if _, _, err := delivery.ensureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId); err != nil {
+	if _, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId); err != nil {
 		t.Fatalf("idempotent ensureManagedService(move): %v", err)
 	}
 	if got := mustListAllocations(t, store, ctx, service.ID); len(got) != 2 {
@@ -162,7 +163,7 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 	}
 }
 
-func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, serviceID string) allocationRecord {
+func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, serviceID string) deliverycore.AllocationRecord {
 	t.Helper()
 	allocation, err := store.allocationByServiceID(ctx, serviceID)
 	if err != nil {
@@ -175,11 +176,11 @@ func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, 
 		        allocation_ipv6 = 'fd00:200::10', phase = 'Healthy', healthy = TRUE,
 		        rollout_state = $1, updated_at = $2
 		  WHERE id = $3`,
-		allocationRolloutServing, time.Now().UTC(), allocation.ID,
+		deliverycore.AllocationRolloutServing, time.Now().UTC(), allocation.ID,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewDelivery(store, nil, nil, nil).advanceRollout(ctx, serviceID, time.Now().UTC()); err != nil {
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatal(err)
 	}
 	allocation, err = store.allocationByServiceID(ctx, serviceID)

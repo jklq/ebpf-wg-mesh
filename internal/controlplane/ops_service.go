@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -16,12 +17,12 @@ type OpsService struct {
 	platformv1.UnimplementedOpsServiceServer
 	webhooks  *GitHubWebhookHandler
 	store     *Store
-	delivery  *Delivery
+	delivery  *deliverycore.Delivery
 	notifier  *Notifier
 	authority *TLSAuthority
 }
 
-func NewOpsService(webhooks *GitHubWebhookHandler, store *Store, delivery *Delivery, notifier *Notifier, authority *TLSAuthority) *OpsService {
+func NewOpsService(webhooks *GitHubWebhookHandler, store *Store, delivery *deliverycore.Delivery, notifier *Notifier, authority *TLSAuthority) *OpsService {
 	return &OpsService{webhooks: webhooks, store: store, delivery: delivery, notifier: notifier, authority: authority}
 }
 
@@ -38,11 +39,7 @@ func (s *OpsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platform
 }
 
 func (s *OpsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgentRequest) (*platformv1.AgentEnrollment, error) {
-	identity, err := DelegatedUserFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rec, token, err := s.delivery.createFleetAgent(ctx, identity.UserID, req)
+	rec, token, err := s.delivery.CreateFleetAgent(ctx, req)
 	if err != nil {
 		return nil, fleetStatusError("create agent", err)
 	}
@@ -50,11 +47,7 @@ func (s *OpsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgen
 }
 
 func (s *OpsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgentRequest) (*platformv1.Agent, error) {
-	identity, err := DelegatedUserFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rec, err := s.delivery.updateFleetAgent(ctx, identity.UserID, req)
+	rec, err := s.delivery.UpdateFleetAgent(ctx, req)
 	if err != nil {
 		return nil, fleetStatusError("update agent", err)
 	}
@@ -67,11 +60,11 @@ func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetA
 		return nil, err
 	}
 	target := lifecycleStateRecord(req.GetLifecycleState())
-	rec, notify, err := s.delivery.setAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
+	rec, notify, err := s.delivery.SetAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
 	if err != nil {
 		return nil, fleetStatusError("set agent lifecycle", err)
 	}
-	if rec.LifecycleState == agentStateRetired && s.authority != nil {
+	if rec.LifecycleState == deliverycore.AgentStateRetired && s.authority != nil {
 		serials, serialErr := s.store.listAgentCertificateSerials(ctx, rec.ID)
 		if serialErr != nil {
 			return nil, status.Errorf(codes.Internal, "set agent lifecycle: load revoked serials: %v", serialErr)
@@ -90,7 +83,7 @@ func fleetStatusError(operation string, err error) error {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return status.Errorf(codes.PermissionDenied, "%s: operator access required or agent not found", operation)
-	case errors.Is(err, errInvalidAgentTransition), errors.Is(err, errAgentHasAllocations):
+	case errors.Is(err, deliverycore.ErrInvalidAgentTransition), errors.Is(err, deliverycore.ErrAgentHasAllocations):
 		return status.Errorf(codes.FailedPrecondition, "%s: %v", operation, err)
 	default:
 		return status.Errorf(codes.InvalidArgument, "%s: %v", operation, err)

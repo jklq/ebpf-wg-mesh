@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"crypto/x509"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"math/big"
 	"strings"
@@ -20,8 +21,8 @@ func TestUnenrolledAgentCannotSelfRegister(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := registerAgent(ctx, store, agentHello("ghost")); !errors.Is(err, errAgentNotEnrolled) {
-		t.Fatalf("upsertAgent(ghost): got %v, want %v", err, errAgentNotEnrolled)
+	if _, err := registerAgent(ctx, store, agentHello("ghost")); !errors.Is(err, deliverycore.ErrAgentNotEnrolled) {
+		t.Fatalf("upsertAgent(ghost): got %v, want %v", err, deliverycore.ErrAgentNotEnrolled)
 	}
 }
 
@@ -45,10 +46,10 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	}
 	originalID := original[0].ID
 
-	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-b", deliverycore.AgentStateCordoned); err != nil {
 		t.Fatalf("cordon node-b: %v", err)
 	}
-	draining, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining)
+	draining, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-a", deliverycore.AgentStateDraining)
 	if err != nil {
 		t.Fatalf("drain node-a without alternate capacity: %v", err)
 	}
@@ -59,10 +60,10 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 		t.Fatalf("drain without capacity moved the replica: %v", agents)
 	}
 
-	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-b", agentStateActive); err != nil {
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-b", deliverycore.AgentStateActive); err != nil {
 		t.Fatalf("return node-b: %v", err)
 	}
-	if _, err := NewDelivery(store, nil, nil, nil).reconcileDrainingAgent(ctx, "node-a"); err != nil {
+	if _, err := newTestDelivery(store, nil, nil, nil).reconcileDrainingAgent(ctx, "node-a"); err != nil {
 		t.Fatalf("retry drain: %v", err)
 	}
 	afterStart := mustListAllocations(t, store, ctx, service.ID)
@@ -70,7 +71,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if agents["node-a"] != 1 || agents["node-b"] != 1 {
 		t.Fatalf("expected overlapping rolling replacement on node-b, got %v", agents)
 	}
-	var replacement allocationRecord
+	var replacement deliverycore.AllocationRecord
 	keptOriginal := false
 	for _, alloc := range afterStart {
 		if alloc.ID == originalID {
@@ -84,10 +85,10 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if !keptOriginal {
 		t.Fatalf("drain rewrote the original allocation instead of creating a replacement: %+v", afterStart)
 	}
-	if replacement.ID == "" || replacement.ID == originalID || replacement.RolloutState != allocationRolloutStarting {
+	if replacement.ID == "" || replacement.ID == originalID || replacement.RolloutState != deliverycore.AllocationRolloutStarting {
 		t.Fatalf("expected a starting replacement allocation on node-b, got %+v", replacement)
 	}
-	inProgress, err := store.agentByID(ctx, "node-a")
+	inProgress, err := store.deliveryQueries().AgentByID(ctx, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +98,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 
 	markRolloutAllocationReady(t, store, replacement)
 	probe := &rolloutIngressProbe{store: store}
-	reconciler := NewRolloutReconciler(NewDelivery(store, nil, probe, nil), time.Second)
+	reconciler := NewRolloutReconciler(newTestDelivery(store, nil, probe, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("promote replacement: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-b"] != 1 || agents["node-a"] != 0 {
 		t.Fatalf("expected drain to finish on node-b, got %v", agents)
 	}
-	finished, err := store.agentByID(ctx, "node-a")
+	finished, err := store.deliveryQueries().AgentByID(ctx, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,22 +121,19 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 func completeServingAllocations(t *testing.T, store *Store, serviceID string) {
 	t.Helper()
 	ctx := context.Background()
-	now := time.Now().UTC()
-	delivery := NewDelivery(store, nil, nil, nil)
+	delivery := newTestDelivery(store, nil, nil, nil)
 	for step := 0; step < 8; step++ {
 		for _, alloc := range mustListAllocations(t, store, ctx, serviceID) {
-			if alloc.RolloutState == allocationRolloutStarting {
+			if alloc.RolloutState == deliverycore.AllocationRolloutStarting {
 				markRolloutAllocationReady(t, store, alloc)
 			}
 		}
-		if _, err := delivery.advanceRollout(ctx, serviceID, now); err != nil {
+		if err := delivery.ReconcileRollouts(ctx); err != nil {
 			t.Fatalf("advance rollout: %v", err)
 		}
-		if _, err := delivery.confirmRolloutIngressConverged(ctx, serviceID, now); err != nil {
-			t.Fatalf("confirm ingress: %v", err)
-		}
+
 		markAllDrainingComplete(t, store, serviceID)
-		if _, err := delivery.advanceRollout(ctx, serviceID, now); err != nil {
+		if err := delivery.ReconcileRollouts(ctx); err != nil {
 			t.Fatalf("remove drained allocations: %v", err)
 		}
 		remaining := mustListAllocations(t, store, ctx, serviceID)
@@ -144,7 +142,7 @@ func completeServingAllocations(t *testing.T, store *Store, serviceID string) {
 		}
 		allServing := true
 		for _, alloc := range remaining {
-			if alloc.RolloutState != allocationRolloutServing {
+			if alloc.RolloutState != deliverycore.AllocationRolloutServing {
 				allServing = false
 				break
 			}
@@ -190,7 +188,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-b")); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewDelivery(store, nil, nil, nil).ReconcileFleetCapacity(ctx); err != nil {
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileFleetCapacity(ctx); err != nil {
 		t.Fatalf("reconcileFleetCapacity: %v", err)
 	}
 	after := mustListAllocations(t, store, ctx, service.ID)
@@ -218,7 +216,7 @@ func TestFleetReplicaSpreadAndRegionPendingReason(t *testing.T) {
 		{AgentId: "node-b", Name: "node-b", Region: "us-east", FailureDomain: "zone-1"},
 		{AgentId: "node-c", Name: "node-c", Region: "us-east", FailureDomain: "zone-2"},
 	} {
-		if _, err := testDelivery(store).updateFleetAgent(ctx, "ops", req); err != nil {
+		if _, err := testDelivery(store).UpdateFleetAgent(ctx, "ops", req); err != nil {
 			t.Fatalf("updateFleetAgent(%s): %v", req.AgentId, err)
 		}
 	}
@@ -270,7 +268,7 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewOpsService(nil, store, NewDelivery(store, nil, nil, nil), nil, &TLSAuthority{revocations: revocations})
+	service := NewOpsService(nil, store, newDelivery(store, nil, nil, nil), nil, &TLSAuthority{revocations: revocations})
 	opsContext := contextWithDelegatedUser("ops", "ops@example.com")
 	if _, err := service.SetAgentLifecycle(opsContext, &platformv1.SetAgentLifecycleRequest{
 		AgentId:        "node-retire",
@@ -285,11 +283,11 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retire: %v", err)
 	}
-	rec, err := store.agentByID(ctx, "node-retire")
+	rec, err := store.deliveryQueries().AgentByID(ctx, "node-retire")
 	if err != nil {
 		t.Fatalf("agentByID: %v", err)
 	}
-	if rec.LifecycleState != agentStateRetired || !rec.CredentialRevokedAt.Valid {
+	if rec.LifecycleState != deliverycore.AgentStateRetired || !rec.CredentialRevokedAt.Valid {
 		t.Fatalf("expected retired revoked agent, got %+v", rec)
 	}
 	if retired.GetLifecycleState() != platformv1.AgentLifecycleState_AGENT_LIFECYCLE_STATE_RETIRED {
@@ -298,10 +296,10 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if rec.WireGuardPublicKey != "" || rec.WorkloadIPv6Subnet != "" {
 		t.Fatalf("expected mesh identity to be cleared, got %+v", rec)
 	}
-	if err := store.authorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, errAgentCredentialRevoked) {
+	if err := store.authorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, deliverycore.ErrAgentCredentialRevoked) {
 		t.Fatalf("authorizeAgentCredential: got %v", err)
 	}
-	if _, err := registerAgent(ctx, store, hello); !errors.Is(err, errAgentCredentialRevoked) {
+	if _, err := registerAgent(ctx, store, hello); !errors.Is(err, deliverycore.ErrAgentCredentialRevoked) {
 		t.Fatalf("upsert after retire: got %v", err)
 	}
 	serials, err := store.listAgentCertificateSerials(ctx, "node-retire")
@@ -331,7 +329,7 @@ func TestFleetViewReportsHeadroomAndVersionSkew(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, right); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := testDelivery(store).updateFleetAgent(ctx, "ops", &platformv1.UpdateAgentRequest{
+	if _, err := testDelivery(store).UpdateFleetAgent(ctx, "ops", &platformv1.UpdateAgentRequest{
 		AgentId: "node-a", Name: "node-a", Region: "us-east", FailureDomain: "zone-1", ReservedCpuMillis: 500,
 	}); err != nil {
 		t.Fatalf("reserve CPU: %v", err)
@@ -364,7 +362,7 @@ func TestCordonedNodesAreExcludedFromNewPlacement(t *testing.T) {
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
 	seedFleetOperator(t, store, ctx)
-	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-b", agentStateCordoned); err != nil {
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-b", deliverycore.AgentStateCordoned); err != nil {
 		t.Fatal(err)
 	}
 	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
@@ -406,14 +404,14 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	if _, _, err := NewDelivery(store, nil, nil, nil).setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining); err != nil {
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-a", deliverycore.AgentStateDraining); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
 	agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID))
 	if agents["node-a"] != 1 {
 		t.Fatalf("stateful allocation was moved before Stage 7: %v", agents)
 	}
-	rec, err := store.agentByID(ctx, "node-a")
+	rec, err := store.deliveryQueries().AgentByID(ctx, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"log/slog"
 
@@ -20,7 +21,7 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 	}
 	volume, err := s.store.createScheduledVolume(ctx, identity.UserID, req.GetEnvironmentId(), req.GetName(), req.GetSizeBytes())
 	if err != nil {
-		if errors.Is(err, errNoPlacementAvailable) {
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create volume: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "create volume: %v", err)
@@ -35,7 +36,7 @@ func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.Dele
 		return nil, err
 	}
 	if err := s.store.deleteVolume(ctx, identity.UserID, req.GetVolumeId()); err != nil {
-		if errors.Is(err, errVolumeInUse) {
+		if errors.Is(err, deliverycore.ErrVolumeInUse) {
 			return nil, status.Errorf(codes.FailedPrecondition, "delete volume: %v", err)
 		}
 		if errors.Is(err, sql.ErrNoRows) {

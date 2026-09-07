@@ -3,93 +3,38 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
-	"time"
-
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
-const (
-	rolloutStatePendingBuild = "pending_build"
-	rolloutStateInProgress   = "in_progress"
-	rolloutStateSucceeded    = "succeeded"
-	rolloutStateFailed       = "failed"
-	rolloutStateSuperseded   = "superseded"
-)
-
-func (s *Store) insertServiceRolloutTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	serviceID string,
-	rolloutGeneration int64,
-	specRevision int64,
-	reason, buildID, requestedByUserID string,
-	now time.Time,
-) error {
-	var rawSpec []byte
-	var desired int32
-	var image string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT r.spec_json, s.desired_replica_count, s.current_resolved_image
-		   FROM services s
-		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = $2
-		  WHERE s.id = $1`, serviceID, specRevision,
-	).Scan(&rawSpec, &desired, &image); err != nil {
-		return err
-	}
-	spec, err := loadServiceSpec(rawSpec)
-	if err != nil {
-		return err
-	}
-	strategyJSON, err := protojson.Marshal(canonicalRollingStrategy(spec.GetRollingStrategy()))
-	if err != nil {
-		return err
-	}
-	state := rolloutStateInProgress
-	if image == "" {
-		state = rolloutStatePendingBuild
-	}
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO service_rollouts(
-			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_user_id,
-			state, strategy_json, desired_replica_count, image_digest, failure_reason, created_at, progress_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '', $11, $11)`,
-		serviceID, rolloutGeneration, specRevision, reason, buildID, requestedByUserID,
-		state, strategyJSON, desired, image, now,
-	)
-	return err
-}
-
-func (s *Store) createVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64, _ string) (volumeRecord, error) {
-	var rec volumeRecord
+func (s *Store) createVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64, _ string) (deliverycore.VolumeRecord, error) {
+	var rec deliverycore.VolumeRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		rec, err = s.createVolumeTx(ctx, tx, userID, environmentID, name, sizeBytes)
 		return err
 	})
 	if err != nil {
-		return volumeRecord{}, err
+		return deliverycore.VolumeRecord{}, err
 	}
 	return rec, nil
 }
 
-func (s *Store) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (volumeRecord, error) {
-	var rec volumeRecord
+func (s *Store) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	var rec deliverycore.VolumeRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		rec, err = s.createVolumeTx(ctx, tx, userID, environmentID, name, sizeBytes)
 		return err
 	})
 	if err != nil {
-		return volumeRecord{}, err
+		return deliverycore.VolumeRecord{}, err
 	}
 	return rec, nil
 }
 
-func (s *Store) listVolumes(ctx context.Context, userID, environmentID string) ([]volumeRecord, error) {
-	if _, err := s.environmentByID(ctx, userID, environmentID); err != nil {
+func (s *Store) listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error) {
+	if _, err := s.deliveryQueries().EnvironmentByID(ctx, userID, environmentID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -104,9 +49,9 @@ func (s *Store) listVolumes(ctx context.Context, userID, environmentID string) (
 	}
 	defer rows.Close()
 
-	var out []volumeRecord
+	var out []deliverycore.VolumeRecord
 	for rows.Next() {
-		var rec volumeRecord
+		var rec deliverycore.VolumeRecord
 		if err := rows.Scan(&rec.ID, &rec.EnvironmentID, &rec.Name, &rec.SizeBytes, &rec.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -125,7 +70,7 @@ func (s *Store) deleteVolume(ctx context.Context, userID, volumeID string) error
 		if err != nil {
 			return err
 		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
+		if _, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
 			return err
 		}
 
@@ -147,12 +92,12 @@ func (s *Store) deleteVolume(ctx context.Context, userID, volumeID string) error
 			if err := rows.Scan(&serviceID, &rawSpec); err != nil {
 				return err
 			}
-			spec, err := loadServiceSpec(rawSpec)
+			spec, err := deliverycore.LoadServiceSpec(rawSpec)
 			if err != nil {
 				return err
 			}
-			if serviceVolumeName(spec) == volumeName {
-				return fmt.Errorf("%w: service %s references volume %s", errVolumeInUse, serviceID, volumeID)
+			if deliverycore.ServiceVolumeName(spec) == volumeName {
+				return fmt.Errorf("%w: service %s references volume %s", deliverycore.ErrVolumeInUse, serviceID, volumeID)
 			}
 		}
 		if err := rows.Err(); err != nil {
@@ -172,170 +117,4 @@ func (s *Store) deleteVolume(ctx context.Context, userID, volumeID string) error
 		}
 		return nil
 	})
-}
-
-func (s *Store) listServices(ctx context.Context, userID, environmentID string) ([]serviceRecord, error) {
-	if _, err := s.environmentByID(ctx, userID, environmentID); err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx,
-		serviceSelectSQL+`
-		  WHERE s.environment_id = $1
-		  ORDER BY s.created_at ASC`,
-		environmentID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []serviceRecord
-	for rows.Next() {
-		rec, err := scanServiceRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range out {
-		spec, err := s.loadServiceDetails(ctx, out[i].ID, out[i].SpecRevision)
-		if err != nil {
-			return nil, err
-		}
-		out[i].Spec = spec
-		out[i].SourceSummary, err = s.loadServiceSourceSummaryQuerier(ctx, s.db, spec, out[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		if out[i].ResolvedImage == "" && out[i].RolloutGeneration > 0 {
-			out[i].ResolvedImage = directImageRef(spec)
-		}
-		out[i].LatestBuild, err = s.latestBuildForServiceQuerier(ctx, s.db, out[i].LatestBuildID)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.attachLatestDeploymentQuerier(ctx, s.db, &out[i]); err != nil {
-			return nil, err
-		}
-		out[i].UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, s.db, out[i].ID, out[i].Spec, out[i].RolloutGeneration)
-		if err != nil {
-			return nil, err
-		}
-		out[i].PendingChanges = len(out[i].UnappliedChanges) > 0
-	}
-	return out, nil
-}
-
-func (s *Store) serviceByID(ctx context.Context, userID, serviceID string) (serviceRecord, error) {
-	return s.serviceByIDQuerier(ctx, s.db, userID, serviceID)
-}
-
-func (s *Store) serviceByIDQuerier(ctx context.Context, q serviceQueryer, userID, serviceID string) (serviceRecord, error) {
-	row := q.QueryRowContext(ctx,
-		serviceSelectSQL+`
-		   JOIN project_memberships m ON m.project_id = e.project_id
-		  WHERE s.id = $1 AND m.user_id = $2 AND m.role IN ('owner', 'editor', 'viewer')`,
-		serviceID, userID,
-	)
-	rec, err := scanServiceRow(row)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	rec.Spec, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.SpecRevision)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	rec.SourceSummary, err = s.loadServiceSourceSummaryQuerier(ctx, q, rec.Spec, rec.ID)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	if rec.ResolvedImage == "" && rec.RolloutGeneration > 0 {
-		rec.ResolvedImage = directImageRef(rec.Spec)
-	}
-	rec.LatestBuild, err = s.latestBuildForServiceQuerier(ctx, q, rec.LatestBuildID)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	if err := s.attachLatestDeploymentQuerier(ctx, q, &rec); err != nil {
-		return serviceRecord{}, err
-	}
-	rec.UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, q, rec.ID, rec.Spec, rec.RolloutGeneration)
-	if err != nil {
-		return serviceRecord{}, err
-	}
-	rec.PendingChanges = len(rec.UnappliedChanges) > 0
-	return rec, nil
-}
-
-func (s *Store) serviceByNameQuerier(ctx context.Context, q serviceQueryer, environmentID, name string) (serviceRecord, bool, error) {
-	row := q.QueryRowContext(
-		ctx,
-		serviceSelectSQL+`
-		  WHERE s.environment_id = $1 AND s.name = $2`,
-		environmentID,
-		name,
-	)
-	rec, err := scanServiceRow(row)
-	switch {
-	case err == nil:
-		rec.Spec, err = s.loadServiceDetailsQuerier(ctx, q, rec.ID, rec.SpecRevision)
-		if err != nil {
-			return serviceRecord{}, false, err
-		}
-		return rec, true, nil
-	case err == sql.ErrNoRows:
-		return serviceRecord{}, false, nil
-	default:
-		return serviceRecord{}, false, err
-	}
-}
-
-const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation,
-		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id AND a.rollout_state <> 'lost' ORDER BY CASE a.rollout_state WHEN 'serving' THEN 0 WHEN 'starting' THEN 1 ELSE 2 END, a.id LIMIT 1), ''),
-		        s.current_resolved_image, s.last_successful_commit_sha, s.latest_build_id,
-		        s.desired_replica_count, s.placement_message, s.created_at, s.updated_at
-		   FROM services s
-		   JOIN environments e ON e.id = s.environment_id`
-
-func scanServiceRow(scanner interface{ Scan(...any) error }) (serviceRecord, error) {
-	var rec serviceRecord
-	if err := scanner.Scan(
-		&rec.ID,
-		&rec.EnvironmentID,
-		&rec.ProjectID,
-		&rec.Name,
-		&rec.SpecRevision,
-		&rec.RolloutGeneration,
-		&rec.AllocatedAgentID,
-		&rec.ResolvedImage,
-		&rec.LastSuccessfulCommitSHA,
-		&rec.LatestBuildID,
-		&rec.DesiredReplicaCount,
-		&rec.PlacementMessage,
-		&rec.CreatedAt,
-		&rec.UpdatedAt,
-	); err != nil {
-		return serviceRecord{}, err
-	}
-	if rec.DesiredReplicaCount <= 0 {
-		rec.DesiredReplicaCount = defaultDesiredReplicaCount
-	}
-	rec.LatestBuild = nil
-	return rec, nil
-}
-
-func (s *Store) loadServiceDetails(ctx context.Context, serviceID string, specRevision int64) (*platformv1.ServiceSpec, error) {
-	return s.loadServiceDetailsQuerier(ctx, s.db, serviceID, specRevision)
-}
-
-func (s *Store) loadServiceDetailsQuerier(ctx context.Context, q serviceQueryer, serviceID string, specRevision int64) (*platformv1.ServiceSpec, error) {
-	var rawSpec []byte
-	if err := q.QueryRowContext(ctx, `SELECT spec_json FROM service_revisions WHERE service_id = $1 AND spec_revision = $2`, serviceID, specRevision).Scan(&rawSpec); err != nil {
-		return nil, err
-	}
-	return loadServiceSpec(rawSpec)
 }
