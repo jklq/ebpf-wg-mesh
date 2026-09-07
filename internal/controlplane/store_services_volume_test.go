@@ -148,7 +148,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 		createErr := <-createErrCh
 		deleteErr := <-deleteErrCh
 		if createErr == nil && deleteErr == nil {
-			if _, _, err := store.releaseEnvironment(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID)); err == nil {
+			if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID)); err == nil {
 				t.Fatalf("iteration %d: deployed service with deleted volume %q", i, volumeName)
 			}
 		}

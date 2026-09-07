@@ -183,7 +183,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	}
 	node1Before := mustDesiredRevision(t, store, ctx, "node-1")
 	node2Before := mustDesiredRevision(t, store, ctx, "node-2")
-	deployed, notifiedAgentIDs, err := store.releaseEnvironment(ctx, "owner", staging.ID)
+	deployed, notifiedAgentIDs, err := releaseEnvironmentForTest(ctx, store, "owner", staging.ID)
 	if err != nil || len(deployed) != 1 || deployed[0].ID != stagingService.ID {
 		t.Fatalf("release staging: %#v: %v", deployed, err)
 	}

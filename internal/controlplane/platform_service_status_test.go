@@ -43,7 +43,7 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				UpdatedAt:                now,
 			}}, nil
 		},
-	}, noopNotifier{}, noopIngress{})
+	}, noopNotifier{}, noopIngress{}, nil)
 
 	resp, err := service.GetServiceStatus(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GetServiceStatusRequest{
 		ServiceId: "service-1",

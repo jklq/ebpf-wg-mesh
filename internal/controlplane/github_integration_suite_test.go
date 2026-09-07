@@ -115,6 +115,7 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 		store,
 		noopNotifier{},
 		noopIngress{},
+		NewDelivery(store, noopNotifier{}),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -157,6 +158,7 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 		store,
 		noopNotifier{},
 		noopIngress{},
+		NewDelivery(store, noopNotifier{}),
 		WithGitHubSourceInspection(NewGitHubCatalog(store, client), client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -246,6 +248,7 @@ func TestPlatformServiceInspectSourceReturnsInstallationRequiredForPrivateRepoWi
 		store,
 		noopNotifier{},
 		noopIngress{},
+		NewDelivery(store, noopNotifier{}),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -283,6 +286,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 		store,
 		noopNotifier{},
 		noopIngress{},
+		NewDelivery(store, noopNotifier{}),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
@@ -337,6 +341,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterForbiddenRepo
 		store,
 		noopNotifier{},
 		noopIngress{},
+		NewDelivery(store, noopNotifier{}),
 		WithGitHubSourceInspection(catalog, client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())

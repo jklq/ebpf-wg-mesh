@@ -121,10 +121,6 @@ func (f *fakePlatformStore) deleteEnvironment(context.Context, string, string) (
 	return nil, nil
 }
 
-func (f *fakePlatformStore) releaseEnvironment(context.Context, string, string) ([]serviceRecord, []string, error) {
-	return nil, nil, nil
-}
-
 func (f *fakePlatformStore) createProject(ctx context.Context, userID, name string) (projectRecord, error) {
 	if f.createProjectFn != nil {
 		return f.createProjectFn(ctx, userID, name)
