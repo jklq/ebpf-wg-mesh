@@ -66,6 +66,7 @@ const (
 	reasonUserRemove           = "USER_REMOVE"
 	reasonWebhookPush          = "WEBHOOK_PUSH"
 	reasonFailoverRescheduled  = "FAILOVER_RESCHEDULED"
+	reasonAgentDrain           = "AGENT_DRAIN"
 	reasonManagedSync          = "MANAGED_SYNC"
 )
 

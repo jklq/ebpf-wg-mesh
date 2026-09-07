@@ -30,14 +30,14 @@ func TestDirectImageEnvironmentReleaseUpdatesDesiredImage(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("example.test/web:a", nil), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("example.test/web:a", nil), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.updateService(ctx, "user-1", service.ID, "", directImageServiceSpec("example.test/web:b", nil)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec("example.test/web:b", nil)); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	before, err := store.desiredStateForAgent(ctx, "node-1")
+	before, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent before environment release: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestDirectImageEnvironmentReleaseUpdatesDesiredImage(t *testing.T) {
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	after, err := store.desiredStateForAgent(ctx, "node-1")
+	after, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent after environment release: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -84,7 +84,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 	node1AfterService := mustDesiredRevision(t, store, ctx, "node-1")
 
-	if err := store.deleteService(ctx, "user-1", service.ID); err != nil {
+	if err := deleteService(ctx, store, "user-1", service.ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	node1AfterDeleteService := mustDesiredRevision(t, store, ctx, "node-1")
@@ -92,7 +92,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatalf("expected node-1 revision %d after deleteService, got %d", node1AfterService+1, node1AfterDeleteService)
 	}
 
-	state, err := store.desiredStateForAgent(ctx, "node-1")
+	state, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent: %v", err)
 	}
@@ -104,13 +104,16 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatal("expected createDomainBinding for deleted service to fail")
 	}
 
-	service, err = store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-2", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	service, err = createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-2", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
 	}), "node-1")
 	if err != nil {
 		t.Fatalf("createService(second): %v", err)
+	}
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "source.platform.example", service.ID, 8080); err != nil {
+		t.Fatal(err)
 	}
 	node1BeforeDomains := mustDesiredRevision(t, store, ctx, "node-1")
 
@@ -121,7 +124,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatalf("expected revision bumped after createDomainBinding, got %d want %d", got, node1BeforeDomains+1)
 	}
 
-	otherService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-3", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	otherService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-3", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -129,11 +132,15 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(third): %v", err)
 	}
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "target.platform.example", otherService.ID, 8080); err != nil {
+		t.Fatal(err)
+	}
+	beforeUpdate := mustDesiredRevision(t, store, ctx, "node-1")
 	if _, _, err := store.updateDomainBinding(ctx, "user-1", "web.example.com", otherService.ID, 8080); err != nil {
 		t.Fatalf("updateDomainBinding: %v", err)
 	}
-	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDomains+3 {
-		t.Fatalf("expected revision %d after creating second service and updating domain, got %d", node1BeforeDomains+3, got)
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != beforeUpdate+1 {
+		t.Fatalf("expected revision %d after updating domain, got %d", beforeUpdate+1, got)
 	}
 
 	node1BeforeDeleteDomain := mustDesiredRevision(t, store, ctx, "node-1")
@@ -197,14 +204,14 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	routedService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	routedService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService(routed): %v", err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", routedService.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", routedService.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
-	internalService, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "worker", serviceSpec(), "node-1")
+	internalService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "worker", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatalf("createService(internal): %v", err)
 	}
@@ -212,7 +219,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	routedAlloc := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, routedService.ID)
 	internalAlloc := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, internalService.ID)
 
-	changed, _, err := store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	changed, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        routedAlloc.ID,
@@ -231,7 +238,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if !changed {
 		t.Fatal("expected routed status change to trigger ingress update")
 	}
-	changed, _, err = store.recordStatusReport(ctx, "node-2", &agentv1.StatusReport{
+	changed, _, err = testDelivery(store).recordStatusReport(ctx, "node-2", &agentv1.StatusReport{
 		AgentId: "node-2",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:   routedAlloc.ID,
@@ -262,7 +269,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatalf("set sentinel allocation updated_at: %v", err)
 	}
 
-	changed, _, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	changed, _, err = testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        routedAlloc.ID,
@@ -286,7 +293,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 		t.Fatalf("unchanged status rewrote allocation: updated_at = %v, want %v", routedAllocAfterUnchangedReport.UpdatedAt, sentinelUpdatedAt)
 	}
 
-	changed, _, err = store.recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+	changed, _, err = testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:        internalAlloc.ID,
@@ -328,7 +335,7 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-b")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	if _, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -336,7 +343,7 @@ func TestChooseAgentForServiceUsesDatabaseAggregation(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	agentID, err := store.chooseAgentForService(ctx, projects[0].ID, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	agentID, err := chooseAgentForService(ctx, store, projects[0].ID, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -370,7 +377,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	if _, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "existing", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       400,
 		MemoryMebibytes: 256,
 		Ports:           runtimePortsFromInts([]int32{8080}),
@@ -378,7 +385,7 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	_, err = store.chooseAgentForService(ctx, projects[0].ID, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+	_, err = chooseAgentForService(ctx, store, projects[0].ID, directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       200,
 		MemoryMebibytes: 300,
 		Ports:           runtimePortsFromInts([]int32{8080}),

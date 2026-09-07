@@ -230,12 +230,12 @@ func (s *Store) deleteEnvironment(ctx context.Context, userID, environmentID str
 		if !identityCatalogChanged {
 			return nil
 		}
-		return s.bumpAllDesiredRevisionsTx(ctx, tx)
+		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+			return err
+		}
+		agentIDs, err = s.agentIDsQuerier(ctx, tx)
+		return err
 	})
-	if err != nil || !identityCatalogChanged {
-		return agentIDs, err
-	}
-	agentIDs, err = s.agentIDs(ctx)
 	return agentIDs, err
 }
 

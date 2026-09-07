@@ -39,7 +39,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080}), CpuMillis: 250, MemoryMebibytes: 256},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -54,7 +54,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	marker := fmt.Sprintf("publish-%d", time.Now().UnixNano())
 	seedDockerfileSourceState(t, store, service, "commit-1", marker)
 
-	before, err := store.desiredStateForAgent(ctx, "node-1")
+	before, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 
 	var desiredImage string
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 50 * time.Second, Interval: 250 * time.Millisecond}, func(ctx context.Context) (bool, error) {
-		state, err := store.desiredStateForAgent(ctx, "node-1")
+		state, err := desiredStateForAgent(ctx, store, "node-1")
 		if err != nil {
 			return false, err
 		}
@@ -149,7 +149,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080}), CpuMillis: 250, MemoryMebibytes: 256},
 		&platformv1.ServiceSourceSpec{
 			Provider:           "github",
@@ -182,7 +182,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 
 	var winner string
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 50 * time.Second, Interval: 250 * time.Millisecond}, func(ctx context.Context) (bool, error) {
-		state, err := store.desiredStateForAgent(ctx, "node-1")
+		state, err := desiredStateForAgent(ctx, store, "node-1")
 		if err != nil {
 			return false, err
 		}
@@ -212,7 +212,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("late CompleteBuild: %v", err)
 	}
-	after, err := store.desiredStateForAgent(ctx, "node-1")
+	after, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 
 func mustDesiredService(t *testing.T, store *Store, agentID string) *agentv1.DesiredService {
 	t.Helper()
-	state, err := store.desiredStateForAgent(context.Background(), agentID)
+	state, err := desiredStateForAgent(context.Background(), store, agentID)
 	if err != nil || len(state.GetServices()) != 1 {
 		t.Fatalf("desired service: %+v %v", state, err)
 	}

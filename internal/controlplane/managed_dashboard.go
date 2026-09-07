@@ -17,6 +17,7 @@ type ManagedDashboardReconciler struct {
 	cfg      config.ManagedDashboardConfig
 	profile  config.Profile
 	store    *Store
+	delivery *Delivery
 	ingress  *IngressSyncer
 	notifier *Notifier
 }
@@ -47,6 +48,7 @@ func NewManagedDashboardReconciler(
 	cfg config.ManagedDashboardConfig,
 	profile config.Profile,
 	store *Store,
+	delivery *Delivery,
 	ingress *IngressSyncer,
 	notifier *Notifier,
 ) *ManagedDashboardReconciler {
@@ -57,6 +59,7 @@ func NewManagedDashboardReconciler(
 		cfg:      cfg,
 		profile:  profile,
 		store:    store,
+		delivery: delivery,
 		ingress:  ingress,
 		notifier: notifier,
 	}
@@ -89,7 +92,7 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 			TimeoutSeconds: 2,
 		}
 	}
-	service, affectedAgentIDs, err := r.store.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec, r.cfg.TrustedAgentID)
+	service, affectedAgentIDs, err := r.delivery.ensureManagedService(ctx, project.ID, r.cfg.ServiceName, spec, r.cfg.TrustedAgentID)
 	if err != nil {
 		return fmt.Errorf("ensure dashboard managed service: %w", err)
 	}

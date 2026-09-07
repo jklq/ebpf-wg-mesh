@@ -12,11 +12,6 @@ func (s *Store) createDomainBinding(ctx context.Context, userID, hostname, servi
 }
 
 func (s *Store) createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (domainBindingRecord, bool, error) {
-	if existing, err := s.platformDomainBindingForService(ctx, userID, serviceID); err == nil {
-		return s.putDomainBinding(ctx, userID, existing.Hostname, serviceID, targetPort, true, false)
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return domainBindingRecord{}, false, err
-	}
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, true, true)
 }
 
@@ -31,12 +26,24 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 	var binding domainBindingRecord
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		changed = false
+		binding = domainBindingRecord{}
+		attemptHostname, attemptCreateOnly := hostname, createOnly
+		attemptPlatformGenerated := platformGenerated
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
 		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
 			return err
+		}
+		if attemptPlatformGenerated {
+			existing, err := s.platformDomainBindingForServiceQuerier(ctx, tx, userID, serviceID)
+			if err == nil {
+				attemptHostname, attemptCreateOnly = existing.Hostname, false
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
 		}
 		now := time.Now().UTC()
 		var existing domainBindingRecord
@@ -46,16 +53,29 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 			   JOIN services s ON s.id = d.service_id
 			   JOIN environments e ON e.id = s.environment_id
 			  WHERE d.hostname = $1`,
-			hostname,
+			attemptHostname,
 		).Scan(&existing.Hostname, &existing.ProjectID, &existing.EnvironmentID, &existing.ServiceID, &existing.TargetPort, &existing.PlatformGenerated, &existing.CreatedAt, &existing.UpdatedAt)
 		switch {
 		case err == nil:
-			if createOnly {
+			if attemptCreateOnly {
 				return errDomainAlreadyExists
 			}
-			platformGenerated = existing.PlatformGenerated
+			if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, existing.EnvironmentID); err != nil {
+				return err
+			}
+			if existing.PlatformGenerated && existing.ServiceID != serviceID {
+				return errPlatformDomainReassignment
+			}
+			if !existing.PlatformGenerated && existing.ServiceID != serviceID {
+				if _, err := s.platformDomainBindingForServiceQuerier(ctx, tx, userID, serviceID); errors.Is(err, sql.ErrNoRows) {
+					return errPlatformDomainNotGenerated
+				} else if err != nil {
+					return err
+				}
+			}
+			attemptPlatformGenerated = existing.PlatformGenerated
 			binding = existing
-			if existing.ServiceID == serviceID && existing.TargetPort == targetPort && existing.PlatformGenerated == platformGenerated {
+			if existing.ServiceID == serviceID && existing.TargetPort == targetPort && existing.PlatformGenerated == attemptPlatformGenerated {
 				return nil
 			}
 			agentIDs, err := s.agentIDsForServiceQuerier(ctx, tx, serviceID)
@@ -76,7 +96,7 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 				        platform_generated = $3,
 				        updated_at = $4
 				  WHERE hostname = $5`,
-				serviceID, targetPort, platformGenerated, now, hostname,
+				serviceID, targetPort, attemptPlatformGenerated, now, attemptHostname,
 			); err != nil {
 				return err
 			}
@@ -87,17 +107,27 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 			binding.ProjectID = service.ProjectID
 			binding.EnvironmentID = service.EnvironmentID
 			binding.TargetPort = targetPort
-			binding.PlatformGenerated = platformGenerated
+			binding.PlatformGenerated = attemptPlatformGenerated
 			binding.UpdatedAt = now
 			changed = true
 			return nil
 		case err != sql.ErrNoRows:
 			return err
 		}
+		if !attemptCreateOnly {
+			return sql.ErrNoRows
+		}
+		if !attemptPlatformGenerated {
+			if _, err := s.platformDomainBindingForServiceQuerier(ctx, tx, userID, serviceID); errors.Is(err, sql.ErrNoRows) {
+				return errPlatformDomainNotGenerated
+			} else if err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO domain_bindings(hostname, service_id, target_port, platform_generated, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			hostname, serviceID, targetPort, platformGenerated, now, now,
+			attemptHostname, serviceID, targetPort, attemptPlatformGenerated, now, now,
 		); err != nil {
 			return err
 		}
@@ -109,12 +139,12 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 			return err
 		}
 		binding = domainBindingRecord{
-			Hostname:          hostname,
+			Hostname:          attemptHostname,
 			ProjectID:         service.ProjectID,
 			EnvironmentID:     service.EnvironmentID,
 			ServiceID:         serviceID,
 			TargetPort:        targetPort,
-			PlatformGenerated: platformGenerated,
+			PlatformGenerated: attemptPlatformGenerated,
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		}
@@ -128,8 +158,12 @@ func (s *Store) putDomainBinding(ctx context.Context, userID, hostname, serviceI
 }
 
 func (s *Store) domainBindingByHostname(ctx context.Context, userID, hostname string) (domainBindingRecord, error) {
+	return s.domainBindingByHostnameQuerier(ctx, s.db, userID, hostname)
+}
+
+func (s *Store) domainBindingByHostnameQuerier(ctx context.Context, q serviceQueryer, userID, hostname string) (domainBindingRecord, error) {
 	var binding domainBindingRecord
-	err := s.db.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port,
 		        d.platform_generated, d.created_at, d.updated_at
 		   FROM domain_bindings d JOIN services s ON s.id = d.service_id
@@ -170,12 +204,16 @@ func (s *Store) listDomainBindings(ctx context.Context, userID, serviceID string
 }
 
 func (s *Store) platformDomainBindingForService(ctx context.Context, userID, serviceID string) (domainBindingRecord, error) {
-	service, err := s.serviceByID(ctx, userID, serviceID)
+	return s.platformDomainBindingForServiceQuerier(ctx, s.db, userID, serviceID)
+}
+
+func (s *Store) platformDomainBindingForServiceQuerier(ctx context.Context, q serviceQueryer, userID, serviceID string) (domainBindingRecord, error) {
+	service, err := s.serviceByIDQuerier(ctx, q, userID, serviceID)
 	if err != nil {
 		return domainBindingRecord{}, err
 	}
 	var binding domainBindingRecord
-	err = s.db.QueryRowContext(ctx,
+	err = q.QueryRowContext(ctx,
 		`SELECT hostname, service_id, target_port, platform_generated, created_at, updated_at
 		   FROM domain_bindings d
 		  WHERE service_id = $1 AND platform_generated = TRUE`,
@@ -189,12 +227,22 @@ func (s *Store) platformDomainBindingForService(ctx context.Context, userID, ser
 func (s *Store) deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error) {
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		binding, err := s.domainBindingByHostname(ctx, userID, hostname)
+		changed = false
+		binding, err := s.domainBindingByHostnameQuerier(ctx, tx, userID, hostname)
 		if err != nil {
 			return err
 		}
 		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, binding.EnvironmentID); err != nil {
 			return err
+		}
+		if binding.PlatformGenerated {
+			var hasCustom bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated)`, binding.ServiceID).Scan(&hasCustom); err != nil {
+				return err
+			}
+			if hasCustom {
+				return errPlatformDomainInUse
+			}
 		}
 		var serviceID string
 		if err := tx.QueryRowContext(ctx,
@@ -219,6 +267,11 @@ func (s *Store) deleteDomainBinding(ctx context.Context, userID, hostname string
 		}
 		if rows == 0 {
 			return sql.ErrNoRows
+		}
+		if !binding.PlatformGenerated {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE service_id = $1 AND platform_generated AND NOT EXISTS (SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated)`, serviceID); err != nil {
+				return err
+			}
 		}
 		if err := s.bumpDesiredRevisionsTx(ctx, tx, agentIDs); err != nil {
 			return err

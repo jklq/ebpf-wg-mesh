@@ -44,14 +44,11 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 	t.Parallel()
 
 	t.Run("viewer", func(t *testing.T) {
-		service := NewPlatformService(&fakePlatformStore{
-			serviceByIDFn: func(context.Context, string, string) (serviceRecord, error) {
-				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil
+		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			applyDeploymentActionFn: func(context.Context, string, string, platformv1.DeploymentAction, string, string) (deploymentActionResult, error) {
+				return deploymentActionResult{}, errDeploymentActionDenied
 			},
-			authorizeProjectWriteFn: func(context.Context, string, string) error {
-				return sql.ErrNoRows
-			},
-		}, noopNotifier{}, noopIngress{}, nil)
+		})
 		_, err := service.ApplyDeploymentAction(
 			contextWithDelegatedUser("user-1", ""),
 			&platformv1.ApplyDeploymentActionRequest{
@@ -65,17 +62,11 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 	})
 
 	t.Run("stale", func(t *testing.T) {
-		service := NewPlatformService(&fakePlatformStore{
-			serviceByIDFn: func(context.Context, string, string) (serviceRecord, error) {
-				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil
+		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			applyDeploymentActionFn: func(context.Context, string, string, platformv1.DeploymentAction, string, string) (deploymentActionResult, error) {
+				return deploymentActionResult{}, errDeploymentStale
 			},
-			applyDeploymentActionFn: func(context.Context, string, string, string, platformv1.DeploymentAction, string, string) (serviceRecord, deploymentActionRecord, error) {
-				return serviceRecord{}, deploymentActionRecord{}, errDeploymentStale
-			},
-			serviceStatusFn: func(context.Context, string, string) (serviceRecord, []allocationRecord, error) {
-				return serviceRecord{ID: "service-1", ProjectID: "project-1"}, nil, nil
-			},
-		}, noopNotifier{}, noopIngress{}, nil)
+		})
 		_, err := service.ApplyDeploymentAction(
 			contextWithDelegatedUser("user-1", ""),
 			&platformv1.ApplyDeploymentActionRequest{
@@ -109,12 +100,12 @@ func TestPlatformServiceRejectsViewerWrites(t *testing.T) {
 func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 	t.Parallel()
 
-	store := &fakePlatformStore{
-		createScheduledServiceFn: func(ctx context.Context, userID, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
+	delivery := &fakePlatformDelivery{
+		createScheduledServiceFn: func(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
 			return serviceRecord{}, errNoPlacementAvailable
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
 
 	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 		EnvironmentId: "project-1",
@@ -168,12 +159,12 @@ func TestPlatformServiceRejectsUnknownHealthCheckType(t *testing.T) {
 func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 
-	store := &fakePlatformStore{
-		updateServiceFn: func(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
+	delivery := &fakePlatformDelivery{
+		updateServiceFn: func(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (serviceRecord, bool, error) {
 			return serviceRecord{}, false, errConcurrentUpdate
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
+	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
 		ServiceId: "service-1",

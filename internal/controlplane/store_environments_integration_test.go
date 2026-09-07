@@ -67,7 +67,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("list staging services: %#v: %v", services, err)
 	}
-	updated, _, err := store.updateService(ctx, "editor", services[0].ID, "web-editor", services[0].Spec)
+	updated, _, err := updateService(ctx, store, "editor", services[0].ID, "web-editor", services[0].Spec)
 	if err != nil || updated.Name != "web-editor" {
 		t.Fatalf("editor could not mutate environment service: %#v: %v", updated, err)
 	}
@@ -75,7 +75,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if _, err := store.serviceByID(ctx, "other", services[0].ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("service ID bypassed ancestry authorization: %v", err)
 	}
-	if _, _, err := store.updateService(ctx, "viewer", services[0].ID, "web-viewer", services[0].Spec); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := updateService(ctx, store, "viewer", services[0].ID, "web-viewer", services[0].Spec); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("viewer mutated a service: %v", err)
 	}
 }
@@ -99,13 +99,13 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "owner", source.ID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{
+	service, err := createService(ctx, store, "owner", source.ID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{
 		Env: map[string]string{"SECRET": "production"}, VolumeName: "data",
 	}), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "owner", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "owner", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,11 +173,11 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	productionService, err := store.createScheduledService(ctx, "owner", production.ID, "web", directImageServiceSpec("example.test/web:production", nil))
+	productionService, err := createScheduledService(ctx, store, "owner", production.ID, "web", directImageServiceSpec("example.test/web:production", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	stagingService, err := store.createScheduledService(ctx, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:staging", nil))
+	stagingService, err := createScheduledService(ctx, store, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:staging", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,13 +203,20 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if productionService.RolloutGeneration != 0 || productionService.AllocatedAgentID != "" {
 		t.Fatalf("staging deploy affected production: %#v", productionService)
 	}
-	state, err := store.desiredStateForAgent(ctx, "node-1")
+	state, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil || len(state.GetServices()) != 1 || state.GetServices()[0].GetServiceId() != stagingService.ID {
 		t.Fatalf("unexpected desired state after staging deploy: %#v: %v", state.GetServices(), err)
 	}
 	node1Before = mustDesiredRevision(t, store, ctx, "node-1")
 	node2Before = mustDesiredRevision(t, store, ctx, "node-2")
-	notifiedAgentIDs, err = store.deleteEnvironment(ctx, "owner", staging.ID)
+	notifier := &recordingNotifier{}
+	ingress := &countingIngress{}
+	operations := NewEnvironmentOperations(store, notifier, ingress)
+	_, err = operations.DeleteEnvironment(contextWithDelegatedUser("owner", "owner@example.com"), &platformv1.DeleteEnvironmentRequest{EnvironmentId: staging.ID})
+	notifiedAgentIDs = notifier.agentIDs
+	if ingress.requests.Load() != 1 {
+		t.Fatal("environment deletion did not request ingress sync")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +229,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
 		t.Fatalf("node-2 revision after environment delete = %d, want %d", got, node2Before+1)
 	}
-	state, err = store.desiredStateForAgent(ctx, "node-1")
+	state, err = desiredStateForAgent(ctx, store, "node-1")
 	if err != nil || len(state.GetServices()) != 0 {
 		t.Fatalf("deleted environment retained desired workloads: %#v: %v", state.GetServices(), err)
 	}
@@ -232,5 +239,5 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 }
 
 func (s *Store) createStagedServiceForTest(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (serviceRecord, error) {
-	return s.createScheduledService(ctx, userID, environmentID, name, spec)
+	return createScheduledService(ctx, s, userID, environmentID, name, spec)
 }

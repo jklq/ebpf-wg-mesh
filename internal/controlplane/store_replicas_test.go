@@ -21,7 +21,7 @@ func TestReplicaPlacementIsDeterministicAndAvoidsColocation(t *testing.T) {
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b", "node-c"})
 
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestReplicaPlacementIsDeterministicAndAvoidsColocation(t *testing.T) {
 		t.Fatalf("expected one replica per agent, got %v", agents)
 	}
 
-	service2, err := store.createService(ctx, "user-1", envID, "api", replicaSpec(100, 64), "node-a")
+	service2, err := createService(ctx, store, "user-1", envID, "api", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService(2): %v", err)
 	}
@@ -59,7 +59,7 @@ func TestReplicaPlacementColocatesOnlyWhenCapacityRequiresIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -83,11 +83,11 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	queued, allocations, err := store.scaleService(ctx, "user-1", service.ID, 4)
+	queued, allocations, err := scaleService(ctx, store, "user-1", service.ID, 4)
 	if err != nil {
 		t.Fatalf("scaleService: %v", err)
 	}
@@ -131,15 +131,15 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 
 	volumeSpec := replicaSpec(100, 64)
 	volumeSpec.Runtime.VolumeName = "data"
-	volumeService, err := store.createService(ctx, "user-1", envID, "disk", volumeSpec, "node-a")
+	volumeService, err := createService(ctx, store, "user-1", envID, "disk", volumeSpec, "node-a")
 	if err != nil {
 		t.Fatalf("createService(volume): %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", volumeService.ID, 2); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := scaleService(ctx, store, "user-1", volumeService.ID, 2); !errors.Is(err, errVolumeReplicaUnsupported) {
 		t.Fatalf("scale volume service to 2: got %v", err)
 	}
 
-	replicaService, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	replicaService, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService(replicas): %v", err)
 	}
@@ -147,7 +147,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	volumeSpec.Runtime.CpuMillis = replicaService.Spec.GetRuntime().GetCpuMillis()
 	volumeSpec.Runtime.MemoryMebibytes = replicaService.Spec.GetRuntime().GetMemoryMebibytes()
 	volumeSpec.Runtime.Ports = replicaService.Spec.GetRuntime().GetPorts()
-	if _, _, err := store.updateService(ctx, "user-1", replicaService.ID, replicaService.Name, volumeSpec); !errors.Is(err, errVolumeReplicaUnsupported) {
+	if _, _, err := updateService(ctx, store, "user-1", replicaService.ID, replicaService.Name, volumeSpec); !errors.Is(err, errVolumeReplicaUnsupported) {
 		t.Fatalf("attach volume to replicated service: got %v", err)
 	}
 }
@@ -158,11 +158,11 @@ func TestReplicaScaleRejectsZero(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.scaleService(ctx, "user-1", service.ID, 0); !errors.Is(err, errInvalidReplicaCount) {
+	if _, _, err := scaleService(ctx, store, "user-1", service.ID, 0); !errors.Is(err, errInvalidReplicaCount) {
 		t.Fatalf("expected errInvalidReplicaCount, got %v", err)
 	}
 }
@@ -173,17 +173,17 @@ func TestReplicaDesiredStateIsAgentLocalAndIdentityCatalogIsClusterWide(t *testi
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 
-	stateA, err := store.desiredStateForAgent(ctx, "node-a")
+	stateA, err := desiredStateForAgent(ctx, store, "node-a")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent(node-a): %v", err)
 	}
-	stateB, err := store.desiredStateForAgent(ctx, "node-b")
+	stateB, err := desiredStateForAgent(ctx, store, "node-b")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent(node-b): %v", err)
 	}
@@ -210,12 +210,12 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	allocations := mustListAllocations(t, store, ctx, service.ID)
@@ -250,7 +250,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		t.Fatalf("expected traffic to be distributed across 2 ready replicas, got %d", got)
 	}
 
-	state, err := store.desiredStateForAgent(ctx, "node-a")
+	state, err := desiredStateForAgent(ctx, store, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b", "node-c"})
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, past, "node-b"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.failoverUnhealthyServices(ctx, time.Now().UTC(), 30*time.Second)
+	result, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("failoverUnhealthyServices: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b", "node-c"})
-	service, err := store.createService(ctx, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
+	service, err := createService(ctx, store, "user-1", envID, "web", replicaSpec(100, 64), "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		desired := int32(2 + i%2)
 		go func(desired int32) {
 			defer wg.Done()
-			_, _, err := store.scaleService(ctx, "user-1", service.ID, desired)
+			_, _, err := scaleService(ctx, store, "user-1", service.ID, desired)
 			if err != nil && !errors.Is(err, errConcurrentUpdate) {
 				errs <- err
 			}
@@ -374,7 +374,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 
 func mustQueueAndDeployReplicas(t *testing.T, store *Store, ctx context.Context, envID, serviceID string, desired int32) {
 	t.Helper()
-	if _, _, err := store.scaleService(ctx, "user-1", serviceID, desired); err != nil {
+	if _, _, err := scaleService(ctx, store, "user-1", serviceID, desired); err != nil {
 		t.Fatalf("scaleService: %v", err)
 	}
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {

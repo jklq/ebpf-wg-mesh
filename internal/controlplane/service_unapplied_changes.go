@@ -2,16 +2,13 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sort"
 	"strconv"
-	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/restartpolicy"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -417,87 +414,4 @@ func (s *Store) loadDeployedServiceSpecQuerier(ctx context.Context, q serviceQue
 		return nil, err
 	}
 	return canonicalServiceSpec(spec), nil
-}
-
-func (s *Store) discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (serviceRecord, error) {
-	var rec serviceRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
-		if err != nil {
-			return err
-		}
-		changes, deployed, err := s.loadServiceUnappliedChangesQuerier(ctx, tx, current.ID, current.Spec, current.RolloutGeneration)
-		if err != nil {
-			return err
-		}
-		valid := make(map[string]struct{}, len(changes))
-		for _, change := range changes {
-			valid[change.GetId()] = struct{}{}
-		}
-		filtered := make([]string, 0, len(changeIDs))
-		for _, id := range changeIDs {
-			if _, ok := valid[id]; ok {
-				filtered = append(filtered, id)
-			}
-		}
-		if !discardAll && len(filtered) == 0 {
-			rec = current
-			return nil
-		}
-		nextSpec := applyDiscardedServiceChanges(current.Spec, deployed, discardAll, filtered)
-		if sameServiceSpec(current.Spec, nextSpec) {
-			rec = current
-			return nil
-		}
-		now := time.Now().UTC()
-		nextRevision := current.SpecRevision + 1
-		specJSON, err := protojson.Marshal(nextSpec)
-		if err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx,
-			`UPDATE services
-			    SET current_spec_revision = $1,
-			        updated_at = $2
-			  WHERE id = $3
-			    AND current_spec_revision = $4
-			    AND current_rollout_generation = $5`,
-			nextRevision, now, current.ID, current.SpecRevision, current.RolloutGeneration,
-		)
-		if err != nil {
-			return err
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if affected == 0 {
-			return errConcurrentUpdate
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-			current.ID, nextRevision, specJSON, now,
-		); err != nil {
-			return err
-		}
-		rec = current
-		rec.Spec = nextSpec
-		rec.SpecRevision = nextRevision
-		rec.UpdatedAt = now
-		if source := desiredSourceSpec(nextSpec); source != nil {
-			rec.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
-		} else {
-			rec.SourceSummary = buildSourceSummary(nextSpec)
-		}
-		rec.ResolvedImage = directImageRef(nextSpec)
-		return nil
-	})
-	if err != nil {
-		return serviceRecord{}, fmt.Errorf("discard service changes: %w", err)
-	}
-	rec, err = s.serviceByID(ctx, userID, serviceID)
-	if err != nil {
-		return serviceRecord{}, fmt.Errorf("discard service changes: %w", err)
-	}
-	return rec, nil
 }

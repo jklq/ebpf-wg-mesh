@@ -37,11 +37,11 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -97,11 +97,11 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "attacker.example", 9090); err != nil {
@@ -135,11 +135,11 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -206,11 +206,11 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	serviceA, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-a", serviceSpec(), "node-1")
+	serviceA, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-a", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10", 8080); err != nil {
@@ -231,11 +231,11 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 
 	<-transport.firstStarted
 
-	serviceB, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-b", serviceSpec(), "node-1")
+	serviceB, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-b", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11", 8080); err != nil {
@@ -295,7 +295,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 		}
 	})
 	<-transport.firstStarted
-	if _, _, err := store.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	syncer.RequestSync()

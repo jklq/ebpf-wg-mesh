@@ -18,24 +18,24 @@ import (
 type AgentService struct {
 	agentv1.UnimplementedAgentControlServer
 	store                   *Store
+	delivery                agentDelivery
 	logStore                *LogStore
 	notifier                *Notifier
-	ingress                 *IngressSyncer
 	authority               *TLSAuthority
 	dashboard               *ManagedDashboardReconciler
 	dashboardEnabled        bool
 	dashboardTrustedAgentID string
 	dashboardCallerID       string
-	events                  *PlatformEvents
 	registry                *RegistryPolicy
 }
 
 type AgentServiceOption func(*AgentService)
 
-func WithAgentPlatformEvents(events *PlatformEvents) AgentServiceOption {
-	return func(service *AgentService) {
-		service.events = events
-	}
+type agentDelivery interface {
+	ObserveAgentStatus(context.Context, string, *agentv1.StatusReport) error
+	ReconcileFleetCapacity(context.Context) error
+	DesiredStateForAgent(context.Context, string) (*agentv1.DesiredNodeState, error)
+	RegisterAgent(context.Context, *agentv1.AgentHello) (bool, error)
 }
 
 func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
@@ -44,9 +44,9 @@ func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
 	}
 }
 
-func NewAgentService(store *Store, logStore *LogStore, notifier *Notifier, ingress *IngressSyncer, authority *TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
+func NewAgentService(store *Store, delivery agentDelivery, logStore *LogStore, notifier *Notifier, authority *TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
 	service := &AgentService{
-		store: store, logStore: logStore, notifier: notifier, ingress: ingress, authority: authority, dashboard: dashboard,
+		store: store, delivery: delivery, logStore: logStore, notifier: notifier, authority: authority, dashboard: dashboard,
 		dashboardEnabled:        dashboardEnabled,
 		dashboardTrustedAgentID: strings.TrimSpace(dashboardTrustedAgentID),
 		dashboardCallerID:       strings.TrimSpace(dashboardCallerID),
@@ -147,12 +147,12 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if err := s.store.authorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
 		return status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
 	}
-	changed, err := s.store.upsertAgent(ctx, hello)
+	changed, err := s.delivery.RegisterAgent(ctx, hello)
 	if err != nil {
 		return status.Errorf(codes.Internal, "register agent: %v", err)
 	}
 	if changed {
-		if err := s.store.reconcileFleetCapacity(ctx); err != nil {
+		if err := s.delivery.ReconcileFleetCapacity(ctx); err != nil {
 			return status.Errorf(codes.Internal, "reconcile fleet capacity: %v", err)
 		}
 	}
@@ -201,19 +201,10 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 				return status.Error(codes.PermissionDenied, "status report agent_id does not match session")
 			}
 			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()))
-			ingressChanged, changedEnvironmentIDs, err := s.store.recordStatusReport(ctx, hello.GetAgentId(), payload.StatusReport)
-			if err != nil {
+			if err := s.delivery.ObserveAgentStatus(ctx, hello.GetAgentId(), payload.StatusReport); err != nil {
 				return status.Errorf(codes.Internal, "status report: %v", err)
 			}
-			for _, environmentID := range changedEnvironmentIDs {
-				if _, err := s.events.Publish(ctx, environmentID); err != nil {
-					return status.Errorf(codes.Internal, "publish status event: %v", err)
-				}
-			}
 			s.emitCrashLoopEvents(ctx, hello.GetAgentId(), payload.StatusReport)
-			if ingressChanged {
-				s.ingress.RequestSync()
-			}
 		case *agentv1.AgentClientMessage_LogBatch:
 			batch := payload.LogBatch
 			if batch.GetAgentId() != hello.GetAgentId() {
@@ -248,7 +239,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			}
 			slog.Info("notify received", "agent_id", agentID)
 			nextRevision, err := sendLatestDesiredState(ctx, agentID, lastRevision, func() (*agentv1.DesiredNodeState, error) {
-				state, err := s.store.desiredStateForAgent(ctx, agentID)
+				state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 				if err != nil {
 					return nil, err
 				}

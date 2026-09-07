@@ -292,26 +292,6 @@ func validHealthCheckPath(path string) bool {
 	return err == nil && !parsed.IsAbs() && parsed.Host == ""
 }
 
-func (s *PlatformService) notifyServices(ctx context.Context, userID string, serviceIDs ...string) {
-	seen := make(map[string]struct{}, len(serviceIDs))
-	for _, serviceID := range serviceIDs {
-		serviceID = strings.TrimSpace(serviceID)
-		if serviceID == "" {
-			continue
-		}
-		if _, ok := seen[serviceID]; ok {
-			continue
-		}
-		seen[serviceID] = struct{}{}
-		service, err := s.store.serviceByID(ctx, userID, serviceID)
-		if err != nil {
-			slog.Warn("failed to load service for domain notification", "service_id", serviceID, "error", err)
-			continue
-		}
-		s.notifyServiceAgents(ctx, service.ID, false)
-	}
-}
-
 func (s *PlatformService) notifyAllAgents(ctx context.Context) {
 	agents, err := s.store.listAgents(ctx)
 	if err != nil {

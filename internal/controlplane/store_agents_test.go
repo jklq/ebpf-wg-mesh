@@ -41,7 +41,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 				if err := enrollTestAgent(ctx, store, hello); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.upsertAgent(ctx, hello); err == nil || !strings.Contains(err.Error(), "exhausted") {
+				if _, err := registerAgent(ctx, store, hello); err == nil || !strings.Contains(err.Error(), "exhausted") {
 					t.Fatalf("expected pool exhaustion, got %v", err)
 				}
 				assertIPv4AllocatorUnchanged(t, store, "node-3", 2)
@@ -65,7 +65,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 				if err := enrollTestAgent(ctx, store, hello); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.upsertAgent(ctx, hello); err == nil || !strings.Contains(err.Error(), "overlap") {
+				if _, err := registerAgent(ctx, store, hello); err == nil || !strings.Contains(err.Error(), "overlap") {
 					t.Fatalf("expected overlap rejection, got %v", err)
 				}
 				assertIPv4AllocatorUnchanged(t, store, "node-3", 1)
@@ -88,10 +88,10 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 					t.Fatalf("listProjects: projects=%d err=%v", len(projects), err)
 				}
 				environmentID := productionEnvironmentID(t, store, projects[0].ID)
-				if _, err := store.createService(ctx, "user-1", environmentID, "first", serviceSpec(), "node-1"); err != nil {
+				if _, err := createService(ctx, store, "user-1", environmentID, "first", serviceSpec(), "node-1"); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.createService(ctx, "user-1", environmentID, "second", serviceSpec(), "node-1"); err == nil || !strings.Contains(err.Error(), "exhausted") {
+				if _, err := createService(ctx, store, "user-1", environmentID, "second", serviceSpec(), "node-1"); err == nil || !strings.Contains(err.Error(), "exhausted") {
 					t.Fatalf("expected address exhaustion, got %v", err)
 				}
 				var services, allocations int
@@ -171,7 +171,7 @@ func TestAssignedNodeConfigSupportsClusterSizes(t *testing.T) {
 
 			for i := 1; i <= tt.clusterSize; i++ {
 				agentID := fmt.Sprintf("node-%d", i)
-				cfg, err := store.assignedNodeConfigForAgent(ctx, agentID)
+				cfg, err := testDelivery(store).assignedNodeConfigForAgent(ctx, agentID)
 				if err != nil {
 					t.Fatalf("assignedNodeConfigForAgent(%s): %v", agentID, err)
 				}
@@ -237,7 +237,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 	}
 	services := make([]serviceRecord, 0, 2)
 	for i, agentID := range []string{"node-1", "node-2"} {
-		service, err := store.createService(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), fmt.Sprintf("web-%d", i+1), directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+		service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), fmt.Sprintf("web-%d", i+1), directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 			Ports: runtimePortsFromInts([]int32{8080}),
 		}), agentID)
 		if err != nil {
@@ -247,7 +247,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 	}
 
 	for _, agentID := range []string{"node-1", "node-2"} {
-		state, err := store.desiredStateForAgent(ctx, agentID)
+		state, err := desiredStateForAgent(ctx, store, agentID)
 		if err != nil {
 			t.Fatalf("desiredStateForAgent(%s): %v", agentID, err)
 		}
@@ -279,7 +279,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 
 	node1BeforeDelete := mustDesiredRevision(t, store, ctx, "node-1")
 	node2BeforeDelete := mustDesiredRevision(t, store, ctx, "node-2")
-	if err := store.deleteService(ctx, "user-1", services[0].ID); err != nil {
+	if err := deleteService(ctx, store, "user-1", services[0].ID); err != nil {
 		t.Fatalf("deleteService: %v", err)
 	}
 	for _, item := range []struct {
@@ -289,7 +289,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 		if got := mustDesiredRevision(t, store, ctx, item.id); got != item.before+1 {
 			t.Fatalf("agent %s identity revision was not bumped: got %d want %d", item.id, got, item.before+1)
 		}
-		state, err := store.desiredStateForAgent(ctx, item.id)
+		state, err := desiredStateForAgent(ctx, store, item.id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +309,7 @@ func TestDesiredStateForSingleNodeClusterHasNoPeers(t *testing.T) {
 		t.Fatalf("upsertAgent(node-1): %v", err)
 	}
 
-	state, err := store.desiredStateForAgent(ctx, "node-1")
+	state, err := desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
 		t.Fatalf("desiredStateForAgent(node-1): %v", err)
 	}
