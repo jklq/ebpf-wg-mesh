@@ -319,7 +319,7 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.releaseEnvironment(ctx, "user-1", envID); err != nil {
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	if _, _, err := store.setAgentLifecycle(ctx, "ops", "node-a", agentStateDraining); err != nil {

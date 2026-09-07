@@ -117,7 +117,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if _, _, err := store.scaleService(ctx, "user-1", service.ID, 2); err != nil {
 		t.Fatalf("queue replica change: %v", err)
 	}
-	if _, _, err := store.releaseEnvironment(ctx, "user-1", service.EnvironmentID); err != nil {
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", service.EnvironmentID); err != nil {
 		t.Fatalf("deploy replica change: %v", err)
 	}
 	if got := countSourceWorkItems(t, store, ctx, sourceWorkKindSourceSpecChanged); got != 0 {

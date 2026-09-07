@@ -201,11 +201,17 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 	processPending := func() error {
 		for {
 			rec, err := p.store.claimNextGitHubWebhookDelivery(ctx, p.id, 5*time.Minute)
-			if err != nil { return err }
-			if rec.ID == "" { return nil }
+			if err != nil {
+				return err
+			}
+			if rec.ID == "" {
+				return nil
+			}
 			slog.InfoContext(ctx, "github webhook delivery claimed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "processor_id", rec.ProcessorID)
 			err = p.processDelivery(ctx, rec)
-			if completeErr := p.store.completeGitHubWebhookDelivery(ctx, rec.ID, p.id, err); completeErr != nil { return completeErr }
+			if completeErr := p.store.completeGitHubWebhookDelivery(ctx, rec.ID, p.id, err); completeErr != nil {
+				return completeErr
+			}
 			if err != nil {
 				slog.Warn("github webhook processing failed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "error", err)
 			} else {
@@ -223,9 +229,13 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 		if err := processPending(); err != nil {
-			if ctx.Err() != nil { return nil }
+			if ctx.Err() != nil {
+				return nil
+			}
 			slog.Warn("github webhook processor pass failed", "error", err)
-			if !waitContext(ctx, jitter(time.Second)) { return nil }
+			if !waitContext(ctx, jitter(time.Second)) {
+				return nil
+			}
 		}
 	}
 }
