@@ -18,12 +18,12 @@ func TestPruneSourceArchivesDeletesExpiredUnreferencedObjects(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v", err)
 	}
@@ -49,17 +49,17 @@ func TestPruneSourceArchivesDeletesExpiredUnreferencedObjects(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	deleted, err := store.pruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))
+	deleted, err := store.source.pruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if deleted != 1 {
 		t.Fatalf("deleted objects = %d, want 1", deleted)
 	}
-	if _, err := store.sourceSnapshotByID(ctx, snapshotID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.source.sourceSnapshotByID(ctx, snapshotID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("snapshot lookup error = %v, want sql.ErrNoRows", err)
 	}
-	if _, err := store.sourceArchives.Get(ctx, objectKey); !errors.Is(err, os.ErrNotExist) {
+	if _, err := store.source.sourceArchives.Get(ctx, objectKey); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("object lookup error = %v, want os.ErrNotExist", err)
 	}
 }

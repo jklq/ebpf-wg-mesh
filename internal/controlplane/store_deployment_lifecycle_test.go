@@ -23,7 +23,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	current, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("current deployment after create: ok=%v err=%v", ok, err)
 	}
@@ -35,7 +35,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
-	queued, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	queued, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("current after enqueue: ok=%v err=%v", ok, err)
 	}
@@ -44,7 +44,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	}
 
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	building, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	building, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || building.State != deliverycore.DeploymentStateBuilding {
 		t.Fatalf("building deployment = %+v ok=%v err=%v", building, ok, err)
 	}
@@ -52,12 +52,12 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
-	scheduled, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	scheduled, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || scheduled.State != deliverycore.DeploymentStateScheduling || scheduled.ImageDigest == "" {
 		t.Fatalf("scheduled deployment = %+v ok=%v err=%v", scheduled, ok, err)
 	}
 
-	alloc, err := store.allocationByServiceID(ctx, service.ID)
+	alloc, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil || alloc.ID == "" {
 		t.Fatalf("allocation: %+v err=%v", alloc, err)
 	}
@@ -77,12 +77,12 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("recordStatusReport: %v", err)
 	}
-	active, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	active, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || active.State != deliverycore.DeploymentStateActive {
 		t.Fatalf("active deployment = %+v ok=%v err=%v", active, ok, err)
 	}
 
-	history, err := store.listServiceDeployments(ctx, userID, service.ID, 10)
+	history, err := store.reads.listServiceDeployments(ctx, userID, service.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments: %v", err)
 	}
@@ -112,12 +112,12 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "docker build failed"); err != nil {
 		t.Fatal(err)
 	}
-	failed, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	failed, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || failed.State != deliverycore.DeploymentStateFailed {
 		t.Fatalf("failed deployment = %+v ok=%v err=%v", failed, ok, err)
 	}
 
-	alloc, err := store.allocationByServiceID(ctx, service.ID)
+	alloc, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestAgentCannotResurrectTerminalDeployment(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("recordStatusReport: %v", err)
 	}
-	stillFailed, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	stillFailed, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || stillFailed.State != deliverycore.DeploymentStateFailed {
 		t.Fatalf("agent resurrected terminal deployment: %+v", stillFailed)
 	}
@@ -147,7 +147,7 @@ func TestDeploymentTransitionRetriesAreIdempotent(t *testing.T) {
 	t.Parallel()
 
 	store, ctx, _, _, service := setupDirectImageServiceForDeployment(t)
-	_, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	_, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("current: ok=%v err=%v", ok, err)
 	}
@@ -158,7 +158,7 @@ func TestDeploymentTransitionRetriesAreIdempotent(t *testing.T) {
 	if err := activate(); err != nil {
 		t.Fatalf("idempotent retry: %v", err)
 	}
-	active, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	active, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || active.State != deliverycore.DeploymentStateActive {
 		t.Fatalf("after retries: %+v ok=%v err=%v", active, ok, err)
 	}
@@ -212,11 +212,11 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		t.Fatalf("enqueue for builder/agent race: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-race", build.ID)
-	alloc, err := store.allocationByServiceID(ctx, service.ID)
+	alloc, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	current, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("current before builder/agent race: ok=%v err=%v", ok, err)
 	}
@@ -257,7 +257,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		}
 	}
 
-	final, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	final, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("final current: ok=%v err=%v", ok, err)
 	}
@@ -268,23 +268,23 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		if err := reportActiveForTest(ctx, store, service.ID); err != nil {
 			t.Fatalf("agent resurrect after race: %v", err)
 		}
-		after, ok, err := store.currentDeploymentForService(ctx, service.ID)
+		after, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 		if err != nil || !ok || after.State != final.State {
 			t.Fatalf("agent changed terminal state from %q to %+v", final.State, after)
 		}
 	}
 }
 
-func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, string, string, deliverycore.ServiceRecord) {
+func setupSourceServiceForDeployment(t *testing.T) (*persistence, context.Context, string, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -306,16 +306,16 @@ func setupSourceServiceForDeployment(t *testing.T) (*Store, context.Context, str
 	return store, ctx, "user-1", projects[0].ID, service
 }
 
-func setupDirectImageServiceForDeployment(t *testing.T) (*Store, context.Context, string, string, deliverycore.ServiceRecord) {
+func setupDirectImageServiceForDeployment(t *testing.T) (*persistence, context.Context, string, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

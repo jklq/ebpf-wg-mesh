@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-func (s *Store) ensureUserProjectNamed(ctx context.Context, userID, name string) (string, error) {
+func (s *catalogPersistence) ensureUserProjectNamed(ctx context.Context, userID, name string) (string, error) {
 	return s.ensureUserProjectNamedQuerier(ctx, s.db, userID, name)
 }
 
-func (s *Store) ensureUserProjectNamedQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (string, error) {
+func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (string, error) {
 	project, found, err := s.projectByOwnedNameQuerier(ctx, q, userID, name)
 	if err != nil {
 		return "", err
@@ -44,7 +44,7 @@ func (s *Store) ensureUserProjectNamedQuerier(ctx context.Context, q deliverycor
 	return id, nil
 }
 
-func (s *Store) ensureProjectOwnerMembershipQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
+func (s *catalogPersistence) ensureProjectOwnerMembershipQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
 	_, err := q.ExecContext(
 		ctx,
 		`INSERT INTO project_memberships(user_id, project_id, role) VALUES ($1, $2, $3)
@@ -56,7 +56,7 @@ func (s *Store) ensureProjectOwnerMembershipQuerier(ctx context.Context, q deliv
 	return err
 }
 
-func (s *Store) ensureManagedProject(ctx context.Context, name, systemKey string) (deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, systemKey string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		current, found, err := s.projectBySystemKeyQuerier(ctx, tx, systemKey)
@@ -113,7 +113,7 @@ func (s *Store) ensureManagedProject(ctx context.Context, name, systemKey string
 	return project, nil
 }
 
-func (s *Store) createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, userID, name)
@@ -132,7 +132,7 @@ func (s *Store) createProject(ctx context.Context, userID, name string) (deliver
 	return project, nil
 }
 
-func (s *Store) listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
@@ -161,11 +161,11 @@ func (s *Store) listProjects(ctx context.Context, userID string) ([]deliverycore
 	return out, rows.Err()
 }
 
-func (s *Store) projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error) {
 	return s.projectByIDQuerier(ctx, s.db, userID, projectID)
 }
 
-func (s *Store) authorizeProjectWrite(ctx context.Context, userID, projectID string) error {
+func (s *catalogPersistence) authorizeProjectWrite(ctx context.Context, userID, projectID string) error {
 	var allowed bool
 	return s.db.QueryRowContext(
 		ctx,
@@ -182,7 +182,7 @@ func (s *Store) authorizeProjectWrite(ctx context.Context, userID, projectID str
 	).Scan(&allowed)
 }
 
-func (s *Store) projectByIDQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) (deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) projectByIDQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) (deliverycore.ProjectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
@@ -199,11 +199,11 @@ func (s *Store) projectByIDQuerier(ctx context.Context, q deliverycore.ServiceQu
 	return deliverycore.ScanProjectRow(row)
 }
 
-func (s *Store) projectByIDInternal(ctx context.Context, projectID string) (deliverycore.ProjectRecord, error) {
-	return s.deliveryQueries().ProjectByIDInternalQuerier(ctx, s.db, projectID)
+func (s *catalogPersistence) projectByIDInternal(ctx context.Context, projectID string) (deliverycore.ProjectRecord, error) {
+	return s.reads.deliveryQueries().ProjectByIDInternalQuerier(ctx, s.db, projectID)
 }
 
-func (s *Store) projectBySystemKeyQuerier(ctx context.Context, q deliverycore.ServiceQueryer, systemKey string) (deliverycore.ProjectRecord, bool, error) {
+func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q deliverycore.ServiceQueryer, systemKey string) (deliverycore.ProjectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
@@ -222,7 +222,7 @@ func (s *Store) projectBySystemKeyQuerier(ctx context.Context, q deliverycore.Se
 	}
 }
 
-func (s *Store) projectByOwnedNameQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (deliverycore.ProjectRecord, bool, error) {
+func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (deliverycore.ProjectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at

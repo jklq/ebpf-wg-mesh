@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"fmt"
 	"time"
@@ -44,7 +45,7 @@ func (d *Delivery) advanceRollout(ctx context.Context, serviceID string, now tim
 			return err
 		}
 		if result.Changed {
-			return s.bumpAllDesiredRevisionsTx(ctx, tx)
+			return dbtx.BumpAllDesiredRevisions(ctx, tx)
 		}
 		return nil
 	})
@@ -244,7 +245,7 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 			return err
 		}
 		result.Changed = true
-		return s.bumpAllDesiredRevisionsTx(ctx, tx)
+		return dbtx.BumpAllDesiredRevisions(ctx, tx)
 	})
 	return result, err
 }

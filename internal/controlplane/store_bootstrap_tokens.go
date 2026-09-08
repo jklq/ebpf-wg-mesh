@@ -13,7 +13,7 @@ import (
 
 var errInvalidBootstrapToken = errors.New("invalid, consumed, or incorrectly bound bootstrap token")
 
-func (s *Store) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.AgentBootstrapToken) error {
+func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.AgentBootstrapToken) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		configured := make(map[string]struct{}, len(tokens))
@@ -105,7 +105,7 @@ func (s *Store) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.
 	})
 }
 
-func (s *Store) consumeAgentBootstrapToken(ctx context.Context, agentID, token string) error {
+func (s *fleetPersistence) consumeAgentBootstrapToken(ctx context.Context, agentID, token string) error {
 	agentID = strings.TrimSpace(agentID)
 	token = strings.TrimSpace(token)
 	if agentID == "" || token == "" {

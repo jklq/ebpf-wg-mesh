@@ -13,7 +13,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func (s *Store) authorizeAgentCredential(ctx context.Context, agentID string) error {
+func (s *fleetPersistence) authorizeAgentCredential(ctx context.Context, agentID string) error {
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM agents
 		WHERE id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, strings.TrimSpace(agentID)).Scan(&one)
@@ -61,7 +61,7 @@ func encodeCapabilities(values []string) ([]byte, error) {
 	return json.Marshal(deliverycore.CanonicalCapabilities(values))
 }
 
-func (s *Store) recordAgentCertificate(ctx context.Context, agentID, serial string) error {
+func (s *fleetPersistence) recordAgentCertificate(ctx context.Context, agentID, serial string) error {
 	agentID = strings.TrimSpace(agentID)
 	serial = strings.ToLower(strings.TrimSpace(serial))
 	if agentID == "" || serial == "" {
@@ -72,7 +72,7 @@ func (s *Store) recordAgentCertificate(ctx context.Context, agentID, serial stri
 	return err
 }
 
-func (s *Store) listAgentCertificateSerials(ctx context.Context, agentID string) ([]string, error) {
+func (s *fleetPersistence) listAgentCertificateSerials(ctx context.Context, agentID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT serial FROM agent_certificates WHERE agent_id = $1 ORDER BY issued_at`, strings.TrimSpace(agentID))
 	if err != nil {
 		return nil, err
@@ -89,11 +89,11 @@ func (s *Store) listAgentCertificateSerials(ctx context.Context, agentID string)
 	return serials, rows.Err()
 }
 
-func (s *Store) fleetView(ctx context.Context, userID string) (*platformv1.Fleet, error) {
-	if err := s.deliveryQueries().AuthorizeOperator(ctx, userID); err != nil {
+func (s *fleetPersistence) fleetView(ctx context.Context, userID string) (*platformv1.Fleet, error) {
+	if err := s.reads.deliveryQueries().AuthorizeOperator(ctx, userID); err != nil {
 		return nil, err
 	}
-	agents, err := s.deliveryQueries().ListAgents(ctx)
+	agents, err := s.reads.deliveryQueries().ListAgents(ctx)
 	if err != nil {
 		return nil, err
 	}

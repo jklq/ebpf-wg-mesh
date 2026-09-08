@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
+func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
 	encodedPorts, err := json.Marshal(healthyPorts)
 	if err != nil {
 		return err
@@ -46,7 +46,7 @@ func (s *Store) markAllocationHealthyForTest(ctx context.Context, serviceID, all
 		return seedActiveDeploymentTx(ctx, tx, serviceID)
 	})
 }
-func (s *Store) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
+func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
 	encodedPorts, err := json.Marshal(healthyPorts)
 	if err != nil {
 		return err
@@ -88,7 +88,7 @@ func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) e
 	_, err = tx.ExecContext(ctx, `UPDATE deployments SET state='active',cause_kind='system',reason_code='DEPLOYMENT_ACTIVE',detail='Marked healthy for test',updated_at=statement_timestamp() WHERE service_id=$1 AND is_current`, serviceID)
 	return err
 }
-func (s *Store) currentDesiredRevisionForAgent(ctx context.Context, id string) (int64, error) {
+func (s *persistence) currentDesiredRevisionForAgent(ctx context.Context, id string) (int64, error) {
 	var rev int64
 	err := s.db.QueryRowContext(ctx, `SELECT desired_revision FROM agents WHERE id=$1`, id).Scan(&rev)
 	return rev, err

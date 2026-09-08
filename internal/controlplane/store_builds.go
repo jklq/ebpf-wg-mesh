@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (s *Store) builderOwnsSourceSnapshot(ctx context.Context, builderID, snapshotID string) (bool, error) {
+func (s *buildsPersistence) builderOwnsSourceSnapshot(ctx context.Context, builderID, snapshotID string) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM build_runs
@@ -16,7 +16,7 @@ func (s *Store) builderOwnsSourceSnapshot(ctx context.Context, builderID, snapsh
 	return count > 0, err
 }
 
-func (s *Store) recordBuilderHeartbeat(ctx context.Context, builderID, buildID string) error {
+func (s *buildsPersistence) recordBuilderHeartbeat(ctx context.Context, builderID, buildID string) error {
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE builder_workers
 		    SET current_build_id = $1,

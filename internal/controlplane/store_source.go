@@ -17,7 +17,7 @@ func snapshotDigest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (s *Store) upsertSourceBindingTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceBindingRecord) (deliverycore.SourceBindingRecord, error) {
+func (s *sourcePersistence) upsertSourceBindingTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceBindingRecord) (deliverycore.SourceBindingRecord, error) {
 	now := time.Now().UTC()
 	if rec.ID == "" {
 		rec.ID = deliverycore.MustID()
@@ -60,19 +60,19 @@ func (s *Store) upsertSourceBindingTx(ctx context.Context, tx *sql.Tx, rec deliv
 	if err != nil {
 		return deliverycore.SourceBindingRecord{}, err
 	}
-	return s.deliveryQueries().SourceBindingByServiceIDQuerier(ctx, tx, rec.ServiceID)
+	return s.reads.deliveryQueries().SourceBindingByServiceIDQuerier(ctx, tx, rec.ServiceID)
 }
 
-func (s *Store) deleteSourceBindingTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
+func (s *sourcePersistence) deleteSourceBindingTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM source_bindings WHERE service_id = $1`, serviceID)
 	return err
 }
 
-func (s *Store) sourceBindingByServiceID(ctx context.Context, serviceID string) (deliverycore.SourceBindingRecord, error) {
-	return s.deliveryQueries().SourceBindingByServiceIDQuerier(ctx, s.db, serviceID)
+func (s *sourcePersistence) sourceBindingByServiceID(ctx context.Context, serviceID string) (deliverycore.SourceBindingRecord, error) {
+	return s.reads.deliveryQueries().SourceBindingByServiceIDQuerier(ctx, s.db, serviceID)
 }
 
-func (s *Store) sourceBindingsForGitHubRepositoryAndRef(ctx context.Context, repositoryExternalID, trackedRef string) ([]deliverycore.SourceBindingRecord, error) {
+func (s *sourcePersistence) sourceBindingsForGitHubRepositoryAndRef(ctx context.Context, repositoryExternalID, trackedRef string) ([]deliverycore.SourceBindingRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
 		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
@@ -124,7 +124,7 @@ func (s *Store) sourceBindingsForGitHubRepositoryAndRef(ctx context.Context, rep
 	return out, rows.Err()
 }
 
-func (s *Store) sourceBindingsForProviderScope(ctx context.Context, provider, providerScopeExternalID string) ([]deliverycore.SourceBindingRecord, error) {
+func (s *sourcePersistence) sourceBindingsForProviderScope(ctx context.Context, provider, providerScopeExternalID string) ([]deliverycore.SourceBindingRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
 		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
@@ -175,7 +175,7 @@ func (s *Store) sourceBindingsForProviderScope(ctx context.Context, provider, pr
 	return out, rows.Err()
 }
 
-func (s *Store) upsertSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceRevisionRecord) (deliverycore.SourceRevisionRecord, error) {
+func (s *sourcePersistence) upsertSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceRevisionRecord) (deliverycore.SourceRevisionRecord, error) {
 	now := time.Now().UTC()
 	if rec.ID == "" {
 		rec.ID = deliverycore.MustID()
@@ -198,22 +198,22 @@ func (s *Store) upsertSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec deli
 	if err != nil {
 		return deliverycore.SourceRevisionRecord{}, err
 	}
-	return s.deliveryQueries().SourceRevisionByBindingAndCommitTx(ctx, tx, rec.SourceBindingID, rec.CommitSHA)
+	return s.reads.deliveryQueries().SourceRevisionByBindingAndCommitTx(ctx, tx, rec.SourceBindingID, rec.CommitSHA)
 }
 
-func (s *Store) sourceRevisionByBindingAndCommit(ctx context.Context, sourceBindingID, commitSHA string) (deliverycore.SourceRevisionRecord, error) {
-	return s.deliveryQueries().SourceRevisionByBindingAndCommitTx(ctx, s.db, sourceBindingID, commitSHA)
+func (s *sourcePersistence) sourceRevisionByBindingAndCommit(ctx context.Context, sourceBindingID, commitSHA string) (deliverycore.SourceRevisionRecord, error) {
+	return s.reads.deliveryQueries().SourceRevisionByBindingAndCommitTx(ctx, s.db, sourceBindingID, commitSHA)
 }
 
-func (s *Store) sourceSnapshotByProviderRepoAndCommit(ctx context.Context, provider, repositoryExternalID, commitSHA string) (deliverycore.SourceSnapshotRecord, error) {
-	return s.deliveryQueries().SourceSnapshotByProviderRepoAndCommitTx(ctx, s.db, provider, repositoryExternalID, commitSHA)
+func (s *sourcePersistence) sourceSnapshotByProviderRepoAndCommit(ctx context.Context, provider, repositoryExternalID, commitSHA string) (deliverycore.SourceSnapshotRecord, error) {
+	return s.reads.deliveryQueries().SourceSnapshotByProviderRepoAndCommitTx(ctx, s.db, provider, repositoryExternalID, commitSHA)
 }
 
-func (s *Store) sourceSnapshotByRevisionID(ctx context.Context, sourceRevisionID string) (deliverycore.SourceSnapshotRecord, error) {
-	return s.deliveryQueries().SourceSnapshotByRevisionIDTx(ctx, s.db, sourceRevisionID)
+func (s *sourcePersistence) sourceSnapshotByRevisionID(ctx context.Context, sourceRevisionID string) (deliverycore.SourceSnapshotRecord, error) {
+	return s.reads.deliveryQueries().SourceSnapshotByRevisionIDTx(ctx, s.db, sourceRevisionID)
 }
 
-func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (deliverycore.SourceSnapshotRecord, error) {
+func (s *sourcePersistence) sourceSnapshotByID(ctx context.Context, snapshotID string) (deliverycore.SourceSnapshotRecord, error) {
 	var rec deliverycore.SourceSnapshotRecord
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
@@ -241,7 +241,7 @@ func (s *Store) sourceSnapshotByID(ctx context.Context, snapshotID string) (deli
 	return rec, nil
 }
 
-func (s *Store) sourceSnapshotArchiveChunk(ctx context.Context, snapshotID string, offset int64, limit int) ([]byte, error) {
+func (s *sourcePersistence) sourceSnapshotArchiveChunk(ctx context.Context, snapshotID string, offset int64, limit int) ([]byte, error) {
 	if offset < 0 || limit <= 0 {
 		return nil, errors.New("invalid source snapshot archive range")
 	}

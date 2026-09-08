@@ -313,15 +313,15 @@ func dockerfileMarkerArchive(marker string) []byte {
 	return buf.Bytes()
 }
 
-func seedDockerfileSourceState(t *testing.T, store *Store, service deliverycore.ServiceRecord, commitSHA, marker string) {
+func seedDockerfileSourceState(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, marker string) {
 	t.Helper()
 	archive := dockerfileMarkerArchive(marker)
-	digest, objectKey, err := store.storeSourceArchive(context.Background(), archive)
+	digest, objectKey, err := store.source.storeSourceArchive(context.Background(), archive)
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}
 	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {
-		binding, err := store.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
+		binding, err := store.source.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,
 			Provider:                     "github",
@@ -336,7 +336,7 @@ func seedDockerfileSourceState(t *testing.T, store *Store, service deliverycore.
 		if err != nil {
 			return err
 		}
-		revision, err := store.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
+		revision, err := store.source.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -350,7 +350,7 @@ func seedDockerfileSourceState(t *testing.T, store *Store, service deliverycore.
 		if err != nil {
 			return err
 		}
-		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
+		_, err = store.source.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,

@@ -15,7 +15,7 @@ import (
 var errGitHubWorkDeferred = errors.New("github work deferred")
 
 type GitHubCoordinator struct {
-	store      *Store
+	store      *sourcePersistence
 	delivery   *deliverycore.Delivery
 	catalog    *GitHubCatalog
 	client     *GitHubClient
@@ -40,7 +40,7 @@ func WithGitHubCoordinatorLogEmitter(emitter *LogEmitter) GitHubCoordinatorOptio
 	}
 }
 
-func NewGitHubCoordinator(store *Store, delivery *deliverycore.Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
+func NewGitHubCoordinator(store *sourcePersistence, delivery *deliverycore.Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration, opts ...GitHubCoordinatorOption) *GitHubCoordinator {
 	if store == nil || delivery == nil || catalog == nil || client == nil || !client.Enabled() {
 		return nil
 	}
@@ -325,7 +325,7 @@ func (c *GitHubCoordinator) refreshInstallation(ctx context.Context, installatio
 }
 
 func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID string, specRevision int64) error {
-	service, err := c.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, c.store.db, serviceID)
+	service, err := c.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, c.store.db, serviceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -507,7 +507,7 @@ func (c *GitHubCoordinator) refreshRepositorySnapshot(ctx context.Context, owner
 	return c.catalog.RefreshRepositorySnapshot(ctx, owner, repo)
 }
 
-func (s *Store) upsertSourceBinding(ctx context.Context, rec deliverycore.SourceBindingRecord) (deliverycore.SourceBindingRecord, error) {
+func (s *sourcePersistence) upsertSourceBinding(ctx context.Context, rec deliverycore.SourceBindingRecord) (deliverycore.SourceBindingRecord, error) {
 	var out deliverycore.SourceBindingRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error

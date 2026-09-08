@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"sort"
 	"time"
@@ -88,7 +89,7 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 		}
 		if len(services) == 0 {
 			if len(staleAgentIDs) > 0 {
-				if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+				if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 					return err
 				}
 				for _, agent := range agents {
@@ -149,7 +150,7 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 		}
 
 		if (moved || len(staleAgentIDs) > 0) && !alreadyBumped {
-			if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 				return err
 			}
 		}

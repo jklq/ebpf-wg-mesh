@@ -17,7 +17,7 @@ import (
 
 type AgentService struct {
 	agentv1.UnimplementedAgentControlServer
-	store                   *Store
+	store                   *fleetPersistence
 	delivery                agentDelivery
 	logStore                *LogStore
 	notifier                *Notifier
@@ -44,7 +44,7 @@ func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
 	}
 }
 
-func NewAgentService(store *Store, delivery agentDelivery, logStore *LogStore, notifier *Notifier, authority *TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
+func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *LogStore, notifier *Notifier, authority *TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
 	service := &AgentService{
 		store: store, delivery: delivery, logStore: logStore, notifier: notifier, authority: authority, dashboard: dashboard,
 		dashboardEnabled:        dashboardEnabled,
@@ -165,7 +165,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, notifyCh)
 	}()
 	if changed {
-		ids, err := s.store.deliveryQueries().AgentIDs(ctx)
+		ids, err := s.store.reads.deliveryQueries().AgentIDs(ctx)
 		if err != nil {
 			return status.Errorf(codes.Internal, "list agents for notify: %v", err)
 		}
@@ -269,7 +269,7 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 		if cond.GetPhase() != restartpolicy.PhaseCrashLoop && !cond.GetRestart().GetCrashLoop() {
 			continue
 		}
-		alloc, err := s.store.allocationByServiceID(ctx, cond.GetServiceId())
+		alloc, err := s.store.reads.allocationByServiceID(ctx, cond.GetServiceId())
 		if err != nil {
 			continue
 		}

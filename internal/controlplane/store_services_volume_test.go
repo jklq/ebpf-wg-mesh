@@ -20,12 +20,12 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
+	volume, err := store.catalog.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
@@ -70,12 +70,12 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
+	volume, err := store.catalog.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
 	if err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	err = store.deleteVolume(ctx, "user-1", volume.ID)
+	err = store.catalog.deleteVolume(ctx, "user-1", volume.ID)
 	if !errors.Is(err, deliverycore.ErrVolumeInUse) {
 		t.Fatalf("expected errVolumeInUse, got %v", err)
 	}
@@ -105,12 +105,12 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		volumeName := fmt.Sprintf("data-%d", i)
 		serviceName := fmt.Sprintf("svc-%d", i)
-		volume, err := store.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20, "node-1")
+		volume, err := store.catalog.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20, "node-1")
 		if err != nil {
 			t.Fatalf("createVolume(%d): %v", i, err)
 		}
@@ -142,7 +142,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			deleteErrCh <- store.deleteVolume(ctx, "user-1", volume.ID)
+			deleteErrCh <- store.catalog.deleteVolume(ctx, "user-1", volume.ID)
 		}()
 
 		close(start)
@@ -154,7 +154,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			}
 		}
 
-		services, err := store.listServices(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID))
+		services, err := store.reads.listServices(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID))
 		if err != nil {
 			t.Fatalf("listServices(%d): %v", i, err)
 		}

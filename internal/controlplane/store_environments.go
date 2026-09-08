@@ -3,6 +3,8 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
@@ -12,7 +14,7 @@ import (
 
 var errProductionEnvironment = errors.New("production environment cannot be deleted")
 
-func (s *Store) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
 	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, deliverycore.EnvironmentSelect+`
 		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if err == nil {
@@ -24,7 +26,7 @@ func (s *Store) ensureProductionEnvironmentQuerier(ctx context.Context, q delive
 	return s.createEnvironmentQuerier(ctx, q, projectID, "Production", true, "")
 }
 
-func (s *Store) createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error) {
 	var rec deliverycore.EnvironmentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.authorizeProjectWriteQuerier(ctx, tx, userID, projectID); err != nil {
@@ -37,7 +39,7 @@ func (s *Store) createEnvironment(ctx context.Context, userID, projectID, name s
 	return rec, err
 }
 
-func (s *Store) listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error) {
 	if _, err := s.projectByID(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
@@ -59,20 +61,20 @@ func (s *Store) listEnvironments(ctx context.Context, userID, projectID string) 
 	return out, rows.Err()
 }
 
-func (s *Store) environmentByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, environmentID string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) environmentByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, environmentID string) (deliverycore.EnvironmentRecord, error) {
 	return deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, deliverycore.EnvironmentSelect+` WHERE e.id = $1`, environmentID))
 }
 
-func (s *Store) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
 	return deliverycore.ScanEnvironmentRow(s.db.QueryRowContext(ctx, deliverycore.EnvironmentSelect+`
 		 WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 }
 
-func (s *Store) authorizeEnvironmentWrite(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
+func (s *catalogPersistence) authorizeEnvironmentWrite(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	return s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
 }
 
-func (s *Store) authorizeProjectWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
+func (s *catalogPersistence) authorizeProjectWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
 	var allowed bool
 	return q.QueryRowContext(ctx, `SELECT TRUE FROM projects p
 		JOIN project_memberships m ON m.project_id = p.id
@@ -81,14 +83,14 @@ func (s *Store) authorizeProjectWriteQuerier(ctx context.Context, q deliverycore
 		projectID, userID, string(deliverycore.ProjectKindUser)).Scan(&allowed)
 }
 
-func (s *Store) renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
 	}
 	var rec deliverycore.EnvironmentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		current, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -104,13 +106,13 @@ func (s *Store) renameEnvironment(ctx context.Context, userID, environmentID, na
 	return rec, err
 }
 
-func (s *Store) deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error) {
+func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error) {
 	var agentIDs []string
 	var identityCatalogChanged bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		agentIDs = nil
 		identityCatalogChanged = false
-		rec, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		rec, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -147,16 +149,16 @@ func (s *Store) deleteEnvironment(ctx context.Context, userID, environmentID str
 		if !identityCatalogChanged {
 			return nil
 		}
-		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 			return err
 		}
-		agentIDs, err = s.deliveryQueries().AgentIDsQuerier(ctx, tx)
+		agentIDs, err = s.reads.deliveryQueries().AgentIDsQuerier(ctx, tx)
 		return err
 	})
 	return agentIDs, err
 }
 
-func (s *Store) createEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string, production bool, copiedFrom string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string, production bool, copiedFrom string) (deliverycore.EnvironmentRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")

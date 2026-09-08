@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-func (s *Store) ConfigureSourceArchives(store SourceArchiveStore) {
+func (s *sourcePersistence) ConfigureSourceArchives(store SourceArchiveStore) {
 	s.sourceArchives = store
 }
 
-func (s *Store) storeSourceArchive(ctx context.Context, archive []byte) (string, string, error) {
+func (s *sourcePersistence) storeSourceArchive(ctx context.Context, archive []byte) (string, string, error) {
 	if s.sourceArchives == nil {
 		return "", "", errors.New("source archive store is not configured")
 	}
@@ -28,7 +28,7 @@ func (s *Store) storeSourceArchive(ctx context.Context, archive []byte) (string,
 	return digest, key, nil
 }
 
-func (s *Store) loadSourceArchive(ctx context.Context, snapshot deliverycore.SourceSnapshotRecord) ([]byte, error) {
+func (s *sourcePersistence) loadSourceArchive(ctx context.Context, snapshot deliverycore.SourceSnapshotRecord) ([]byte, error) {
 	if s.sourceArchives == nil {
 		return nil, errors.New("source archive store is not configured")
 	}
@@ -45,7 +45,7 @@ func (s *Store) loadSourceArchive(ctx context.Context, snapshot deliverycore.Sou
 	return archive, nil
 }
 
-func (s *Store) pruneSourceArchives(ctx context.Context, cutoff time.Time) (int, error) {
+func (s *sourcePersistence) pruneSourceArchives(ctx context.Context, cutoff time.Time) (int, error) {
 	if s.sourceArchives == nil {
 		return 0, errors.New("source archive store is not configured")
 	}

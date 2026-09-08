@@ -9,7 +9,7 @@ import (
 )
 
 type GitHubReconciler struct {
-	store             *Store
+	store             *sourcePersistence
 	coordinator       *GitHubCoordinator
 	buildStaleAfter   time.Duration
 	webhookStaleAfter time.Duration
@@ -17,7 +17,7 @@ type GitHubReconciler struct {
 	workerID          string
 }
 
-func NewGitHubReconciler(store *Store, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter, workStaleAfter time.Duration) *GitHubReconciler {
+func NewGitHubReconciler(store *sourcePersistence, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter, workStaleAfter time.Duration) *GitHubReconciler {
 	if store == nil || coordinator == nil || !coordinator.Enabled() {
 		return nil
 	}

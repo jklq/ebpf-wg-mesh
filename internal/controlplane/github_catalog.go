@@ -12,11 +12,11 @@ import (
 )
 
 type GitHubCatalog struct {
-	store  *Store
+	store  *sourcePersistence
 	client *GitHubClient
 }
 
-func NewGitHubCatalog(store *Store, client *GitHubClient) *GitHubCatalog {
+func NewGitHubCatalog(store *sourcePersistence, client *GitHubClient) *GitHubCatalog {
 	if store == nil || client == nil || !client.Enabled() {
 		return nil
 	}
