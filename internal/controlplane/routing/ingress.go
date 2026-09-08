@@ -1,4 +1,4 @@
-package controlplane
+package routing
 
 import (
 	"bytes"
@@ -15,6 +15,17 @@ import (
 )
 
 const defaultIngressMinSyncInterval = 2 * time.Second
+
+type Backend struct {
+	Domain       string
+	Upstream     string
+	AllocationID string
+}
+
+type SnapshotSource interface {
+	HealthyIngressBackends(context.Context) ([]Backend, error)
+	WithLeaseGuard(context.Context, func() error) error
+}
 
 var routeSlicePool = sync.Pool{
 	New: func() interface{} {
@@ -78,7 +89,7 @@ type IngressSyncerOption func(*IngressSyncer)
 type IngressSyncer struct {
 	adminURL         string
 	client           *http.Client
-	store            *routingPersistence
+	store            SnapshotSource
 	staticRoutes     []IngressStaticRoute
 	listenAddrs      []string
 	adminListen      string
@@ -114,7 +125,25 @@ func WithIngressAutomaticHTTPSDisabled(disable bool) IngressSyncerOption {
 	}
 }
 
-func NewIngressSyncer(adminURL string, store *routingPersistence, opts ...IngressSyncerOption) *IngressSyncer {
+func WithHTTPClient(client *http.Client) IngressSyncerOption {
+	return func(i *IngressSyncer) {
+		if client != nil {
+			i.client = client
+		}
+	}
+}
+
+func WithMinSyncInterval(interval time.Duration) IngressSyncerOption {
+	return func(i *IngressSyncer) {
+		if interval > 0 {
+			i.minSyncInterval = interval
+		}
+	}
+}
+
+func (i *IngressSyncer) MinSyncInterval() time.Duration { return i.minSyncInterval }
+
+func NewIngressSyncer(adminURL string, store SnapshotSource, opts ...IngressSyncerOption) *IngressSyncer {
 	syncer := &IngressSyncer{
 		adminURL:        adminURL,
 		client:          &http.Client{},
@@ -183,7 +212,7 @@ func (i *IngressSyncer) Run(ctx context.Context) error {
 }
 
 func (i *IngressSyncer) syncLocked(ctx context.Context) error {
-	cfg, err := i.render(ctx)
+	cfg, err := i.Render(ctx)
 	if err != nil {
 		return err
 	}
@@ -195,7 +224,7 @@ func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 	// Render before taking the lease-row lock so database reads cannot deadlock
 	// behind a concurrent lease renewal. Only the external write needs fencing:
 	// takeover waits for it, and a former owner cannot enter this section.
-	return i.store.withLeaseGuard(ctx, func() error {
+	return i.store.WithLeaseGuard(ctx, func() error {
 		if bytes.Equal(body, i.lastPayload) {
 			return nil
 		}
@@ -234,7 +263,7 @@ func (i *IngressSyncer) pushRoutes(ctx context.Context, cfg *caddyConfig) error 
 	if err != nil {
 		return err
 	}
-	endpoint := ingressConfigAPIURL(i.adminURL, "/config/apps/http/servers/srv0/routes")
+	endpoint := ConfigAPIURL(i.adminURL, "/config/apps/http/servers/srv0/routes")
 	if endpoint == "" {
 		return fmt.Errorf("invalid ingress admin url %q", i.adminURL)
 	}
@@ -258,7 +287,7 @@ func (i *IngressSyncer) pushJSON(ctx context.Context, method, endpoint string, b
 	return nil
 }
 
-func ingressConfigAPIURL(adminURL, path string) string {
+func ConfigAPIURL(adminURL, path string) string {
 	parsed, err := url.Parse(adminURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""
@@ -269,8 +298,8 @@ func ingressConfigAPIURL(adminURL, path string) string {
 	return parsed.String()
 }
 
-func (i *IngressSyncer) render(ctx context.Context) (*caddyConfig, error) {
-	backends, err := i.store.listHealthyIngressBackends(ctx)
+func (i *IngressSyncer) Render(ctx context.Context) (*caddyConfig, error) {
+	backends, err := i.store.HealthyIngressBackends(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +375,7 @@ func ingressRoute(hosts []string, upstreams ...string) (caddyRoute, bool) {
 	}, true
 }
 
-func groupIngressBackends(backends []ingressBackend) []groupedIngressBackend {
+func groupIngressBackends(backends []Backend) []groupedIngressBackend {
 	order := make([]string, 0, len(backends))
 	grouped := make(map[string]*groupedIngressBackend, len(backends))
 	for _, backend := range backends {

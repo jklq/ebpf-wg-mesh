@@ -1,4 +1,4 @@
-package controlplane
+package routing
 
 import (
 	"context"
@@ -13,17 +13,24 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
 	errInvalidDomainHostname      = errors.New("hostname must be a valid DNS name")
 	errDomainOwnershipNotProven   = errors.New("domain CNAME does not point to the service platform hostname")
-	errPlatformDomainNotGenerated = errors.New("generate a platform domain for the service first")
-	errPlatformDomainReassignment = errors.New("generated platform domain cannot be reassigned to another service")
-	errPlatformDomainInUse        = errors.New("generated platform domain cannot be deleted while a custom domain is attached")
+	ErrPlatformDomainNotGenerated = errors.New("generate a platform domain for the service first")
+	ErrPlatformDomainReassignment = errors.New("generated platform domain cannot be reassigned to another service")
+	ErrPlatformDomainInUse        = errors.New("generated platform domain cannot be deleted while a custom domain is attached")
 )
 
 const domainOwnershipLookupTimeout = 3 * time.Second
+
+type Resolver interface {
+	LookupCNAME(context.Context, string) (string, error)
+	LookupHost(context.Context, string) ([]string, error)
+}
 
 var platformDomainAdjectives = [...]string{
 	"amber", "azure", "coral", "crimson", "golden", "indigo", "jade", "lilac",
@@ -63,7 +70,7 @@ func isPlatformHostname(hostname, suffix string) bool {
 	return hostname == suffix || strings.HasSuffix(hostname, "."+suffix)
 }
 
-func (s *Domains) annotateDomainBinding(ctx context.Context, userID string, rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
+func (s *Domains) AnnotateDomainBinding(ctx context.Context, userID string, rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
 	binding := toProtoDomainBinding(rec)
 	if rec.PlatformGenerated {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED
@@ -83,10 +90,10 @@ func (s *Domains) inspectDomainOwnership(ctx context.Context, userID, serviceID,
 	if platformGenerated {
 		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
 	}
-	platformBinding, err := s.store.platformDomainBindingForService(ctx, userID, serviceID)
+	platformBinding, err := s.store.PlatformDomainBindingForService(ctx, userID, serviceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED, errPlatformDomainNotGenerated
+			return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED, ErrPlatformDomainNotGenerated
 		}
 		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNSPECIFIED, err
 	}
@@ -152,12 +159,20 @@ func addressSetsOverlap(left, right []string) bool {
 	return false
 }
 
-func newPublicDNSResolver() *net.Resolver {
+func NewPublicDNSResolver() *net.Resolver {
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, network, net.JoinHostPort("1.1.1.1", "53"))
 		},
+	}
+}
+
+func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
+	return &platformv1.DomainBinding{
+		Hostname: rec.Hostname, ServiceId: rec.ServiceID, TargetPort: rec.TargetPort,
+		PlatformGenerated: rec.PlatformGenerated,
+		CreatedAt:         timestamppb.New(rec.CreatedAt), UpdatedAt: timestamppb.New(rec.UpdatedAt),
 	}
 }
