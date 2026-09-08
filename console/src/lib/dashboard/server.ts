@@ -261,7 +261,7 @@ export function createServiceFastFromSession(input: {
 
 export function listEnvironmentServicesFromSession(input: {
 	environmentId: string;
-}): Promise<Array<DashboardServiceRecord>> {
+}) {
 	return services.listEnvironmentServicesFromSession(
 		getDashboardRuntime(),
 		input,

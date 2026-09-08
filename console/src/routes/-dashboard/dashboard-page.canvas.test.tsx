@@ -8,7 +8,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DashboardPage, resetDashboardPageTestState } from "./dashboard-page";
+import { CreatedServiceCacheProvider } from "./created-service-cache";
+import { DashboardPage } from "./dashboard-page";
 import {
 	dashboardState,
 	emptyState,
@@ -30,7 +31,7 @@ const {
 	doSaveServicePositionMock: vi.fn(),
 	doUpdateServiceMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
-	routerMock: { invalidate: vi.fn() },
+	routerMock: { invalidate: vi.fn(), navigate: vi.fn() },
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -59,6 +60,7 @@ beforeEach(() => {
 		repositories: [],
 	});
 	routerMock.invalidate.mockReset();
+	routerMock.navigate.mockReset();
 	stubDashboardLayoutMetrics();
 	vi.stubGlobal("EventSource", MockEventSource);
 	vi.stubGlobal(
@@ -70,7 +72,6 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
-	resetDashboardPageTestState();
 	vi.unstubAllGlobals();
 });
 
@@ -216,7 +217,11 @@ describe("DashboardPage canvas", () => {
 			onboarding: emptyState().onboarding,
 		});
 
-		const { rerender } = render(<DashboardPage state={emptyState()} />);
+		const { rerender } = render(
+			<CreatedServiceCacheProvider>
+				<DashboardPage state={emptyState()} />
+			</CreatedServiceCacheProvider>,
+		);
 
 		fireEvent.click(
 			screen.getAllByRole("button", {
@@ -231,7 +236,11 @@ describe("DashboardPage canvas", () => {
 			await screen.findByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();
 
-		rerender(<DashboardPage state={emptyState()} />);
+		rerender(
+			<CreatedServiceCacheProvider>
+				<DashboardPage state={emptyState()} />
+			</CreatedServiceCacheProvider>,
+		);
 
 		expect(routerMock.invalidate).not.toHaveBeenCalled();
 		expect(
@@ -256,7 +265,13 @@ describe("DashboardPage canvas", () => {
 			onboarding: emptyState().onboarding,
 		});
 
-		const { unmount } = render(<DashboardPage state={emptyState()} />);
+		// The provider owns the created row above the remount; the selection
+		// travels in route search state, like the real route components do.
+		const { rerender } = render(
+			<CreatedServiceCacheProvider>
+				<DashboardPage key="before-remount" state={emptyState()} />
+			</CreatedServiceCacheProvider>,
+		);
 
 		fireEvent.click(
 			screen.getAllByRole("button", {
@@ -271,9 +286,15 @@ describe("DashboardPage canvas", () => {
 			await screen.findByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();
 
-		unmount();
-
-		render(<DashboardPage state={emptyState()} />);
+		rerender(
+			<CreatedServiceCacheProvider>
+				<DashboardPage
+					key="after-remount"
+					state={emptyState()}
+					urlSelectedServiceId={created.id}
+				/>
+			</CreatedServiceCacheProvider>,
+		);
 
 		expect(
 			screen.getByRole("button", { name: /close service panel/i }),
@@ -286,6 +307,7 @@ describe("DashboardPage canvas", () => {
 					environment,
 					environments: [environment],
 				})}
+				urlSelectedServiceId={created.id}
 			/>,
 		);
 
@@ -311,7 +333,11 @@ describe("DashboardPage canvas", () => {
 			onboarding: emptyState().onboarding,
 		});
 
-		const { unmount } = render(<DashboardPage state={emptyState()} />);
+		const { rerender } = render(
+			<CreatedServiceCacheProvider>
+				<DashboardPage key="before-remount" state={emptyState()} />
+			</CreatedServiceCacheProvider>,
+		);
 
 		fireEvent.click(
 			screen.getAllByRole("button", {
@@ -332,19 +358,37 @@ describe("DashboardPage canvas", () => {
 			expect(source).toBeTruthy();
 			return source as MockEventSource;
 		});
-		environmentSource.emit("services", [created]);
+		environmentSource.emit("services", {
+			services: [created],
+			revision: 2,
+		});
 
 		expect(
 			screen.getByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();
 
-		unmount();
+		rerender(
+			<CreatedServiceCacheProvider>
+				<DashboardPage
+					key="after-remount"
+					state={emptyState()}
+					urlSelectedServiceId={created.id}
+				/>
+			</CreatedServiceCacheProvider>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+
+		cleanup();
 		render(
 			<DashboardPage
 				state={dashboardState(created, {
 					environment,
 					environments: [environment],
 				})}
+				urlSelectedServiceId={created.id}
 			/>,
 		);
 

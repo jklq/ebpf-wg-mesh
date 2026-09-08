@@ -57,6 +57,8 @@ function homeState(overrides: Partial<DashboardHomeState>): DashboardHomeState {
 		ingressTargetHost: "platform.example.test",
 		environments: [],
 		services: [],
+		servicesRevision: 0,
+		selectedServiceId: null,
 		domainBindings: [],
 		controlPlaneReachable: true,
 		...overrides,

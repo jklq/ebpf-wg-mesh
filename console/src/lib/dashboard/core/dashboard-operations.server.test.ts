@@ -92,7 +92,7 @@ describe("dashboard operations", () => {
 		const state = await homeOperations.loadDashboardHome(harness.runtime);
 
 		expect(state?.services[0]?.layoutPosition).toEqual({ x: 320, y: 256 });
-		expect(state?.service?.layoutPosition).toEqual({ x: 320, y: 256 });
+		expect(state?.selectedServiceId).toBe("service-1");
 	});
 
 	it("uses the URL environment to select its project and services", async () => {
@@ -242,8 +242,8 @@ describe("dashboard operations", () => {
 
 		expect(home?.project?.id).toBe("project-1");
 		expect(home?.services).toHaveLength(1);
-		expect(home?.service?.id).toBe("service-1");
-		expect(home?.serviceStatus).toBeUndefined();
+		expect(home?.selectedServiceId).toBe("service-1");
+		expect(home?.servicesRevision).toBeGreaterThanOrEqual(1);
 		expect(home?.domainBindings).toEqual([]);
 		expect(harness.platform.getServiceStatusCalls).toEqual([]);
 		expect(harness.platform.listDomainBindingsCalls).toEqual([]);

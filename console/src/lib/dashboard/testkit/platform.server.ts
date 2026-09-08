@@ -104,6 +104,7 @@ export interface FakePlatformGateway extends PlatformGateway {
 	projects: Array<DashboardProject>;
 	environments: Array<DashboardEnvironment>;
 	services: Array<DashboardServiceRecord>;
+	servicesIndex: number;
 	serviceStatuses: Map<string, DashboardServiceStatus>;
 	serviceLogs: Array<DashboardServiceLogLine>;
 	serviceDeployments: Array<DashboardDeploymentRecord>;
@@ -152,6 +153,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		projects: [],
 		environments: [],
 		services: [],
+		servicesIndex: 1,
 		serviceStatuses: new Map<string, DashboardServiceStatus>(),
 		serviceLogs: [],
 		serviceDeployments: [],
@@ -302,26 +304,28 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				const next = deployed.find((entry) => entry.id === service.id);
 				return next ?? service;
 			});
+			platform.servicesIndex += 1;
 			return deployed.map((service) => ({ service }));
 		},
-		async listServices(
-			user,
-			environmentId,
-		): Promise<Array<DashboardServiceRecord>> {
+		async listServices(user, environmentId) {
 			platform.listServicesCalls.push({ user, environmentId });
 			if (platform.errors.listServices) {
 				throw platform.errors.listServices;
 			}
-			return platform.services.filter(
-				(service) => service.environmentId === environmentId,
-			);
+			return {
+				index: platform.servicesIndex,
+				notModified: false,
+				services: platform.services.filter(
+					(service) => service.environmentId === environmentId,
+				),
+			};
 		},
 		async waitForServices(user, input) {
-			const services = await platform.listServices(user, input.environmentId);
+			const snapshot = await platform.listServices(user, input.environmentId);
 			return {
-				index: input.waitIndex + 1,
+				index: Math.max(snapshot.index, input.waitIndex + 1),
 				notModified: false,
-				services,
+				services: snapshot.services,
 			};
 		},
 		async inspectRepositorySource(
@@ -395,6 +399,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				pendingChanges: true,
 			};
 			platform.services = [...platform.services, serviceRecord];
+			platform.servicesIndex += 1;
 			platform.serviceStatuses.set(serviceRecord.id, {
 				service: serviceRecord,
 				allocation: {
@@ -445,6 +450,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.services = platform.services.map((service) =>
 				service.id === updated.id ? updated : service,
 			);
+			platform.servicesIndex += 1;
 			const status = platform.serviceStatuses.get(updated.id);
 			if (status) {
 				platform.serviceStatuses.set(updated.id, {
@@ -502,6 +508,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.services = platform.services.map((service) =>
 				service.id === updated.id ? updated : service,
 			);
+			platform.servicesIndex += 1;
 			const status = platform.serviceStatuses.get(input.serviceId);
 			if (status) {
 				platform.serviceStatuses.set(input.serviceId, {
@@ -553,6 +560,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.services = platform.services.map((service) =>
 				service.id === updated.id ? updated : service,
 			);
+			platform.servicesIndex += 1;
 			return updated;
 		},
 		async deleteService(user, input): Promise<void> {
@@ -563,6 +571,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.services = platform.services.filter(
 				(service) => service.id !== input.serviceId,
 			);
+			platform.servicesIndex += 1;
 			platform.serviceStatuses.delete(input.serviceId);
 		},
 		async getService(user, input): Promise<DashboardServiceRecord> {

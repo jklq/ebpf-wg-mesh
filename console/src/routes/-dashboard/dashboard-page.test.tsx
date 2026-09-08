@@ -18,7 +18,7 @@ import {
 } from "vitest";
 
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
-import { DashboardPage, resetDashboardPageTestState } from "./dashboard-page";
+import { DashboardPage } from "./dashboard-page";
 import {
 	dashboardState,
 	deferred,
@@ -42,7 +42,7 @@ const {
 	doSaveServicePositionMock: vi.fn(),
 	doUpdateServiceMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
-	routerMock: { invalidate: vi.fn() },
+	routerMock: { invalidate: vi.fn(), navigate: vi.fn() },
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -81,6 +81,7 @@ beforeEach(() => {
 		repositories: [],
 	});
 	routerMock.invalidate.mockReset();
+	routerMock.navigate.mockReset();
 	stubDashboardLayoutMetrics();
 	vi.stubGlobal("EventSource", MockEventSource);
 	vi.stubGlobal(
@@ -103,7 +104,6 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
-	resetDashboardPageTestState();
 	resetServicePersistQueueForTests();
 	vi.unstubAllGlobals();
 });
@@ -216,7 +216,9 @@ describe("DashboardPage", () => {
 			],
 		});
 		const { rerender } = render(
-			<DashboardPage state={dashboardState(current)} />,
+			<DashboardPage
+				state={dashboardState(current, { servicesRevision: 2 })}
+			/>,
 		);
 		expect(await screen.findByText("Undeployed changes")).toBeTruthy();
 
@@ -229,6 +231,36 @@ describe("DashboardPage", () => {
 						unappliedChangeCount: 0,
 						unappliedChanges: [],
 					}),
+					{ servicesRevision: 1 },
+				)}
+			/>,
+		);
+
+		expect(await screen.findByText("Undeployed changes")).toBeTruthy();
+	});
+
+	it("accepts a newer loader rerender over older stream data", async () => {
+		const clean = serviceRecord({
+			pendingChanges: false,
+			unappliedChangeCount: 0,
+			unappliedChanges: [],
+		});
+		const { rerender } = render(
+			<DashboardPage state={dashboardState(clean, { servicesRevision: 1 })} />,
+		);
+
+		rerender(
+			<DashboardPage
+				state={dashboardState(
+					serviceRecord({
+						specRevision: 2,
+						pendingChanges: true,
+						unappliedChangeCount: 1,
+						unappliedChanges: [
+							unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
+						],
+					}),
+					{ servicesRevision: 2 },
 				)}
 			/>,
 		);
@@ -301,18 +333,31 @@ describe("DashboardPage", () => {
 			expect(source).toBeTruthy();
 			return source;
 		});
-		environmentSource?.emit("services", [
-			service,
-			{
-				...worker,
-				pendingChanges: true,
-				unappliedChangeCount: 2,
-				unappliedChanges: [
-					unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "one"),
-					unappliedChange("runtime.env.BAR", "Variables", "BAR", "", "two"),
-				],
-			},
-		]);
+		// A delayed duplicate of the loader snapshot must not clear the
+		// badge once the newer revision has applied.
+		environmentSource?.emit("services", {
+			services: [service, worker],
+			revision: 1,
+		});
+		environmentSource?.emit("services", {
+			services: [
+				service,
+				{
+					...worker,
+					pendingChanges: true,
+					unappliedChangeCount: 2,
+					unappliedChanges: [
+						unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "one"),
+						unappliedChange("runtime.env.BAR", "Variables", "BAR", "", "two"),
+					],
+				},
+			],
+			revision: 2,
+		});
+		environmentSource?.emit("services", {
+			services: [service, worker],
+			revision: 1,
+		});
 
 		expect(await screen.findByText("2 changes")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Details" })).toBeTruthy();
@@ -358,7 +403,7 @@ describe("DashboardPage", () => {
 					],
 					environment: secondEnvironment,
 					services: [secondService],
-					service: secondService,
+					selectedServiceId: null,
 				})}
 			/>,
 		);
@@ -416,7 +461,9 @@ describe("DashboardPage", () => {
 			],
 		});
 		const { rerender } = render(
-			<DashboardPage state={dashboardState(firstEdit)} />,
+			<DashboardPage
+				state={dashboardState(firstEdit, { servicesRevision: 2 })}
+			/>,
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
@@ -433,7 +480,11 @@ describe("DashboardPage", () => {
 				unappliedChange("runtime.env.BAR", "Variables", "BAR", "", "next"),
 			],
 		});
-		rerender(<DashboardPage state={dashboardState(secondEdit)} />);
+		rerender(
+			<DashboardPage
+				state={dashboardState(secondEdit, { servicesRevision: 3 })}
+			/>,
+		);
 
 		await screen.findByText("Applying 1 change, 1 ready");
 		const deployingButton = screen.getByRole("button", { name: "Deploying…" });

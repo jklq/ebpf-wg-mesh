@@ -48,6 +48,8 @@ export async function loadDashboardHome(
 		localDomainSuffix: config.localDomainSuffix,
 		environments: [],
 		services: [],
+		servicesRevision: 0,
+		selectedServiceId: null,
 		domainBindings: [],
 		controlPlaneReachable: true,
 	} satisfies DashboardHomeState;
@@ -86,7 +88,8 @@ export async function loadDashboardHome(
 		let environments: DashboardHomeState["environments"] = [];
 		let environment: DashboardHomeState["environment"];
 		let allServices: Array<DashboardServiceRecord> = [];
-		let service: DashboardServiceRecord | undefined;
+		let servicesRevision = 0;
+		let selectedServiceId: string | null = null;
 
 		if (project) {
 			environments = await platformCall(
@@ -102,7 +105,7 @@ export async function loadDashboardHome(
 		}
 
 		if (environment) {
-			const [servicesResult, positions] = await Promise.all([
+			const [servicesSnapshot, positions] = await Promise.all([
 				safePlatformCall(runtime, "listServices", (platform) =>
 					platform.listServices(session.user, environment.id),
 				),
@@ -110,27 +113,39 @@ export async function loadDashboardHome(
 					store.listServicePositions(session.user.id, environment.id),
 				),
 			]);
-			allServices = servicesResult ?? [];
-			allServices = applyServicePositions(allServices, positions);
-		}
-
-		if (project && onboarding.serviceId) {
-			service = allServices.find((s) => s.id === onboarding.serviceId);
-		}
-
-		if (!service && project && onboarding.repositorySelector) {
-			const matchingServices = allServices.filter(
-				(entry) =>
-					entry.spec?.source?.repositorySelector ===
-					onboarding.repositorySelector,
+			allServices = applyServicePositions(
+				servicesSnapshot?.services ?? [],
+				positions,
 			);
-			if (matchingServices.length === 1) {
-				service = matchingServices[0];
-			}
+			servicesRevision = servicesSnapshot?.index ?? 0;
 		}
 
-		if (project && service) {
-			reconciledDraft = reconcileOnboardingDraft(onboarding, project, service);
+		const selectedService =
+			project && onboarding.serviceId
+				? allServices.find((s) => s.id === onboarding.serviceId)
+				: undefined;
+		const repositoryMatch =
+			!selectedService && project && onboarding.repositorySelector
+				? (() => {
+						const matchingServices = allServices.filter(
+							(entry) =>
+								entry.spec?.source?.repositorySelector ===
+								onboarding.repositorySelector,
+						);
+						return matchingServices.length === 1
+							? matchingServices[0]
+							: undefined;
+					})()
+				: undefined;
+		const resolvedSelection = selectedService ?? repositoryMatch;
+		selectedServiceId = resolvedSelection?.id ?? null;
+
+		if (project && resolvedSelection) {
+			reconciledDraft = reconcileOnboardingDraft(
+				onboarding,
+				project,
+				resolvedSelection,
+			);
 		} else if (onboarding.projectId || onboarding.serviceId) {
 			reconciledDraft = reconcileOnboardingDraft(
 				onboarding,
@@ -159,7 +174,8 @@ export async function loadDashboardHome(
 			environments,
 			environment,
 			services: allServices,
-			service,
+			servicesRevision,
+			selectedServiceId,
 		} satisfies DashboardHomeState;
 	} catch (error) {
 		if (error instanceof PlatformGatewayError) {

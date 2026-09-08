@@ -94,8 +94,8 @@ export function dashboardState(
 		},
 		repositories: [],
 		services: [service],
-		service,
-		serviceStatus: undefined,
+		servicesRevision: 1,
+		selectedServiceId: null,
 		githubInstallURL:
 			"https://github.example.test/apps/platform/installations/new",
 		publicBaseURL: "https://dashboard.example.test",
@@ -111,7 +111,8 @@ export function dashboardState(
 export function emptyState(): DashboardHomeState {
 	return dashboardState(serviceRecord(), {
 		services: [],
-		service: undefined,
+		servicesRevision: 1,
+		selectedServiceId: null,
 		environment: undefined,
 		githubAccount: {
 			providerSubject: "1",
