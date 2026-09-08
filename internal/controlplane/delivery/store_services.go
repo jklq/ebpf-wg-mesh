@@ -50,6 +50,8 @@ type ServiceQueryer interface {
 
 type jsonInt32Slice []int32
 
+type JsonInt32Slice = jsonInt32Slice
+
 type jsonStringSlice []string
 
 func encodeHealthyPorts(ports []int32) ([]byte, error) {

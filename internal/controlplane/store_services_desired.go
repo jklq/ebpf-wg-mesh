@@ -5,8 +5,6 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/restartpolicy"
-	"encoding/json"
-	"fmt"
 	"net"
 	"slices"
 	"strconv"
@@ -44,7 +42,7 @@ func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]rout
 			allocationIPv6   string
 			allocationID     string
 		)
-		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyIPv4Ports), (*jsonInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
+		if err := rows.Scan(&domain, &targetPort, (*deliverycore.JsonInt32Slice)(&healthyIPv4Ports), (*deliverycore.JsonInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
 			return nil, err
 		}
 		if slices.Contains(healthyIPv4Ports, targetPort) && net.ParseIP(allocationIPv4) != nil {
@@ -58,23 +56,4 @@ func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]rout
 		}
 	}
 	return backends, rows.Err()
-}
-
-type jsonInt32Slice []int32
-
-func (p *jsonInt32Slice) Scan(src any) error {
-	if p == nil {
-		return nil
-	}
-	switch v := src.(type) {
-	case nil:
-		*p = nil
-		return nil
-	case []byte:
-		return json.Unmarshal(v, (*[]int32)(p))
-	case string:
-		return json.Unmarshal([]byte(v), (*[]int32)(p))
-	default:
-		return fmt.Errorf("scan int32 slice json: unsupported type %T", src)
-	}
 }
