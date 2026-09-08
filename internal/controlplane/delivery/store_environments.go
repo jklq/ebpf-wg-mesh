@@ -134,3 +134,7 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEn
 	})
 	return duplicate, err
 }
+
+func ScanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRecord, error) {
+	return scanEnvironmentRow(scanner)
+}

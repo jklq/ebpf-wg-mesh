@@ -27,3 +27,7 @@ func scanProjectRow(scanner interface{ Scan(...any) error }) (ProjectRecord, err
 	}
 	return rec, nil
 }
+
+func ScanProjectRow(scanner interface{ Scan(...any) error }) (ProjectRecord, error) {
+	return scanProjectRow(scanner)
+}
