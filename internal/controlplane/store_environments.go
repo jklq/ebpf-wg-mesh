@@ -17,7 +17,7 @@ import (
 var errProductionEnvironment = errors.New("production environment cannot be deleted")
 
 func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
-	rec, err := scanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
+	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
 		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if err == nil {
 		return rec, nil
@@ -54,7 +54,7 @@ func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, proje
 	defer rows.Close()
 	var out []deliverycore.EnvironmentRecord
 	for rows.Next() {
-		rec, err := scanEnvironmentRow(rows)
+		rec, err := deliverycore.ScanEnvironmentRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -63,12 +63,8 @@ func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, proje
 	return out, rows.Err()
 }
 
-func (s *catalogPersistence) environmentByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return scanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+` WHERE e.id = $1`, environmentID))
-}
-
 func (s *catalogPersistence) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
-	return scanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+`
+	return deliverycore.ScanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+`
 		 WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 }
 
@@ -225,7 +221,7 @@ func (s *catalogPersistence) environmentByIDQuerier(ctx context.Context, q deliv
 		 WHERE e.id = $1 AND m.user_id = $2
 		   AND m.role IN ('owner', 'editor', 'viewer') AND p.kind = $3`,
 		environmentID, userID, string(deliverycore.ProjectKindUser))
-	return scanEnvironmentRow(row)
+	return deliverycore.ScanEnvironmentRow(row)
 }
 
 func (s *catalogPersistence) authorizeEnvironmentWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
@@ -235,23 +231,7 @@ func (s *catalogPersistence) authorizeEnvironmentWriteQuerier(ctx context.Contex
 		 WHERE e.id = $1 AND m.user_id = $2
 		   AND m.role IN ('owner', 'editor') AND p.kind = $3`,
 		environmentID, userID, string(deliverycore.ProjectKindUser))
-	return scanEnvironmentRow(row)
-}
-
-func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (deliverycore.EnvironmentRecord, error) {
-	var rec deliverycore.EnvironmentRecord
-	var kind string
-	var networkIdentity int64
-	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction,
-		&networkIdentity, &rec.CopiedFromEnvironmentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
-		return deliverycore.EnvironmentRecord{}, err
-	}
-	if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
-		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment %s has invalid network identity %d", rec.ID, networkIdentity)
-	}
-	rec.NetworkIdentity = uint32(networkIdentity)
-	rec.Kind = deliverycore.EnvironmentKind(kind)
-	return rec, nil
+	return deliverycore.ScanEnvironmentRow(row)
 }
 
 const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,

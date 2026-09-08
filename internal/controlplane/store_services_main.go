@@ -7,19 +7,6 @@ import (
 	"fmt"
 )
 
-func (s *catalogPersistence) createVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64, _ string) (deliverycore.VolumeRecord, error) {
-	var rec deliverycore.VolumeRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		rec, err = s.createVolumeTx(ctx, tx, userID, environmentID, name, sizeBytes)
-		return err
-	})
-	if err != nil {
-		return deliverycore.VolumeRecord{}, err
-	}
-	return rec, nil
-}
-
 func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
 	var rec deliverycore.VolumeRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
