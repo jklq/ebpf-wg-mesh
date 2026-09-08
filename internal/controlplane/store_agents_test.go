@@ -19,18 +19,18 @@ import (
 func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		run  func(*testing.T, *Store)
+		run  func(*testing.T, *persistence)
 	}{
 		{
 			name: "exhaustion",
-			run: func(t *testing.T, store *Store) {
+			run: func(t *testing.T, store *persistence) {
 				ctx := context.Background()
 				for i, want := range []string{"10.42.0.0/30", "10.42.0.4/30"} {
 					hello := testAgentHello(i + 1)
 					if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 						t.Fatalf("upsertAgent(%s): %v", hello.GetAgentId(), err)
 					}
-					agent, err := store.deliveryQueries().AgentByID(ctx, hello.GetAgentId())
+					agent, err := store.reads.deliveryQueries().AgentByID(ctx, hello.GetAgentId())
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -51,7 +51,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 		},
 		{
 			name: "overlap",
-			run: func(t *testing.T, store *Store) {
+			run: func(t *testing.T, store *persistence) {
 				ctx := context.Background()
 				if _, err := upsertTestAgent(t, store, ctx, testAgentHello(1)); err != nil {
 					t.Fatal(err)
@@ -75,17 +75,17 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 		},
 		{
 			name: "workload address exhaustion",
-			run: func(t *testing.T, store *Store) {
+			run: func(t *testing.T, store *persistence) {
 				ctx := context.Background()
 				if _, err := upsertTestAgent(t, store, ctx, testAgentHello(1)); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+				if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 					Users: []config.BootstrapUser{{ID: "user-1", Projects: []string{"demo"}}},
 				}); err != nil {
 					t.Fatal(err)
 				}
-				projects, err := store.listProjects(ctx, "user-1")
+				projects, err := store.catalog.listProjects(ctx, "user-1")
 				if err != nil || len(projects) != 1 {
 					t.Fatalf("listProjects: projects=%d err=%v", len(projects), err)
 				}
@@ -113,7 +113,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 			meshCfg := testMeshConfig()
 			meshCfg.WorkloadIPv4PoolCIDR = "10.42.0.0/29"
 			meshCfg.WorkloadIPv4NodePrefixBits = 30
-			store, err := OpenStore(config.DatabaseConfig{URL: createTestDatabase(t)}, meshCfg)
+			store, err := openPersistence(config.DatabaseConfig{URL: createTestDatabase(t)}, meshCfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +127,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 	}
 }
 
-func assertIPv4AllocatorUnchanged(t *testing.T, store *Store, unassignedAgent string, wantOrdinal int64) {
+func assertIPv4AllocatorUnchanged(t *testing.T, store *persistence, unassignedAgent string, wantOrdinal int64) {
 	t.Helper()
 	var ordinal int64
 	if err := store.db.QueryRow(`SELECT next_ordinal FROM workload_ipv4_prefix_allocator WHERE id = TRUE`).Scan(&ordinal); err != nil {
@@ -221,12 +221,12 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

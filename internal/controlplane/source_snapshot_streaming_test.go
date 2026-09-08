@@ -20,12 +20,12 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -48,21 +48,21 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 		t.Fatalf("seedReadySourceState: %v", err)
 	}
 
-	binding, err := store.sourceBindingByServiceID(ctx, service.ID)
+	binding, err := store.source.sourceBindingByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := store.sourceRevisionByBindingAndCommit(ctx, binding.ID, "commit-1")
+	revision, err := store.source.sourceRevisionByBindingAndCommit(ctx, binding.ID, "commit-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := store.sourceSnapshotByRevisionID(ctx, revision.ID)
+	snapshot, err := store.source.sourceSnapshotByRevisionID(ctx, revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	archive := bytes.Repeat([]byte("bounded-source-snapshot"), sourceSnapshotChunkBytes/8)
 	archive = append(archive, []byte("final-chunk")...)
-	digest, objectKey, err := store.storeSourceArchive(ctx, archive)
+	digest, objectKey, err := store.source.storeSourceArchive(ctx, archive)
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if summary.GetSourceState().GetLatestSnapshot().GetId() != snapshot.ID {
 		t.Fatalf("unexpected source summary snapshot: %v", summary)
 	}
-	metadataOnly, err := store.sourceSnapshotByRevisionID(ctx, revision.ID)
+	metadataOnly, err := store.source.sourceSnapshotByRevisionID(ctx, revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	stream := &recordingSourceSnapshotServerStream{
 		ctx: contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 	}
-	if err := NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0)).DownloadSourceSnapshot(
+	if err := NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0)).DownloadSourceSnapshot(
 		&platformv1.DownloadSourceSnapshotRequest{SnapshotId: snapshot.ID}, stream,
 	); err != nil {
 		t.Fatalf("DownloadSourceSnapshot: %v", err)

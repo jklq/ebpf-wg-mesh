@@ -17,12 +17,12 @@ func TestConcurrentCreateServicePlacementIsAtomic(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -80,12 +80,12 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		}
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		t.Fatal("expected updated service to report pending changes")
 	}
 	var revisions int
-	if revisions, err = store.countServiceRevisionsForTest(ctx, service.ID); err != nil {
+	if revisions, err = store.reads.countServiceRevisionsForTest(ctx, service.ID); err != nil {
 		t.Fatalf("count revisions: %v", err)
 	}
 	if revisions != 3 {
@@ -154,12 +154,12 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -186,14 +186,14 @@ func TestUpdateServiceNoopDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	if updated.SpecRevision != 1 || updated.RolloutGeneration != 1 {
 		t.Fatalf("expected no-op update to preserve revisions, got spec=%d rollout=%d", updated.SpecRevision, updated.RolloutGeneration)
 	}
-	revisions, err := store.countServiceRevisionsForTest(ctx, service.ID)
+	revisions, err := store.reads.countServiceRevisionsForTest(ctx, service.ID)
 	if err != nil {
 		t.Fatalf("countServiceRevisionsForTest: %v", err)
 	}
 	if revisions != 1 {
 		t.Fatalf("expected 1 stored spec revision after noop, got %d", revisions)
 	}
-	rollouts, err := store.countServiceRolloutsForTest(ctx, service.ID)
+	rollouts, err := store.reads.countServiceRolloutsForTest(ctx, service.ID)
 	if err != nil {
 		t.Fatalf("countServiceRolloutsForTest: %v", err)
 	}
@@ -207,12 +207,12 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -264,12 +264,12 @@ func TestUpdateServiceNameDoesNotAdvanceSpecOrRollout(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -319,12 +319,12 @@ func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	current, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
 	}
@@ -355,14 +355,14 @@ func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 	if redeployed.RolloutGeneration != 2 {
 		t.Fatalf("expected rollout generation 2, got %d", redeployed.RolloutGeneration)
 	}
-	revisions, err := store.countServiceRevisionsForTest(ctx, service.ID)
+	revisions, err := store.reads.countServiceRevisionsForTest(ctx, service.ID)
 	if err != nil {
 		t.Fatalf("countServiceRevisionsForTest: %v", err)
 	}
 	if revisions != 2 {
 		t.Fatalf("expected 2 stored spec revisions after exact redeploy, got %d", revisions)
 	}
-	rollouts, err := store.countServiceRolloutsForTest(ctx, service.ID)
+	rollouts, err := store.reads.countServiceRolloutsForTest(ctx, service.ID)
 	if err != nil {
 		t.Fatalf("countServiceRolloutsForTest: %v", err)
 	}

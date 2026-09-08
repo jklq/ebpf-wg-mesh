@@ -33,7 +33,7 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{
 			ID:       "user-1",
 			Projects: []string{"one", "two"},
@@ -41,11 +41,11 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 2 {
 		t.Fatalf("list projects: %v (%d)", err, len(projects))
 	}
-	if err := store.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+	if err := store.source.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
 		InstallationID: 7,
 		AccountLogin:   "octocat",
 		AccountType:    "User",
@@ -61,29 +61,29 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+	if err := store.source.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
 		RepositoryID:   42,
 		FullName:       "octocat/hello",
 		InstallationID: 7,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if installationID, err := store.projectGitHubRepositoryInstallation(ctx, projects[0].ID, "octocat", "hello"); err != nil || installationID != 7 {
+	if installationID, err := store.source.projectGitHubRepositoryInstallation(ctx, projects[0].ID, "octocat", "hello"); err != nil || installationID != 7 {
 		t.Fatalf("linked project installation = %d, %v", installationID, err)
 	}
-	if _, err := store.projectGitHubRepositoryInstallation(ctx, projects[1].ID, "octocat", "hello"); err != sql.ErrNoRows {
+	if _, err := store.source.projectGitHubRepositoryInstallation(ctx, projects[1].ID, "octocat", "hello"); err != sql.ErrNoRows {
 		t.Fatalf("expected unlinked project denial, got %v", err)
 	}
 }
 
-func bootstrapProjectAndAgent(t *testing.T, store *Store, ctx context.Context) string {
+func bootstrapProjectAndAgent(t *testing.T, store *persistence, ctx context.Context) string {
 	t.Helper()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -93,7 +93,7 @@ func bootstrapProjectAndAgent(t *testing.T, store *Store, ctx context.Context) s
 	return projects[0].ID
 }
 
-func countSourceWorkItems(t *testing.T, store *Store, ctx context.Context, kind string) int {
+func countSourceWorkItems(t *testing.T, store *persistence, ctx context.Context, kind string) int {
 	t.Helper()
 	var count int
 	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM source_work_items WHERE kind = $1`, kind).Scan(&count); err != nil {
@@ -102,7 +102,7 @@ func countSourceWorkItems(t *testing.T, store *Store, ctx context.Context, kind 
 	return count
 }
 
-func createRepoBackedTestService(t *testing.T, store *Store, ctx context.Context, repositorySelector string, installationID int64, trackedRef string) (string, string) {
+func createRepoBackedTestService(t *testing.T, store *persistence, ctx context.Context, repositorySelector string, installationID int64, trackedRef string) (string, string) {
 	t.Helper()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -111,7 +111,7 @@ func createRepoBackedTestService(t *testing.T, store *Store, ctx context.Context
 		t.Fatalf("splitGitHubRepositorySelector: %v", err)
 	}
 	if installationID > 0 {
-		if err := store.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+		if err := store.source.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
 			InstallationID: installationID,
 			AccountLogin:   owner,
 			AccountType:    "Organization",

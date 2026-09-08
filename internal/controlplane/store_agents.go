@@ -12,7 +12,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 )
 
-func (s *Store) heartbeatAgent(ctx context.Context, agentID string) error {
+func (s *fleetPersistence) heartbeatAgent(ctx context.Context, agentID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE agents SET
 		lifecycle_state = CASE WHEN lifecycle_state = 'unavailable'
 			THEN CASE WHEN state_before_unavailable IN ('active', 'cordoned', 'draining') THEN state_before_unavailable ELSE 'active' END
@@ -23,7 +23,7 @@ func (s *Store) heartbeatAgent(ctx context.Context, agentID string) error {
 	return err
 }
 
-func (s *Store) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
+func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	type logOwner struct {
 		allocationID  string
 		environmentID string
@@ -63,7 +63,7 @@ func (s *Store) validateAgentLogBatch(ctx context.Context, agentID string, batch
 	return nil
 }
 
-func (s *Store) validateWorkloadIPv4Pool(ctx context.Context) error {
+func (s *fleetPersistence) validateWorkloadIPv4Pool(ctx context.Context) error {
 	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
 		pool := s.mesh.WorkloadIPv4PoolCIDR
 		prefixBits := s.mesh.WorkloadIPv4NodePrefixBits
@@ -131,6 +131,6 @@ func (s *Store) validateWorkloadIPv4Pool(ctx context.Context) error {
 	})
 }
 
-func (s *Store) schedulerSnapshot(ctx context.Context) ([]deliverycore.AgentRecord, []deliverycore.ServiceRecord, error) {
-	return s.deliveryQueries().SchedulerSnapshotTx(ctx, s.db)
+func (s *fleetPersistence) schedulerSnapshot(ctx context.Context) ([]deliverycore.AgentRecord, []deliverycore.ServiceRecord, error) {
+	return s.reads.deliveryQueries().SchedulerSnapshotTx(ctx, s.db)
 }

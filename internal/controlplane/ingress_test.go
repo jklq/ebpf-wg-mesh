@@ -25,12 +25,12 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -41,14 +41,14 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store)
+	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
 	cfg, err := syncer.render(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -85,12 +85,12 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -101,14 +101,14 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "attacker.example", 9090); err != nil {
 		t.Fatal(err)
 	}
 
-	backends, err := store.listHealthyIngressBackends(ctx)
+	backends, err := store.routing.listHealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,12 +123,12 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -148,7 +148,7 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 
 	syncer := NewIngressSyncer(
 		"http://127.0.0.1:2019/load",
-		store,
+		store.routing,
 		WithIngressStaticRoutes([]IngressStaticRoute{{
 			Hosts:    []string{"platform.localtest.me", "mesh.dev.example.test"},
 			Upstream: "host.docker.internal:41235",
@@ -193,12 +193,12 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -210,14 +210,14 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", store)
+	syncer := NewIngressSyncer("http://caddy.invalid/load", store.routing)
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
@@ -235,7 +235,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11", 8080); err != nil {
@@ -283,12 +283,12 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	store := openTestStore(t)
 
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", store)
+	syncer := NewIngressSyncer("http://caddy.invalid/load", store.routing)
 	syncer.minSyncInterval = 20 * time.Millisecond
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
@@ -321,7 +321,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 		}
 	})
 	<-transport.firstStarted
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	syncer.RequestSync()
@@ -345,13 +345,13 @@ func TestIngressSyncSkipsUnchangedConfig(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", store)
+	syncer := NewIngressSyncer("http://caddy.invalid/load", store.routing)
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),

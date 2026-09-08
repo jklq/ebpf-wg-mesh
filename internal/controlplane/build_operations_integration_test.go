@@ -29,7 +29,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.createProject(ctx, "owner", "demo")
+	project, err := store.catalog.createProject(ctx, "owner", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	credentials := &retryBuildCredentials{}
 	notifier := &recordingNotifier{}
 	logs := &recordingLogWriter{enabled: true}
-	operations := NewBuildOperations(store, newDelivery(store, notifier, nil, nil), registry, credentials, 0, WithBuilderLogEmitter(&LogEmitter{store: logs}))
+	operations := NewBuildOperations(store.builds, newDelivery(store, notifier, nil, nil), registry, credentials, 0, WithBuilderLogEmitter(&LogEmitter{store: logs}))
 	builder := contextWithClientIdentity(serviceCallerBuilder, "builder-1")
 	claim := &platformv1.ClaimBuildRequest{BuilderId: "builder-1"}
 	if _, err := operations.ClaimBuild(builder, claim); err == nil {

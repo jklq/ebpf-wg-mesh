@@ -17,7 +17,7 @@ const managedDashboardSecretsMount = "/run/secrets/dashboard"
 type ManagedDashboardReconciler struct {
 	cfg      config.ManagedDashboardConfig
 	profile  config.Profile
-	store    *Store
+	store    *catalogPersistence
 	delivery *deliverycore.Delivery
 	ingress  *IngressSyncer
 	notifier *Notifier
@@ -48,7 +48,7 @@ func (r *ManagedDashboardReconciler) Run(ctx context.Context) error {
 func NewManagedDashboardReconciler(
 	cfg config.ManagedDashboardConfig,
 	profile config.Profile,
-	store *Store,
+	store *catalogPersistence,
 	delivery *deliverycore.Delivery,
 	ingress *IngressSyncer,
 	notifier *Notifier,

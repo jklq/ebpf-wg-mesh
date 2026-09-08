@@ -45,11 +45,11 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projectsA, err := store.listProjects(ctx, "user-a")
+	projectsA, err := store.catalog.listProjects(ctx, "user-a")
 	if err != nil || len(projectsA) != 1 {
 		t.Fatalf("projects A: %v", err)
 	}
-	projectsB, err := store.listProjects(ctx, "user-b")
+	projectsB, err := store.catalog.listProjects(ctx, "user-b")
 	if err != nil || len(projectsB) != 1 {
 		t.Fatalf("projects B: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 			LogType:       platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
 		}},
 	}
-	if err := store.validateAgentLogBatch(ctx, agentID, spoof); err == nil {
+	if err := store.fleet.validateAgentLogBatch(ctx, agentID, spoof); err == nil {
 		t.Fatal("validateAgentLogBatch accepted a batch that claimed B's service with A's allocation")
 	}
 	foreignAlloc := &agentv1.LogBatch{
@@ -143,7 +143,7 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 			Line:          "spoof-unassigned",
 		}},
 	}
-	if err := store.validateAgentLogBatch(ctx, agentID, foreignAlloc); err == nil {
+	if err := store.fleet.validateAgentLogBatch(ctx, agentID, foreignAlloc); err == nil {
 		t.Fatal("validateAgentLogBatch accepted an allocation not assigned to the agent")
 	}
 
@@ -183,7 +183,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-a")
+	projects, err := store.catalog.listProjects(ctx, "user-a")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	if _, err := upsertTestAgent(t, disabled.server.store, ctx, agentHello("disabled-agent")); err != nil {
 		t.Fatal(err)
 	}
-	disabledProjects, err := disabled.server.store.listProjects(ctx, "user-a")
+	disabledProjects, err := disabled.server.store.catalog.listProjects(ctx, "user-a")
 	if err != nil || len(disabledProjects) != 1 {
 		t.Fatalf("disabled projects: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	}
 }
 
-func allocationIDForService(t *testing.T, store *Store, serviceID string) string {
+func allocationIDForService(t *testing.T, store *persistence, serviceID string) string {
 	t.Helper()
 	var id string
 	if err := store.db.QueryRowContext(context.Background(), `SELECT id FROM allocations WHERE service_id = $1`, serviceID).Scan(&id); err != nil {

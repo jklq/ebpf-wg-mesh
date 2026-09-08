@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func upsertTestAgent(t *testing.T, store *Store, ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
+func upsertTestAgent(t *testing.T, store *persistence, ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
 	t.Helper()
 	if hello == nil {
 		return false, fmt.Errorf("agent hello is required")
@@ -58,7 +58,7 @@ func upsertTestAgent(t *testing.T, store *Store, ctx context.Context, hello *age
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 
-func enrollTestAgent(ctx context.Context, store *Store, hello *agentv1.AgentHello) error {
+func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.AgentHello) error {
 	id := strings.TrimSpace(hello.GetAgentId())
 	name := strings.TrimSpace(hello.GetName())
 	if name == "" {
@@ -74,7 +74,7 @@ func enrollTestAgent(ctx context.Context, store *Store, hello *agentv1.AgentHell
 	return err
 }
 
-func openTestStore(t *testing.T) *Store {
+func openTestStore(t *testing.T) *persistence {
 	t.Helper()
 
 	// Most integration tests only need isolated data, not an independently
@@ -85,7 +85,7 @@ func openTestStore(t *testing.T) *Store {
 	t.Cleanup(testStoreMu.Unlock)
 
 	dbURL := sharedTestDatabase(t)
-	store, err := OpenStore(config.DatabaseConfig{
+	store, err := openPersistence(config.DatabaseConfig{
 		URL:          dbURL,
 		MaxOpenConns: 4,
 		MaxIdleConns: 4,
@@ -97,7 +97,7 @@ func openTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("create source archive store: %v", err)
 	}
-	store.ConfigureSourceArchives(archiveStore)
+	store.source.ConfigureSourceArchives(archiveStore)
 	resetTestStore(t, store)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
@@ -119,7 +119,7 @@ func sharedTestDatabase(t *testing.T) string {
 	return testDatabaseURL
 }
 
-func resetTestStore(t *testing.T, store *Store) {
+func resetTestStore(t *testing.T, store *persistence) {
 	t.Helper()
 
 	// TRUNCATE is a schema change in CockroachDB and takes roughly a second even
@@ -193,9 +193,9 @@ func createTestDatabase(t *testing.T) string {
 	return dbURL
 }
 
-func productionEnvironmentID(t *testing.T, store *Store, projectID string) string {
+func productionEnvironmentID(t *testing.T, store *persistence, projectID string) string {
 	t.Helper()
-	environment, err := store.productionEnvironmentByProjectInternal(context.Background(), projectID)
+	environment, err := store.catalog.productionEnvironmentByProjectInternal(context.Background(), projectID)
 	if err != nil {
 		t.Fatalf("load production environment for project %s: %v", projectID, err)
 	}

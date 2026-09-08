@@ -15,7 +15,7 @@ func countReadyAllocations(recs []deliverycore.AllocationRecord) int32 {
 	return ready
 }
 
-func (s *Store) agentIDsForServiceQuerier(ctx context.Context, q deliverycore.ServiceQueryer, serviceID string) ([]string, error) {
+func (s *readsPersistence) agentIDsForServiceQuerier(ctx context.Context, q deliverycore.ServiceQueryer, serviceID string) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT DISTINCT agent_id FROM allocations WHERE service_id = $1 ORDER BY agent_id`, serviceID)
 	if err != nil {
 		return nil, err

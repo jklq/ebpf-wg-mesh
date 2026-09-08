@@ -18,10 +18,10 @@ type Notifier struct {
 	watchers  map[string][]chan struct{}
 	indexMap  map[chan struct{}]int
 	revisions map[string]int64
-	store     *Store
+	store     *readsPersistence
 }
 
-func NewNotifier(ctx context.Context, store *Store, pollInterval time.Duration) *Notifier {
+func NewNotifier(ctx context.Context, store *readsPersistence, pollInterval time.Duration) *Notifier {
 	if pollInterval <= 0 {
 		pollInterval = defaultNotifierPollInterval
 	}
@@ -108,7 +108,7 @@ func (n *Notifier) poll(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (s *Store) desiredRevisionsForAgents(ctx context.Context, agentIDs []string) (map[string]int64, error) {
+func (s *readsPersistence) desiredRevisionsForAgents(ctx context.Context, agentIDs []string) (map[string]int64, error) {
 	out := make(map[string]int64, len(agentIDs))
 	if len(agentIDs) == 0 {
 		return out, nil

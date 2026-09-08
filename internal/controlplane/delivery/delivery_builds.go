@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"time"
 
@@ -11,13 +12,13 @@ import (
 
 var ErrBuildCommitMismatch = errors.New("commit_sha does not match the claimed build")
 
-type buildCompletion struct {
+type BuildCompletion struct {
 	Build            BuildRunRecord
 	Changed          bool
 	RolloutScheduled bool
 }
 
-func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) (buildCompletion, error) {
+func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) (BuildCompletion, error) {
 	s := d.store
 	var environmentID, serviceID string
 	var changed, rolloutScheduled bool
@@ -260,15 +261,15 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			return err
 		}
 		rolloutScheduled = true
-		return s.bumpAllDesiredRevisionsTx(ctx, tx)
+		return dbtx.BumpAllDesiredRevisions(ctx, tx)
 	})
 	if err != nil || !changed {
-		return buildCompletion{}, err
+		return BuildCompletion{}, err
 	}
 	if rolloutScheduled && d.notifier != nil {
 		allocations, err := s.listAllocationsByServiceID(ctx, serviceID)
 		if err != nil {
-			return buildCompletion{}, err
+			return BuildCompletion{}, err
 		}
 		seen := make(map[string]struct{}, len(allocations))
 		for _, allocation := range allocations {
@@ -285,7 +286,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 	if d.events != nil {
 		_, err = d.events.Publish(ctx, environmentID)
 	}
-	return buildCompletion{Build: completed, Changed: changed, RolloutScheduled: rolloutScheduled}, err
+	return BuildCompletion{Build: completed, Changed: changed, RolloutScheduled: rolloutScheduled}, err
 }
 
 func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, error) {

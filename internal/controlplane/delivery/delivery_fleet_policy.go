@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
@@ -127,7 +129,7 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 		if !started {
 			return nil
 		}
-		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE lifecycle_state <> 'retired' ORDER BY id`)
@@ -199,7 +201,7 @@ func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 			changed = changed || len(before) != len(after)
 		}
 		if changed {
-			return s.bumpAllDesiredRevisionsTx(ctx, tx)
+			return dbtx.BumpAllDesiredRevisions(ctx, tx)
 		}
 		return nil
 	})
@@ -411,7 +413,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			return err
 		}
 		if changed {
-			return s.bumpAllDesiredRevisionsTx(ctx, tx)
+			return dbtx.BumpAllDesiredRevisions(ctx, tx)
 		}
 		return nil
 	})

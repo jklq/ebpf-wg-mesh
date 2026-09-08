@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-func (s *Store) createVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64, _ string) (deliverycore.VolumeRecord, error) {
+func (s *catalogPersistence) createVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64, _ string) (deliverycore.VolumeRecord, error) {
 	var rec deliverycore.VolumeRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -20,7 +20,7 @@ func (s *Store) createVolume(ctx context.Context, userID, environmentID, name st
 	return rec, nil
 }
 
-func (s *Store) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
 	var rec deliverycore.VolumeRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -33,8 +33,8 @@ func (s *Store) createScheduledVolume(ctx context.Context, userID, environmentID
 	return rec, nil
 }
 
-func (s *Store) listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error) {
-	if _, err := s.deliveryQueries().EnvironmentByID(ctx, userID, environmentID); err != nil {
+func (s *catalogPersistence) listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error) {
+	if _, err := s.reads.deliveryQueries().EnvironmentByID(ctx, userID, environmentID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -60,7 +60,7 @@ func (s *Store) listVolumes(ctx context.Context, userID, environmentID string) (
 	return out, rows.Err()
 }
 
-func (s *Store) deleteVolume(ctx context.Context, userID, volumeID string) error {
+func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		var (
 			volumeName    string
@@ -70,7 +70,7 @@ func (s *Store) deleteVolume(ctx context.Context, userID, volumeID string) error
 		if err != nil {
 			return err
 		}
-		if _, err := s.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
+		if _, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
 			return err
 		}
 

@@ -7,15 +7,15 @@ import (
 	"fmt"
 )
 
-type queuedSourceBuild struct {
+type QueuedSourceBuild struct {
 	Service ServiceRecord
 	Build   BuildRunRecord
 }
 
-// queueSourceBuild atomically r	esolves the durable source snapshot and queues
+// queueSourceBuild atomically resolves the durable source snapshot and queues
 // the deployment build. Publication happens only after the transaction commits.
-func (d *Delivery) QueueSourceBuild(ctx context.Context, binding SourceBindingRecord, commitSHA string, pendingSnapshot SourceSnapshotRecord) (queuedSourceBuild, error) {
-	var result queuedSourceBuild
+func (d *Delivery) QueueSourceBuild(ctx context.Context, binding SourceBindingRecord, commitSHA string, pendingSnapshot SourceSnapshotRecord) (QueuedSourceBuild, error) {
+	var result QueuedSourceBuild
 	err := d.store.withTx(ctx, func(tx *sql.Tx) error {
 		revision, err := d.store.sourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
 		if err != nil {
@@ -39,15 +39,15 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding SourceBindingRe
 		if err != nil {
 			return err
 		}
-		result = queuedSourceBuild{Service: service, Build: build}
+		result = QueuedSourceBuild{Service: service, Build: build}
 		return nil
 	})
 	if err != nil {
-		return queuedSourceBuild{}, err
+		return QueuedSourceBuild{}, err
 	}
 	if d.events != nil {
 		if _, err := d.events.Publish(ctx, result.Service.EnvironmentID); err != nil {
-			return queuedSourceBuild{}, fmt.Errorf("publish source event: %w", err)
+			return QueuedSourceBuild{}, fmt.Errorf("publish source event: %w", err)
 		}
 	}
 	return result, nil

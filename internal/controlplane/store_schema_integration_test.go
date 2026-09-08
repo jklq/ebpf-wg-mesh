@@ -81,7 +81,7 @@ func TestSchemaVersionFourUpgradesDeploymentActionsToVersionFive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := OpenStore(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
+	store, err := openPersistence(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
 	if err != nil {
 		t.Fatalf("upgrade v4 schema: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestSchemaVersionFiveUpgradesFleetToVersionSix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := OpenStore(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
+	store, err := openPersistence(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
 	if err != nil {
 		t.Fatalf("upgrade v5 schema: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestSchemaVersionSixUpgradesIsolationThroughRailwayDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := OpenStore(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
+	store, err := openPersistence(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
 	if err != nil {
 		t.Fatalf("upgrade v6 schema: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestSchemaVersionSevenCutsPersistedProfilesOverToRailwayDefaults(t *testing
 		t.Fatal(err)
 	}
 
-	store, err := OpenStore(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
+	store, err := openPersistence(config.DatabaseConfig{URL: dbURL, MaxOpenConns: 2, MaxIdleConns: 2}, testMeshConfig())
 	if err != nil {
 		t.Fatalf("upgrade v7 schema: %v", err)
 	}

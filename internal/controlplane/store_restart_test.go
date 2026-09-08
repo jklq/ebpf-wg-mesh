@@ -19,12 +19,12 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -39,20 +39,20 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
-	backends, err := store.listHealthyIngressBackends(ctx)
+	backends, err := store.routing.listHealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(backends) != 1 {
 		t.Fatalf("expected healthy backend, got %#v", backends)
 	}
-	_, allocs, err := store.serviceStatus(ctx, "user-1", service.ID)
+	_, allocs, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,14 +92,14 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if got, err := eventStore.currentEnvironmentEvent(ctx, service.EnvironmentID); err != nil || got != initialEnvironmentRevision+1 {
 		t.Fatalf("published environment revision = %d, %v", got, err)
 	}
-	updated, err := store.allocationByServiceID(ctx, service.ID)
+	updated, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if updated.Phase != restartpolicy.PhaseCrashLoop || updated.Healthy || !updated.Restart.GetCrashLoop() {
 		t.Fatalf("allocation not persisted as crash-loop: %+v", updated)
 	}
-	backends, err = store.listHealthyIngressBackends(ctx)
+	backends, err = store.routing.listHealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,12 +112,12 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -135,11 +135,11 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
-	current, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	current, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok || current.State != deliverycore.DeploymentStateActive {
 		t.Fatalf("current deployment: %+v ok=%v err=%v", current, ok, err)
 	}
-	original, err := store.allocationByServiceID(ctx, service.ID)
+	original, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	crashed, ok, err := store.currentDeploymentForService(ctx, service.ID)
+	crashed, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
 	if err != nil || !ok {
 		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
 	}
@@ -212,12 +212,12 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, allocs, err := store.serviceStatus(ctx, "user-1", service.ID)
+	_, allocs, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func (s *Store) enqueueSourceWorkItem(ctx context.Context, rec deliverycore.SourceWorkItemRecord) (bool, error) {
+func (s *sourcePersistence) enqueueSourceWorkItem(ctx context.Context, rec deliverycore.SourceWorkItemRecord) (bool, error) {
 	inserted := false
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -83,7 +83,7 @@ func buildJobSourceFromRecord(rec deliverycore.BuildRunRecord) *platformv1.Build
 	}
 }
 
-func (s *Store) enqueueSourceWorkItemTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceWorkItemRecord) (bool, error) {
+func (s *sourcePersistence) enqueueSourceWorkItemTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceWorkItemRecord) (bool, error) {
 	now, err := deliverycore.DatabaseTime(ctx, tx)
 	if err != nil {
 		return false, err

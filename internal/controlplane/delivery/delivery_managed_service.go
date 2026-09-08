@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"fmt"
 	"strings"
@@ -173,7 +174,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 				return err
 			}
 		}
-		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 			return err
 		}
 		affectedAgentIDs = appendAllocationAgentIDs([]string{trustedAgentID}, existing...)

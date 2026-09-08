@@ -28,7 +28,7 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 	}
 	store.reserveAgents(trusted.AgentId)
 
-	project, err := store.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +44,12 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 		t.Fatalf("dashboard allocated to %q, want trusted agent %q", service.AllocatedAgentID, trusted.AgentId)
 	}
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{{
 		ID: "user-1", Email: "user@example.test", Projects: []string{"demo"},
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v (%d projects)", err, len(projects))
 	}
@@ -72,7 +72,7 @@ func TestManagedDashboardSameAgentSyncPreservesServingAllocationState(t *testing
 		t.Fatal(err)
 	}
 	store.reserveAgents(trusted.AgentId)
-	project, err := store.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 		t.Fatal(err)
 	}
 	store.reserveAgents(oldTrusted.AgentId, newTrusted.AgentId)
-	project, err := store.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,9 +163,9 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 	}
 }
 
-func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, serviceID string) deliverycore.AllocationRecord {
+func completeManagedAllocation(t *testing.T, store *persistence, ctx context.Context, serviceID string) deliverycore.AllocationRecord {
 	t.Helper()
-	allocation, err := store.allocationByServiceID(ctx, serviceID)
+	allocation, err := store.reads.allocationByServiceID(ctx, serviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func completeManagedAllocation(t *testing.T, store *Store, ctx context.Context, 
 	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatal(err)
 	}
-	allocation, err = store.allocationByServiceID(ctx, serviceID)
+	allocation, err = store.reads.allocationByServiceID(ctx, serviceID)
 	if err != nil {
 		t.Fatal(err)
 	}

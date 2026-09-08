@@ -14,7 +14,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-func claimBuildForTest(t *testing.T, store *Store, ctx context.Context, builderID, expectedBuildID string) {
+func claimBuildForTest(t *testing.T, store *persistence, ctx context.Context, builderID, expectedBuildID string) {
 	t.Helper()
 	claimed, err := claimNextBuild(ctx, store, builderID, builderID, 0)
 	if err != nil {
@@ -31,12 +31,12 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID(after build): %v", err)
 	}
@@ -105,7 +105,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("expected resolved desired image digest, got %q", got)
 	}
 
-	if err := store.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+	if err := store.source.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
 		RepositoryID:   1,
 		FullName:       "octocat/hello",
 		InstallationID: 1,
@@ -124,7 +124,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 0 {
 		t.Fatalf("replica-only deploy queued %d source builds, want 0", got)
 	}
-	current, err = store.serviceByID(ctx, "user-1", service.ID)
+	current, err = store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID(after replica deploy): %v", err)
 	}
@@ -142,12 +142,12 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatalf("completeBuild(second): %v", err)
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
@@ -212,12 +212,12 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID(after old success): %v", err)
 	}
@@ -275,7 +275,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
-	current, err = store.serviceByID(ctx, "user-1", service.ID)
+	current, err = store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID(after new success): %v", err)
 	}
@@ -317,7 +317,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 
 	assertRolloutState(t, store, service.ID, 1, "superseded", "newer rollout")
 	assertRolloutState(t, store, service.ID, 2, "in_progress", "")
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
@@ -437,12 +437,12 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -474,12 +474,12 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -524,12 +524,12 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -583,12 +583,12 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -620,7 +620,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("completeBuild: %v", err)
 	}
 
-	repoDeployments, err := store.listServiceDeployments(ctx, "user-1", repoService.ID, 10)
+	repoDeployments, err := store.reads.listServiceDeployments(ctx, "user-1", repoService.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments(repo): %v", err)
 	}
@@ -637,7 +637,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err != nil {
 		t.Fatalf("create direct-image service: %v", err)
 	}
-	imageDeployment, ok, err := store.currentDeploymentForService(ctx, imageService.ID)
+	imageDeployment, ok, err := store.reads.currentDeploymentForService(ctx, imageService.ID)
 	if err != nil || !ok {
 		t.Fatalf("currentDeploymentForService(image): ok=%v err=%v", ok, err)
 	}
@@ -645,7 +645,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 
-	imageDeployments, err := store.listServiceDeployments(ctx, "user-1", imageService.ID, 10)
+	imageDeployments, err := store.reads.listServiceDeployments(ctx, "user-1", imageService.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments(image): %v", err)
 	}
@@ -666,12 +666,12 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
-	deployments, err := store.listServiceDeployments(ctx, "user-1", service.ID, 10)
+	deployments, err := store.reads.listServiceDeployments(ctx, "user-1", service.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments: %v", err)
 	}
@@ -725,12 +725,12 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -781,20 +781,20 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	}
 }
 
-func seedReadySourceState(t *testing.T, store *Store, service deliverycore.ServiceRecord, commitSHA string) error {
+func seedReadySourceState(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA string) error {
 	return seedReadySourceStateWithMetadata(t, store, service, commitSHA, "", "")
 }
 
-func newRepoBuildTestService(t *testing.T) (*Store, string, deliverycore.ServiceRecord) {
+func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -816,16 +816,16 @@ func newRepoBuildTestService(t *testing.T) (*Store, string, deliverycore.Service
 	return store, projects[0].ID, service
 }
 
-func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string) error {
+func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string) error {
 	t.Helper()
 	archive := []byte("snapshot-" + commitSHA)
-	digest, objectKey, err := store.storeSourceArchive(context.Background(), archive)
+	digest, objectKey, err := store.source.storeSourceArchive(context.Background(), archive)
 	if err != nil {
 		return err
 	}
 
 	return store.withTx(context.Background(), func(tx *sql.Tx) error {
-		binding, err := store.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
+		binding, err := store.source.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,
 			Provider:                     "github",
@@ -841,7 +841,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service delive
 		if err != nil {
 			return err
 		}
-		revision, err := store.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
+		revision, err := store.source.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -855,7 +855,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *Store, service delive
 		if err != nil {
 			return err
 		}
-		_, err = store.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
+		_, err = store.source.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,

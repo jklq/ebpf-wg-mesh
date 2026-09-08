@@ -9,7 +9,7 @@ import (
 	"strconv"
 )
 
-func (s *Store) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
+func (s *routingPersistence) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT d.hostname, d.target_port, a.healthy_ipv4_ports, a.healthy_ipv6_ports,
 		        a.allocation_ipv4, a.allocation_ipv6, a.id

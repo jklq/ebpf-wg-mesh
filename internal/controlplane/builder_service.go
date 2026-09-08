@@ -55,7 +55,7 @@ func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSn
 	if !owned {
 		return status.Error(codes.PermissionDenied, "source snapshot is not assigned to this builder")
 	}
-	snapshot, err := s.operations.store.sourceSnapshotByID(ctx, snapshotID)
+	snapshot, err := s.operations.store.source.sourceSnapshotByID(ctx, snapshotID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return status.Error(codes.NotFound, "source snapshot not found")
@@ -79,7 +79,7 @@ func (s *BuilderService) DownloadSourceSnapshot(req *platformv1.DownloadSourceSn
 		if remaining < int64(limit) {
 			limit = int(remaining)
 		}
-		chunk, err := s.operations.store.sourceSnapshotArchiveChunk(ctx, snapshot.ID, offset, limit)
+		chunk, err := s.operations.store.source.sourceSnapshotArchiveChunk(ctx, snapshot.ID, offset, limit)
 		if err != nil {
 			return status.Errorf(codes.Internal, "read source snapshot chunk: %v", err)
 		}

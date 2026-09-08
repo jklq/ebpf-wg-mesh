@@ -20,7 +20,7 @@ import (
 
 // BuildOperations owns builder authorization, job preparation, and committed build effects.
 type BuildOperations struct {
-	store       *Store
+	store       *buildsPersistence
 	delivery    *deliverycore.Delivery
 	registry    buildRegistry
 	credentials buildCredentials
@@ -50,7 +50,7 @@ func WithBuilderLogEmitter(emitter *LogEmitter) BuildOperationsOption {
 	}
 }
 
-func NewBuildOperations(store *Store, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
+func NewBuildOperations(store *buildsPersistence, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
 	service := &BuildOperations{
 		store:       store,
 		delivery:    delivery,
@@ -86,7 +86,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 		return &platformv1.BuildJob{}, nil
 	}
 	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
-	service, err := s.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build service: %v", err)
 	}
@@ -146,7 +146,7 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if len(req.GetLines()) == 0 {
 		return &emptypb.Empty{}, nil
 	}
-	build, err := s.store.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
+	build, err := s.store.reads.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Error(codes.Internal, "build not found")
@@ -156,7 +156,7 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if build.State != deliverycore.BuildStateRunning || build.BuilderID != builderID {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
-	service, err := s.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service for log report: %v", err)
 	}
@@ -180,7 +180,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	}
 	// Load build + service up-front so we can emit synthetic logs keyed to
 	// the correct service/allocation regardless of the terminal state.
-	build, err := s.store.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
+	build, err := s.store.reads.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
 	}
@@ -196,7 +196,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	if req.GetCommitSha() != build.CommitSHA {
 		return nil, status.Error(codes.InvalidArgument, "commit_sha does not match the claimed build")
 	}
-	service, err := s.store.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service before completion: %v", err)
 	}
@@ -231,7 +231,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 		// A first source build has no allocation before completion. Completing the
 		// build creates its rollout allocations, so use the durable post-completion
 		// allocation set when describing the rollout in synthetic logs.
-		allocations, err := s.store.deliveryQueries().ListAllocationsByServiceID(ctx, build.ServiceID)
+		allocations, err := s.store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, build.ServiceID)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "load build allocations after completion: %v", err)
 		}
