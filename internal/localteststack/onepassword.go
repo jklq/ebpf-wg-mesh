@@ -24,7 +24,6 @@ const (
 	ControlPlaneGitHubPrivateKeyPEMKey    = "CONTROLPLANE_GITHUB_PRIVATE_KEY_PEM"
 	ControlPlaneDashboardGitHubInstallKey = "CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL"
 	ControlPlaneGitHubAPIBaseURLKey       = "CONTROLPLANE_GITHUB_API_BASE_URL"
-	ControlPlaneGitHubWebBaseURLKey       = "CONTROLPLANE_GITHUB_WEB_BASE_URL"
 	ControlPlaneGitHubWebhookPathKey      = "CONTROLPLANE_GITHUB_WEBHOOK_PATH"
 	DashboardGitHubAppIDKey               = "DASHBOARD_GITHUB_APP_ID"
 	DashboardGitHubClientIDKey            = "DASHBOARD_GITHUB_CLIENT_ID"
@@ -105,7 +104,6 @@ func OverlayKeys() []string {
 		ControlPlaneGitHubPrivateKeyPEMKey,
 		ControlPlaneDashboardGitHubInstallKey,
 		ControlPlaneGitHubAPIBaseURLKey,
-		ControlPlaneGitHubWebBaseURLKey,
 		ControlPlaneGitHubWebhookPathKey,
 		DashboardGitHubAppIDKey,
 		DashboardGitHubClientIDKey,
@@ -317,7 +315,6 @@ func ApplyEnvironmentOverlay(cfg *config.ControlPlaneConfig, dashboardEnv map[st
 	}
 	cfg.GitHub.PrivateKeyPEM = privateKeyPEM
 	cfg.GitHub.APIBaseURL = optionalEnv(env, ControlPlaneGitHubAPIBaseURLKey)
-	cfg.GitHub.WebBaseURL = optionalEnv(env, ControlPlaneGitHubWebBaseURLKey)
 	cfg.GitHub.WebhookPath = webhookPath
 
 	if installURL := strings.TrimSpace(env[ControlPlaneDashboardGitHubInstallKey]); installURL != "" {
