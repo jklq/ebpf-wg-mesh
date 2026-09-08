@@ -3,12 +3,12 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/restartpolicy"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 type nodeLossReplacementResult struct {
@@ -75,7 +75,7 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 		}
 
 		if needBump && !alreadyBumped {
-			if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 				return err
 			}
 		}

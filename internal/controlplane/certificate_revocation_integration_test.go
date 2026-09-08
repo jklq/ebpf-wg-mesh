@@ -21,7 +21,7 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 
 	store := openTestStore(t)
 	freshToken := config.AgentBootstrapToken{AgentID: "node-1", Token: "fresh-after-compromise"}
-	if err := store.ensureAgentBootstrapTokens(context.Background(), []config.AgentBootstrapToken{freshToken}); err != nil {
+	if err := store.fleet.ensureAgentBootstrapTokens(context.Background(), []config.AgentBootstrapToken{freshToken}); err != nil {
 		t.Fatalf("seed fresh bootstrap token: %v", err)
 	}
 	stateDir := t.TempDir()
@@ -38,7 +38,7 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
-	service := NewAgentService(store, nil, nil, nil, authority, nil, false, "", "")
+	service := NewAgentService(store.fleet, nil, nil, nil, authority, nil, false, "", "")
 	csr := string(mustCreateCSR(t, "node-1"))
 
 	if err := os.WriteFile(revocationPath, []byte("63\n"), 0o600); err != nil {

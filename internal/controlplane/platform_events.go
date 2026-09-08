@@ -16,7 +16,7 @@ const (
 
 // PlatformEvents provides durable monotonic indexes and blocking waits. The
 // revision is intentionally global: false-positive wakes are cheap, while
-// advancing it in every Store.withTx transaction makes state and notification
+// advancing it in every database.withTx transaction makes state and notification
 // atomic without requiring callers to remember an environment-specific outbox.
 type PlatformEvents struct {
 	store        environmentEventStore
@@ -35,8 +35,8 @@ func NewPlatformEvents(store environmentEventStore, pollInterval time.Duration) 
 	return &PlatformEvents{store: store, pollInterval: pollInterval}
 }
 
-func (s *Store) publishEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
-	// Visible store mutations advance the global revision in Store.withTx in the
+func (s *eventsPersistence) publishEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
+	// Visible store mutations advance the global revision in database.withTx in the
 	// same transaction as the state change. Publishing is therefore a durable
 	// read, not a second write that could be lost after the state commits.
 	return s.currentEnvironmentEvent(ctx, environmentID)
@@ -49,7 +49,7 @@ func (e *PlatformEvents) Current(ctx context.Context, environmentID string) (int
 	return e.store.currentEnvironmentEvent(ctx, environmentID)
 }
 
-func (s *Store) currentEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
+func (s *eventsPersistence) currentEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
 	var revision int64
 	err := s.db.QueryRowContext(ctx, `SELECT revision FROM environment_events WHERE environment_id = $1`, globalEnvironmentEventID).Scan(&revision)
 	if errors.Is(err, sql.ErrNoRows) {

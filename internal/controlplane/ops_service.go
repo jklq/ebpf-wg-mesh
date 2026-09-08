@@ -16,13 +16,13 @@ import (
 type OpsService struct {
 	platformv1.UnimplementedOpsServiceServer
 	webhooks  *GitHubWebhookHandler
-	store     *Store
+	store     *fleetPersistence
 	delivery  *deliverycore.Delivery
 	notifier  *Notifier
 	authority *TLSAuthority
 }
 
-func NewOpsService(webhooks *GitHubWebhookHandler, store *Store, delivery *deliverycore.Delivery, notifier *Notifier, authority *TLSAuthority) *OpsService {
+func NewOpsService(webhooks *GitHubWebhookHandler, store *fleetPersistence, delivery *deliverycore.Delivery, notifier *Notifier, authority *TLSAuthority) *OpsService {
 	return &OpsService{webhooks: webhooks, store: store, delivery: delivery, notifier: notifier, authority: authority}
 }
 

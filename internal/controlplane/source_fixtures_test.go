@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (s *Store) upsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceSnapshotRecord) (deliverycore.SourceSnapshotRecord, error) {
+func (s *sourcePersistence) upsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec deliverycore.SourceSnapshotRecord) (deliverycore.SourceSnapshotRecord, error) {
 	now := time.Now().UTC()
 	if rec.ID == "" {
 		rec.ID = deliverycore.MustID()
@@ -36,13 +36,13 @@ func (s *Store) upsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec deli
 		return deliverycore.SourceSnapshotRecord{}, err
 	}
 	if rows == 0 {
-		return s.deliveryQueries().SourceSnapshotByRevisionIDTx(ctx, tx, rec.SourceRevisionID)
+		return s.reads.deliveryQueries().SourceSnapshotByRevisionIDTx(ctx, tx, rec.SourceRevisionID)
 	}
-	return s.deliveryQueries().SourceSnapshotByRevisionIDTx(ctx, tx, rec.SourceRevisionID)
+	return s.reads.deliveryQueries().SourceSnapshotByRevisionIDTx(ctx, tx, rec.SourceRevisionID)
 }
 
-func sourceSummaryForTest(ctx context.Context, s *Store, id string) (*platformv1.ServiceSourceSummary, error) {
-	service, err := s.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.db, id)
+func sourceSummaryForTest(ctx context.Context, s *persistence, id string) (*platformv1.ServiceSourceSummary, error) {
+	service, err := s.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.db, id)
 	return service.SourceSummary, err
 }
 

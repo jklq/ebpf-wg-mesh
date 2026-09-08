@@ -15,7 +15,7 @@ import (
 func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.createProject(ctx, "owner", "delivery")
+	project, err := store.catalog.createProject(ctx, "owner", "delivery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if first.ID > second.ID {
 		first, second = second, first
 	}
-	volume, err := store.createVolume(ctx, "owner", environmentID, "missing", 64<<20, "node-1")
+	volume, err := store.catalog.createVolume(ctx, "owner", environmentID, "missing", 64<<20, "node-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,14 +53,14 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	notifier := &releaseTestNotifier{}
 	delivery := newTestDelivery(store, notifier, nil, nil)
 	before := mustDesiredRevision(t, store, ctx, "node-1")
-	events := NewPlatformEvents(store, 0)
+	events := NewPlatformEvents(store.events, 0)
 	eventBefore, err := events.Current(ctx, environmentID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	deploymentCounts := make(map[string]int)
 	for _, id := range []string{first.ID, second.ID} {
-		deployments, err := store.listServiceDeployments(ctx, "owner", id, 10)
+		deployments, err := store.reads.listServiceDeployments(ctx, "owner", id, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,14 +70,14 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		t.Fatal("release with missing volume unexpectedly succeeded")
 	}
 	for _, id := range []string{first.ID, second.ID} {
-		service, err := store.serviceByID(ctx, "owner", id)
+		service, err := store.reads.serviceByID(ctx, "owner", id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if service.RolloutGeneration != 0 || service.AllocatedAgentID != "" {
 			t.Fatalf("failed release mutated service: %#v", service)
 		}
-		deployments, err := store.listServiceDeployments(ctx, "owner", id, 10)
+		deployments, err := store.reads.listServiceDeployments(ctx, "owner", id, 10)
 		if err != nil {
 			t.Fatal(err)
 		}

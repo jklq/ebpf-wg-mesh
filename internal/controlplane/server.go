@@ -28,7 +28,7 @@ import (
 
 type Server struct {
 	cfg             config.ControlPlaneConfig
-	store           *Store
+	store           *persistence
 	delivery        *deliverycore.Delivery
 	logStore        *LogStore
 	logEmitter      *LogEmitter
@@ -60,11 +60,11 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
-	store, err := OpenStore(cfg.Database, cfg.Mesh)
+	store, err := openPersistence(cfg.Database, cfg.Mesh)
 	if err != nil {
 		return nil, err
 	}
-	leases := NewLeaseManager(store, 15*time.Second, time.Second)
+	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
 	store.useReportedAllocationIP = cfg.Ingress.UseReportedAllocationIP
 	archiveStore, err := NewFileSourceArchiveStore(cfg.SourceArchives.Directory)
 	if err != nil {
@@ -85,13 +85,13 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	defer releaseInitialization()
-	store.ConfigureSourceArchives(archiveStore)
-	if err := store.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
+	store.source.ConfigureSourceArchives(archiveStore)
+	if err := store.catalog.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
 	store.reserveAgents(cfg.Dashboard.TrustedAgentID)
-	if err := store.ensureAgentBootstrapTokens(ctx, cfg.InternalGRPC.TLS.BootstrapTokens); err != nil {
+	if err := store.fleet.ensureAgentBootstrapTokens(ctx, cfg.InternalGRPC.TLS.BootstrapTokens); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
@@ -118,8 +118,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	logEmitter := NewLogEmitter(logStore)
-	notifier := NewNotifier(ctx, store, 0)
-	platformEvents := NewPlatformEvents(store, 0)
+	notifier := NewNotifier(ctx, store.reads, 0)
+	platformEvents := NewPlatformEvents(store.events, 0)
 	ingressOpts := []IngressSyncerOption{
 		WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
 		WithIngressAdminListen(cfg.Ingress.AdminListen),
@@ -135,7 +135,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		}
 		ingressOpts = append(ingressOpts, WithIngressStaticRoutes(staticRoutes))
 	}
-	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store, ingressOpts...)
+	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store.routing, ingressOpts...)
 	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
 	delivery := newDelivery(store, notifier, ingress, platformEvents)
 	var githubClient *GitHubClient
@@ -149,15 +149,15 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		if err != nil {
 			return nil, err
 		}
-		githubCatalog = NewGitHubCatalog(store, githubClient)
-		githubCoordinator = NewGitHubCoordinator(store, delivery, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter))
-		githubReconciler = NewGitHubReconciler(store, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
-		webhookProcessor = NewGitHubWebhookProcessor(store, githubCoordinator)
-		webhookHandler = NewGitHubWebhookHandler(store, cfg.GitHub.WebhookSecret, webhookProcessor)
+		githubCatalog = NewGitHubCatalog(store.source, githubClient)
+		githubCoordinator = NewGitHubCoordinator(store.source, delivery, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter))
+		githubReconciler = NewGitHubReconciler(store.source, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
+		webhookProcessor = NewGitHubWebhookProcessor(store.source, githubCoordinator)
+		webhookHandler = NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
 
 	platformService := NewPlatformService(
-		store,
+		store.platform(),
 		notifier,
 		ingress,
 		delivery,
@@ -168,7 +168,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithPlatformEvents(platformEvents),
 	)
 	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
-	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store, delivery, ingress, notifier)
+	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
 	rollouts := NewRolloutReconciler(delivery, 2*time.Second)
 	failover := NewServiceFailoverReconciler(delivery,
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
@@ -178,14 +178,14 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
 	)
 	agentv1.RegisterAgentControlServer(internal, NewAgentService(
-		store, delivery, logStore, notifier, authority, dashboard,
+		store.fleet, delivery, logStore, notifier, authority, dashboard,
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
 		WithAgentRegistry(registry),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	buildOperations := NewBuildOperations(store, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
+	buildOperations := NewBuildOperations(store.builds, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(buildOperations))
-	opsService := NewOpsService(webhookHandler, store, delivery, notifier, authority)
+	opsService := NewOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
 	platformv1.RegisterOpsServiceServer(internal, opsService)
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
@@ -279,7 +279,7 @@ func (s *Server) sourceArchiveStore() (*FileSourceArchiveStore, bool) {
 	if s == nil || s.store == nil {
 		return nil, false
 	}
-	archive, ok := s.store.sourceArchives.(*FileSourceArchiveStore)
+	archive, ok := s.store.source.sourceArchives.(*FileSourceArchiveStore)
 	return archive, ok
 }
 
@@ -406,7 +406,7 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 			return
 		}
 		cutoff := now.AddDate(0, 0, -s.cfg.SourceArchives.RetentionDays)
-		deleted, err := s.store.pruneSourceArchives(ctx, cutoff)
+		deleted, err := s.store.source.pruneSourceArchives(ctx, cutoff)
 		if err != nil && ctx.Err() == nil {
 			slog.Warn("source archive retention failed", "error", err)
 			return
@@ -524,7 +524,7 @@ func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, err
 	if s == nil || s.store == nil {
 		return false, errors.New("controlplane store is not initialized")
 	}
-	rec, err := s.store.deliveryQueries().AgentByID(ctx, agentID)
+	rec, err := s.store.reads.deliveryQueries().AgentByID(ctx, agentID)
 	switch {
 	case err == nil:
 		now, err := deliverycore.DatabaseTime(ctx, s.store.db)

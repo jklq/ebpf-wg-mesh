@@ -78,7 +78,7 @@ type IngressSyncerOption func(*IngressSyncer)
 type IngressSyncer struct {
 	adminURL         string
 	client           *http.Client
-	store            *Store
+	store            *routingPersistence
 	staticRoutes     []IngressStaticRoute
 	listenAddrs      []string
 	adminListen      string
@@ -114,7 +114,7 @@ func WithIngressAutomaticHTTPSDisabled(disable bool) IngressSyncerOption {
 	}
 }
 
-func NewIngressSyncer(adminURL string, store *Store, opts ...IngressSyncerOption) *IngressSyncer {
+func NewIngressSyncer(adminURL string, store *routingPersistence, opts ...IngressSyncerOption) *IngressSyncer {
 	syncer := &IngressSyncer{
 		adminURL:        adminURL,
 		client:          &http.Client{},

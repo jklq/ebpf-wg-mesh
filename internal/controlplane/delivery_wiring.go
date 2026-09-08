@@ -5,13 +5,13 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-func newDelivery(store *Store, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) *deliverycore.Delivery {
+func newDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) *deliverycore.Delivery {
 	return deliverycore.New(deliveryDependencies(store, notifier, ingress, events))
 }
 
-func deliveryDependencies(store *Store, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) deliverycore.Dependencies {
+func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) deliverycore.Dependencies {
 	return deliverycore.Dependencies{
-		CreateEnvironment: store.createEnvironmentQuerier, CreateVolume: store.createVolumeTx, EnqueueSourceWork: store.enqueueSourceWorkItemTx,
+		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.enqueueSourceWorkItemTx,
 		DB: store.db, Mesh: store.mesh, Transaction: store.withTx, UnfencedTransaction: store.withTxUnfenced,
 		ReservedAgentIDs: store.reservedAgentIDs, UseReportedAllocationIP: store.useReportedAllocationIP,
 		Notifier: notifier, Ingress: ingress, Events: events,
@@ -22,6 +22,4 @@ func deliveryDependencies(store *Store, notifier deliverycore.PlatformNotifier, 
 	}
 }
 
-func (s *Store) deliveryQueries() *deliverycore.ReadModel {
-	return newDelivery(s, nil, nil, nil).ReadModel()
-}
+func (s *readsPersistence) deliveryQueries() *deliverycore.ReadModel { return s.model }

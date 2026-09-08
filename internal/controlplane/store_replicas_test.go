@@ -104,7 +104,7 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	scaled, err := store.serviceByID(ctx, "user-1", service.ID)
+	scaled, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
-	if _, err := store.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-a"); err != nil {
+	if _, err := store.catalog.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-a"); err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
 
@@ -216,7 +216,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	allocations := mustListAllocations(t, store, ctx, service.ID)
@@ -224,14 +224,14 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backends, err := store.listHealthyIngressBackends(ctx)
+	backends, err := store.routing.listHealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatalf("listHealthyIngressBackends: %v", err)
 	}
 	if len(backends) != 1 {
 		t.Fatalf("expected only the ready replica in ingress, got %+v", backends)
 	}
-	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store)
+	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
 	cfg, err := syncer.render(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +346,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		t.Fatalf("concurrent scale: %v", err)
 	}
 
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	current, err = store.serviceByID(ctx, "user-1", service.ID)
+	current, err = store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	}
 }
 
-func mustQueueAndDeployReplicas(t *testing.T, store *Store, ctx context.Context, envID, serviceID string, desired int32) {
+func mustQueueAndDeployReplicas(t *testing.T, store *persistence, ctx context.Context, envID, serviceID string, desired int32) {
 	t.Helper()
 	if _, _, err := scaleService(ctx, store, "user-1", serviceID, desired); err != nil {
 		t.Fatalf("scaleService: %v", err)
@@ -391,14 +391,14 @@ func replicaSpec(cpu, memory int64) *platformv1.ServiceSpec {
 	})
 }
 
-func seedReplicaFixture(t *testing.T, store *Store, ctx context.Context, agentIDs []string) string {
+func seedReplicaFixture(t *testing.T, store *persistence, ctx context.Context, agentIDs []string) string {
 	t.Helper()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -412,9 +412,9 @@ func seedReplicaFixture(t *testing.T, store *Store, ctx context.Context, agentID
 	return productionEnvironmentID(t, store, projects[0].ID)
 }
 
-func mustListAllocations(t *testing.T, store *Store, ctx context.Context, serviceID string) []deliverycore.AllocationRecord {
+func mustListAllocations(t *testing.T, store *persistence, ctx context.Context, serviceID string) []deliverycore.AllocationRecord {
 	t.Helper()
-	allocations, err := store.deliveryQueries().ListAllocationsByServiceID(ctx, serviceID)
+	allocations, err := store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		t.Fatalf("listAllocationsByServiceID: %v", err)
 	}

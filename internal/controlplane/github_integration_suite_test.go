@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func linkTestProjectRepository(t *testing.T, store *Store, catalog *GitHubCatalog, projectID, repositorySelector string) {
+func linkTestProjectRepository(t *testing.T, store *persistence, catalog *GitHubCatalog, projectID, repositorySelector string) {
 	t.Helper()
 	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
@@ -26,7 +26,7 @@ func linkTestProjectRepository(t *testing.T, store *Store, catalog *GitHubCatalo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.linkProjectGitHubRepository(context.Background(), projectID, "user-1", view); err != nil {
+	if err := store.source.linkProjectGitHubRepository(context.Background(), projectID, "user-1", view); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -40,7 +40,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
+	catalog := NewGitHubCatalog(store.source, client)
 	ctx := context.Background()
 
 	repo, err := catalog.RepositoryView(ctx, "public", "hello", 0)
@@ -54,7 +54,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 		t.Fatalf("expected zero github api calls, got %d", server.requestCount())
 	}
 
-	if err := store.upsertGitHubRepositorySnapshot(ctx, githubRepositorySnapshotRecord{
+	if err := store.source.upsertGitHubRepositorySnapshot(ctx, githubRepositorySnapshotRecord{
 		RepositoryID:  1,
 		Owner:         "public",
 		Repo:          "hello",
@@ -72,7 +72,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 		t.Fatalf("expected available repo from stored snapshot, got %s", repo.AccessState)
 	}
 
-	if err := store.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+	if err := store.source.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
 		InstallationID: 7,
 		AccountLogin:   "private",
 		AccountType:    "Organization",
@@ -111,9 +111,9 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
+	catalog := NewGitHubCatalog(store.source, client)
 	service := NewPlatformService(
-		store,
+		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
@@ -156,11 +156,11 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	service := NewPlatformService(
-		store,
+		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(NewGitHubCatalog(store, client), client),
+		WithGitHubSourceInspection(NewGitHubCatalog(store.source, client), client),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 	ctx := contextWithDelegatedUser("user-1", "user@example.com")
@@ -182,7 +182,7 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 			if status.Code(err) != test.code {
 				t.Fatalf("LinkGitHubRepository code = %s, want %s (error: %v)", status.Code(err), test.code, err)
 			}
-			if _, err := store.projectGitHubRepositoryInstallation(context.Background(), projectID, "private", "secret"); !errors.Is(err, sql.ErrNoRows) {
+			if _, err := store.source.projectGitHubRepositoryInstallation(context.Background(), projectID, "private", "secret"); !errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("repository link was persisted after denied user authorization: %v", err)
 			}
 		})
@@ -244,9 +244,9 @@ func TestPlatformServiceInspectSourceReturnsInstallationRequiredForPrivateRepoWi
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
+	catalog := NewGitHubCatalog(store.source, client)
 	service := NewPlatformService(
-		store,
+		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
@@ -282,9 +282,9 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
+	catalog := NewGitHubCatalog(store.source, client)
 	service := NewPlatformService(
-		store,
+		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
@@ -337,9 +337,9 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterForbiddenRepo
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
+	catalog := NewGitHubCatalog(store.source, client)
 	service := NewPlatformService(
-		store,
+		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),

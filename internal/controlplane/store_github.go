@@ -24,13 +24,13 @@ const (
 	githubWorkStateProcessing = "processing"
 )
 
-func (s *Store) upsertGitHubInstallation(ctx context.Context, rec githubInstallationRecord) error {
+func (s *sourcePersistence) upsertGitHubInstallation(ctx context.Context, rec githubInstallationRecord) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		return s.upsertGitHubInstallationTx(ctx, tx, rec)
 	})
 }
 
-func (s *Store) upsertGitHubInstallationTx(ctx context.Context, tx *sql.Tx, rec githubInstallationRecord) error {
+func (s *sourcePersistence) upsertGitHubInstallationTx(ctx context.Context, tx *sql.Tx, rec githubInstallationRecord) error {
 	now := time.Now().UTC()
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = now
@@ -51,7 +51,7 @@ func (s *Store) upsertGitHubInstallationTx(ctx context.Context, tx *sql.Tx, rec 
 	return err
 }
 
-func (s *Store) deactivateGitHubInstallation(ctx context.Context, installationID int64) error {
+func (s *sourcePersistence) deactivateGitHubInstallation(ctx context.Context, installationID int64) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx,
@@ -72,7 +72,7 @@ func (s *Store) deactivateGitHubInstallation(ctx context.Context, installationID
 	})
 }
 
-func (s *Store) replaceGitHubInstallationRepositories(ctx context.Context, installation githubInstallationRecord, repos []githubRepositoryRecord) error {
+func (s *sourcePersistence) replaceGitHubInstallationRepositories(ctx context.Context, installation githubInstallationRecord, repos []githubRepositoryRecord) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.upsertGitHubInstallationTx(ctx, tx, installation); err != nil {
 			return err
@@ -116,7 +116,7 @@ func (s *Store) replaceGitHubInstallationRepositories(ctx context.Context, insta
 	})
 }
 
-func (s *Store) listGitHubInstallations(ctx context.Context) ([]githubInstallationRecord, error) {
+func (s *sourcePersistence) listGitHubInstallations(ctx context.Context) ([]githubInstallationRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT installation_id, account_login, account_type, target_type, active, created_at, updated_at
 		   FROM github_installations
@@ -139,7 +139,7 @@ func (s *Store) listGitHubInstallations(ctx context.Context) ([]githubInstallati
 	return out, rows.Err()
 }
 
-func (s *Store) githubInstallationByID(ctx context.Context, installationID int64) (githubInstallationRecord, error) {
+func (s *sourcePersistence) githubInstallationByID(ctx context.Context, installationID int64) (githubInstallationRecord, error) {
 	var rec githubInstallationRecord
 	err := s.db.QueryRowContext(ctx,
 		`SELECT installation_id, account_login, account_type, target_type, active, created_at, updated_at
@@ -153,7 +153,7 @@ func (s *Store) githubInstallationByID(ctx context.Context, installationID int64
 	return rec, nil
 }
 
-func (s *Store) listGitHubInstallationRepositories(ctx context.Context, installationID int64) ([]githubRepositoryRecord, error) {
+func (s *sourcePersistence) listGitHubInstallationRepositories(ctx context.Context, installationID int64) ([]githubRepositoryRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT r.installation_id, r.repository_id, r.owner, r.repo, r.full_name, r.private, r.default_branch, r.created_at, r.updated_at
 		   FROM github_installation_repositories r
@@ -179,7 +179,7 @@ func (s *Store) listGitHubInstallationRepositories(ctx context.Context, installa
 	return out, rows.Err()
 }
 
-func (s *Store) listGitHubInstallationRepositoryViews(ctx context.Context, installationID int64) ([]GitHubRepositoryView, error) {
+func (s *sourcePersistence) listGitHubInstallationRepositoryViews(ctx context.Context, installationID int64) ([]GitHubRepositoryView, error) {
 	recs, err := s.listGitHubInstallationRepositories(ctx, installationID)
 	if err != nil {
 		return nil, err
@@ -201,7 +201,7 @@ func (s *Store) listGitHubInstallationRepositoryViews(ctx context.Context, insta
 	return out, nil
 }
 
-func (s *Store) githubRepositoryGrantByName(ctx context.Context, installationID int64, owner, repo string) (githubRepositoryRecord, error) {
+func (s *sourcePersistence) githubRepositoryGrantByName(ctx context.Context, installationID int64, owner, repo string) (githubRepositoryRecord, error) {
 	var rec githubRepositoryRecord
 	fullName := githubFullName(owner, repo)
 	err := s.db.QueryRowContext(ctx,
@@ -219,7 +219,7 @@ func (s *Store) githubRepositoryGrantByName(ctx context.Context, installationID 
 	return rec, nil
 }
 
-func (s *Store) listGitHubRepositoryGrantsByName(ctx context.Context, owner, repo string) ([]githubRepositoryRecord, error) {
+func (s *sourcePersistence) listGitHubRepositoryGrantsByName(ctx context.Context, owner, repo string) ([]githubRepositoryRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT r.installation_id, r.repository_id, r.owner, r.repo, r.full_name, r.private, r.default_branch, r.created_at, r.updated_at
 		   FROM github_installation_repositories r
@@ -245,7 +245,7 @@ func (s *Store) listGitHubRepositoryGrantsByName(ctx context.Context, owner, rep
 	return out, rows.Err()
 }
 
-func (s *Store) linkProjectGitHubRepository(ctx context.Context, projectID, userID string, view GitHubRepositoryView) error {
+func (s *sourcePersistence) linkProjectGitHubRepository(ctx context.Context, projectID, userID string, view GitHubRepositoryView) error {
 	if projectID == "" || userID == "" || view.RepositoryID <= 0 || view.FullName == "" {
 		return errors.New("project, user, and repository are required")
 	}
@@ -265,7 +265,7 @@ func (s *Store) linkProjectGitHubRepository(ctx context.Context, projectID, user
 	return err
 }
 
-func (s *Store) projectGitHubRepositoryInstallation(ctx context.Context, projectID, owner, repo string) (int64, error) {
+func (s *sourcePersistence) projectGitHubRepositoryInstallation(ctx context.Context, projectID, owner, repo string) (int64, error) {
 	var installationID int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT installation_id
@@ -276,7 +276,7 @@ func (s *Store) projectGitHubRepositoryInstallation(ctx context.Context, project
 	return installationID, err
 }
 
-func (s *Store) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, eventType string, payload []byte) (bool, error) {
+func (s *sourcePersistence) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, eventType string, payload []byte) (bool, error) {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO github_webhook_deliveries(
@@ -295,7 +295,7 @@ func (s *Store) enqueueGitHubWebhookDelivery(ctx context.Context, deliveryID, ev
 	return rows > 0, nil
 }
 
-func (s *Store) claimNextGitHubWebhookDelivery(ctx context.Context, processorID string, staleAfter time.Duration) (githubWebhookDeliveryRecord, error) {
+func (s *sourcePersistence) claimNextGitHubWebhookDelivery(ctx context.Context, processorID string, staleAfter time.Duration) (githubWebhookDeliveryRecord, error) {
 	var rec githubWebhookDeliveryRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now, err := deliverycore.DatabaseTime(ctx, tx)
@@ -348,7 +348,7 @@ func (s *Store) claimNextGitHubWebhookDelivery(ctx context.Context, processorID 
 	return rec, nil
 }
 
-func (s *Store) completeGitHubWebhookDelivery(ctx context.Context, deliveryID, processorID string, processErr error) error {
+func (s *sourcePersistence) completeGitHubWebhookDelivery(ctx context.Context, deliveryID, processorID string, processErr error) error {
 	state := githubWebhookStateProcessed
 	lastError := ""
 	if processErr != nil {
@@ -377,7 +377,7 @@ func (s *Store) completeGitHubWebhookDelivery(ctx context.Context, deliveryID, p
 	return nil
 }
 
-func (s *Store) enqueueGitHubWorkItem(ctx context.Context, rec githubWorkItemRecord) (bool, error) {
+func (s *sourcePersistence) enqueueGitHubWorkItem(ctx context.Context, rec githubWorkItemRecord) (bool, error) {
 	inserted := false
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -387,7 +387,7 @@ func (s *Store) enqueueGitHubWorkItem(ctx context.Context, rec githubWorkItemRec
 	return inserted, err
 }
 
-func (s *Store) enqueueGitHubWorkItemTx(ctx context.Context, tx *sql.Tx, rec githubWorkItemRecord) (bool, error) {
+func (s *sourcePersistence) enqueueGitHubWorkItemTx(ctx context.Context, tx *sql.Tx, rec githubWorkItemRecord) (bool, error) {
 	now := time.Now().UTC()
 	if rec.ID == "" {
 		rec.ID = deliverycore.MustID()
@@ -418,7 +418,7 @@ func (s *Store) enqueueGitHubWorkItemTx(ctx context.Context, tx *sql.Tx, rec git
 	return rows > 0, nil
 }
 
-func (s *Store) claimNextGitHubWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (githubWorkItemRecord, error) {
+func (s *sourcePersistence) claimNextGitHubWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (githubWorkItemRecord, error) {
 	var rec githubWorkItemRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		now, err := deliverycore.DatabaseTime(ctx, tx)
@@ -488,7 +488,7 @@ func (s *Store) claimNextGitHubWorkItem(ctx context.Context, processorID string,
 	return rec, nil
 }
 
-func (s *Store) completeGitHubWorkItem(ctx context.Context, id, processorID string) error {
+func (s *sourcePersistence) completeGitHubWorkItem(ctx context.Context, id, processorID string) error {
 	result, err := s.db.ExecContext(ctx,
 		`DELETE FROM github_work_items WHERE id = $1 AND state = $2 AND processor_id = $3`,
 		id, githubWorkStateProcessing, processorID,
@@ -506,7 +506,7 @@ func (s *Store) completeGitHubWorkItem(ctx context.Context, id, processorID stri
 	return nil
 }
 
-func (s *Store) releaseGitHubWorkItem(ctx context.Context, id, processorID string, processErr error, retryAfter time.Duration) error {
+func (s *sourcePersistence) releaseGitHubWorkItem(ctx context.Context, id, processorID string, processErr error, retryAfter time.Duration) error {
 	message := ""
 	if processErr != nil {
 		message = processErr.Error()
@@ -540,7 +540,7 @@ func (s *Store) releaseGitHubWorkItem(ctx context.Context, id, processorID strin
 	return nil
 }
 
-func (s *Store) recoverGitHubWorkItems(ctx context.Context, staleAfter time.Duration) error {
+func (s *sourcePersistence) recoverGitHubWorkItems(ctx context.Context, staleAfter time.Duration) error {
 	if staleAfter <= 0 {
 		return nil
 	}
@@ -560,13 +560,13 @@ func (s *Store) recoverGitHubWorkItems(ctx context.Context, staleAfter time.Dura
 	})
 }
 
-func (s *Store) upsertGitHubRepositorySnapshot(ctx context.Context, rec githubRepositorySnapshotRecord) error {
+func (s *sourcePersistence) upsertGitHubRepositorySnapshot(ctx context.Context, rec githubRepositorySnapshotRecord) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		return s.upsertGitHubRepositorySnapshotTx(ctx, tx, rec)
 	})
 }
 
-func (s *Store) upsertGitHubRepositorySnapshotTx(ctx context.Context, tx *sql.Tx, rec githubRepositorySnapshotRecord) error {
+func (s *sourcePersistence) upsertGitHubRepositorySnapshotTx(ctx context.Context, tx *sql.Tx, rec githubRepositorySnapshotRecord) error {
 	now := time.Now().UTC()
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = now
@@ -592,7 +592,7 @@ func (s *Store) upsertGitHubRepositorySnapshotTx(ctx context.Context, tx *sql.Tx
 	return err
 }
 
-func (s *Store) markGitHubRepositorySnapshotDeleted(ctx context.Context, owner, repo string) error {
+func (s *sourcePersistence) markGitHubRepositorySnapshotDeleted(ctx context.Context, owner, repo string) error {
 	fullName := githubFullName(owner, repo)
 	owner = strings.ToLower(strings.TrimSpace(owner))
 	repo = strings.ToLower(strings.TrimSpace(repo))
@@ -608,7 +608,7 @@ func (s *Store) markGitHubRepositorySnapshotDeleted(ctx context.Context, owner, 
 	return err
 }
 
-func (s *Store) githubRepositorySnapshotByName(ctx context.Context, owner, repo string) (githubRepositorySnapshotRecord, error) {
+func (s *sourcePersistence) githubRepositorySnapshotByName(ctx context.Context, owner, repo string) (githubRepositorySnapshotRecord, error) {
 	var rec githubRepositorySnapshotRecord
 	err := s.db.QueryRowContext(ctx,
 		`SELECT repository_id, owner, repo, full_name, private, default_branch, deleted, created_at, updated_at
@@ -622,7 +622,7 @@ func (s *Store) githubRepositorySnapshotByName(ctx context.Context, owner, repo 
 	return rec, nil
 }
 
-func (s *Store) listActiveGitHubInstallationIDs(ctx context.Context) ([]int64, error) {
+func (s *sourcePersistence) listActiveGitHubInstallationIDs(ctx context.Context) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT installation_id
 		   FROM github_installations
@@ -645,7 +645,7 @@ func (s *Store) listActiveGitHubInstallationIDs(ctx context.Context) ([]int64, e
 	return out, rows.Err()
 }
 
-func (s *Store) recoverGitHubWebhookDeliveries(ctx context.Context, staleAfter time.Duration) error {
+func (s *sourcePersistence) recoverGitHubWebhookDeliveries(ctx context.Context, staleAfter time.Duration) error {
 	if staleAfter <= 0 {
 		return nil
 	}

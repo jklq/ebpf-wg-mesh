@@ -28,12 +28,12 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
 	})
-	builderService := NewBuilderService(NewBuildOperations(store, newDelivery(store, notifier, nil, nil), registry, registry, 0))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, newDelivery(store, notifier, nil, nil), registry, registry, 0))
 	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
@@ -98,12 +98,12 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	builderService := NewBuilderService(NewBuildOperations(store, newDelivery(store, notifier, nil, nil), nil, nil, 0))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, newDelivery(store, notifier, nil, nil), nil, nil, 0))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -159,12 +159,12 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService := NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
 	observedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	_, err = builderService.ReportBuildLogs(
@@ -251,12 +251,12 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	disabledWriter := &recordingLogWriter{enabled: false}
-	builderService := NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: disabledWriter})))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: disabledWriter})))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
@@ -297,7 +297,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	}
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService = NewBuilderService(NewBuildOperations(store, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
+	builderService = NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{BuildId: build.ID},

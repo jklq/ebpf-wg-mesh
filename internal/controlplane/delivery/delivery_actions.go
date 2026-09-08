@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -320,7 +321,7 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	if _, err := d.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
 		return "", err
 	}
-	if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+	if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 		return "", err
 	}
 	return dep.ID, nil
@@ -409,7 +410,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 		); err != nil {
 			return "", err
 		}
-		return "", s.bumpAllDesiredRevisionsTx(ctx, tx)
+		return "", dbtx.BumpAllDesiredRevisions(ctx, tx)
 	}
 	if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 		return "", err
@@ -423,7 +424,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_resolved_image = '', updated_at = $1 WHERE id = $2`, now, service.ID); err != nil {
 		return "", err
 	}
-	return "", s.bumpAllDesiredRevisionsTx(ctx, tx)
+	return "", dbtx.BumpAllDesiredRevisions(ctx, tx)
 }
 
 func allocationsHaveServedTraffic(allocs []AllocationRecord) bool {
@@ -495,7 +496,7 @@ func (d *Delivery) removeDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 			return s.finalizeDeploymentRemovalTx(ctx, tx, service.ID, target.ID, actor, now)
 		}
 	}
-	return s.bumpAllDesiredRevisionsTx(ctx, tx)
+	return dbtx.BumpAllDesiredRevisions(ctx, tx)
 }
 
 func (s *persistence) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.Tx, serviceID, deploymentID string, actor deploymentActor, now time.Time) error {

@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"time"
 )
@@ -42,7 +43,7 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 				wireguard_listen_port = 0, wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
 				return err
 			}
-			if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 				return err
 			}
 		} else {

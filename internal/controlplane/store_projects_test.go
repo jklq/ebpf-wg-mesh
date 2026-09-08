@@ -16,7 +16,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{
 			ID:       "user-1",
 			Email:    "user@example.com",
@@ -26,7 +26,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	managed, err := store.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	managed, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
 	if err != nil {
 		t.Fatalf("ensureManagedProject: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 		t.Fatalf("expected managed project kind, got %s", managed.Kind)
 	}
 
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{
 			{
 				ID:       "user-1",
@@ -66,11 +66,11 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	firstProjects, err := store.listProjects(ctx, "user-1")
+	firstProjects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}
-	secondProjects, err := store.listProjects(ctx, "user-2")
+	secondProjects, err := store.catalog.listProjects(ctx, "user-2")
 	if err != nil {
 		t.Fatalf("listProjects(user-2): %v", err)
 	}
@@ -85,7 +85,7 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 	}
 	assertProjectOwnerInvariant(t, store, firstProjects[0].ID, "user-1")
 	assertProjectOwnerInvariant(t, store, secondProjects[0].ID, "user-2")
-	if _, err := store.projectByID(ctx, "user-1", secondProjects[0].ID); err == nil {
+	if _, err := store.catalog.projectByID(ctx, "user-1", secondProjects[0].ID); err == nil {
 		t.Fatalf("expected user-1 to be denied access to user-2 project %q", secondProjects[0].ID)
 	}
 }
@@ -96,7 +96,7 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{
 			ID:       "user-1",
 			Email:    "user1@example.com",
@@ -106,7 +106,7 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}
@@ -124,11 +124,11 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 	); err != nil {
 		t.Fatalf("downgrade owner membership: %v", err)
 	}
-	if err := store.authorizeProjectWrite(ctx, "user-1", projectID); err != sql.ErrNoRows {
+	if err := store.catalog.authorizeProjectWrite(ctx, "user-1", projectID); err != sql.ErrNoRows {
 		t.Fatalf("expected viewer write denial, got %v", err)
 	}
 
-	project, err := store.createProject(ctx, "user-1", "demo")
+	project, err := store.catalog.createProject(ctx, "user-1", "demo")
 	if err != nil {
 		t.Fatalf("createProject: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 	assertProjectOwnerInvariant(t, store, projectID, "user-1")
 }
 
-func assertProjectOwnerInvariant(t *testing.T, store *Store, projectID, userID string) {
+func assertProjectOwnerInvariant(t *testing.T, store *persistence, projectID, userID string) {
 	t.Helper()
 
 	var ownerUserID string

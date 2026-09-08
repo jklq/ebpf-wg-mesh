@@ -24,16 +24,16 @@ type leaseClaim struct {
 type leaseContextKey struct{}
 
 // LeaseManager gives one replica ownership of a named background job. The
-// monotonically increasing token is checked by Store.withTx, making lease loss
+// monotonically increasing token is checked by database.withTx, making lease loss
 // a commit fence rather than merely a best-effort leader hint.
 type LeaseManager struct {
-	store         *Store
+	store         *database
 	holderID      string
 	ttl           time.Duration
 	retryInterval time.Duration
 }
 
-func NewLeaseManager(store *Store, ttl, retryInterval time.Duration) *LeaseManager {
+func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseManager {
 	if ttl <= 0 {
 		ttl = 15 * time.Second
 	}
@@ -250,7 +250,7 @@ func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 // lease and publish a newer external state while the former owner is still able
 // to publish an older one. It deliberately does not use the retrying transaction
 // helper: an external side effect must never be replayed automatically.
-func (s *Store) withLeaseGuard(ctx context.Context, fn func() error) error {
+func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
 	claim, ok := ctx.Value(leaseContextKey{}).(leaseClaim)
 	if !ok {
 		return fn()

@@ -19,30 +19,30 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{
 		{ID: "user-1", Email: "user-1@example.com", Projects: []string{"one", "two"}},
 	}}); err != nil {
 		t.Fatalf("EnsureBootstrap: %v", err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
 	if len(projects) != 2 {
 		t.Fatalf("expected two projects, got %d", len(projects))
 	}
-	environmentsOne, err := store.listEnvironments(ctx, "user-1", projects[0].ID)
+	environmentsOne, err := store.catalog.listEnvironments(ctx, "user-1", projects[0].ID)
 	if err != nil || len(environmentsOne) != 1 {
 		t.Fatalf("list first project environments: %#v: %v", environmentsOne, err)
 	}
-	environmentsTwo, err := store.listEnvironments(ctx, "user-1", projects[1].ID)
+	environmentsTwo, err := store.catalog.listEnvironments(ctx, "user-1", projects[1].ID)
 	if err != nil || len(environmentsTwo) != 1 {
 		t.Fatalf("list second project environments: %#v: %v", environmentsTwo, err)
 	}
 	if environmentsOne[0].NetworkIdentity == 0 || environmentsTwo[0].NetworkIdentity == 0 || environmentsOne[0].NetworkIdentity == environmentsTwo[0].NetworkIdentity {
 		t.Fatalf("expected distinct non-zero network identities: %#v %#v", environmentsOne, environmentsTwo)
 	}
-	staging, err := store.createEnvironment(ctx, "user-1", projects[0].ID, "Staging")
+	staging, err := store.catalog.createEnvironment(ctx, "user-1", projects[0].ID, "Staging")
 	if err != nil {
 		t.Fatalf("create staging environment: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	}
 	stagingService = stagingDeployed[0]
 	for label, item := range map[string]deliverycore.ServiceRecord{"production": service, "staging": stagingService} {
-		allocation, err := store.allocationByServiceID(ctx, item.ID)
+		allocation, err := store.reads.allocationByServiceID(ctx, item.ID)
 		if err != nil {
 			t.Fatalf("load %s allocation: %v", label, err)
 		}
@@ -130,16 +130,16 @@ func TestAgentBootstrapTokensAreBoundDurableAndSingleUse(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	tokens := []config.AgentBootstrapToken{{AgentID: "node-1", Token: "one-time-secret"}}
-	if err := store.ensureAgentBootstrapTokens(ctx, tokens); err != nil {
+	if err := store.fleet.ensureAgentBootstrapTokens(ctx, tokens); err != nil {
 		t.Fatalf("ensureAgentBootstrapTokens: %v", err)
 	}
-	if err := store.consumeAgentBootstrapToken(ctx, "node-2", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
+	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-2", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected agent binding rejection, got %v", err)
 	}
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			results <- store.consumeAgentBootstrapToken(ctx, "node-1", "one-time-secret")
+			results <- store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "one-time-secret")
 		}()
 	}
 	successes := 0
@@ -153,10 +153,10 @@ func TestAgentBootstrapTokensAreBoundDurableAndSingleUse(t *testing.T) {
 	if successes != 1 {
 		t.Fatalf("expected exactly one token consumer, got %d", successes)
 	}
-	if err := store.ensureAgentBootstrapTokens(ctx, tokens); err != nil {
+	if err := store.fleet.ensureAgentBootstrapTokens(ctx, tokens); err != nil {
 		t.Fatalf("reseed bootstrap tokens: %v", err)
 	}
-	if err := store.consumeAgentBootstrapToken(ctx, "node-1", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
+	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected consumed token rejection after reseed, got %v", err)
 	}
 }
@@ -166,16 +166,16 @@ func TestRemovedAgentBootstrapTokenIsRevoked(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.ensureAgentBootstrapTokens(ctx, []config.AgentBootstrapToken{{AgentID: "node-1", Token: "old-secret"}}); err != nil {
+	if err := store.fleet.ensureAgentBootstrapTokens(ctx, []config.AgentBootstrapToken{{AgentID: "node-1", Token: "old-secret"}}); err != nil {
 		t.Fatalf("seed old token: %v", err)
 	}
-	if err := store.ensureAgentBootstrapTokens(ctx, []config.AgentBootstrapToken{{AgentID: "node-1", Token: "new-secret"}}); err != nil {
+	if err := store.fleet.ensureAgentBootstrapTokens(ctx, []config.AgentBootstrapToken{{AgentID: "node-1", Token: "new-secret"}}); err != nil {
 		t.Fatalf("rotate token: %v", err)
 	}
-	if err := store.consumeAgentBootstrapToken(ctx, "node-1", "old-secret"); !errors.Is(err, errInvalidBootstrapToken) {
+	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "old-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected removed token rejection, got %v", err)
 	}
-	if err := store.consumeAgentBootstrapToken(ctx, "node-1", "new-secret"); err != nil {
+	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "new-secret"); err != nil {
 		t.Fatalf("consume replacement token: %v", err)
 	}
 }
@@ -184,11 +184,11 @@ func TestProjectCreationCreatesExactlyOneProductionEnvironment(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.createProject(ctx, "user-1", "demo")
+	project, err := store.catalog.createProject(ctx, "user-1", "demo")
 	if err != nil {
 		t.Fatalf("createProject: %v", err)
 	}
-	environments, err := store.listEnvironments(ctx, "user-1", project.ID)
+	environments, err := store.catalog.listEnvironments(ctx, "user-1", project.ID)
 	if err != nil {
 		t.Fatalf("listEnvironments: %v", err)
 	}

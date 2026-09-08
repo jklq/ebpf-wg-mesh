@@ -26,8 +26,8 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client))
+	catalog := NewGitHubCatalog(store.source, client)
+	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client))
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -82,8 +82,8 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client))
+	catalog := NewGitHubCatalog(store.source, client)
+	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client))
 	ctx := context.Background()
 
 	projectID, serviceID := createRepoBackedTestService(t, store, ctx, "public/hello", 0, "main")
@@ -152,9 +152,9 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	coordinator := NewGitHubCoordinator(store, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store, coordinator, time.Minute, time.Minute, time.Minute)
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -180,7 +180,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 			break
 		}
 	}
-	status, _, err := store.serviceStatus(ctx, "user-1", service.ID)
+	status, _, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceStatus: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 		t.Fatalf("expected synced build commit author to be persisted, got %+v", status.LatestBuild)
 	}
 
-	if _, err := store.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
+	if _, err := store.source.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
 		Kind:           deliverycore.SourceWorkKindSourceSpecChanged,
 		IdempotencyKey: fmt.Sprintf("%s:%s:%d", deliverycore.SourceWorkKindSourceSpecChanged, service.ID, service.SpecRevision),
 		ServiceID:      service.ID,
@@ -229,9 +229,9 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	coordinator := NewGitHubCoordinator(store, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store, coordinator, time.Minute, time.Minute, time.Minute)
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -246,7 +246,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		},
 	)
 	productionID := productionEnvironmentID(t, store, projectID)
-	staging, err := store.createEnvironment(ctx, "user-1", projectID, "Staging")
+	staging, err := store.catalog.createEnvironment(ctx, "user-1", projectID, "Staging")
 	if err != nil {
 		t.Fatalf("create staging environment: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		commit  string
 	}{{first, "commit-public-main"}, {second, "commit-public-release"}} {
 		service := item.service
-		status, _, err := store.serviceStatus(ctx, "user-1", service.ID)
+		status, _, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
 		if err != nil {
 			t.Fatalf("serviceStatus(%s): %v", service.Name, err)
 		}
@@ -284,11 +284,11 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 			t.Fatalf("expected %s build for environment %s, got %+v", item.commit, service.EnvironmentID, status.LatestBuild)
 		}
 	}
-	mainBindings, err := store.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "main")
+	mainBindings, err := store.source.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "main")
 	if err != nil || len(mainBindings) != 1 || mainBindings[0].ServiceID != first.ID {
 		t.Fatalf("main matched the wrong environment services: %#v: %v", mainBindings, err)
 	}
-	releaseBindings, err := store.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "release")
+	releaseBindings, err := store.source.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "release")
 	if err != nil || len(releaseBindings) != 1 || releaseBindings[0].ServiceID != second.ID {
 		t.Fatalf("release matched the wrong environment services: %#v: %v", releaseBindings, err)
 	}
@@ -303,9 +303,9 @@ func TestPushAndInstallationWebhooksOnlyQueueCoordinatorWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	coordinator := NewGitHubCoordinator(store, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	processor := NewGitHubWebhookProcessor(store, coordinator)
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
 	_, serviceID := createRepoBackedTestService(t, store, ctx, "private/secret", 7, "main")
@@ -354,9 +354,9 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	coordinator := NewGitHubCoordinator(store, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	processor := NewGitHubWebhookProcessor(store, coordinator)
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
 	_, _ = createRepoBackedTestService(t, store, ctx, "private/secret", 7, "main")
@@ -435,12 +435,12 @@ func TestGitHubReconcilerBootstrapRequeuesStaleWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	catalog := NewGitHubCatalog(store, client)
-	coordinator := NewGitHubCoordinator(store, testDelivery(store).Delivery, catalog, client, time.Minute)
-	reconciler := NewGitHubReconciler(store, coordinator, time.Minute, time.Minute, time.Minute)
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
 	ctx := context.Background()
 
-	if _, err := store.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
+	if _, err := store.source.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
 		Kind:                    deliverycore.SourceWorkKindProviderAccessChanged,
 		IdempotencyKey:          "bootstrap-refresh-7",
 		Provider:                "github",
@@ -478,7 +478,7 @@ func TestGitHubWebhookHandlerRejectsInvalidSignatureAndAcceptsValidSignature(t *
 	t.Parallel()
 
 	store := openTestStore(t)
-	handler := NewGitHubWebhookHandler(store, "topsecret", &GitHubWebhookProcessor{requestCh: make(chan struct{}, 1)})
+	handler := NewGitHubWebhookHandler(store.source, "topsecret", &GitHubWebhookProcessor{requestCh: make(chan struct{}, 1)})
 	payload := []byte(`{"zen":"ship it"}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))

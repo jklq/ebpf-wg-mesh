@@ -20,7 +20,7 @@ func TestNotifierObservesDesiredRevisionWrittenByAnotherReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	storeB, err := OpenStore(config.DatabaseConfig{
+	storeB, err := openPersistence(config.DatabaseConfig{
 		URL: sharedTestDatabase(t), MaxOpenConns: 2, MaxIdleConns: 2,
 	}, testMeshConfig())
 	if err != nil {
@@ -28,7 +28,7 @@ func TestNotifierObservesDesiredRevisionWrittenByAnotherReplica(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = storeB.Close() })
 
-	notifierB := NewNotifier(ctx, storeB, 5*time.Millisecond)
+	notifierB := NewNotifier(ctx, storeB.reads, 5*time.Millisecond)
 	wake, stop := notifierB.Watch("agent-a")
 	defer stop()
 
@@ -52,7 +52,7 @@ func TestNotifierObservesDesiredRevisionWrittenByAnotherReplica(t *testing.T) {
 func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	events := NewPlatformEvents(store, time.Millisecond)
+	events := NewPlatformEvents(store.events, time.Millisecond)
 
 	before, err := events.Current(ctx, "environment-a")
 	if err != nil {
@@ -93,8 +93,8 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first := NewLeaseManager(store, time.Minute, time.Millisecond)
-	second := NewLeaseManager(store, time.Minute, time.Millisecond)
+	first := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	second := NewLeaseManager(store.database, time.Minute, time.Millisecond)
 
 	firstClaim, acquired, err := first.acquire(ctx, "singleton-test")
 	if err != nil || !acquired {
@@ -128,8 +128,8 @@ func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 func TestLeaseGuardSerializesExternalEffectWithTakeover(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first := NewLeaseManager(store, time.Minute, time.Millisecond)
-	second := NewLeaseManager(store, time.Minute, time.Millisecond)
+	first := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	second := NewLeaseManager(store.database, time.Minute, time.Millisecond)
 	claim, acquired, err := first.acquire(ctx, "external-effect-test")
 	if err != nil || !acquired {
 		t.Fatalf("first acquire = (%v, %v)", acquired, err)
@@ -183,8 +183,8 @@ func TestLeaseGuardSerializesExternalEffectWithTakeover(t *testing.T) {
 func TestHeldLeaseRenewsUntilReleased(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first := NewLeaseManager(store, 300*time.Millisecond, 5*time.Millisecond)
-	second := NewLeaseManager(store, 300*time.Millisecond, 5*time.Millisecond)
+	first := NewLeaseManager(store.database, 300*time.Millisecond, 5*time.Millisecond)
+	second := NewLeaseManager(store.database, 300*time.Millisecond, 5*time.Millisecond)
 	leaseCtx, release, err := first.hold(ctx, "held-test")
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +205,8 @@ func TestHeldLeaseRenewsUntilReleased(t *testing.T) {
 
 func TestLeaseManagerSelectsOneReplicaAndHandsOffOnShutdown(t *testing.T) {
 	store := openTestStore(t)
-	first := NewLeaseManager(store, time.Second, 10*time.Millisecond)
-	second := NewLeaseManager(store, time.Second, 10*time.Millisecond)
+	first := NewLeaseManager(store.database, time.Second, 10*time.Millisecond)
+	second := NewLeaseManager(store.database, time.Second, 10*time.Millisecond)
 	firstCtx, stopFirst := context.WithCancel(context.Background())
 	secondCtx, stopSecond := context.WithCancel(context.Background())
 	defer stopFirst()

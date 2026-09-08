@@ -37,7 +37,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 		t.Fatalf("desired image used a mutable tag: %q", desiredImage)
 	}
 
-	completed, err := store.deliveryQueries().BuildRunByIDQuerier(ctx, store.db, build.ID)
+	completed, err := store.reads.deliveryQueries().BuildRunByIDQuerier(ctx, store.db, build.ID)
 	if err != nil {
 		t.Fatalf("load completed build: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListServiceDeployments: %v", err)
 	}
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("wait for build 2 digest: %v", err)
 	}
-	completed2, err := store.deliveryQueries().BuildRunByIDQuerier(ctx, store.db, build2.ID)
+	completed2, err := store.reads.deliveryQueries().BuildRunByIDQuerier(ctx, store.db, build2.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	if got := after.GetServices()[0].GetSpec().GetImage(); got != winner {
 		t.Fatalf("late complete stole desired image: got %q want %q", got, winner)
 	}
-	current, err := store.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	}
 }
 
-func mustDesiredService(t *testing.T, store *Store, agentID string) *agentv1.DesiredService {
+func mustDesiredService(t *testing.T, store *persistence, agentID string) *agentv1.DesiredService {
 	t.Helper()
 	state, err := desiredStateForAgent(context.Background(), store, agentID)
 	if err != nil || len(state.GetServices()) != 1 {

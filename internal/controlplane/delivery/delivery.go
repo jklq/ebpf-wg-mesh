@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"strings"
 	"time"
@@ -11,9 +12,8 @@ import (
 )
 
 // Delivery owns deployment lifecycle policy, its transactional state changes,
-// and the wake, ingress, and publication effects that follow a commit. Store is
-// its concrete persistence implementation rather than a lifecycle interface
-// exposed to transports and background workers.
+// and the wake, ingress, and publication effects that follow a commit. Its
+// persistence and transaction helpers are private to this package.
 type Delivery struct {
 	store           *persistence
 	notifier        PlatformNotifier
@@ -164,7 +164,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			}
 		}
 		if identityCatalogChanged {
-			if err := d.store.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 				return err
 			}
 			rows, err := tx.QueryContext(ctx, `SELECT id FROM agents ORDER BY id`)
@@ -187,7 +187,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			if err := rows.Close(); err != nil {
 				return err
 			}
-		} else if err := d.store.bumpDesiredRevisionsTx(ctx, tx, agentIDs); err != nil {
+		} else if err := dbtx.BumpDesiredRevisions(ctx, tx, agentIDs); err != nil {
 			return err
 		}
 		for _, id := range serviceIDs {
@@ -317,4 +317,9 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 		return ServiceRecord{}, err
 	}
 	return current, nil
+}
+
+// DuplicateEnvironment copies drafts, volumes, and staged deployments atomically.
+func (r *Delivery) DuplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (EnvironmentRecord, error) {
+	return r.store.duplicateEnvironment(ctx, userID, sourceEnvironmentID, name, copyVariables)
 }

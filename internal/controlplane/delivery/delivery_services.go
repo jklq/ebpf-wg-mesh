@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"fmt"
 	"strings"
@@ -44,7 +45,8 @@ func (d *Delivery) createScheduledService(ctx context.Context, userID, environme
 	return rec, nil
 }
 
-func (d *Delivery) createService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
+// CreateService deploys a service with an explicit initial placement.
+func (d *Delivery) CreateService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -59,7 +61,7 @@ func (d *Delivery) createService(ctx context.Context, userID, environmentID, nam
 }
 
 func (d *Delivery) createServiceTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
-	environment, err := d.store.environmentByIDQuerier(ctx, tx, userID, environmentID)
+	environment, err := d.store.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
@@ -140,7 +142,7 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	// Allocations are part of every node's workload identity catalog. Creating
 	// one therefore changes mesh policy globally even though only one agent runs
 	// the workload.
-	if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+	if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 		return ServiceRecord{}, err
 	}
 	return rec, nil
@@ -237,7 +239,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 		}
 		current.Name = nextName
 		current.UpdatedAt = now
-		if err := s.bumpAllDesiredRevisionsTx(ctx, tx); err != nil {
+		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 			return ServiceRecord{}, false, false, err
 		}
 		return current, false, false, nil
@@ -330,7 +332,7 @@ func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) 
 		if rows == 0 {
 			return sql.ErrNoRows
 		}
-		return s.bumpAllDesiredRevisionsTx(ctx, tx)
+		return dbtx.BumpAllDesiredRevisions(ctx, tx)
 	})
 	if err != nil {
 		return err

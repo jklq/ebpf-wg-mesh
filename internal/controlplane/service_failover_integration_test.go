@@ -58,7 +58,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 
-	notifier := NewNotifier(ctx, store, time.Hour)
+	notifier := NewNotifier(ctx, store.reads, time.Hour)
 	watches := make(map[string]<-chan struct{})
 	for _, id := range []string{"old-node", "new-node", "reserved-node"} {
 		ch, stop := notifier.Watch(id)
@@ -135,7 +135,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.createVolume(ctx, "user-1", projectID, "data", 64<<20, "old-node"); err != nil {
+	if _, err := store.catalog.createVolume(ctx, "user-1", projectID, "data", 64<<20, "old-node"); err != nil {
 		t.Fatal(err)
 	}
 	volumeService, err := createService(ctx, store, "user-1", projectID, "stateful", directImageServiceSpec("example.test/stateful:1", &platformv1.ServiceRuntime{
@@ -164,14 +164,14 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if len(result.MovedServiceIDs) != 0 || len(result.BlockedServiceIDs) != 2 {
 		t.Fatalf("unexpected failover result %+v", result)
 	}
-	volumeAllocation, err := store.allocationByServiceID(ctx, volumeService.ID)
+	volumeAllocation, err := store.reads.allocationByServiceID(ctx, volumeService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != "Unavailable" || !strings.Contains(volumeAllocation.Message, "replicated storage") {
 		t.Fatalf("volume allocation did not surface a pinned-storage reason: %+v", volumeAllocation)
 	}
-	largeAllocation, err := store.allocationByServiceID(ctx, largeService.ID)
+	largeAllocation, err := store.reads.allocationByServiceID(ctx, largeService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.reserveAgents(trusted.AgentId)
-	project, err := store.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	if _, err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	allocation, err := store.allocationByServiceID(ctx, service.ID)
+	allocation, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,22 +289,22 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 	_ = requireNodeLossReplacement(t, store, service.ID, originalID, "old-node", "new-node")
 }
 
-func bootstrapFailoverProject(t *testing.T, store *Store) string {
+func bootstrapFailoverProject(t *testing.T, store *persistence) string {
 	t.Helper()
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{Users: []config.BootstrapUser{{
 		ID: "user-1", Email: "user@example.test", Projects: []string{"demo"},
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v (%d)", err, len(projects))
 	}
 	return productionEnvironmentID(t, store, projects[0].ID)
 }
 
-func makeAgentUnhealthy(t *testing.T, store *Store, agentID string, lastSeen time.Time) {
+func makeAgentUnhealthy(t *testing.T, store *persistence, agentID string, lastSeen time.Time) {
 	t.Helper()
 	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, lastSeen.UTC(), agentID); err != nil {
 		t.Fatal(err)

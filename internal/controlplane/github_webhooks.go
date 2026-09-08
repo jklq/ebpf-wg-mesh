@@ -18,7 +18,7 @@ import (
 )
 
 type GitHubWebhookHandler struct {
-	store     *Store
+	store     *sourcePersistence
 	secret    []byte
 	processor *GitHubWebhookProcessor
 }
@@ -31,7 +31,7 @@ var (
 	errGitHubWebhookPayloadTooLarge  = errors.New("webhook payload too large")
 )
 
-func NewGitHubWebhookHandler(store *Store, secret string, processor *GitHubWebhookProcessor) *GitHubWebhookHandler {
+func NewGitHubWebhookHandler(store *sourcePersistence, secret string, processor *GitHubWebhookProcessor) *GitHubWebhookHandler {
 	if store == nil || strings.TrimSpace(secret) == "" || processor == nil {
 		return nil
 	}
@@ -166,13 +166,13 @@ func textPrefix(value string, chars int) string {
 }
 
 type GitHubWebhookProcessor struct {
-	store       *Store
+	store       *sourcePersistence
 	coordinator *GitHubCoordinator
 	requestCh   chan struct{}
 	id          string
 }
 
-func NewGitHubWebhookProcessor(store *Store, coordinator *GitHubCoordinator) *GitHubWebhookProcessor {
+func NewGitHubWebhookProcessor(store *sourcePersistence, coordinator *GitHubCoordinator) *GitHubWebhookProcessor {
 	if store == nil || coordinator == nil || !coordinator.Enabled() {
 		return nil
 	}

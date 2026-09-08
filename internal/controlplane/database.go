@@ -3,29 +3,27 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"runtime"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"ebof-wg-mesh/internal/config"
-
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-type Store struct {
+type database struct {
 	db                      *sql.DB
 	mesh                    config.ControlPlaneMeshConfig
 	reservedAgentIDs        []string
-	sourceArchives          SourceArchiveStore
 	useReportedAllocationIP bool
 }
 
-func (s *Store) reserveAgents(agentIDs ...string) {
+func (s *database) reserveAgents(agentIDs ...string) {
 	for _, agentID := range agentIDs {
 		agentID = strings.TrimSpace(agentID)
 		if agentID != "" && !slices.Contains(s.reservedAgentIDs, agentID) {
@@ -34,7 +32,7 @@ func (s *Store) reserveAgents(agentIDs ...string) {
 	}
 }
 
-func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*Store, error) {
+func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*persistence, error) {
 	normalizeDatabaseConfig(&dbCfg)
 	db, err := sql.Open("pgx", dbCfg.URL)
 	if err != nil {
@@ -48,26 +46,26 @@ func OpenStore(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfi
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	store := &Store{db: db, mesh: meshCfg}
+	store := newPersistence(&database{db: db, mesh: meshCfg})
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := store.validateWorkloadIPv4Pool(context.Background()); err != nil {
+	if err := store.fleet.validateWorkloadIPv4Pool(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
 }
 
-func (s *Store) Close() error {
+func (s *database) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	return s.db.Close()
 }
 
-func (s *Store) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
+func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 	if s == nil || s.db == nil {
 		return false, false
 	}
@@ -81,7 +79,7 @@ func (s *Store) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 	return true, version >= currentSchemaVersion
 }
 
-func (s *Store) migrate(ctx context.Context) error {
+func (s *database) migrate(ctx context.Context) error {
 	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 			return fmt.Errorf("create schema_migrations: %w", err)
@@ -156,7 +154,7 @@ func applySchemaUpgrades(ctx context.Context, tx *sql.Tx, fromVersion int) error
 	return nil
 }
 
-func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+func (s *database) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
 		if err := assertLeaseTx(ctx, tx); err != nil {
 			return err
@@ -168,11 +166,11 @@ func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	})
 }
 
-func (s *Store) withTxUnfenced(ctx context.Context, fn func(*sql.Tx) error) error {
+func (s *database) withTxUnfenced(ctx context.Context, fn func(*sql.Tx) error) error {
 	return crdb.ExecuteTx(ctx, s.db, nil, fn)
 }
 
-func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {
+func (s *catalogPersistence) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		for _, user := range bootstrap.Users {
 			if user.ID == "" {
@@ -199,58 +197,12 @@ func (s *Store) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapC
 	})
 }
 
-func (s *Store) bumpDesiredRevisionsTx(ctx context.Context, tx *sql.Tx, agentIDs []string) error {
-	if len(agentIDs) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]struct{}, len(agentIDs))
-	uniqueIDs := make([]string, 0, len(agentIDs))
-	for _, agentID := range agentIDs {
-		agentID = strings.TrimSpace(agentID)
-		if agentID == "" {
-			continue
-		}
-		if _, ok := seen[agentID]; ok {
-			continue
-		}
-		seen[agentID] = struct{}{}
-		uniqueIDs = append(uniqueIDs, agentID)
-	}
-	if len(uniqueIDs) == 0 {
-		return nil
-	}
-	sort.Strings(uniqueIDs)
-
-	args := make([]any, 0, len(uniqueIDs))
-	placeholders := make([]string, 0, len(uniqueIDs))
-	for i, agentID := range uniqueIDs {
-		args = append(args, agentID)
-		var b strings.Builder
-		b.Grow(len(strconv.Itoa(i+1)) + 1)
-		b.WriteByte('$')
-		b.WriteString(strconv.Itoa(i + 1))
-		placeholders = append(placeholders, b.String())
-	}
-	query := fmt.Sprintf(
-		`UPDATE agents SET desired_revision = desired_revision + 1 WHERE id IN (%s)`,
-		strings.Join(placeholders, ", "),
-	)
-	_, err := tx.ExecContext(ctx, query, args...)
-	return err
-}
-
-func (s *Store) bumpAllDesiredRevisionsTx(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `UPDATE agents SET desired_revision = desired_revision + 1`)
-	return err
-}
-
-func (s *Store) bumpDesiredRevisions(ctx context.Context, agentIDs []string) error {
+func (s *database) bumpDesiredRevisions(ctx context.Context, agentIDs []string) error {
 	if len(agentIDs) == 0 {
 		return nil
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		return s.bumpDesiredRevisionsTx(ctx, tx, agentIDs)
+		return dbtx.BumpDesiredRevisions(ctx, tx, agentIDs)
 	})
 }
 

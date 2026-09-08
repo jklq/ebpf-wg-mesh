@@ -12,12 +12,12 @@ import (
 
 type testDeliveryHarness struct {
 	*deliverycore.Delivery
-	store       *Store
+	store       *persistence
 	rolloutNow  func() time.Time
 	failoverNow func() time.Time
 }
 
-func newTestDelivery(store *Store, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) *testDeliveryHarness {
+func newTestDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) *testDeliveryHarness {
 	return &testDeliveryHarness{Delivery: newDelivery(store, notifier, ingress, events), store: store}
 }
 func (d *testDeliveryHarness) ReconcileRollouts(ctx context.Context) error {
@@ -97,7 +97,7 @@ func (d *testDeliveryHarness) chooseAgentForService(ctx context.Context, environ
 	if err != nil {
 		return "", err
 	}
-	allocations, err := d.store.listAllocationsByServiceID(ctx, service.ID)
+	allocations, err := d.store.reads.listAllocationsByServiceID(ctx, service.ID)
 	if err != nil {
 		return "", err
 	}
@@ -106,8 +106,8 @@ func (d *testDeliveryHarness) chooseAgentForService(ctx context.Context, environ
 	}
 	return allocations[0].AgentID, nil
 }
-func reportActiveForTest(ctx context.Context, s *Store, serviceID string) error {
-	allocations, err := s.listAllocationsByServiceID(ctx, serviceID)
+func reportActiveForTest(ctx context.Context, s *persistence, serviceID string) error {
+	allocations, err := s.reads.listAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		return err
 	}

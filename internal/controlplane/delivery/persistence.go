@@ -3,8 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/config"
 	"time"
+
+	"ebof-wg-mesh/internal/config"
 )
 
 // Transaction runs a retryable, lease-fenced transaction and advances the
@@ -16,7 +17,9 @@ type Events interface {
 	Publish(context.Context, string) (int64, error)
 }
 
-// Dependencies supplies connection infrastructure and post-commit effects.
+// Dependencies supplies connection infrastructure, transactional catalog/source
+// operations, and post-commit effects. Catalog/source callbacks must use the
+// supplied transaction so environment copies and source queues commit with delivery.
 // Delivery never lends its persistence or transaction helpers to callers.
 type Dependencies struct {
 	CreateEnvironment func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
@@ -50,8 +53,21 @@ type persistence struct {
 
 func New(deps Dependencies) *Delivery {
 	return &Delivery{
-		store:    &persistence{db: deps.DB, mesh: deps.Mesh, reservedAgentIDs: append([]string(nil), deps.ReservedAgentIDs...), useReportedAllocationIP: deps.UseReportedAllocationIP, withTx: deps.Transaction, withTxUnfenced: deps.UnfencedTransaction},
-		notifier: deps.Notifier, ingress: deps.Ingress, events: deps.Events, userFromContext: deps.UserFromContext,
+		store: &persistence{
+			db:                       deps.DB,
+			mesh:                     deps.Mesh,
+			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
+			useReportedAllocationIP:  deps.UseReportedAllocationIP,
+			withTx:                   deps.Transaction,
+			withTxUnfenced:           deps.UnfencedTransaction,
+			createEnvironmentQuerier: deps.CreateEnvironment,
+			createVolumeTx:           deps.CreateVolume,
+			enqueueSourceWorkItemTx:  deps.EnqueueSourceWork,
+		},
+		notifier:        deps.Notifier,
+		ingress:         deps.Ingress,
+		events:          deps.Events,
+		userFromContext: deps.UserFromContext,
 	}
 }
 
@@ -60,24 +76,6 @@ func New(deps Dependencies) *Delivery {
 type ReadModel struct{ store *persistence }
 
 func (d *Delivery) ReadModel() *ReadModel { return &ReadModel{store: d.store} }
-
-func (s *persistence) bumpAllDesiredRevisionsTx(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `UPDATE agents SET desired_revision = desired_revision + 1`)
-	return err
-}
-func (s *persistence) bumpDesiredRevisionsTx(ctx context.Context, tx *sql.Tx, agentIDs []string) error {
-	seen := map[string]bool{}
-	for _, id := range agentIDs {
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		if _, err := tx.ExecContext(ctx, `UPDATE agents SET desired_revision = desired_revision + 1 WHERE id = $1`, id); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // Clock overrides are useful for deterministic reconciliation tests.
 func (d *Delivery) SetClocks(rollout, failover func() time.Time) {

@@ -15,7 +15,7 @@ import (
 )
 
 type rolloutIngressProbe struct {
-	store     *Store
+	store     *persistence
 	err       error
 	syncCalls int
 	snapshots [][]ingressBackend
@@ -23,7 +23,7 @@ type rolloutIngressProbe struct {
 
 func (p *rolloutIngressProbe) Sync(ctx context.Context) error {
 	p.syncCalls++
-	backends, err := p.store.listHealthyIngressBackends(ctx)
+	backends, err := p.store.routing.listHealthyIngressBackends(ctx)
 	if err != nil {
 		return err
 	}
@@ -36,7 +36,7 @@ func (*rolloutIngressProbe) RequestSync() {}
 func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
@@ -270,12 +270,12 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 	envID := productionEnvironmentID(t, store, projects[0].ID)
-	if _, err := store.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-1"); err != nil {
+	if _, err := store.catalog.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-1"); err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
 	spec := rollingTestSpec("example.test/disk:a", 1, 1)
@@ -354,16 +354,16 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	assertRolloutState(t, store, service.ID, 2, "succeeded", "")
 }
 
-func createHealthyRollingService(t *testing.T, replicas, _ int32) (*Store, string, deliverycore.ServiceRecord) {
+func createHealthyRollingService(t *testing.T, replicas, _ int32) (*persistence, string, deliverycore.ServiceRecord) {
 	t.Helper()
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -400,7 +400,7 @@ func rollingTestSpec(image string, replicas, _ int32) *platformv1.ServiceSpec {
 	return spec
 }
 
-func markRolloutAllocationReady(t *testing.T, store *Store, alloc deliverycore.AllocationRecord) {
+func markRolloutAllocationReady(t *testing.T, store *persistence, alloc deliverycore.AllocationRecord) {
 	t.Helper()
 	if _, err := store.db.ExecContext(context.Background(),
 		`UPDATE allocations
@@ -415,7 +415,7 @@ func markRolloutAllocationReady(t *testing.T, store *Store, alloc deliverycore.A
 	}
 }
 
-func markAllDrainingComplete(t *testing.T, store *Store, serviceID string) {
+func markAllDrainingComplete(t *testing.T, store *persistence, serviceID string) {
 	t.Helper()
 	if _, err := store.db.ExecContext(context.Background(),
 		`UPDATE allocations SET phase = 'Drained', message = 'graceful exit', updated_at = now()
@@ -425,16 +425,16 @@ func markAllDrainingComplete(t *testing.T, store *Store, serviceID string) {
 	}
 }
 
-func mustRolloutAllocations(t *testing.T, store *Store, serviceID string) []deliverycore.AllocationRecord {
+func mustRolloutAllocations(t *testing.T, store *persistence, serviceID string) []deliverycore.AllocationRecord {
 	t.Helper()
-	allocs, err := store.deliveryQueries().ListAllocationsByServiceID(context.Background(), serviceID)
+	allocs, err := store.reads.deliveryQueries().ListAllocationsByServiceID(context.Background(), serviceID)
 	if err != nil {
 		t.Fatalf("list allocations: %v", err)
 	}
 	return allocs
 }
 
-func allocationForGeneration(t *testing.T, store *Store, serviceID string, generation int64) []deliverycore.AllocationRecord {
+func allocationForGeneration(t *testing.T, store *persistence, serviceID string, generation int64) []deliverycore.AllocationRecord {
 	t.Helper()
 	var out []deliverycore.AllocationRecord
 	for _, alloc := range mustRolloutAllocations(t, store, serviceID) {
@@ -445,7 +445,7 @@ func allocationForGeneration(t *testing.T, store *Store, serviceID string, gener
 	return out
 }
 
-func allocationByID(t *testing.T, store *Store, serviceID, allocationID string) deliverycore.AllocationRecord {
+func allocationByID(t *testing.T, store *persistence, serviceID, allocationID string) deliverycore.AllocationRecord {
 	t.Helper()
 	for _, alloc := range mustRolloutAllocations(t, store, serviceID) {
 		if alloc.ID == allocationID {
@@ -456,7 +456,7 @@ func allocationByID(t *testing.T, store *Store, serviceID, allocationID string) 
 	return deliverycore.AllocationRecord{}
 }
 
-func assertServingCount(t *testing.T, store *Store, serviceID string, want int) {
+func assertServingCount(t *testing.T, store *persistence, serviceID string, want int) {
 	t.Helper()
 	got := 0
 	for _, alloc := range mustRolloutAllocations(t, store, serviceID) {
@@ -469,7 +469,7 @@ func assertServingCount(t *testing.T, store *Store, serviceID string, want int) 
 	}
 }
 
-func assertRolloutState(t *testing.T, store *Store, serviceID string, generation int64, wantState, reasonContains string) {
+func assertRolloutState(t *testing.T, store *persistence, serviceID string, generation int64, wantState, reasonContains string) {
 	t.Helper()
 	var state, reason string
 	if err := store.db.QueryRowContext(context.Background(),
@@ -482,7 +482,7 @@ func assertRolloutState(t *testing.T, store *Store, serviceID string, generation
 	}
 }
 
-func assertDesiredIntent(t *testing.T, store *Store, alloc deliverycore.AllocationRecord, draining bool) {
+func assertDesiredIntent(t *testing.T, store *persistence, alloc deliverycore.AllocationRecord, draining bool) {
 	t.Helper()
 	services, err := testDelivery(store).listDesiredServices(context.Background(), alloc.AgentID)
 	if err != nil {

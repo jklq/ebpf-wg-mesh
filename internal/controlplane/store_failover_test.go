@@ -16,12 +16,12 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	if len(environmentsChanged) != 1 || environmentsChanged[0] != environmentID {
 		t.Fatalf("changed environments = %v, want %s", environmentsChanged, environmentID)
 	}
-	got, err := store.serviceByID(ctx, "user-1", service.ID)
+	got, err := store.reads.serviceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, err := store.deliveryQueries().ListAgents(ctx)
+	agents, err := store.reads.deliveryQueries().ListAgents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,12 +117,12 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.EnsureBootstrap(ctx, config.BootstrapConfig{
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, "user-1")
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 	// Addresses come from the owning node's prefixes, so failover must re-address
 	// the workload on both families rather than carry the dead node's addresses over.
-	survivor, err := store.deliveryQueries().AgentByID(ctx, "node-b")
+	survivor, err := store.reads.deliveryQueries().AgentByID(ctx, "node-b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 }
 
-func mustAllocationOnAgent(t *testing.T, store *Store, serviceID, agentID string) deliverycore.AllocationRecord {
+func mustAllocationOnAgent(t *testing.T, store *persistence, serviceID, agentID string) deliverycore.AllocationRecord {
 	t.Helper()
 	for _, alloc := range mustListAllocations(t, store, context.Background(), serviceID) {
 		if alloc.AgentID == agentID {
@@ -236,7 +236,7 @@ func mustAllocationOnAgent(t *testing.T, store *Store, serviceID, agentID string
 	return deliverycore.AllocationRecord{}
 }
 
-func requireNodeLossReplacement(t *testing.T, store *Store, serviceID, originalID, deadAgent, liveAgent string) deliverycore.AllocationRecord {
+func requireNodeLossReplacement(t *testing.T, store *persistence, serviceID, originalID, deadAgent, liveAgent string) deliverycore.AllocationRecord {
 	t.Helper()
 	allocs := mustListAllocations(t, store, context.Background(), serviceID)
 	var lost, live []deliverycore.AllocationRecord

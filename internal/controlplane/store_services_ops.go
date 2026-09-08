@@ -3,17 +3,19 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"time"
 )
 
-func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, error) {
+func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, projectID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, error) {
 	if err := deliverycore.ValidatePort(targetPort); err != nil {
 		return deliverycore.DomainBindingRecord{}, err
 	}
 	var binding deliverycore.DomainBindingRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.deliveryQueries().ProjectByIDInternalQuerier(ctx, tx, projectID); err != nil {
+		if _, err := s.reads.deliveryQueries().ProjectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 			return err
 		}
 		var agentID, environmentID string
@@ -40,7 +42,7 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 			); err != nil {
 				return err
 			}
-			if err := s.bumpDesiredRevisionsTx(ctx, tx, []string{agentID}); err != nil {
+			if err := dbtx.BumpDesiredRevisions(ctx, tx, []string{agentID}); err != nil {
 				return err
 			}
 			binding = deliverycore.DomainBindingRecord{
@@ -62,7 +64,7 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 		default:
 			agentIDs := []string{agentID}
 			if binding.ServiceID != serviceID {
-				previousIDs, err := s.agentIDsForServiceQuerier(ctx, tx, binding.ServiceID)
+				previousIDs, err := s.reads.agentIDsForServiceQuerier(ctx, tx, binding.ServiceID)
 				if err != nil {
 					return err
 				}
@@ -78,7 +80,7 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 			); err != nil {
 				return err
 			}
-			if err := s.bumpDesiredRevisionsTx(ctx, tx, agentIDs); err != nil {
+			if err := dbtx.BumpDesiredRevisions(ctx, tx, agentIDs); err != nil {
 				return err
 			}
 			binding.ServiceID = serviceID
@@ -93,8 +95,8 @@ func (s *Store) ensureManagedDomainBinding(ctx context.Context, projectID, hostn
 	return binding, nil
 }
 
-func (s *Store) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
-	environment, err := s.deliveryQueries().EnvironmentByIDQuerier(ctx, tx, userID, environmentID)
+func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	environment, err := s.reads.deliveryQueries().EnvironmentByIDQuerier(ctx, tx, userID, environmentID)
 	if err != nil {
 		return deliverycore.VolumeRecord{}, err
 	}

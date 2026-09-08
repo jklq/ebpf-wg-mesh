@@ -7,7 +7,7 @@ import (
 	"errors"
 )
 
-func (s *Store) currentDeploymentForService(ctx context.Context, serviceID string) (deliverycore.DeploymentRecord, bool, error) {
+func (s *readsPersistence) currentDeploymentForService(ctx context.Context, serviceID string) (deliverycore.DeploymentRecord, bool, error) {
 	rec, err := deliverycore.ScanDeploymentRow(s.db.QueryRowContext(ctx,
 		`SELECT `+deliverycore.DeploymentSelectColumns+`
 		   FROM deployments
