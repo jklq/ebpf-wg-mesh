@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/proto"
@@ -51,8 +52,8 @@ func diffServiceUnappliedChanges(current, deployed *platformv1.ServiceSpec) []*p
 }
 
 func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []unappliedChangeField {
-	currentSource := DesiredSourceSpec(current)
-	deployedSource := DesiredSourceSpec(deployed)
+	currentSource := source.DesiredSourceSpec(current)
+	deployedSource := source.DesiredSourceSpec(deployed)
 	currentRecipe := currentSource.GetBuildRecipe()
 	deployedRecipe := deployedSource.GetBuildRecipe()
 	fields := []unappliedChangeField{
@@ -271,13 +272,13 @@ func applyDiscardedServiceChanges(current, deployed *platformv1.ServiceSpec, dis
 func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id string) {
 	switch id {
 	case "source.repositorySelector":
-		currentSourceSpec(current).RepositorySelector = DesiredSourceSpec(deployed).GetRepositorySelector()
+		currentSourceSpec(current).RepositorySelector = source.DesiredSourceSpec(deployed).GetRepositorySelector()
 	case "source.trackedRef":
-		currentSourceSpec(current).TrackedRef = DesiredSourceSpec(deployed).GetTrackedRef()
+		currentSourceSpec(current).TrackedRef = source.DesiredSourceSpec(deployed).GetTrackedRef()
 	case "source.buildRecipe.dockerfilePath":
-		currentSourceSpec(current).BuildRecipe.DockerfilePath = DesiredSourceSpec(deployed).GetBuildRecipe().GetDockerfilePath()
+		currentSourceSpec(current).BuildRecipe.DockerfilePath = source.DesiredSourceSpec(deployed).GetBuildRecipe().GetDockerfilePath()
 	case "source.buildRecipe.contextDir":
-		currentSourceSpec(current).BuildRecipe.ContextDir = DesiredSourceSpec(deployed).GetBuildRecipe().GetContextDir()
+		currentSourceSpec(current).BuildRecipe.ContextDir = source.DesiredSourceSpec(deployed).GetBuildRecipe().GetContextDir()
 	case "source.image.ref":
 		current.Source = &platformv1.ServiceSource{
 			Source: &platformv1.ServiceSource_Image{
@@ -359,11 +360,11 @@ func currentSourceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceSp
 			},
 		}
 	}
-	source := spec.Source.GetSourceSpec()
-	if source.BuildRecipe == nil {
-		source.BuildRecipe = &platformv1.BuildRecipe{}
+	desired := spec.Source.GetSourceSpec()
+	if desired.BuildRecipe == nil {
+		desired.BuildRecipe = &platformv1.BuildRecipe{}
 	}
-	return source
+	return desired
 }
 
 func discardRuntimePort(current, deployed []*platformv1.ServiceRuntimePort, port int32) []*platformv1.ServiceRuntimePort {

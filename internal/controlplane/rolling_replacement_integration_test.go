@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/routing"
 	"errors"
 	"fmt"
 	"testing"
@@ -18,12 +19,12 @@ type rolloutIngressProbe struct {
 	store     *persistence
 	err       error
 	syncCalls int
-	snapshots [][]ingressBackend
+	snapshots [][]routing.Backend
 }
 
 func (p *rolloutIngressProbe) Sync(ctx context.Context) error {
 	p.syncCalls++
-	backends, err := p.store.routing.listHealthyIngressBackends(ctx)
+	backends, err := p.store.routing.HealthyIngressBackends(ctx)
 	if err != nil {
 		return err
 	}
@@ -36,7 +37,7 @@ func (*rolloutIngressProbe) RequestSync() {}
 func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
@@ -427,7 +428,7 @@ func markAllDrainingComplete(t *testing.T, store *persistence, serviceID string)
 
 func mustRolloutAllocations(t *testing.T, store *persistence, serviceID string) []deliverycore.AllocationRecord {
 	t.Helper()
-	allocs, err := store.reads.deliveryQueries().ListAllocationsByServiceID(context.Background(), serviceID)
+	allocs, err := store.reads.ListAllocationsByServiceID(context.Background(), serviceID)
 	if err != nil {
 		t.Fatalf("list allocations: %v", err)
 	}

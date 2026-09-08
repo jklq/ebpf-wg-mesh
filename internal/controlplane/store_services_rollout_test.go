@@ -126,7 +126,7 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		}
 	}
 
-	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}

@@ -13,13 +13,13 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/identity"
 
 	"google.golang.org/grpc"
 )
 
 type testDashboardCertificateIssuer struct {
-	authority *controlplane.TLSAuthority
+	authority *identity.TLSAuthority
 	calls     int
 	request   *agentv1.ManagedDashboardCertificateRequest
 	err       error
@@ -38,7 +38,7 @@ func TestManagedDashboardIdentityIsCreatedLocallyAndReused(t *testing.T) {
 	t.Parallel()
 
 	secretsDir := t.TempDir()
-	authority, err := controlplane.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"controlplane"},
@@ -98,7 +98,7 @@ func TestManagedDashboardIdentityKeepsValidCertificateWhenRenewalFails(t *testin
 	t.Parallel()
 
 	secretsDir := t.TempDir()
-	authority, err := controlplane.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"controlplane"},

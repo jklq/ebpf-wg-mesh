@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -47,9 +48,9 @@ type ServiceQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-type JsonInt32Slice []int32
+type jsonInt32Slice []int32
 
-type JsonStringSlice []string
+type jsonStringSlice []string
 
 func encodeHealthyPorts(ports []int32) ([]byte, error) {
 	if ports == nil {
@@ -116,8 +117,8 @@ func CanonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 			runtime.Restart = restartpolicy.CanonicalRestart(runtime.GetRestart())
 		}
 	}
-	if source := out.GetSource(); source != nil {
-		if spec := source.GetSourceSpec(); spec != nil {
+	if desired := out.GetSource(); desired != nil {
+		if spec := desired.GetSourceSpec(); spec != nil {
 			spec.Provider = strings.TrimSpace(strings.ToLower(spec.GetProvider()))
 			spec.RepositorySelector = strings.TrimSpace(strings.ToLower(spec.GetRepositorySelector()))
 			spec.TrackedRef = strings.TrimSpace(spec.GetTrackedRef())
@@ -191,16 +192,9 @@ func directImageRef(spec *platformv1.ServiceSpec) string {
 	return spec.GetSource().GetImage().GetImage()
 }
 
-func DesiredSourceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceSpec {
-	if spec == nil || spec.GetSource() == nil {
-		return nil
-	}
-	return spec.GetSource().GetSourceSpec()
-}
-
 func sameDesiredSourceSpec(a, b *platformv1.ServiceSpec) bool {
-	as := DesiredSourceSpec(a)
-	bs := DesiredSourceSpec(b)
+	as := source.DesiredSourceSpec(a)
+	bs := source.DesiredSourceSpec(b)
 	if (as == nil) != (bs == nil) {
 		return false
 	}
@@ -489,7 +483,7 @@ func LoadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
 	return CanonicalServiceSpec(spec), nil
 }
 
-func (p *JsonStringSlice) Scan(src any) error {
+func (p *jsonStringSlice) Scan(src any) error {
 	if p == nil {
 		return nil
 	}
@@ -506,7 +500,7 @@ func (p *JsonStringSlice) Scan(src any) error {
 	}
 }
 
-func (p *JsonInt32Slice) Scan(src any) error {
+func (p *jsonInt32Slice) Scan(src any) error {
 	if p == nil {
 		return nil
 	}

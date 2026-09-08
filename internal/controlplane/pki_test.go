@@ -38,10 +38,10 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.StateDir, pkiDirName, caCertFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "pki", "ca.crt")); err != nil {
 		t.Fatalf("stat ca cert: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.StateDir, pkiDirName, serverCertFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "pki", "server.crt")); err != nil {
 		t.Fatalf("stat server cert: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestAgentServiceIssuesManagedDashboardCertificateOnlyToTrustedAgent(t *test
 	if len(cert.Subject.OrganizationalUnit) != 1 || cert.Subject.OrganizationalUnit[0] != string(serviceCallerDashboard) {
 		t.Fatalf("unexpected dashboard organizational unit %#v", cert.Subject.OrganizationalUnit)
 	}
-	if _, err := os.Stat(filepath.Join(authority.pkiDir, clientCertsDirName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(authority.PKIDir(), "clients")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dashboard issuance persisted client key material on the control plane: %v", err)
 	}
 

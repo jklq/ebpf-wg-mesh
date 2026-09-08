@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,12 +23,14 @@ import (
 
 // BuildOperations owns builder authorization, job preparation, and committed build effects.
 type BuildOperations struct {
-	store       *buildsPersistence
+	builds      *buildsPersistence
+	reads       deliverycore.ReadModel
+	snapshots   source.SnapshotService
 	delivery    *deliverycore.Delivery
 	registry    buildRegistry
 	credentials buildCredentials
 
-	emitter    *LogEmitter
+	emitter    *logs.LogEmitter
 	staleAfter time.Duration
 }
 
@@ -44,15 +49,17 @@ type BuildOperationsOption func(*BuildOperations)
 // WithBuilderLogEmitter wires a LogEmitter into BuildOperations so that
 // build state transitions (claim, complete) persist human-readable log lines
 // under the "build" log type. A nil emitter is treated as a no-op.
-func WithBuilderLogEmitter(emitter *LogEmitter) BuildOperationsOption {
+func WithBuilderLogEmitter(emitter *logs.LogEmitter) BuildOperationsOption {
 	return func(s *BuildOperations) {
 		s.emitter = emitter
 	}
 }
 
-func NewBuildOperations(store *buildsPersistence, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
+func NewBuildOperations(builds *buildsPersistence, reads deliverycore.ReadModel, snapshots source.SnapshotService, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
 	service := &BuildOperations{
-		store:       store,
+		builds:      builds,
+		reads:       reads,
+		snapshots:   snapshots,
 		delivery:    delivery,
 		registry:    registry,
 		credentials: credentials,
@@ -67,7 +74,7 @@ func NewBuildOperations(store *buildsPersistence, delivery *deliverycore.Deliver
 }
 
 func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimBuildRequest) (*platformv1.BuildJob, error) {
-	caller, err := ServiceCallerFromContext(ctx)
+	caller, err := identity.ServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +82,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 	if err != nil {
 		return nil, err
 	}
-	if s.store == nil || s.delivery == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
+	if s.builds == nil || s.reads == nil || s.delivery == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
 	build, err := s.delivery.ClaimNextBuild(ctx, builderID, req.GetBuilderName(), s.staleAfter)
@@ -86,7 +93,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 		return &platformv1.BuildJob{}, nil
 	}
 	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
-	service, err := s.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.reads.ServiceSnapshot(ctx, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build service: %v", err)
 	}
@@ -98,7 +105,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "resolve registry credentials: %v", err)
 	}
-	s.emitter.EmitBuildf(ctx, service, build, StageBuild, "Builder %s claimed build for commit %s", builderID, shortSHA(build.CommitSHA))
+	s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Builder %s claimed build for commit %s", builderID, shortSHA(build.CommitSHA))
 	return &platformv1.BuildJob{
 		BuildId:               build.ID,
 		ServiceId:             service.ID,
@@ -114,7 +121,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 }
 
 func (s *BuildOperations) ReportBuildHeartbeat(ctx context.Context, req *platformv1.BuilderHeartbeatRequest) (*emptypb.Empty, error) {
-	caller, err := ServiceCallerFromContext(ctx)
+	caller, err := identity.ServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +129,7 @@ func (s *BuildOperations) ReportBuildHeartbeat(ctx context.Context, req *platfor
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.recordBuilderHeartbeat(ctx, builderID, req.GetBuildId()); err != nil {
+	if err := s.builds.recordBuilderHeartbeat(ctx, builderID, req.GetBuildId()); err != nil {
 		if errors.Is(err, deliverycore.ErrBuildNotOwned) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
@@ -132,7 +139,7 @@ func (s *BuildOperations) ReportBuildHeartbeat(ctx context.Context, req *platfor
 }
 
 func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.ReportBuildLogsRequest) (*emptypb.Empty, error) {
-	caller, err := ServiceCallerFromContext(ctx)
+	caller, err := identity.ServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +153,7 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if len(req.GetLines()) == 0 {
 		return &emptypb.Empty{}, nil
 	}
-	build, err := s.store.reads.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
+	build, err := s.reads.BuildByID(ctx, req.GetBuildId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Error(codes.Internal, "build not found")
@@ -156,21 +163,21 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if build.State != deliverycore.BuildStateRunning || build.BuilderID != builderID {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
-	service, err := s.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.reads.ServiceSnapshot(ctx, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service for log report: %v", err)
 	}
 	if s.emitter == nil || !s.emitter.Enabled() {
 		return &emptypb.Empty{}, nil
 	}
-	if err := s.emitter.EmitBuildLines(ctx, service, build, builderID, req.GetLines()); err != nil {
+	if err := s.emitter.EmitBuildLines(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, builderID, req.GetLines()); err != nil {
 		return nil, status.Errorf(codes.Internal, "persist build logs: %v", err)
 	}
 	return &emptypb.Empty{}, nil
 }
 
 func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.CompleteBuildRequest) (*emptypb.Empty, error) {
-	caller, err := ServiceCallerFromContext(ctx)
+	caller, err := identity.ServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +187,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	}
 	// Load build + service up-front so we can emit synthetic logs keyed to
 	// the correct service/allocation regardless of the terminal state.
-	build, err := s.store.reads.deliveryQueries().BuildRunByIDQuerier(ctx, s.store.db, req.GetBuildId())
+	build, err := s.reads.BuildByID(ctx, req.GetBuildId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
 	}
@@ -196,7 +203,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	if req.GetCommitSha() != build.CommitSHA {
 		return nil, status.Error(codes.InvalidArgument, "commit_sha does not match the claimed build")
 	}
-	service, err := s.store.reads.deliveryQueries().ServiceByIDInternalQuerier(ctx, s.store.db, build.ServiceID)
+	service, err := s.reads.ServiceSnapshot(ctx, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service before completion: %v", err)
 	}
@@ -231,7 +238,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 		// A first source build has no allocation before completion. Completing the
 		// build creates its rollout allocations, so use the durable post-completion
 		// allocation set when describing the rollout in synthetic logs.
-		allocations, err := s.store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, build.ServiceID)
+		allocations, err := s.reads.ListAllocationsByServiceID(ctx, build.ServiceID)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "load build allocations after completion: %v", err)
 		}
@@ -251,7 +258,7 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 
 	switch req.GetState() {
 	case platformv1.BuildState_BUILD_STATE_SUCCEEDED:
-		s.emitter.EmitBuildf(ctx, service, build, StageBuild, "Image build succeeded for commit %s (digest %s)", shortSHA(req.GetCommitSha()), shortDigest(req.GetImageDigest()))
+		s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Image build succeeded for commit %s (digest %s)", shortSHA(req.GetCommitSha()), shortDigest(req.GetImageDigest()))
 		// We synthesize a deploy-stage line so the "Deploy" tab shows
 		// activity immediately even before the agent applies the new
 		// rollout; the runtime condition stream later adds more detail.
@@ -260,16 +267,16 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 			target = "pending placement"
 		}
 		if completion.RolloutScheduled {
-			s.emitter.EmitDeployf(ctx, service, "", req.GetBuildId(), StageDeploy, "Scheduling rollout to agent %s", target)
+			s.emitter.EmitDeployf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration, AgentID: service.AllocatedAgentID}, "", req.GetBuildId(), logs.StageDeploy, "Scheduling rollout to agent %s", target)
 		}
 	case platformv1.BuildState_BUILD_STATE_FAILED:
 		reason := strings.TrimSpace(req.GetFailureReason())
 		if reason == "" {
 			reason = "no reason provided"
 		}
-		s.emitter.EmitBuildf(ctx, service, build, StageBuild, "Image build failed: %s", reason)
+		s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Image build failed: %s", reason)
 	case platformv1.BuildState_BUILD_STATE_SUPERSEDED:
-		s.emitter.EmitBuild(ctx, service, build, StageBuild, "Build superseded by a newer commit")
+		s.emitter.EmitBuild(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Build superseded by a newer commit")
 	}
 
 	return &emptypb.Empty{}, nil
@@ -296,8 +303,8 @@ func validateRuntimeImageRef(pushRef, imageRef string) error {
 	return nil
 }
 
-func authenticatedBuilderID(caller ServiceCaller, requested string) (string, error) {
-	if caller.Class != serviceCallerBuilder {
+func authenticatedBuilderID(caller identity.ServiceCaller, requested string) (string, error) {
+	if caller.Class != identity.CallerBuilder {
 		return "", status.Error(codes.PermissionDenied, "builder client certificate required")
 	}
 	requested = strings.TrimSpace(requested)
@@ -305,6 +312,18 @@ func authenticatedBuilderID(caller ServiceCaller, requested string) (string, err
 		return "", status.Error(codes.PermissionDenied, "builder_id does not match client certificate")
 	}
 	return caller.ID, nil
+}
+
+func buildJobSourceFromRecord(rec deliverycore.BuildRunRecord) *platformv1.BuildJobSource {
+	if rec.SourceRevisionID == "" && rec.SourceSnapshotID == "" {
+		return nil
+	}
+	return &platformv1.BuildJobSource{
+		SourceRevisionId:     rec.SourceRevisionID,
+		SourceSnapshotId:     rec.SourceSnapshotID,
+		SourceSnapshotDigest: rec.SourceSnapshotDigest,
+		BuildRecipe:          source.CloneBuildRecipe(rec.BuildRecipe),
+	}
 }
 
 // shortSHA truncates a git SHA for human-friendly log lines. We keep the first

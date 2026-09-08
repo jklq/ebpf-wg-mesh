@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"errors"
 	"log/slog"
 	"strings"
@@ -16,7 +18,7 @@ import (
 )
 
 func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.CreateServiceRequest) (*platformv1.Service, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +56,7 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 		return nil, status.Errorf(codes.Internal, "create service: %v", err)
 	}
 	slog.Info("service created", "service_id", service.ID, "environment_id", service.EnvironmentID, "spec_revision", service.SpecRevision, "rollout_generation", service.RolloutGeneration)
-	service, err = s.store.serviceByID(ctx, identity.UserID, service.ID)
+	service, err = s.store.ServiceByID(ctx, identity.UserID, service.ID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "reload service: %v", err)
 	}
@@ -82,11 +84,11 @@ func (s *PlatformService) emitInitialization(ctx context.Context, service delive
 	if agentID == "" {
 		agentID = "pending placement"
 	}
-	s.emitter.EmitDeployf(ctx, service, "", "", StageInitialization, "Service scheduled on agent %s (rollout %d)", agentID, service.RolloutGeneration)
+	s.emitter.EmitDeployf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration, AgentID: service.AllocatedAgentID}, "", "", logs.StageInitialization, "Service scheduled on agent %s (rollout %d)", agentID, service.RolloutGeneration)
 }
 
 func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,7 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
 	}
-	current, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
+	current, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
@@ -169,14 +171,14 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 }
 
 func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.ScaleServiceRequest) (*platformv1.ServiceStatus, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
-	current, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
+	current, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -207,11 +209,11 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 }
 
 func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	current, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
+	current, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
@@ -236,11 +238,11 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 }
 
 func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
+	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
@@ -254,11 +256,11 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 }
 
 func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetServiceRequest) (*platformv1.Service, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId())
+	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
@@ -270,7 +272,7 @@ func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetSer
 }
 
 func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.ListServicesRequest) (*platformv1.ListServicesResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +287,7 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	if !changed {
 		return &platformv1.ListServicesResponse{Index: index, NotModified: true}, nil
 	}
-	items, err := s.store.listServices(ctx, identity.UserID, req.GetEnvironmentId())
+	items, err := s.store.ListServices(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list services: %v", err)
 	}

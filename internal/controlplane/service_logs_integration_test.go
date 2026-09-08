@@ -4,7 +4,7 @@ package controlplane
 
 import (
 	"context"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"strings"
 	"testing"
 	"time"
@@ -197,8 +197,8 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	deployLine := "deploy-line-" + suffix
 	runtimeLine := "runtime-line-" + suffix
 
-	cp.server.logEmitter.EmitBuild(ctx, service, deliverycore.BuildRunRecord{ID: "build-" + suffix}, StageBuild, buildLine)
-	cp.server.logEmitter.EmitDeploy(ctx, service, allocID, "build-"+suffix, StageDeploy, deployLine)
+	cp.server.logEmitter.EmitBuild(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, "build-"+suffix, logs.StageBuild, buildLine)
+	cp.server.logEmitter.EmitDeploy(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration, AgentID: service.AllocatedAgentID}, allocID, "build-"+suffix, logs.StageDeploy, deployLine)
 
 	cert := enrollAgentTLS(t, cp.server, agentID, token)
 	stream, streamCancel := openAgentSync(t, cp.server, cert, agentHello(agentID))
@@ -238,11 +238,11 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	for _, item := range lines {
 		switch item.GetLine() {
 		case buildLine:
-			if item.GetStage() != StageBuild {
+			if item.GetStage() != logs.StageBuild {
 				t.Fatalf("build stage = %q", item.GetStage())
 			}
 		case deployLine:
-			if item.GetStage() != StageDeploy {
+			if item.GetStage() != logs.StageDeploy {
 				t.Fatalf("deploy stage = %q", item.GetStage())
 			}
 		}

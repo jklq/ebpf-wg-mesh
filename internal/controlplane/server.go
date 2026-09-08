@@ -3,7 +3,12 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,21 +35,21 @@ type Server struct {
 	cfg             config.ControlPlaneConfig
 	store           *persistence
 	delivery        *deliverycore.Delivery
-	logStore        *LogStore
-	logEmitter      *LogEmitter
+	logStore        *logs.LogStore
+	logEmitter      *logs.LogEmitter
 	notifier        *Notifier
-	authority       *TLSAuthority
+	authority       *identity.TLSAuthority
 	internalGRPC    *grpc.Server
 	internalHTTP    *http.Server
-	ingress         *IngressSyncer
+	ingress         *routing.IngressSyncer
 	dashboard       *ManagedDashboardReconciler
 	registry        *RegistryPolicy
 	registryAuth    *RegistryAuth
 	registryHTTP    *http.Server
-	github          *GitHubCatalog
-	webhooks        *GitHubWebhookProcessor
-	coordinator     *GitHubCoordinator
-	reconciler      *GitHubReconciler
+	github          *source.GitHubCatalog
+	webhooks        *source.GitHubWebhookProcessor
+	coordinator     *source.GitHubCoordinator
+	reconciler      *source.GitHubReconciler
 	rollouts        *RolloutReconciler
 	failover        *ServiceFailoverReconciler
 	leases          *LeaseManager
@@ -66,7 +71,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
 	store.useReportedAllocationIP = cfg.Ingress.UseReportedAllocationIP
-	archiveStore, err := NewFileSourceArchiveStore(cfg.SourceArchives.Directory)
+	archiveStore, err := source.NewFileArchiveStore(cfg.SourceArchives.Directory)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -95,11 +100,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
-	var authority *TLSAuthority
+	var authority *identity.TLSAuthority
 	var registryAuth *RegistryAuth
 	if err := store.withLeaseGuard(initializationCtx, func() error {
 		var err error
-		authority, err = NewTLSAuthority(cfg)
+		authority, err = identity.NewTLSAuthority(cfg)
 		if err != nil {
 			return err
 		}
@@ -112,48 +117,48 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, fmt.Errorf("initialize shared control-plane identity: %w", err)
 	}
-	logStore, err := OpenLogStore(ctx, cfg.Logs)
+	logStore, err := logs.OpenLogStore(ctx, cfg.Logs)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	logEmitter := NewLogEmitter(logStore)
+	logEmitter := logs.NewLogEmitter(logStore)
 	notifier := NewNotifier(ctx, store.reads, 0)
 	platformEvents := NewPlatformEvents(store.events, 0)
-	ingressOpts := []IngressSyncerOption{
-		WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
-		WithIngressAdminListen(cfg.Ingress.AdminListen),
-		WithIngressAutomaticHTTPSDisabled(cfg.Ingress.DisableAutomaticHTTPS),
+	ingressOpts := []routing.IngressSyncerOption{
+		routing.WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
+		routing.WithIngressAdminListen(cfg.Ingress.AdminListen),
+		routing.WithIngressAutomaticHTTPSDisabled(cfg.Ingress.DisableAutomaticHTTPS),
 	}
 	if len(cfg.Ingress.StaticRoutes) > 0 {
-		staticRoutes := make([]IngressStaticRoute, 0, len(cfg.Ingress.StaticRoutes))
+		staticRoutes := make([]routing.IngressStaticRoute, 0, len(cfg.Ingress.StaticRoutes))
 		for _, route := range cfg.Ingress.StaticRoutes {
-			staticRoutes = append(staticRoutes, IngressStaticRoute{
+			staticRoutes = append(staticRoutes, routing.IngressStaticRoute{
 				Hosts:    append([]string(nil), route.Hosts...),
 				Upstream: route.Upstream,
 			})
 		}
-		ingressOpts = append(ingressOpts, WithIngressStaticRoutes(staticRoutes))
+		ingressOpts = append(ingressOpts, routing.WithIngressStaticRoutes(staticRoutes))
 	}
-	ingress := NewIngressSyncer(cfg.Ingress.AdminURL, store.routing, ingressOpts...)
+	ingress := routing.NewIngressSyncer(cfg.Ingress.AdminURL, store.routing, ingressOpts...)
 	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
-	delivery := newDelivery(store, notifier, ingress, platformEvents)
-	var githubClient *GitHubClient
-	var githubCatalog *GitHubCatalog
-	var githubCoordinator *GitHubCoordinator
-	var webhookHandler *GitHubWebhookHandler
-	var webhookProcessor *GitHubWebhookProcessor
-	var githubReconciler *GitHubReconciler
+	delivery := newDelivery(store, notifier, ingress, platformEvents, logEmitter)
+	var githubClient *source.GitHubClient
+	var githubCatalog *source.GitHubCatalog
+	var githubCoordinator *source.GitHubCoordinator
+	var webhookHandler *source.GitHubWebhookHandler
+	var webhookProcessor *source.GitHubWebhookProcessor
+	var githubReconciler *source.GitHubReconciler
 	if cfg.GitHub.Enabled {
-		githubClient, err = NewGitHubClient(cfg.GitHub)
+		githubClient, err = source.NewGitHubClient(cfg.GitHub)
 		if err != nil {
 			return nil, err
 		}
-		githubCatalog = NewGitHubCatalog(store.source, githubClient)
-		githubCoordinator = NewGitHubCoordinator(store.source, delivery, githubCatalog, githubClient, 5*time.Minute, WithGitHubCoordinatorLogEmitter(logEmitter))
-		githubReconciler = NewGitHubReconciler(store.source, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
-		webhookProcessor = NewGitHubWebhookProcessor(store.source, githubCoordinator)
-		webhookHandler = NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
+		githubCatalog = source.NewGitHubCatalog(store.source, githubClient)
+		githubCoordinator = source.NewGitHubCoordinator(store.source, delivery, githubCatalog, githubClient, 5*time.Minute)
+		githubReconciler = source.NewGitHubReconciler(store.source, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
+		webhookProcessor = source.NewGitHubWebhookProcessor(store.source, githubCoordinator)
+		webhookHandler = source.NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
 
 	platformService := NewPlatformService(
@@ -167,7 +172,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithPlatformDomainSuffix(cfg.Ingress.PublicAddr),
 		WithPlatformEvents(platformEvents),
 	)
-	authz := NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.revocations)
+	authz := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.Revocations())
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
 	rollouts := NewRolloutReconciler(delivery, 2*time.Second)
 	failover := NewServiceFailoverReconciler(delivery,
@@ -183,7 +188,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithAgentRegistry(registry),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	buildOperations := NewBuildOperations(store.builds, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
+	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(buildOperations))
 	opsService := NewOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
 	platformv1.RegisterOpsServiceServer(internal, opsService)
@@ -266,21 +271,13 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 	if s != nil && s.logStore != nil && !s.logStore.Ready(ctx) {
 		failed = append(failed, "logs")
 	}
-	if archive, ok := s.sourceArchiveStore(); !ok || !archive.Ready() {
+	if s == nil || s.store == nil || !s.store.source.SourceStorageReady() {
 		failed = append(failed, "source_storage")
 	}
 	if len(failed) > 0 {
 		return health.Report{Status: health.StatusNotReady, Failed: failed}
 	}
 	return health.Report{Status: health.StatusReady}
-}
-
-func (s *Server) sourceArchiveStore() (*FileSourceArchiveStore, bool) {
-	if s == nil || s.store == nil {
-		return nil, false
-	}
-	archive, ok := s.store.source.sourceArchives.(*FileSourceArchiveStore)
-	return archive, ok
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -398,7 +395,7 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 
 func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 	prune := func() {
-		now, err := deliverycore.DatabaseTime(ctx, s.store.db)
+		now, err := dbtx.DatabaseTime(ctx, s.store.db)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("source archive retention database time failed", "error", err)
@@ -406,7 +403,7 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 			return
 		}
 		cutoff := now.AddDate(0, 0, -s.cfg.SourceArchives.RetentionDays)
-		deleted, err := s.store.source.pruneSourceArchives(ctx, cutoff)
+		deleted, err := s.store.source.PruneSourceArchives(ctx, cutoff)
 		if err != nil && ctx.Err() == nil {
 			slog.Warn("source archive retention failed", "error", err)
 			return
@@ -503,19 +500,19 @@ func (s *Server) RegistryAuthCertificatePath() string {
 	return s.registryAuth.CertificatePath()
 }
 
-func (s *Server) EnsureDashboardClientIdentity(id string) (ClientIdentityMaterial, error) {
+func (s *Server) EnsureDashboardClientIdentity(id string) (identity.ClientIdentityMaterial, error) {
 	if s == nil || s.authority == nil {
-		return ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
+		return identity.ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
 	}
 	if allowedID := s.cfg.Dashboard.ServiceCallerID; allowedID == "" || id != allowedID {
-		return ClientIdentityMaterial{}, fmt.Errorf("dashboard client identity %q is not allowed", id)
+		return identity.ClientIdentityMaterial{}, fmt.Errorf("dashboard client identity %q is not allowed", id)
 	}
 	return s.authority.EnsureDashboardClientIdentity(id)
 }
 
-func (s *Server) EnsureBuilderClientIdentity(id string) (ClientIdentityMaterial, error) {
+func (s *Server) EnsureBuilderClientIdentity(id string) (identity.ClientIdentityMaterial, error) {
 	if s == nil || s.authority == nil {
-		return ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
+		return identity.ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
 	}
 	return s.authority.EnsureBuilderClientIdentity(id)
 }
@@ -524,10 +521,10 @@ func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, err
 	if s == nil || s.store == nil {
 		return false, errors.New("controlplane store is not initialized")
 	}
-	rec, err := s.store.reads.deliveryQueries().AgentByID(ctx, agentID)
+	rec, err := s.store.reads.AgentByID(ctx, agentID)
 	switch {
 	case err == nil:
-		now, err := deliverycore.DatabaseTime(ctx, s.store.db)
+		now, err := dbtx.DatabaseTime(ctx, s.store.db)
 		if err != nil {
 			return false, err
 		}
@@ -548,7 +545,7 @@ func serveInternalHTTP(server *http.Server, ln net.Listener) error {
 
 // newConnectHandler exposes PlatformService and OpsService over the Connect
 // protocol, enforcing the same authorization rules as the gRPC interceptors.
-func newConnectHandler(authz *InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
+func newConnectHandler(authz *identity.InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
 	options := []connect.HandlerOption{
 		connect.WithInterceptors(authz.ConnectInterceptor()),
 	}
@@ -566,7 +563,7 @@ func dualProtocolHandler(grpcServer *grpc.Server, connectHandler http.Handler) h
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
-			ctx = context.WithValue(ctx, verifiedClientCertificateContextKey{}, r.TLS.VerifiedChains[0][0])
+			ctx = identity.WithVerifiedClientCertificate(ctx, r.TLS.VerifiedChains[0][0])
 		}
 		r = r.WithContext(ctx)
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {

@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
+	"github.com/google/uuid"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 )
 
 var ErrBuildCommitMismatch = errors.New("commit_sha does not match the claimed build")
@@ -316,7 +318,7 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 		return BuildRunRecord{}, err
 	}
 	var err error
-	rec.BuildRecipe, err = UnmarshalBuildRecipe(recipeJSON)
+	rec.BuildRecipe, err = source.UnmarshalBuildRecipe(recipeJSON)
 	if err != nil {
 		return BuildRunRecord{}, err
 	}
@@ -325,34 +327,34 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 
 func (d *Delivery) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, commitSHA string, actor deploymentActor) (BuildRunRecord, error) {
 	s := d.store
-	spec := DesiredSourceSpec(service.Spec)
+	spec := source.DesiredSourceSpec(service.Spec)
 	if spec == nil {
 		return BuildRunRecord{}, errServiceNotBuildable
 	}
 	if commitSHA == "" {
 		return BuildRunRecord{}, errors.New("commit sha is required")
 	}
-	binding, err := s.sourceBindingByServiceIDQuerier(ctx, tx, service.ID)
+	binding, err := s.sourceStore.SourceBindingByServiceIDQuerier(ctx, tx, service.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return BuildRunRecord{}, errSourceStateNotReady
 		}
 		return BuildRunRecord{}, err
 	}
-	if binding.AccessState != SourceAccessStateAvailable {
+	if binding.AccessState != source.SourceAccessStateAvailable {
 		return BuildRunRecord{}, errSourceStateNotReady
 	}
 	if time.Now().UTC().After(binding.FreshUntil) {
 		return BuildRunRecord{}, errSourceStateNotReady
 	}
-	revision, err := s.sourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
+	revision, err := s.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return BuildRunRecord{}, errSourceStateNotReady
 		}
 		return BuildRunRecord{}, err
 	}
-	snapshot, err := s.sourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
+	snapshot, err := s.sourceStore.SourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return BuildRunRecord{}, errSourceStateNotReady
@@ -365,7 +367,7 @@ func (d *Delivery) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service Servi
 	return d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, actor)
 }
 
-func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision SourceRevisionRecord, snapshot SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, error) {
+func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, error) {
 	s := d.store
 	// Build enqueue, claim, and completion all mutate the service's current
 	// deployment. Take the same lock before reading rollout state so concurrent
@@ -380,7 +382,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
 		return BuildRunRecord{}, errSourceStateNotReady
 	}
-	if err := EnsureReadySnapshot(snapshot); err != nil {
+	if err := source.EnsureReadySnapshot(snapshot); err != nil {
 		return BuildRunRecord{}, err
 	}
 
@@ -409,7 +411,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		targetGeneration = service.RolloutGeneration
 	}
 	rec := BuildRunRecord{
-		ID:                      MustID(),
+		ID:                      uuid.NewString(),
 		ServiceID:               service.ID,
 		ProjectID:               service.ProjectID,
 		EnvironmentID:           service.EnvironmentID,
@@ -421,10 +423,10 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		SourceSnapshotID:        snapshot.ID,
 		SourceSnapshotDigest:    snapshot.Digest,
 		TargetRolloutGeneration: targetGeneration,
-		BuildRecipe:             CloneBuildRecipe(buildRecipe),
+		BuildRecipe:             source.CloneBuildRecipe(buildRecipe),
 		QueuedAt:                now,
 	}
-	recipeJSON, err := MarshalBuildRecipe(rec.BuildRecipe)
+	recipeJSON, err := source.MarshalBuildRecipe(rec.BuildRecipe)
 	if err != nil {
 		return BuildRunRecord{}, err
 	}
@@ -468,7 +470,7 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 	var rec BuildRunRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		rec = BuildRunRecord{}
-		now, err := DatabaseTime(ctx, tx)
+		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -591,7 +593,7 @@ func (d *Delivery) RecoverExpiredBuilds(ctx context.Context, staleAfter time.Dur
 		return nil
 	}
 	return d.store.withTx(ctx, func(tx *sql.Tx) error {
-		now, err := DatabaseTime(ctx, tx)
+		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -631,7 +633,7 @@ func (d *Delivery) recoverExpiredBuildsTx(ctx context.Context, tx *sql.Tx, cutof
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	now, err := DatabaseTime(ctx, tx)
+	now, err := dbtx.DatabaseTime(ctx, tx)
 	if err != nil {
 		return err
 	}

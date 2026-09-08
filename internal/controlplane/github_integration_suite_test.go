@@ -5,7 +5,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"net/http"
 	"testing"
@@ -18,7 +18,7 @@ import (
 
 func linkTestProjectRepository(t *testing.T, store *persistence, catalog *GitHubCatalog, projectID, repositorySelector string) {
 	t.Helper()
-	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
+	owner, repo, err := source.SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func linkTestProjectRepository(t *testing.T, store *persistence, catalog *GitHub
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.source.linkProjectGitHubRepository(context.Background(), projectID, "user-1", view); err != nil {
+	if err := store.source.LinkProjectGitHubRepository(context.Background(), projectID, "user-1", view); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -47,14 +47,14 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RepositoryView(empty): %v", err)
 	}
-	if repo.AccessState != deliverycore.SourceAccessStateInstallationRequired {
+	if repo.AccessState != source.SourceAccessStateInstallationRequired {
 		t.Fatalf("expected installation required for empty catalog, got %s", repo.AccessState)
 	}
 	if server.requestCount() != 0 {
 		t.Fatalf("expected zero github api calls, got %d", server.requestCount())
 	}
 
-	if err := store.source.upsertGitHubRepositorySnapshot(ctx, githubRepositorySnapshotRecord{
+	if err := store.source.UpsertGitHubRepositorySnapshot(ctx, githubRepositorySnapshotRecord{
 		RepositoryID:  1,
 		Owner:         "public",
 		Repo:          "hello",
@@ -62,17 +62,17 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 		Private:       false,
 		DefaultBranch: "main",
 	}); err != nil {
-		t.Fatalf("upsertGitHubRepositorySnapshot: %v", err)
+		t.Fatalf("UpsertGitHubRepositorySnapshot: %v", err)
 	}
 	repo, err = catalog.RepositoryView(ctx, "public", "hello", 0)
 	if err != nil {
 		t.Fatalf("RepositoryView(snapshot): %v", err)
 	}
-	if repo.AccessState != deliverycore.SourceAccessStateAvailable {
+	if repo.AccessState != source.SourceAccessStateAvailable {
 		t.Fatalf("expected available repo from stored snapshot, got %s", repo.AccessState)
 	}
 
-	if err := store.source.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+	if err := store.source.ReplaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
 		InstallationID: 7,
 		AccountLogin:   "private",
 		AccountType:    "Organization",
@@ -87,14 +87,14 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 		Private:        true,
 		DefaultBranch:  "main",
 	}}); err != nil {
-		t.Fatalf("replaceGitHubInstallationRepositories: %v", err)
+		t.Fatalf("ReplaceGitHubInstallationRepositories: %v", err)
 	}
 
 	view, err := catalog.RepositoryView(ctx, "private", "secret", 7)
 	if err != nil {
 		t.Fatalf("RepositoryView(private): %v", err)
 	}
-	if view.AccessState != deliverycore.SourceAccessStateAvailable {
+	if view.AccessState != source.SourceAccessStateAvailable {
 		t.Fatalf("expected available repository view, got %+v", view)
 	}
 	if server.requestCount() != 0 {
@@ -182,7 +182,7 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 			if status.Code(err) != test.code {
 				t.Fatalf("LinkGitHubRepository code = %s, want %s (error: %v)", status.Code(err), test.code, err)
 			}
-			if _, err := store.source.projectGitHubRepositoryInstallation(context.Background(), projectID, "private", "secret"); !errors.Is(err, sql.ErrNoRows) {
+			if _, err := store.source.ProjectGitHubRepositoryInstallation(context.Background(), projectID, "private", "secret"); !errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("repository link was persisted after denied user authorization: %v", err)
 			}
 		})
@@ -322,7 +322,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 	if err != nil {
 		t.Fatalf("RepositoryView: %v", err)
 	}
-	if view.AccessState != deliverycore.SourceAccessStateAvailable || view.InstallationID != 7 {
+	if view.AccessState != source.SourceAccessStateAvailable || view.InstallationID != 7 {
 		t.Fatalf("unexpected stored repository view %+v", view)
 	}
 }

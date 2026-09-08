@@ -50,8 +50,6 @@ type serviceQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-type jsonInt32Slice []int32
-
 type jsonStringSlice []string
 
 func (p *jsonStringSlice) Scan(src any) error {
@@ -68,23 +66,6 @@ func (p *jsonStringSlice) Scan(src any) error {
 		return json.Unmarshal([]byte(v), (*[]string)(p))
 	default:
 		return fmt.Errorf("scan string slice json: unsupported type %T", src)
-	}
-}
-
-func (p *jsonInt32Slice) Scan(src any) error {
-	if p == nil {
-		return nil
-	}
-	switch v := src.(type) {
-	case nil:
-		*p = nil
-		return nil
-	case []byte:
-		return json.Unmarshal(v, (*[]int32)(p))
-	case string:
-		return json.Unmarshal([]byte(v), (*[]int32)(p))
-	default:
-		return fmt.Errorf("scan int32 slice json: unsupported type %T", src)
 	}
 }
 

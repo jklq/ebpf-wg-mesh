@@ -26,6 +26,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/source"
 )
 
 func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
@@ -45,7 +46,7 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	if err != nil || len(projects) != 2 {
 		t.Fatalf("list projects: %v (%d)", err, len(projects))
 	}
-	if err := store.source.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+	if err := store.source.ReplaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
 		InstallationID: 7,
 		AccountLogin:   "octocat",
 		AccountType:    "User",
@@ -61,17 +62,17 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.source.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+	if err := store.source.LinkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
 		RepositoryID:   42,
 		FullName:       "octocat/hello",
 		InstallationID: 7,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if installationID, err := store.source.projectGitHubRepositoryInstallation(ctx, projects[0].ID, "octocat", "hello"); err != nil || installationID != 7 {
+	if installationID, err := store.source.ProjectGitHubRepositoryInstallation(ctx, projects[0].ID, "octocat", "hello"); err != nil || installationID != 7 {
 		t.Fatalf("linked project installation = %d, %v", installationID, err)
 	}
-	if _, err := store.source.projectGitHubRepositoryInstallation(ctx, projects[1].ID, "octocat", "hello"); err != sql.ErrNoRows {
+	if _, err := store.source.ProjectGitHubRepositoryInstallation(ctx, projects[1].ID, "octocat", "hello"); err != sql.ErrNoRows {
 		t.Fatalf("expected unlinked project denial, got %v", err)
 	}
 }
@@ -106,12 +107,12 @@ func createRepoBackedTestService(t *testing.T, store *persistence, ctx context.C
 	t.Helper()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
-	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
+	owner, repo, err := source.SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
-		t.Fatalf("splitGitHubRepositorySelector: %v", err)
+		t.Fatalf("SplitGitHubRepositorySelector: %v", err)
 	}
 	if installationID > 0 {
-		if err := store.source.replaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+		if err := store.source.ReplaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
 			InstallationID: installationID,
 			AccountLogin:   owner,
 			AccountType:    "Organization",
@@ -126,7 +127,7 @@ func createRepoBackedTestService(t *testing.T, store *persistence, ctx context.C
 			Private:        true,
 			DefaultBranch:  "main",
 		}}); err != nil {
-			t.Fatalf("replaceGitHubInstallationRepositories: %v", err)
+			t.Fatalf("ReplaceGitHubInstallationRepositories: %v", err)
 		}
 	}
 	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(

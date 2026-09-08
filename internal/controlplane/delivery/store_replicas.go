@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/google/uuid"
 	"slices"
 	"sort"
 	"strings"
@@ -63,7 +64,7 @@ func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.
 
 func (s *persistence) insertAllocationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, error) {
 	alloc := AllocationRecord{
-		ID:                       MustID(),
+		ID:                       uuid.NewString(),
 		ServiceID:                service.ID,
 		ProjectID:                service.ProjectID,
 		EnvironmentID:            service.EnvironmentID,
@@ -285,8 +286,8 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (AllocationRecor
 		&rec.UpdatedAt,
 		&rec.DesiredRolloutGeneration,
 		&rec.AppliedRolloutGeneration,
-		(*JsonInt32Slice)(&rec.HealthyIPv4Ports),
-		(*JsonInt32Slice)(&rec.HealthyIPv6Ports),
+		(*jsonInt32Slice)(&rec.HealthyIPv4Ports),
+		(*jsonInt32Slice)(&rec.HealthyIPv6Ports),
 		&restartRaw,
 		&rec.OperatorRestartNonce,
 		&rec.CreatedAt,

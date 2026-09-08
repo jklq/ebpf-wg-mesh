@@ -10,6 +10,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -30,7 +31,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		if !agentExists {
 			return fmt.Errorf("%w: trusted agent %s is not enrolled", ErrNoPlacementAvailable, trustedAgentID)
 		}
-		environment, err := ScanEnvironmentRow(tx.QueryRowContext(ctx, EnvironmentSelect+`
+		environment, err := scanEnvironmentRow(tx.QueryRowContext(ctx, environmentSelect+`
 			WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 		if err != nil {
 			return err
@@ -169,7 +170,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 				return err
 			}
 		}
-		if DesiredSourceSpec(spec) != nil {
+		if source.DesiredSourceSpec(spec) != nil {
 			if err := s.enqueueSourceSpecChangedTx(ctx, tx, rec.ID, rec.SpecRevision, false); err != nil {
 				return err
 			}

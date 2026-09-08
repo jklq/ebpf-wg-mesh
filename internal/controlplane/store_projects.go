@@ -6,6 +6,8 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func (s *catalogPersistence) ensureUserProjectNamed(ctx context.Context, userID, name string) (string, error) {
@@ -24,7 +26,7 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 		return project.ID, nil
 	}
 
-	id := deliverycore.MustID()
+	id := uuid.NewString()
 	now := time.Now().UTC()
 	if _, err := q.ExecContext(
 		ctx,
@@ -66,7 +68,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 		now := time.Now().UTC()
 		if !found {
 			project = deliverycore.ProjectRecord{
-				ID:        deliverycore.MustID(),
+				ID:        uuid.NewString(),
 				Name:      name,
 				Kind:      deliverycore.ProjectKindManaged,
 				SystemKey: systemKey,
@@ -152,7 +154,7 @@ func (s *catalogPersistence) listProjects(ctx context.Context, userID string) ([
 
 	var out []deliverycore.ProjectRecord
 	for rows.Next() {
-		rec, err := deliverycore.ScanProjectRow(rows)
+		rec, err := scanProjectRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -196,11 +198,11 @@ func (s *catalogPersistence) projectByIDQuerier(ctx context.Context, q deliveryc
 		userID,
 		string(deliverycore.ProjectKindUser),
 	)
-	return deliverycore.ScanProjectRow(row)
+	return scanProjectRow(row)
 }
 
 func (s *catalogPersistence) projectByIDInternal(ctx context.Context, projectID string) (deliverycore.ProjectRecord, error) {
-	return s.reads.deliveryQueries().ProjectByIDInternalQuerier(ctx, s.db, projectID)
+	return s.projectByIDInternalQuerier(ctx, s.db, projectID)
 }
 
 func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q deliverycore.ServiceQueryer, systemKey string) (deliverycore.ProjectRecord, bool, error) {
@@ -211,7 +213,7 @@ func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q de
 		  WHERE system_key = $1`,
 		systemKey,
 	)
-	rec, err := deliverycore.ScanProjectRow(row)
+	rec, err := scanProjectRow(row)
 	switch {
 	case err == nil:
 		return rec, true, nil
@@ -232,7 +234,7 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 		name,
 		string(deliverycore.ProjectKindUser),
 	)
-	rec, err := deliverycore.ScanProjectRow(row)
+	rec, err := scanProjectRow(row)
 	switch {
 	case err == nil:
 		return rec, true, nil
@@ -241,4 +243,28 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 	default:
 		return deliverycore.ProjectRecord{}, false, err
 	}
+}
+
+func (s *catalogPersistence) projectByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.ProjectRecord, error) {
+	row := q.QueryRowContext(
+		ctx,
+		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		   FROM projects
+		  WHERE id = $1`,
+		projectID,
+	)
+	return scanProjectRow(row)
+}
+
+func scanProjectRow(scanner interface{ Scan(...any) error }) (deliverycore.ProjectRecord, error) {
+	var rec deliverycore.ProjectRecord
+	var kind string
+	if err := scanner.Scan(&rec.ID, &rec.Name, &kind, &rec.SystemKey, &rec.CreatedAt); err != nil {
+		return deliverycore.ProjectRecord{}, err
+	}
+	rec.Kind = deliverycore.ProjectKind(kind)
+	if rec.Kind == "" {
+		rec.Kind = deliverycore.ProjectKindUser
+	}
+	return rec, nil
 }

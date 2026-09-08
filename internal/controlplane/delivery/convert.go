@@ -4,6 +4,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 )
 
 func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
@@ -15,16 +16,16 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 		State:         toProtoBuildState(rec.State),
 		CommitSha:     rec.CommitSHA,
 		ImageDigest:   rec.ImageDigest,
-		QueuedAt:      Ts(rec.QueuedAt),
+		QueuedAt:      ts(rec.QueuedAt),
 		FailureReason: rec.FailureReason,
 		CommitMessage: rec.CommitMessage,
 		CommitAuthor:  rec.CommitAuthor,
 	}
 	if rec.StartedAt.Valid {
-		status.StartedAt = Ts(rec.StartedAt.Time)
+		status.StartedAt = ts(rec.StartedAt.Time)
 	}
 	if rec.FinishedAt.Valid {
-		status.FinishedAt = Ts(rec.FinishedAt.Time)
+		status.FinishedAt = ts(rec.FinishedAt.Time)
 	}
 	return status
 }
@@ -48,7 +49,7 @@ func toProtoBuildState(state string) platformv1.BuildState {
 	}
 }
 
-func toProtoResolvedSourceBinding(rec SourceBindingRecord) *platformv1.ResolvedSourceBinding {
+func toProtoResolvedSourceBinding(rec source.SourceBindingRecord) *platformv1.ResolvedSourceBinding {
 	if rec.ID == "" {
 		return nil
 	}
@@ -60,14 +61,14 @@ func toProtoResolvedSourceBinding(rec SourceBindingRecord) *platformv1.ResolvedS
 		TrackedRef:                   rec.TrackedRef,
 		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
 		ProviderScopeExternalId:      rec.ProviderScopeExternalID,
-		AccessState:                  ToProtoSourceAccessState(rec.AccessState),
-		ResolvedAt:                   Ts(rec.ResolvedAt),
-		FreshUntil:                   Ts(rec.FreshUntil),
-		BuildRecipe:                  CloneBuildRecipe(rec.BuildRecipe),
+		AccessState:                  source.ToProtoSourceAccessState(rec.AccessState),
+		ResolvedAt:                   ts(rec.ResolvedAt),
+		FreshUntil:                   ts(rec.FreshUntil),
+		BuildRecipe:                  source.CloneBuildRecipe(rec.BuildRecipe),
 	}
 }
 
-func toProtoSourceRevision(rec SourceRevisionRecord) *platformv1.SourceRevision {
+func toProtoSourceRevision(rec source.SourceRevisionRecord) *platformv1.SourceRevision {
 	if rec.ID == "" {
 		return nil
 	}
@@ -77,11 +78,11 @@ func toProtoSourceRevision(rec SourceRevisionRecord) *platformv1.SourceRevision 
 		ProviderRepositoryExternalId: rec.ProviderRepositoryExternalID,
 		TrackedRef:                   rec.TrackedRef,
 		CommitSha:                    rec.CommitSHA,
-		ObservedAt:                   Ts(rec.ObservedAt),
+		ObservedAt:                   ts(rec.ObservedAt),
 	}
 }
 
-func toProtoSourceSnapshot(rec SourceSnapshotRecord) *platformv1.SourceSnapshot {
+func toProtoSourceSnapshot(rec source.SourceSnapshotRecord) *platformv1.SourceSnapshot {
 	if rec.ID == "" {
 		return nil
 	}
@@ -94,12 +95,12 @@ func toProtoSourceSnapshot(rec SourceSnapshotRecord) *platformv1.SourceSnapshot 
 		Ready:                        rec.Ready,
 	}
 	if rec.FetchedAt.Valid {
-		snapshot.FetchedAt = Ts(rec.FetchedAt.Time)
+		snapshot.FetchedAt = ts(rec.FetchedAt.Time)
 	}
 	return snapshot
 }
 
-func toProtoSourceStateSummary(desired *platformv1.ServiceSourceSpec, binding *SourceBindingRecord, revision *SourceRevisionRecord, snapshot *SourceSnapshotRecord) *platformv1.ServiceSourceSummary {
+func toProtoSourceStateSummary(desired *platformv1.ServiceSourceSpec, binding *source.SourceBindingRecord, revision *source.SourceRevisionRecord, snapshot *source.SourceSnapshotRecord) *platformv1.ServiceSourceSummary {
 	if desired == nil {
 		return nil
 	}

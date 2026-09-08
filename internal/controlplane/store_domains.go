@@ -4,21 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/routing"
 
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"time"
 )
 
-func (s *routingPersistence) createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+func (s *routingPersistence) CreateDomainBindingRecord(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, false, true)
 }
 
-func (s *routingPersistence) createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+func (s *routingPersistence) CreatePlatformDomainBindingRecord(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, true, true)
 }
 
-func (s *routingPersistence) updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+func (s *routingPersistence) UpdateDomainBindingRecord(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	return s.putDomainBinding(ctx, userID, hostname, serviceID, targetPort, false, false)
 }
 
@@ -33,11 +34,11 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 		binding = deliverycore.DomainBindingRecord{}
 		attemptHostname, attemptCreateOnly := hostname, createOnly
 		attemptPlatformGenerated := platformGenerated
-		service, err := s.reads.deliveryQueries().ServiceByIDQuerier(ctx, tx, userID, serviceID)
+		service, err := s.serviceLocation(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
 		}
-		if _, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
+		if err := s.authorizeEnvironmentWrite(ctx, tx, userID, service.EnvironmentID); err != nil {
 			return err
 		}
 		if attemptPlatformGenerated {
@@ -63,15 +64,15 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 			if attemptCreateOnly {
 				return deliverycore.ErrDomainAlreadyExists
 			}
-			if _, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, existing.EnvironmentID); err != nil {
+			if err := s.authorizeEnvironmentWrite(ctx, tx, userID, existing.EnvironmentID); err != nil {
 				return err
 			}
 			if existing.PlatformGenerated && existing.ServiceID != serviceID {
-				return errPlatformDomainReassignment
+				return routing.ErrPlatformDomainReassignment
 			}
 			if !existing.PlatformGenerated && existing.ServiceID != serviceID {
 				if _, err := s.platformDomainBindingForServiceQuerier(ctx, tx, userID, serviceID); errors.Is(err, sql.ErrNoRows) {
-					return errPlatformDomainNotGenerated
+					return routing.ErrPlatformDomainNotGenerated
 				} else if err != nil {
 					return err
 				}
@@ -81,12 +82,12 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 			if existing.ServiceID == serviceID && existing.TargetPort == targetPort && existing.PlatformGenerated == attemptPlatformGenerated {
 				return nil
 			}
-			agentIDs, err := s.reads.agentIDsForServiceQuerier(ctx, tx, serviceID)
+			agentIDs, err := s.agentIDsForService(ctx, tx, serviceID)
 			if err != nil {
 				return err
 			}
 			if existing.ServiceID != serviceID {
-				previousIDs, err := s.reads.agentIDsForServiceQuerier(ctx, tx, existing.ServiceID)
+				previousIDs, err := s.agentIDsForService(ctx, tx, existing.ServiceID)
 				if err != nil {
 					return err
 				}
@@ -122,7 +123,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 		}
 		if !attemptPlatformGenerated {
 			if _, err := s.platformDomainBindingForServiceQuerier(ctx, tx, userID, serviceID); errors.Is(err, sql.ErrNoRows) {
-				return errPlatformDomainNotGenerated
+				return routing.ErrPlatformDomainNotGenerated
 			} else if err != nil {
 				return err
 			}
@@ -134,7 +135,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 		); err != nil {
 			return err
 		}
-		createAgentIDs, err := s.reads.agentIDsForServiceQuerier(ctx, tx, serviceID)
+		createAgentIDs, err := s.agentIDsForService(ctx, tx, serviceID)
 		if err != nil {
 			return err
 		}
@@ -160,7 +161,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 	return binding, changed, nil
 }
 
-func (s *routingPersistence) domainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error) {
+func (s *routingPersistence) DomainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error) {
 	return s.domainBindingByHostnameQuerier(ctx, s.db, userID, hostname)
 }
 
@@ -181,12 +182,12 @@ func (s *routingPersistence) domainBindingByHostnameQuerier(ctx context.Context,
 	return binding, nil
 }
 
-func (s *routingPersistence) platformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+func (s *routingPersistence) PlatformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
 	return s.platformDomainBindingForServiceQuerier(ctx, s.db, userID, serviceID)
 }
 
 func (s *routingPersistence) platformDomainBindingForServiceQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
-	service, err := s.reads.deliveryQueries().ServiceByIDQuerier(ctx, q, userID, serviceID)
+	service, err := s.serviceLocation(ctx, q, userID, serviceID)
 	if err != nil {
 		return deliverycore.DomainBindingRecord{}, err
 	}
@@ -202,7 +203,7 @@ func (s *routingPersistence) platformDomainBindingForServiceQuerier(ctx context.
 	return binding, err
 }
 
-func (s *routingPersistence) deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error) {
+func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, userID, hostname string) (bool, error) {
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		changed = false
@@ -210,7 +211,7 @@ func (s *routingPersistence) deleteDomainBinding(ctx context.Context, userID, ho
 		if err != nil {
 			return err
 		}
-		if _, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, binding.EnvironmentID); err != nil {
+		if err := s.authorizeEnvironmentWrite(ctx, tx, userID, binding.EnvironmentID); err != nil {
 			return err
 		}
 		if binding.PlatformGenerated {
@@ -219,7 +220,7 @@ func (s *routingPersistence) deleteDomainBinding(ctx context.Context, userID, ho
 				return err
 			}
 			if hasCustom {
-				return errPlatformDomainInUse
+				return routing.ErrPlatformDomainInUse
 			}
 		}
 		var serviceID string
@@ -231,7 +232,7 @@ func (s *routingPersistence) deleteDomainBinding(ctx context.Context, userID, ho
 		).Scan(&serviceID); err != nil {
 			return err
 		}
-		agentIDs, err := s.reads.agentIDsForServiceQuerier(ctx, tx, serviceID)
+		agentIDs, err := s.agentIDsForService(ctx, tx, serviceID)
 		if err != nil {
 			return err
 		}
@@ -268,9 +269,44 @@ func (s *routingPersistence) deleteDomainBinding(ctx context.Context, userID, ho
 // so callers that just want stage projections can keep going without
 // special-casing the not-yet-scheduled path.
 func (s *readsPersistence) allocationByServiceID(ctx context.Context, serviceID string) (deliverycore.AllocationRecord, error) {
-	allocs, err := s.deliveryQueries().ListAllocationsByServiceID(ctx, serviceID)
+	allocs, err := s.ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		return deliverycore.AllocationRecord{}, err
 	}
 	return primaryAllocation(allocs), nil
+}
+
+type serviceLocation struct {
+	ID, ProjectID, EnvironmentID string
+}
+
+func (s *routingPersistence) authorizeEnvironmentWrite(ctx context.Context, q deliverycore.ServiceQueryer, userID, environmentID string) error {
+	var one int
+	return q.QueryRowContext(ctx, `SELECT 1 FROM environments e JOIN projects p ON p.id = e.project_id JOIN project_memberships m ON m.project_id = e.project_id WHERE e.id = $1 AND m.user_id = $2 AND m.role IN ('owner', 'editor') AND p.kind = $3`, environmentID, userID, string(deliverycore.ProjectKindUser)).Scan(&one)
+}
+
+func (s *routingPersistence) agentIDsForService(ctx context.Context, q deliverycore.ServiceQueryer, serviceID string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT agent_id FROM allocations WHERE service_id = $1 AND agent_id <> '' ORDER BY agent_id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *routingPersistence) serviceLocation(ctx context.Context, q deliverycore.ServiceQueryer, userID, serviceID string) (serviceLocation, error) {
+	var rec serviceLocation
+	err := q.QueryRowContext(ctx, `SELECT s.id, e.project_id, s.environment_id FROM services s
+ JOIN environments e ON e.id = s.environment_id
+ JOIN project_memberships m ON m.project_id = e.project_id
+ WHERE s.id = $1 AND m.user_id = $2 AND m.role IN ('owner', 'editor', 'viewer')`, serviceID, userID).Scan(&rec.ID, &rec.ProjectID, &rec.EnvironmentID)
+	return rec, err
 }

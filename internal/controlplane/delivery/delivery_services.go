@@ -10,6 +10,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -73,7 +74,7 @@ func (d *Delivery) createServiceTxInternal(ctx context.Context, tx *sql.Tx, proj
 	if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 		return ServiceRecord{}, err
 	}
-	environment, err := ScanEnvironmentRow(tx.QueryRowContext(ctx, EnvironmentSelect+`
+	environment, err := scanEnvironmentRow(tx.QueryRowContext(ctx, environmentSelect+`
 		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if err != nil {
 		return ServiceRecord{}, err
@@ -120,7 +121,7 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	initialState := DeploymentStateScheduling
 	reasonCode := reasonServiceCreated
 	detail := "Service created and scheduled"
-	if DesiredSourceSpec(spec) != nil {
+	if source.DesiredSourceSpec(spec) != nil {
 		initialState = DeploymentStateStaged
 		reasonCode = reasonServiceStaged
 		detail = "Service created; waiting for source build"
@@ -134,7 +135,7 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	if _, err := d.reconcileServiceReplicasTx(ctx, tx, rec, agentID, now); err != nil {
 		return ServiceRecord{}, err
 	}
-	if DesiredSourceSpec(spec) != nil {
+	if source.DesiredSourceSpec(spec) != nil {
 		if err := s.enqueueSourceSpecChangedTx(ctx, tx, rec.ID, rec.SpecRevision, false); err != nil {
 			return ServiceRecord{}, err
 		}
@@ -247,7 +248,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 
 	now := time.Now().UTC()
 	nextSpecRevision := current.SpecRevision + 1
-	sourceChanged := DesiredSourceSpec(spec) != nil && !sameDesiredSourceSpec(current.Spec, spec)
+	sourceChanged := source.DesiredSourceSpec(spec) != nil && !sameDesiredSourceSpec(current.Spec, spec)
 	specJSON, err := protojson.Marshal(spec)
 	if err != nil {
 		return ServiceRecord{}, false, false, err
@@ -281,8 +282,8 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 	nextRecord := current
 	nextRecord.Name = nextName
 	nextRecord.Spec = spec
-	if source := DesiredSourceSpec(spec); source != nil {
-		nextRecord.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
+	if desired := source.DesiredSourceSpec(spec); desired != nil {
+		nextRecord.SourceSummary = toProtoSourceStateSummary(desired, nil, nil, nil)
 	} else {
 		nextRecord.SourceSummary = BuildSourceSummary(spec)
 	}
@@ -431,8 +432,8 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID 
 		rec.Spec = nextSpec
 		rec.SpecRevision = nextRevision
 		rec.UpdatedAt = now
-		if source := DesiredSourceSpec(nextSpec); source != nil {
-			rec.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
+		if desired := source.DesiredSourceSpec(nextSpec); desired != nil {
+			rec.SourceSummary = toProtoSourceStateSummary(desired, nil, nil, nil)
 		} else {
 			rec.SourceSummary = BuildSourceSummary(nextSpec)
 		}

@@ -6,13 +6,15 @@ import (
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platformv1.LinkGitHubRepositoryRequest) (*platformv1.InspectSourceResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +35,7 @@ func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platfor
 }
 
 func (s *PlatformService) InspectSource(ctx context.Context, req *platformv1.InspectSourceRequest) (*platformv1.InspectSourceResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -60,14 +62,14 @@ func (s *PlatformService) InspectSource(ctx context.Context, req *platformv1.Ins
 }
 
 func gitHubUserAuthorizationStatus(err error) error {
-	var authErr *gitHubUserRepositoryAuthorizationError
+	var authErr *source.GitHubUserRepositoryAuthorizationError
 	if !errors.As(err, &authErr) {
 		return nil
 	}
-	if errors.Is(authErr, errGitHubUserAccessTokenRequired) {
+	if errors.Is(authErr, source.ErrGitHubUserAccessTokenRequired) {
 		return status.Error(codes.Unauthenticated, "GitHub user authorization is required")
 	}
-	var apiErr *gitHubAPIError
+	var apiErr *source.GitHubAPIError
 	if errors.As(authErr, &apiErr) {
 		switch apiErr.StatusCode {
 		case 401:
@@ -78,7 +80,7 @@ func gitHubUserAuthorizationStatus(err error) error {
 			return status.Error(codes.Unavailable, "GitHub user authorization is temporarily unavailable")
 		}
 	}
-	if errors.Is(authErr, errGitHubRepositoryIdentityMismatch) {
+	if errors.Is(authErr, source.ErrGitHubRepositoryIdentityMismatch) {
 		return status.Error(codes.PermissionDenied, "GitHub repository identity could not be verified")
 	}
 	return status.Error(codes.Unavailable, "GitHub user authorization is temporarily unavailable")

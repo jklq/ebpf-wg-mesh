@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -45,9 +46,7 @@ func (r staticDNSResolver) LookupHost(_ context.Context, name string) ([]string,
 }
 
 func contextWithDelegatedUser(userID, _ string) context.Context {
-	return context.WithValue(context.Background(), delegatedUserContextKey{}, DelegatedUser{
-		UserID: userID,
-	})
+	return identity.WithDelegatedUser(context.Background(), userID)
 }
 
 type noopNotifier struct{}
@@ -156,7 +155,7 @@ func (f *fakePlatformStore) listEnvironments(context.Context, string, string) ([
 	return nil, nil
 }
 
-func (f *fakePlatformStore) environmentByID(_ context.Context, _ string, environmentID string) (deliverycore.EnvironmentRecord, error) {
+func (f *fakePlatformStore) EnvironmentByID(_ context.Context, _ string, environmentID string) (deliverycore.EnvironmentRecord, error) {
 	return deliverycore.EnvironmentRecord{ID: environmentID, ProjectID: "project-1", Kind: deliverycore.EnvironmentKindPersistent}, nil
 }
 
@@ -164,7 +163,7 @@ func (f *fakePlatformStore) createEnvironment(_ context.Context, _ string, proje
 	return deliverycore.EnvironmentRecord{ID: "environment-1", ProjectID: projectID, Name: name, Kind: deliverycore.EnvironmentKindPersistent}, nil
 }
 
-func (f *fakePlatformStore) duplicateEnvironment(_ context.Context, _ string, sourceEnvironmentID, name string, _ bool) (deliverycore.EnvironmentRecord, error) {
+func (f *fakePlatformDelivery) DuplicateEnvironment(_ context.Context, _ string, sourceEnvironmentID, name string, _ bool) (deliverycore.EnvironmentRecord, error) {
 	return deliverycore.EnvironmentRecord{ID: "environment-2", ProjectID: "project-1", Name: name, Kind: deliverycore.EnvironmentKindPersistent, CopiedFromEnvironmentID: sourceEnvironmentID}, nil
 }
 
@@ -204,14 +203,14 @@ func (f *fakePlatformStore) authorizeProjectWrite(ctx context.Context, userID, p
 	return nil
 }
 
-func (f *fakePlatformStore) serviceByID(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, error) {
+func (f *fakePlatformStore) ServiceByID(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, error) {
 	if f.serviceByIDFn != nil {
 		return f.serviceByIDFn(ctx, userID, serviceID)
 	}
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, nil
 }
 
-func (f *fakePlatformStore) listServices(ctx context.Context, userID, environmentID string) ([]deliverycore.ServiceRecord, error) {
+func (f *fakePlatformStore) ListServices(ctx context.Context, userID, environmentID string) ([]deliverycore.ServiceRecord, error) {
 	if f.listServicesFn != nil {
 		return f.listServicesFn(ctx, userID, environmentID)
 	}
@@ -239,77 +238,77 @@ func (f *fakePlatformStore) deleteVolume(ctx context.Context, userID, volumeID s
 	return sql.ErrNoRows
 }
 
-func (f *fakePlatformStore) createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+func (f *fakePlatformStore) CreateDomainBindingRecord(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	if f.createDomainBindingFn != nil {
 		return f.createDomainBindingFn(ctx, userID, hostname, serviceID, targetPort)
 	}
 	return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort}, true, nil
 }
 
-func (f *fakePlatformStore) createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+func (f *fakePlatformStore) CreatePlatformDomainBindingRecord(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	if f.createPlatformDomainBindingFn != nil {
 		return f.createPlatformDomainBindingFn(ctx, userID, hostname, serviceID, targetPort)
 	}
 	return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort, PlatformGenerated: true}, true, nil
 }
 
-func (f *fakePlatformStore) platformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
+func (f *fakePlatformStore) PlatformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error) {
 	if f.platformDomainBindingForServiceFn != nil {
 		return f.platformDomainBindingForServiceFn(ctx, userID, serviceID)
 	}
 	return deliverycore.DomainBindingRecord{}, sql.ErrNoRows
 }
 
-func (f *fakePlatformStore) updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
+func (f *fakePlatformStore) UpdateDomainBindingRecord(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 	if f.updateDomainBindingFn != nil {
 		return f.updateDomainBindingFn(ctx, userID, hostname, serviceID, targetPort)
 	}
 	return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort}, false, nil
 }
 
-func (f *fakePlatformStore) domainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error) {
+func (f *fakePlatformStore) DomainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error) {
 	if f.domainBindingByHostFn != nil {
 		return f.domainBindingByHostFn(ctx, userID, hostname)
 	}
 	return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: "service-1"}, nil
 }
 
-func (f *fakePlatformStore) listDomainBindings(ctx context.Context, userID, serviceID string) ([]deliverycore.DomainBindingRecord, error) {
+func (f *fakePlatformStore) ListDomainBindings(ctx context.Context, userID, serviceID string) ([]deliverycore.DomainBindingRecord, error) {
 	if f.listDomainBindingsFn != nil {
 		return f.listDomainBindingsFn(ctx, userID, serviceID)
 	}
 	return nil, nil
 }
 
-func (f *fakePlatformStore) deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error) {
+func (f *fakePlatformStore) DeleteDomainBindingRecord(ctx context.Context, userID, hostname string) (bool, error) {
 	if f.deleteDomainBindingFn != nil {
 		return f.deleteDomainBindingFn(ctx, userID, hostname)
 	}
 	return true, nil
 }
 
-func (f *fakePlatformStore) serviceStatus(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
+func (f *fakePlatformStore) ServiceStatus(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
 	if f.serviceStatusFn != nil {
 		return f.serviceStatusFn(ctx, userID, serviceID)
 	}
 	return deliverycore.ServiceRecord{}, nil, nil
 }
 
-func (f *fakePlatformStore) listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error) {
+func (f *fakePlatformStore) ListServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error) {
 	if f.listServiceDeploymentsFn != nil {
 		return f.listServiceDeploymentsFn(ctx, userID, serviceID, limit)
 	}
 	return nil, nil
 }
 
-func (f *fakePlatformStore) listAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error) {
+func (f *fakePlatformStore) ListAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error) {
 	if f.listAllocationsByServiceIDFn != nil {
 		return f.listAllocationsByServiceIDFn(ctx, serviceID)
 	}
 	return nil, nil
 }
 
-func (f *fakePlatformStore) listAgents(ctx context.Context) ([]deliverycore.AgentRecord, error) {
+func (f *fakePlatformStore) ListAgents(ctx context.Context) ([]deliverycore.AgentRecord, error) {
 	if f.listAgentsFn != nil {
 		return f.listAgentsFn(ctx)
 	}

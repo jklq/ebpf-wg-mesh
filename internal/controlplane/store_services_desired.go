@@ -3,13 +3,16 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/restartpolicy"
+	"encoding/json"
+	"fmt"
 	"net"
 	"slices"
 	"strconv"
 )
 
-func (s *routingPersistence) listHealthyIngressBackends(ctx context.Context) ([]ingressBackend, error) {
+func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]routing.Backend, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT d.hostname, d.target_port, a.healthy_ipv4_ports, a.healthy_ipv6_ports,
 		        a.allocation_ipv4, a.allocation_ipv6, a.id
@@ -30,7 +33,7 @@ func (s *routingPersistence) listHealthyIngressBackends(ctx context.Context) ([]
 	}
 	defer rows.Close()
 
-	var backends []ingressBackend
+	var backends []routing.Backend
 	for rows.Next() {
 		var (
 			domain           string
@@ -41,15 +44,15 @@ func (s *routingPersistence) listHealthyIngressBackends(ctx context.Context) ([]
 			allocationIPv6   string
 			allocationID     string
 		)
-		if err := rows.Scan(&domain, &targetPort, (*deliverycore.JsonInt32Slice)(&healthyIPv4Ports), (*deliverycore.JsonInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
+		if err := rows.Scan(&domain, &targetPort, (*jsonInt32Slice)(&healthyIPv4Ports), (*jsonInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
 			return nil, err
 		}
 		if slices.Contains(healthyIPv4Ports, targetPort) && net.ParseIP(allocationIPv4) != nil {
-			backends = append(backends, ingressBackend{
+			backends = append(backends, routing.Backend{
 				Domain: domain, Upstream: net.JoinHostPort(allocationIPv4, strconv.Itoa(int(targetPort))), AllocationID: allocationID,
 			})
 		} else if slices.Contains(healthyIPv6Ports, targetPort) && net.ParseIP(allocationIPv6) != nil {
-			backends = append(backends, ingressBackend{
+			backends = append(backends, routing.Backend{
 				Domain: domain, Upstream: net.JoinHostPort(allocationIPv6, strconv.Itoa(int(targetPort))), AllocationID: allocationID,
 			})
 		}
@@ -57,8 +60,21 @@ func (s *routingPersistence) listHealthyIngressBackends(ctx context.Context) ([]
 	return backends, rows.Err()
 }
 
-type ingressBackend struct {
-	Domain       string
-	Upstream     string
-	AllocationID string
+type jsonInt32Slice []int32
+
+func (p *jsonInt32Slice) Scan(src any) error {
+	if p == nil {
+		return nil
+	}
+	switch v := src.(type) {
+	case nil:
+		*p = nil
+		return nil
+	case []byte:
+		return json.Unmarshal(v, (*[]int32)(p))
+	case string:
+		return json.Unmarshal([]byte(v), (*[]int32)(p))
+	default:
+		return fmt.Errorf("scan int32 slice json: unsupported type %T", src)
+	}
 }

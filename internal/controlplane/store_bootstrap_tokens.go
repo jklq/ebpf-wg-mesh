@@ -105,7 +105,7 @@ func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, token
 	})
 }
 
-func (s *fleetPersistence) consumeAgentBootstrapToken(ctx context.Context, agentID, token string) error {
+func (s *fleetPersistence) ConsumeAgentBootstrapToken(ctx context.Context, agentID, token string) error {
 	agentID = strings.TrimSpace(agentID)
 	token = strings.TrimSpace(token)
 	if agentID == "" || token == "" {

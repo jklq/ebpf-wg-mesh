@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -30,14 +32,14 @@ func deploymentStagesFromLifecycle(dep deliverycore.DeploymentRecord, service de
 }
 
 func includeInitializationStage(service deliverycore.ServiceRecord, build *deliverycore.BuildRunRecord) bool {
-	return !(deliverycore.DesiredSourceSpec(service.Spec) != nil && build != nil)
+	return !(source.DesiredSourceSpec(service.Spec) != nil && build != nil)
 }
 
 func lifecycleInitializationStage(dep deliverycore.DeploymentRecord, service deliverycore.ServiceRecord) *platformv1.DeploymentStage {
 	stage := &platformv1.DeploymentStage{
-		Key:       StageInitialization,
+		Key:       logs.StageInitialization,
 		Label:     "Initialization",
-		StartedAt: deliverycore.Ts(firstTransitionTime(dep, deliverycore.DeploymentStateStaged, dep.CreatedAt)),
+		StartedAt: ts(firstTransitionTime(dep, deliverycore.DeploymentStateStaged, dep.CreatedAt)),
 	}
 	switch dep.State {
 	case deliverycore.DeploymentStateStaged:
@@ -47,7 +49,7 @@ func lifecycleInitializationStage(dep deliverycore.DeploymentRecord, service del
 		if !passedState(dep, deliverycore.DeploymentStateScheduling) {
 			stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 			stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Initialization failed")
-			stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+			stage.FinishedAt = ts(dep.UpdatedAt)
 			break
 		}
 		fallthrough
@@ -61,17 +63,17 @@ func lifecycleInitializationStage(dep deliverycore.DeploymentRecord, service del
 		if finished.IsZero() {
 			finished = dep.CreatedAt
 		}
-		stage.FinishedAt = deliverycore.Ts(finished)
+		stage.FinishedAt = ts(finished)
 	}
 	return stage
 }
 
 func lifecycleBuildStage(dep deliverycore.DeploymentRecord, service deliverycore.ServiceRecord, build *deliverycore.BuildRunRecord) *platformv1.DeploymentStage {
 	stage := &platformv1.DeploymentStage{
-		Key:   StageBuild,
+		Key:   logs.StageBuild,
 		Label: "Build",
 	}
-	if deliverycore.DesiredSourceSpec(service.Spec) == nil && dep.BuildID == "" && build == nil {
+	if source.DesiredSourceSpec(service.Spec) == nil && dep.BuildID == "" && build == nil {
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED
 		stage.Detail = "No build required — using prebuilt image"
 		return stage
@@ -84,7 +86,7 @@ func lifecycleBuildStage(dep deliverycore.DeploymentRecord, service deliverycore
 		}
 	}
 	if !started.IsZero() {
-		stage.StartedAt = deliverycore.Ts(started)
+		stage.StartedAt = ts(started)
 	}
 	switch {
 	case dep.State == deliverycore.DeploymentStateQueuedBuild:
@@ -96,15 +98,15 @@ func lifecycleBuildStage(dep deliverycore.DeploymentRecord, service deliverycore
 	case dep.State == deliverycore.DeploymentStateFailed && !passedState(dep, deliverycore.DeploymentStateScheduling):
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, buildFailureDetail(build), "Build failed")
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	case dep.State == deliverycore.DeploymentStateSuperseded && !passedState(dep, deliverycore.DeploymentStateScheduling):
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Superseded by a newer build")
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	case dep.State == deliverycore.DeploymentStateCancelled && !passedState(dep, deliverycore.DeploymentStateScheduling):
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Build cancelled")
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	case passedState(dep, deliverycore.DeploymentStateScheduling) || deploymentProgressAtLeast(dep.State, deliverycore.DeploymentStateScheduling):
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SUCCEEDED
 		stage.Detail = "Image ready"
@@ -112,7 +114,7 @@ func lifecycleBuildStage(dep deliverycore.DeploymentRecord, service deliverycore
 		if build != nil && build.FinishedAt.Valid {
 			finished = build.FinishedAt.Time
 		}
-		stage.FinishedAt = deliverycore.Ts(finished)
+		stage.FinishedAt = ts(finished)
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING
 		stage.Detail = "Waiting for source"
@@ -122,7 +124,7 @@ func lifecycleBuildStage(dep deliverycore.DeploymentRecord, service deliverycore
 
 func lifecycleDeployStage(dep deliverycore.DeploymentRecord, service deliverycore.ServiceRecord, build *deliverycore.BuildRunRecord) *platformv1.DeploymentStage {
 	stage := &platformv1.DeploymentStage{
-		Key:   StageDeploy,
+		Key:   logs.StageDeploy,
 		Label: "Deploy",
 	}
 	if !reachedDeployPhase(dep) {
@@ -134,16 +136,16 @@ func lifecycleDeployStage(dep deliverycore.DeploymentRecord, service deliverycor
 	if build != nil && build.FinishedAt.Valid {
 		started = build.FinishedAt.Time
 	}
-	stage.StartedAt = deliverycore.Ts(started)
+	stage.StartedAt = ts(started)
 	switch {
 	case dep.State == deliverycore.DeploymentStateFailed && !passedState(dep, deliverycore.DeploymentStateReadiness):
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Deploy failed")
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	case dep.State == deliverycore.DeploymentStateCrashed && !passedState(dep, deliverycore.DeploymentStateReadiness):
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Deploy failed")
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	case dep.State == deliverycore.DeploymentStateScheduling, dep.State == deliverycore.DeploymentStateImagePull, dep.State == deliverycore.DeploymentStateStarting:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, deliverycore.DefaultDetailForState(dep.State))
@@ -153,7 +155,7 @@ func lifecycleDeployStage(dep deliverycore.DeploymentRecord, service deliverycor
 		if service.AllocatedAgentID != "" {
 			stage.Detail = "Running on " + service.AllocatedAgentID
 		}
-		stage.FinishedAt = deliverycore.Ts(firstTransitionTime(dep, deliverycore.DeploymentStateReadiness, dep.UpdatedAt))
+		stage.FinishedAt = ts(firstTransitionTime(dep, deliverycore.DeploymentStateReadiness, dep.UpdatedAt))
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING
 		stage.Detail = "Waiting for scheduler"
@@ -163,7 +165,7 @@ func lifecycleDeployStage(dep deliverycore.DeploymentRecord, service deliverycor
 
 func lifecyclePostDeployStage(dep deliverycore.DeploymentRecord, _ *deliverycore.BuildRunRecord) *platformv1.DeploymentStage {
 	stage := &platformv1.DeploymentStage{
-		Key:   StagePostDeploy,
+		Key:   logs.StagePostDeploy,
 		Label: "Post-deploy",
 	}
 	if !reachedPostDeployPhase(dep) {
@@ -171,7 +173,7 @@ func lifecyclePostDeployStage(dep deliverycore.DeploymentRecord, _ *deliverycore
 		stage.Detail = "Waiting for rollout"
 		return stage
 	}
-	stage.StartedAt = deliverycore.Ts(firstTransitionTime(dep, deliverycore.DeploymentStateReadiness, dep.UpdatedAt))
+	stage.StartedAt = ts(firstTransitionTime(dep, deliverycore.DeploymentStateReadiness, dep.UpdatedAt))
 	switch dep.State {
 	case deliverycore.DeploymentStateReadiness:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING
@@ -179,15 +181,15 @@ func lifecyclePostDeployStage(dep deliverycore.DeploymentRecord, _ *deliverycore
 	case deliverycore.DeploymentStateFailed, deliverycore.DeploymentStateCrashed:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_FAILED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Workload unhealthy")
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	case deliverycore.DeploymentStateActive, deliverycore.DeploymentStateDraining, deliverycore.DeploymentStateCompleted:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SUCCEEDED
 		stage.Detail = deliverycore.FirstNonEmpty(detailForState(dep, deliverycore.DeploymentStateActive), "Deployment ready")
-		stage.FinishedAt = deliverycore.Ts(firstTransitionTime(dep, deliverycore.DeploymentStateActive, dep.UpdatedAt))
+		stage.FinishedAt = ts(firstTransitionTime(dep, deliverycore.DeploymentStateActive, dep.UpdatedAt))
 	case deliverycore.DeploymentStateCancelled, deliverycore.DeploymentStateRemoved, deliverycore.DeploymentStateSuperseded:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, deliverycore.DefaultDetailForState(dep.State))
-		stage.FinishedAt = deliverycore.Ts(dep.UpdatedAt)
+		stage.FinishedAt = ts(dep.UpdatedAt)
 	default:
 		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING
 		stage.Detail = deliverycore.FirstNonEmpty(dep.Detail, "Waiting for HTTP readiness check")

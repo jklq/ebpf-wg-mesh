@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func Ipv4SubnetAt(poolCIDR string, prefixBits int, ordinal uint64) (string, error) {
+func ipv4SubnetAt(poolCIDR string, prefixBits int, ordinal uint64) (string, error) {
 	pool, err := netip.ParsePrefix(poolCIDR)
 	if err != nil || !pool.Addr().Is4() {
 		return "", fmt.Errorf("parse IPv4 workload pool %q", poolCIDR)
@@ -64,11 +64,11 @@ func nextIPv4AddressFromSubnet(subnetCIDR string, used map[string]struct{}) (str
 	return "", fmt.Errorf("IPv4 workload subnet %q exhausted", subnetCIDR)
 }
 
-func Ipv4PrefixesOverlap(left, right netip.Prefix) bool {
+func ipv4PrefixesOverlap(left, right netip.Prefix) bool {
 	return left.Contains(right.Addr()) || right.Contains(left.Addr())
 }
 
-func Ts(v time.Time) *timestamppb.Timestamp {
+func ts(v time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(v)
 }
 

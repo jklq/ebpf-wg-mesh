@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -126,7 +128,7 @@ func (d *Delivery) applyDeploymentAction(
 			return err
 		}
 		actionRecord = DeploymentActionRecord{
-			ID:                 MustID(),
+			ID:                 uuid.NewString(),
 			ServiceID:          serviceID,
 			TargetDeploymentID: deploymentID,
 			ResultDeploymentID: resultDeploymentID,
@@ -528,11 +530,11 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	if err != nil {
 		return "", err
 	}
-	revision, err := s.sourceRevisionByIDTx(ctx, tx, build.SourceRevisionID)
+	revision, err := s.sourceStore.SourceRevisionByIDTx(ctx, tx, build.SourceRevisionID)
 	if err != nil {
 		return "", err
 	}
-	snapshot, err := s.sourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
+	snapshot, err := s.sourceStore.SourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
 	if err != nil {
 		return "", err
 	}
@@ -561,7 +563,7 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 
 func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, target DeploymentRecord, userID string) (string, error) {
 	s := d.store
-	if target.ResolvedSpec == nil || DesiredSourceSpec(target.ResolvedSpec) == nil {
+	if target.ResolvedSpec == nil || source.DesiredSourceSpec(target.ResolvedSpec) == nil {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image or source configuration", ErrDeploymentActionInvalid)
 	}
 	existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
@@ -625,8 +627,8 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 }
 
 func (s *persistence) latestSuccessfulDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID, excludeID string) (DeploymentRecord, bool, error) {
-	rec, err := ScanDeploymentRow(tx.QueryRowContext(ctx,
-		`SELECT `+DeploymentSelectColumns+` FROM deployments
+	rec, err := scanDeploymentRow(tx.QueryRowContext(ctx,
+		`SELECT `+deploymentSelectColumns+` FROM deployments
 		  WHERE service_id = $1 AND id != $2 AND state IN ($3, $4, $5) AND image_digest != ''
 		  ORDER BY rollout_generation DESC, created_at DESC LIMIT 1 FOR UPDATE`,
 		serviceID, excludeID, DeploymentStateActive, DeploymentStateCompleted, DeploymentStateDraining,

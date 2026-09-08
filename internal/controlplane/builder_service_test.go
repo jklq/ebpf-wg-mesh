@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
 	})
-	builderService := NewBuilderService(NewBuildOperations(store.builds, newDelivery(store, notifier, nil, nil), registry, registry, 0))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), registry, registry, 0))
 	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
@@ -133,7 +134,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, newDelivery(store, notifier, nil, nil), nil, nil, 0))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), nil, nil, 0))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -193,7 +194,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
 	observedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	_, err = builderService.ReportBuildLogs(
@@ -234,7 +235,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if lines[0].AgentID != "builder-1" {
 		t.Fatalf("expected caller builder id to be recorded, got %q", lines[0].AgentID)
 	}
-	if lines[0].LogType != LogTypeBuild || lines[0].BuildID != build.ID || lines[0].Stage != StageBuild {
+	if lines[0].LogType != logs.LogTypeBuild || lines[0].BuildID != build.ID || lines[0].Stage != logs.StageBuild {
 		t.Fatalf("unexpected build log metadata %+v", lines[0])
 	}
 	if lines[0].Stream != "stdout" || lines[0].Line != "step 1/3" || !lines[0].ObservedAt.Equal(observedAt) {
@@ -285,7 +286,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	disabledWriter := &recordingLogWriter{enabled: false}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: disabledWriter})))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0, WithBuilderLogEmitter(logs.NewLogEmitter(disabledWriter))))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
@@ -297,7 +298,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	}
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService = NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0, WithBuilderLogEmitter(&LogEmitter{store: writer})))
+	builderService = NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{BuildId: build.ID},
@@ -311,24 +312,24 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 
 type recordingLogWriter struct {
 	enabled bool
-	batches [][]LogLineInput
+	batches [][]logs.LogLineInput
 }
 
 func (w *recordingLogWriter) Enabled() bool {
 	return w != nil && w.enabled
 }
 
-func (w *recordingLogWriter) WriteLogLines(_ context.Context, inputs []LogLineInput) error {
+func (w *recordingLogWriter) WriteLogLines(_ context.Context, inputs []logs.LogLineInput) error {
 	if !w.Enabled() {
 		return nil
 	}
-	clone := append([]LogLineInput(nil), inputs...)
+	clone := append([]logs.LogLineInput(nil), inputs...)
 	w.batches = append(w.batches, clone)
 	return nil
 }
 
-func (w *recordingLogWriter) Flatten() []LogLineInput {
-	var out []LogLineInput
+func (w *recordingLogWriter) Flatten() []logs.LogLineInput {
+	var out []logs.LogLineInput
 	for _, batch := range w.batches {
 		out = append(out, batch...)
 	}

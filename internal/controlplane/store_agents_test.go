@@ -30,7 +30,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 					if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 						t.Fatalf("upsertAgent(%s): %v", hello.GetAgentId(), err)
 					}
-					agent, err := store.reads.deliveryQueries().AgentByID(ctx, hello.GetAgentId())
+					agent, err := store.reads.AgentByID(ctx, hello.GetAgentId())
 					if err != nil {
 						t.Fatal(err)
 					}

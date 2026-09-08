@@ -12,10 +12,10 @@ func (s *persistence) projectByIDInternalQuerier(ctx context.Context, q ServiceQ
 		  WHERE id = $1`,
 		projectID,
 	)
-	return ScanProjectRow(row)
+	return scanProjectRow(row)
 }
 
-func ScanProjectRow(scanner interface{ Scan(...any) error }) (ProjectRecord, error) {
+func scanProjectRow(scanner interface{ Scan(...any) error }) (ProjectRecord, error) {
 	var rec ProjectRecord
 	var kind string
 	if err := scanner.Scan(&rec.ID, &rec.Name, &kind, &rec.SystemKey, &rec.CreatedAt); err != nil {

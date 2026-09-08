@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -22,24 +24,24 @@ func createService(ctx context.Context, store *persistence, userID, environmentI
 }
 
 func createScheduledService(ctx context.Context, store *persistence, userID, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error) {
-	return testDelivery(store).CreateScheduledService(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), environmentID, name, spec)
+	return testDelivery(store).CreateScheduledService(identity.WithDelegatedUser(ctx, userID), environmentID, name, spec)
 }
 
 func updateService(ctx context.Context, store *persistence, userID, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
-	return testDelivery(store).UpdateService(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), serviceID, name, spec)
+	return testDelivery(store).UpdateService(identity.WithDelegatedUser(ctx, userID), serviceID, name, spec)
 }
 
 func deleteService(ctx context.Context, store *persistence, userID, serviceID string) error {
-	return testDelivery(store).DeleteService(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), serviceID)
+	return testDelivery(store).DeleteService(identity.WithDelegatedUser(ctx, userID), serviceID)
 }
 
 func scaleService(ctx context.Context, store *persistence, userID, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
-	service, allocs, _, err := testDelivery(store).ScaleService(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), serviceID, desired)
+	service, allocs, _, err := testDelivery(store).ScaleService(identity.WithDelegatedUser(ctx, userID), serviceID, desired)
 	return service, allocs, err
 }
 
 func discardServiceChanges(ctx context.Context, store *persistence, userID, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error) {
-	return testDelivery(store).DiscardServiceChanges(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), serviceID, changeIDs, discardAll)
+	return testDelivery(store).DiscardServiceChanges(identity.WithDelegatedUser(ctx, userID), serviceID, changeIDs, discardAll)
 }
 
 func desiredStateForAgent(ctx context.Context, store *persistence, agentID string) (*agentv1.DesiredNodeState, error) {
@@ -58,8 +60,8 @@ func registerAgent(ctx context.Context, store *persistence, hello *agentv1.Agent
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 
-func claimNextSourceWorkItem(ctx context.Context, store *persistence, processorID string, staleAfter time.Duration) (deliverycore.SourceWorkItemRecord, error) {
-	return (&GitHubCoordinator{store: store.source}).ClaimNextWorkItem(ctx, processorID, staleAfter)
+func claimNextSourceWorkItem(ctx context.Context, store *persistence, processorID string, staleAfter time.Duration) (source.SourceWorkItemRecord, error) {
+	return store.source.ClaimNextSourceWorkItem(ctx, processorID, staleAfter)
 }
 
 func completeBuildForTest(ctx context.Context, store *persistence, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) error {
@@ -68,7 +70,7 @@ func completeBuildForTest(ctx context.Context, store *persistence, builderID, bu
 }
 
 func applyDeploymentActionForTest(ctx context.Context, store *persistence, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.ServiceRecord, deliverycore.DeploymentActionRecord, error) {
-	result, err := testDelivery(store).ApplyDeploymentAction(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), serviceID, deploymentID, action, idempotencyKey, allocationID)
+	result, err := testDelivery(store).ApplyDeploymentAction(identity.WithDelegatedUser(ctx, userID), serviceID, deploymentID, action, idempotencyKey, allocationID)
 	if err != nil {
 		return deliverycore.ServiceRecord{}, deliverycore.DeploymentActionRecord{}, err
 	}
@@ -78,12 +80,15 @@ func applyDeploymentActionForTest(ctx context.Context, store *persistence, userI
 }
 
 func enqueueBuildForTest(ctx context.Context, store *persistence, userID, serviceID, commitSHA string) (deliverycore.BuildRunRecord, error) {
-	binding, err := store.source.sourceBindingByServiceID(ctx, serviceID)
+	binding, err := store.source.SourceBindingByServiceID(ctx, serviceID)
 	if err != nil {
 		return deliverycore.BuildRunRecord{}, err
 	}
-	result, err := testDelivery(store).QueueSourceBuild(ctx, binding, commitSHA, deliverycore.SourceSnapshotRecord{})
-	return result.Build, err
+	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, commitSHA, source.SourceSnapshotRecord{})
+	if err != nil {
+		return deliverycore.BuildRunRecord{}, err
+	}
+	return store.reads.BuildByID(ctx, queued.BuildID)
 }
 
 func releaseEnvironmentServiceForTest(ctx context.Context, store *persistence, userID, environmentID, serviceID string) (deliverycore.ServiceRecord, error) {
@@ -102,7 +107,7 @@ func releaseEnvironmentServiceForTest(ctx context.Context, store *persistence, u
 // Release fixtures use the same authorized operation as the transport.
 func releaseEnvironmentForTest(ctx context.Context, store *persistence, userID, environmentID string) ([]deliverycore.ServiceRecord, []string, error) {
 	notifier := &releaseTestNotifier{}
-	released, err := newTestDelivery(store, notifier, nil, nil).ReleaseEnvironment(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), environmentID)
+	released, err := newTestDelivery(store, notifier, nil, nil).ReleaseEnvironment(identity.WithDelegatedUser(ctx, userID), environmentID)
 	services := make([]deliverycore.ServiceRecord, 0, len(released))
 	for _, result := range released {
 		services = append(services, result.Service)

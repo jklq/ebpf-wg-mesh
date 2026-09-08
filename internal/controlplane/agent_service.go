@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,9 +21,10 @@ type AgentService struct {
 	agentv1.UnimplementedAgentControlServer
 	store                   *fleetPersistence
 	delivery                agentDelivery
-	logStore                *LogStore
+	logStore                *logs.LogStore
 	notifier                *Notifier
-	authority               *TLSAuthority
+	authority               *identity.TLSAuthority
+	enrollment              *identity.Enrollment
 	dashboard               *ManagedDashboardReconciler
 	dashboardEnabled        bool
 	dashboardTrustedAgentID string
@@ -44,9 +47,10 @@ func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
 	}
 }
 
-func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *LogStore, notifier *Notifier, authority *TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
+func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *logs.LogStore, notifier *Notifier, authority *identity.TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
 	service := &AgentService{
 		store: store, delivery: delivery, logStore: logStore, notifier: notifier, authority: authority, dashboard: dashboard,
+		enrollment:              identity.NewEnrollment(store, authority),
 		dashboardEnabled:        dashboardEnabled,
 		dashboardTrustedAgentID: strings.TrimSpace(dashboardTrustedAgentID),
 		dashboardCallerID:       strings.TrimSpace(dashboardCallerID),
@@ -60,51 +64,18 @@ func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *
 }
 
 func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
-	if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
-		return nil, err
-	}
-	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
-	}
-	if authenticated {
-		if caller.Class != serviceCallerAgent {
-			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
-		}
-		if caller.ID != req.GetAgentId() {
-			return nil, status.Error(codes.PermissionDenied, "client certificate does not match agent_id")
-		}
-	}
-	if err := s.store.authorizeAgentCredential(ctx, req.GetAgentId()); err != nil {
-		return nil, status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
-	}
-	if !authenticated {
-		if err := s.store.consumeAgentBootstrapToken(ctx, req.GetAgentId(), req.GetBootstrapToken()); err != nil {
-			return nil, status.Error(codes.Unauthenticated, "invalid bootstrap token")
-		}
-	}
-	resp, err := s.authority.Enroll(req)
-	if err != nil {
-		return nil, err
-	}
-	if serial, err := certificateSerialFromPEM(resp.GetCertPem()); err != nil {
-		return nil, status.Errorf(codes.Internal, "record agent certificate: %v", err)
-	} else if err := s.store.recordAgentCertificate(ctx, req.GetAgentId(), serial); err != nil {
-		return nil, status.Errorf(codes.Internal, "record agent certificate: %v", err)
-	}
-	slog.Info("agent certificate issued", "agent_id", req.GetAgentId(), "authenticated_renewal", authenticated)
-	return resp, nil
+	return s.enrollment.EnrollAgent(ctx, req)
 }
 
 func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
-	if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+	if err := identity.CheckClientCertificateRevocation(s.authority.Revocations(), identity.VerifiedClientCertificateFromContext(ctx)); err != nil {
 		return nil, err
 	}
-	caller, err := ServiceCallerFromContext(ctx)
+	caller, err := identity.ServiceCallerFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if caller.Class != serviceCallerAgent || caller.ID != req.GetAgentId() {
+	if caller.Class != identity.CallerAgent || caller.ID != req.GetAgentId() {
 		return nil, status.Error(codes.PermissionDenied, "client certificate does not match agent_id")
 	}
 	if !s.dashboardEnabled || s.dashboardTrustedAgentID == "" || caller.ID != s.dashboardTrustedAgentID {
@@ -120,7 +91,7 @@ func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req
 
 func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	ctx := stream.Context()
-	if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+	if err := identity.CheckClientCertificateRevocation(s.authority.Revocations(), identity.VerifiedClientCertificateFromContext(ctx)); err != nil {
 		return err
 	}
 	first, err := stream.Recv()
@@ -131,20 +102,20 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if hello == nil {
 		return status.Error(codes.InvalidArgument, "first message must be hello")
 	}
-	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
+	caller, authenticated, err := identity.AuthenticatedServiceCallerFromContext(ctx)
 	if err != nil {
 		return status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
 	}
 	if !authenticated {
 		return status.Error(codes.Unauthenticated, "client certificate is required")
 	}
-	if caller.Class != serviceCallerAgent {
+	if caller.Class != identity.CallerAgent {
 		return status.Error(codes.PermissionDenied, "agent client certificate required")
 	}
 	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
 	}
-	if err := s.store.authorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
+	if err := s.store.AuthorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
 		return status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
 	}
 	changed, err := s.delivery.RegisterAgent(ctx, hello)
@@ -165,7 +136,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, notifyCh)
 	}()
 	if changed {
-		ids, err := s.store.reads.deliveryQueries().AgentIDs(ctx)
+		ids, err := s.store.reads.AgentIDs(ctx)
 		if err != nil {
 			return status.Errorf(codes.Internal, "list agents for notify: %v", err)
 		}
@@ -182,10 +153,10 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		if err != nil {
 			return err
 		}
-		if err := checkClientCertificateRevocation(s.authority.revocations, verifiedClientCertificateFromContext(ctx)); err != nil {
+		if err := identity.CheckClientCertificateRevocation(s.authority.Revocations(), identity.VerifiedClientCertificateFromContext(ctx)); err != nil {
 			return err
 		}
-		if err := s.store.authorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
+		if err := s.store.AuthorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
 			return status.Error(codes.PermissionDenied, "agent credentials were revoked")
 		}
 		switch payload := msg.Payload.(type) {
@@ -264,7 +235,7 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 	if s == nil || report == nil || s.logStore == nil || !s.logStore.Enabled() {
 		return
 	}
-	var lines []LogLineInput
+	var lines []logs.LogLineInput
 	for _, cond := range report.GetServices() {
 		if cond.GetPhase() != restartpolicy.PhaseCrashLoop && !cond.GetRestart().GetCrashLoop() {
 			continue
@@ -286,17 +257,17 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 			"allocation_id", cond.GetAllocationId(),
 			"message", message,
 		)
-		lines = append(lines, LogLineInput{
+		lines = append(lines, logs.LogLineInput{
 			ObservedAt:        time.Now().UTC(),
 			EnvironmentID:     alloc.EnvironmentID,
 			ServiceID:         cond.GetServiceId(),
 			AllocationID:      cond.GetAllocationId(),
 			AgentID:           agentID,
 			Stream:            "combined",
-			LogType:           LogTypeDeploy,
+			LogType:           logs.LogTypeDeploy,
 			Stage:             "restart",
 			RolloutGeneration: cond.GetDesiredRolloutGeneration(),
-			Sequence:          nextSynthSequence(),
+			Sequence:          logs.NextSequence(),
 			Line:              message,
 		})
 	}

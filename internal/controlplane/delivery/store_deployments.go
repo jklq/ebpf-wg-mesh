@@ -17,7 +17,7 @@ func (s *persistence) listServiceDeployments(ctx context.Context, userID, servic
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+DeploymentSelectColumns+`
+		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE service_id = $1
 		  ORDER BY created_at DESC, rollout_generation DESC, id DESC
@@ -31,7 +31,7 @@ func (s *persistence) listServiceDeployments(ctx context.Context, userID, servic
 
 	var records []DeploymentRecord
 	for rows.Next() {
-		rec, err := ScanDeploymentRow(rows)
+		rec, err := scanDeploymentRow(rows)
 		if err != nil {
 			return nil, err
 		}

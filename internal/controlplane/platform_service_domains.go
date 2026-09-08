@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"errors"
 	"log/slog"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.CreateVolumeRequest) (*platformv1.Volume, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +32,7 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 }
 
 func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.DeleteVolumeRequest) (*emptypb.Empty, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +50,7 @@ func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.Dele
 }
 
 func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListVolumesRequest) (*platformv1.ListVolumesResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -65,59 +66,57 @@ func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListV
 }
 
 func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platformv1.CreateDomainBindingRequest) (*platformv1.DomainBinding, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
+	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	return s.domains.CreateDomainBinding(ctx, req)
 }
 
 func (s *PlatformService) GenerateDomainBinding(ctx context.Context, req *platformv1.GenerateDomainBindingRequest) (*platformv1.DomainBinding, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
+	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	return s.domains.GenerateDomainBinding(ctx, req)
 }
 
 func (s *PlatformService) GetDomainBinding(ctx context.Context, req *platformv1.GetDomainBindingRequest) (*platformv1.DomainBinding, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	binding, err := s.store.domainBindingByHostname(ctx, identity.UserID, req.GetHostname())
+	binding, err := s.domains.GetDomainBinding(ctx, identity.UserID, req.GetHostname())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "get domain binding: %v", err)
 	}
-	return s.domains.annotateDomainBinding(ctx, identity.UserID, binding), nil
+	return binding, nil
 }
 
 func (s *PlatformService) ListDomainBindings(ctx context.Context, req *platformv1.ListDomainBindingsRequest) (*platformv1.ListDomainBindingsResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listDomainBindings(ctx, identity.UserID, req.GetServiceId())
+	items, err := s.domains.ListDomainBindings(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list domain bindings: %v", err)
 	}
 	resp := &platformv1.ListDomainBindingsResponse{Bindings: make([]*platformv1.DomainBinding, 0, len(items))}
-	for _, item := range items {
-		resp.Bindings = append(resp.Bindings, s.domains.annotateDomainBinding(ctx, identity.UserID, item))
-	}
+	resp.Bindings = append(resp.Bindings, items...)
 	return resp, nil
 }
 
 func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platformv1.UpdateDomainBindingRequest) (*platformv1.DomainBinding, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
+	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	return s.domains.UpdateDomainBinding(ctx, req)
 }
 
 func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platformv1.DeleteDomainBindingRequest) (*emptypb.Empty, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
+	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	return s.domains.DeleteDomainBinding(ctx, req)

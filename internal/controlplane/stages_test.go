@@ -3,6 +3,7 @@ package controlplane
 import (
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"testing"
 	"time"
 
@@ -40,17 +41,17 @@ func TestDeploymentStagesOmitsInitializationForBuildDrivenSourceDeployments(t *t
 	if len(stages) != 3 {
 		t.Fatalf("expected 3 stages, got %d", len(stages))
 	}
-	if stages[0].GetKey() != StageBuild {
+	if stages[0].GetKey() != logs.StageBuild {
 		t.Fatalf("expected first stage to be build, got %q", stages[0].GetKey())
 	}
-	if stages[2].GetKey() != StagePostDeploy {
+	if stages[2].GetKey() != logs.StagePostDeploy {
 		t.Fatalf("expected last stage to be post-deploy, got %q", stages[2].GetKey())
 	}
 	if stages[2].GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_PENDING {
 		t.Fatalf("expected post-deploy pending while build is still running, got %v", stages[2].GetState())
 	}
 	for _, stage := range stages {
-		if stage.GetKey() == StageInitialization {
+		if stage.GetKey() == logs.StageInitialization {
 			t.Fatalf("expected initialization stage to be omitted for build-driven source deployment")
 		}
 	}
@@ -79,7 +80,7 @@ func TestDeploymentStagesKeepsInitializationForDirectImageDeployments(t *testing
 	if len(stages) != 4 {
 		t.Fatalf("expected 4 stages, got %d", len(stages))
 	}
-	if stages[0].GetKey() != StageInitialization {
+	if stages[0].GetKey() != logs.StageInitialization {
 		t.Fatalf("expected first stage to be initialization, got %q", stages[0].GetKey())
 	}
 }
@@ -114,14 +115,14 @@ func TestDeploymentStagesDoesNotRegressDeployAfterRolloutApplied(t *testing.T) {
 
 	stages := deploymentStages(service, build)
 	deploy := stages[1]
-	if deploy.GetKey() != StageDeploy {
+	if deploy.GetKey() != logs.StageDeploy {
 		t.Fatalf("expected second stage to be deploy, got %q", deploy.GetKey())
 	}
 	if deploy.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SUCCEEDED {
 		t.Fatalf("expected deploy to stay succeeded once rollout is applied, got %v", deploy.GetState())
 	}
 	postDeploy := stages[2]
-	if postDeploy.GetKey() != StagePostDeploy {
+	if postDeploy.GetKey() != logs.StagePostDeploy {
 		t.Fatalf("expected third stage to be post-deploy, got %q", postDeploy.GetKey())
 	}
 	if postDeploy.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_RUNNING {

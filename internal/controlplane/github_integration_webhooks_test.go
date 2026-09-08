@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 	if got := server.branchHeadHits(); got != branchHitsBeforeCreate {
 		t.Fatalf("expected no branch head lookup during create, got %d new calls", got-branchHitsBeforeCreate)
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 0 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindSourceSpecChanged); got != 0 {
 		t.Fatalf("expected staged service to queue no work, got %d", got)
 	}
 	if _, err := service.ReleaseEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ReleaseEnvironmentRequest{
@@ -68,7 +69,7 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 	}); err != nil {
 		t.Fatalf("ReleaseEnvironment: %v", err)
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 1 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindSourceSpecChanged); got != 1 {
 		t.Fatalf("expected release to queue 1 sync item, got %d", got)
 	}
 }
@@ -116,7 +117,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 	if updateResp.GetLatestBuild().GetBuildId() != "" {
 		t.Fatalf("expected no synchronous build on source update, got %+v", updateResp.GetLatestBuild())
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 0 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindSourceSpecChanged); got != 0 {
 		t.Fatalf("expected source update to remain staged until deployment, got %d queued items", got)
 	}
 
@@ -138,7 +139,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 	if got := server.branchHeadHits(); got != branchHitsBeforeMutations {
 		t.Fatalf("expected no branch head lookup in update/deploy, got %d new calls", got-branchHitsBeforeMutations)
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 1 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindSourceSpecChanged); got != 1 {
 		t.Fatalf("expected 1 queued sync item after release, got %d", got)
 	}
 }
@@ -172,7 +173,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		processed, err := reconciler.processNext(ctx)
+		processed, err := reconciler.ProcessNext(ctx)
 		if err != nil {
 			t.Fatalf("processNext(%d): %v", i, err)
 		}
@@ -180,7 +181,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 			break
 		}
 	}
-	status, _, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
+	status, _, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceStatus: %v", err)
 	}
@@ -194,16 +195,16 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 		t.Fatalf("expected synced build commit author to be persisted, got %+v", status.LatestBuild)
 	}
 
-	if _, err := store.source.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
-		Kind:           deliverycore.SourceWorkKindSourceSpecChanged,
-		IdempotencyKey: fmt.Sprintf("%s:%s:%d", deliverycore.SourceWorkKindSourceSpecChanged, service.ID, service.SpecRevision),
+	if _, err := store.source.EnqueueSourceWorkItem(ctx, source.SourceWorkItemRecord{
+		Kind:           source.SourceWorkKindSourceSpecChanged,
+		IdempotencyKey: fmt.Sprintf("%s:%s:%d", source.SourceWorkKindSourceSpecChanged, service.ID, service.SpecRevision),
 		ServiceID:      service.ID,
 		SpecRevision:   service.SpecRevision,
 	}); err != nil {
-		t.Fatalf("enqueueSourceWorkItem(sync retry): %v", err)
+		t.Fatalf("EnqueueSourceWorkItem(sync retry): %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		processed, err := reconciler.processNext(ctx)
+		processed, err := reconciler.ProcessNext(ctx)
 		if err != nil {
 			t.Fatalf("processNext(retry %d): %v", i, err)
 		}
@@ -262,7 +263,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 	}
 
 	for i := 0; i < 4; i++ {
-		processed, err := reconciler.processNext(ctx)
+		processed, err := reconciler.ProcessNext(ctx)
 		if err != nil {
 			t.Fatalf("processNext(%d): %v", i, err)
 		}
@@ -276,19 +277,19 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		commit  string
 	}{{first, "commit-public-main"}, {second, "commit-public-release"}} {
 		service := item.service
-		status, _, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
+		status, _, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
 		if err != nil {
-			t.Fatalf("serviceStatus(%s): %v", service.Name, err)
+			t.Fatalf("ServiceStatus(%s): %v", service.Name, err)
 		}
 		if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != item.commit {
 			t.Fatalf("expected %s build for environment %s, got %+v", item.commit, service.EnvironmentID, status.LatestBuild)
 		}
 	}
-	mainBindings, err := store.source.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "main")
+	mainBindings, err := store.source.SourceBindingsForGitHubRepositoryAndRef(ctx, "1", "main")
 	if err != nil || len(mainBindings) != 1 || mainBindings[0].ServiceID != first.ID {
 		t.Fatalf("main matched the wrong environment services: %#v: %v", mainBindings, err)
 	}
-	releaseBindings, err := store.source.sourceBindingsForGitHubRepositoryAndRef(ctx, "1", "release")
+	releaseBindings, err := store.source.SourceBindingsForGitHubRepositoryAndRef(ctx, "1", "release")
 	if err != nil || len(releaseBindings) != 1 || releaseBindings[0].ServiceID != second.ID {
 		t.Fatalf("release matched the wrong environment services: %#v: %v", releaseBindings, err)
 	}
@@ -316,10 +317,10 @@ func TestPushAndInstallationWebhooksOnlyQueueCoordinatorWork(t *testing.T) {
 		"repository":{"id":2,"name":"secret","full_name":"private/secret","owner":{"login":"private"}},
 		"installation":{"id":7}
 	}`)
-	if err := processor.processPushEvent(ctx, pushPayload); err != nil {
+	if err := processor.ProcessPushEvent(ctx, pushPayload); err != nil {
 		t.Fatalf("processPushEvent(first): %v", err)
 	}
-	if err := processor.processPushEvent(ctx, pushPayload); err != nil {
+	if err := processor.ProcessPushEvent(ctx, pushPayload); err != nil {
 		t.Fatalf("processPushEvent(second): %v", err)
 	}
 	var buildCount int
@@ -329,7 +330,7 @@ func TestPushAndInstallationWebhooksOnlyQueueCoordinatorWork(t *testing.T) {
 	if buildCount != 0 {
 		t.Fatalf("expected webhook to queue work, not build directly, got %d build rows", buildCount)
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindRevisionObserved); got != 1 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindRevisionObserved); got != 1 {
 		t.Fatalf("expected one queued build command after duplicate push, got %d", got)
 	}
 
@@ -337,10 +338,10 @@ func TestPushAndInstallationWebhooksOnlyQueueCoordinatorWork(t *testing.T) {
 		"action":"created",
 		"installation":{"id":9,"target_type":"Organization","account":{"login":"octo","type":"Organization"}}
 	}`)
-	if err := processor.processInstallationEvent(ctx, installationPayload); err != nil {
+	if err := processor.ProcessInstallationEvent(ctx, installationPayload); err != nil {
 		t.Fatalf("processInstallationEvent: %v", err)
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindProviderAccessChanged); got != 1 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindProviderAccessChanged); got != 1 {
 		t.Fatalf("expected one queued refresh command, got %d", got)
 	}
 }
@@ -372,7 +373,7 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 		"repository":{"id":2,"name":"secret","full_name":"private/secret","owner":{"login":"private"}},
 		"installation":{"id":7}
 	}`)
-	if err := processor.processPushEvent(ctx, pushPayload); err != nil {
+	if err := processor.ProcessPushEvent(ctx, pushPayload); err != nil {
 		t.Fatalf("processPushEvent: %v", err)
 	}
 
@@ -383,7 +384,7 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 		  WHERE kind = $1
 		  ORDER BY created_at DESC
 		  LIMIT 1`,
-		deliverycore.SourceWorkKindRevisionObserved,
+		source.SourceWorkKindRevisionObserved,
 	).Scan(&commitMessage, &commitAuthor); err != nil {
 		t.Fatalf("query queued source work item: %v", err)
 	}
@@ -440,13 +441,13 @@ func TestGitHubReconcilerBootstrapRequeuesStaleWork(t *testing.T) {
 	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
 	ctx := context.Background()
 
-	if _, err := store.source.enqueueSourceWorkItem(ctx, deliverycore.SourceWorkItemRecord{
-		Kind:                    deliverycore.SourceWorkKindProviderAccessChanged,
+	if _, err := store.source.EnqueueSourceWorkItem(ctx, source.SourceWorkItemRecord{
+		Kind:                    source.SourceWorkKindProviderAccessChanged,
 		IdempotencyKey:          "bootstrap-refresh-7",
 		Provider:                "github",
-		ProviderScopeExternalID: scopeExternalID(7),
+		ProviderScopeExternalID: source.ScopeExternalID(7),
 	}); err != nil {
-		t.Fatalf("enqueueSourceWorkItem: %v", err)
+		t.Fatalf("EnqueueSourceWorkItem: %v", err)
 	}
 	claimed, err := claimNextSourceWorkItem(ctx, store, "processor-1", 0)
 	if err != nil {
@@ -478,7 +479,7 @@ func TestGitHubWebhookHandlerRejectsInvalidSignatureAndAcceptsValidSignature(t *
 	t.Parallel()
 
 	store := openTestStore(t)
-	handler := NewGitHubWebhookHandler(store.source, "topsecret", &GitHubWebhookProcessor{requestCh: make(chan struct{}, 1)})
+	handler := NewGitHubWebhookHandler(store.source, "topsecret", noopWebhookProcessor{})
 	payload := []byte(`{"zen":"ship it"}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))

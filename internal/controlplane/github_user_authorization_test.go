@@ -64,19 +64,19 @@ func TestGitHubUserAuthorizationStatus(t *testing.T) {
 
 	for _, test := range []struct {
 		name  string
-		cause error
+		Cause error
 		want  codes.Code
 	}{
-		{name: "missing token", cause: errGitHubUserAccessTokenRequired, want: codes.Unauthenticated},
-		{name: "expired token", cause: &gitHubAPIError{StatusCode: 401}, want: codes.Unauthenticated},
-		{name: "forbidden repository", cause: &gitHubAPIError{StatusCode: 403}, want: codes.PermissionDenied},
-		{name: "hidden repository", cause: &gitHubAPIError{StatusCode: 404}, want: codes.PermissionDenied},
-		{name: "repository identity mismatch", cause: errGitHubRepositoryIdentityMismatch, want: codes.PermissionDenied},
-		{name: "github server failure", cause: &gitHubAPIError{StatusCode: 503}, want: codes.Unavailable},
-		{name: "github transport failure", cause: errors.New("connection reset"), want: codes.Unavailable},
+		{name: "missing token", Cause: errGitHubUserAccessTokenRequired, want: codes.Unauthenticated},
+		{name: "expired token", Cause: &gitHubAPIError{StatusCode: 401}, want: codes.Unauthenticated},
+		{name: "forbidden repository", Cause: &gitHubAPIError{StatusCode: 403}, want: codes.PermissionDenied},
+		{name: "hidden repository", Cause: &gitHubAPIError{StatusCode: 404}, want: codes.PermissionDenied},
+		{name: "repository identity mismatch", Cause: errGitHubRepositoryIdentityMismatch, want: codes.PermissionDenied},
+		{name: "github server failure", Cause: &gitHubAPIError{StatusCode: 503}, want: codes.Unavailable},
+		{name: "github transport failure", Cause: errors.New("connection reset"), want: codes.Unavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := gitHubUserAuthorizationStatus(&gitHubUserRepositoryAuthorizationError{cause: test.cause})
+			err := gitHubUserAuthorizationStatus(&gitHubUserRepositoryAuthorizationError{Cause: test.Cause})
 			if got := status.Code(err); got != test.want {
 				t.Fatalf("status code = %s, want %s (error: %v)", got, test.want, err)
 			}

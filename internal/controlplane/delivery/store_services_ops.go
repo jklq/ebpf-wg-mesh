@@ -3,10 +3,12 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -40,7 +42,7 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		return ServiceRecord{}, err
 	}
 	rec := ServiceRecord{
-		ID:                  MustID(),
+		ID:                  uuid.NewString(),
 		EnvironmentID:       environment.ID,
 		ProjectID:           environment.ProjectID,
 		Name:                strings.TrimSpace(name),
@@ -52,8 +54,8 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		UpdatedAt:           now,
 		PendingChanges:      true,
 	}
-	if source := DesiredSourceSpec(spec); source != nil {
-		rec.SourceSummary = toProtoSourceStateSummary(source, nil, nil, nil)
+	if desired := source.DesiredSourceSpec(spec); desired != nil {
+		rec.SourceSummary = toProtoSourceStateSummary(desired, nil, nil, nil)
 	} else {
 		rec.SourceSummary = BuildSourceSummary(spec)
 	}

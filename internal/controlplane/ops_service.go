@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -15,19 +17,19 @@ import (
 
 type OpsService struct {
 	platformv1.UnimplementedOpsServiceServer
-	webhooks  *GitHubWebhookHandler
+	webhooks  *source.GitHubWebhookHandler
 	store     *fleetPersistence
 	delivery  *deliverycore.Delivery
 	notifier  *Notifier
-	authority *TLSAuthority
+	authority interface{ RevokeSerials([]string) error }
 }
 
-func NewOpsService(webhooks *GitHubWebhookHandler, store *fleetPersistence, delivery *deliverycore.Delivery, notifier *Notifier, authority *TLSAuthority) *OpsService {
+func NewOpsService(webhooks *source.GitHubWebhookHandler, store *fleetPersistence, delivery *deliverycore.Delivery, notifier *Notifier, authority interface{ RevokeSerials([]string) error }) *OpsService {
 	return &OpsService{webhooks: webhooks, store: store, delivery: delivery, notifier: notifier, authority: authority}
 }
 
 func (s *OpsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platformv1.Fleet, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +57,7 @@ func (s *OpsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgen
 }
 
 func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetAgentLifecycleRequest) (*platformv1.Agent, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +106,11 @@ func (s *OpsService) IngestGitHubWebhook(ctx context.Context, req *platformv1.In
 	switch {
 	case err == nil:
 		return &emptypb.Empty{}, nil
-	case errors.Is(err, errGitHubWebhookInvalidSignature):
+	case errors.Is(err, source.ErrGitHubWebhookInvalidSignature):
 		return nil, status.Error(codes.Unauthenticated, err.Error())
-	case errors.Is(err, errGitHubWebhookMissingHeaders):
+	case errors.Is(err, source.ErrGitHubWebhookMissingHeaders):
 		return nil, status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, errGitHubWebhookPayloadTooLarge):
+	case errors.Is(err, source.ErrGitHubWebhookPayloadTooLarge):
 		return nil, status.Error(codes.ResourceExhausted, err.Error())
 	default:
 		return nil, status.Errorf(codes.Internal, "ingest github webhook: %v", err)

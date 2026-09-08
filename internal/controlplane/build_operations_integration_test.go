@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	logscore "ebof-wg-mesh/internal/controlplane/logs"
 	"errors"
 	"strings"
 	"testing"
@@ -52,8 +53,8 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	registry := NewRegistryPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform", CredentialTTLSeconds: 300})
 	credentials := &retryBuildCredentials{}
 	notifier := &recordingNotifier{}
-	logs := &recordingLogWriter{enabled: true}
-	operations := NewBuildOperations(store.builds, newDelivery(store, notifier, nil, nil), registry, credentials, 0, WithBuilderLogEmitter(&LogEmitter{store: logs}))
+	logWriter := &recordingLogWriter{enabled: true}
+	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), registry, credentials, 0, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter)))
 	builder := contextWithClientIdentity(serviceCallerBuilder, "builder-1")
 	claim := &platformv1.ClaimBuildRequest{BuilderId: "builder-1"}
 	if _, err := operations.ClaimBuild(builder, claim); err == nil {
@@ -80,14 +81,14 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	if _, err := operations.CompleteBuild(builder, completion); err != nil {
 		t.Fatal(err)
 	}
-	beforeLogs, beforeWakes := len(logs.Flatten()), len(notifier.agentIDs)
+	beforeLogs, beforeWakes := len(logWriter.Flatten()), len(notifier.agentIDs)
 	if beforeWakes == 0 {
 		t.Fatal("completion did not wake allocated agent")
 	}
 	if _, err := operations.CompleteBuild(builder, completion); err != nil {
 		t.Fatal(err)
 	}
-	if len(logs.Flatten()) != beforeLogs || len(notifier.agentIDs) != beforeWakes {
+	if len(logWriter.Flatten()) != beforeLogs || len(notifier.agentIDs) != beforeWakes {
 		t.Fatal("repeated completion repeated post-commit work")
 	}
 }
