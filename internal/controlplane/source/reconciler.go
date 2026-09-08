@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 type GitHubReconciler struct {
-	store             *sourcePersistence
+	store             Store
 	coordinator       *GitHubCoordinator
 	buildStaleAfter   time.Duration
 	webhookStaleAfter time.Duration
@@ -17,7 +17,7 @@ type GitHubReconciler struct {
 	workerID          string
 }
 
-func NewGitHubReconciler(store *sourcePersistence, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter, workStaleAfter time.Duration) *GitHubReconciler {
+func NewGitHubReconciler(store Store, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter, workStaleAfter time.Duration) *GitHubReconciler {
 	if store == nil || coordinator == nil || !coordinator.Enabled() {
 		return nil
 	}
@@ -38,13 +38,13 @@ func (r *GitHubReconciler) Bootstrap(ctx context.Context) error {
 	if err := r.coordinator.delivery.RecoverExpiredBuilds(ctx, r.buildStaleAfter); err != nil {
 		return err
 	}
-	if err := r.store.recoverGitHubWebhookDeliveries(ctx, r.webhookStaleAfter); err != nil {
+	if err := r.store.RecoverGitHubWebhookDeliveries(ctx, r.webhookStaleAfter); err != nil {
 		return err
 	}
 	if err := r.coordinator.RecoverWorkItems(ctx, r.workStaleAfter); err != nil {
 		return err
 	}
-	installationIDs, err := r.store.listActiveGitHubInstallationIDs(ctx)
+	installationIDs, err := r.store.ListActiveGitHubInstallationIDs(ctx)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 	const maxRetryDelay = 30 * time.Second
 	retryDelay := 250 * time.Millisecond
 	for {
-		processed, err := r.processNext(ctx)
+		processed, err := r.ProcessNext(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -88,7 +88,7 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 	}
 }
 
-func (r *GitHubReconciler) processNext(ctx context.Context) (bool, error) {
+func (r *GitHubReconciler) ProcessNext(ctx context.Context) (bool, error) {
 	rec, err := r.coordinator.ClaimNextWorkItem(ctx, r.workerID, r.workStaleAfter)
 	if err != nil {
 		return false, err

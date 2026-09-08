@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"archive/tar"
@@ -22,7 +22,7 @@ func TestValidateSourceArchiveRejectsOversizedEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := validateSourceArchive(archive.Bytes())
+	err := ValidateArchive(archive.Bytes())
 	if err == nil || !strings.Contains(err.Error(), "file size limit") {
 		t.Fatalf("expected file size limit error, got %v", err)
 	}

@@ -1,7 +1,8 @@
-package controlplane
+package source
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -11,20 +12,24 @@ import (
 	"strings"
 )
 
-type SourceArchiveStore interface {
+func ArchiveDigest(data []byte) string {
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+}
+
+type ArchiveStore interface {
 	Put(context.Context, string, []byte) error
 	Get(context.Context, string) ([]byte, error)
 	ReadRange(context.Context, string, int64, int) ([]byte, error)
 	Delete(context.Context, string) error
 }
 
-type FileSourceArchiveStore struct {
+type FileArchiveStore struct {
 	root string
 }
 
 var sourceArchiveDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-func NewFileSourceArchiveStore(root string) (*FileSourceArchiveStore, error) {
+func NewFileArchiveStore(root string) (*FileArchiveStore, error) {
 	root = filepath.Clean(strings.TrimSpace(root))
 	if root == "" || root == "." {
 		return nil, errors.New("source archive directory is required")
@@ -32,10 +37,10 @@ func NewFileSourceArchiveStore(root string) (*FileSourceArchiveStore, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create source archive directory: %w", err)
 	}
-	return &FileSourceArchiveStore{root: root}, nil
+	return &FileArchiveStore{root: root}, nil
 }
 
-func (s *FileSourceArchiveStore) Ready() bool {
+func (s *FileArchiveStore) Ready() bool {
 	if s == nil || strings.TrimSpace(s.root) == "" {
 		return false
 	}
@@ -43,7 +48,7 @@ func (s *FileSourceArchiveStore) Ready() bool {
 	return err == nil && info.IsDir()
 }
 
-func sourceArchiveObjectKey(digest string) (string, error) {
+func ArchiveObjectKey(digest string) (string, error) {
 	digest = strings.TrimSpace(strings.ToLower(digest))
 	if !sourceArchiveDigestPattern.MatchString(digest) {
 		return "", fmt.Errorf("invalid source archive digest %q", digest)
@@ -52,7 +57,7 @@ func sourceArchiveObjectKey(digest string) (string, error) {
 	return filepath.ToSlash(filepath.Join("sha256", hexDigest[:2], hexDigest+".tgz")), nil
 }
 
-func (s *FileSourceArchiveStore) path(key string) (string, error) {
+func (s *FileArchiveStore) path(key string) (string, error) {
 	if s == nil {
 		return "", errors.New("source archive store is not configured")
 	}
@@ -63,7 +68,7 @@ func (s *FileSourceArchiveStore) path(key string) (string, error) {
 	return filepath.Join(s.root, clean), nil
 }
 
-func (s *FileSourceArchiveStore) Put(ctx context.Context, key string, data []byte) error {
+func (s *FileArchiveStore) Put(ctx context.Context, key string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -105,7 +110,7 @@ func (s *FileSourceArchiveStore) Put(ctx context.Context, key string, data []byt
 	return nil
 }
 
-func (s *FileSourceArchiveStore) Get(ctx context.Context, key string) ([]byte, error) {
+func (s *FileArchiveStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -116,7 +121,7 @@ func (s *FileSourceArchiveStore) Get(ctx context.Context, key string) ([]byte, e
 	return os.ReadFile(path)
 }
 
-func (s *FileSourceArchiveStore) ReadRange(ctx context.Context, key string, offset int64, limit int) ([]byte, error) {
+func (s *FileArchiveStore) ReadRange(ctx context.Context, key string, offset int64, limit int) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -150,7 +155,7 @@ func (s *FileSourceArchiveStore) ReadRange(ctx context.Context, key string, offs
 	return chunk[:read], nil
 }
 
-func (s *FileSourceArchiveStore) Delete(ctx context.Context, key string) error {
+func (s *FileArchiveStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

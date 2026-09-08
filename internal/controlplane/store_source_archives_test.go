@@ -49,17 +49,17 @@ func TestPruneSourceArchivesDeletesExpiredUnreferencedObjects(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	deleted, err := store.source.pruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))
+	deleted, err := store.source.PruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if deleted != 1 {
 		t.Fatalf("deleted objects = %d, want 1", deleted)
 	}
-	if _, err := store.source.sourceSnapshotByID(ctx, snapshotID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.source.SourceSnapshotByID(ctx, snapshotID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("snapshot lookup error = %v, want sql.ErrNoRows", err)
 	}
-	if _, err := store.source.sourceArchives.Get(ctx, objectKey); !errors.Is(err, os.ErrNotExist) {
+	if _, err := store.source.Archives().Get(ctx, objectKey); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("object lookup error = %v, want os.ErrNotExist", err)
 	}
 }

@@ -1,11 +1,10 @@
-package controlplane
+package source
 
 import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"context"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,40 +17,40 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-type gitHubSourceInspector struct {
+type Inspector struct {
 	catalog *GitHubCatalog
 	client  *GitHubClient
 }
 
 var (
-	errGitHubUserAccessTokenRequired    = errors.New("github user access token is required")
-	errGitHubRepositoryIdentityMismatch = errors.New("github repository identity mismatch")
+	ErrGitHubUserAccessTokenRequired    = errors.New("github user access token is required")
+	ErrGitHubRepositoryIdentityMismatch = errors.New("github repository identity mismatch")
 )
 
-type gitHubUserRepositoryAuthorizationError struct {
-	cause error
+type GitHubUserRepositoryAuthorizationError struct {
+	Cause error
 }
 
-func (e *gitHubUserRepositoryAuthorizationError) Error() string {
+func (e *GitHubUserRepositoryAuthorizationError) Error() string {
 	return "github user repository authorization failed"
 }
 
-func (e *gitHubUserRepositoryAuthorizationError) Unwrap() error {
-	return e.cause
+func (e *GitHubUserRepositoryAuthorizationError) Unwrap() error {
+	return e.Cause
 }
 
-func newGitHubSourceInspector(catalog *GitHubCatalog, client *GitHubClient) *gitHubSourceInspector {
+func NewInspector(catalog *GitHubCatalog, client *GitHubClient) *Inspector {
 	if catalog == nil || client == nil || !client.Enabled() {
 		return nil
 	}
-	return &gitHubSourceInspector{catalog: catalog, client: client}
+	return &Inspector{catalog: catalog, client: client}
 }
 
-func (i *gitHubSourceInspector) LinkAndInspect(ctx context.Context, projectID, userID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
+func (i *Inspector) LinkAndInspect(ctx context.Context, projectID, userID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
 	if i == nil || i.catalog == nil || i.client == nil {
 		return nil, fmt.Errorf("github source inspection is not configured")
 	}
-	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
+	owner, repo, err := SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
 		return nil, err
 	}
@@ -63,21 +62,21 @@ func (i *gitHubSourceInspector) LinkAndInspect(ctx context.Context, projectID, u
 	if err := i.authorizeUserRepository(ctx, owner, repo, userAccessToken, view); err != nil {
 		return nil, err
 	}
-	if view.AccessState != deliverycore.SourceAccessStateAvailable {
+	if view.AccessState != SourceAccessStateAvailable {
 		return inspectionResponseForView(view), nil
 	}
-	if err := i.catalog.store.linkProjectGitHubRepository(ctx, projectID, userID, view); err != nil {
+	if err := i.catalog.store.LinkProjectGitHubRepository(ctx, projectID, userID, view); err != nil {
 		return nil, err
 	}
 	return i.inspectView(ctx, view)
 }
 
-func (i *gitHubSourceInspector) Inspect(ctx context.Context, projectID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
+func (i *Inspector) Inspect(ctx context.Context, projectID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
 	view, err := i.authorizedRepositoryView(ctx, projectID, repositorySelector)
 	if err != nil {
 		return nil, err
 	}
-	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
+	owner, repo, err := SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
 		return nil, err
 	}
@@ -87,25 +86,25 @@ func (i *gitHubSourceInspector) Inspect(ctx context.Context, projectID, reposito
 	return i.inspectView(ctx, view)
 }
 
-func (i *gitHubSourceInspector) authorizeUserRepository(ctx context.Context, owner, repo, accessToken string, appView GitHubRepositoryView) error {
+func (i *Inspector) authorizeUserRepository(ctx context.Context, owner, repo, accessToken string, appView GitHubRepositoryView) error {
 	if strings.TrimSpace(accessToken) == "" {
-		return &gitHubUserRepositoryAuthorizationError{cause: errGitHubUserAccessTokenRequired}
+		return &GitHubUserRepositoryAuthorizationError{Cause: ErrGitHubUserAccessTokenRequired}
 	}
 	userView, err := i.client.GetUserRepository(ctx, owner, repo, accessToken)
 	if err != nil {
-		return &gitHubUserRepositoryAuthorizationError{cause: err}
+		return &GitHubUserRepositoryAuthorizationError{Cause: err}
 	}
 	userOwner, userRepo, err := normalizeRepositoryRef(userView.Owner, userView.Repo)
 	if err != nil || !strings.EqualFold(userOwner, owner) || !strings.EqualFold(userRepo, repo) {
-		return &gitHubUserRepositoryAuthorizationError{cause: errGitHubRepositoryIdentityMismatch}
+		return &GitHubUserRepositoryAuthorizationError{Cause: ErrGitHubRepositoryIdentityMismatch}
 	}
-	if appView.AccessState == deliverycore.SourceAccessStateAvailable && (appView.RepositoryID <= 0 || userView.RepositoryID != appView.RepositoryID) {
-		return &gitHubUserRepositoryAuthorizationError{cause: errGitHubRepositoryIdentityMismatch}
+	if appView.AccessState == SourceAccessStateAvailable && (appView.RepositoryID <= 0 || userView.RepositoryID != appView.RepositoryID) {
+		return &GitHubUserRepositoryAuthorizationError{Cause: ErrGitHubRepositoryIdentityMismatch}
 	}
 	return nil
 }
 
-func (i *gitHubSourceInspector) Authorize(ctx context.Context, projectID string, source *platformv1.ServiceSourceSpec) error {
+func (i *Inspector) Authorize(ctx context.Context, projectID string, source *platformv1.ServiceSourceSpec) error {
 	if source == nil || strings.TrimSpace(strings.ToLower(source.GetProvider())) != "github" {
 		return nil
 	}
@@ -113,28 +112,28 @@ func (i *gitHubSourceInspector) Authorize(ctx context.Context, projectID string,
 	if err != nil {
 		return err
 	}
-	if view.AccessState != deliverycore.SourceAccessStateAvailable {
+	if view.AccessState != SourceAccessStateAvailable {
 		return fmt.Errorf("repository is not authorized for project")
 	}
 	return nil
 }
 
-func (i *gitHubSourceInspector) authorizedRepositoryView(ctx context.Context, projectID, repositorySelector string) (GitHubRepositoryView, error) {
+func (i *Inspector) authorizedRepositoryView(ctx context.Context, projectID, repositorySelector string) (GitHubRepositoryView, error) {
 	if i == nil || i.catalog == nil || i.client == nil {
 		return GitHubRepositoryView{}, fmt.Errorf("github source inspection is not configured")
 	}
-	owner, repo, err := splitGitHubRepositorySelector(repositorySelector)
+	owner, repo, err := SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
 		return GitHubRepositoryView{}, err
 	}
-	installationID, err := i.catalog.store.projectGitHubRepositoryInstallation(ctx, projectID, owner, repo)
+	installationID, err := i.catalog.store.ProjectGitHubRepositoryInstallation(ctx, projectID, owner, repo)
 	if err != nil {
 		return GitHubRepositoryView{}, fmt.Errorf("repository is not linked to project: %w", err)
 	}
 	return i.catalog.RepositoryView(ctx, owner, repo, installationID)
 }
 
-func (i *gitHubSourceInspector) inspectView(ctx context.Context, view GitHubRepositoryView) (*platformv1.InspectSourceResponse, error) {
+func (i *Inspector) inspectView(ctx context.Context, view GitHubRepositoryView) (*platformv1.InspectSourceResponse, error) {
 	resp := inspectionResponseForView(view)
 	if resp.GetAccessState() != platformv1.SourceAccessState_SOURCE_ACCESS_STATE_AVAILABLE {
 		return resp, nil
@@ -175,7 +174,7 @@ func (i *gitHubSourceInspector) inspectView(ctx context.Context, view GitHubRepo
 
 func inspectionResponseForView(view GitHubRepositoryView) *platformv1.InspectSourceResponse {
 	return &platformv1.InspectSourceResponse{
-		AccessState:   deliverycore.ToProtoSourceAccessState(sourceAccessStateFromGitHubView(view)),
+		AccessState:   ToProtoSourceAccessState(sourceAccessStateFromGitHubView(view)),
 		DefaultBranch: strings.TrimSpace(view.DefaultBranch),
 	}
 }
@@ -286,6 +285,13 @@ func readArchiveFile(archiveTGZ []byte, target string) ([]byte, error) {
 	}
 }
 
+// validExposedPort reports whether a Dockerfile EXPOSE port is usable. This is
+// intentionally a small local check: the service-spec port validation stays in
+// delivery and this package must not import it.
+func validExposedPort(port int32) bool {
+	return port >= 1 && port <= 65535
+}
+
 func parseDockerfileExposePorts(body []byte) []int32 {
 	seen := map[int32]struct{}{}
 	var out []int32
@@ -311,7 +317,7 @@ func parseDockerfileExposePorts(body []byte) []int32 {
 				continue
 			}
 			port := int32(value)
-			if deliverycore.ValidatePort(port) != nil {
+			if !validExposedPort(port) {
 				continue
 			}
 			if _, ok := seen[port]; ok {
