@@ -4,10 +4,8 @@ import {
 	parseTargetPort,
 	platformCall,
 	safePlatformCall,
-	safeVerifyHostname,
 } from "#/lib/dashboard/core/runtime.server";
 import type { DashboardDomainBinding } from "#/lib/dashboard/core/types.server";
-import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
 import { normalizeHostname } from "#/lib/dashboard/domain/dns.server";
 
 export async function listDomainBindingsFromSession(
@@ -87,12 +85,4 @@ export async function deleteDomainBindingFromSession(
 	await platformCall(runtime, "deleteDomainBinding", (platform) =>
 		platform.deleteDomainBinding(session.user, { hostname: input.hostname }),
 	);
-}
-
-export async function checkDomainDNSFromSession(
-	runtime: DashboardRuntime,
-	hostname: string,
-): Promise<DomainVerificationResult | undefined> {
-	await requireSession(runtime);
-	return safeVerifyHostname(runtime, normalizeHostname(hostname));
 }

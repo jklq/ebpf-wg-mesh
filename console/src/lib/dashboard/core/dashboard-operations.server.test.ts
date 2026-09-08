@@ -74,7 +74,6 @@ describe("dashboard operations", () => {
 			},
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-project-1",
 			serviceId: "service-1",
@@ -142,7 +141,6 @@ describe("dashboard operations", () => {
 			},
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-1",
 			serviceId: "service-1",
@@ -230,7 +228,6 @@ describe("dashboard operations", () => {
 			},
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-project-1",
 			serviceId: "service-1",
@@ -248,7 +245,6 @@ describe("dashboard operations", () => {
 		expect(home?.service?.id).toBe("service-1");
 		expect(home?.serviceStatus).toBeUndefined();
 		expect(home?.domainBindings).toEqual([]);
-		expect(home?.domainVerification).toBeUndefined();
 		expect(harness.platform.getServiceStatusCalls).toEqual([]);
 		expect(harness.platform.listDomainBindingsCalls).toEqual([]);
 	});
@@ -317,7 +313,6 @@ describe("dashboard operations", () => {
 		];
 		// Pre-link the project in the onboarding draft so it is reused by ID
 		await harness.store.saveOnboardingDraft("user-1", {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-project-1",
 			serviceId: "service-1",
@@ -328,13 +323,14 @@ describe("dashboard operations", () => {
 			hostname: "",
 		});
 
-		const draft = await onboarding.confirmRepositoryFromSession(
+		const result = await onboarding.createServiceFastFromSession(
 			harness.runtime,
 			{
 				repositorySelector: "octocat/hello",
 				serviceName: "talented-harmony",
 			},
 		);
+		const draft = result.onboarding;
 
 		expect(harness.platform.updateServiceCalls).toHaveLength(0);
 		expect(harness.platform.createServiceCalls).toEqual([
@@ -381,7 +377,7 @@ describe("dashboard operations", () => {
 			recommendedPorts: [3000, 8080],
 		};
 
-		await onboarding.confirmRepositoryFromSession(harness.runtime, {
+		await onboarding.createServiceFastFromSession(harness.runtime, {
 			repositorySelector: "octocat/hello",
 			serviceName: "talented-harmony",
 		});
@@ -416,7 +412,6 @@ describe("dashboard operations", () => {
 		});
 		expect(result.serviceStatus?.service.id).toBe("service-1");
 		expect(result.onboarding).toMatchObject({
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-1",
 			serviceId: "service-1",

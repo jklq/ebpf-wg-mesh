@@ -96,7 +96,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	volume, err := store.catalog.createVolume(ctx, "owner", source.ID, "data", 64<<20, "node-1")
+	volume, err := store.catalog.createScheduledVolume(ctx, "owner", source.ID, "data", 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

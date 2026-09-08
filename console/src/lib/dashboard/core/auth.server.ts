@@ -92,13 +92,13 @@ export async function completeAuthCallback(
 			});
 		}
 
-		const token = await githubCall(runtime, "exchangeCode", () =>
+		const token = await githubCall("exchangeCode", () =>
 			github.exchangeCode({
 				code: input.code ?? "",
 				redirectURI: authCallbackURL(config),
 			}),
 		);
-		const identity = await githubCall(runtime, "fetchIdentity", () =>
+		const identity = await githubCall("fetchIdentity", () =>
 			github.fetchIdentity(token.accessToken),
 		);
 		const operatorGitHubLogin = config.operatorGitHubLogin

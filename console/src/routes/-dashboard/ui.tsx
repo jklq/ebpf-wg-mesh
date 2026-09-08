@@ -46,39 +46,6 @@ export function ModalOverlay({
 		: createPortal(overlay, document.body);
 }
 
-export function InfoRow({
-	label,
-	children,
-}: {
-	label: string;
-	children: ReactNode;
-}) {
-	return (
-		<div className="flex items-baseline gap-2 border-b border-line py-[7px] last:border-b-0">
-			<span className="w-[110px] shrink-0 font-condensed text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
-				{label}
-			</span>
-			<div className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-ink">
-				{children}
-			</div>
-		</div>
-	);
-}
-
-export function MonoValue({
-	children,
-	title,
-}: {
-	children: ReactNode;
-	title?: string;
-}) {
-	return (
-		<span className="font-mono text-xs text-ink" title={title}>
-			{children}
-		</span>
-	);
-}
-
 export function PanelSection({
 	title,
 	lede,

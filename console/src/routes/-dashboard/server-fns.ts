@@ -5,7 +5,6 @@ import { z } from "zod";
 import type {
 	DashboardDeploymentRecord,
 	DashboardGitHubAccount,
-	DashboardRepositoryInspection,
 	GitHubUserRepository,
 } from "#/lib/dashboard/core/types.server";
 
@@ -14,7 +13,6 @@ const optionalIdentifier = identifier.optional();
 const environmentIdInput = z.object({ environmentId: identifier });
 const serviceIdInput = z.object({ serviceId: identifier });
 const hostnameInput = z.object({ hostname: identifier });
-const repositorySelectorInput = z.object({ repositorySelector: identifier });
 const targetPort = z.union([z.string(), z.number()]).optional();
 const deploymentAction = z.enum([
 	"DEPLOYMENT_ACTION_RESTART",
@@ -140,13 +138,6 @@ export const doReleaseEnvironment = createServerFn({ method: "POST" })
 		),
 	);
 
-export const fetchServiceStatus = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => serviceIdInput.parse(input))
-	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.getServiceStatusFromSession(data);
-	});
-
 export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
 	async (): Promise<{
 		githubAccount?: DashboardGitHubAccount;
@@ -156,15 +147,6 @@ export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
 		return svc.loadGitHubCatalogFromSession();
 	},
 );
-
-export const fetchRepositoryInspection = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => repositorySelectorInput.parse(input))
-	.handler(
-		async ({ data }): Promise<DashboardRepositoryInspection | undefined> => {
-			const svc = await import("#/lib/dashboard/server");
-			return svc.inspectRepositorySourceFromSession(data);
-		},
-	);
 
 export const fetchServiceLogs = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) =>
@@ -317,43 +299,6 @@ export const doDeleteDomainBinding = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const svc = await import("#/lib/dashboard/server");
 		return svc.deleteDomainBindingFromSession(data);
-	});
-
-export const doCheckDNS = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => hostnameInput.parse(input))
-	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.checkDomainDNSFromSession(data.hostname);
-	});
-
-export const doInspectRepository = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => repositorySelectorInput.parse(input))
-	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		await svc.inspectRepositoryFromSession(data);
-		const state = await svc.loadDashboardHome();
-		if (!state) {
-			throw redirect({
-				to: "/login",
-				search: { redirect: undefined, error: undefined },
-			});
-		}
-		return state;
-	});
-
-export const doConfirmRepository = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => confirmRepositoryInput.parse(input))
-	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		await svc.confirmRepositoryFromSession(data);
-		const state = await svc.loadDashboardHome();
-		if (!state) {
-			throw redirect({
-				to: "/login",
-				search: { redirect: undefined, error: undefined },
-			});
-		}
-		return state;
 	});
 
 export const doCreateServiceFast = createServerFn({ method: "POST" })

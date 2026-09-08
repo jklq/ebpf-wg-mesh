@@ -19,11 +19,11 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionSecret("controlplane.userAssertions.hmacSecret", cfg.UserAssertions.HMACSecret); err != nil {
 		return err
 	}
-	if err := validateProductionDurableURL("controlplane.database.url", cfg.Database.URL); err != nil {
+	if err := validateProductionDurableTarget("controlplane.database.url", cfg.Database.URL); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.Logs.ClickHouse.URL) != "" {
-		if err := validateProductionDurableURL("controlplane.logs.clickhouse.url", cfg.Logs.ClickHouse.URL); err != nil {
+		if err := validateProductionDurableTarget("controlplane.logs.clickhouse.url", cfg.Logs.ClickHouse.URL); err != nil {
 			return err
 		}
 	}
@@ -63,7 +63,7 @@ func validateProductionAgent(cfg AgentConfig) error {
 	if err := validateProductionTLSName("agent.controlPlane.tls.serverName", cfg.ControlPlane.TLS.ServerName); err != nil {
 		return err
 	}
-	if err := validateProductionDurableDial("agent.controlPlane.address", cfg.ControlPlane.Address); err != nil {
+	if err := validateProductionDurableTarget("agent.controlPlane.address", cfg.ControlPlane.Address); err != nil {
 		return err
 	}
 	if cfg.Runtime.DisableCgroups {
@@ -79,7 +79,7 @@ func validateProductionBuilder(cfg BuilderConfig) error {
 	if err := validateProductionTLSName("builder.controlPlane.tls.serverName", cfg.ControlPlane.TLS.ServerName); err != nil {
 		return err
 	}
-	if err := validateProductionDurableDial("builder.controlPlane.address", cfg.ControlPlane.Address); err != nil {
+	if err := validateProductionDurableTarget("builder.controlPlane.address", cfg.ControlPlane.Address); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.Health.Listen) == "" {
@@ -168,14 +168,7 @@ func validateProductionSecret(field, value string) error {
 	return nil
 }
 
-func validateProductionDurableURL(field, raw string) error {
-	if strings.TrimSpace(raw) == "" {
-		return fmt.Errorf("%s is required in production", field)
-	}
-	return validateProductionDurableHost(field, hostnameFromDialTarget(raw))
-}
-
-func validateProductionDurableDial(field, raw string) error {
+func validateProductionDurableTarget(field, raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("%s is required in production", field)
 	}

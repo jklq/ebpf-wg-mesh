@@ -358,7 +358,6 @@ func decideDeploymentTransition(rec DeploymentRecord, input deploymentTransition
 	rec.ReasonCode = FirstNonEmpty(input.ReasonCode, reasonCodeForState(toState))
 	rec.Detail = FirstNonEmpty(sanitizeDeploymentDetail(input.Detail), DefaultDetailForState(toState))
 	rec.UpdatedAt = now
-	rec.Reason = rec.ReasonCode
 
 	return rec, true, nil
 }

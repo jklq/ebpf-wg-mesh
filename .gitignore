@@ -69,6 +69,7 @@ console/src/lib/platform-gen/
 
 # Build/test binaries and artifacts
 integration.test
+localteststack
 testvm
 !cmd/testvm/
 !cmd/testvm/main.go

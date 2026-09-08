@@ -3,13 +3,13 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
 func (s *fleetPersistence) heartbeatAgent(ctx context.Context, agentID string) error {
@@ -70,7 +70,7 @@ func (s *fleetPersistence) validateWorkloadIPv4Pool(ctx context.Context) error {
 		if strings.TrimSpace(pool) == "" || prefixBits == 0 {
 			return errors.New("IPv4 workload pool and per-node prefix size are required")
 		}
-		if _, err := ipv4SubnetAt(pool, prefixBits, 0); err != nil {
+		if _, err := deliverycore.IPv4SubnetAt(pool, prefixBits, 0); err != nil {
 			return err
 		}
 		var configuredPool string
@@ -111,7 +111,7 @@ func (s *fleetPersistence) validateWorkloadIPv4Pool(ctx context.Context) error {
 				return fmt.Errorf("allocated IPv4 node prefix %q is outside configured pool %q", raw, pool)
 			}
 			for _, other := range allocated {
-				if ipv4PrefixesOverlap(prefix, other) {
+				if deliverycore.IPv4PrefixesOverlap(prefix, other) {
 					rows.Close()
 					return fmt.Errorf("allocated IPv4 node prefixes %s and %s overlap", prefix, other)
 				}
@@ -124,36 +124,6 @@ func (s *fleetPersistence) validateWorkloadIPv4Pool(ctx context.Context) error {
 		if nextOrdinal < 0 {
 			return fmt.Errorf("IPv4 workload allocator has invalid next ordinal %d", nextOrdinal)
 		}
-		if _, err := ipv4SubnetAt(pool, prefixBits, uint64(nextOrdinal)); err != nil && len(allocated) == 0 && nextOrdinal == 0 {
-			return err
-		}
 		return nil
 	})
-}
-
-func ipv4SubnetAt(poolCIDR string, prefixBits int, ordinal uint64) (string, error) {
-	pool, err := netip.ParsePrefix(poolCIDR)
-	if err != nil || !pool.Addr().Is4() {
-		return "", fmt.Errorf("parse IPv4 workload pool %q", poolCIDR)
-	}
-	if pool != pool.Masked() {
-		return "", fmt.Errorf("IPv4 workload pool %q must be canonical", poolCIDR)
-	}
-	pool = pool.Masked()
-	if prefixBits <= pool.Bits() || prefixBits > 30 || prefixBits-pool.Bits() > 31 {
-		return "", fmt.Errorf("invalid IPv4 child prefix /%d for pool %q", prefixBits, poolCIDR)
-	}
-	count := uint64(1) << uint(prefixBits-pool.Bits())
-	if ordinal >= count {
-		return "", fmt.Errorf("IPv4 workload pool %q exhausted", poolCIDR)
-	}
-	baseBytes := pool.Addr().As4()
-	base := binary.BigEndian.Uint32(baseBytes[:])
-	base += uint32(ordinal) << uint(32-prefixBits)
-	var out [4]byte
-	binary.BigEndian.PutUint32(out[:], base)
-	return netip.PrefixFrom(netip.AddrFrom4(out), prefixBits).String(), nil
-}
-func ipv4PrefixesOverlap(left, right netip.Prefix) bool {
-	return left.Contains(right.Addr()) || right.Contains(left.Addr())
 }

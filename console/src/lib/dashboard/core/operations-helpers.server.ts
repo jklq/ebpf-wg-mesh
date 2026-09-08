@@ -1,20 +1,16 @@
 import {
 	type DashboardRuntime,
 	listGitHubRepositories,
-	nextGeneratedProjectName,
-	platformCall,
 	refreshGitHubAccount,
 	storeCall,
 	toGitHubApiError,
 } from "#/lib/dashboard/core/runtime.server";
 import {
 	type DashboardGitHubAccount,
-	type DashboardProject,
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
 	type DashboardServiceSpec,
 	type DashboardSourceSpec,
-	type DashboardUser,
 	DashboardValidationError,
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
@@ -123,28 +119,6 @@ export async function requireGitHubRepositoryAccess(
 		});
 	}
 	return catalog.githubAccount?.accessToken ?? "";
-}
-
-export async function repositoryProject(
-	runtime: DashboardRuntime,
-	user: DashboardUser,
-	preferredProjectID: string,
-): Promise<DashboardProject> {
-	const projects = await platformCall(runtime, "listProjects", (platform) =>
-		platform.listProjects(user),
-	);
-	const existing = projects.find(
-		(project) => project.id === preferredProjectID,
-	);
-	if (existing) {
-		return existing;
-	}
-	return platformCall(runtime, "createProject", (platform) =>
-		platform.createProject(
-			user,
-			nextGeneratedProjectName(projects, runtime.randomUUID()),
-		),
-	);
 }
 
 export function buildServiceSpec(

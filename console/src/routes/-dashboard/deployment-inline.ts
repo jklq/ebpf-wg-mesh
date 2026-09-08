@@ -6,7 +6,6 @@ import type {
 	DashboardDeploymentStatus,
 } from "#/lib/dashboard/core/types.server";
 
-const ENV_KEY = /[A-Z][A-Z0-9_]{1,63}/;
 const ENV_STOPWORDS = new Set([
 	"ERROR",
 	"FATAL",
@@ -100,24 +99,6 @@ export function buildStepHint(lines: string[]): string | undefined {
 	return fallback;
 }
 
-export function stageAttemptLabel(options: {
-	state: string;
-	detail?: string;
-	priorFailed: boolean;
-}): string | undefined {
-	if (
-		options.priorFailed &&
-		(options.state === "DEPLOYMENT_STAGE_STATE_PENDING" ||
-			options.state === "DEPLOYMENT_STAGE_STATE_UNSPECIFIED")
-	) {
-		return "not attempted";
-	}
-	if (options.detail?.trim()) {
-		return options.detail.trim();
-	}
-	return undefined;
-}
-
 export function trafficRetentionCopy(options: {
 	failed: boolean;
 	lastSuccessfulCommitSha?: string;
@@ -127,10 +108,6 @@ export function trafficRetentionCopy(options: {
 		return "the last healthy rollout. Nothing was taken down.";
 	}
 	return "This first rollout never left the builder. Nothing is serving yet.";
-}
-
-export function looksLikeEnvKey(value: string): boolean {
-	return ENV_KEY.test(value) && isLikelyEnvKey(value);
 }
 
 const LIVE_STATES = new Set<DashboardDeploymentState>([

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
 type GitHubCatalog struct {
@@ -190,27 +188,6 @@ func (c *GitHubCatalog) RefreshInstallation(ctx context.Context, installation gi
 		TargetType:     installation.TargetType,
 		Active:         true,
 	}, repos)
-}
-
-func (c *GitHubCatalog) BuildRepositoryView(ctx context.Context, source *platformv1.ServiceSourceSpec) (GitHubRepositoryView, error) {
-	if source == nil {
-		return GitHubRepositoryView{}, errors.New("source spec is required")
-	}
-	if strings.TrimSpace(strings.ToLower(source.GetProvider())) != "github" {
-		return GitHubRepositoryView{}, errors.New("unsupported source provider")
-	}
-	owner, repo, err := SplitGitHubRepositorySelector(source.GetRepositorySelector())
-	if err != nil {
-		return GitHubRepositoryView{}, err
-	}
-	view, err := c.RepositoryView(ctx, owner, repo, 0)
-	if err != nil {
-		return GitHubRepositoryView{}, err
-	}
-	if view.AccessState != SourceAccessStateAvailable {
-		return GitHubRepositoryView{}, errors.New("repository is not deployable")
-	}
-	return view, nil
 }
 
 func repositoryViewFromSnapshot(rec GitHubRepositorySnapshotRecord, installationID int64) GitHubRepositoryView {

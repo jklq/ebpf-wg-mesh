@@ -130,22 +130,12 @@ export async function loadDashboardHome(
 		}
 
 		if (project && service) {
-			reconciledDraft = reconcileOnboardingDraft(
-				onboarding,
-				undefined,
-				project,
-				service,
-				undefined,
-				[],
-			);
+			reconciledDraft = reconcileOnboardingDraft(onboarding, project, service);
 		} else if (onboarding.projectId || onboarding.serviceId) {
 			reconciledDraft = reconcileOnboardingDraft(
 				onboarding,
-				undefined,
 				project,
 				undefined,
-				undefined,
-				[],
 			);
 		}
 
