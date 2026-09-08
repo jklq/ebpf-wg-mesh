@@ -1,4 +1,4 @@
-package controlplane
+package logs
 
 import (
 	"strings"

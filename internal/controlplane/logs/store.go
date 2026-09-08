@@ -1,4 +1,4 @@
-package controlplane
+package logs
 
 import (
 	"context"
@@ -33,13 +33,13 @@ const (
 	LogTypeNetwork LogType = "network"
 )
 
-var errLogStoreDisabled = errors.New("log storage is not configured")
+var ErrDisabled = errors.New("log storage is not configured")
 
 type LogStore struct {
 	db *sql.DB
 }
 
-type serviceLogRecord struct {
+type ServiceLog struct {
 	ObservedAt        time.Time
 	EnvironmentID     string
 	ServiceID         string
@@ -273,9 +273,9 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	return nil
 }
 
-func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]serviceLogRecord, error) {
+func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]ServiceLog, error) {
 	if !s.Enabled() {
-		return nil, errLogStoreDisabled
+		return nil, ErrDisabled
 	}
 	limit := int(req.GetLimit())
 	if limit <= 0 {
@@ -325,9 +325,9 @@ SELECT observed_at, environment_id, service_id, allocation_id, agent_id, stream,
 	}
 	defer rows.Close()
 
-	var newestFirst []serviceLogRecord
+	var newestFirst []ServiceLog
 	for rows.Next() {
-		var rec serviceLogRecord
+		var rec ServiceLog
 		if err := rows.Scan(
 			&rec.ObservedAt,
 			&rec.EnvironmentID,
@@ -349,7 +349,7 @@ SELECT observed_at, environment_id, service_id, allocation_id, agent_id, stream,
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate clickhouse service logs: %w", err)
 	}
-	out := make([]serviceLogRecord, len(newestFirst))
+	out := make([]ServiceLog, len(newestFirst))
 	for i := range newestFirst {
 		out[len(newestFirst)-1-i] = newestFirst[i]
 	}
@@ -412,7 +412,7 @@ func logTypeFromProto(t platformv1.ServiceLogType) LogType {
 	}
 }
 
-func logTypeToProto(t string) platformv1.ServiceLogType {
+func TypeToProto(t string) platformv1.ServiceLogType {
 	switch LogType(t) {
 	case LogTypeRuntime:
 		return platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME
