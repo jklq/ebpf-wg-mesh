@@ -110,9 +110,6 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 		if err := validateAbsoluteURL("controlplane.github.apiBaseUrl", cfg.GitHub.APIBaseURL); err != nil {
 			return err
 		}
-		if err := validateAbsoluteURL("controlplane.github.webBaseUrl", cfg.GitHub.WebBaseURL); err != nil {
-			return err
-		}
 		if !strings.HasPrefix(cfg.GitHub.WebhookPath, "/") {
 			return errors.New("controlplane.github.webhookPath must start with /")
 		}

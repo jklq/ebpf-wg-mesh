@@ -132,7 +132,6 @@ type GitHubAppConfig struct {
 	WebhookSecret string
 	PrivateKeyPEM string
 	APIBaseURL    string
-	WebBaseURL    string
 	WebhookPath   string
 }
 
