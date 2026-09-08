@@ -1,4 +1,4 @@
-package controlplane
+package identity
 
 import (
 	"context"
@@ -35,13 +35,13 @@ func TestCertificateRevocationsReloadsHexSerials(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# compromised agent\nAB:CD # openssl output\n"), 0o600); err != nil {
 		t.Fatalf("write revocation file: %v", err)
 	}
-	if err := revocations.Check(cert); !errors.Is(err, errClientCertificateRevoked) {
+	if err := revocations.Check(cert); !errors.Is(err, ErrClientCertificateRevoked) {
 		t.Fatalf("expected live revocation, got %v", err)
 	}
 	if err := os.WriteFile(path, []byte("not-a-serial\n"), 0o600); err != nil {
 		t.Fatalf("write malformed revocation file: %v", err)
 	}
-	if err := revocations.Check(cert); err == nil || errors.Is(err, errClientCertificateRevoked) {
+	if err := revocations.Check(cert); err == nil || errors.Is(err, ErrClientCertificateRevoked) {
 		t.Fatalf("expected malformed denylist to fail closed, got %v", err)
 	}
 }
@@ -58,7 +58,7 @@ func TestCertificateRevocationsAddIsIdempotent(t *testing.T) {
 	if err := revocations.Add("AB:CD", "abcd"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if err := revocations.Check(cert); !errors.Is(err, errClientCertificateRevoked) {
+	if err := revocations.Check(cert); !errors.Is(err, ErrClientCertificateRevoked) {
 		t.Fatalf("expected added serial to be revoked, got %v", err)
 	}
 }
@@ -76,14 +76,14 @@ func TestInternalAuthRejectsRevokedCertificatesForEveryCallerClass(t *testing.T)
 	}
 	authz := NewInternalAuth("dashboard-1", testUserAssertionSecret, revocations)
 	tests := []struct {
-		class  serviceCallerClass
+		class  CallerClass
 		id     string
 		method string
 	}{
-		{class: serviceCallerAgent, id: "agent-1", method: "/agent.v1.AgentControl/Enroll"},
-		{class: serviceCallerAgent, id: "agent-1", method: "/agent.v1.AgentControl/Sync"},
-		{class: serviceCallerBuilder, id: "builder-1", method: "/platform.v1.BuilderService/ClaimBuild"},
-		{class: serviceCallerDashboard, id: "dashboard-1", method: "/platform.v1.OpsService/IngestGitHubWebhook"},
+		{class: CallerAgent, id: "agent-1", method: "/agent.v1.AgentControl/Enroll"},
+		{class: CallerAgent, id: "agent-1", method: "/agent.v1.AgentControl/Sync"},
+		{class: CallerBuilder, id: "builder-1", method: "/platform.v1.BuilderService/ClaimBuild"},
+		{class: CallerDashboard, id: "dashboard-1", method: "/platform.v1.OpsService/IngestGitHubWebhook"},
 	}
 	for _, test := range tests {
 		test := test
@@ -114,7 +114,7 @@ func TestTLSHandshakeRejectsRevokedCertificateButAllowsCertificateFreeBootstrap(
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
-	material, err := authority.EnsureClientIdentity(serviceCallerAgent, "node-1")
+	material, err := authority.EnsureClientIdentity(CallerAgent, "node-1")
 	if err != nil {
 		t.Fatalf("EnsureClientIdentity: %v", err)
 	}
@@ -178,7 +178,7 @@ func runTLSHandshake(t *testing.T, serverCredentials, clientCredentials credenti
 	return <-serverResult, clientErr
 }
 
-func contextWithCertificate(class serviceCallerClass, id string, serial *big.Int) context.Context {
+func contextWithCertificate(class CallerClass, id string, serial *big.Int) context.Context {
 	cert := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{

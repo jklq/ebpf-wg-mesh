@@ -1,4 +1,4 @@
-package controlplane
+package identity
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func TestInternalAuthAllowsDashboardPlatformCallsWithDelegatedUser(t *testing.T)
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
+	ctx := contextWithClientIdentity(CallerDashboard, "dashboard-1")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
 		userAssertionHeader, signedUserAssertion(t, "user-1", nil),
 	))
@@ -42,7 +42,7 @@ func TestInternalAuthRejectsMissingDelegatedUserOnPlatformCall(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.PlatformService/ListProjects")
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(CallerDashboard, "dashboard-1"), "/platform.v1.PlatformService/ListProjects")
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected Unauthenticated, got %v", err)
 	}
@@ -52,7 +52,7 @@ func TestInternalAuthRejectsAgentCallingPlatformService(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	ctx := contextWithClientIdentity(serviceCallerAgent, "agent-1")
+	ctx := contextWithClientIdentity(CallerAgent, "agent-1")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
 		userAssertionHeader, signedUserAssertion(t, "user-1", nil),
 	))
@@ -67,7 +67,7 @@ func TestInternalAuthRejectsDashboardCallingAgentSync(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/agent.v1.AgentControl/Sync")
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(CallerDashboard, "dashboard-1"), "/agent.v1.AgentControl/Sync")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
@@ -77,7 +77,7 @@ func TestInternalAuthAllowsDashboardOpsCalls(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerDashboard, "dashboard-1"), "/platform.v1.OpsService/IngestGitHubWebhook")
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(CallerDashboard, "dashboard-1"), "/platform.v1.OpsService/IngestGitHubWebhook")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestInternalAuthRejectsWrongClassOpsCalls(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(serviceCallerBuilder, "builder-1"), "/platform.v1.OpsService/IngestGitHubWebhook")
+	_, err := authz.authorizeGRPCContext(contextWithClientIdentity(CallerBuilder, "builder-1"), "/platform.v1.OpsService/IngestGitHubWebhook")
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
@@ -107,7 +107,7 @@ func TestInternalAuthRejectsNonCanonicalAndUnknownMethods(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
+	ctx := contextWithClientIdentity(CallerDashboard, "dashboard-1")
 	for _, method := range []string{
 		"platform.v1.BuilderService/ClaimBuild",
 		"/unknown.v1.Service/Method",
@@ -123,7 +123,7 @@ func TestInternalAuthRejectsUnpinnedDashboard(t *testing.T) {
 	t.Parallel()
 
 	authz := newTestInternalAuth()
-	ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-2")
+	ctx := contextWithClientIdentity(CallerDashboard, "dashboard-2")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(userAssertionHeader, signedUserAssertion(t, "user-1", nil)))
 	_, err := authz.authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 	if status.Code(err) != codes.PermissionDenied {
@@ -156,7 +156,7 @@ func TestInternalAuthRejectsInvalidUserAssertions(t *testing.T) {
 		name, mutate := name, mutate
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
+			ctx := contextWithClientIdentity(CallerDashboard, "dashboard-1")
 			ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
 				userAssertionHeader, signedUserAssertion(t, "user-1", mutate),
 			))
@@ -180,7 +180,7 @@ func TestInternalAuthRejectsInvalidSignatureAndDuplicateAssertions(t *testing.T)
 		name, values := name, values
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ctx := contextWithClientIdentity(serviceCallerDashboard, "dashboard-1")
+			ctx := contextWithClientIdentity(CallerDashboard, "dashboard-1")
 			ctx = metadata.NewIncomingContext(ctx, metadata.MD{userAssertionHeader: values})
 			_, err := newTestInternalAuth().authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
 			if status.Code(err) != codes.Unauthenticated {
@@ -200,16 +200,16 @@ func differentLastCharacter(value string) string {
 func TestServiceCallerFromContextFallsBackToAuthenticatedPeerIdentity(t *testing.T) {
 	t.Parallel()
 
-	caller, err := ServiceCallerFromContext(contextWithClientIdentity(serviceCallerBuilder, "builder-1"))
+	caller, err := ServiceCallerFromContext(contextWithClientIdentity(CallerBuilder, "builder-1"))
 	if err != nil {
 		t.Fatalf("ServiceCallerFromContext: %v", err)
 	}
-	if caller.Class != serviceCallerBuilder || caller.ID != "builder-1" {
+	if caller.Class != CallerBuilder || caller.ID != "builder-1" {
 		t.Fatalf("unexpected caller %+v", caller)
 	}
 }
 
-func contextWithClientIdentity(class serviceCallerClass, id string) context.Context {
+func contextWithClientIdentity(class CallerClass, id string) context.Context {
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{

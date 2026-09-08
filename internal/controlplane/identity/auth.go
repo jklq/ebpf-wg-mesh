@@ -1,4 +1,4 @@
-package controlplane
+package identity
 
 import (
 	"context"
@@ -25,12 +25,12 @@ type delegatedUserContextKey struct{}
 // request.TLS, so both the gRPC and Connect paths see the same identity.
 type verifiedClientCertificateContextKey struct{}
 
-type serviceCallerClass string
+type CallerClass string
 
 const (
-	serviceCallerAgent     serviceCallerClass = "agent"
-	serviceCallerBuilder   serviceCallerClass = "builder"
-	serviceCallerDashboard serviceCallerClass = "dashboard"
+	CallerAgent     CallerClass = "agent"
+	CallerBuilder   CallerClass = "builder"
+	CallerDashboard CallerClass = "dashboard"
 )
 
 const (
@@ -43,7 +43,7 @@ const (
 )
 
 type ServiceCaller struct {
-	Class serviceCallerClass
+	Class CallerClass
 	ID    string
 }
 
@@ -131,7 +131,7 @@ func callerIdentityFromConnectRequest(ctx context.Context, req connect.AnyReques
 }
 
 func callerIdentityFromContext(ctx context.Context, assertions []string) callerIdentity {
-	cert := verifiedClientCertificateFromContext(ctx)
+	cert := VerifiedClientCertificateFromContext(ctx)
 	identity := callerIdentity{assertions: assertions}
 	if cert == nil {
 		return identity
@@ -153,12 +153,16 @@ func metadataAssertions(ctx context.Context) []string {
 	return md.Get(userAssertionHeader)
 }
 
-// verifiedClientCertificateFromContext returns the verified client certificate
+// VerifiedClientCertificateFromContext returns the verified client certificate
 // leaf, or nil when the caller presented none. The internal HTTP handler
 // populates it from the TLS handshake for both gRPC and Connect requests.
-func verifiedClientCertificateFromContext(ctx context.Context) *x509.Certificate {
+func VerifiedClientCertificateFromContext(ctx context.Context) *x509.Certificate {
 	cert, _ := ctx.Value(verifiedClientCertificateContextKey{}).(*x509.Certificate)
 	return cert
+}
+
+func WithVerifiedClientCertificate(ctx context.Context, cert *x509.Certificate) context.Context {
+	return context.WithValue(ctx, verifiedClientCertificateContextKey{}, cert)
 }
 
 func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identity callerIdentity) (context.Context, error) {
@@ -169,7 +173,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 		return nil, status.Errorf(codes.Unauthenticated, "peer identity: %v", identity.identityErr)
 	}
 	if identity.authenticated && a.revocations != nil {
-		if err := checkClientCertificateRevocation(a.revocations, identity.verifiedCertificate); err != nil {
+		if err := CheckClientCertificateRevocation(a.revocations, identity.verifiedCertificate); err != nil {
 			return nil, err
 		}
 	}
@@ -178,7 +182,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 	if authenticated {
 		ctx = context.WithValue(ctx, serviceCallerContextKey{}, caller)
 	}
-	if authenticated && caller.Class == serviceCallerDashboard &&
+	if authenticated && caller.Class == CallerDashboard &&
 		(a.dashboardCallerID == "" || caller.ID != a.dashboardCallerID) {
 		return nil, status.Error(codes.PermissionDenied, "dashboard client certificate common name is not allowed")
 	}
@@ -188,7 +192,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 		return nil, err
 	}
 	if delegated {
-		if !authenticated || caller.Class != serviceCallerDashboard {
+		if !authenticated || caller.Class != CallerDashboard {
 			return nil, status.Error(codes.PermissionDenied, "delegated user metadata requires dashboard caller")
 		}
 		ctx = context.WithValue(ctx, delegatedUserContextKey{}, delegatedUser)
@@ -196,26 +200,26 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 
 	switch {
 	case strings.HasPrefix(fullMethod, "/platform.v1.PlatformService/"):
-		if !authenticated || caller.Class != serviceCallerDashboard {
+		if !authenticated || caller.Class != CallerDashboard {
 			return nil, status.Error(codes.PermissionDenied, "dashboard client certificate required")
 		}
 		if !delegated {
 			return nil, status.Error(codes.Unauthenticated, "delegated user metadata is required")
 		}
 	case strings.HasPrefix(fullMethod, "/platform.v1.OpsService/"):
-		if !authenticated || caller.Class != serviceCallerDashboard {
+		if !authenticated || caller.Class != CallerDashboard {
 			return nil, status.Error(codes.PermissionDenied, "dashboard client certificate required")
 		}
 	case strings.HasPrefix(fullMethod, "/platform.v1.BuilderService/"):
-		if !authenticated || caller.Class != serviceCallerBuilder {
+		if !authenticated || caller.Class != CallerBuilder {
 			return nil, status.Error(codes.PermissionDenied, "builder client certificate required")
 		}
 	case fullMethod == "/agent.v1.AgentControl/Enroll":
-		if authenticated && caller.Class != serviceCallerAgent {
+		if authenticated && caller.Class != CallerAgent {
 			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
 		}
 	case strings.HasPrefix(fullMethod, "/agent.v1.AgentControl/"):
-		if !authenticated || caller.Class != serviceCallerAgent {
+		if !authenticated || caller.Class != CallerAgent {
 			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
 		}
 	default:
@@ -231,7 +235,7 @@ func ServiceCallerFromContext(ctx context.Context) (ServiceCaller, error) {
 	if ok && caller.ID != "" {
 		return caller, nil
 	}
-	caller, authenticated, err := authenticatedServiceCallerFromContext(ctx)
+	caller, authenticated, err := AuthenticatedServiceCallerFromContext(ctx)
 	if err != nil {
 		return ServiceCaller{}, status.Errorf(codes.Unauthenticated, "peer identity: %v", err)
 	}
@@ -250,20 +254,24 @@ func DelegatedUserFromContext(ctx context.Context) (DelegatedUser, error) {
 	return user, nil
 }
 
-func authenticatedServiceCallerFromContext(ctx context.Context) (ServiceCaller, bool, error) {
-	cert := verifiedClientCertificateFromContext(ctx)
+func WithDelegatedUser(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID})
+}
+
+func AuthenticatedServiceCallerFromContext(ctx context.Context) (ServiceCaller, bool, error) {
+	cert := VerifiedClientCertificateFromContext(ctx)
 	if cert == nil {
 		return ServiceCaller{}, false, nil
 	}
 	return serviceCallerFromCertificate(cert)
 }
 
-func checkClientCertificateRevocation(revocations *CertificateRevocations, cert *x509.Certificate) error {
+func CheckClientCertificateRevocation(revocations *CertificateRevocations, cert *x509.Certificate) error {
 	if revocations == nil || cert == nil {
 		return nil
 	}
 	if err := revocations.Check(cert); err != nil {
-		if errors.Is(err, errClientCertificateRevoked) {
+		if errors.Is(err, ErrClientCertificateRevoked) {
 			return status.Error(codes.Unauthenticated, "client certificate is revoked")
 		}
 		return status.Error(codes.Unavailable, "client certificate revocation status is unavailable")
@@ -282,9 +290,9 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	if len(cert.Subject.OrganizationalUnit) == 0 {
 		return ServiceCaller{}, false, errors.New("client certificate organizational unit is required")
 	}
-	class := serviceCallerClass(strings.TrimSpace(cert.Subject.OrganizationalUnit[0]))
+	class := CallerClass(strings.TrimSpace(cert.Subject.OrganizationalUnit[0]))
 	switch class {
-	case serviceCallerAgent, serviceCallerBuilder, serviceCallerDashboard:
+	case CallerAgent, CallerBuilder, CallerDashboard:
 		return ServiceCaller{Class: class, ID: id}, true, nil
 	default:
 		return ServiceCaller{}, false, errors.New("unknown client certificate caller class")
