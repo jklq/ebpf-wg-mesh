@@ -10,10 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *catalogPersistence) ensureUserProjectNamed(ctx context.Context, userID, name string) (string, error) {
-	return s.ensureUserProjectNamedQuerier(ctx, s.db, userID, name)
-}
-
 func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (string, error) {
 	project, found, err := s.projectByOwnedNameQuerier(ctx, q, userID, name)
 	if err != nil {
@@ -154,7 +150,7 @@ func (s *catalogPersistence) listProjects(ctx context.Context, userID string) ([
 
 	var out []deliverycore.ProjectRecord
 	for rows.Next() {
-		rec, err := scanProjectRow(rows)
+		rec, err := deliverycore.ScanProjectRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -198,11 +194,7 @@ func (s *catalogPersistence) projectByIDQuerier(ctx context.Context, q deliveryc
 		userID,
 		string(deliverycore.ProjectKindUser),
 	)
-	return scanProjectRow(row)
-}
-
-func (s *catalogPersistence) projectByIDInternal(ctx context.Context, projectID string) (deliverycore.ProjectRecord, error) {
-	return s.projectByIDInternalQuerier(ctx, s.db, projectID)
+	return deliverycore.ScanProjectRow(row)
 }
 
 func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q deliverycore.ServiceQueryer, systemKey string) (deliverycore.ProjectRecord, bool, error) {
@@ -213,7 +205,7 @@ func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q de
 		  WHERE system_key = $1`,
 		systemKey,
 	)
-	rec, err := scanProjectRow(row)
+	rec, err := deliverycore.ScanProjectRow(row)
 	switch {
 	case err == nil:
 		return rec, true, nil
@@ -234,7 +226,7 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 		name,
 		string(deliverycore.ProjectKindUser),
 	)
-	rec, err := scanProjectRow(row)
+	rec, err := deliverycore.ScanProjectRow(row)
 	switch {
 	case err == nil:
 		return rec, true, nil
@@ -253,18 +245,5 @@ func (s *catalogPersistence) projectByIDInternalQuerier(ctx context.Context, q d
 		  WHERE id = $1`,
 		projectID,
 	)
-	return scanProjectRow(row)
-}
-
-func scanProjectRow(scanner interface{ Scan(...any) error }) (deliverycore.ProjectRecord, error) {
-	var rec deliverycore.ProjectRecord
-	var kind string
-	if err := scanner.Scan(&rec.ID, &rec.Name, &kind, &rec.SystemKey, &rec.CreatedAt); err != nil {
-		return deliverycore.ProjectRecord{}, err
-	}
-	rec.Kind = deliverycore.ProjectKind(kind)
-	if rec.Kind == "" {
-		rec.Kind = deliverycore.ProjectKindUser
-	}
-	return rec, nil
+	return deliverycore.ScanProjectRow(row)
 }
