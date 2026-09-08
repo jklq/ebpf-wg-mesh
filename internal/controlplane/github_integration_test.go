@@ -46,13 +46,13 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	if err != nil || len(projects) != 2 {
 		t.Fatalf("list projects: %v (%d)", err, len(projects))
 	}
-	if err := store.source.ReplaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+	if err := store.source.ReplaceGitHubInstallationRepositories(ctx, source.GitHubInstallationRecord{
 		InstallationID: 7,
 		AccountLogin:   "octocat",
 		AccountType:    "User",
 		TargetType:     "User",
 		Active:         true,
-	}, []githubRepositoryRecord{{
+	}, []source.GitHubRepositoryRecord{{
 		InstallationID: 7,
 		RepositoryID:   42,
 		Owner:          "octocat",
@@ -62,7 +62,7 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.source.LinkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+	if err := store.source.LinkProjectGitHubRepository(ctx, projects[0].ID, "user-1", source.GitHubRepositoryView{
 		RepositoryID:   42,
 		FullName:       "octocat/hello",
 		InstallationID: 7,
@@ -112,13 +112,13 @@ func createRepoBackedTestService(t *testing.T, store *persistence, ctx context.C
 		t.Fatalf("SplitGitHubRepositorySelector: %v", err)
 	}
 	if installationID > 0 {
-		if err := store.source.ReplaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+		if err := store.source.ReplaceGitHubInstallationRepositories(ctx, source.GitHubInstallationRecord{
 			InstallationID: installationID,
 			AccountLogin:   owner,
 			AccountType:    "Organization",
 			TargetType:     "Organization",
 			Active:         true,
-		}, []githubRepositoryRecord{{
+		}, []source.GitHubRepositoryRecord{{
 			InstallationID: installationID,
 			RepositoryID:   2,
 			Owner:          owner,
@@ -359,7 +359,6 @@ func (s *testGitHubServer) config() config.GitHubAppConfig {
 		WebhookSecret: "topsecret",
 		PrivateKeyPEM: s.privateKey,
 		APIBaseURL:    s.httpServer.URL,
-		WebBaseURL:    "https://github.example.test",
 		WebhookPath:   "/webhooks/github",
 	}
 }

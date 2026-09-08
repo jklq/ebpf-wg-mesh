@@ -54,7 +54,7 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 		t.Fatalf("expected zero github api calls, got %d", server.requestCount())
 	}
 
-	if err := store.source.UpsertGitHubRepositorySnapshot(ctx, githubRepositorySnapshotRecord{
+	if err := store.source.UpsertGitHubRepositorySnapshot(ctx, source.GitHubRepositorySnapshotRecord{
 		RepositoryID:  1,
 		Owner:         "public",
 		Repo:          "hello",
@@ -72,13 +72,13 @@ func TestGitHubCatalogResolveRepositoryUsesStoredStateOnly(t *testing.T) {
 		t.Fatalf("expected available repo from stored snapshot, got %s", repo.AccessState)
 	}
 
-	if err := store.source.ReplaceGitHubInstallationRepositories(ctx, githubInstallationRecord{
+	if err := store.source.ReplaceGitHubInstallationRepositories(ctx, source.GitHubInstallationRecord{
 		InstallationID: 7,
 		AccountLogin:   "private",
 		AccountType:    "Organization",
 		TargetType:     "Organization",
 		Active:         true,
-	}, []githubRepositoryRecord{{
+	}, []source.GitHubRepositoryRecord{{
 		InstallationID: 7,
 		RepositoryID:   2,
 		Owner:          "private",

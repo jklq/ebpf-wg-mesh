@@ -526,6 +526,10 @@ func TestRuntimeDigestRefPreservesRegistryPort(t *testing.T) {
 	}
 }
 
+func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
+	return extractSourceSnapshotReader(repoDir, bytes.NewReader(archiveTGZ), int64(len(archiveTGZ)))
+}
+
 func makeSnapshotArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 
