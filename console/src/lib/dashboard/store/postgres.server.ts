@@ -32,13 +32,11 @@ export function createPostgresDashboardStore(
 	runtime: DashboardStoreRuntimeConfig,
 	db: Pool,
 ): DashboardStore {
-	let initPromise: Promise<void> | undefined;
-
+	// Stateless: initialization is cached once by the DashboardRuntime, which
+	// retries on failure. Caching here too would retain a rejection the outer
+	// cache believes was dropped, making retries silently no-op.
 	function ensureInitialized(): Promise<void> {
-		if (!initPromise) {
-			initPromise = migrateDashboardStore(runtime, db);
-		}
-		return initPromise;
+		return migrateDashboardStore(runtime, db);
 	}
 
 	return {

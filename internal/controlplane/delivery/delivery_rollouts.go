@@ -8,8 +8,8 @@ import (
 )
 
 // ReconcileRollouts advances every active rollout through placement, ingress
-// withdrawal, draining, and failover, then performs the wake and publication
-// effects required by the committed changes.
+// withdrawal, draining, and failover, then performs the wake effects required
+// by the committed changes.
 func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 	var now time.Time
 	if d.rolloutNow == nil {
@@ -51,7 +51,6 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 	}
 
 	changed, ingressChanged := false, false
-	environments := map[string]struct{}{}
 	var waitingForIngress []string
 	for _, serviceID := range serviceIDs {
 		result, err := d.advanceRollout(ctx, serviceID, now)
@@ -60,9 +59,6 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 		}
 		changed = changed || result.Changed
 		ingressChanged = ingressChanged || result.IngressChanged
-		if result.Changed && result.EnvironmentID != "" {
-			environments[result.EnvironmentID] = struct{}{}
-		}
 		if result.NeedsIngressConvergence {
 			waitingForIngress = append(waitingForIngress, serviceID)
 		}
@@ -80,9 +76,6 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 				return fmt.Errorf("confirm ingress convergence for service %s: %w", serviceID, err)
 			}
 			changed = changed || confirmed.Changed
-			if confirmed.Changed && confirmed.EnvironmentID != "" {
-				environments[confirmed.EnvironmentID] = struct{}{}
-			}
 		}
 	}
 
@@ -117,13 +110,6 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 	}
 	if ingressChanged && len(waitingForIngress) == 0 && d.ingress != nil {
 		d.ingress.RequestSync()
-	}
-	for environmentID := range environments {
-		if d.events != nil {
-			if _, err := d.events.Publish(ctx, environmentID); err != nil {
-				return fmt.Errorf("publish rollout event: %w", err)
-			}
-		}
 	}
 	return nil
 }

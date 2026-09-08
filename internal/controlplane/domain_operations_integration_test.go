@@ -69,7 +69,7 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	before = ingress.requests.Load()
-	revision, err := store.events.currentEnvironmentEvent(ctx, service.EnvironmentID)
+	revision, err := store.events.currentGlobalRevision(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 	if ingress.requests.Load() != before {
 		t.Fatal("rolled-back deletion woke ingress")
 	}
-	if after, err := store.events.currentEnvironmentEvent(ctx, service.EnvironmentID); err != nil || after != revision {
+	if after, err := store.events.currentGlobalRevision(ctx); err != nil || after != revision {
 		t.Fatalf("rolled-back deletion advanced event: %d -> %d: %v", revision, after, err)
 	}
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM domain_delete_blocker`); err != nil {

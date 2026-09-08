@@ -284,17 +284,6 @@ export function waitForServiceStatusFromSession(input: {
 	return services.waitForServiceStatusFromSession(getDashboardRuntime(), input);
 }
 
-export function waitForProjectServicesFromSession(input: {
-	projectId: string;
-	waitIndex: number;
-	waitTimeoutSeconds: number;
-}) {
-	return services.waitForProjectServicesFromSession(
-		getDashboardRuntime(),
-		input,
-	);
-}
-
 export function listServiceLogsFromSession(input: {
 	serviceId: string;
 	allocationId?: string;

@@ -13,16 +13,9 @@ import (
 )
 
 func (d *Delivery) ObserveAgentStatus(ctx context.Context, agentID string, report *agentv1.StatusReport) error {
-	ingressChanged, environmentIDs, err := d.recordStatusReport(ctx, agentID, report)
+	ingressChanged, _, err := d.recordStatusReport(ctx, agentID, report)
 	if err != nil {
 		return err
-	}
-	for _, environmentID := range environmentIDs {
-		if d.events != nil {
-			if _, err := d.events.Publish(ctx, environmentID); err != nil {
-				return fmt.Errorf("publish status event: %w", err)
-			}
-		}
 	}
 	if ingressChanged && d.ingress != nil {
 		d.ingress.RequestSync()

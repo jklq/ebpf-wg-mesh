@@ -296,9 +296,6 @@ func validateBuilder(cfg BuilderConfig) error {
 	if cfg.HeartbeatIntervalSeconds <= 0 {
 		return errors.New("builder.heartbeatIntervalSeconds must be greater than 0")
 	}
-	if cfg.GitBinary == "" {
-		return errors.New("builder.gitBinary is required")
-	}
 	if cfg.BuildctlBinary == "" {
 		return errors.New("builder.buildctlBinary is required")
 	}
