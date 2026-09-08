@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 
 	"ebof-wg-mesh/internal/controlplane/logs"
@@ -12,7 +11,7 @@ import (
 )
 
 // queueSourceBuild atomically resolves the durable source snapshot and queues
-// the deployment build. Publication happens only after the transaction commits.
+// the deployment build.
 func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBindingRecord, commitSHA string, pendingSnapshot source.SourceSnapshotRecord) (source.QueuedBuild, error) {
 	var result source.QueuedBuild
 	var service ServiceRecord
@@ -45,11 +44,6 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 	})
 	if err != nil {
 		return source.QueuedBuild{}, err
-	}
-	if d.events != nil {
-		if _, err := d.events.Publish(ctx, service.EnvironmentID); err != nil {
-			return source.QueuedBuild{}, fmt.Errorf("publish source event: %w", err)
-		}
 	}
 	// The coordinator no longer emits logs (it owns no emitter); delivery emits
 	// the queued-build line itself so the service panel still shows progress

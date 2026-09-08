@@ -261,7 +261,6 @@ type BuilderConfig struct {
 	WorkDir                  string
 	PollIntervalSeconds      int
 	HeartbeatIntervalSeconds int
-	GitBinary                string
 	BuildctlBinary           string
 	BuildkitAddress          string
 	CleanupWorkDir           bool

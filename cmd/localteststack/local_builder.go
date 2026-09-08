@@ -58,7 +58,6 @@ func startLocalBuilder(ctx context.Context, stateDir string, controlPlaneAddr st
 		WorkDir:                  filepath.Join(builderDir, "work"),
 		PollIntervalSeconds:      1,
 		HeartbeatIntervalSeconds: 5,
-		GitBinary:                firstNonEmpty(os.Getenv("BUILDER_GIT_BINARY"), "git"),
 		BuildctlBinary:           buildBinary,
 		BuildkitAddress:          buildkitAddress,
 		CleanupWorkDir:           true,
@@ -67,9 +66,6 @@ func startLocalBuilder(ctx context.Context, stateDir string, controlPlaneAddr st
 		return nil, nil, fmt.Errorf("finalize local builder config: %w", err)
 	}
 	fmt.Println(config.BuilderStartupContract(cfg).String())
-	if _, err := exec.LookPath(cfg.GitBinary); err != nil {
-		return nil, nil, fmt.Errorf("find %s: %w", cfg.GitBinary, err)
-	}
 	if _, err := exec.LookPath(cfg.BuildctlBinary); err != nil {
 		return nil, nil, fmt.Errorf("find %s: %w", cfg.BuildctlBinary, err)
 	}

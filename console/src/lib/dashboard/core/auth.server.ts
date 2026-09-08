@@ -196,7 +196,7 @@ async function signIn(
 	cookies.set(
 		config.refreshCookieName,
 		tokens.refreshToken,
-		refreshCookieOptions(config, tokens.refreshTokenExpiresAt),
+		sessionCookieOptions(config, tokens.refreshTokenExpiresAt),
 	);
 	return sanitizeRedirect(redirectTo);
 }
@@ -238,19 +238,6 @@ export async function requireSession(
 }
 
 export function sessionCookieOptions(
-	config: DashboardConfig,
-	expiresAt: Date,
-): SessionCookieOptions {
-	return {
-		httpOnly: true,
-		path: "/",
-		sameSite: "lax",
-		secure: shouldUseSecureCookies(config),
-		expires: expiresAt,
-	};
-}
-
-export function refreshCookieOptions(
 	config: DashboardConfig,
 	expiresAt: Date,
 ): SessionCookieOptions {
@@ -320,7 +307,7 @@ export async function refreshSessionFromCookies(
 	cookies.set(
 		config.refreshCookieName,
 		tokens.refreshToken,
-		refreshCookieOptions(config, tokens.refreshTokenExpiresAt),
+		sessionCookieOptions(config, tokens.refreshTokenExpiresAt),
 	);
 	return { user };
 }

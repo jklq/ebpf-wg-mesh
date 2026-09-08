@@ -84,7 +84,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	);
 	const services = localState.services;
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
-	const [, setStatusLoading] = useState(false);
 	const [showNewService, setShowNewService] = useState(false);
 	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
 	const [githubCatalogLoading, setGitHubCatalogLoading] = useState(false);
@@ -322,7 +321,6 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						: state.serviceStatus,
 			};
 		});
-		setStatusLoading(false);
 	}, [state, githubCatalogLoaded, githubCatalogLoading]);
 
 	useEffect(() => {
@@ -352,10 +350,8 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	useEffect(() => {
 		if (!selectedId) {
-			setStatusLoading(false);
 			return;
 		}
-		setStatusLoading(true);
 		let active = true;
 		const source = new EventSource(
 			`/events/service-status?serviceId=${encodeURIComponent(selectedId)}`,
@@ -366,16 +362,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				JSON.parse((event as MessageEvent<string>).data),
 			);
 			mergeStatusService(nextStatus);
-			setStatusLoading(false);
 		});
-		source.addEventListener("status-error", () => {
-			if (!active) return;
-			setStatusLoading(false);
-		});
-		source.onerror = () => {
-			if (!active) return;
-			setStatusLoading(false);
-		};
 		return () => {
 			active = false;
 			source.close();

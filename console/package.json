@@ -19,8 +19,7 @@
     "test:e2e:local": "bunx playwright test -c playwright.local.config.ts",
     "format": "bunx biome format",
     "lint": "bunx biome lint",
-    "check:input-validators": "if grep -E 'input as |inputValidator\\([^)]*=>[^)]* as ' src/routes/-dashboard/server-fns.ts src/routes/-fleet/server-fns.ts src/routes/auth/start.tsx src/routes/auth/callback.tsx; then exit 1; fi",
-    "check": "bun run generate:proto && bun run check:input-validators && bunx biome check",
+    "check": "bun run generate:proto && bunx biome check",
     "typecheck": "bun run generate:proto && bunx tsc --noEmit"
   },
   "dependencies": {

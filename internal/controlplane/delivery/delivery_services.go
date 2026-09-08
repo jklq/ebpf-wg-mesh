@@ -38,11 +38,6 @@ func (d *Delivery) createScheduledService(ctx context.Context, userID, environme
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	if d.events != nil {
-		if _, err := d.events.Publish(ctx, rec.EnvironmentID); err != nil {
-			return ServiceRecord{}, err
-		}
-	}
 	return rec, nil
 }
 
@@ -173,11 +168,6 @@ func (d *Delivery) updateService(ctx context.Context, userID, serviceID, name st
 	if err != nil {
 		return ServiceRecord{}, false, err
 	}
-	if d.events != nil {
-		if _, err := d.events.Publish(ctx, current.EnvironmentID); err != nil {
-			return ServiceRecord{}, false, err
-		}
-	}
 	return current, changed, nil
 }
 
@@ -303,7 +293,6 @@ func (d *Delivery) DeleteService(ctx context.Context, serviceID string) error {
 
 func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) error {
 	s := d.store
-	var environmentID string
 	var hasBindings bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
@@ -313,7 +302,6 @@ func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) 
 		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
 			return err
 		}
-		environmentID = service.EnvironmentID
 		bindings, err := s.listDomainBindings(ctx, userID, serviceID)
 		if err != nil {
 			return err
@@ -349,11 +337,6 @@ func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) 
 	}
 	if hasBindings && d.ingress != nil {
 		d.ingress.RequestSync()
-	}
-	if d.events != nil && environmentID != "" {
-		if _, err := d.events.Publish(ctx, environmentID); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -447,11 +430,6 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID 
 	if err != nil {
 		return ServiceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}
-	if d.events != nil {
-		if _, err := d.events.Publish(ctx, rec.EnvironmentID); err != nil {
-			return ServiceRecord{}, err
-		}
-	}
 	return rec, nil
 }
 
@@ -466,7 +444,7 @@ func (d *Delivery) ScaleService(ctx context.Context, serviceID string, desired i
 	}
 	var eventIndex int64
 	if d.events != nil {
-		eventIndex, err = d.events.Publish(ctx, service.EnvironmentID)
+		eventIndex, err = d.events.Current(ctx)
 		if err != nil {
 			return ServiceRecord{}, nil, 0, err
 		}

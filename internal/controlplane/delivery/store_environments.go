@@ -8,7 +8,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
@@ -122,7 +121,6 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEn
 			if err := protojson.Unmarshal(service.raw, spec); err != nil {
 				return err
 			}
-			spec = proto.Clone(spec).(*platformv1.ServiceSpec)
 			if !copyVariables && spec.GetRuntime() != nil {
 				spec.Runtime.Env = nil
 			}

@@ -234,9 +234,6 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 	if cfg.HeartbeatIntervalSeconds <= 0 {
 		cfg.HeartbeatIntervalSeconds = 10
 	}
-	if cfg.GitBinary == "" {
-		cfg.GitBinary = "git"
-	}
 	if cfg.BuildctlBinary == "" {
 		cfg.BuildctlBinary = "buildctl"
 	}

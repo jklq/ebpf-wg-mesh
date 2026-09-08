@@ -228,7 +228,7 @@ func markAllocationUnavailableForFailover(ctx context.Context, q ServiceQueryer,
 }
 
 // ReconcileFailover detects unhealthy agents, applies placement repair in one
-// transaction, then wakes agents and publishes routing and environment effects.
+// transaction, then wakes agents and requests ingress sync.
 func (d *Delivery) ReconcileFailover(ctx context.Context, unhealthyThreshold time.Duration) (ServiceFailoverResult, error) {
 	if d == nil || d.store == nil {
 		return ServiceFailoverResult{}, nil
@@ -252,13 +252,6 @@ func (d *Delivery) ReconcileFailover(ctx context.Context, unhealthyThreshold tim
 	}
 	if result.IngressChanged && d.ingress != nil {
 		d.ingress.RequestSync()
-	}
-	for _, environmentID := range result.EnvironmentIDs {
-		if d.events != nil {
-			if _, err := d.events.Publish(ctx, environmentID); err != nil {
-				return ServiceFailoverResult{}, fmt.Errorf("publish failover event: %w", err)
-			}
-		}
 	}
 	return result, nil
 }

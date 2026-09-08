@@ -4,7 +4,6 @@ import {
 	beginGitHubLogin,
 	clearSession,
 	completeAuthCallback,
-	refreshCookieOptions,
 	refreshSession,
 	sessionCookieOptions,
 } from "#/lib/dashboard/core/auth.server";
@@ -72,12 +71,8 @@ describe("dashboard authentication", () => {
 		};
 
 		expect(sessionCookieOptions(secureConfig, new Date()).secure).toBe(true);
-		expect(refreshCookieOptions(secureConfig, new Date()).secure).toBe(true);
 		expect(authStateCookieOptions(secureConfig, new Date()).secure).toBe(true);
 		expect(sessionCookieOptions(localStackConfig, new Date()).secure).toBe(
-			false,
-		);
-		expect(refreshCookieOptions(localStackConfig, new Date()).secure).toBe(
 			false,
 		);
 		expect(authStateCookieOptions(localStackConfig, new Date()).secure).toBe(

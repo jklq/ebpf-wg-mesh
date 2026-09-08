@@ -14,7 +14,7 @@ import (
 )
 
 // Delivery owns deployment lifecycle policy, its transactional state changes,
-// and the wake, ingress, and publication effects that follow a commit. Its
+// and the wake and ingress effects that follow a commit. Its
 // persistence and transaction helpers are private to this package.
 type Delivery struct {
 	store           *persistence
@@ -39,7 +39,7 @@ type DeploymentActionResult struct {
 }
 
 // ApplyDeploymentAction applies restart, rollback, cancellation, removal, and
-// retry policy atomically, then performs every wake and publication required to
+// retry policy atomically, then performs every wake required to
 // make the committed state observable. Callers do not need to finish the
 // operation themselves.
 func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (DeploymentActionResult, error) {
@@ -65,7 +65,7 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploym
 	}
 	var eventIndex int64
 	if d.events != nil {
-		eventIndex, err = d.events.Publish(ctx, service.EnvironmentID)
+		eventIndex, err = d.events.Current(ctx)
 		if err != nil {
 			return DeploymentActionResult{}, err
 		}

@@ -28,7 +28,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
-	index, changed, err := s.events.Wait(ctx, service.EnvironmentID, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
+	index, changed, err := s.events.Wait(ctx, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "wait for service event: %v", err)
 	}

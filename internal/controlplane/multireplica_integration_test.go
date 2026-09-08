@@ -52,7 +52,7 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	store := openTestStore(t)
 	events := NewPlatformEvents(store.events, time.Millisecond)
 
-	before, err := events.Current(ctx, "environment-a")
+	before, err := events.Current(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := events.Current(ctx, "environment-a")
+	after, err := events.Current(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	}); !errors.Is(err, rollbackErr) {
 		t.Fatalf("rollback error = %v", err)
 	}
-	unchanged, err := events.Current(ctx, "environment-a")
+	unchanged, err := events.Current(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

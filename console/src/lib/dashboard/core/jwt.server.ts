@@ -22,7 +22,6 @@ interface DashboardTokenPayload {
 	aud: string;
 	typ: "access" | "refresh";
 	sub: string;
-	uid?: string;
 	email: string;
 	iat: number;
 	exp: number;
@@ -205,8 +204,7 @@ function sign(secret: string, value: string): string {
 
 function payloadUser(payload: DashboardTokenPayload): DashboardUser {
 	return {
-		// uid is accepted only to rotate sessions issued before user IDs moved to sub.
-		id: payload.uid ?? payload.sub,
+		id: payload.sub,
 		email: payload.email,
 	};
 }
@@ -248,9 +246,6 @@ function isDashboardTokenPayload(
 		typeof payload.iat !== "number" ||
 		typeof payload.exp !== "number"
 	) {
-		return false;
-	}
-	if (payload.uid !== undefined && typeof payload.uid !== "string") {
 		return false;
 	}
 	if (expectedType === "refresh" && typeof payload.sid !== "string") {

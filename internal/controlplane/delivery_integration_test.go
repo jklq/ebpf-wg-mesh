@@ -54,7 +54,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	delivery := newTestDelivery(store, notifier, nil, nil)
 	before := mustDesiredRevision(t, store, ctx, "node-1")
 	events := NewPlatformEvents(store.events, 0)
-	eventBefore, err := events.Current(ctx, environmentID)
+	eventBefore, err := events.Current(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != before {
 		t.Fatalf("failed release changed desired revision: %d -> %d", before, got)
 	}
-	if got, err := events.Current(ctx, environmentID); err != nil || got != eventBefore {
+	if got, err := events.Current(ctx); err != nil || got != eventBefore {
 		t.Fatalf("failed release changed event index: %d -> %d (%v)", eventBefore, got, err)
 	}
 	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", nil)); err != nil {

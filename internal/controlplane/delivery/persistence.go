@@ -15,8 +15,12 @@ import (
 type Transaction func(context.Context, func(*sql.Tx) error) error
 
 type UserIdentity struct{ UserID string }
+
+// Events reads the global revision advanced atomically by every committed
+// transaction. Delivery never publishes: the bump already happened in withTx
+// by the time these methods run, so callers only read.
 type Events interface {
-	Publish(context.Context, string) (int64, error)
+	Current(context.Context) (int64, error)
 }
 
 // Dependencies supplies connection infrastructure, transactional catalog/source

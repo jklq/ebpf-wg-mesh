@@ -34,6 +34,7 @@ type PlatformService struct {
 
 type platformStore interface {
 	environmentStore
+	routing.Store
 	createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error)
 	listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error)
 	projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error)
@@ -125,8 +126,7 @@ func NewPlatformService(store platformStore, notifier deliverycore.PlatformNotif
 			opt(service)
 		}
 	}
-	routingStore, _ := store.(routing.Store)
-	service.domains = routing.NewDomains(routingStore, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
+	service.domains = routing.NewDomains(store, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
 	service.environments = NewEnvironmentOperations(store, notifier, ingress)
 	return service
 }
