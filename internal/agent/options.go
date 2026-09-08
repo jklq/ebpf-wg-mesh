@@ -45,15 +45,6 @@ func WithRuntime(runtime Runtime) Option {
 	}
 }
 
-func WithRuntimeFactory(factory func(config.AgentConfig) (Runtime, error)) Option {
-	return func(o *options) {
-		if factory == nil {
-			return
-		}
-		o.runtimeFactory = factory
-	}
-}
-
 func WithMeshFactory(factory MeshFactory) Option {
 	return func(o *options) {
 		if factory == nil {

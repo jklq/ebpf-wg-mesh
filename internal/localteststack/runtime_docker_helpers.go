@@ -18,6 +18,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/meshlabels"
+	"ebof-wg-mesh/internal/runtimeutil"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -206,7 +207,7 @@ func probeDockerReadiness(inspect dockerContainerInspect, svc *agentv1.DesiredSe
 		result.failureReason = "only HTTP readiness checks are supported"
 		return result
 	}
-	port := readinessCheckPort(runtime, check)
+	port := runtimeutil.ReadinessCheckPort(runtime, check)
 	if port == 0 {
 		result.failureReason = "HTTP readiness check port is unavailable"
 		return result
@@ -251,33 +252,6 @@ func probeDockerHealthCheck(inspect dockerContainerInspect, port int32, check *p
 	return fmt.Errorf("unsupported health check type")
 }
 
-func dockerReadinessPorts(svc *agentv1.DesiredService) []int32 {
-	runtime := svc.GetSpec().GetRuntime()
-	ports := runtimePortNumbers(runtime)
-	if len(ports) == 0 {
-		if check := runtime.GetHealthCheck(); check != nil && check.GetPort() > 0 {
-			return []int32{check.GetPort()}
-		}
-	}
-	return ports
-}
-
-func readinessCheckPort(runtime *platformv1.ServiceRuntime, check *platformv1.HealthCheck) int32 {
-	if check.GetPort() > 0 {
-		return check.GetPort()
-	}
-	for _, item := range runtime.GetPorts() {
-		if item.GetPrimary() {
-			return item.GetPort()
-		}
-	}
-	ports := runtimePortNumbers(runtime)
-	if len(ports) > 0 {
-		return ports[0]
-	}
-	return 0
-}
-
 func validHealthCheckPath(path string) bool {
 	return strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "\r\n")
 }
@@ -293,26 +267,6 @@ func resolvePublishedHostPort(inspect dockerContainerInspect, containerPort int3
 		hostIP = "127.0.0.1"
 	}
 	return net.JoinHostPort(hostIP, bindings[0].HostPort)
-}
-
-func runtimePortNumbers(runtime *platformv1.ServiceRuntime) []int32 {
-	if runtime == nil {
-		return nil
-	}
-	seen := map[int32]struct{}{}
-	var ports []int32
-	for _, item := range runtime.GetPorts() {
-		port := item.GetPort()
-		if port < 1 || port > 65535 {
-			continue
-		}
-		if _, ok := seen[port]; ok {
-			continue
-		}
-		seen[port] = struct{}{}
-		ports = append(ports, port)
-	}
-	return ports
 }
 
 func publishedPorts(runtime *platformv1.ServiceRuntime) []int32 {
@@ -363,22 +317,6 @@ func labelsMatchDesired(labels map[string]string, svc *agentv1.DesiredService) b
 		labels[meshlabels.DefaultIPv4Key] == svc.GetPrivateIpv4() &&
 		labels[meshlabels.DefaultIPv6Key] == svc.GetPrivateIpv6() &&
 		labels[internalHostnameLabel] == svc.GetInternalHostname()
-}
-
-func indexDesiredVolumes(items []*agentv1.DesiredVolume) map[string]*agentv1.DesiredVolume {
-	out := make(map[string]*agentv1.DesiredVolume, len(items))
-	for _, item := range items {
-		out[item.GetVolumeId()] = item
-	}
-	return out
-}
-
-func indexDesiredServices(items []*agentv1.DesiredService) map[string]*agentv1.DesiredService {
-	out := make(map[string]*agentv1.DesiredService, len(items))
-	for _, item := range items {
-		out[item.GetAllocationId()] = item
-	}
-	return out
 }
 
 func maxInt32(v int32, fallback int32) int32 {
