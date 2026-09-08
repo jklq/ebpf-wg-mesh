@@ -71,7 +71,6 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.GitHub.WebhookSecret, "github-webhook-secret", "CONTROLPLANE_GITHUB_WEBHOOK_SECRET", "", "")
 	stringFlag(fs, &githubPrivateKeyFile, "github-private-key-file", "CONTROLPLANE_GITHUB_PRIVATE_KEY_FILE", "", "")
 	stringFlag(fs, &cfg.GitHub.APIBaseURL, "github-api-base-url", "CONTROLPLANE_GITHUB_API_BASE_URL", "https://api.github.com", "")
-	stringFlag(fs, &cfg.GitHub.WebBaseURL, "github-web-base-url", "CONTROLPLANE_GITHUB_WEB_BASE_URL", "https://github.com", "")
 	stringFlag(fs, &cfg.GitHub.WebhookPath, "github-webhook-path", "CONTROLPLANE_GITHUB_WEBHOOK_PATH", "/webhooks/github", "")
 	stringFlag(fs, &cfg.Registry.Host, "registry-host", "CONTROLPLANE_REGISTRY_HOST", "", "")
 	stringFlag(fs, &cfg.Registry.NamespacePrefix, "registry-namespace-prefix", "CONTROLPLANE_REGISTRY_NAMESPACE_PREFIX", "mesh", "")
