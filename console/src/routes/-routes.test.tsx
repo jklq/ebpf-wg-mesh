@@ -13,7 +13,6 @@ import {
 	clearSession,
 	completeAuthCallback,
 } from "#/lib/dashboard/core/auth.server";
-import { loadDashboardHome } from "#/lib/dashboard/core/operations-home.server";
 import type {
 	CreateServiceFastResult,
 	DashboardHomeState,
@@ -21,7 +20,6 @@ import type {
 import { GitHubApiError } from "#/lib/dashboard/core/types.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
 import { NewServiceModal } from "#/routes/-dashboard/new-service-modal";
-import { loadHomeRouteState } from "#/routes/index";
 import { LoginPageView } from "#/routes/login";
 import { logoutRouteResponse } from "#/routes/logout";
 import {
@@ -73,16 +71,6 @@ describe("dashboard routes", () => {
 		).toBe(
 			"/auth/callback?user_id=user-1&email=user%40example.com&redirect=%2Fprojects",
 		);
-	});
-
-	it("redirects home route loads when there is no session", async () => {
-		const harness = createDashboardTestHarness();
-
-		await expect(
-			loadHomeRouteState({
-				loadDashboardHome: () => loadDashboardHome(harness.runtime),
-			}),
-		).rejects.toBeTruthy();
 	});
 
 	it("logs out and redirects to /login", async () => {
@@ -277,7 +265,6 @@ function homeState(
 			email: "user@example.com",
 		},
 		onboarding: {
-			currentStep: "account",
 			projectId: "",
 			environmentId: "",
 			serviceId: "",
@@ -332,7 +319,6 @@ function fastCreateResult(repositorySelector: string): CreateServiceFastResult {
 		},
 		serviceStatus: null,
 		onboarding: {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-1",
 			serviceId: "service-1",

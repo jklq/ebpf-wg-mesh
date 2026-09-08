@@ -1,5 +1,3 @@
-import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
-
 export interface DashboardUser {
 	id: string;
 	email: string;
@@ -24,12 +22,6 @@ export interface DashboardEnvironment {
 	createdAt?: Date;
 	updatedAt?: Date;
 }
-
-export type DashboardOnboardingStep =
-	| "account"
-	| "repository"
-	| "build"
-	| "domain";
 
 export type RepositoryAccessState =
 	| "SOURCE_ACCESS_STATE_AVAILABLE"
@@ -142,7 +134,6 @@ export interface StoredDashboardGitHubAccount extends DashboardGitHubAccount {
 }
 
 export interface DashboardOnboardingDraft {
-	currentStep: DashboardOnboardingStep;
 	projectId: string;
 	environmentId: string;
 	serviceId: string;
@@ -499,8 +490,6 @@ export interface DashboardHomeState {
 	services: Array<DashboardServiceRecord>;
 	service?: DashboardServiceRecord;
 	serviceStatus?: DashboardServiceStatus;
-	repositoryInspection?: DashboardRepositoryInspection;
-	domainVerification?: DomainVerificationResult;
 	domainBindings: Array<DashboardDomainBinding>;
 	controlPlaneReachable: boolean;
 	controlPlaneError?: string;

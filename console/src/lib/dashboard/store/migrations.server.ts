@@ -60,7 +60,6 @@ export function dashboardStoreMigrations(
 					user_id STRING PRIMARY KEY REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
 					account_name STRING NOT NULL DEFAULT '',
 					status STRING NOT NULL DEFAULT 'pending',
-					current_step STRING NOT NULL DEFAULT 'account',
 					project_id STRING NOT NULL DEFAULT '',
 					environment_id STRING NOT NULL DEFAULT '',
 					service_id STRING NOT NULL DEFAULT '',

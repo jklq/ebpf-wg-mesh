@@ -25,11 +25,7 @@ type RegistryPolicy struct {
 	now             func() time.Time
 }
 
-func NewRegistryPolicy(cfg config.RegistryConfig, minters ...registryCredentialMinter) *RegistryPolicy {
-	var minter registryCredentialMinter
-	if len(minters) > 0 {
-		minter = minters[0]
-	}
+func NewRegistryPolicy(cfg config.RegistryConfig, minter registryCredentialMinter) *RegistryPolicy {
 	return &RegistryPolicy{
 		host:            strings.TrimSpace(cfg.Host),
 		namespacePrefix: trimRegistryPath(cfg.NamespacePrefix),

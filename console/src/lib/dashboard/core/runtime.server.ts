@@ -2,14 +2,9 @@ import {
 	AuthConflictError,
 	type DashboardConfig,
 	type DashboardDependencies,
-	type DashboardDomainBinding,
 	type DashboardOnboardingDraft,
-	type DashboardOnboardingStep,
 	type DashboardProject,
-	type DashboardRepositoryInspection,
-	type DashboardRuntimePort,
 	type DashboardServiceRecord,
-	type DashboardServiceStatus,
 	type DashboardStore,
 	DashboardValidationError,
 	DatabaseError,
@@ -22,8 +17,6 @@ import {
 	type StoredDashboardGitHubAccount,
 } from "#/lib/dashboard/core/types.server";
 import { formatError } from "#/lib/dashboard/core/utils.server";
-import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
-import { verifyHostnameDNS } from "#/lib/dashboard/domain/dns.server";
 import {
 	defaultOnboardingDraft,
 	generatedServiceNameFromSeed,
@@ -199,68 +192,23 @@ function waitForTokenRefresh(): Promise<void> {
 
 export function reconcileOnboardingDraft(
 	draft: DashboardOnboardingDraft,
-	inspection: DashboardRepositoryInspection | undefined,
 	project: DashboardProject | undefined,
 	service: DashboardServiceRecord | undefined,
-	serviceStatus: DashboardServiceStatus | undefined,
-	domainBindings: Array<DashboardDomainBinding>,
 ): DashboardOnboardingDraft {
 	const source = service?.spec?.source;
-	const hostname = draft.hostname || domainBindings[0]?.hostname || "";
-	const currentStep = deriveCurrentStep({
-		draft,
-		project,
-		service,
-		serviceStatus,
-		hostname,
-		domainBindings,
-	});
 	return {
 		...defaultOnboardingDraft(),
 		...draft,
-		currentStep,
 		projectId: project?.id ?? "",
 		serviceId: service?.id ?? "",
 		repositorySelector:
 			draft.repositorySelector || source?.repositorySelector || "",
-		trackedRef:
-			draft.trackedRef || source?.trackedRef || inspection?.defaultBranch || "",
+		trackedRef: draft.trackedRef || source?.trackedRef || "",
 		dockerfilePath:
-			draft.dockerfilePath ||
-			source?.buildRecipe?.dockerfilePath ||
-			inspection?.recommendedBuildRecipe?.dockerfilePath ||
-			"",
-		contextDir:
-			draft.contextDir ||
-			source?.buildRecipe?.contextDir ||
-			inspection?.recommendedBuildRecipe?.contextDir ||
-			"",
-		hostname,
+			draft.dockerfilePath || source?.buildRecipe?.dockerfilePath || "",
+		contextDir: draft.contextDir || source?.buildRecipe?.contextDir || "",
+		hostname: draft.hostname,
 	};
-}
-
-function deriveCurrentStep(input: {
-	draft: DashboardOnboardingDraft;
-	project: DashboardProject | undefined;
-	service: DashboardServiceRecord | undefined;
-	serviceStatus: DashboardServiceStatus | undefined;
-	hostname: string;
-	domainBindings: Array<DashboardDomainBinding>;
-}): DashboardOnboardingStep {
-	if (
-		input.hostname ||
-		input.domainBindings.length > 0 ||
-		buildHealthyAndReady(input.serviceStatus ?? undefined)
-	) {
-		return "domain";
-	}
-	if (input.project && input.service) {
-		return "build";
-	}
-	if (input.draft.repositorySelector) {
-		return "repository";
-	}
-	return "account";
 }
 
 export function onboardingDraftEquals(
@@ -268,7 +216,6 @@ export function onboardingDraftEquals(
 	right: DashboardOnboardingDraft,
 ): boolean {
 	return (
-		left.currentStep === right.currentStep &&
 		left.projectId === right.projectId &&
 		left.environmentId === right.environmentId &&
 		left.serviceId === right.serviceId &&
@@ -294,38 +241,6 @@ export function parseTargetPort(raw: string | number | undefined): number {
 	return port;
 }
 
-export function recommendedTargetPort(
-	service: DashboardServiceRecord | undefined,
-	status: DashboardServiceStatus | undefined,
-): number {
-	for (const port of sortedRuntimePorts(service?.spec?.runtime.ports ?? [])) {
-		if (port.primary) {
-			return port.port;
-		}
-	}
-	const healthyPorts = new Set([
-		...(status?.allocation?.healthyIpv4Ports ?? []),
-		...(status?.allocation?.healthyIpv6Ports ?? []),
-	]);
-	for (const port of healthyPorts) {
-		if (Number.isInteger(port) && port >= 1 && port <= 65535) {
-			return port;
-		}
-	}
-	return 8080;
-}
-
-function sortedRuntimePorts(
-	ports: DashboardRuntimePort[],
-): DashboardRuntimePort[] {
-	return [...ports].sort((left, right) => {
-		if (left.primary !== right.primary) {
-			return left.primary ? -1 : 1;
-		}
-		return left.port - right.port;
-	});
-}
-
 export function nextGeneratedServiceName(
 	services: Array<DashboardServiceRecord>,
 	preferredName: string | undefined,
@@ -344,15 +259,6 @@ export function nextGeneratedProjectName(
 	return uniqueServiceName(
 		projects.map((project) => project.name),
 		generatedServiceNameFromSeed(seed),
-	);
-}
-
-export function buildHealthyAndReady(
-	status: DashboardServiceStatus | undefined,
-): boolean {
-	return (
-		status?.service.latestBuild?.state === "BUILD_STATE_SUCCEEDED" &&
-		status.allocation?.healthy === true
 	);
 }
 
@@ -397,11 +303,9 @@ async function ensureStoreInitialized(
 }
 
 export async function githubCall<A>(
-	runtime: DashboardRuntime,
 	operation: string,
 	run: () => Promise<A>,
 ): Promise<A> {
-	void runtime;
 	try {
 		return await run();
 	} catch (cause) {
@@ -516,36 +420,4 @@ function readGrpcCode(value: unknown): number | undefined {
 		return value.code;
 	}
 	return undefined;
-}
-
-export async function verifyHostnameOrThrow(
-	runtime: DashboardRuntime,
-	hostname: string,
-): Promise<DomainVerificationResult> {
-	try {
-		return await verifyHostnameDNS(
-			hostname,
-			runtime.config.ingressTargetHost,
-			undefined,
-			runtime.config.localDomainSuffix,
-		);
-	} catch (cause) {
-		throw new DashboardValidationError({
-			message: formatError(cause),
-		});
-	}
-}
-
-export async function safeVerifyHostname(
-	runtime: DashboardRuntime,
-	hostname: string,
-): Promise<DomainVerificationResult | undefined> {
-	try {
-		return await verifyHostnameOrThrow(runtime, hostname);
-	} catch (error) {
-		if (error instanceof DashboardValidationError) {
-			return undefined;
-		}
-		throw error;
-	}
 }

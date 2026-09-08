@@ -6,15 +6,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func deploymentStateInProgress(state string) bool {
-	switch state {
-	case deliverycore.DeploymentStateStaged, deliverycore.DeploymentStateQueuedBuild, deliverycore.DeploymentStateBuilding, deliverycore.DeploymentStateScheduling, deliverycore.DeploymentStateImagePull, deliverycore.DeploymentStateStarting, deliverycore.DeploymentStateReadiness, deliverycore.DeploymentStateDraining:
-		return true
-	default:
-		return false
-	}
-}
-
 func toProtoDeploymentState(state string) platformv1.DeploymentState {
 	switch state {
 	case deliverycore.DeploymentStateStaged:

@@ -170,7 +170,6 @@ func (s *persistence) insertDeploymentTx(
 		RequestedByUserID: requestedByUserID,
 		CreatedAt:         now,
 		UpdatedAt:         now,
-		Reason:            reasonCode,
 	}
 	resolvedSpec, err := s.loadServiceDetailsQuerier(ctx, tx, serviceID, specRevision)
 	if err != nil {
@@ -402,28 +401,6 @@ func (s *persistence) markCurrentDeploymentRemovedTx(ctx context.Context, tx *sq
 	return err
 }
 
-func (s *persistence) cancelCurrentDeployment(ctx context.Context, serviceID, userID string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
-			return err
-		}
-		current, ok, err := s.currentDeploymentTx(ctx, tx, serviceID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return sql.ErrNoRows
-		}
-		_, err = s.applyDeploymentTransitionTx(ctx, tx, current.ID, deploymentTransitionInput{
-			ToState:    DeploymentStateCancelled,
-			Actor:      deploymentActor{Kind: DeploymentCauseUser, ID: userID},
-			ReasonCode: reasonUserCancel,
-			Detail:     "Cancelled by user",
-		})
-		return err
-	})
-}
-
 func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecord, error) {
 	var rec DeploymentRecord
 	var resolvedSpecJSON, variableVersionsJSON []byte
@@ -458,7 +435,6 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 	if rec.VariableVersions == nil {
 		rec.VariableVersions = map[string]int64{}
 	}
-	rec.Reason = rec.ReasonCode
 	return rec, nil
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -55,10 +54,6 @@ func lifecycleStateRecord(state platformv1.AgentLifecycleState) deliverycore.Age
 	default:
 		return ""
 	}
-}
-
-func encodeCapabilities(values []string) ([]byte, error) {
-	return json.Marshal(deliverycore.CanonicalCapabilities(values))
 }
 
 func (s *fleetPersistence) RecordAgentCertificate(ctx context.Context, agentID, serial string) error {

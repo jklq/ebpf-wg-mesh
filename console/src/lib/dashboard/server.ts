@@ -36,9 +36,7 @@ import {
 	type DashboardFleetAgent,
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
-	type DashboardOnboardingDraft,
 	type DashboardProject,
-	type DashboardRepositoryInspection,
 	type DashboardServiceLogLine,
 	type DashboardServiceLogType,
 	type DashboardServicePosition,
@@ -59,7 +57,6 @@ import {
 	parseDevUsers,
 	parseIdentifier,
 } from "#/lib/dashboard/core/utils.server";
-import type { DomainVerificationResult } from "#/lib/dashboard/domain/dns.server";
 import { createGitHubAppUserClient } from "#/lib/dashboard/github/auth.server";
 import { createPostgresDashboardStore } from "#/lib/dashboard/store/postgres.server";
 import type { GitHubTokenCipher } from "#/lib/dashboard/store/token-crypto.server";
@@ -244,37 +241,10 @@ export function loadGitHubCatalogFromSession(): Promise<{
 	return onboarding.loadGitHubCatalogFromSession(getDashboardRuntime());
 }
 
-export function inspectRepositorySourceFromSession(input: {
-	repositorySelector: string;
-}): Promise<DashboardRepositoryInspection | undefined> {
-	return onboarding.inspectRepositorySourceFromSession(
-		getDashboardRuntime(),
-		input,
-	);
-}
-
 export function createProjectFromSession(
 	name: string,
 ): Promise<DashboardProject> {
 	return onboarding.createProjectFromSession(getDashboardRuntime(), name);
-}
-
-export function inspectRepositoryFromSession(input: {
-	repositorySelector: string;
-}): Promise<DashboardOnboardingDraft> {
-	return onboarding.inspectRepositoryFromSession(getDashboardRuntime(), input);
-}
-
-export function confirmRepositoryFromSession(input: {
-	repositorySelector: string;
-	serviceName?: string;
-	trackedRef?: string;
-	dockerfilePath?: string;
-	contextDir?: string;
-	cpuMillis?: number;
-	memoryMebibytes?: number;
-}): Promise<DashboardOnboardingDraft> {
-	return onboarding.confirmRepositoryFromSession(getDashboardRuntime(), input);
 }
 
 export function createServiceFastFromSession(input: {
@@ -287,22 +257,6 @@ export function createServiceFastFromSession(input: {
 	memoryMebibytes?: number;
 }): Promise<CreateServiceFastResult> {
 	return onboarding.createServiceFastFromSession(getDashboardRuntime(), input);
-}
-
-export function saveHostnameFromSession(
-	hostname: string,
-): Promise<DashboardOnboardingDraft> {
-	return onboarding.saveHostnameFromSession(getDashboardRuntime(), hostname);
-}
-
-export function publishDomainFromSession(): Promise<DashboardDomainBinding> {
-	return onboarding.publishDomainFromSession(getDashboardRuntime());
-}
-
-export function getServiceStatusFromSession(input: {
-	serviceId: string;
-}): Promise<DashboardServiceStatus> {
-	return services.getServiceStatusFromSession(getDashboardRuntime(), input);
 }
 
 export function listEnvironmentServicesFromSession(input: {
@@ -453,12 +407,6 @@ export function deleteDomainBindingFromSession(input: {
 	return domains.deleteDomainBindingFromSession(getDashboardRuntime(), input);
 }
 
-export function checkDomainDNSFromSession(
-	hostname: string,
-): Promise<DomainVerificationResult | undefined> {
-	return domains.checkDomainDNSFromSession(getDashboardRuntime(), hostname);
-}
-
 export function clearSession(): Promise<void> {
 	return auth.clearSession(getDashboardRuntime());
 }
@@ -555,9 +503,7 @@ function readConfig(): RuntimeConfig {
 		sessionCookieName,
 		refreshCookieName,
 		authStateCookieName:
-			process.env.DASHBOARD_AUTH_STATE_COOKIE_NAME ??
-			process.env.DASHBOARD_OAUTH_STATE_COOKIE_NAME ??
-			"dashboard_auth_state",
+			process.env.DASHBOARD_AUTH_STATE_COOKIE_NAME ?? "dashboard_auth_state",
 		publicBaseURL,
 		localIngressBaseURL,
 		githubInstallURL:

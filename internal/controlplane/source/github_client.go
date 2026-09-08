@@ -86,11 +86,6 @@ func (c *GitHubClient) Enabled() bool {
 	return c != nil && c.cfg.Enabled
 }
 
-func (c *GitHubClient) CloneURL(owner, repo string) string {
-	base := strings.TrimRight(c.cfg.WebBaseURL, "/")
-	return fmt.Sprintf("%s/%s/%s.git", base, owner, repo)
-}
-
 func (c *GitHubClient) FetchArchive(ctx context.Context, owner, repo, ref string, installationID int64) ([]byte, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, c.apiPath("/repos/%s/%s/tarball/%s", owner, repo, strings.TrimSpace(ref)), nil)
 	if err != nil {

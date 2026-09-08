@@ -6214,7 +6214,6 @@ type DeploymentRecord struct {
 	ServiceId         string                    `protobuf:"bytes,2,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
 	RolloutGeneration int64                     `protobuf:"varint,3,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
 	SpecRevision      int64                     `protobuf:"varint,4,opt,name=spec_revision,json=specRevision,proto3" json:"spec_revision,omitempty"`
-	Reason            string                    `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
 	CreatedAt         *timestamppb.Timestamp    `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	Build             *BuildStatus              `protobuf:"bytes,7,opt,name=build,proto3" json:"build,omitempty"`
 	IsCurrent         bool                      `protobuf:"varint,8,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
@@ -6284,13 +6283,6 @@ func (x *DeploymentRecord) GetSpecRevision() int64 {
 		return x.SpecRevision
 	}
 	return 0
-}
-
-func (x *DeploymentRecord) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
 }
 
 func (x *DeploymentRecord) GetCreatedAt() *timestamppb.Timestamp {
@@ -8073,14 +8065,13 @@ const file_platform_proto_rawDesc = "" +
 	"\x1dListServiceDeploymentsRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\xde\x05\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\xc6\x05\n" +
 	"\x10DeploymentRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x02 \x01(\tR\tserviceId\x12-\n" +
 	"\x12rollout_generation\x18\x03 \x01(\x03R\x11rolloutGeneration\x12#\n" +
-	"\rspec_revision\x18\x04 \x01(\x03R\fspecRevision\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\x129\n" +
+	"\rspec_revision\x18\x04 \x01(\x03R\fspecRevision\x129\n" +
 	"\n" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12.\n" +
 	"\x05build\x18\a \x01(\v2\x18.platform.v1.BuildStatusR\x05build\x12\x1d\n" +

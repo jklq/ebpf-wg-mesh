@@ -23,7 +23,6 @@ export interface GitHubAccountRow {
 }
 
 export interface OnboardingRow {
-	current_step: string;
 	project_id: string;
 	environment_id: string;
 	service_id: string;
@@ -62,7 +61,6 @@ export function onboardingDraftFromRow(
 	row: OnboardingRow,
 ): DashboardOnboardingDraft {
 	return {
-		currentStep: decodeOnboardingStep(row.current_step),
 		projectId: row.project_id,
 		environmentId: row.environment_id,
 		serviceId: row.service_id,
@@ -72,17 +70,4 @@ export function onboardingDraftFromRow(
 		contextDir: row.context_dir,
 		hostname: row.hostname,
 	};
-}
-
-function decodeOnboardingStep(
-	value: string,
-): DashboardOnboardingDraft["currentStep"] {
-	switch (value) {
-		case "repository":
-		case "build":
-		case "domain":
-			return value;
-		default:
-			return "account";
-	}
 }

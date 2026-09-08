@@ -299,7 +299,6 @@ function state(): DashboardHomeState {
 		environments: [environment],
 		environment,
 		onboarding: {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-1",
 			serviceId: "service-1",

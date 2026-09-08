@@ -14,7 +14,6 @@ class DashboardTaggedError extends Error {
 		super(message);
 		this.name = tag;
 		this._tag = tag;
-		Object.setPrototypeOf(this, new.target.prototype);
 	}
 }
 

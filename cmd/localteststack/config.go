@@ -89,10 +89,6 @@ func operatorGitHubUserID(login string) string {
 	return "github:" + strings.ToLower(strings.TrimSpace(login))
 }
 
-func (c localStackConfig) ingressBaseURL() string {
-	return fmt.Sprintf("http://%s:%d", c.IngressHost, c.IngressPort)
-}
-
 func (c localStackConfig) examplePublishedHost(service string) string {
 	service = strings.TrimSpace(strings.ToLower(service))
 	if service == "" {

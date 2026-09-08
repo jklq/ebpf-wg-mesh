@@ -130,25 +130,3 @@ func (d *Delivery) chooseAgentForReplicaQuerier(ctx context.Context, q ServiceQu
 	}
 	return "", fmt.Errorf("%w: %s", ErrNoPlacementAvailable, placementFailureReason(candidates, spec, s.reservedAgentIDs))
 }
-
-func (d *Delivery) chooseAgentForPlacementQuerier(ctx context.Context, q ServiceQueryer, spec *platformv1.ServiceSpec) (string, error) {
-	return d.chooseAgentForReplicaQuerier(ctx, q, spec, nil)
-}
-
-func (d *Delivery) chooseAgentForService(ctx context.Context, environmentID string, spec *platformv1.ServiceSpec) (string, error) {
-	if volumeName := ServiceVolumeName(spec); volumeName != "" {
-		if err := d.store.requireVolumeQuerier(ctx, d.store.db, environmentID, volumeName); err != nil {
-			return "", err
-		}
-	}
-	return d.chooseAgentForPlacementQuerier(ctx, d.store.db, spec)
-}
-
-func (d *Delivery) chooseAgentForServiceTx(ctx context.Context, tx *sql.Tx, environmentID string, spec *platformv1.ServiceSpec) (string, error) {
-	if volumeName := ServiceVolumeName(spec); volumeName != "" {
-		if err := d.store.requireVolumeQuerier(ctx, tx, environmentID, volumeName); err != nil {
-			return "", err
-		}
-	}
-	return d.chooseAgentForPlacementQuerier(ctx, tx, spec)
-}

@@ -27,16 +27,6 @@ import {
 	requireGitHubRepositoryAccess,
 } from "./operations-helpers.server";
 
-export async function getServiceStatusFromSession(
-	runtime: DashboardRuntime,
-	input: { serviceId: string },
-): Promise<DashboardServiceStatus> {
-	const session = await requireSession(runtime);
-	return platformCall(runtime, "getServiceStatus", (platform) =>
-		platform.getServiceStatus(session.user, { serviceId: input.serviceId }),
-	);
-}
-
 export async function waitForServiceStatusFromSession(
 	runtime: DashboardRuntime,
 	input: {

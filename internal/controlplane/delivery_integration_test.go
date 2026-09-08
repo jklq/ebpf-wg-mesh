@@ -36,7 +36,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if first.ID > second.ID {
 		first, second = second, first
 	}
-	volume, err := store.catalog.createVolume(ctx, "owner", environmentID, "missing", 64<<20, "node-1")
+	volume, err := store.catalog.createScheduledVolume(ctx, "owner", environmentID, "missing", 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

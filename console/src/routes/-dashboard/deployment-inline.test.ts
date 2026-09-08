@@ -8,7 +8,6 @@ import {
 	isPinnedDeployment,
 	partitionDeployments,
 	selectInlineLogSnippet,
-	stageAttemptLabel,
 	trafficRetentionCopy,
 } from "./deployment-inline";
 
@@ -54,18 +53,6 @@ describe("buildStepHint", () => {
 				"#6 [builder 5/7] RUN go build -o /out/worker ./cmd/worker",
 			]),
 		).toBe("step 6 of 7");
-	});
-});
-
-describe("stageAttemptLabel", () => {
-	it("marks later stages as not attempted after a failure", () => {
-		expect(
-			stageAttemptLabel({
-				state: "DEPLOYMENT_STAGE_STATE_PENDING",
-				detail: "Waiting for build to finish",
-				priorFailed: true,
-			}),
-		).toBe("not attempted");
 	});
 });
 

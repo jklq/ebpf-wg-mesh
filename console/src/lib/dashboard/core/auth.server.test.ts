@@ -203,7 +203,6 @@ describe("dashboard authentication", () => {
 		expect(JSON.stringify(home)).not.toContain("github-access-token");
 		expect(JSON.stringify(home)).not.toContain("github-refresh-token");
 		expect(home?.onboarding).toMatchObject({
-			currentStep: "account",
 			projectId: "",
 			serviceId: "",
 			repositorySelector: "",

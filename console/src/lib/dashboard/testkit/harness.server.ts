@@ -389,7 +389,6 @@ export function createDashboardTestHarness(
 
 function defaultOnboardingDraft(): DashboardOnboardingDraft {
 	return {
-		currentStep: "account",
 		projectId: "",
 		environmentId: "",
 		serviceId: "",

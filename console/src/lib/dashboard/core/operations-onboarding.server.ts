@@ -5,32 +5,25 @@ import {
 	nextGeneratedProjectName,
 	nextGeneratedServiceName,
 	platformCall,
-	recommendedTargetPort,
 	safePlatformCall,
 	saveOnboardingDraft,
 	storeCall,
-	verifyHostnameOrThrow,
 } from "#/lib/dashboard/core/runtime.server";
 import {
 	type CreateServiceFastResult,
-	type DashboardDomainBinding,
 	type DashboardEnvironment,
 	type DashboardGitHubAccount,
-	type DashboardOnboardingDraft,
 	type DashboardProject,
-	type DashboardRepositoryInspection,
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
 	DashboardValidationError,
 	type GitHubUserRepository,
 } from "#/lib/dashboard/core/types.server";
-import { normalizeHostname } from "#/lib/dashboard/domain/dns.server";
 import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
 import {
 	buildServiceSpec,
 	loadGitHubCatalog,
 	publicGitHubAccount,
-	repositoryProject,
 	requireGitHubRepositoryAccess,
 } from "./operations-helpers.server";
 
@@ -53,33 +46,6 @@ export async function loadGitHubCatalogFromSession(
 		githubAccount: publicGitHubAccount(catalog.githubAccount),
 		repositories: catalog.repositories,
 	};
-}
-
-export async function inspectRepositorySourceFromSession(
-	runtime: DashboardRuntime,
-	input: { repositorySelector: string },
-): Promise<DashboardRepositoryInspection | undefined> {
-	const session = await requireSession(runtime);
-	const selector = normalizeRepositorySelector(input.repositorySelector);
-	if (!selector) return undefined;
-	const githubUserAccessToken = await requireGitHubRepositoryAccess(
-		runtime,
-		session.user.id,
-		selector,
-	);
-	const draft = await loadOnboardingDraft(runtime, session.user.id);
-	const project = await repositoryProject(
-		runtime,
-		session.user,
-		draft.projectId,
-	);
-	return platformCall(runtime, "linkGitHubRepository", (platform) =>
-		platform.linkGitHubRepository(session.user, {
-			projectId: project.id,
-			repositorySelector: selector,
-			githubUserAccessToken,
-		}),
-	);
 }
 
 export async function createProjectFromSession(
@@ -189,74 +155,6 @@ export async function releaseEnvironmentFromSession(
 	);
 }
 
-export async function inspectRepositoryFromSession(
-	runtime: DashboardRuntime,
-	input: { repositorySelector: string },
-): Promise<DashboardOnboardingDraft> {
-	const session = await requireSession(runtime);
-	const selector = normalizeRepositorySelector(input.repositorySelector);
-	const githubUserAccessToken = await requireGitHubRepositoryAccess(
-		runtime,
-		session.user.id,
-		selector,
-	);
-	const draft = await loadOnboardingDraft(runtime, session.user.id);
-	const project = await repositoryProject(
-		runtime,
-		session.user,
-		draft.projectId,
-	);
-	const inspection = await platformCall(
-		runtime,
-		"linkGitHubRepository",
-		(platform) =>
-			platform.linkGitHubRepository(session.user, {
-				projectId: project.id,
-				repositorySelector: selector,
-				githubUserAccessToken,
-			}),
-	);
-	const recommended = inspection.recommendedBuildRecipe;
-	const selectorChanged = draft.repositorySelector !== selector;
-	const nextDraft: DashboardOnboardingDraft = {
-		...draft,
-		currentStep: "repository",
-		projectId: project.id,
-		serviceId: selectorChanged ? "" : draft.serviceId,
-		repositorySelector: selector,
-		trackedRef:
-			selectorChanged || draft.trackedRef === ""
-				? inspection.defaultBranch
-				: draft.trackedRef,
-		dockerfilePath:
-			selectorChanged || draft.dockerfilePath === ""
-				? (recommended?.dockerfilePath ?? "")
-				: draft.dockerfilePath,
-		contextDir:
-			selectorChanged || draft.contextDir === ""
-				? (recommended?.contextDir ?? "")
-				: draft.contextDir,
-		hostname: selectorChanged ? "" : draft.hostname,
-	};
-	return saveOnboardingDraft(runtime, session.user.id, nextDraft);
-}
-
-export async function confirmRepositoryFromSession(
-	runtime: DashboardRuntime,
-	input: {
-		repositorySelector: string;
-		serviceName?: string;
-		trackedRef?: string;
-		dockerfilePath?: string;
-		contextDir?: string;
-		cpuMillis?: number;
-		memoryMebibytes?: number;
-	},
-): Promise<DashboardOnboardingDraft> {
-	const result = await createServiceFastFromSession(runtime, input);
-	return result.onboarding;
-}
-
 export async function createServiceFastFromSession(
 	runtime: DashboardRuntime,
 	input: {
@@ -359,7 +257,6 @@ export async function createServiceFastFromSession(
 		}),
 	);
 	const onboarding = await saveOnboardingDraft(runtime, session.user.id, {
-		currentStep: "build",
 		projectId: project.id,
 		environmentId: environment.id,
 		serviceId: service.id,
@@ -382,74 +279,4 @@ export async function createServiceFastFromSession(
 		serviceStatus,
 		onboarding,
 	};
-}
-
-export async function saveHostnameFromSession(
-	runtime: DashboardRuntime,
-	hostname: string,
-): Promise<DashboardOnboardingDraft> {
-	const session = await requireSession(runtime);
-	const normalizedHostname = normalizeHostname(hostname);
-	const draft = await loadOnboardingDraft(runtime, session.user.id);
-	if (!draft.projectId || !draft.serviceId) {
-		throw new DashboardValidationError({
-			message: "Create a service before connecting a domain.",
-		});
-	}
-	return saveOnboardingDraft(runtime, session.user.id, {
-		...draft,
-		currentStep: "domain",
-		hostname: normalizedHostname,
-	});
-}
-
-export async function publishDomainFromSession(
-	runtime: DashboardRuntime,
-): Promise<DashboardDomainBinding> {
-	const session = await requireSession(runtime);
-	const draft = await loadOnboardingDraft(runtime, session.user.id);
-	if (!draft.projectId || !draft.serviceId) {
-		throw new DashboardValidationError({
-			message: "Create a service before publishing a domain.",
-		});
-	}
-	if (!draft.hostname) {
-		throw new DashboardValidationError({
-			message: "Enter a hostname first.",
-		});
-	}
-	const service = await platformCall(runtime, "getService", (platform) =>
-		platform.getService(session.user, {
-			serviceId: draft.serviceId,
-		}),
-	);
-	const serviceStatus = await safePlatformCall(
-		runtime,
-		"getServiceStatus",
-		(platform) =>
-			platform.getServiceStatus(session.user, {
-				serviceId: draft.serviceId,
-			}),
-	);
-	const verification = await verifyHostnameOrThrow(runtime, draft.hostname);
-	if (verification.state !== "verified") {
-		throw new DashboardValidationError({
-			message: "DNS has not verified yet for this hostname.",
-		});
-	}
-	const binding = await platformCall(
-		runtime,
-		"createDomainBinding",
-		(platform) =>
-			platform.createDomainBinding(session.user, {
-				serviceId: draft.serviceId,
-				hostname: draft.hostname,
-				targetPort: recommendedTargetPort(service, serviceStatus),
-			}),
-	);
-	await saveOnboardingDraft(runtime, session.user.id, {
-		...draft,
-		currentStep: "domain",
-	});
-	return binding;
 }

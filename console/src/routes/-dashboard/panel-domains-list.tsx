@@ -559,8 +559,6 @@ export function recommendedTargetPort(
 	const healthy = [
 		...(state.serviceStatus?.allocation?.healthyIpv4Ports ?? []),
 		...(state.serviceStatus?.allocation?.healthyIpv6Ports ?? []),
-	].find(
-		(port) => Number.isInteger(port) && port >= 1 && port <= 65535,
-	);
+	].find((port) => Number.isInteger(port) && port >= 1 && port <= 65535);
 	return healthy ?? 8080;
 }

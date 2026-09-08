@@ -50,7 +50,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry := NewRegistryPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform", CredentialTTLSeconds: 300})
+	registry := NewRegistryPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform", CredentialTTLSeconds: 300}, nil)
 	credentials := &retryBuildCredentials{}
 	notifier := &recordingNotifier{}
 	logWriter := &recordingLogWriter{enabled: true}
