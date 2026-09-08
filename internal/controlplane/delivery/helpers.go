@@ -201,3 +201,11 @@ func trailingNumber(value string) int {
 	}
 	return number
 }
+
+func IPv4SubnetAt(poolCIDR string, prefixBits int, ordinal uint64) (string, error) {
+	return ipv4SubnetAt(poolCIDR, prefixBits, ordinal)
+}
+
+func IPv4PrefixesOverlap(left, right netip.Prefix) bool {
+	return ipv4PrefixesOverlap(left, right)
+}

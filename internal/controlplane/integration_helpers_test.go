@@ -5,9 +5,11 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -17,6 +19,18 @@ import (
 
 func testDelivery(store *persistence) *testDeliveryHarness {
 	return newTestDelivery(store, nil, nil, nil)
+}
+
+func bumpDesiredRevisionsForTest(t *testing.T, store *persistence, ctx context.Context, agentIDs []string) {
+	t.Helper()
+	if len(agentIDs) == 0 {
+		return
+	}
+	if err := store.withTx(ctx, func(tx *sql.Tx) error {
+		return dbtx.BumpDesiredRevisions(ctx, tx, agentIDs)
+	}); err != nil {
+		t.Fatalf("bumpDesiredRevisions: %v", err)
+	}
 }
 
 func createService(ctx context.Context, store *persistence, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (deliverycore.ServiceRecord, error) {

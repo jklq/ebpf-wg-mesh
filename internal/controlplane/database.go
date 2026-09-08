@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"runtime"
 	"slices"
@@ -103,19 +102,12 @@ func (s *database) migrate(ctx context.Context) error {
 			return fmt.Errorf("iterate schema versions: %w", err)
 		}
 		if len(applied) > 0 {
-			current := 0
-			for version := range applied {
-				if version > current {
-					current = version
+			if len(applied) == 1 {
+				if _, ok := applied[currentSchemaVersion]; ok {
+					return nil
 				}
 			}
-			if current == currentSchemaVersion && len(applied) == 1 {
-				return nil
-			}
-			if err := applySchemaUpgrades(ctx, tx, current); err != nil {
-				return err
-			}
-			return nil
+			return fmt.Errorf("database schema is stale; recreate the database")
 		}
 
 		for _, stmt := range currentSchema {
@@ -128,30 +120,6 @@ func (s *database) migrate(ctx context.Context) error {
 		}
 		return nil
 	})
-}
-
-func applySchemaUpgrades(ctx context.Context, tx *sql.Tx, fromVersion int) error {
-	if fromVersion <= 0 {
-		return fmt.Errorf("database schema is stale; recreate the database")
-	}
-	for version := fromVersion + 1; version <= currentSchemaVersion; version++ {
-		stmts, ok := schemaUpgrades[version]
-		if !ok {
-			return fmt.Errorf("database schema is stale; recreate the database")
-		}
-		for _, stmt := range stmts {
-			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("upgrade schema to %d: %w", version, err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version-1); err != nil {
-			return fmt.Errorf("replace schema version %d: %w", version-1, err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES ($1, $2)`, version, time.Now().UTC()); err != nil {
-			return fmt.Errorf("record schema version %d: %w", version, err)
-		}
-	}
-	return nil
 }
 
 func (s *database) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
@@ -197,40 +165,17 @@ func (s *catalogPersistence) EnsureBootstrap(ctx context.Context, bootstrap conf
 	})
 }
 
-func (s *database) bumpDesiredRevisions(ctx context.Context, agentIDs []string) error {
-	if len(agentIDs) == 0 {
-		return nil
-	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		return dbtx.BumpDesiredRevisions(ctx, tx, agentIDs)
-	})
-}
-
 func normalizeDatabaseConfig(dbCfg *config.DatabaseConfig) {
 	if dbCfg == nil {
 		return
 	}
 	if dbCfg.MaxOpenConns <= 0 {
-		dbCfg.MaxOpenConns = maxInt(32, runtime.GOMAXPROCS(0)*8)
+		dbCfg.MaxOpenConns = max(32, runtime.GOMAXPROCS(0)*8)
 	}
 	if dbCfg.MaxIdleConns <= 0 {
-		dbCfg.MaxIdleConns = minInt(dbCfg.MaxOpenConns, maxInt(16, runtime.GOMAXPROCS(0)*4))
+		dbCfg.MaxIdleConns = min(dbCfg.MaxOpenConns, max(16, runtime.GOMAXPROCS(0)*4))
 	}
 	if dbCfg.MaxIdleConns > dbCfg.MaxOpenConns {
 		dbCfg.MaxIdleConns = dbCfg.MaxOpenConns
 	}
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
