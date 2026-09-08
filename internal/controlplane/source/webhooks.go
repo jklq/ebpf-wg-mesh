@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"context"
@@ -18,20 +18,20 @@ import (
 )
 
 type GitHubWebhookHandler struct {
-	store     *sourcePersistence
+	store     Store
 	secret    []byte
-	processor *GitHubWebhookProcessor
+	processor interface{ RequestProcess() }
 }
 
-const maxGitHubWebhookPayloadBytes = 2 << 20
+const MaxWebhookPayloadBytes = 2 << 20
 
 var (
-	errGitHubWebhookInvalidSignature = errors.New("invalid signature")
-	errGitHubWebhookMissingHeaders   = errors.New("missing delivery headers")
-	errGitHubWebhookPayloadTooLarge  = errors.New("webhook payload too large")
+	ErrGitHubWebhookInvalidSignature = errors.New("invalid signature")
+	ErrGitHubWebhookMissingHeaders   = errors.New("missing delivery headers")
+	ErrGitHubWebhookPayloadTooLarge  = errors.New("webhook payload too large")
 )
 
-func NewGitHubWebhookHandler(store *sourcePersistence, secret string, processor *GitHubWebhookProcessor) *GitHubWebhookHandler {
+func NewGitHubWebhookHandler(store Store, secret string, processor interface{ RequestProcess() }) *GitHubWebhookHandler {
 	if store == nil || strings.TrimSpace(secret) == "" || processor == nil {
 		return nil
 	}
@@ -47,13 +47,13 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	payload, err := io.ReadAll(io.LimitReader(r.Body, maxGitHubWebhookPayloadBytes+1))
+	payload, err := io.ReadAll(io.LimitReader(r.Body, MaxWebhookPayloadBytes+1))
 	if err != nil {
 		http.Error(w, "read webhook body", http.StatusBadRequest)
 		return
 	}
-	if len(payload) > maxGitHubWebhookPayloadBytes {
-		http.Error(w, errGitHubWebhookPayloadTooLarge.Error(), http.StatusRequestEntityTooLarge)
+	if len(payload) > MaxWebhookPayloadBytes {
+		http.Error(w, ErrGitHubWebhookPayloadTooLarge.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	err = h.HandleDelivery(
@@ -66,11 +66,11 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusAccepted)
-	case errors.Is(err, errGitHubWebhookInvalidSignature):
+	case errors.Is(err, ErrGitHubWebhookInvalidSignature):
 		http.Error(w, err.Error(), http.StatusUnauthorized)
-	case errors.Is(err, errGitHubWebhookMissingHeaders):
+	case errors.Is(err, ErrGitHubWebhookMissingHeaders):
 		http.Error(w, err.Error(), http.StatusBadRequest)
-	case errors.Is(err, errGitHubWebhookPayloadTooLarge):
+	case errors.Is(err, ErrGitHubWebhookPayloadTooLarge):
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 	default:
 		http.Error(w, "enqueue webhook", http.StatusInternalServerError)
@@ -78,8 +78,8 @@ func (h *GitHubWebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *GitHubWebhookHandler) HandleDelivery(ctx context.Context, signature, deliveryID, eventType string, payload []byte) error {
-	if len(payload) > maxGitHubWebhookPayloadBytes {
-		return errGitHubWebhookPayloadTooLarge
+	if len(payload) > MaxWebhookPayloadBytes {
+		return ErrGitHubWebhookPayloadTooLarge
 	}
 	deliveryID = strings.TrimSpace(deliveryID)
 	eventType = strings.TrimSpace(eventType)
@@ -97,13 +97,13 @@ func (h *GitHubWebhookHandler) HandleDelivery(ctx context.Context, signature, de
 			"expected_prefix", details.expectedPrefix,
 			"secret_fingerprint", details.secretFingerprint,
 		)
-		return errGitHubWebhookInvalidSignature
+		return ErrGitHubWebhookInvalidSignature
 	}
 	if deliveryID == "" || eventType == "" {
 		slog.Warn("github webhook delivery rejected", "delivery_id", deliveryID, "event_type", eventType, "payload_bytes", payloadBytes, "reason", "missing_delivery_headers")
-		return errGitHubWebhookMissingHeaders
+		return ErrGitHubWebhookMissingHeaders
 	}
-	inserted, err := h.store.enqueueGitHubWebhookDelivery(ctx, deliveryID, eventType, payload)
+	inserted, err := h.store.EnqueueGitHubWebhookDelivery(ctx, deliveryID, eventType, payload)
 	if err != nil {
 		return err
 	}
@@ -166,13 +166,13 @@ func textPrefix(value string, chars int) string {
 }
 
 type GitHubWebhookProcessor struct {
-	store       *sourcePersistence
+	store       Store
 	coordinator *GitHubCoordinator
 	requestCh   chan struct{}
 	id          string
 }
 
-func NewGitHubWebhookProcessor(store *sourcePersistence, coordinator *GitHubCoordinator) *GitHubWebhookProcessor {
+func NewGitHubWebhookProcessor(store Store, coordinator *GitHubCoordinator) *GitHubWebhookProcessor {
 	if store == nil || coordinator == nil || !coordinator.Enabled() {
 		return nil
 	}
@@ -200,7 +200,7 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 	}
 	processPending := func() error {
 		for {
-			rec, err := p.store.claimNextGitHubWebhookDelivery(ctx, p.id, 5*time.Minute)
+			rec, err := p.store.ClaimNextGitHubWebhookDelivery(ctx, p.id, 5*time.Minute)
 			if err != nil {
 				return err
 			}
@@ -209,7 +209,7 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 			}
 			slog.InfoContext(ctx, "github webhook delivery claimed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "processor_id", rec.ProcessorID)
 			err = p.processDelivery(ctx, rec)
-			if completeErr := p.store.completeGitHubWebhookDelivery(ctx, rec.ID, p.id, err); completeErr != nil {
+			if completeErr := p.store.CompleteGitHubWebhookDelivery(ctx, rec.ID, p.id, err); completeErr != nil {
 				return completeErr
 			}
 			if err != nil {
@@ -240,12 +240,12 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 	}
 }
 
-func (p *GitHubWebhookProcessor) processDelivery(ctx context.Context, rec githubWebhookDeliveryRecord) error {
+func (p *GitHubWebhookProcessor) processDelivery(ctx context.Context, rec GitHubWebhookDeliveryRecord) error {
 	switch rec.EventType {
 	case "push":
-		return p.processPushEvent(ctx, rec.Payload)
+		return p.ProcessPushEvent(ctx, rec.Payload)
 	case "installation":
-		return p.processInstallationEvent(ctx, rec.Payload)
+		return p.ProcessInstallationEvent(ctx, rec.Payload)
 	case "installation_repositories":
 		return p.processInstallationRepositoriesEvent(ctx, rec.Payload)
 	case "repository":
@@ -256,7 +256,7 @@ func (p *GitHubWebhookProcessor) processDelivery(ctx context.Context, rec github
 	}
 }
 
-func (p *GitHubWebhookProcessor) processPushEvent(ctx context.Context, raw []byte) error {
+func (p *GitHubWebhookProcessor) ProcessPushEvent(ctx context.Context, raw []byte) error {
 	var payload struct {
 		Ref        string `json:"ref"`
 		After      string `json:"after"`
@@ -305,7 +305,7 @@ func (p *GitHubWebhookProcessor) processPushEvent(ctx context.Context, raw []byt
 	return nil
 }
 
-func (p *GitHubWebhookProcessor) processInstallationEvent(ctx context.Context, raw []byte) error {
+func (p *GitHubWebhookProcessor) ProcessInstallationEvent(ctx context.Context, raw []byte) error {
 	var payload struct {
 		Action       string                     `json:"action"`
 		Installation webhookInstallationPayload `json:"installation"`
@@ -316,10 +316,10 @@ func (p *GitHubWebhookProcessor) processInstallationEvent(ctx context.Context, r
 	switch payload.Action {
 	case "deleted":
 		slog.InfoContext(ctx, "github installation deleted", "installation_id", payload.Installation.ID)
-		return p.store.deactivateGitHubInstallation(ctx, payload.Installation.ID)
+		return p.store.DeactivateGitHubInstallation(ctx, payload.Installation.ID)
 	default:
 		slog.InfoContext(ctx, "github installation refreshed", "installation_id", payload.Installation.ID, "action", payload.Action)
-		if err := p.store.upsertGitHubInstallation(ctx, githubInstallationRecord{
+		if err := p.store.UpsertGitHubInstallation(ctx, GitHubInstallationRecord{
 			InstallationID: payload.Installation.ID,
 			AccountLogin:   payload.Installation.Account.Login,
 			AccountType:    payload.Installation.Account.Type,
@@ -343,7 +343,7 @@ func (p *GitHubWebhookProcessor) processInstallationRepositoriesEvent(ctx contex
 	if payload.Action != "added" && payload.Action != "removed" {
 		return nil
 	}
-	if err := p.store.upsertGitHubInstallation(ctx, githubInstallationRecord{
+	if err := p.store.UpsertGitHubInstallation(ctx, GitHubInstallationRecord{
 		InstallationID: payload.Installation.ID,
 		AccountLogin:   payload.Installation.Account.Login,
 		AccountType:    payload.Installation.Account.Type,
@@ -370,7 +370,7 @@ func (p *GitHubWebhookProcessor) processRepositoryEvent(ctx context.Context, raw
 	switch payload.Action {
 	case "deleted":
 		slog.InfoContext(ctx, "github repository deleted", "installation_id", payload.Installation.ID, "repository", githubFullName(payload.Repository.Owner.Login, payload.Repository.Name))
-		if err := p.store.markGitHubRepositorySnapshotDeleted(ctx, payload.Repository.Owner.Login, payload.Repository.Name); err != nil {
+		if err := p.store.MarkGitHubRepositorySnapshotDeleted(ctx, payload.Repository.Owner.Login, payload.Repository.Name); err != nil {
 			return err
 		}
 		return p.coordinator.RequestInstallationRefresh(ctx, payload.Installation.ID)

@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"bytes"
@@ -48,15 +48,15 @@ type gitHubCommitMetadata struct {
 
 var errGitHubNotModified = errors.New("github not modified")
 
-const maxSourceArchiveCompressedBytes = 64 << 20
+const MaxArchiveCompressedBytes = 64 << 20
 
-type gitHubAPIError struct {
+type GitHubAPIError struct {
 	StatusCode int
 	Method     string
 	Path       string
 }
 
-func (e *gitHubAPIError) Error() string {
+func (e *GitHubAPIError) Error() string {
 	return fmt.Sprintf("github api %s %s: status %d", e.Method, e.Path, e.StatusCode)
 }
 
@@ -109,16 +109,16 @@ func (c *GitHubClient) FetchArchive(ctx context.Context, owner, repo, ref string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &gitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
+		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
 	}
-	archive, err := io.ReadAll(io.LimitReader(resp.Body, maxSourceArchiveCompressedBytes+1))
+	archive, err := io.ReadAll(io.LimitReader(resp.Body, MaxArchiveCompressedBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(archive) > maxSourceArchiveCompressedBytes {
+	if len(archive) > MaxArchiveCompressedBytes {
 		return nil, errors.New("github source archive exceeds compressed size limit")
 	}
-	if err := validateSourceArchive(archive); err != nil {
+	if err := ValidateArchive(archive); err != nil {
 		return nil, err
 	}
 	return archive, nil
@@ -411,7 +411,7 @@ func (c *GitHubClient) doJSON(req *http.Request, out any) error {
 		return errGitHubNotModified
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &gitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
+		return &GitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

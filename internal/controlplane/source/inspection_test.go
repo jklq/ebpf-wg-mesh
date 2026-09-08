@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"archive/tar"

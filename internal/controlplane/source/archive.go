@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"archive/tar"
@@ -15,7 +15,7 @@ const (
 	maxSourceArchiveEntries       = 100_000
 )
 
-func validateSourceArchive(archiveTGZ []byte) error {
+func ValidateArchive(archiveTGZ []byte) error {
 	gzr, err := gzip.NewReader(bytes.NewReader(archiveTGZ))
 	if err != nil {
 		return fmt.Errorf("open source archive: %w", err)

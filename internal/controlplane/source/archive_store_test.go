@@ -1,4 +1,4 @@
-package controlplane
+package source
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 func TestFileSourceArchiveStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	store, err := NewFileSourceArchiveStore(t.TempDir())
+	store, err := NewFileArchiveStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	archive := []byte("archive payload")
-	key, err := sourceArchiveObjectKey(snapshotDigest(archive))
+	key, err := ArchiveObjectKey(ArchiveDigest(archive))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestFileSourceArchiveStoreRoundTrip(t *testing.T) {
 func TestFileSourceArchiveStoreRejectsTraversal(t *testing.T) {
 	t.Parallel()
 
-	store, err := NewFileSourceArchiveStore(t.TempDir())
+	store, err := NewFileArchiveStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
