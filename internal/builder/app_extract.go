@@ -2,7 +2,6 @@ package builder
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
@@ -48,10 +47,6 @@ func prepareWorkspace(workDir, buildID string) (jobWorkspace, error) {
 		repoDir:      repoDir,
 		metadataFile: filepath.Join(root, "metadata.json"),
 	}, nil
-}
-
-func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
-	return extractSourceSnapshotReader(repoDir, bytes.NewReader(archiveTGZ), int64(len(archiveTGZ)))
 }
 
 func extractSourceSnapshotFile(repoDir, archivePath string, compressedSize int64) error {

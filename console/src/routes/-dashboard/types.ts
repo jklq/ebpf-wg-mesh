@@ -6,18 +6,11 @@ import type {
 	SetStateAction,
 } from "react";
 
-import type {
-	CreateServiceFastResult,
-	DashboardHomeState,
-} from "#/lib/dashboard/core/types.server";
+import type { CreateServiceFastResult } from "#/lib/dashboard/core/types.server";
 
 export type DashboardTab = "deployments" | "variables" | "settings" | "domains";
 
 export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
-
-export type InspectRepositoryFn = (input: {
-	data: { repositorySelector: string };
-}) => Promise<DashboardHomeState>;
 
 export type ConfirmRepositoryFn = (input: {
 	data: {

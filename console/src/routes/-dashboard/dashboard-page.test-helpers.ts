@@ -83,7 +83,6 @@ export function dashboardState(
 			isProduction: true,
 		},
 		onboarding: {
-			currentStep: "build",
 			projectId: "project-1",
 			environmentId: "environment-1",
 			serviceId: service.id,

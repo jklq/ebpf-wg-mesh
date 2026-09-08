@@ -715,7 +715,6 @@ message DeploymentRecord {
   string service_id = 2;
   int64 rollout_generation = 3;
   int64 spec_revision = 4;
-  string reason = 5;
   google.protobuf.Timestamp created_at = 6;
   BuildStatus build = 7;
   bool is_current = 8;

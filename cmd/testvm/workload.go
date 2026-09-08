@@ -115,17 +115,6 @@ func dualStackHTTPServiceSpec(marker string) *platformv1.ServiceSpec {
 	return spec
 }
 
-func crossNodeProbeHost(excludeAgentID string, hosts map[string]hostInfo) *hostInfo {
-	for agentID, host := range hosts {
-		if agentID == "controlplane" || agentID == excludeAgentID {
-			continue
-		}
-		hostCopy := host
-		return &hostCopy
-	}
-	return nil
-}
-
 func managedContainerName(allocationID string) string {
 	return "platform-" + allocationID
 }

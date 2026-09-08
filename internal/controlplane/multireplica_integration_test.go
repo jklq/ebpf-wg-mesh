@@ -39,9 +39,7 @@ func TestNotifierObservesDesiredRevisionWrittenByAnotherReplica(t *testing.T) {
 		t.Fatal("notifier did not establish its initial revision")
 	}
 
-	if err := storeA.bumpDesiredRevisions(ctx, []string{"agent-a"}); err != nil {
-		t.Fatal(err)
-	}
+	bumpDesiredRevisionsForTest(t, storeA, ctx, []string{"agent-a"})
 	select {
 	case <-wake:
 	case <-time.After(time.Second):

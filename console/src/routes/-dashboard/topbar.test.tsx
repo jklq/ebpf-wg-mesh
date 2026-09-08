@@ -43,7 +43,6 @@ function homeState(overrides: Partial<DashboardHomeState>): DashboardHomeState {
 	return {
 		user: { id: "user-1", email: "user@example.com" },
 		onboarding: {
-			currentStep: "account",
 			projectId: "",
 			environmentId: "",
 			serviceId: "",

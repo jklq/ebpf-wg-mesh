@@ -325,48 +325,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 	return rec, nil
 }
 
-func (d *Delivery) enqueueBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, commitSHA string, actor deploymentActor) (BuildRunRecord, error) {
-	s := d.store
-	spec := source.DesiredSourceSpec(service.Spec)
-	if spec == nil {
-		return BuildRunRecord{}, errServiceNotBuildable
-	}
-	if commitSHA == "" {
-		return BuildRunRecord{}, errors.New("commit sha is required")
-	}
-	binding, err := s.sourceStore.SourceBindingByServiceIDQuerier(ctx, tx, service.ID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return BuildRunRecord{}, errSourceStateNotReady
-		}
-		return BuildRunRecord{}, err
-	}
-	if binding.AccessState != source.SourceAccessStateAvailable {
-		return BuildRunRecord{}, errSourceStateNotReady
-	}
-	if time.Now().UTC().After(binding.FreshUntil) {
-		return BuildRunRecord{}, errSourceStateNotReady
-	}
-	revision, err := s.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return BuildRunRecord{}, errSourceStateNotReady
-		}
-		return BuildRunRecord{}, err
-	}
-	snapshot, err := s.sourceStore.SourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return BuildRunRecord{}, errSourceStateNotReady
-		}
-		return BuildRunRecord{}, err
-	}
-	if actor.Kind == "" {
-		actor.Kind = DeploymentCauseUser
-	}
-	return d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, actor)
-}
-
 func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, error) {
 	s := d.store
 	// Build enqueue, claim, and completion all mutate the service's current

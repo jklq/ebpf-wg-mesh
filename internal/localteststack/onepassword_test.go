@@ -378,7 +378,6 @@ func TestApplyEnvironmentOverlayEnablesGitHubForCompleteContract(t *testing.T) {
 		ControlPlaneGitHubWebhookSecretKey: "webhook-secret",
 		ControlPlaneGitHubPrivateKeyPEMKey: sampleGitHubPrivateKeyPEMBase64(),
 		ControlPlaneGitHubAPIBaseURLKey:    "https://api.github.example.test",
-		ControlPlaneGitHubWebBaseURLKey:    "https://github.example.test",
 		ControlPlaneGitHubWebhookPathKey:   "/hooks/github",
 		DashboardGitHubAppIDKey:            "123",
 		DashboardGitHubClientIDKey:         "client-id",

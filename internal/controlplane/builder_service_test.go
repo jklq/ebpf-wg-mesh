@@ -71,7 +71,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		Host:                 "registry.example.test",
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
-	})
+	}, nil)
 	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), registry, registry, 0))
 	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 

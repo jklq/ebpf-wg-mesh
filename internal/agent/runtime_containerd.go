@@ -19,6 +19,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/restartpolicy"
+	"ebof-wg-mesh/internal/runtimeutil"
 )
 
 const defaultVolumeMount = "/data"
@@ -152,8 +153,8 @@ func (r *ContainerdRuntime) RestartManagedDashboard(ctx context.Context, state *
 
 func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNodeState) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
-	desiredVolumes := indexDesiredVolumes(state.GetVolumes())
-	desiredServices := indexDesiredServices(state.GetServices())
+	desiredVolumes := runtimeutil.IndexDesiredVolumes(state.GetVolumes())
+	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
 	if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
 		return nil, err
@@ -351,8 +352,8 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 	check := explicitHTTPHealthCheck(svc)
 	if check == nil {
 		cond.Healthy = true
-		cond.HealthyIpv4Ports = readinessPorts(svc)
-		cond.HealthyIpv6Ports = readinessPorts(svc)
+		cond.HealthyIpv4Ports = runtimeutil.ReadinessPorts(svc)
+		cond.HealthyIpv6Ports = runtimeutil.ReadinessPorts(svc)
 		cond.Phase = "Healthy"
 		cond.Message = "process running; no health check configured"
 		return cond
@@ -375,7 +376,7 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 	ipv4Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv4, svc)
 	ipv6Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv6, svc)
 	if ipv4Probe.healthy || ipv6Probe.healthy {
-		ports := readinessPorts(svc)
+		ports := runtimeutil.ReadinessPorts(svc)
 		if r.ready == nil {
 			r.ready = make(map[string]rolloutReadiness)
 		}
@@ -540,10 +541,6 @@ type serviceHealthProbe struct {
 
 type dialContextFunc func(context.Context, string, string) (net.Conn, error)
 
-func probeServiceHealth(allocationIP string, svc *agentv1.DesiredService) serviceHealthProbe {
-	return probeServiceHealthWithDialer(context.Background(), allocationIP, svc, (&net.Dialer{}).DialContext)
-}
-
 func probeServiceHealthWithDialer(ctx context.Context, allocationIP string, svc *agentv1.DesiredService, dial dialContextFunc) serviceHealthProbe {
 	runtime := svc.GetSpec().GetRuntime()
 	check := runtime.GetHealthCheck()
@@ -559,7 +556,7 @@ func probeServiceHealthWithDialer(ctx context.Context, allocationIP string, svc 
 		result.failureReason = "allocation IP is unavailable"
 		return result
 	}
-	port := readinessCheckPort(runtime, check)
+	port := runtimeutil.ReadinessCheckPort(runtime, check)
 	if port == 0 {
 		result.failureReason = "HTTP readiness check port is unavailable"
 		return result
@@ -606,33 +603,6 @@ func explicitHTTPHealthCheck(svc *agentv1.DesiredService) *platformv1.HealthChec
 	return check
 }
 
-func readinessCheckPort(runtime *platformv1.ServiceRuntime, check *platformv1.HealthCheck) int32 {
-	if check.GetPort() > 0 {
-		return check.GetPort()
-	}
-	for _, item := range runtime.GetPorts() {
-		if item.GetPrimary() {
-			return item.GetPort()
-		}
-	}
-	ports := runtimePortNumbers(runtime)
-	if len(ports) > 0 {
-		return ports[0]
-	}
-	return 0
-}
-
-func readinessPorts(svc *agentv1.DesiredService) []int32 {
-	runtime := svc.GetSpec().GetRuntime()
-	ports := runtimePortNumbers(runtime)
-	if len(ports) == 0 {
-		if check := runtime.GetHealthCheck(); check != nil && check.GetPort() > 0 {
-			return []int32{check.GetPort()}
-		}
-	}
-	return ports
-}
-
 func healthHTTPClient(timeout time.Duration, dial dialContextFunc) *http.Client {
 	transport := &http.Transport{Proxy: nil}
 	if dial != nil {
@@ -651,26 +621,6 @@ func validHealthCheckPath(path string) bool {
 	return strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "\r\n")
 }
 
-func runtimePortNumbers(runtime *platformv1.ServiceRuntime) []int32 {
-	if runtime == nil {
-		return nil
-	}
-	seen := make(map[int32]struct{}, len(runtime.GetPorts()))
-	var out []int32
-	for _, item := range runtime.GetPorts() {
-		port := item.GetPort()
-		if port < 1 || port > 65535 {
-			continue
-		}
-		if _, ok := seen[port]; ok {
-			continue
-		}
-		seen[port] = struct{}{}
-		out = append(out, port)
-	}
-	return out
-}
-
 func containerName(allocationID string) string {
 	return "platform-" + allocationID
 }
@@ -687,20 +637,4 @@ func cpuCFSForMillis(cpuMillis int64) (int64, uint64) {
 		return 0, defaultCPUCFSPeriod
 	}
 	return cpuMillis * int64(defaultCPUCFSPeriod) / 1000, defaultCPUCFSPeriod
-}
-
-func indexDesiredVolumes(items []*agentv1.DesiredVolume) map[string]*agentv1.DesiredVolume {
-	out := make(map[string]*agentv1.DesiredVolume, len(items))
-	for _, item := range items {
-		out[item.GetVolumeId()] = item
-	}
-	return out
-}
-
-func indexDesiredServices(items []*agentv1.DesiredService) map[string]*agentv1.DesiredService {
-	out := make(map[string]*agentv1.DesiredService, len(items))
-	for _, item := range items {
-		out[item.GetAllocationId()] = item
-	}
-	return out
 }

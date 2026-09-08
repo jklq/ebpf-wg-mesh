@@ -127,8 +127,8 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
-	if _, err := store.catalog.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-a"); err != nil {
-		t.Fatalf("createVolume: %v", err)
+	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", envID, "data", 64<<20); err != nil {
+		t.Fatalf("createScheduledVolume: %v", err)
 	}
 
 	volumeSpec := replicaSpec(100, 64)

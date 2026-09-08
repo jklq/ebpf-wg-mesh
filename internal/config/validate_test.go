@@ -158,7 +158,6 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 			WebhookSecret: "secret",
 			PrivateKeyPEM: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
 			APIBaseURL:    "https://api.github.com",
-			WebBaseURL:    "https://github.com",
 		},
 		Registry: RegistryConfig{
 			Host: "registry.example.test",
@@ -281,7 +280,6 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 			WebhookSecret: "secret",
 			PrivateKeyPEM: "pem",
 			APIBaseURL:    "https://api.github.com",
-			WebBaseURL:    "https://github.com",
 		},
 		Mesh: ControlPlaneMeshConfig{
 			InterfaceName:    "wg0",
@@ -344,7 +342,6 @@ func validControlPlaneConfigForRegistryTest() ControlPlaneConfig {
 			WebhookSecret: "secret",
 			PrivateKeyPEM: "pem",
 			APIBaseURL:    "https://api.github.com",
-			WebBaseURL:    "https://github.com",
 		},
 		Registry: RegistryConfig{
 			Host:                 "registry.example.test",
