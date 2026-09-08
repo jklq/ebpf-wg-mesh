@@ -1,4 +1,4 @@
-package controlplane
+package identity
 
 import (
 	"crypto/x509"
@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var errClientCertificateRevoked = errors.New("client certificate is revoked")
+var ErrClientCertificateRevoked = errors.New("client certificate is revoked")
 
 // CertificateRevocations is a file-backed denylist of client leaf certificate
 // serials. The file is read for every check so an atomic file replacement takes
@@ -101,10 +101,12 @@ func (r *CertificateRevocations) Check(cert *x509.Certificate) error {
 		return err
 	}
 	if _, revoked := serials[cert.SerialNumber.Text(16)]; revoked {
-		return errClientCertificateRevoked
+		return ErrClientCertificateRevoked
 	}
 	return nil
 }
+
+func (r *CertificateRevocations) RevokeSerials(serials []string) error { return r.Add(serials...) }
 
 func (r *CertificateRevocations) load() (map[string]struct{}, error) {
 	raw, err := os.ReadFile(r.path)

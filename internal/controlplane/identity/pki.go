@@ -1,4 +1,4 @@
-package controlplane
+package identity
 
 import (
 	"crypto"
@@ -110,7 +110,21 @@ func (a *TLSAuthority) RevokeSerials(serials []string) error {
 	return a.revocations.Add(serials...)
 }
 
-func certificateSerialFromPEM(raw string) (string, error) {
+func (a *TLSAuthority) Revocations() *CertificateRevocations {
+	if a == nil {
+		return nil
+	}
+	return a.revocations
+}
+
+func (a *TLSAuthority) PKIDir() string {
+	if a == nil {
+		return ""
+	}
+	return a.pkiDir
+}
+
+func CertificateSerialFromPEM(raw string) (string, error) {
 	block, _ := pem.Decode([]byte(raw))
 	if block == nil {
 		return "", errors.New("decode issued certificate")
@@ -137,7 +151,7 @@ func (a *TLSAuthority) Enroll(req *agentv1.EnrollRequest) (*agentv1.EnrollRespon
 	if strings.TrimSpace(csr.Subject.CommonName) != agentID {
 		return nil, status.Error(codes.InvalidArgument, "csr common name must match agent_id")
 	}
-	return a.issueClientCertificate(serviceCallerAgent, agentID, csr.PublicKey)
+	return a.issueClientCertificate(CallerAgent, agentID, csr.PublicKey)
 }
 
 func (a *TLSAuthority) IssueManagedDashboardCertificate(id, csrPEM string) (*agentv1.EnrollResponse, error) {
@@ -149,7 +163,7 @@ func (a *TLSAuthority) IssueManagedDashboardCertificate(id, csrPEM string) (*age
 	if err != nil {
 		return nil, err
 	}
-	return a.issueClientCertificate(serviceCallerDashboard, id, csr.PublicKey)
+	return a.issueClientCertificate(CallerDashboard, id, csr.PublicKey)
 }
 
 func parseClientCSR(raw string) (*x509.CertificateRequest, error) {
@@ -167,7 +181,7 @@ func parseClientCSR(raw string) (*x509.CertificateRequest, error) {
 	return csr, nil
 }
 
-func (a *TLSAuthority) issueClientCertificate(class serviceCallerClass, id string, publicKey any) (*agentv1.EnrollResponse, error) {
+func (a *TLSAuthority) issueClientCertificate(class CallerClass, id string, publicKey any) (*agentv1.EnrollResponse, error) {
 	now := time.Now().UTC()
 	notAfter := now.Add(a.clientCertTTL)
 	serial, err := randomCertificateSerial()
@@ -203,7 +217,7 @@ type ClientIdentityMaterial struct {
 	CAPEM   []byte
 }
 
-func (a *TLSAuthority) EnsureClientIdentity(class serviceCallerClass, id string) (ClientIdentityMaterial, error) {
+func (a *TLSAuthority) EnsureClientIdentity(class CallerClass, id string) (ClientIdentityMaterial, error) {
 	if strings.TrimSpace(id) == "" {
 		return ClientIdentityMaterial{}, errors.New("client identity id is required")
 	}
@@ -285,11 +299,11 @@ func randomCertificateSerial() (*big.Int, error) {
 }
 
 func (a *TLSAuthority) EnsureDashboardClientIdentity(id string) (ClientIdentityMaterial, error) {
-	return a.EnsureClientIdentity(serviceCallerDashboard, id)
+	return a.EnsureClientIdentity(CallerDashboard, id)
 }
 
 func (a *TLSAuthority) EnsureBuilderClientIdentity(id string) (ClientIdentityMaterial, error) {
-	return a.EnsureClientIdentity(serviceCallerBuilder, id)
+	return a.EnsureClientIdentity(CallerBuilder, id)
 }
 
 func loadOrCreateCA(dir string) (*x509.Certificate, crypto.Signer, []byte, error) {
