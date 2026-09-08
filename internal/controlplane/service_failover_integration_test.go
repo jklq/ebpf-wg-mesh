@@ -135,7 +135,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.createVolume(ctx, "user-1", projectID, "data", 64<<20, "old-node"); err != nil {
+	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", projectID, "data", 64<<20); err != nil {
 		t.Fatal(err)
 	}
 	volumeService, err := createService(ctx, store, "user-1", projectID, "stateful", directImageServiceSpec("example.test/stateful:1", &platformv1.ServiceRuntime{

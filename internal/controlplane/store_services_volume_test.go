@@ -33,9 +33,9 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.catalog.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
+	volume, err := store.catalog.createScheduledVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20)
 	if err != nil {
-		t.Fatalf("createVolume: %v", err)
+		t.Fatalf("createScheduledVolume: %v", err)
 	}
 	_, err = createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		CpuMillis:       100,
@@ -83,9 +83,9 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.catalog.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20, "node-1")
+	volume, err := store.catalog.createScheduledVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20)
 	if err != nil {
-		t.Fatalf("createVolume: %v", err)
+		t.Fatalf("createScheduledVolume: %v", err)
 	}
 	if _, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
 		VolumeName: "data",
@@ -121,9 +121,9 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		volumeName := fmt.Sprintf("data-%d", i)
 		serviceName := fmt.Sprintf("svc-%d", i)
-		volume, err := store.catalog.createVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20, "node-1")
+		volume, err := store.catalog.createScheduledVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20)
 		if err != nil {
-			t.Fatalf("createVolume(%d): %v", i, err)
+			t.Fatalf("createScheduledVolume(%d): %v", i, err)
 		}
 
 		start := make(chan struct{})
