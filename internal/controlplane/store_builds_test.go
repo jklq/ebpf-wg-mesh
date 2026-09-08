@@ -106,7 +106,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("expected resolved desired image digest, got %q", got)
 	}
 
-	if err := store.source.LinkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+	if err := store.source.LinkProjectGitHubRepository(ctx, projects[0].ID, "user-1", source.GitHubRepositoryView{
 		RepositoryID:   1,
 		FullName:       "octocat/hello",
 		InstallationID: 1,
@@ -638,10 +638,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err != nil {
 		t.Fatalf("create direct-image service: %v", err)
 	}
-	imageDeployment, ok, err := store.reads.currentDeploymentForService(ctx, imageService.ID)
-	if err != nil || !ok {
-		t.Fatalf("currentDeploymentForService(image): ok=%v err=%v", ok, err)
-	}
+	imageDeployment := currentDeploymentForTest(t, store, ctx, imageService.ID)
 	if _, _, err := applyDeploymentActionForTest(ctx, store, "user-1", imageService.ID, imageDeployment.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "image-history-exact-redeploy", ""); err != nil {
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
@@ -656,8 +653,8 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if imageDeployments[0].Build != nil {
 		t.Fatalf("expected direct-image redeploy to have no build row, got %+v", imageDeployments[0].Build)
 	}
-	if imageDeployments[0].ReasonCode != "EXACT_REDEPLOY" && imageDeployments[0].Reason != "EXACT_REDEPLOY" {
-		t.Fatalf("expected latest direct-image deployment reason %q, got %q", "EXACT_REDEPLOY", imageDeployments[0].Reason)
+	if imageDeployments[0].ReasonCode != "EXACT_REDEPLOY" {
+		t.Fatalf("expected latest direct-image deployment reason %q, got %q", "EXACT_REDEPLOY", imageDeployments[0].ReasonCode)
 	}
 }
 

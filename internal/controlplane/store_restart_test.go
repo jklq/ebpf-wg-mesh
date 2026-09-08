@@ -134,9 +134,9 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
-	current, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok || current.State != deliverycore.DeploymentStateActive {
-		t.Fatalf("current deployment: %+v ok=%v err=%v", current, ok, err)
+	current := currentDeploymentForTest(t, store, ctx, service.ID)
+	if current.State != deliverycore.DeploymentStateActive {
+		t.Fatalf("current deployment: %+v", current)
 	}
 	original, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err != nil {
@@ -191,10 +191,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	crashed, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok {
-		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
-	}
+	crashed := currentDeploymentForTest(t, store, ctx, service.ID)
 	if _, _, err := applyDeploymentActionForTest(ctx, store, "user-1", service.ID, crashed.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "clear-crash-loop", ""); err != nil {
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}

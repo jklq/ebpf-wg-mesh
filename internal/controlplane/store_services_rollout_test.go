@@ -341,10 +341,7 @@ func TestExactRedeployCopiesImmutableSnapshotIntoNewRollout(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	current, ok, err := store.reads.currentDeploymentForService(ctx, service.ID)
-	if err != nil || !ok {
-		t.Fatalf("currentDeploymentForService: ok=%v err=%v", ok, err)
-	}
+	current := currentDeploymentForTest(t, store, ctx, service.ID)
 	redeployed, _, err := applyDeploymentActionForTest(ctx, store, "user-1", service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "exact-redeploy", "")
 	if err != nil {
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)

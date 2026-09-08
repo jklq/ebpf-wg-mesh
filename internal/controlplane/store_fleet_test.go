@@ -390,8 +390,8 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
 	seedFleetOperator(t, store, ctx)
-	if _, err := store.catalog.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-a"); err != nil {
-		t.Fatalf("createVolume: %v", err)
+	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", envID, "data", 64<<20); err != nil {
+		t.Fatalf("createScheduledVolume: %v", err)
 	}
 	spec := replicaSpec(100, 64)
 	spec.Runtime.VolumeName = "data"
