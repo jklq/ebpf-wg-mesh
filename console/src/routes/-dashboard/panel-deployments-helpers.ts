@@ -252,25 +252,11 @@ export function newIdempotencyKey(): string {
 	return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function deploymentRecordKey(entry: DashboardDeploymentRecord): string {
-	return entry.build?.buildId || `${entry.id}-${entry.rolloutGeneration}`;
-}
-
 export function compareDeploymentsNewestFirst(
 	a: DashboardDeploymentRecord,
 	b: DashboardDeploymentRecord,
 ): number {
 	return deploymentTime(b) - deploymentTime(a);
-}
-
-export function mergeDeploymentRecords(
-	records: Array<DashboardDeploymentRecord>,
-): Array<DashboardDeploymentRecord> {
-	const uniqueRecords = new Map<string, DashboardDeploymentRecord>();
-	for (const record of records) {
-		uniqueRecords.set(deploymentRecordKey(record), record);
-	}
-	return [...uniqueRecords.values()].sort(compareDeploymentsNewestFirst);
 }
 
 export function deploymentTime(entry: DashboardDeploymentRecord): number {
@@ -282,60 +268,6 @@ export function deploymentTime(entry: DashboardDeploymentRecord): number {
 		entry.allocation?.updatedAt?.getTime() ??
 		0
 	);
-}
-
-export function isSameDeploymentRecord(
-	left: DashboardDeploymentRecord,
-	right: DashboardDeploymentRecord,
-): boolean {
-	if (left.build?.buildId && right.build?.buildId) {
-		return left.build.buildId === right.build.buildId;
-	}
-	return (
-		left.rolloutGeneration !== undefined &&
-		right.rolloutGeneration !== undefined &&
-		left.rolloutGeneration === right.rolloutGeneration
-	);
-}
-
-export function hasDeploymentIdentity(
-	entry: DashboardDeploymentRecord,
-): boolean {
-	return Boolean(
-		entry.build?.buildId !== undefined || entry.rolloutGeneration !== undefined,
-	);
-}
-
-export function createDeploymentRecord({
-	serviceId,
-	build,
-	allocation,
-	rolloutGeneration,
-	isCurrent,
-	status,
-}: {
-	serviceId: string;
-	build: DashboardBuildStatus | undefined;
-	allocation: DashboardAllocationStatus | undefined;
-	rolloutGeneration?: number;
-	isCurrent: boolean;
-	status?: DashboardDeploymentStatus;
-}): DashboardDeploymentRecord {
-	return {
-		id: status?.deploymentId || serviceId,
-		rolloutGeneration: status?.rolloutGeneration || rolloutGeneration || 0,
-		createdAt:
-			status?.transitionedAt ??
-			build?.startedAt ??
-			build?.queuedAt ??
-			build?.finishedAt ??
-			allocation?.updatedAt,
-		build,
-		allocation,
-		isCurrent,
-		status,
-		imageDigest: status?.imageDigest,
-	};
 }
 
 export function shouldRenderDeploymentHistoryEntry(
