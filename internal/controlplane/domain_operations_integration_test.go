@@ -57,7 +57,7 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 	if _, err := operations.DeleteDomainBinding(ctx, &platformv1.DeleteDomainBindingRequest{Hostname: "one.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if bindings, err := store.reads.listDomainBindings(ctx, "owner", service.ID); err != nil || len(bindings) != 2 {
+	if bindings, err := store.reads.ListDomainBindings(ctx, "owner", service.ID); err != nil || len(bindings) != 2 {
 		t.Fatalf("generated binding removed too early: %v, %v", bindings, err)
 	}
 	// Make generated-domain cleanup fail after the custom DELETE. Both writes
@@ -76,7 +76,7 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 	if _, err := operations.DeleteDomainBinding(ctx, &platformv1.DeleteDomainBindingRequest{Hostname: "two.example.com"}); err == nil {
 		t.Fatal("expected cleanup constraint failure")
 	}
-	if _, err := store.routing.domainBindingByHostname(ctx, "owner", "two.example.com"); err != nil {
+	if _, err := store.routing.DomainBindingByHostname(ctx, "owner", "two.example.com"); err != nil {
 		t.Fatalf("custom deletion escaped rollback: %v", err)
 	}
 	if ingress.requests.Load() != before {
@@ -91,7 +91,7 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 	if _, err := operations.DeleteDomainBinding(ctx, &platformv1.DeleteDomainBindingRequest{Hostname: "two.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if bindings, err := store.reads.listDomainBindings(ctx, "owner", service.ID); err != nil || len(bindings) != 0 {
+	if bindings, err := store.reads.ListDomainBindings(ctx, "owner", service.ID); err != nil || len(bindings) != 0 {
 		t.Fatalf("cleanup left bindings: %v, %v", bindings, err)
 	}
 	if ingress.requests.Load() != before+1 {
@@ -127,7 +127,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	if _, err := operations.UpdateDomainBinding(attacker, &platformv1.UpdateDomainBindingRequest{Hostname: "owned.example.com", Binding: &platformv1.DomainBindingTarget{ServiceId: target.ID, TargetPort: 8080}}); err == nil {
 		t.Fatal("viewer stole domain into writable target")
 	}
-	binding, err := store.routing.domainBindingByHostname(owner, "owner", "owned.example.com")
+	binding, err := store.routing.DomainBindingByHostname(owner, "owner", "owned.example.com")
 	if err != nil || binding.ServiceID != source.ID {
 		t.Fatalf("failed update changed binding: %#v: %v", binding, err)
 	}
@@ -142,7 +142,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	if _, err := store.db.ExecContext(owner, `UPDATE project_memberships SET role = 'editor' WHERE user_id = 'attacker' AND project_id = $1`, source.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	generated, err := store.routing.platformDomainBindingForService(owner, "owner", source.ID)
+	generated, err := store.routing.PlatformDomainBindingForService(owner, "owner", source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	if _, err := operations.UpdateDomainBinding(attacker, &platformv1.UpdateDomainBindingRequest{Hostname: "owned.example.com", Binding: &platformv1.DomainBindingTarget{ServiceId: target.ID, TargetPort: 8080}}); err != nil {
 		t.Fatalf("authorized custom reassignment: %v", err)
 	}
-	binding, err = store.routing.domainBindingByHostname(attacker, "attacker", "owned.example.com")
+	binding, err = store.routing.DomainBindingByHostname(attacker, "attacker", "owned.example.com")
 	if err != nil || binding.ServiceID != target.ID || ingress.requests.Load() != before+1 {
 		t.Fatalf("custom reassignment did not finish: %#v: %v", binding, err)
 	}

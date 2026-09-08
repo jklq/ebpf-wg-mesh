@@ -7,7 +7,10 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type testDeliveryHarness struct {
@@ -18,7 +21,7 @@ type testDeliveryHarness struct {
 }
 
 func newTestDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) *testDeliveryHarness {
-	return &testDeliveryHarness{Delivery: newDelivery(store, notifier, ingress, events), store: store}
+	return &testDeliveryHarness{Delivery: newDelivery(store, notifier, ingress, events, nil), store: store}
 }
 func (d *testDeliveryHarness) ReconcileRollouts(ctx context.Context) error {
 	d.SetClocks(d.rolloutNow, d.failoverNow)
@@ -58,11 +61,11 @@ func (i *observedIngress) RequestSync()               { i.changed = true }
 func (i *observedIngress) Sync(context.Context) error { return nil }
 func (d *testDeliveryHarness) recordStatusReport(ctx context.Context, id string, report *agentv1.StatusReport) (bool, []string, error) {
 	ingress := &observedIngress{}
-	err := newDelivery(d.store, nil, ingress, nil).ObserveAgentStatus(ctx, id, report)
+	err := newDelivery(d.store, nil, ingress, nil, nil).ObserveAgentStatus(ctx, id, report)
 	return ingress.changed, nil, err
 }
 func (d *testDeliveryHarness) UpdateFleetAgent(ctx context.Context, userID string, req *platformv1.UpdateAgentRequest) (deliverycore.AgentRecord, error) {
-	return d.Delivery.UpdateFleetAgent(context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID}), req)
+	return d.Delivery.UpdateFleetAgent(identity.WithDelegatedUser(ctx, userID), req)
 }
 func (d *testDeliveryHarness) reconcileDrainingAgent(ctx context.Context, id string) ([]string, error) {
 	err := d.ReconcileRollouts(ctx)
@@ -89,7 +92,7 @@ func (d *testDeliveryHarness) chooseAgentForService(ctx context.Context, environ
 	if err := d.store.db.QueryRowContext(ctx, `SELECT id FROM environments WHERE project_id=$1 AND is_production`, environmentID).Scan(&projectEnvironment); err == nil {
 		environmentID = projectEnvironment
 	}
-	service, err := createScheduledService(ctx, d.store, "user-1", environmentID, "placement-"+deliverycore.MustID(), spec)
+	service, err := createScheduledService(ctx, d.store, "user-1", environmentID, "placement-"+uuid.NewString(), spec)
 	if err != nil {
 		return "", err
 	}
@@ -97,7 +100,7 @@ func (d *testDeliveryHarness) chooseAgentForService(ctx context.Context, environ
 	if err != nil {
 		return "", err
 	}
-	allocations, err := d.store.reads.listAllocationsByServiceID(ctx, service.ID)
+	allocations, err := d.store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	if err != nil {
 		return "", err
 	}
@@ -107,7 +110,7 @@ func (d *testDeliveryHarness) chooseAgentForService(ctx context.Context, environ
 	return allocations[0].AgentID, nil
 }
 func reportActiveForTest(ctx context.Context, s *persistence, serviceID string) error {
-	allocations, err := s.reads.listAllocationsByServiceID(ctx, serviceID)
+	allocations, err := s.reads.ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		return err
 	}

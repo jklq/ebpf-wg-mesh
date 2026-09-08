@@ -104,7 +104,7 @@ func (s *persistence) allocateWorkloadIPv4SubnetTx(ctx context.Context, tx *sql.
 		}
 		prefix = prefix.Masked()
 		for _, other := range used {
-			if Ipv4PrefixesOverlap(prefix, other) {
+			if ipv4PrefixesOverlap(prefix, other) {
 				rows.Close()
 				return "", fmt.Errorf("allocated IPv4 node prefixes %s and %s overlap", prefix, other)
 			}
@@ -114,13 +114,13 @@ func (s *persistence) allocateWorkloadIPv4SubnetTx(ctx context.Context, tx *sql.
 	if err := rows.Close(); err != nil {
 		return "", err
 	}
-	candidateRaw, err := Ipv4SubnetAt(pool, prefixBits, uint64(nextOrdinal))
+	candidateRaw, err := ipv4SubnetAt(pool, prefixBits, uint64(nextOrdinal))
 	if err != nil {
 		return "", err
 	}
 	candidate, _ := netip.ParsePrefix(candidateRaw)
 	for _, other := range used {
-		if Ipv4PrefixesOverlap(candidate, other) {
+		if ipv4PrefixesOverlap(candidate, other) {
 			return "", fmt.Errorf("next IPv4 node prefix %s overlaps allocated prefix %s", candidate, other)
 		}
 	}

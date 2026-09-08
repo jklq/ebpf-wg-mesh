@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const EnvironmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
+const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
 	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
 	FROM environments e`
 
@@ -20,26 +20,26 @@ func (s *persistence) environmentByID(ctx context.Context, userID, environmentID
 }
 
 func (s *persistence) environmentByIDQuerier(ctx context.Context, q ServiceQueryer, userID, environmentID string) (EnvironmentRecord, error) {
-	row := q.QueryRowContext(ctx, EnvironmentSelect+`
+	row := q.QueryRowContext(ctx, environmentSelect+`
 		 JOIN project_memberships m ON m.project_id = e.project_id
 		 JOIN projects p ON p.id = e.project_id
 		 WHERE e.id = $1 AND m.user_id = $2
 		   AND m.role IN ('owner', 'editor', 'viewer') AND p.kind = $3`,
 		environmentID, userID, string(ProjectKindUser))
-	return ScanEnvironmentRow(row)
+	return scanEnvironmentRow(row)
 }
 
 func (s *persistence) authorizeEnvironmentWriteQuerier(ctx context.Context, q ServiceQueryer, userID, environmentID string) (EnvironmentRecord, error) {
-	row := q.QueryRowContext(ctx, EnvironmentSelect+`
+	row := q.QueryRowContext(ctx, environmentSelect+`
 		 JOIN project_memberships m ON m.project_id = e.project_id
 		 JOIN projects p ON p.id = e.project_id
 		 WHERE e.id = $1 AND m.user_id = $2
 		   AND m.role IN ('owner', 'editor') AND p.kind = $3`,
 		environmentID, userID, string(ProjectKindUser))
-	return ScanEnvironmentRow(row)
+	return scanEnvironmentRow(row)
 }
 
-func ScanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRecord, error) {
+func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRecord, error) {
 	var rec EnvironmentRecord
 	var kind string
 	var networkIdentity int64

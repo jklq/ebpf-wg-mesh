@@ -31,7 +31,7 @@ const agentSelectSQL = `SELECT id, name, lifecycle_state, state_before_unavailab
 
 func scanAgentRecord(scanner interface{ Scan(...any) error }) (AgentRecord, error) {
 	var rec AgentRecord
-	var capabilities JsonStringSlice
+	var capabilities jsonStringSlice
 	if err := scanner.Scan(
 		&rec.ID, &rec.Name, &rec.LifecycleState, &rec.StateBeforeUnavailable,
 		&rec.Region, &rec.Zone, &rec.FailureDomain, &rec.ReservedCPUMillis, &rec.ReservedMemoryMebibytes,

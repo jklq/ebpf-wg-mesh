@@ -39,20 +39,20 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
-	backends, err := store.routing.listHealthyIngressBackends(ctx)
+	backends, err := store.routing.HealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(backends) != 1 {
 		t.Fatalf("expected healthy backend, got %#v", backends)
 	}
-	_, allocs, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
+	_, allocs, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if updated.Phase != restartpolicy.PhaseCrashLoop || updated.Healthy || !updated.Restart.GetCrashLoop() {
 		t.Fatalf("allocation not persisted as crash-loop: %+v", updated)
 	}
-	backends, err = store.routing.listHealthyIngressBackends(ctx)
+	backends, err = store.routing.HealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, allocs, err := store.reads.serviceStatus(ctx, "user-1", service.ID)
+	_, allocs, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

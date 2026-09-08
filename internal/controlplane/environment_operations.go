@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -24,7 +25,7 @@ func NewEnvironmentOperations(store environmentStore, notifier deliverycore.Plat
 }
 
 func (s *EnvironmentOperations) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}

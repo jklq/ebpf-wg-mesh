@@ -102,7 +102,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 		t.Fatalf("expected desired state revision %d, got %d", node1AfterDeleteService, got)
 	}
 
-	if _, _, err := store.routing.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err == nil {
+	if _, _, err := store.routing.CreateDomainBindingRecord(ctx, "user-1", "web.example.com", service.ID, 8080); err == nil {
 		t.Fatal("expected createDomainBinding for deleted service to fail")
 	}
 
@@ -114,12 +114,12 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(second): %v", err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "source.platform.example", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "source.platform.example", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	node1BeforeDomains := mustDesiredRevision(t, store, ctx, "node-1")
 
-	if _, _, err := store.routing.createDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreateDomainBindingRecord(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDomains+1 {
@@ -134,11 +134,11 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(third): %v", err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "target.platform.example", otherService.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "target.platform.example", otherService.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	beforeUpdate := mustDesiredRevision(t, store, ctx, "node-1")
-	if _, _, err := store.routing.updateDomainBinding(ctx, "user-1", "web.example.com", otherService.ID, 8080); err != nil {
+	if _, _, err := store.routing.UpdateDomainBindingRecord(ctx, "user-1", "web.example.com", otherService.ID, 8080); err != nil {
 		t.Fatalf("updateDomainBinding: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != beforeUpdate+1 {
@@ -146,7 +146,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 
 	node1BeforeDeleteDomain := mustDesiredRevision(t, store, ctx, "node-1")
-	if _, err := store.routing.deleteDomainBinding(ctx, "user-1", "web.example.com"); err != nil {
+	if _, err := store.routing.DeleteDomainBindingRecord(ctx, "user-1", "web.example.com"); err != nil {
 		t.Fatalf("deleteDomainBinding: %v", err)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1BeforeDeleteDomain+1 {
@@ -210,7 +210,7 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(routed): %v", err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", routedService.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.com", routedService.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	internalService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "worker", serviceSpec(), "node-1")
@@ -392,9 +392,9 @@ func TestChooseAgentForServiceRejectsOverCapacityAgents(t *testing.T) {
 
 func mustPrimaryAllocation(t *testing.T, store *persistence, ctx context.Context, userID, projectID, serviceID string) deliverycore.AllocationRecord {
 	t.Helper()
-	_, allocations, err := store.reads.serviceStatus(ctx, userID, serviceID)
+	_, allocations, err := store.reads.ServiceStatus(ctx, userID, serviceID)
 	if err != nil {
-		t.Fatalf("serviceStatus(%s): %v", serviceID, err)
+		t.Fatalf("ServiceStatus(%s): %v", serviceID, err)
 	}
 	return primaryAllocation(allocations)
 }

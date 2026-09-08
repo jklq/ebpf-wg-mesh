@@ -15,6 +15,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 	"github.com/google/uuid"
@@ -93,11 +94,12 @@ func openTestStore(t *testing.T) *persistence {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archiveStore, err := NewFileSourceArchiveStore(t.TempDir())
+	archiveStore, err := source.NewFileArchiveStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("create source archive store: %v", err)
 	}
 	store.source.ConfigureSourceArchives(archiveStore)
+	newDelivery(store, nil, nil, nil, nil)
 	resetTestStore(t, store)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {

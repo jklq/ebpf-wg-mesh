@@ -319,7 +319,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 	s := d.store
 	var changed bool
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		now, err := DatabaseTime(ctx, tx)
+		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}

@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/identity"
 )
 
 type output struct {
@@ -30,7 +30,7 @@ func main() {
 		log.Fatal("missing -state-dir")
 	}
 
-	authority, err := controlplane.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
 		StateDir: *stateDir,
 		InternalGRPC: config.ListenerConfig{
 			TLS: config.ServerTLSConfig{
@@ -45,12 +45,12 @@ func main() {
 		log.Fatalf("load controlplane authority: %v", err)
 	}
 
-	var identity controlplane.ClientIdentityMaterial
+	var material identity.ClientIdentityMaterial
 	switch *callerClass {
 	case "dashboard":
-		identity, err = authority.EnsureDashboardClientIdentity(*callerID)
+		material, err = authority.EnsureDashboardClientIdentity(*callerID)
 	case "builder":
-		identity, err = authority.EnsureBuilderClientIdentity(*callerID)
+		material, err = authority.EnsureBuilderClientIdentity(*callerID)
 	default:
 		log.Fatalf("unsupported caller class %q", *callerClass)
 	}
@@ -59,9 +59,9 @@ func main() {
 	}
 
 	if err := json.NewEncoder(os.Stdout).Encode(output{
-		CAPEMB64:   base64.StdEncoding.EncodeToString(identity.CAPEM),
-		CertPEMB64: base64.StdEncoding.EncodeToString(identity.CertPEM),
-		KeyPEMB64:  base64.StdEncoding.EncodeToString(identity.KeyPEM),
+		CAPEMB64:   base64.StdEncoding.EncodeToString(material.CAPEM),
+		CertPEMB64: base64.StdEncoding.EncodeToString(material.CertPEM),
+		KeyPEMB64:  base64.StdEncoding.EncodeToString(material.KeyPEM),
 	}); err != nil {
 		log.Fatalf("write output: %v", err)
 	}

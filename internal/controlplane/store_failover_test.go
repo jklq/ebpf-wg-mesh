@@ -51,7 +51,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	if len(environmentsChanged) != 1 || environmentsChanged[0] != environmentID {
 		t.Fatalf("changed environments = %v, want %s", environmentsChanged, environmentID)
 	}
-	got, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	got, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, err := store.reads.deliveryQueries().ListAgents(ctx)
+	agents, err := store.reads.ListAgents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 	// Addresses come from the owning node's prefixes, so failover must re-address
 	// the workload on both families rather than carry the dead node's addresses over.
-	survivor, err := store.reads.deliveryQueries().AgentByID(ctx, "node-b")
+	survivor, err := store.reads.AgentByID(ctx, "node-b")
 	if err != nil {
 		t.Fatal(err)
 	}

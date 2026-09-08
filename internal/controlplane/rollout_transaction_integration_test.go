@@ -26,7 +26,7 @@ func TestRolloutAdvancementRollbackAndConcurrency(t *testing.T) {
 	now := time.Now().UTC()
 	revision := mustDesiredRevision(t, store, ctx, target.AgentID)
 	aborted := errors.New("abort after rollout writes")
-	deps := deliveryDependencies(store, nil, nil, nil)
+	deps := deliveryDependencies(store, nil, nil, nil, nil)
 	deps.Transaction = func(ctx context.Context, fn func(*sql.Tx) error) error {
 		return store.withTx(ctx, func(tx *sql.Tx) error {
 			if err := fn(tx); err != nil {
@@ -55,7 +55,7 @@ func TestRolloutAdvancementRollbackAndConcurrency(t *testing.T) {
 	// the durable withdrawal and cannot promote or bump the revision again.
 	waiting := errors.New("ingress has not converged")
 	probe := &blockedRolloutIngress{err: waiting}
-	engine = deliverycore.New(deliveryDependencies(store, nil, probe, nil))
+	engine = deliverycore.New(deliveryDependencies(store, nil, probe, nil, nil))
 	engine.SetClocks(func() time.Time { return now }, nil)
 	start := make(chan struct{})
 	outcomes := make(chan error, 2)

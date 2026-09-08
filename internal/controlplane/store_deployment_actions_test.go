@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"strings"
 	"sync"
@@ -50,7 +51,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY, "restart-all", ""); !errors.Is(err, deliverycore.ErrDeploymentActionConflict) {
 		t.Fatalf("idempotency key reuse err = %v", err)
 	}
-	allocs, err := store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, service.ID)
+	allocs, err := store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if rolled.ID == first.ID {
 		t.Fatal("rollback reused the historical deployment row")
 	}
-	history, err := store.reads.listServiceDeployments(ctx, userID, service.ID, 20)
+	history, err := store.reads.ListServiceDeployments(ctx, userID, service.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if err != nil || !ok || removed.State != deliverycore.DeploymentStateDraining {
 		t.Fatalf("remove should wait for drain: %+v ok=%v err=%v", removed, ok, err)
 	}
-	allocs, err = store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, service.ID)
+	allocs, err = store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("begin remove drain: %v", err)
 	}
-	allocs, err = store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, service.ID)
+	allocs, err = store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	if err != nil || len(allocs) == 0 || allocs[0].RolloutState != deliverycore.AllocationRolloutDraining || !allocs[0].DrainDeadline.Valid {
 		t.Fatalf("remove did not produce graceful drain intent: %+v err=%v", allocs, err)
 	}
@@ -185,11 +186,11 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if err != nil || !ok || removed.State != deliverycore.DeploymentStateRemoved {
 		t.Fatalf("removed current: %+v ok=%v err=%v", removed, ok, err)
 	}
-	allocs, err = store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, service.ID)
+	allocs, err = store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	if err != nil || len(allocs) != 0 {
 		t.Fatalf("expected drained allocations to be withdrawn, got %#v err=%v", allocs, err)
 	}
-	history, err = store.reads.listServiceDeployments(ctx, userID, service.ID, 20)
+	history, err = store.reads.ListServiceDeployments(ctx, userID, service.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +327,7 @@ func TestDeploymentActionRetryCancelledUnresolvedSource(t *testing.T) {
 	if retried.State != deliverycore.DeploymentStateStaged || retried.ReasonCode != "USER_RETRY" || retried.RolloutGeneration != 2 {
 		t.Fatalf("retried deployment = %+v, want staged rollout 2", retried)
 	}
-	if retried.ResolvedSpec == nil || deliverycore.DesiredSourceSpec(retried.ResolvedSpec) == nil {
+	if retried.ResolvedSpec == nil || source.DesiredSourceSpec(retried.ResolvedSpec) == nil {
 		t.Fatalf("retried deployment lost its source snapshot: %+v", retried)
 	}
 	assertRolloutState(t, store, service.ID, 2, "pending_build", "")
@@ -334,7 +335,7 @@ func TestDeploymentActionRetryCancelledUnresolvedSource(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM source_work_items
 		  WHERE service_id = $1 AND spec_revision = $2 AND state = $3`,
-		service.ID, retried.SpecRevision, deliverycore.SourceWorkStatePending,
+		service.ID, retried.SpecRevision, source.SourceWorkStatePending,
 	).Scan(&queued); err != nil {
 		t.Fatalf("count retry source work: %v", err)
 	}
@@ -491,7 +492,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	if retried.ID == failed.ID {
 		t.Fatal("retry did not create a new deployment")
 	}
-	history, err := store.reads.listServiceDeployments(ctx, userID, service.ID, 10)
+	history, err := store.reads.ListServiceDeployments(ctx, userID, service.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +513,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 
 func deploymentByIDForTest(t *testing.T, store *persistence, ctx context.Context, userID, projectID, serviceID, deploymentID string) deliverycore.DeploymentRecord {
 	t.Helper()
-	history, err := store.reads.listServiceDeployments(ctx, userID, serviceID, 50)
+	history, err := store.reads.ListServiceDeployments(ctx, userID, serviceID, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

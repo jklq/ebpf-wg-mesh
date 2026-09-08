@@ -82,7 +82,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("active deployment = %+v ok=%v err=%v", active, ok, err)
 	}
 
-	history, err := store.reads.listServiceDeployments(ctx, userID, service.ID, 10)
+	history, err := store.reads.ListServiceDeployments(ctx, userID, service.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments: %v", err)
 	}

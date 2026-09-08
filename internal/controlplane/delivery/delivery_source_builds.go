@@ -5,50 +5,69 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-)
+	"strings"
 
-type QueuedSourceBuild struct {
-	Service ServiceRecord
-	Build   BuildRunRecord
-}
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/source"
+)
 
 // queueSourceBuild atomically resolves the durable source snapshot and queues
 // the deployment build. Publication happens only after the transaction commits.
-func (d *Delivery) QueueSourceBuild(ctx context.Context, binding SourceBindingRecord, commitSHA string, pendingSnapshot SourceSnapshotRecord) (QueuedSourceBuild, error) {
-	var result QueuedSourceBuild
+func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBindingRecord, commitSHA string, pendingSnapshot source.SourceSnapshotRecord) (source.QueuedBuild, error) {
+	var result source.QueuedBuild
+	var service ServiceRecord
+	var build BuildRunRecord
 	err := d.store.withTx(ctx, func(tx *sql.Tx) error {
-		revision, err := d.store.sourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
+		revision, err := d.store.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
 		if err != nil {
 			return err
 		}
-		snapshot, err := d.store.sourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
+		snapshot, err := d.store.sourceStore.SourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
 		if errors.Is(err, sql.ErrNoRows) {
 			if pendingSnapshot.ObjectKey == "" {
 				return err
 			}
-			snapshot, err = d.store.upsertSourceSnapshotTx(ctx, tx, pendingSnapshot)
+			snapshot, err = d.store.sourceStore.UpsertSourceSnapshotTx(ctx, tx, pendingSnapshot)
 		}
 		if err != nil {
 			return err
 		}
-		service, err := d.store.serviceByIDInternalQuerier(ctx, tx, binding.ServiceID)
+		service, err = d.store.serviceByIDInternalQuerier(ctx, tx, binding.ServiceID)
 		if err != nil {
 			return err
 		}
-		build, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook})
+		build, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook})
 		if err != nil {
 			return err
 		}
-		result = QueuedSourceBuild{Service: service, Build: build}
+		result = source.QueuedBuild{BuildID: build.ID}
 		return nil
 	})
 	if err != nil {
-		return QueuedSourceBuild{}, err
+		return source.QueuedBuild{}, err
 	}
 	if d.events != nil {
-		if _, err := d.events.Publish(ctx, result.Service.EnvironmentID); err != nil {
-			return QueuedSourceBuild{}, fmt.Errorf("publish source event: %w", err)
+		if _, err := d.events.Publish(ctx, service.EnvironmentID); err != nil {
+			return source.QueuedBuild{}, fmt.Errorf("publish source event: %w", err)
 		}
 	}
+	// The coordinator no longer emits logs (it owns no emitter); delivery emits
+	// the queued-build line itself so the service panel still shows progress
+	// while the builder claims the job. The emitter is nil-safe.
+	d.logEmitter.EmitBuildf(ctx, logs.ServiceScope{
+		EnvironmentID:     service.EnvironmentID,
+		ServiceID:         service.ID,
+		RolloutGeneration: service.RolloutGeneration,
+	}, build.ID, logs.StageBuild,
+		"Queued build for commit %s on ref %s", shortSHA(build.CommitSHA), binding.TrackedRef,
+	)
 	return result, nil
+}
+
+func shortSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) <= 7 {
+		return sha
+	}
+	return sha[:7]
 }

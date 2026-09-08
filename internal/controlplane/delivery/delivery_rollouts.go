@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"time"
 )
@@ -13,7 +14,7 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 	var now time.Time
 	if d.rolloutNow == nil {
 		var err error
-		now, err = DatabaseTime(ctx, d.store.db)
+		now, err = dbtx.DatabaseTime(ctx, d.store.db)
 		if err != nil {
 			return fmt.Errorf("read database time: %w", err)
 		}

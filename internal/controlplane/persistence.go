@@ -1,6 +1,11 @@
 package controlplane
 
-import deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+import (
+	"context"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
+)
 
 // persistence wires module-owned stores. It deliberately has no domain methods.
 type persistence struct {
@@ -11,11 +16,9 @@ type persistence struct {
 	fleet   *fleetPersistence
 	reads   *readsPersistence
 	routing *routingPersistence
-	source  *sourcePersistence
+	source  *source.SQLStore
 }
 type buildsPersistence struct {
-	source *sourcePersistence
-	reads  *readsPersistence
 	*database
 }
 type catalogPersistence struct {
@@ -31,17 +34,14 @@ type fleetPersistence struct {
 }
 type readsPersistence struct {
 	*database
-	model    *deliverycore.ReadModel
-	delivery *deliverycore.Delivery
+	deliverycore.ReadModel
 }
 type routingPersistence struct {
 	*database
-	reads *readsPersistence
 }
-type sourcePersistence struct {
-	sourceArchives SourceArchiveStore
-	*database
-	reads *readsPersistence
+
+func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error) error {
+	return s.withLeaseGuard(ctx, fn)
 }
 
 func newPersistence(db *database) *persistence {
@@ -52,15 +52,15 @@ func newPersistence(db *database) *persistence {
 	p.fleet = &fleetPersistence{database: db}
 	p.reads = &readsPersistence{database: db}
 	p.routing = &routingPersistence{database: db}
-	p.source = &sourcePersistence{database: db}
-	p.builds.source = p.source
-	p.builds.reads = p.reads
+	p.source = source.NewSQLStore(db.db, db.withTx, func(ctx context.Context, serviceID string) (source.Service, error) {
+		rec, err := p.reads.ServiceSnapshot(ctx, serviceID)
+		if err != nil {
+			return source.Service{}, err
+		}
+		return source.Service{ID: rec.ID, ProjectID: rec.ProjectID, Spec: rec.Spec, SpecRevision: rec.SpecRevision}, nil
+	})
 	p.catalog.reads = p.reads
 	p.fleet.reads = p.reads
-	p.routing.reads = p.reads
-	p.source.reads = p.reads
-	p.reads.delivery = newDelivery(p, nil, nil, nil)
-	p.reads.model = p.reads.delivery.ReadModel()
 	return p
 }
 

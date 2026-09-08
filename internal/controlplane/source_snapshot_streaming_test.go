@@ -12,7 +12,9 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
@@ -48,21 +50,21 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 		t.Fatalf("seedReadySourceState: %v", err)
 	}
 
-	binding, err := store.source.sourceBindingByServiceID(ctx, service.ID)
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := store.source.sourceRevisionByBindingAndCommit(ctx, binding.ID, "commit-1")
+	revision, err := store.source.SourceRevisionByBindingAndCommit(ctx, binding.ID, "commit-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := store.source.sourceSnapshotByRevisionID(ctx, revision.ID)
+	snapshot, err := store.source.SourceSnapshotByRevisionID(ctx, revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	archive := bytes.Repeat([]byte("bounded-source-snapshot"), sourceSnapshotChunkBytes/8)
 	archive = append(archive, []byte("final-chunk")...)
-	digest, objectKey, err := store.source.storeSourceArchive(ctx, archive)
+	digest, objectKey, err := store.source.StoreSourceArchive(ctx, archive)
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}
@@ -82,7 +84,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if summary.GetSourceState().GetLatestSnapshot().GetId() != snapshot.ID {
 		t.Fatalf("unexpected source summary snapshot: %v", summary)
 	}
-	metadataOnly, err := store.source.sourceSnapshotByRevisionID(ctx, revision.ID)
+	metadataOnly, err := store.source.SourceSnapshotByRevisionID(ctx, revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,10 +100,33 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	stream := &recordingSourceSnapshotServerStream{
 		ctx: contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 	}
-	if err := NewBuilderService(NewBuildOperations(store.builds, nil, nil, nil, 0)).DownloadSourceSnapshot(
+	if err := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0)).DownloadSourceSnapshot(
 		&platformv1.DownloadSourceSnapshotRequest{SnapshotId: snapshot.ID}, stream,
 	); err != nil {
 		t.Fatalf("DownloadSourceSnapshot: %v", err)
+	}
+	operations := NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0)
+	if _, _, err := operations.OpenSourceSnapshot(contextWithClientIdentity(serviceCallerBuilder, "builder-other"), snapshot.ID); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unassigned builder: %v", err)
+	}
+	metadata, reader, err := operations.OpenSourceSnapshot(stream.ctx, snapshot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloaded, err := io.ReadAll(reader)
+	if err != nil || metadata.Digest != digest || !bytes.Equal(downloaded, archive) {
+		t.Fatalf("open snapshot: metadata=%+v, err=%v", metadata, err)
+	}
+	// Corrupt metadata must be detected by the operation reader, independent of gRPC framing.
+	if _, err := store.db.ExecContext(ctx, `UPDATE source_snapshots SET digest = $2 WHERE id = $1`, snapshot.ID, "sha256:"+string(bytes.Repeat([]byte("0"), 64))); err != nil {
+		t.Fatal(err)
+	}
+	_, reader, err = operations.OpenSourceSnapshot(stream.ctx, snapshot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(reader); status.Code(err) != codes.DataLoss {
+		t.Fatalf("corrupt digest: %v", err)
 	}
 	if len(stream.chunks) < 2 {
 		t.Fatalf("expected multiple chunks, got %d", len(stream.chunks))

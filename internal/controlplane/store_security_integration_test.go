@@ -133,13 +133,13 @@ func TestAgentBootstrapTokensAreBoundDurableAndSingleUse(t *testing.T) {
 	if err := store.fleet.ensureAgentBootstrapTokens(ctx, tokens); err != nil {
 		t.Fatalf("ensureAgentBootstrapTokens: %v", err)
 	}
-	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-2", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
+	if err := store.fleet.ConsumeAgentBootstrapToken(ctx, "node-2", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected agent binding rejection, got %v", err)
 	}
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			results <- store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "one-time-secret")
+			results <- store.fleet.ConsumeAgentBootstrapToken(ctx, "node-1", "one-time-secret")
 		}()
 	}
 	successes := 0
@@ -156,7 +156,7 @@ func TestAgentBootstrapTokensAreBoundDurableAndSingleUse(t *testing.T) {
 	if err := store.fleet.ensureAgentBootstrapTokens(ctx, tokens); err != nil {
 		t.Fatalf("reseed bootstrap tokens: %v", err)
 	}
-	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
+	if err := store.fleet.ConsumeAgentBootstrapToken(ctx, "node-1", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected consumed token rejection after reseed, got %v", err)
 	}
 }
@@ -172,10 +172,10 @@ func TestRemovedAgentBootstrapTokenIsRevoked(t *testing.T) {
 	if err := store.fleet.ensureAgentBootstrapTokens(ctx, []config.AgentBootstrapToken{{AgentID: "node-1", Token: "new-secret"}}); err != nil {
 		t.Fatalf("rotate token: %v", err)
 	}
-	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "old-secret"); !errors.Is(err, errInvalidBootstrapToken) {
+	if err := store.fleet.ConsumeAgentBootstrapToken(ctx, "node-1", "old-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected removed token rejection, got %v", err)
 	}
-	if err := store.fleet.consumeAgentBootstrapToken(ctx, "node-1", "new-secret"); err != nil {
+	if err := store.fleet.ConsumeAgentBootstrapToken(ctx, "node-1", "new-secret"); err != nil {
 		t.Fatalf("consume replacement token: %v", err)
 	}
 }

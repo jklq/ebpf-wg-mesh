@@ -13,7 +13,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func (s *fleetPersistence) authorizeAgentCredential(ctx context.Context, agentID string) error {
+func (s *fleetPersistence) AuthorizeAgentCredential(ctx context.Context, agentID string) error {
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM agents
 		WHERE id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, strings.TrimSpace(agentID)).Scan(&one)
@@ -61,7 +61,7 @@ func encodeCapabilities(values []string) ([]byte, error) {
 	return json.Marshal(deliverycore.CanonicalCapabilities(values))
 }
 
-func (s *fleetPersistence) recordAgentCertificate(ctx context.Context, agentID, serial string) error {
+func (s *fleetPersistence) RecordAgentCertificate(ctx context.Context, agentID, serial string) error {
 	agentID = strings.TrimSpace(agentID)
 	serial = strings.ToLower(strings.TrimSpace(serial))
 	if agentID == "" || serial == "" {
@@ -90,10 +90,10 @@ func (s *fleetPersistence) listAgentCertificateSerials(ctx context.Context, agen
 }
 
 func (s *fleetPersistence) fleetView(ctx context.Context, userID string) (*platformv1.Fleet, error) {
-	if err := s.reads.deliveryQueries().AuthorizeOperator(ctx, userID); err != nil {
+	if err := s.reads.AuthorizeOperator(ctx, userID); err != nil {
 		return nil, err
 	}
-	agents, err := s.reads.deliveryQueries().ListAgents(ctx)
+	agents, err := s.reads.ListAgents(ctx)
 	if err != nil {
 		return nil, err
 	}

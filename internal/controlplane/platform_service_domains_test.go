@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/routing"
 	"strings"
 	"testing"
 
@@ -279,7 +280,7 @@ func TestPlatformServiceCreateDomainBindingRequiresPlatformHostname(t *testing.T
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{createDomainBindingFn: func(context.Context, string, string, string, int32) (deliverycore.DomainBindingRecord, bool, error) {
-		return deliverycore.DomainBindingRecord{}, false, errPlatformDomainNotGenerated
+		return deliverycore.DomainBindingRecord{}, false, routing.ErrPlatformDomainNotGenerated
 	}}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
 	_, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
 		Binding: &platformv1.DomainBindingInput{Hostname: "web.example.com", ServiceId: "service-1", TargetPort: 8080},

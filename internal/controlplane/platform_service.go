@@ -3,6 +3,10 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -15,15 +19,15 @@ import (
 type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store                platformStore
-	domains              *Domains
+	domains              *routing.Domains
 	environments         *EnvironmentOperations
 	delivery             platformDelivery
 	logStore             serviceLogStore
-	emitter              *LogEmitter
+	emitter              *logs.LogEmitter
 	notifier             deliverycore.PlatformNotifier
 	ingress              deliverycore.PlatformIngress
-	inspector            *gitHubSourceInspector
-	dnsResolver          domainCNAMEResolver
+	inspector            *source.Inspector
+	dnsResolver          routing.Resolver
 	platformDomainSuffix string
 	events               *PlatformEvents
 }
@@ -34,25 +38,20 @@ type platformStore interface {
 	listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error)
 	projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error)
 	authorizeProjectWrite(ctx context.Context, userID, projectID string) error
-	serviceByID(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, error)
-	listServices(ctx context.Context, userID, environmentID string) ([]deliverycore.ServiceRecord, error)
+	ServiceByID(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, error)
+	ListServices(ctx context.Context, userID, environmentID string) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
 	listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error)
 	deleteVolume(ctx context.Context, userID, volumeID string) error
-	createDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
-	createPlatformDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
-	platformDomainBindingForService(ctx context.Context, userID, serviceID string) (deliverycore.DomainBindingRecord, error)
-	updateDomainBinding(ctx context.Context, userID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
-	domainBindingByHostname(ctx context.Context, userID, hostname string) (deliverycore.DomainBindingRecord, error)
-	listDomainBindings(ctx context.Context, userID, serviceID string) ([]deliverycore.DomainBindingRecord, error)
-	deleteDomainBinding(ctx context.Context, userID, hostname string) (bool, error)
-	serviceStatus(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
-	listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
-	listAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error)
-	listAgents(ctx context.Context) ([]deliverycore.AgentRecord, error)
+	ServiceStatus(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
+	ListServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
+	ListAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error)
+	ListAgents(ctx context.Context) ([]deliverycore.AgentRecord, error)
 }
 
 type platformDelivery interface {
+	DuplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
+
 	ReleaseEnvironment(ctx context.Context, environmentID string) ([]deliverycore.ReleasedService, error)
 	ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.DeploymentActionResult, error)
 	CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error)
@@ -64,29 +63,23 @@ type platformDelivery interface {
 
 type environmentStore interface {
 	listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error)
-	environmentByID(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error)
+	EnvironmentByID(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error)
 	createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error)
-	duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
 	renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error)
 	deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error)
 }
 
 func (s *PlatformService) environmentForUser(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return s.store.environmentByID(ctx, userID, environmentID)
+	return s.store.EnvironmentByID(ctx, userID, environmentID)
 }
 
 type serviceLogStore interface {
-	ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]serviceLogRecord, error)
+	ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]logs.ServiceLog, error)
 }
 
 type PlatformServiceOption func(*PlatformService)
 
-type domainCNAMEResolver interface {
-	LookupCNAME(context.Context, string) (string, error)
-	LookupHost(context.Context, string) ([]string, error)
-}
-
-func WithDomainCNAMEResolver(resolver domainCNAMEResolver) PlatformServiceOption {
+func WithDomainCNAMEResolver(resolver routing.Resolver) PlatformServiceOption {
 	return func(service *PlatformService) {
 		service.dnsResolver = resolver
 	}
@@ -107,15 +100,15 @@ func WithServiceLogs(logStore serviceLogStore) PlatformServiceOption {
 // WithServiceLogEmitter wires a LogEmitter so the platform service can write
 // synthetic deploy/initialization log lines (for example, when a service is
 // first scheduled or released). A nil emitter is a valid no-op.
-func WithServiceLogEmitter(emitter *LogEmitter) PlatformServiceOption {
+func WithServiceLogEmitter(emitter *logs.LogEmitter) PlatformServiceOption {
 	return func(service *PlatformService) {
 		service.emitter = emitter
 	}
 }
 
-func WithGitHubSourceInspection(catalog *GitHubCatalog, client *GitHubClient) PlatformServiceOption {
+func WithGitHubSourceInspection(catalog *source.GitHubCatalog, client *source.GitHubClient) PlatformServiceOption {
 	return func(service *PlatformService) {
-		service.inspector = newGitHubSourceInspector(catalog, client)
+		service.inspector = source.NewInspector(catalog, client)
 	}
 }
 
@@ -126,19 +119,20 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 }
 
 func NewPlatformService(store platformStore, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, delivery platformDelivery, opts ...PlatformServiceOption) *PlatformService {
-	service := &PlatformService{store: store, delivery: delivery, notifier: notifier, ingress: ingress, dnsResolver: newPublicDNSResolver()}
+	service := &PlatformService{store: store, delivery: delivery, notifier: notifier, ingress: ingress, dnsResolver: routing.NewPublicDNSResolver()}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
 		}
 	}
-	service.domains = NewDomains(store, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
+	routingStore, _ := store.(routing.Store)
+	service.domains = routing.NewDomains(routingStore, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
 	service.environments = NewEnvironmentOperations(store, notifier, ingress)
 	return service
 }
 
 func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.CreateProjectRequest) (*platformv1.Project, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +144,7 @@ func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.Cre
 }
 
 func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListProjectsResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +160,7 @@ func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*
 }
 
 func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetProjectRequest) (*platformv1.Project, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +172,7 @@ func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetPro
 }
 
 func (s *PlatformService) ListEnvironments(ctx context.Context, req *platformv1.ListEnvironmentsRequest) (*platformv1.ListEnvironmentsResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -194,11 +188,11 @@ func (s *PlatformService) ListEnvironments(ctx context.Context, req *platformv1.
 }
 
 func (s *PlatformService) GetEnvironment(ctx context.Context, req *platformv1.GetEnvironmentRequest) (*platformv1.Environment, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.store.environmentByID(ctx, identity.UserID, req.GetEnvironmentId())
+	rec, err := s.store.EnvironmentByID(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "environment: %v", err)
 	}
@@ -206,7 +200,7 @@ func (s *PlatformService) GetEnvironment(ctx context.Context, req *platformv1.Ge
 }
 
 func (s *PlatformService) CreateEnvironment(ctx context.Context, req *platformv1.CreateEnvironmentRequest) (*platformv1.Environment, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -218,11 +212,11 @@ func (s *PlatformService) CreateEnvironment(ctx context.Context, req *platformv1
 }
 
 func (s *PlatformService) DuplicateEnvironment(ctx context.Context, req *platformv1.DuplicateEnvironmentRequest) (*platformv1.Environment, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.store.duplicateEnvironment(ctx, identity.UserID, req.GetSourceEnvironmentId(), req.GetName(), req.GetCopyVariables())
+	rec, err := s.delivery.DuplicateEnvironment(ctx, identity.UserID, req.GetSourceEnvironmentId(), req.GetName(), req.GetCopyVariables())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "duplicate environment: %v", err)
 	}
@@ -230,7 +224,7 @@ func (s *PlatformService) DuplicateEnvironment(ctx context.Context, req *platfor
 }
 
 func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1.RenameEnvironmentRequest) (*platformv1.Environment, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +236,7 @@ func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1
 }
 
 func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
+	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	return s.environments.DeleteEnvironment(ctx, req)

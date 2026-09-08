@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"testing"
 	"time"
@@ -80,9 +81,9 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
-	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
-		t.Fatalf("serviceByID(after build): %v", err)
+		t.Fatalf("ServiceByID(after build): %v", err)
 	}
 	if current.ResolvedImage != "registry.example.test/platform/web@sha256:111" {
 		t.Fatalf("expected resolved image to be updated, got %q", current.ResolvedImage)
@@ -105,7 +106,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("expected resolved desired image digest, got %q", got)
 	}
 
-	if err := store.source.linkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
+	if err := store.source.LinkProjectGitHubRepository(ctx, projects[0].ID, "user-1", GitHubRepositoryView{
 		RepositoryID:   1,
 		FullName:       "octocat/hello",
 		InstallationID: 1,
@@ -121,12 +122,12 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", service.EnvironmentID); err != nil {
 		t.Fatalf("deploy replica change: %v", err)
 	}
-	if got := countSourceWorkItems(t, store, ctx, deliverycore.SourceWorkKindSourceSpecChanged); got != 0 {
+	if got := countSourceWorkItems(t, store, ctx, source.SourceWorkKindSourceSpecChanged); got != 0 {
 		t.Fatalf("replica-only deploy queued %d source builds, want 0", got)
 	}
-	current, err = store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err = store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
-		t.Fatalf("serviceByID(after replica deploy): %v", err)
+		t.Fatalf("ServiceByID(after replica deploy): %v", err)
 	}
 	if current.DesiredReplicaCount != 2 {
 		t.Fatalf("live desired replica count = %d, want 2", current.DesiredReplicaCount)
@@ -191,7 +192,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatalf("completeBuild(second): %v", err)
 	}
 
-	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
@@ -263,9 +264,9 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 
-	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
-		t.Fatalf("serviceByID(after old success): %v", err)
+		t.Fatalf("ServiceByID(after old success): %v", err)
 	}
 	if current.ResolvedImage != "" {
 		t.Fatalf("expected older build success to stay unapplied while newer work exists, got %q", current.ResolvedImage)
@@ -275,9 +276,9 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
-	current, err = store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err = store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
-		t.Fatalf("serviceByID(after new success): %v", err)
+		t.Fatalf("ServiceByID(after new success): %v", err)
 	}
 	if current.ResolvedImage != "registry.example.test/platform/web@sha256:222" {
 		t.Fatalf("expected newer successful build to win, got %q", current.ResolvedImage)
@@ -317,7 +318,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 
 	assertRolloutState(t, store, service.ID, 1, "superseded", "newer rollout")
 	assertRolloutState(t, store, service.ID, 2, "in_progress", "")
-	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
@@ -620,9 +621,9 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("completeBuild: %v", err)
 	}
 
-	repoDeployments, err := store.reads.listServiceDeployments(ctx, "user-1", repoService.ID, 10)
+	repoDeployments, err := store.reads.ListServiceDeployments(ctx, "user-1", repoService.ID, 10)
 	if err != nil {
-		t.Fatalf("listServiceDeployments(repo): %v", err)
+		t.Fatalf("ListServiceDeployments(repo): %v", err)
 	}
 	if len(repoDeployments) < 2 {
 		t.Fatalf("expected at least two repo deployments, got %d", len(repoDeployments))
@@ -645,9 +646,9 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("applyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 
-	imageDeployments, err := store.reads.listServiceDeployments(ctx, "user-1", imageService.ID, 10)
+	imageDeployments, err := store.reads.ListServiceDeployments(ctx, "user-1", imageService.ID, 10)
 	if err != nil {
-		t.Fatalf("listServiceDeployments(image): %v", err)
+		t.Fatalf("ListServiceDeployments(image): %v", err)
 	}
 	if len(imageDeployments) < 2 {
 		t.Fatalf("expected at least two direct-image deployments, got %d", len(imageDeployments))
@@ -704,7 +705,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
-	deployments, err := store.reads.listServiceDeployments(ctx, "user-1", service.ID, 10)
+	deployments, err := store.reads.ListServiceDeployments(ctx, "user-1", service.ID, 10)
 	if err != nil {
 		t.Fatalf("listServiceDeployments: %v", err)
 	}
@@ -819,13 +820,13 @@ func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.S
 func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string) error {
 	t.Helper()
 	archive := []byte("snapshot-" + commitSHA)
-	digest, objectKey, err := store.source.storeSourceArchive(context.Background(), archive)
+	digest, objectKey, err := store.source.StoreSourceArchive(context.Background(), archive)
 	if err != nil {
 		return err
 	}
 
 	return store.withTx(context.Background(), func(tx *sql.Tx) error {
-		binding, err := store.source.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
+		binding, err := store.source.UpsertSourceBindingTx(context.Background(), tx, source.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,
 			Provider:                     "github",
@@ -833,7 +834,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 			TrackedRef:                   "main",
 			ProviderRepositoryExternalID: "repo-1",
 			ProviderScopeExternalID:      "",
-			AccessState:                  deliverycore.SourceAccessStateAvailable,
+			AccessState:                  source.SourceAccessStateAvailable,
 			BuildRecipe:                  &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
 			ResolvedAt:                   time.Now().UTC(),
 			FreshUntil:                   time.Now().UTC().Add(time.Hour),
@@ -841,7 +842,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 		if err != nil {
 			return err
 		}
-		revision, err := store.source.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
+		revision, err := store.source.UpsertSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -855,7 +856,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 		if err != nil {
 			return err
 		}
-		_, err = store.source.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
+		_, err = store.source.UpsertSourceSnapshotTx(context.Background(), tx, source.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,

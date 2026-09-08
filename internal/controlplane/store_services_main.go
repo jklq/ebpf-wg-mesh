@@ -34,7 +34,7 @@ func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, 
 }
 
 func (s *catalogPersistence) listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error) {
-	if _, err := s.reads.deliveryQueries().EnvironmentByID(ctx, userID, environmentID); err != nil {
+	if _, err := s.reads.EnvironmentByID(ctx, userID, environmentID); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -70,7 +70,7 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID 
 		if err != nil {
 			return err
 		}
-		if _, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
+		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
 			return err
 		}
 

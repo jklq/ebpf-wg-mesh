@@ -60,7 +60,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	}
 	deploymentCounts := make(map[string]int)
 	for _, id := range []string{first.ID, second.ID} {
-		deployments, err := store.reads.listServiceDeployments(ctx, "owner", id, 10)
+		deployments, err := store.reads.ListServiceDeployments(ctx, "owner", id, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,14 +70,14 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		t.Fatal("release with missing volume unexpectedly succeeded")
 	}
 	for _, id := range []string{first.ID, second.ID} {
-		service, err := store.reads.serviceByID(ctx, "owner", id)
+		service, err := store.reads.ServiceByID(ctx, "owner", id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if service.RolloutGeneration != 0 || service.AllocatedAgentID != "" {
 			t.Fatalf("failed release mutated service: %#v", service)
 		}
-		deployments, err := store.reads.listServiceDeployments(ctx, "owner", id, 10)
+		deployments, err := store.reads.ListServiceDeployments(ctx, "owner", id, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
