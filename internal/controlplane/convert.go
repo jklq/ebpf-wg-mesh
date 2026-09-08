@@ -204,7 +204,6 @@ func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.Depl
 		ServiceId:         rec.ServiceID,
 		RolloutGeneration: rec.RolloutGeneration,
 		SpecRevision:      rec.SpecRevision,
-		Reason:            rec.Reason,
 		CreatedAt:         ts(rec.CreatedAt),
 		Build:             toProtoMaybeBuildStatus(rec.Build),
 		IsCurrent:         rec.IsCurrent,
@@ -221,11 +220,7 @@ func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.Depl
 			CreatedAt: ts(action.CreatedAt),
 		})
 	}
-	if rec.Build != nil {
-		protoRec.Stages = deploymentStagesFromLifecycle(rec, deliverycore.ServiceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision, AllocatedAgentID: ""}, rec.Build)
-	} else {
-		protoRec.Stages = deploymentStagesFromLifecycle(rec, deliverycore.ServiceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision}, nil)
-	}
+	protoRec.Stages = deploymentStagesFromLifecycle(rec, deliverycore.ServiceRecord{ID: rec.ServiceID, SpecRevision: rec.SpecRevision}, rec.Build)
 	return protoRec
 }
 
