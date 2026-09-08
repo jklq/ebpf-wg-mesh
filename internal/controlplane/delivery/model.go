@@ -172,7 +172,6 @@ type DeploymentRecord struct {
 	ServiceID         string
 	RolloutGeneration int64
 	SpecRevision      int64
-	Reason            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	Build             *BuildRunRecord
