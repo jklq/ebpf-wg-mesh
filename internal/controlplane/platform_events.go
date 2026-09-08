@@ -19,37 +19,33 @@ const (
 // advancing it in every database.withTx transaction makes state and notification
 // atomic without requiring callers to remember an environment-specific outbox.
 type PlatformEvents struct {
-	store        environmentEventStore
+	store        globalRevisionStore
 	pollInterval time.Duration
 }
 
-type environmentEventStore interface {
-	publishEnvironmentEvent(context.Context, string) (int64, error)
-	currentEnvironmentEvent(context.Context, string) (int64, error)
+type globalRevisionStore interface {
+	currentGlobalRevision(context.Context) (int64, error)
 }
 
-func NewPlatformEvents(store environmentEventStore, pollInterval time.Duration) *PlatformEvents {
+func NewPlatformEvents(store globalRevisionStore, pollInterval time.Duration) *PlatformEvents {
 	if pollInterval <= 0 {
 		pollInterval = defaultEventPollInterval
 	}
 	return &PlatformEvents{store: store, pollInterval: pollInterval}
 }
 
-func (s *eventsPersistence) publishEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
-	// Visible store mutations advance the global revision in database.withTx in the
-	// same transaction as the state change. Publishing is therefore a durable
-	// read, not a second write that could be lost after the state commits.
-	return s.currentEnvironmentEvent(ctx, environmentID)
-}
-
-func (e *PlatformEvents) Current(ctx context.Context, environmentID string) (int64, error) {
-	if e == nil || e.store == nil || environmentID == "" {
+// Current reads the global revision. Mutations advance it in database.withTx
+// in the same transaction as the state change, so there is no separate
+// publish step: by the time a mutation has committed, Current already
+// reflects it.
+func (e *PlatformEvents) Current(ctx context.Context) (int64, error) {
+	if e == nil || e.store == nil {
 		return initialEnvironmentRevision, nil
 	}
-	return e.store.currentEnvironmentEvent(ctx, environmentID)
+	return e.store.currentGlobalRevision(ctx)
 }
 
-func (s *eventsPersistence) currentEnvironmentEvent(ctx context.Context, environmentID string) (int64, error) {
+func (s *eventsPersistence) currentGlobalRevision(ctx context.Context) (int64, error) {
 	var revision int64
 	err := s.db.QueryRowContext(ctx, `SELECT revision FROM environment_events WHERE environment_id = $1`, globalEnvironmentEventID).Scan(&revision)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -68,8 +64,8 @@ func bumpGlobalEnvironmentEventTx(ctx context.Context, tx *sql.Tx) error {
 }
 
 // Wait returns the current index and whether it advanced beyond after.
-func (e *PlatformEvents) Wait(ctx context.Context, environmentID string, after int64, timeout time.Duration) (int64, bool, error) {
-	current, err := e.Current(ctx, environmentID)
+func (e *PlatformEvents) Wait(ctx context.Context, after int64, timeout time.Duration) (int64, bool, error) {
+	current, err := e.Current(ctx)
 	if err != nil {
 		return 0, false, err
 	}
@@ -90,7 +86,7 @@ func (e *PlatformEvents) Wait(ctx context.Context, environmentID string, after i
 		case <-timeoutTimer.C:
 			return current, false, nil
 		case <-poll.C:
-			current, err = e.Current(ctx, environmentID)
+			current, err = e.Current(ctx)
 			if err != nil {
 				return 0, false, err
 			}
@@ -106,11 +102,4 @@ func platformWaitDuration(seconds int32) time.Duration {
 		return maxPlatformBlockingWait
 	}
 	return time.Duration(seconds) * time.Second
-}
-
-func (e *PlatformEvents) Publish(ctx context.Context, environmentID string) (int64, error) {
-	if e == nil || e.store == nil || environmentID == "" {
-		return 0, nil
-	}
-	return e.store.publishEnvironmentEvent(ctx, environmentID)
 }

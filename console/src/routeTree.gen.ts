@@ -18,7 +18,6 @@ import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
-import { Route as EventsProjectServicesRouteImport } from './routes/events/project-services'
 import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/environment-services'
 import { Route as EnvironmentsEnvironmentIdRouteImport } from './routes/environments/$environmentId'
 import { Route as AuthStartRouteImport } from './routes/auth/start'
@@ -69,11 +68,6 @@ const EventsServiceStatusRoute = EventsServiceStatusRouteImport.update({
   path: '/events/service-status',
   getParentRoute: () => rootRouteImport,
 } as any)
-const EventsProjectServicesRoute = EventsProjectServicesRouteImport.update({
-  id: '/events/project-services',
-  path: '/events/project-services',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const EventsEnvironmentServicesRoute =
   EventsEnvironmentServicesRouteImport.update({
     id: '/events/environment-services',
@@ -109,7 +103,6 @@ export interface FileRoutesByFullPath {
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
-  '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
 }
@@ -125,7 +118,6 @@ export interface FileRoutesByTo {
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
-  '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
 }
@@ -142,7 +134,6 @@ export interface FileRoutesById {
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
-  '/events/project-services': typeof EventsProjectServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
 }
@@ -160,7 +151,6 @@ export interface FileRouteTypes {
     | '/auth/start'
     | '/environments/$environmentId'
     | '/events/environment-services'
-    | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
   fileRoutesByTo: FileRoutesByTo
@@ -176,7 +166,6 @@ export interface FileRouteTypes {
     | '/auth/start'
     | '/environments/$environmentId'
     | '/events/environment-services'
-    | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
   id:
@@ -192,7 +181,6 @@ export interface FileRouteTypes {
     | '/auth/start'
     | '/environments/$environmentId'
     | '/events/environment-services'
-    | '/events/project-services'
     | '/events/service-status'
     | '/webhooks/github'
   fileRoutesById: FileRoutesById
@@ -209,7 +197,6 @@ export interface RootRouteChildren {
   AuthStartRoute: typeof AuthStartRoute
   EnvironmentsEnvironmentIdRoute: typeof EnvironmentsEnvironmentIdRoute
   EventsEnvironmentServicesRoute: typeof EventsEnvironmentServicesRoute
-  EventsProjectServicesRoute: typeof EventsProjectServicesRoute
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
 }
@@ -279,13 +266,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EventsServiceStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/events/project-services': {
-      id: '/events/project-services'
-      path: '/events/project-services'
-      fullPath: '/events/project-services'
-      preLoaderRoute: typeof EventsProjectServicesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/events/environment-services': {
       id: '/events/environment-services'
       path: '/events/environment-services'
@@ -329,7 +309,6 @@ const rootRouteChildren: RootRouteChildren = {
   AuthStartRoute: AuthStartRoute,
   EnvironmentsEnvironmentIdRoute: EnvironmentsEnvironmentIdRoute,
   EventsEnvironmentServicesRoute: EventsEnvironmentServicesRoute,
-  EventsProjectServicesRoute: EventsProjectServicesRoute,
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,
 }

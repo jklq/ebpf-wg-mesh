@@ -276,11 +276,10 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	if err != nil {
 		return nil, err
 	}
-	environment, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId())
-	if err != nil {
+	if _, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId()); err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
 	}
-	index, changed, err := s.events.Wait(ctx, environment.ID, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
+	index, changed, err := s.events.Wait(ctx, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "wait for service event: %v", err)
 	}

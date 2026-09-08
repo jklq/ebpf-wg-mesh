@@ -22,7 +22,7 @@ type BuildCompletion struct {
 
 func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) (BuildCompletion, error) {
 	s := d.store
-	var environmentID, serviceID string
+	var serviceID string
 	var changed, rolloutScheduled bool
 	var completed BuildRunRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -32,7 +32,6 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		if err != nil {
 			return err
 		}
-		environmentID = build.EnvironmentID
 		serviceID = build.ServiceID
 		if err := s.lockServiceTx(ctx, tx, build.ServiceID); err != nil {
 			return err
@@ -285,10 +284,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			d.notifier.Notify(allocation.AgentID)
 		}
 	}
-	if d.events != nil {
-		_, err = d.events.Publish(ctx, environmentID)
-	}
-	return BuildCompletion{Build: completed, Changed: changed, RolloutScheduled: rolloutScheduled}, err
+	return BuildCompletion{Build: completed, Changed: changed, RolloutScheduled: rolloutScheduled}, nil
 }
 
 func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, error) {

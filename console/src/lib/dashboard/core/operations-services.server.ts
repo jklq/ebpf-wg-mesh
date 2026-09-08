@@ -81,46 +81,6 @@ export async function waitForEnvironmentServicesFromSession(
 	};
 }
 
-export async function waitForProjectServicesFromSession(
-	runtime: DashboardRuntime,
-	input: {
-		projectId: string;
-		waitIndex: number;
-		waitTimeoutSeconds: number;
-	},
-) {
-	const session = await requireSession(runtime);
-	const environments = await platformCall(
-		runtime,
-		"listEnvironments",
-		(platform) => platform.listEnvironments(session.user, input.projectId),
-	);
-	const environment =
-		environments.find((entry) => entry.isProduction) ?? environments[0];
-	if (!environment) {
-		throw new DashboardValidationError({
-			message: "project has no environment",
-		});
-	}
-	const result = await platformCall(runtime, "waitForServices", (platform) =>
-		platform.waitForServices(session.user, {
-			environmentId: environment.id,
-			waitIndex: input.waitIndex,
-			waitTimeoutSeconds: input.waitTimeoutSeconds,
-		}),
-	);
-	if (result.notModified || !result.services) {
-		return result;
-	}
-	const positions = await storeCall(runtime, "listServicePositions", (store) =>
-		store.listServicePositions(session.user.id, environment.id),
-	);
-	return {
-		...result,
-		services: applyServicePositions(result.services, positions),
-	};
-}
-
 export async function listServiceLogsFromSession(
 	runtime: DashboardRuntime,
 	input: {

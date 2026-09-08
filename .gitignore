@@ -67,12 +67,11 @@ docker-compose.override.yml
 api/proto/**/*.pb.go
 console/src/lib/platform-gen/
 
-# Build/test binaries and artifacts
-integration.test
-localteststack
-testvm
-!cmd/testvm/
-!cmd/testvm/main.go
+# Build/test binaries and artifacts (anchored to repo-root outputs so the
+# cmd/<name>/ source directories stay visible to discovery and git)
+/integration.test
+/localteststack
+/testvm
 artifacts/
 testbed.log
 

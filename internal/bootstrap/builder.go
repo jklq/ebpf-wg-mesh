@@ -24,7 +24,6 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	stringFlag(fs, &cfg.WorkDir, "work-dir", "BUILDER_WORK_DIR", "var/builder", "")
 	intFlag(fs, &cfg.PollIntervalSeconds, "poll-interval-seconds", "BUILDER_POLL_INTERVAL_SECONDS", 5, "")
 	intFlag(fs, &cfg.HeartbeatIntervalSeconds, "heartbeat-interval-seconds", "BUILDER_HEARTBEAT_INTERVAL_SECONDS", 10, "")
-	stringFlag(fs, &cfg.GitBinary, "git-binary", "BUILDER_GIT_BINARY", "git", "")
 	stringFlag(fs, &cfg.BuildctlBinary, "buildctl-binary", "BUILDER_BUILDCTL_BINARY", "buildctl", "")
 	stringFlag(fs, &cfg.BuildkitAddress, "buildkit-address", "BUILDER_BUILDKIT_ADDRESS", "unix:///run/buildkit/buildkitd.sock", "")
 	boolFlag(fs, &cfg.CleanupWorkDir, "cleanup-work-dir", "BUILDER_CLEANUP_WORK_DIR", true, "")

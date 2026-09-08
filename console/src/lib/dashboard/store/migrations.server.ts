@@ -17,14 +17,6 @@ export function dashboardStoreMigrations(
 					created_at TIMESTAMPTZ NOT NULL,
 					updated_at TIMESTAMPTZ NOT NULL
 				)`,
-				`CREATE TABLE ${tableName(runtime, "sessions")} (
-					id STRING PRIMARY KEY,
-					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
-					created_at TIMESTAMPTZ NOT NULL,
-					expires_at TIMESTAMPTZ NOT NULL
-				)`,
-				`CREATE INDEX ${runtime.databaseSchema}_sessions_expires_at_idx
-					ON ${tableName(runtime, "sessions")} (expires_at)`,
 				`CREATE TABLE ${tableName(runtime, "refresh_sessions")} (
 					id STRING PRIMARY KEY,
 					user_id STRING NOT NULL REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
@@ -58,8 +50,6 @@ export function dashboardStoreMigrations(
 					ON ${tableName(runtime, "accounts")} (provider, lower(verified_email_snapshot))`,
 				`CREATE TABLE ${tableName(runtime, "onboarding")} (
 					user_id STRING PRIMARY KEY REFERENCES ${tableName(runtime, "users")}(id) ON DELETE CASCADE,
-					account_name STRING NOT NULL DEFAULT '',
-					status STRING NOT NULL DEFAULT 'pending',
 					project_id STRING NOT NULL DEFAULT '',
 					environment_id STRING NOT NULL DEFAULT '',
 					service_id STRING NOT NULL DEFAULT '',
