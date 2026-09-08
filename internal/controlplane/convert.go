@@ -2,7 +2,10 @@ package controlplane
 
 import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
@@ -11,7 +14,7 @@ func toProtoProject(rec deliverycore.ProjectRecord) *platformv1.Project {
 	return &platformv1.Project{
 		Id:        rec.ID,
 		Name:      rec.Name,
-		CreatedAt: deliverycore.Ts(rec.CreatedAt),
+		CreatedAt: ts(rec.CreatedAt),
 		Kind:      toProtoProjectKind(rec.Kind),
 		SystemKey: rec.SystemKey,
 	}
@@ -34,8 +37,8 @@ func toProtoEnvironment(rec deliverycore.EnvironmentRecord) *platformv1.Environm
 		Kind:                    platformv1.EnvironmentKind_ENVIRONMENT_KIND_PERSISTENT,
 		IsProduction:            rec.IsProduction,
 		CopiedFromEnvironmentId: rec.CopiedFromEnvironmentID,
-		CreatedAt:               deliverycore.Ts(rec.CreatedAt),
-		UpdatedAt:               deliverycore.Ts(rec.UpdatedAt),
+		CreatedAt:               ts(rec.CreatedAt),
+		UpdatedAt:               ts(rec.UpdatedAt),
 	}
 }
 
@@ -46,8 +49,8 @@ func toProtoService(rec deliverycore.ServiceRecord) *platformv1.Service {
 		Name:                    rec.Name,
 		Spec:                    rec.Spec,
 		SpecRevision:            rec.SpecRevision,
-		CreatedAt:               deliverycore.Ts(rec.CreatedAt),
-		UpdatedAt:               deliverycore.Ts(rec.UpdatedAt),
+		CreatedAt:               ts(rec.CreatedAt),
+		UpdatedAt:               ts(rec.UpdatedAt),
 		RolloutGeneration:       rec.RolloutGeneration,
 		SourceSummary:           rec.SourceSummary,
 		LastSuccessfulCommitSha: rec.LastSuccessfulCommitSHA,
@@ -87,8 +90,8 @@ func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.Doma
 		ServiceId:         rec.ServiceID,
 		TargetPort:        rec.TargetPort,
 		PlatformGenerated: rec.PlatformGenerated,
-		CreatedAt:         deliverycore.Ts(rec.CreatedAt),
-		UpdatedAt:         deliverycore.Ts(rec.UpdatedAt),
+		CreatedAt:         ts(rec.CreatedAt),
+		UpdatedAt:         ts(rec.UpdatedAt),
 	}
 }
 
@@ -98,7 +101,7 @@ func toProtoVolume(rec deliverycore.VolumeRecord) *platformv1.Volume {
 		EnvironmentId: rec.EnvironmentID,
 		Name:          rec.Name,
 		SizeBytes:     rec.SizeBytes,
-		CreatedAt:     deliverycore.Ts(rec.CreatedAt),
+		CreatedAt:     ts(rec.CreatedAt),
 	}
 }
 
@@ -110,7 +113,7 @@ func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {
 		Healthy:                    rec.Healthy(time.Now().UTC()),
 		CpuMillisCapacity:          rec.CPUMillisCapacity,
 		MemoryMebibytesCapacity:    rec.MemoryMebibytesCapcity,
-		LastSeenAt:                 deliverycore.Ts(rec.LastSeenAt),
+		LastSeenAt:                 ts(rec.LastSeenAt),
 		LifecycleState:             lifecycleStateProto(rec.LifecycleState),
 		Region:                     rec.Region,
 		Zone:                       rec.Zone,
@@ -124,7 +127,7 @@ func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {
 		MaintenanceMessage:         rec.MaintenanceMessage,
 	}
 	if rec.CredentialRevokedAt.Valid {
-		out.CredentialRevokedAt = deliverycore.Ts(rec.CredentialRevokedAt.Time)
+		out.CredentialRevokedAt = ts(rec.CredentialRevokedAt.Time)
 	}
 	return out
 }
@@ -143,7 +146,7 @@ func toProtoAllocation(rec deliverycore.AllocationRecord) *platformv1.Allocation
 		Healthy:                  rec.Healthy,
 		HealthyIpv4Ports:         append([]int32(nil), rec.HealthyIPv4Ports...),
 		HealthyIpv6Ports:         append([]int32(nil), rec.HealthyIPv6Ports...),
-		UpdatedAt:                deliverycore.Ts(rec.UpdatedAt),
+		UpdatedAt:                ts(rec.UpdatedAt),
 		DesiredRolloutGeneration: rec.DesiredRolloutGeneration,
 		AppliedRolloutGeneration: rec.AppliedRolloutGeneration,
 		Restart:                  rec.Restart,
@@ -151,10 +154,10 @@ func toProtoAllocation(rec deliverycore.AllocationRecord) *platformv1.Allocation
 		RolloutState:             rec.RolloutState,
 	}
 	if rec.DrainStartedAt.Valid {
-		out.DrainStartedAt = deliverycore.Ts(rec.DrainStartedAt.Time)
+		out.DrainStartedAt = ts(rec.DrainStartedAt.Time)
 	}
 	if rec.DrainDeadline.Valid {
-		out.DrainDeadline = deliverycore.Ts(rec.DrainDeadline.Time)
+		out.DrainDeadline = ts(rec.DrainDeadline.Time)
 	}
 	return out
 }
@@ -177,9 +180,9 @@ func primaryAllocation(recs []deliverycore.AllocationRecord) deliverycore.Alloca
 	return recs[0]
 }
 
-func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
+func toProtoServiceLogLine(rec logs.ServiceLog) *platformv1.ServiceLogLine {
 	return &platformv1.ServiceLogLine{
-		ObservedAt:        deliverycore.Ts(rec.ObservedAt),
+		ObservedAt:        ts(rec.ObservedAt),
 		EnvironmentId:     rec.EnvironmentID,
 		ServiceId:         rec.ServiceID,
 		AllocationId:      rec.AllocationID,
@@ -188,7 +191,7 @@ func toProtoServiceLogLine(rec serviceLogRecord) *platformv1.ServiceLogLine {
 		RolloutGeneration: rec.RolloutGeneration,
 		Sequence:          rec.Sequence,
 		Line:              rec.Line,
-		LogType:           logTypeToProto(rec.LogType),
+		LogType:           logs.TypeToProto(rec.LogType),
 		BuildId:           rec.BuildID,
 		Stage:             rec.Stage,
 	}
@@ -202,7 +205,7 @@ func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.Depl
 		RolloutGeneration: rec.RolloutGeneration,
 		SpecRevision:      rec.SpecRevision,
 		Reason:            rec.Reason,
-		CreatedAt:         deliverycore.Ts(rec.CreatedAt),
+		CreatedAt:         ts(rec.CreatedAt),
 		Build:             toProtoMaybeBuildStatus(rec.Build),
 		IsCurrent:         rec.IsCurrent,
 		RequestedByUserId: rec.RequestedByUserID,
@@ -215,7 +218,7 @@ func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.Depl
 			Id: action.ID, Action: deliverycore.ToProtoDeploymentAction(action.Action),
 			TargetDeploymentId: action.TargetDeploymentID, ResultDeploymentId: action.ResultDeploymentID,
 			AllocationId: action.AllocationID, RequestedByUserId: action.RequestedByUserID,
-			CreatedAt: deliverycore.Ts(action.CreatedAt),
+			CreatedAt: ts(action.CreatedAt),
 		})
 	}
 	if rec.Build != nil {
@@ -233,7 +236,7 @@ func toProtoDeploymentStatus(rec *deliverycore.DeploymentRecord) *platformv1.Dep
 	return &platformv1.DeploymentStatus{
 		DeploymentId:      rec.ID,
 		State:             toProtoDeploymentState(rec.State),
-		TransitionedAt:    deliverycore.Ts(rec.UpdatedAt),
+		TransitionedAt:    ts(rec.UpdatedAt),
 		CauseKind:         toProtoDeploymentCauseKind(rec.CauseKind),
 		CauseId:           rec.CauseID,
 		ReasonCode:        rec.ReasonCode,
@@ -249,4 +252,8 @@ func toProtoMaybeBuildStatus(rec *deliverycore.BuildRunRecord) *platformv1.Build
 		return nil
 	}
 	return deliverycore.ToProtoBuildStatus(*rec)
+}
+
+func ts(v time.Time) *timestamppb.Timestamp {
+	return timestamppb.New(v)
 }

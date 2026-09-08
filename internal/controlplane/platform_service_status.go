@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -18,11 +20,11 @@ import (
 )
 
 func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.GetServiceStatusRequest) (*platformv1.ServiceStatus, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	service, allocations, err := s.store.serviceStatus(ctx, identity.UserID, req.GetServiceId())
+	service, allocations, err := s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
@@ -37,7 +39,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	// watch. Returning it here would report the state from *before* the change
 	// that woke us, leaving every watcher one event behind — the final "healthy"
 	// status of a rollout would then never reach the client.
-	service, allocations, err = s.store.serviceStatus(ctx, identity.UserID, req.GetServiceId())
+	service, allocations, err = s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
 	}
@@ -49,7 +51,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 }
 
 func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (*platformv1.ListServiceLogsResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +59,9 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
 	if s.logStore == nil {
-		return nil, status.Error(codes.FailedPrecondition, errLogStoreDisabled.Error())
+		return nil, status.Error(codes.FailedPrecondition, logs.ErrDisabled.Error())
 	}
-	if _, err := s.store.serviceByID(ctx, identity.UserID, req.GetServiceId()); err != nil {
+	if _, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
@@ -67,7 +69,7 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 	}
 	lines, err := s.logStore.ListServiceLogs(ctx, req)
 	if err != nil {
-		if errors.Is(err, errLogStoreDisabled) {
+		if errors.Is(err, logs.ErrDisabled) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "list service logs: %v", err)
@@ -80,14 +82,14 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 }
 
 func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platformv1.ListServiceDeploymentsRequest) (*platformv1.ListServiceDeploymentsResponse, error) {
-	identity, err := DelegatedUserFromContext(ctx)
+	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
-	items, err := s.store.listServiceDeployments(ctx, identity.UserID, req.GetServiceId(), req.GetLimit())
+	items, err := s.store.ListServiceDeployments(ctx, identity.UserID, req.GetServiceId(), req.GetLimit())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service deployments: %v", err)
@@ -104,10 +106,10 @@ func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platf
 }
 
 func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListAgentsResponse, error) {
-	if _, err := DelegatedUserFromContext(ctx); err != nil {
+	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
-	items, err := s.store.listAgents(ctx)
+	items, err := s.store.ListAgents(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list agents: %v", err)
 	}
@@ -132,7 +134,7 @@ func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Conte
 	// deploy stage rather than a hard error).
 	if allocs == nil {
 		var err error
-		allocs, err = s.store.listAllocationsByServiceID(ctx, service.ID)
+		allocs, err = s.store.ListAllocationsByServiceID(ctx, service.ID)
 		if err != nil {
 			return deliverycore.ServiceRecord{}, err
 		}
@@ -157,7 +159,7 @@ func (s *PlatformService) notifyServiceAgents(ctx context.Context, serviceID str
 		s.notifyAllAgents(ctx)
 		return
 	}
-	ids, err := s.store.listAllocationsByServiceID(ctx, serviceID)
+	ids, err := s.store.ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		s.notifyAllAgents(ctx)
 		return
@@ -294,7 +296,7 @@ func validHealthCheckPath(path string) bool {
 }
 
 func (s *PlatformService) notifyAllAgents(ctx context.Context) {
-	agents, err := s.store.listAgents(ctx)
+	agents, err := s.store.ListAgents(ctx)
 	if err != nil {
 		slog.Warn("failed to list agents for cluster identity notification", "error", err)
 		return

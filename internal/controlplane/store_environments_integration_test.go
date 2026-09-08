@@ -58,13 +58,13 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.reads.deliveryQueries().EnvironmentByID(ctx, "other", staging.ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.reads.EnvironmentByID(ctx, "other", staging.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("cross-project environment access: %v", err)
 	}
 	if _, err := store.createStagedServiceForTest(ctx, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", nil)); err != nil {
 		t.Fatal(err)
 	}
-	services, err := store.reads.listServices(ctx, "owner", staging.ID)
+	services, err := store.reads.ListServices(ctx, "owner", staging.ID)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("list staging services: %#v: %v", services, err)
 	}
@@ -73,7 +73,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatalf("editor could not mutate environment service: %#v: %v", updated, err)
 	}
 	services[0] = updated
-	if _, err := store.reads.serviceByID(ctx, "other", services[0].ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.reads.ServiceByID(ctx, "other", services[0].ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("service ID bypassed ancestry authorization: %v", err)
 	}
 	if _, _, err := updateService(ctx, store, "viewer", services[0].ID, "web-viewer", services[0].Spec); !errors.Is(err, sql.ErrNoRows) {
@@ -106,11 +106,11 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "owner", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "owner", "web.example.test", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	duplicate, err := store.reads.duplicateEnvironment(ctx, "owner", source.ID, "Staging", false)
+	duplicate, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, "owner", source.ID, "Staging", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil || len(volumes) != 1 || volumes[0].ID == volume.ID {
 		t.Fatalf("duplicated volumes: %#v: %v", volumes, err)
 	}
-	services, err := store.reads.listServices(ctx, "owner", duplicate.ID)
+	services, err := store.reads.ListServices(ctx, "owner", duplicate.ID)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("duplicated services: %#v: %v", services, err)
 	}
@@ -143,11 +143,11 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 		t.Fatalf("duplicate copied runtime records: allocations=%d domains=%d builds=%d", allocations, domains, builds)
 	}
 
-	withVariables, err := store.reads.duplicateEnvironment(ctx, "owner", source.ID, "Credentials Review", true)
+	withVariables, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, "owner", source.ID, "Credentials Review", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	variableCopies, err := store.reads.listServices(ctx, "owner", withVariables.ID)
+	variableCopies, err := store.reads.ListServices(ctx, "owner", withVariables.ID)
 	if err != nil || len(variableCopies) != 1 || variableCopies[0].Spec.GetRuntime().GetEnv()["SECRET"] != "production" {
 		t.Fatalf("explicit variable copy failed: %#v: %v", variableCopies, err)
 	}
@@ -197,7 +197,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
 		t.Fatalf("node-2 revision after release = %d, want %d", got, node2Before+1)
 	}
-	productionService, err = store.reads.serviceByID(ctx, "owner", productionService.ID)
+	productionService, err = store.reads.ServiceByID(ctx, "owner", productionService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if err != nil || len(state.GetServices()) != 0 {
 		t.Fatalf("deleted environment retained desired workloads: %#v: %v", state.GetServices(), err)
 	}
-	if _, err := store.reads.deliveryQueries().EnvironmentByID(ctx, "owner", production.ID); err != nil {
+	if _, err := store.reads.EnvironmentByID(ctx, "owner", production.ID); err != nil {
 		t.Fatalf("staging delete affected production: %v", err)
 	}
 }

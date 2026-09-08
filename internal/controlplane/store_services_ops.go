@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 
+	"github.com/google/uuid"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"time"
 )
@@ -15,7 +17,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 	}
 	var binding deliverycore.DomainBindingRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.reads.deliveryQueries().ProjectByIDInternalQuerier(ctx, tx, projectID); err != nil {
+		if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 			return err
 		}
 		var agentID, environmentID string
@@ -96,12 +98,12 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 }
 
 func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
-	environment, err := s.reads.deliveryQueries().EnvironmentByIDQuerier(ctx, tx, userID, environmentID)
+	environment, err := s.environmentByIDQuerier(ctx, tx, userID, environmentID)
 	if err != nil {
 		return deliverycore.VolumeRecord{}, err
 	}
 	rec := deliverycore.VolumeRecord{
-		ID:            deliverycore.MustID(),
+		ID:            uuid.NewString(),
 		EnvironmentID: environment.ID,
 		Name:          name,
 		SizeBytes:     sizeBytes,

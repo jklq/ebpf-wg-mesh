@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/x509"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"errors"
 	"math/big"
 	"strings"
@@ -84,7 +85,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if replacement.ID == "" || replacement.ID == originalID || replacement.RolloutState != deliverycore.AllocationRolloutStarting {
 		t.Fatalf("expected a starting replacement allocation on node-b, got %+v", replacement)
 	}
-	inProgress, err := store.reads.deliveryQueries().AgentByID(ctx, "node-a")
+	inProgress, err := store.reads.AgentByID(ctx, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-b"] != 1 || agents["node-a"] != 0 {
 		t.Fatalf("expected drain to finish on node-b, got %v", agents)
 	}
-	finished, err := store.reads.deliveryQueries().AgentByID(ctx, "node-a")
+	finished, err := store.reads.AgentByID(ctx, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if len(placed) != 1 {
 		t.Fatalf("expected one placed replica before node return, got %d", len(placed))
 	}
-	pending, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	pending, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +193,7 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if len(after) != 2 {
 		t.Fatalf("expected node return to place the pending replica, got %d", len(after))
 	}
-	cleared, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	cleared, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestFleetReplicaSpreadAndRegionPendingReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService(region): %v", err)
 	}
-	pending, err := store.reads.serviceByID(ctx, "user-1", regionService.ID)
+	pending, err := store.reads.ServiceByID(ctx, "user-1", regionService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,15 +258,15 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.fleet.recordAgentCertificate(ctx, "node-retire", "abcd"); err != nil {
-		t.Fatalf("recordAgentCertificate: %v", err)
+	if err := store.fleet.RecordAgentCertificate(ctx, "node-retire", "abcd"); err != nil {
+		t.Fatalf("RecordAgentCertificate: %v", err)
 	}
 	path := t.TempDir() + "/revoked.txt"
 	revocations, err := NewCertificateRevocations(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewOpsService(nil, store.fleet, newDelivery(store, nil, nil, nil), nil, &TLSAuthority{revocations: revocations})
+	service := NewOpsService(nil, store.fleet, newDelivery(store, nil, nil, nil, nil), nil, revocations)
 	opsContext := contextWithDelegatedUser("ops", "ops@example.com")
 	if _, err := service.SetAgentLifecycle(opsContext, &platformv1.SetAgentLifecycleRequest{
 		AgentId:        "node-retire",
@@ -280,7 +281,7 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retire: %v", err)
 	}
-	rec, err := store.reads.deliveryQueries().AgentByID(ctx, "node-retire")
+	rec, err := store.reads.AgentByID(ctx, "node-retire")
 	if err != nil {
 		t.Fatalf("agentByID: %v", err)
 	}
@@ -293,8 +294,8 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if rec.WireGuardPublicKey != "" || rec.WorkloadIPv6Subnet != "" {
 		t.Fatalf("expected mesh identity to be cleared, got %+v", rec)
 	}
-	if err := store.fleet.authorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, deliverycore.ErrAgentCredentialRevoked) {
-		t.Fatalf("authorizeAgentCredential: got %v", err)
+	if err := store.fleet.AuthorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, deliverycore.ErrAgentCredentialRevoked) {
+		t.Fatalf("AuthorizeAgentCredential: got %v", err)
 	}
 	if _, err := registerAgent(ctx, store, hello); !errors.Is(err, deliverycore.ErrAgentCredentialRevoked) {
 		t.Fatalf("upsert after retire: got %v", err)
@@ -304,7 +305,7 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 		t.Fatalf("certificate serials = %v, err=%v", serials, err)
 	}
 
-	if err := revocations.Check(&x509.Certificate{SerialNumber: new(big.Int).SetInt64(0xabcd)}); !errors.Is(err, errClientCertificateRevoked) {
+	if err := revocations.Check(&x509.Certificate{SerialNumber: new(big.Int).SetInt64(0xabcd)}); !errors.Is(err, identity.ErrClientCertificateRevoked) {
 		t.Fatalf("production CRL was not updated by OpsService: %v", err)
 	}
 }
@@ -408,7 +409,7 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	if agents["node-a"] != 1 {
 		t.Fatalf("stateful allocation was moved before Stage 7: %v", agents)
 	}
-	rec, err := store.reads.deliveryQueries().AgentByID(ctx, "node-a")
+	rec, err := store.reads.AgentByID(ctx, "node-a")
 	if err != nil {
 		t.Fatal(err)
 	}

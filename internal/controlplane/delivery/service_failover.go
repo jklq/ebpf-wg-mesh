@@ -22,8 +22,8 @@ type ServiceFailoverResult struct {
 type allocationFailoverState struct {
 	phase            string
 	message          string
-	healthyIPv4Ports JsonInt32Slice
-	healthyIPv6Ports JsonInt32Slice
+	healthyIPv4Ports jsonInt32Slice
+	healthyIPv6Ports jsonInt32Slice
 	healthy          bool
 }
 
@@ -233,7 +233,7 @@ func (d *Delivery) ReconcileFailover(ctx context.Context, unhealthyThreshold tim
 	if d == nil || d.store == nil {
 		return ServiceFailoverResult{}, nil
 	}
-	now, err := DatabaseTime(ctx, d.store.db)
+	now, err := dbtx.DatabaseTime(ctx, d.store.db)
 	if d.failoverNow != nil {
 		now = d.failoverNow().UTC()
 		err = nil

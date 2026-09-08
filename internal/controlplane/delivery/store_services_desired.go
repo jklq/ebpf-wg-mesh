@@ -49,7 +49,7 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 			&candidate.Region,
 			&candidate.Zone,
 			&candidate.FailureDomain,
-			(*JsonStringSlice)(&candidate.RuntimeCapabilities),
+			(*jsonStringSlice)(&candidate.RuntimeCapabilities),
 			&candidate.CPUMillisCapacity,
 			&candidate.MemoryMebibytesCapcity,
 			&candidate.ServiceCount,

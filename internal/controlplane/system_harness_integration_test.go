@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"fmt"
 	"io"
 	"net"
@@ -316,19 +317,19 @@ func dockerfileMarkerArchive(marker string) []byte {
 func seedDockerfileSourceState(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, marker string) {
 	t.Helper()
 	archive := dockerfileMarkerArchive(marker)
-	digest, objectKey, err := store.source.storeSourceArchive(context.Background(), archive)
+	digest, objectKey, err := store.source.StoreSourceArchive(context.Background(), archive)
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}
 	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {
-		binding, err := store.source.upsertSourceBindingTx(context.Background(), tx, deliverycore.SourceBindingRecord{
+		binding, err := store.source.UpsertSourceBindingTx(context.Background(), tx, source.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,
 			Provider:                     "github",
 			RepositorySelector:           "octocat/hello",
 			TrackedRef:                   "main",
 			ProviderRepositoryExternalID: "repo-1",
-			AccessState:                  deliverycore.SourceAccessStateAvailable,
+			AccessState:                  source.SourceAccessStateAvailable,
 			BuildRecipe:                  &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
 			ResolvedAt:                   time.Now().UTC(),
 			FreshUntil:                   time.Now().UTC().Add(time.Hour),
@@ -336,7 +337,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 		if err != nil {
 			return err
 		}
-		revision, err := store.source.upsertSourceRevisionTx(context.Background(), tx, deliverycore.SourceRevisionRecord{
+		revision, err := store.source.UpsertSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -350,7 +351,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 		if err != nil {
 			return err
 		}
-		_, err = store.source.upsertSourceSnapshotTx(context.Background(), tx, deliverycore.SourceSnapshotRecord{
+		_, err = store.source.UpsertSourceSnapshotTx(context.Background(), tx, source.SourceSnapshotRecord{
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,

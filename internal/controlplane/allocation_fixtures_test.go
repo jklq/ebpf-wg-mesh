@@ -11,6 +11,8 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
@@ -81,7 +83,7 @@ func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColum
 }
 func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO deployment_transitions(id,deployment_id,from_state,to_state,cause_kind,cause_id,reason_code,detail,spec_revision,image_digest,rollout_generation,occurred_at)
- SELECT $1,id,state,'active','system','','DEPLOYMENT_ACTIVE','Marked healthy for test',spec_revision,image_digest,rollout_generation,statement_timestamp() FROM deployments WHERE service_id=$2 AND is_current AND state<>'active'`, deliverycore.MustID(), serviceID)
+ SELECT $1,id,state,'active','system','','DEPLOYMENT_ACTIVE','Marked healthy for test',spec_revision,image_digest,rollout_generation,statement_timestamp() FROM deployments WHERE service_id=$2 AND is_current AND state<>'active'`, uuid.NewString(), serviceID)
 	if err != nil {
 		return err
 	}

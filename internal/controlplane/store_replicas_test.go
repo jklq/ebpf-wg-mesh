@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/routing"
 	"errors"
 	"strings"
 	"sync"
@@ -104,7 +105,7 @@ func TestReplicaScaleExplainsPendingCapacityFailures(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	scaled, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	scaled, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +217,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	allocations := mustListAllocations(t, store, ctx, service.ID)
@@ -224,15 +225,15 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backends, err := store.routing.listHealthyIngressBackends(ctx)
+	backends, err := store.routing.HealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatalf("listHealthyIngressBackends: %v", err)
 	}
 	if len(backends) != 1 {
 		t.Fatalf("expected only the ready replica in ingress, got %+v", backends)
 	}
-	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
-	cfg, err := syncer.render(ctx)
+	syncer := routing.NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
+	cfg, err := syncer.Render(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 	if err := store.markAllocationIDHealthyForTest(ctx, allocations[1].ID, "fd00:1::11", 8080); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = syncer.render(ctx)
+	cfg, err = syncer.Render(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		t.Fatalf("concurrent scale: %v", err)
 	}
 
-	current, err := store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +361,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", envID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
-	current, err = store.reads.serviceByID(ctx, "user-1", service.ID)
+	current, err = store.reads.ServiceByID(ctx, "user-1", service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +415,7 @@ func seedReplicaFixture(t *testing.T, store *persistence, ctx context.Context, a
 
 func mustListAllocations(t *testing.T, store *persistence, ctx context.Context, serviceID string) []deliverycore.AllocationRecord {
 	t.Helper()
-	allocations, err := store.reads.deliveryQueries().ListAllocationsByServiceID(ctx, serviceID)
+	allocations, err := store.reads.ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		t.Fatalf("listAllocationsByServiceID: %v", err)
 	}

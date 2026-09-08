@@ -19,7 +19,7 @@ type ManagedDashboardReconciler struct {
 	profile  config.Profile
 	store    *catalogPersistence
 	delivery *deliverycore.Delivery
-	ingress  *IngressSyncer
+	ingress  deliverycore.PlatformIngress
 	notifier *Notifier
 }
 
@@ -50,7 +50,7 @@ func NewManagedDashboardReconciler(
 	profile config.Profile,
 	store *catalogPersistence,
 	delivery *deliverycore.Delivery,
-	ingress *IngressSyncer,
+	ingress deliverycore.PlatformIngress,
 	notifier *Notifier,
 ) *ManagedDashboardReconciler {
 	if !cfg.Enabled {

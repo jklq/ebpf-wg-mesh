@@ -154,9 +154,9 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			}
 		}
 
-		services, err := store.reads.listServices(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID))
+		services, err := store.reads.ListServices(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID))
 		if err != nil {
-			t.Fatalf("listServices(%d): %v", i, err)
+			t.Fatalf("ListServices(%d): %v", i, err)
 		}
 		for _, service := range services {
 			if service.Name != serviceName {

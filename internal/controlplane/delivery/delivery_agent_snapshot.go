@@ -18,7 +18,7 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	state := &agentv1.DesiredNodeState{
 		AgentId:     agentID,
 		Revision:    revision,
-		GeneratedAt: Ts(time.Now().UTC()),
+		GeneratedAt: ts(time.Now().UTC()),
 	}
 	vols, err := d.listDesiredVolumes(ctx, agentID)
 	if err != nil {
@@ -117,7 +117,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 		if rolloutState == AllocationRolloutDraining {
 			svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN
 			if drainDeadline.Valid {
-				svc.DrainDeadline = Ts(drainDeadline.Time)
+				svc.DrainDeadline = ts(drainDeadline.Time)
 			}
 		}
 		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
@@ -186,7 +186,7 @@ func (d *Delivery) internalHostsForEnvironment(ctx context.Context, environmentI
 	for rows.Next() {
 		var serviceID, name, ipv4, ipv6 string
 		var healthyIPv4Ports, healthyIPv6Ports []int32
-		if err := rows.Scan(&serviceID, &name, &ipv4, &ipv6, (*JsonInt32Slice)(&healthyIPv4Ports), (*JsonInt32Slice)(&healthyIPv6Ports)); err != nil {
+		if err := rows.Scan(&serviceID, &name, &ipv4, &ipv6, (*jsonInt32Slice)(&healthyIPv4Ports), (*jsonInt32Slice)(&healthyIPv6Ports)); err != nil {
 			return nil, err
 		}
 		if len(healthyIPv4Ports) == 0 {

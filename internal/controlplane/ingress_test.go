@@ -16,6 +16,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/testutil"
 )
 
@@ -41,15 +42,15 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
-	cfg, err := syncer.render(ctx)
+	syncer := routing.NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
+	cfg, err := syncer.Render(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "fd00:200:1::10", 8080); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = syncer.render(ctx)
+	cfg, err = syncer.Render(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,14 +102,14 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "demo.example.com", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "attacker.example", 9090); err != nil {
 		t.Fatal(err)
 	}
 
-	backends, err := store.routing.listHealthyIngressBackends(ctx)
+	backends, err := store.routing.HealthyIngressBackends(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,25 +140,25 @@ func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "echo.localtest.me", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer(
+	syncer := routing.NewIngressSyncer(
 		"http://127.0.0.1:2019/load",
 		store.routing,
-		WithIngressStaticRoutes([]IngressStaticRoute{{
+		routing.WithIngressStaticRoutes([]routing.IngressStaticRoute{{
 			Hosts:    []string{"platform.localtest.me", "mesh.dev.example.test"},
 			Upstream: "host.docker.internal:41235",
 		}}),
-		WithIngressListenAddrs([]string{":8080"}),
-		WithIngressAdminListen(":2019"),
-		WithIngressAutomaticHTTPSDisabled(true),
+		routing.WithIngressListenAddrs([]string{":8080"}),
+		routing.WithIngressAdminListen(":2019"),
+		routing.WithIngressAutomaticHTTPSDisabled(true),
 	)
-	cfg, err := syncer.render(ctx)
+	cfg, err := syncer.Render(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,19 +211,19 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "a.example.com", serviceA.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10", 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", store.routing)
+	syncer := routing.NewIngressSyncer("http://caddy.invalid/load", store.routing)
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	syncer.client = &http.Client{Transport: transport}
+	routing.WithHTTPClient(&http.Client{Transport: transport})(syncer)
 
 	firstErrCh := make(chan error, 1)
 	go func() {
@@ -235,7 +236,7 @@ func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "b.example.com", serviceB.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11", 8080); err != nil {
@@ -303,13 +304,13 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", store.routing)
-	syncer.minSyncInterval = 20 * time.Millisecond
+	syncer := routing.NewIngressSyncer("http://caddy.invalid/load", store.routing)
+	routing.WithMinSyncInterval(20 * time.Millisecond)(syncer)
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	syncer.client = &http.Client{Transport: transport}
+	routing.WithHTTPClient(&http.Client{Transport: transport})(syncer)
 
 	runCtx, cancelRun := context.WithCancel(ctx)
 	runDone := make(chan error, 1)
@@ -321,7 +322,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 		}
 	})
 	<-transport.firstStarted
-	if _, _, err := store.routing.createPlatformDomainBinding(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	syncer.RequestSync()
@@ -334,7 +335,7 @@ func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("wait for coalesced ingress pushes: %v", err)
 	}
-	time.Sleep(2 * syncer.minSyncInterval)
+	time.Sleep(2 * syncer.MinSyncInterval())
 	if got := transport.calls.Load(); got != 2 {
 		t.Fatalf("expected exactly 2 ingress pushes, got %d", got)
 	}
@@ -351,12 +352,12 @@ func TestIngressSyncSkipsUnchangedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := NewIngressSyncer("http://caddy.invalid/load", store.routing)
+	syncer := routing.NewIngressSyncer("http://caddy.invalid/load", store.routing)
 	transport := &blockingIngressTransport{
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	syncer.client = &http.Client{Transport: transport}
+	routing.WithHTTPClient(&http.Client{Transport: transport})(syncer)
 	close(transport.releaseFirst)
 
 	if err := syncer.Sync(ctx); err != nil {
@@ -419,12 +420,20 @@ func (t *blockingIngressTransport) RoundTrip(req *http.Request) (*http.Response,
 func ingressRouteCount(t *testing.T, body []byte) int {
 	t.Helper()
 
-	var routes []caddyRoute
+	var routes []json.RawMessage
 	if err := json.Unmarshal(body, &routes); err == nil && json.Valid(body) && len(body) > 0 && body[0] == '[' {
 		return len(routes)
 	}
 
-	var cfg caddyConfig
+	var cfg struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Routes []json.RawMessage `json:"routes"`
+				} `json:"servers"`
+			} `json:"http"`
+		} `json:"apps"`
+	}
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		t.Fatalf("json.Unmarshal ingress body: %v", err)
 	}

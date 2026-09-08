@@ -14,7 +14,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/controlplane"
+	identitycore "ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/testutil"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -53,7 +53,7 @@ type productE2ESummary struct {
 func runProductE2EScenario(
 	ctx context.Context,
 	controlPlaneAddr string,
-	identity controlplane.ClientIdentityMaterial,
+	identity identitycore.ClientIdentityMaterial,
 	assertionSecret string,
 	ingressPort int,
 	publicBaseURL string,

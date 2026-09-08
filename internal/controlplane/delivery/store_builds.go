@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/source"
 )
 
 const (
@@ -57,7 +58,7 @@ func (s *persistence) buildRunByIDQuerier(ctx context.Context, q ServiceQueryer,
 	return rec, err
 }
 
-func sourceSnapshotMatchesRevision(snapshot SourceSnapshotRecord, revision SourceRevisionRecord) bool {
+func sourceSnapshotMatchesRevision(snapshot source.SourceSnapshotRecord, revision source.SourceRevisionRecord) bool {
 	if snapshot.SourceRevisionID == revision.ID {
 		return true
 	}

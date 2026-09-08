@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 
+	"github.com/google/uuid"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
@@ -15,7 +17,7 @@ import (
 var errProductionEnvironment = errors.New("production environment cannot be deleted")
 
 func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
-	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, deliverycore.EnvironmentSelect+`
+	rec, err := scanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
 		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if err == nil {
 		return rec, nil
@@ -43,7 +45,7 @@ func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, proje
 	if _, err := s.projectByID(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, deliverycore.EnvironmentSelect+`
+	rows, err := s.db.QueryContext(ctx, environmentSelect+`
 		 WHERE e.project_id = $1
 		 ORDER BY e.is_production DESC, e.created_at ASC, e.id ASC`, projectID)
 	if err != nil {
@@ -52,7 +54,7 @@ func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, proje
 	defer rows.Close()
 	var out []deliverycore.EnvironmentRecord
 	for rows.Next() {
-		rec, err := deliverycore.ScanEnvironmentRow(rows)
+		rec, err := scanEnvironmentRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -62,16 +64,16 @@ func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, proje
 }
 
 func (s *catalogPersistence) environmentByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, deliverycore.EnvironmentSelect+` WHERE e.id = $1`, environmentID))
+	return scanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+` WHERE e.id = $1`, environmentID))
 }
 
 func (s *catalogPersistence) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
-	return deliverycore.ScanEnvironmentRow(s.db.QueryRowContext(ctx, deliverycore.EnvironmentSelect+`
+	return scanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+`
 		 WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 }
 
 func (s *catalogPersistence) authorizeEnvironmentWrite(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
+	return s.authorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
 }
 
 func (s *catalogPersistence) authorizeProjectWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
@@ -90,7 +92,7 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 	}
 	var rec deliverycore.EnvironmentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		current, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -112,7 +114,7 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, envi
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		agentIDs = nil
 		identityCatalogChanged = false
-		rec, err := s.reads.deliveryQueries().AuthorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		rec, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -152,7 +154,7 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, envi
 		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 			return err
 		}
-		agentIDs, err = s.reads.deliveryQueries().AgentIDsQuerier(ctx, tx)
+		agentIDs, err = s.agentIDsQuerier(ctx, tx)
 		return err
 	})
 	return agentIDs, err
@@ -169,7 +171,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 	}
 	now := time.Now().UTC()
 	rec := deliverycore.EnvironmentRecord{
-		ID:                      deliverycore.MustID(),
+		ID:                      uuid.NewString(),
 		ProjectID:               projectID,
 		Name:                    name,
 		Kind:                    deliverycore.EnvironmentKindPersistent,
@@ -214,4 +216,62 @@ func nullIfEmpty(value string) any {
 		return nil
 	}
 	return value
+}
+
+func (s *catalogPersistence) environmentByIDQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	row := q.QueryRowContext(ctx, environmentSelect+`
+		 JOIN project_memberships m ON m.project_id = e.project_id
+		 JOIN projects p ON p.id = e.project_id
+		 WHERE e.id = $1 AND m.user_id = $2
+		   AND m.role IN ('owner', 'editor', 'viewer') AND p.kind = $3`,
+		environmentID, userID, string(deliverycore.ProjectKindUser))
+	return scanEnvironmentRow(row)
+}
+
+func (s *catalogPersistence) authorizeEnvironmentWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	row := q.QueryRowContext(ctx, environmentSelect+`
+		 JOIN project_memberships m ON m.project_id = e.project_id
+		 JOIN projects p ON p.id = e.project_id
+		 WHERE e.id = $1 AND m.user_id = $2
+		   AND m.role IN ('owner', 'editor') AND p.kind = $3`,
+		environmentID, userID, string(deliverycore.ProjectKindUser))
+	return scanEnvironmentRow(row)
+}
+
+func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (deliverycore.EnvironmentRecord, error) {
+	var rec deliverycore.EnvironmentRecord
+	var kind string
+	var networkIdentity int64
+	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction,
+		&networkIdentity, &rec.CopiedFromEnvironmentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
+		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment %s has invalid network identity %d", rec.ID, networkIdentity)
+	}
+	rec.NetworkIdentity = uint32(networkIdentity)
+	rec.Kind = deliverycore.EnvironmentKind(kind)
+	return rec, nil
+}
+
+const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
+	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
+	FROM environments e`
+
+func (s *catalogPersistence) agentIDsQuerier(ctx context.Context, q deliverycore.ServiceQueryer) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT id FROM agents ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

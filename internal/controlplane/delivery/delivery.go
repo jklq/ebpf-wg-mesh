@@ -9,6 +9,8 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/source"
 )
 
 // Delivery owns deployment lifecycle policy, its transactional state changes,
@@ -19,6 +21,7 @@ type Delivery struct {
 	notifier        PlatformNotifier
 	ingress         PlatformIngress
 	events          Events
+	logEmitter      *logs.LogEmitter
 	userFromContext func(context.Context) (UserIdentity, error)
 	rolloutNow      func() time.Time
 	failoverNow     func() time.Time
@@ -130,17 +133,17 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 					return err
 				}
 			}
-			if source := DesiredSourceSpec(service.Spec); source != nil {
+			if desired := source.DesiredSourceSpec(service.Spec); desired != nil {
 				var granted bool
 				err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 					SELECT 1 FROM project_github_repositories
 					WHERE project_id = $1 AND lower(full_name) = lower($2)
-				)`, environment.ProjectID, source.GetRepositorySelector()).Scan(&granted)
+				)`, environment.ProjectID, desired.GetRepositorySelector()).Scan(&granted)
 				if err != nil {
 					return err
 				}
 				if !granted {
-					return fmt.Errorf("repository %q is not granted to project %s", source.GetRepositorySelector(), environment.ProjectID)
+					return fmt.Errorf("repository %q is not granted to project %s", desired.GetRepositorySelector(), environment.ProjectID)
 				}
 			}
 			if service.AllocatedAgentID == "" {
@@ -219,7 +222,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 // its repository/ref/build recipe changes. Runtime, restart, and replica-only
 // revisions reuse the image already resolved by the deployed rollout.
 func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord) (bool, error) {
-	if DesiredSourceSpec(service.Spec) == nil {
+	if source.DesiredSourceSpec(service.Spec) == nil {
 		return false, nil
 	}
 	if service.RolloutGeneration == 0 || strings.TrimSpace(service.ResolvedImage) == "" {
@@ -300,7 +303,7 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 	}
 	releaseState := DeploymentStateScheduling
 	releaseDetail := "Environment release scheduled"
-	if DesiredSourceSpec(current.Spec) != nil && resolvedImage == "" {
+	if source.DesiredSourceSpec(current.Spec) != nil && resolvedImage == "" {
 		releaseState = DeploymentStateStaged
 		releaseDetail = "Environment release waiting for source build"
 	}
