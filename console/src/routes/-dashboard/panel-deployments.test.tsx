@@ -36,7 +36,9 @@ describe("deployments panel inline failure", () => {
 	afterEach(cleanup);
 
 	beforeEach(() => {
-		serverFns.fetchServiceDeployments.mockReset().mockResolvedValue([]);
+		serverFns.fetchServiceDeployments
+			.mockReset()
+			.mockResolvedValue([failedDeployment()]);
 		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([
 			{
 				observedAt: new Date("2026-08-13T10:00:00Z"),
@@ -333,9 +335,7 @@ function project(): DashboardProject {
 	return { id: "project-1", name: "test-project", kind: "PROJECT_KIND_USER" };
 }
 
-function failedService(
-	overrides: Partial<DashboardServiceRecord> = {},
-): DashboardServiceRecord {
+function failedDeployment(): DashboardDeploymentRecord {
 	const startedAt = new Date("2026-08-13T10:00:00Z");
 	const finishedAt = new Date("2026-08-13T10:00:22Z");
 	const build: DashboardBuildStatus = {
@@ -372,6 +372,30 @@ function failedService(
 		],
 	};
 	return {
+		id: "deploy-1",
+		rolloutGeneration: 1,
+		createdAt: startedAt,
+		build,
+		isCurrent: true,
+		status: {
+			deploymentId: "deploy-1",
+			state: "DEPLOYMENT_STATE_FAILED",
+			causeKind: "DEPLOYMENT_CAUSE_KIND_USER",
+			causeId: "user-1",
+			reasonCode: "build_failed",
+			detail: "Build failed",
+			specRevision: 1,
+			imageDigest: "",
+			rolloutGeneration: 1,
+		},
+	};
+}
+
+function failedService(
+	overrides: Partial<DashboardServiceRecord> = {},
+): DashboardServiceRecord {
+	const deployment = failedDeployment();
+	return {
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
@@ -384,18 +408,8 @@ function failedService(
 			},
 			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
 		},
-		latestBuild: build,
-		latestDeployment: {
-			deploymentId: "deploy-1",
-			state: "DEPLOYMENT_STATE_FAILED",
-			causeKind: "DEPLOYMENT_CAUSE_KIND_USER",
-			causeId: "user-1",
-			reasonCode: "build_failed",
-			detail: "Build failed",
-			specRevision: 1,
-			imageDigest: "",
-			rolloutGeneration: 1,
-		},
+		latestBuild: deployment.build,
+		latestDeployment: deployment.status,
 		...overrides,
 	};
 }
