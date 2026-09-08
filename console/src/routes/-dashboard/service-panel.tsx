@@ -25,7 +25,6 @@ import type {
 import { panelIconBtn } from "#/lib/ui-classes";
 import { PanelDeployments } from "./panel-deployments";
 import { doUpdateService } from "./server-fns";
-import { newestServiceRecord } from "./service-record-order";
 import { formatError, healthLabel, serviceHealth } from "./service-utils";
 import type { DashboardTab } from "./types";
 import { usePulseDelay } from "./use-pulse-delay";
@@ -93,10 +92,9 @@ export function ServicePanel({
 	onServiceDeleted: (serviceId: string) => void;
 	onSpecSaveStateChange?: (key: string, saving: boolean) => void;
 }) {
-	const currentService = newestServiceRecord(
-		service,
-		status?.service ?? service,
-	);
+	// The record is the single source of truth; the status only carries
+	// allocation details, reconstructed around the same record upstream.
+	const currentService = service;
 	const build = currentService.latestBuild ?? service.latestBuild;
 	const health = serviceHealth(currentService);
 	const hasUndeployedChanges =
@@ -353,7 +351,11 @@ export function ServicePanel({
 								project &&
 								(DomainsPanel ? (
 									<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
-										<DomainsPanel service={service} state={state} />
+										<DomainsPanel
+											service={service}
+											state={state}
+											status={status}
+										/>
 									</div>
 								) : (
 									<PanelTabFallback />

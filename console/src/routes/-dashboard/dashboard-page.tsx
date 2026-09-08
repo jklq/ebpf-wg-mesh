@@ -17,25 +17,28 @@ import type {
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
+import { useCreatedServiceCache } from "./created-service-cache";
 import {
 	DashboardCanvasStage,
 	ServicePanelFallback,
 	serviceLayoutPositions,
 } from "./dashboard-canvas";
 import {
-	hydrateServiceSnapshots,
-	hydrateServiceStatusSnapshot,
+	hydrateServicesSnapshot,
+	hydrateStatusSnapshot,
 } from "./dashboard-hydrate";
 import {
-	clearPendingCreatedService,
-	hydrateStateWithPendingCreated,
-	mergeHomeEnvironmentServices,
-	mergeHomeService,
-	mergeHomeStatusService,
-	readPendingCreatedService,
-	rememberPendingCreatedService,
-	withPendingCreatedService,
-} from "./dashboard-pending";
+	applyLoaderState,
+	applyMutationRecord,
+	applyMutationStatus,
+	applyServiceStatusSnapshot,
+	applyServicesSnapshot,
+	createNormalizedState,
+	removeService,
+	selectSelectedStatus,
+	selectServicesArray,
+	upsertServiceRecord,
+} from "./dashboard-services";
 import {
 	type ApplyingServiceChanges,
 	applyingChangeKey,
@@ -54,14 +57,12 @@ import {
 	doSaveServicePosition,
 	fetchGitHubCatalog,
 } from "./server-fns";
-import { newestServiceRecord } from "./service-record-order";
 import { formatError } from "./service-utils";
 import { Topbar } from "./topbar";
 import type { DashboardTab } from "./types";
 import { useDashboardCanvas } from "./use-dashboard-canvas";
 
 export { DashboardCanvasSkeleton } from "./dashboard-canvas";
-export { resetDashboardPageTestState } from "./dashboard-pending";
 
 const loadNewServiceModal = () =>
 	import("./new-service-modal").then((module) => ({
@@ -74,15 +75,44 @@ const ServicePanel = lazy(() =>
 	})),
 );
 
-export function DashboardPage({ state }: { state: DashboardHomeState }) {
+export function DashboardPage({
+	state,
+	urlSelectedServiceId,
+}: {
+	state: DashboardHomeState;
+	/**
+	 * Selection from route search state (`?serviceId=`). The route owns the
+	 * URL; this component reflects it and navigates on change so selection
+	 * survives the `/` → `/environments/:id` remount.
+	 */
+	urlSelectedServiceId?: string | null;
+}) {
 	const router = useRouter();
-	const [selectedId, setSelectedId] = useState<string | null>(
-		() => readPendingCreatedService()?.service.id ?? null,
+	const createdCache = useCreatedServiceCache();
+	const [view, setView] = useState(() =>
+		createNormalizedState(state, {
+			selectedServiceId: urlSelectedServiceId ?? undefined,
+		}),
 	);
-	const [localState, setLocalState] = useState(() =>
-		hydrateStateWithPendingCreated(state),
-	);
-	const services = localState.services;
+	// Selection lives here as a plain ID; service data lives once in the
+	// normalized map. The route mirrors the ID into `?serviceId=` so it
+	// survives the `/` → `/environments/:id` remount and history navigation.
+	// The first render keeps the loader default; later URL changes (history
+	// navigation, env switches) become the selection.
+	const selectedId = view.selectedServiceId;
+	const prevUrlSelectionRef = useRef(urlSelectedServiceId);
+	useEffect(() => {
+		if (prevUrlSelectionRef.current === urlSelectedServiceId) return;
+		prevUrlSelectionRef.current = urlSelectedServiceId;
+		if (urlSelectedServiceId === undefined) return;
+		setView((current) =>
+			current.selectedServiceId === urlSelectedServiceId
+				? current
+				: { ...current, selectedServiceId: urlSelectedServiceId },
+		);
+	}, [urlSelectedServiceId]);
+	const environmentId = view.base.environment?.id ?? null;
+	const services = useMemo(() => selectServicesArray(view), [view]);
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
 	const [showNewService, setShowNewService] = useState(false);
 	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
@@ -101,9 +131,10 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		() => new Set(),
 	);
 	const [, startTransition] = useTransition();
-	const environmentId = localState.environment?.id ?? null;
 	const servicesRef = useRef(services);
 	servicesRef.current = services;
+	const revisionRef = useRef(view.servicesRevision);
+	revisionRef.current = view.servicesRevision;
 	const environmentIdRef = useRef(environmentId);
 	environmentIdRef.current = environmentId;
 	const pendingSpecWritesRef = useRef(pendingSpecWrites);
@@ -111,23 +142,29 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const specWriteWaitersRef = useRef<Array<() => void>>([]);
 	const previousEnvironmentIdRef = useRef<string | null>(environmentId);
 	const githubCatalogPromiseRef = useRef<Promise<void> | null>(null);
-	const selected = services.find((service) => service.id === selectedId);
+	const selected = selectedId ? view.servicesById[selectedId] : undefined;
 	const canvas = useDashboardCanvas({
 		services,
 		environmentId,
 		selectedId,
 		selected,
 		onDeselect: () => {
-			clearPendingCreatedService(selectedId ?? undefined);
-			setSelectedId(null);
-			setLocalState((current) => ({ ...current, serviceStatus: undefined }));
+			clearSelection();
 		},
 	});
 	const { setNodePositions, nodePositionsRef } = canvas;
-	const liveStatus =
-		selectedId && localState.serviceStatus?.service.id === selectedId
-			? localState.serviceStatus
-			: null;
+	const liveStatus = selectedId ? selectSelectedStatus(view) : null;
+	// Legacy presentational props read the same fields; derive them from the
+	// single normalized source instead of storing them twice.
+	const homeState: DashboardHomeState = useMemo(
+		() => ({
+			...view.base,
+			services,
+			servicesRevision: view.servicesRevision,
+			selectedServiceId: selectedId,
+		}),
+		[view.base, services, view.servicesRevision, selectedId],
+	);
 	const dirtyServices = services.filter(hasUnappliedChanges);
 	const changeSignature = dirtyServices
 		.flatMap((service) =>
@@ -167,6 +204,41 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		applyingChangeCount > 0 ||
 		hasPendingSpecWrites ||
 		Boolean(deployError);
+
+	const navigateSelection = useCallback(
+		(nextId: string | null) => {
+			void router.navigate({
+				to: ".",
+				search: nextId ? { serviceId: nextId } : {},
+				replace: true,
+				resetScroll: false,
+			});
+		},
+		[router],
+	);
+
+	const selectService = useCallback(
+		(serviceId: string) => {
+			setView((current) =>
+				current.selectedServiceId === serviceId
+					? current
+					: { ...current, selectedServiceId: serviceId },
+			);
+			setActiveTab("deployments");
+			navigateSelection(serviceId);
+		},
+		[navigateSelection],
+	);
+
+	const clearSelection = useCallback(() => {
+		setView((current) =>
+			current.selectedServiceId === null
+				? current
+				: { ...current, selectedServiceId: null },
+		);
+		navigateSelection(null);
+	}, [navigateSelection]);
+
 	const setSpecWriteState = useCallback(
 		(serviceId: string, key: string, saving: boolean) => {
 			const writeKey = `${serviceId}:${key}`;
@@ -199,15 +271,21 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		setGitHubCatalogLoading(true);
 		const promise = fetchGitHubCatalog()
 			.then((catalog) => {
-				setLocalState((current) => ({
+				setView((current) => ({
 					...current,
-					githubAccount: catalog.githubAccount ?? current.githubAccount,
-					repositories: catalog.repositories,
+					base: {
+						...current.base,
+						githubAccount: catalog.githubAccount ?? current.base.githubAccount,
+						repositories: catalog.repositories,
+					},
 				}));
 				setGitHubCatalogLoaded(true);
 			})
 			.catch(() => {
-				setLocalState((current) => ({ ...current, repositories: [] }));
+				setView((current) => ({
+					...current,
+					base: { ...current.base, repositories: [] },
+				}));
 				setGitHubCatalogLoaded(true);
 			})
 			.finally(() => {
@@ -220,19 +298,10 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 
 	useEffect(() => {
 		if (previousEnvironmentIdRef.current === environmentId) return;
-		const pending = readPendingCreatedService();
-		const keepCreatedSelection =
-			Boolean(pending) && environmentId === (pending?.environment.id ?? null);
 		previousEnvironmentIdRef.current = environmentId;
-		if (keepCreatedSelection && pending) {
-			setSelectedId(pending.service.id);
-		} else {
-			setSelectedId(null);
-			setLocalState((current) => ({ ...current, serviceStatus: undefined }));
-		}
-		setNodePositions(serviceLayoutPositions(localState.services));
-		nodePositionsRef.current = serviceLayoutPositions(localState.services);
-	}, [environmentId, localState.services, nodePositionsRef, setNodePositions]);
+		setNodePositions(serviceLayoutPositions(servicesRef.current));
+		nodePositionsRef.current = serviceLayoutPositions(servicesRef.current);
+	}, [environmentId, nodePositionsRef, setNodePositions]);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -249,79 +318,62 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				return;
 			}
 			if (selectedId) {
-				clearPendingCreatedService(selectedId);
-				setSelectedId(null);
-				setLocalState((current) => ({ ...current, serviceStatus: undefined }));
+				clearSelection();
 			}
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [selectedId, showChangeDetails, showNewService]);
+	}, [clearSelection, selectedId, showChangeDetails, showNewService]);
 
 	const mergeStatusService = useCallback(
-		(status: DashboardServiceStatus) => {
-			setLocalState((current) =>
-				mergeHomeStatusService(current, status, selectedId),
-			);
+		(status: DashboardServiceStatus, basisRevision: number) => {
+			setView((current) => applyMutationStatus(current, status, basisRevision));
 		},
-		[selectedId],
+		[],
 	);
 
-	const mergeEnvironmentServices = useCallback(
-		(nextServices: Array<DashboardServiceRecord>) => {
-			setLocalState((current) =>
-				mergeHomeEnvironmentServices(current, nextServices),
+	const mergeServiceRecord = useCallback(
+		(service: DashboardServiceRecord, basisRevision: number) => {
+			setView((current) =>
+				applyMutationRecord(current, service, basisRevision),
 			);
 		},
 		[],
 	);
 
+	const mergeEnvironmentServices = useCallback(
+		(snapshot: {
+			services: Array<DashboardServiceRecord>;
+			revision: number;
+		}) => {
+			setView((current) => applyServicesSnapshot(current, snapshot));
+		},
+		[],
+	);
+
+	// Loader refresh. Static fields always update; the service list goes
+	// through the single revision gate, so a stale loader rerender can never
+	// clear newer stream or mutation data. Retained created services cover
+	// the backend list until it includes them.
 	useEffect(() => {
-		const pending = readPendingCreatedService();
-		const pendingEnvironment =
-			!state.environment && pending ? pending.environment : undefined;
-		const pendingEnvironments = pendingEnvironment
-			? state.environments.some((entry) => entry.id === pendingEnvironment.id)
-				? state.environments
-				: [...state.environments, pendingEnvironment]
-			: state.environments;
-		setLocalState((current) => {
-			const services = withPendingCreatedService(state.services).map(
-				(service) =>
-					newestServiceRecord(
-						current.services.find((entry) => entry.id === service.id),
-						service,
-					),
-			);
-			const selectedService = current.service
-				? services.find((service) => service.id === current.service?.id)
-				: state.service;
-			const statusService = current.serviceStatus
-				? services.find(
-						(service) => service.id === current.serviceStatus?.service.id,
-					)
-				: undefined;
-			return {
-				...state,
-				githubAccount:
-					githubCatalogLoaded || githubCatalogLoading
-						? (current.githubAccount ?? state.githubAccount)
-						: state.githubAccount,
-				repositories:
-					githubCatalogLoaded || githubCatalogLoading
-						? current.repositories
-						: state.repositories,
-				environment: state.environment ?? pendingEnvironment,
-				environments: pendingEnvironments,
-				services,
-				service: selectedService,
-				serviceStatus:
-					current.serviceStatus && statusService
-						? { ...current.serviceStatus, service: statusService }
-						: state.serviceStatus,
-			};
-		});
-	}, [state, githubCatalogLoaded, githubCatalogLoading]);
+		setView((current) =>
+			applyLoaderState(
+				current,
+				{
+					...state,
+					githubAccount:
+						githubCatalogLoaded || githubCatalogLoading
+							? (current.base.githubAccount ?? state.githubAccount)
+							: state.githubAccount,
+					repositories:
+						githubCatalogLoaded || githubCatalogLoading
+							? current.base.repositories
+							: state.repositories,
+				},
+				createdCache?.retainedServices(state.environment?.id ?? null),
+			),
+		);
+	}, [state, githubCatalogLoaded, githubCatalogLoading, createdCache]);
 
 	useEffect(() => {
 		if (totalUnappliedChanges === 0) {
@@ -337,10 +389,11 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		);
 		source.addEventListener("services", (event) => {
 			if (!active) return;
-			const services = hydrateServiceSnapshots(
-				JSON.parse((event as MessageEvent<string>).data),
+			mergeEnvironmentServices(
+				hydrateServicesSnapshot(
+					JSON.parse((event as MessageEvent<string>).data),
+				),
 			);
-			mergeEnvironmentServices(services);
 		});
 		return () => {
 			active = false;
@@ -358,16 +411,16 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		);
 		source.addEventListener("status", (event) => {
 			if (!active) return;
-			const nextStatus = hydrateServiceStatusSnapshot(
+			const snapshot = hydrateStatusSnapshot(
 				JSON.parse((event as MessageEvent<string>).data),
 			);
-			mergeStatusService(nextStatus);
+			setView((current) => applyServiceStatusSnapshot(current, snapshot));
 		});
 		return () => {
 			active = false;
 			source.close();
 		};
-	}, [selectedId, mergeStatusService]);
+	}, [selectedId]);
 
 	const handleRefresh = () => {
 		startTransition(() => {
@@ -376,14 +429,20 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	};
 
 	const handleNavigateEnvironment = (nextEnvironmentId: string | null) => {
+		setView((current) =>
+			current.selectedServiceId === null
+				? current
+				: { ...current, selectedServiceId: null },
+		);
 		startTransition(() => {
 			void router.navigate(
 				nextEnvironmentId
 					? {
 							to: "/environments/$environmentId",
 							params: { environmentId: nextEnvironmentId },
+							search: {},
 						}
-					: { to: "/" },
+					: { to: "/", search: {} },
 			);
 		});
 	};
@@ -406,7 +465,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	};
 
 	const mergeService = (service: DashboardServiceRecord) => {
-		setLocalState((current) => mergeHomeService(current, service));
+		setView((current) => upsertServiceRecord(current, service));
 	};
 
 	const handleCreated = (result: CreateServiceFastResult) => {
@@ -444,59 +503,63 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			}
 		}
 
+		// Retain the created service above the remount: the first service
+		// materialises an environment, which navigates `/` to
+		// `/environments/:id` and remounts this component. The cache carries
+		// the row and the selection travels in the URL.
+		createdCache?.remember(result.service, result.environment);
 		previousEnvironmentIdRef.current = result.environment.id ?? null;
-		rememberPendingCreatedService(result.service, result.environment);
 
-		setLocalState((current) => {
-			const nextServices = current.services.some(
-				(service) => service.id === result.service.id,
-			)
-				? current.services.map((service) =>
-						service.id === result.service.id ? result.service : service,
-					)
-				: [...current.services, result.service];
-			const nextEnvironments = current.environments.some(
+		setView((current) => {
+			const next = upsertServiceRecord(current, result.service);
+			const nextEnvironments = current.base.environments.some(
 				(entry) => entry.id === result.environment.id,
 			)
-				? current.environments
-				: [...current.environments, result.environment];
+				? current.base.environments
+				: [...current.base.environments, result.environment];
 			return {
-				...current,
-				project:
-					current.project?.id === result.project.id
-						? current.project
-						: result.project,
-				environment: result.environment,
-				environments: nextEnvironments,
-				services: nextServices,
-				service: result.service,
-				serviceStatus: result.serviceStatus ?? current.serviceStatus,
-				onboarding: result.onboarding,
-				controlPlaneReachable: true,
-				controlPlaneError: undefined,
+				...next,
+				base: {
+					...current.base,
+					project:
+						current.base.project?.id === result.project.id
+							? current.base.project
+							: result.project,
+					environment: result.environment,
+					environments: nextEnvironments,
+					onboarding: result.onboarding,
+					controlPlaneReachable: true,
+					controlPlaneError: undefined,
+				},
+				selectedServiceId: result.service.id,
 			};
 		});
-		setSelectedId(result.service.id);
 		canvas.hasUserPanned.current = false;
 		setActiveTab("deployments");
 		setShowNewService(false);
-		if (environmentId && environmentId === result.environment.id) {
+		if (!environmentId || environmentId !== result.environment.id) {
+			startTransition(() => {
+				void router.navigate({
+					to: "/environments/$environmentId",
+					params: { environmentId: result.environment.id },
+					search: { serviceId: result.service.id },
+				});
+			});
+		} else {
+			navigateSelection(result.service.id);
 			startTransition(() => void router.invalidate());
+		}
+		if (result.serviceStatus) {
+			mergeStatusService(result.serviceStatus, revisionRef.current);
 		}
 	};
 
 	const handleServiceDeleted = (serviceId: string) => {
-		clearPendingCreatedService(serviceId);
-		setSelectedId((current) => (current === serviceId ? null : current));
-		setLocalState((current) => ({
-			...current,
-			services: current.services.filter((service) => service.id !== serviceId),
-			service: current.service?.id === serviceId ? undefined : current.service,
-			serviceStatus:
-				current.serviceStatus?.service.id === serviceId
-					? undefined
-					: current.serviceStatus,
-		}));
+		createdCache?.forget(serviceId);
+		setView((current) => removeService(current, serviceId));
+		if (selectedId === serviceId) {
+			navigateSelection(null);
+		}
 		startTransition(() => void router.invalidate());
 	};
 
@@ -505,6 +568,10 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 		currentEnvironmentId: string,
 	) => {
 		const applying = servicesToDeploy.map(snapshotApplyingChanges);
+		// Basis revision: a newer snapshot arriving mid-deploy already
+		// reflects the committed server state, so this response must not
+		// overwrite it when it lands.
+		const basisRevision = revisionRef.current;
 		setDeployError(undefined);
 		setShowChangeDetails(false);
 		setDeployingChanges(true);
@@ -514,7 +581,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				data: { environmentId: currentEnvironmentId },
 			});
 			for (const status of statuses) {
-				mergeStatusService(status);
+				mergeStatusService(status, basisRevision);
 			}
 			startTransition(() => void router.invalidate());
 		} catch (error) {
@@ -553,11 +620,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const handleDiscardServiceChanges = async (serviceId: string) => {
 		if (discardingChangeId) return;
 		setDiscardingChangeId(`service:${serviceId}`);
+		const basisRevision = revisionRef.current;
 		try {
 			const service = await doDiscardServiceChanges({
 				data: { serviceId, discardAll: true },
 			});
-			mergeService(service);
+			mergeServiceRecord(service, basisRevision);
 		} catch (error) {
 			setDeployError(`Discard failed: ${formatError(error)}`);
 		} finally {
@@ -568,11 +636,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	const handleDiscardChange = async (serviceId: string, changeId: string) => {
 		if (discardingChangeId) return;
 		setDiscardingChangeId(`${serviceId}:${changeId}`);
+		const basisRevision = revisionRef.current;
 		try {
 			const service = await doDiscardServiceChanges({
 				data: { serviceId, changeIds: [changeId] },
 			});
-			mergeService(service);
+			mergeServiceRecord(service, basisRevision);
 		} catch (error) {
 			setDeployError(`Discard failed: ${formatError(error)}`);
 		} finally {
@@ -583,7 +652,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 	return (
 		<div className="flex h-dvh flex-col overflow-hidden">
 			<Topbar
-				state={localState}
+				state={homeState}
 				onNewService={openNewService}
 				onPreloadNewService={preloadNewService}
 				onRefresh={handleRefresh}
@@ -593,7 +662,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			/>
 			{showEnvironmentDialog && (
 				<EnvironmentDialog
-					state={localState}
+					state={homeState}
 					onClose={() => setShowEnvironmentDialog(false)}
 					onCreated={(environmentId) => {
 						setShowEnvironmentDialog(false);
@@ -615,27 +684,17 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 				onSelectService={(serviceId) => {
 					const id = canvas.selectService(serviceId);
 					if (!id) return;
-					setSelectedId(id);
-					setActiveTab("deployments");
-					setLocalState((current) => ({
-						...current,
-						serviceStatus: undefined,
-					}));
+					selectService(id);
 				}}
 				onResetView={canvas.handleResetView}
 				onEscape={() => {
-					clearPendingCreatedService(selectedId ?? undefined);
-					setSelectedId(null);
-					setLocalState((current) => ({
-						...current,
-						serviceStatus: undefined,
-					}));
+					clearSelection();
 				}}
 				panCursor={Boolean(canvas.panStart.current)}
 				promptLeft={canvas.promptLeft}
 				services={services}
 				selectedId={selectedId}
-				localState={localState}
+				localState={homeState}
 				showNewService={showNewService}
 				onAddService={openNewService}
 				onPreloadAdd={preloadNewService}
@@ -663,17 +722,12 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 						<ServicePanel
 							service={selected}
 							status={liveStatus}
-							project={localState.project}
-							state={localState}
+							project={view.base.project}
+							state={homeState}
 							activeTab={activeTab}
 							onTabChange={handleTabChange}
 							onClose={() => {
-								clearPendingCreatedService(selectedId ?? undefined);
-								setSelectedId(null);
-								setLocalState((current) => ({
-									...current,
-									serviceStatus: undefined,
-								}));
+								clearSelection();
 							}}
 							onRefresh={handleRefresh}
 							onServiceUpdated={mergeService}
@@ -687,7 +741,7 @@ export function DashboardPage({ state }: { state: DashboardHomeState }) {
 			{showNewService && (
 				<Suspense fallback={null}>
 					<NewServiceModal
-						state={localState}
+						state={homeState}
 						catalogLoading={githubCatalogLoading}
 						onClose={() => setShowNewService(false)}
 						onCreated={handleCreated}

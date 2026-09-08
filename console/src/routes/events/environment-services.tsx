@@ -25,7 +25,13 @@ export const Route = createFileRoute("/events/environment-services")({
 									waitIndex,
 									waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
 								});
-							return { ...snapshot, value: snapshot.services };
+							return {
+								...snapshot,
+								value: {
+									services: snapshot.services,
+									revision: snapshot.index,
+								},
+							};
 						},
 					});
 				} catch {
