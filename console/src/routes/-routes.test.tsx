@@ -277,6 +277,8 @@ function homeState(
 		repositories: [],
 		environments: [],
 		services: [],
+		servicesRevision: 0,
+		selectedServiceId: null,
 		githubInstallURL:
 			"https://github.example.test/apps/platform/installations/new",
 		publicBaseURL: "https://dashboard.example.test",

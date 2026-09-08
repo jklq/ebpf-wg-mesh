@@ -220,11 +220,12 @@ export function createPlatformGateway(
 		},
 		async listServices(user, environmentId) {
 			try {
-				const response = await platform.listServices(
-					toListServicesRequest({ environmentId }),
-					callOptions(user),
+				return toIndexedServices(
+					await platform.listServices(
+						toListServicesRequest({ environmentId }),
+						callOptions(user),
+					),
 				);
-				return response.services.map(toServiceRecord);
 			} catch (cause) {
 				throw toPlatformGatewayError("ListServices", cause);
 			}

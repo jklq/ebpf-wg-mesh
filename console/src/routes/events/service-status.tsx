@@ -24,7 +24,13 @@ export const Route = createFileRoute("/events/service-status")({
 								waitIndex,
 								waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
 							});
-							return { ...snapshot, value: snapshot.status };
+							return {
+								...snapshot,
+								value: {
+									status: snapshot.status,
+									revision: snapshot.index,
+								},
+							};
 						},
 					});
 				} catch {

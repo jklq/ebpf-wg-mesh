@@ -7,6 +7,16 @@ import {
 import { loadHome } from "./-dashboard/server-fns";
 
 export const Route = createFileRoute("/")({
+	validateSearch: (
+		search: Record<string, unknown>,
+	): {
+		serviceId?: string;
+	} => ({
+		serviceId:
+			typeof search.serviceId === "string" && search.serviceId.length > 0
+				? search.serviceId
+				: undefined,
+	}),
 	loader: async () => {
 		const state = await loadHome();
 		if (state.environment) {
@@ -23,7 +33,15 @@ export const Route = createFileRoute("/")({
 
 function DashboardRoute() {
 	const state = Route.useLoaderData();
-	return <DashboardPage state={state} />;
+	const search = Route.useSearch();
+	const urlSelectedServiceId =
+		search.serviceId &&
+		state.services.some((service) => service.id === search.serviceId)
+			? search.serviceId
+			: null;
+	return (
+		<DashboardPage state={state} urlSelectedServiceId={urlSelectedServiceId} />
+	);
 }
 
 function DashboardPendingRoute() {

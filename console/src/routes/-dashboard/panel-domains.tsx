@@ -4,6 +4,7 @@ import type {
 	DashboardDomainBinding,
 	DashboardHomeState,
 	DashboardServiceRecord,
+	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
 import { DomainPanelView, recommendedTargetPort } from "./panel-domains-list";
@@ -20,11 +21,13 @@ import { usePolling } from "./use-polling";
 export function PanelDomains({
 	service,
 	state,
+	status = null,
 }: {
 	service: DashboardServiceRecord;
 	state: DashboardHomeState;
+	status?: DashboardServiceStatus | null;
 }) {
-	const recommendedPort = recommendedTargetPort(service, state);
+	const recommendedPort = recommendedTargetPort(service, status);
 	const [bindings, setBindings] = useState<DashboardDomainBinding[]>([]);
 	const [loadingBindings, setLoadingBindings] = useState(true);
 	const [hostname, setHostname] = useState("");

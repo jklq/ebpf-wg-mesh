@@ -44,9 +44,9 @@ export async function waitForServiceStatusFromSession(
 export async function listEnvironmentServicesFromSession(
 	runtime: DashboardRuntime,
 	input: { environmentId: string },
-): Promise<Array<DashboardServiceRecord>> {
+) {
 	const session = await requireSession(runtime);
-	const [services, positions] = await Promise.all([
+	const [snapshot, positions] = await Promise.all([
 		platformCall(runtime, "listServices", (platform) =>
 			platform.listServices(session.user, input.environmentId),
 		),
@@ -54,7 +54,12 @@ export async function listEnvironmentServicesFromSession(
 			store.listServicePositions(session.user.id, input.environmentId),
 		),
 	]);
-	return applyServicePositions(services, positions);
+	return {
+		...snapshot,
+		services: snapshot.services
+			? applyServicePositions(snapshot.services, positions)
+			: undefined,
+	};
 }
 
 export async function waitForEnvironmentServicesFromSession(

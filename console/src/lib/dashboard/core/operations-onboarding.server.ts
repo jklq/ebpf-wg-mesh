@@ -91,7 +91,7 @@ export async function duplicateEnvironmentFromSession(
 				name: input.name.trim(),
 			}),
 	);
-	const [sourceServices, copiedServices, sourcePositions] = await Promise.all([
+	const [sourceSnapshot, copiedSnapshot, sourcePositions] = await Promise.all([
 		platformCall(runtime, "listServices", (platform) =>
 			platform.listServices(session.user, input.sourceEnvironmentId),
 		),
@@ -103,10 +103,10 @@ export async function duplicateEnvironmentFromSession(
 		),
 	]);
 	const sourceByName = new Map(
-		sourceServices.map((service) => [service.name, service]),
+		(sourceSnapshot.services ?? []).map((service) => [service.name, service]),
 	);
 	await Promise.all(
-		copiedServices.map(async (service) => {
+		(copiedSnapshot.services ?? []).map(async (service) => {
 			const source = sourceByName.get(service.name);
 			const position = source ? sourcePositions[source.id] : undefined;
 			if (!position) return;
@@ -228,9 +228,12 @@ export async function createServiceFastFromSession(
 		".";
 	const trackedRef =
 		input.trackedRef?.trim() || inspection.defaultBranch || "main";
-	const services = await platformCall(runtime, "listServices", (platform) =>
-		platform.listServices(session.user, environment.id),
+	const servicesSnapshot = await platformCall(
+		runtime,
+		"listServices",
+		(platform) => platform.listServices(session.user, environment.id),
 	);
+	const services = servicesSnapshot.services ?? [];
 	const desiredSpec: DashboardServiceSpec = buildServiceSpec(
 		{
 			provider: "github",

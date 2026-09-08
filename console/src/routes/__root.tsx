@@ -8,8 +8,8 @@ import type { ReactNode } from "react";
 
 import { cn } from "#/lib/cn";
 import { btnPrimary, modalCard } from "#/lib/ui-classes";
-
 import appCss from "../styles.css?url";
+import { CreatedServiceCacheProvider } from "./-dashboard/created-service-cache";
 
 export const Route = createRootRoute({
 	head: () => ({
@@ -56,7 +56,7 @@ function RootDocument({ children }: { children: ReactNode }) {
 				<HeadContent />
 			</head>
 			<body className="h-full min-h-full bg-canvas font-sans text-[14px] text-ink antialiased">
-				{children}
+				<CreatedServiceCacheProvider>{children}</CreatedServiceCacheProvider>
 				<Scripts />
 			</body>
 		</html>

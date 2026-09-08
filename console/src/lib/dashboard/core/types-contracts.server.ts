@@ -154,7 +154,7 @@ export interface PlatformGateway {
 	listServices(
 		user: DashboardUser,
 		environmentId: string,
-	): Promise<Array<DashboardServiceRecord>>;
+	): Promise<DashboardIndexedServices>;
 	waitForServices(
 		user: DashboardUser,
 		input: {

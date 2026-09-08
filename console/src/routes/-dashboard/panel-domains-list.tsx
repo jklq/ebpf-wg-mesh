@@ -13,6 +13,7 @@ import type {
 	DashboardDomainBinding,
 	DashboardHomeState,
 	DashboardServiceRecord,
+	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 import {
 	btnDanger,
@@ -550,15 +551,15 @@ export function formatOwnershipMessage(
 
 export function recommendedTargetPort(
 	service: DashboardServiceRecord,
-	state: DashboardHomeState,
+	status: DashboardServiceStatus | null,
 ): number {
 	const primary = service.spec?.runtime.ports.find((port) => port.primary);
 	if (primary?.port) {
 		return primary.port;
 	}
 	const healthy = [
-		...(state.serviceStatus?.allocation?.healthyIpv4Ports ?? []),
-		...(state.serviceStatus?.allocation?.healthyIpv6Ports ?? []),
+		...(status?.allocation?.healthyIpv4Ports ?? []),
+		...(status?.allocation?.healthyIpv6Ports ?? []),
 	].find((port) => Number.isInteger(port) && port >= 1 && port <= 65535);
 	return healthy ?? 8080;
 }
