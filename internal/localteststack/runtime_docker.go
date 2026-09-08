@@ -16,6 +16,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/restartpolicy"
+	"ebof-wg-mesh/internal/runtimeutil"
 )
 
 const (
@@ -132,8 +133,8 @@ func (r *DockerRuntime) Close() error {
 
 func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNodeState) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
-	desiredVolumes := indexDesiredVolumes(state.GetVolumes())
-	desiredServices := indexDesiredServices(state.GetServices())
+	desiredVolumes := runtimeutil.IndexDesiredVolumes(state.GetVolumes())
+	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
 	if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
 		return nil, err
@@ -275,8 +276,8 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 		check := svc.GetSpec().GetRuntime().GetHealthCheck()
 		if check == nil || check.GetType() == platformv1.HealthCheck_TYPE_UNSPECIFIED {
 			cond.Healthy = true
-			cond.HealthyIpv4Ports = healthyFamilyPorts(status.AllocationIPv4 != "", dockerReadinessPorts(svc))
-			cond.HealthyIpv6Ports = healthyFamilyPorts(status.AllocationIPv6 != "", dockerReadinessPorts(svc))
+			cond.HealthyIpv4Ports = healthyFamilyPorts(status.AllocationIPv4 != "", runtimeutil.ReadinessPorts(svc))
+			cond.HealthyIpv6Ports = healthyFamilyPorts(status.AllocationIPv6 != "", runtimeutil.ReadinessPorts(svc))
 			cond.Phase = "Healthy"
 			cond.Message = "process running; no health check configured"
 			report.Services = append(report.Services, cond)
@@ -296,7 +297,7 @@ func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNod
 		}
 		probe := probeDockerReadiness(status.inspect, svc)
 		if probe.healthy {
-			ports := dockerReadinessPorts(svc)
+			ports := runtimeutil.ReadinessPorts(svc)
 			if r.ready == nil {
 				r.ready = make(map[string]dockerRolloutReadiness)
 			}
