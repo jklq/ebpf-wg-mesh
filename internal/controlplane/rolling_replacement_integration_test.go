@@ -284,7 +284,7 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 	envID := productionEnvironmentID(t, store, projects[0].ID)
-	if _, err := store.catalog.createVolume(ctx, "user-1", envID, "data", 64<<20, "node-1"); err != nil {
+	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", envID, "data", 64<<20); err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
 	spec := rollingTestSpec("example.test/disk:a", 1, 1)
