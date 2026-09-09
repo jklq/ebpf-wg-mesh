@@ -206,12 +206,17 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 
 	deadCancel()
 	liveCancel()
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL), deadID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL), deadID); err != nil {
 		t.Fatalf("mark stale: %v", err)
 	}
 	first.stop()
 
 	second := startSystemControlPlane(t, opts)
+	reconnectedHello := restartAgentHello(liveID, "fd00:30::32")
+	reconnectedHello.SessionId += "-reconnected"
+	reconnectedStream, reconnectedCancel := openAgentSync(t, second.server, liveCert, reconnectedHello)
+	defer reconnectedCancel()
+	_ = recvDesiredState(t, reconnectedStream)
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
@@ -278,5 +283,6 @@ func restartAgentHello(id, addr string) *agentv1.AgentHello {
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 		SoftwareVersion:         "test",
+		SessionId:               "restart-session-" + id,
 	}
 }

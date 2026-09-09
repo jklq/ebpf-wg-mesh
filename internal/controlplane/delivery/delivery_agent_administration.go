@@ -34,14 +34,22 @@ func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *pla
 	var rec AgentRecord
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
-		_, err := tx.ExecContext(ctx, `INSERT INTO agents(
-			id, name, lifecycle_state, region, zone, failure_domain,
-			reserved_cpu_millis, reserved_memory_mebibytes, last_seen_at, created_at, updated_at
-		) VALUES ($1, $2, 'enrolling', $3, $4, $5, $6, $7, $8, $9, $9)`,
+		_, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
+			id, name, region, zone, failure_domain,
+			reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
 			strings.TrimSpace(req.GetAgentId()), strings.TrimSpace(req.GetName()),
 			strings.TrimSpace(req.GetRegion()), strings.TrimSpace(req.GetZone()), strings.TrimSpace(req.GetFailureDomain()),
-			req.GetReservedCpuMillis(), req.GetReservedMemoryMebibytes(), time.Unix(0, 0).UTC(), now)
+			req.GetReservedCpuMillis(), req.GetReservedMemoryMebibytes(), now)
 		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
+			VALUES ($1, 'enrolling', $2)`, req.GetAgentId(), now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_presence(agent_id, session_id, last_observation_sequence, last_contact_at, ready, reachable, updated_at)
+			VALUES ($1, '', 0, $2, FALSE, FALSE, $2)`, req.GetAgentId(), time.Unix(0, 0).UTC()); err != nil {
 			return err
 		}
 		if err := insertAgentBootstrapTokenTx(ctx, tx, req.GetAgentId(), token, "operator", now); err != nil {
@@ -71,7 +79,11 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *pla
 	}
 	var rec AgentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := agentByIDQuerier(ctx, tx, req.GetAgentId(), true)
+		var locked string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_registrations WHERE id = $1 FOR UPDATE`, req.GetAgentId()).Scan(&locked); err != nil {
+			return err
+		}
+		current, err := agentByIDQuerier(ctx, tx, locked, false)
 		if err != nil {
 			return err
 		}
@@ -84,7 +96,7 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *pla
 		if req.GetReservedMemoryMebibytes() > current.MemoryMebibytesCapcity && current.MemoryMebibytesCapcity > 0 {
 			return errors.New("reserved memory exceeds observed node capacity")
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE agents SET name = $1, region = $2, zone = $3,
+		_, err = tx.ExecContext(ctx, `UPDATE agent_registrations SET name = $1, region = $2, zone = $3,
 			failure_domain = $4, reserved_cpu_millis = $5, reserved_memory_mebibytes = $6,
 			updated_at = $7 WHERE id = $8`, strings.TrimSpace(req.GetName()), strings.TrimSpace(req.GetRegion()),
 			strings.TrimSpace(req.GetZone()), strings.TrimSpace(req.GetFailureDomain()), req.GetReservedCpuMillis(),

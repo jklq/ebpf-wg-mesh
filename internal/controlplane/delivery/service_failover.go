@@ -57,45 +57,11 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 		}
 
 		cutoff := now.UTC().Add(-unhealthyThreshold)
-		staleRows, err := tx.QueryContext(ctx, `UPDATE agents
-			SET state_before_unavailable = lifecycle_state,
-			    lifecycle_state = $1,
-			    updated_at = $2
-			WHERE lifecycle_state IN ($3, $4, $5) AND last_seen_at <= $6
-			RETURNING id`, AgentStateUnavailable, now.UTC(), AgentStateActive, AgentStateCordoned, AgentStateDraining, cutoff)
-		if err != nil {
-			return err
-		}
-		var staleAgentIDs []string
-		for staleRows.Next() {
-			var agentID string
-			if err := staleRows.Scan(&agentID); err != nil {
-				_ = staleRows.Close()
-				return err
-			}
-			staleAgentIDs = append(staleAgentIDs, agentID)
-		}
-		if err := staleRows.Err(); err != nil {
-			_ = staleRows.Close()
-			return err
-		}
-		if err := staleRows.Close(); err != nil {
-			return err
-		}
-
 		agents, services, err := s.schedulerSnapshotTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if len(services) == 0 {
-			if len(staleAgentIDs) > 0 {
-				if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-					return err
-				}
-				for _, agent := range agents {
-					result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)
-				}
-			}
 			return nil
 		}
 
@@ -106,7 +72,11 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 
 		healthyAgents := make(map[string]AgentRecord, len(agents))
 		for _, agent := range agents {
-			if agent.LastSeenAt.After(cutoff) && agent.LifecycleState == AgentStateActive {
+			// Placement and failover use administrative intent plus last-contact
+			// TTL. A live session that has ended (control-plane restart, stream
+			// teardown) composes as unavailable in the agents view, but the
+			// agent remains an eligible replacement target until last contact ages out.
+			if agent.LastSeenAt.After(cutoff) && agent.StateBeforeUnavailable == AgentStateActive {
 				healthyAgents[agent.ID] = agent
 			}
 		}
@@ -149,12 +119,12 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 			}
 		}
 
-		if (moved || len(staleAgentIDs) > 0) && !alreadyBumped {
+		if moved && !alreadyBumped {
 			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
 				return err
 			}
 		}
-		if moved || len(staleAgentIDs) > 0 {
+		if moved {
 			for _, agent := range agents {
 				result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)
 			}
@@ -169,21 +139,6 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 		return ServiceFailoverResult{}, err
 	}
 	return result, nil
-}
-
-func finishLostDrainingAllocationTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
-	_, err := tx.ExecContext(ctx,
-		`UPDATE allocations
-		    SET phase = 'Drained',
-		        message = $1,
-		        healthy = FALSE,
-		        healthy_ipv4_ports = $2,
-		        healthy_ipv6_ports = $2,
-		        updated_at = $3
-		  WHERE id = $4`,
-		message, []byte("[]"), now, allocationID,
-	)
-	return err
 }
 
 func allocationStatesForFailover(ctx context.Context, q ServiceQueryer) ([]AllocationRecord, error) {
@@ -214,16 +169,11 @@ func listAllocationsForFailover(ctx context.Context, q ServiceQueryer, agentID s
 	return out, rows.Err()
 }
 
-func markAllocationUnavailableForFailover(ctx context.Context, q ServiceQueryer, allocationID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
+func (s *persistence) markAllocationUnavailableForFailoverTx(ctx context.Context, tx *sql.Tx, allocationID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
 	if current.phase == allocationPhaseUnavailable && current.message == message && len(current.healthyIPv4Ports) == 0 && len(current.healthyIPv6Ports) == 0 && !current.healthy {
 		return false, nil
 	}
-	_, err := q.ExecContext(ctx,
-		`UPDATE allocations
-		    SET phase = $1, message = $2, healthy_ipv4_ports = $3, healthy_ipv6_ports = $3, healthy = FALSE, updated_at = $4
-		  WHERE id = $5`,
-		allocationPhaseUnavailable, message, []byte("[]"), now, allocationID,
-	)
+	err := s.setAssignmentMessageTx(ctx, tx, allocationID, message, now)
 	return err == nil, err
 }
 

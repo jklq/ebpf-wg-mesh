@@ -80,6 +80,11 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}
 	ingress := &countingIngress{}
 	delivery := newTestDelivery(store, nil, ingress, NewPlatformEvents(store.events, time.Millisecond))
+	prepareTestStatusReport(ctx, store, "node-1", report)
+	beforeReportRevision, err := store.events.currentGlobalRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = delivery.ObserveAgentStatus(ctx, "node-1", report)
 	if err != nil {
 		t.Fatalf("ObserveAgentStatus: %v", err)
@@ -87,7 +92,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if ingress.requests.Load() != 1 {
 		t.Fatalf("expected one ingress request, got %d", ingress.requests.Load())
 	}
-	if got, err := store.events.currentGlobalRevision(ctx); err != nil || got != initialEnvironmentRevision+1 {
+	if got, err := store.events.currentGlobalRevision(ctx); err != nil || got != beforeReportRevision+1 {
 		t.Fatalf("global revision after status report = %d, %v", got, err)
 	}
 	updated, err := store.reads.allocationByServiceID(ctx, service.ID)

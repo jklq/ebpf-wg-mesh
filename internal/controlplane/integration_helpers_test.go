@@ -71,6 +71,9 @@ func chooseAgentForService(ctx context.Context, store *persistence, environmentI
 }
 
 func registerAgent(ctx context.Context, store *persistence, hello *agentv1.AgentHello) (bool, error) {
+	if hello != nil && hello.GetSessionId() == "" {
+		hello.SessionId = "test-session-" + hello.GetAgentId()
+	}
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 

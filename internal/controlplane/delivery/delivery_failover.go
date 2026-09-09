@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
-	"ebof-wg-mesh/internal/restartpolicy"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,7 +32,7 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 		notifyAgentIDs = nil
 		changedEnvironmentIDs = nil
 		var lastSeen time.Time
-		if err := tx.QueryRowContext(ctx, `SELECT last_seen_at FROM agents WHERE id = $1 FOR UPDATE`, agentID).Scan(&lastSeen); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT last_contact_at FROM agent_presence WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&lastSeen); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -42,14 +41,6 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 		if lastSeen.After(cutoff) {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE agents SET
-			state_before_unavailable = CASE WHEN lifecycle_state IN ('active', 'cordoned', 'draining') THEN lifecycle_state ELSE state_before_unavailable END,
-			lifecycle_state = CASE WHEN lifecycle_state = 'retired' THEN lifecycle_state ELSE 'unavailable' END,
-			maintenance_message = CASE WHEN lifecycle_state = 'retired' THEN maintenance_message ELSE 'heartbeat expired; workloads are being failed over' END,
-			updated_at = $1 WHERE id = $2`, time.Now().UTC(), agentID); err != nil {
-			return err
-		}
-
 		allocations, err := listAllocationsForFailover(ctx, tx, agentID)
 		if err != nil {
 			return err
@@ -114,7 +105,7 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 	case failoverIgnore:
 		return result, nil
 	case failoverFinishDrain:
-		if err := finishLostDrainingAllocationTx(ctx, tx, allocation.ID, "node lost while draining; allocation will be removed", now); err != nil {
+		if err := d.store.markAssignmentLostTx(ctx, tx, allocation.ID, "node lost while draining; allocation will be removed", now); err != nil {
 			return result, err
 		}
 		return nodeLossReplacementResult{Changed: true, Replaced: true}, nil
@@ -182,7 +173,7 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 			phase: allocation.Phase, message: allocation.Message,
 			healthyIPv4Ports: allocation.HealthyIPv4Ports, healthyIPv6Ports: allocation.HealthyIPv6Ports, healthy: allocation.Healthy,
 		}
-		changed, err := markAllocationUnavailableForFailover(ctx, tx, allocation.ID, state, decision.Message, now)
+		changed, err := d.store.markAllocationUnavailableForFailoverTx(ctx, tx, allocation.ID, state, decision.Message, now)
 		if err != nil {
 			return result, err
 		}
@@ -196,7 +187,7 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 
 	lostMessage := fmt.Sprintf("node lost; replacement scheduled from expired agent %s", deadAgentID)
 
-	if err := markAllocationLostTx(ctx, tx, allocation.ID, lostMessage, now); err != nil {
+	if err := d.store.markAssignmentLostTx(ctx, tx, allocation.ID, lostMessage, now); err != nil {
 		return result, err
 	}
 	if decision.Action == failoverAdvance {
@@ -216,27 +207,4 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 	result.Changed = true
 	result.Bumped = true
 	return result, nil
-}
-
-func markAllocationLostTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
-	nodeLoss, err := encodeRestartObservation(restartpolicy.NodeLossObservation(now, 0, 0))
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx,
-		`UPDATE allocations
-		    SET phase = $1,
-		        rollout_state = $2,
-		        message = $3,
-		        allocation_ipv4 = '',
-		        allocation_ipv6 = '',
-		        healthy_ipv4_ports = $4,
-		        healthy_ipv6_ports = $4,
-		        healthy = FALSE,
-		        restart_observation_json = $5,
-		        updated_at = $6
-		  WHERE id = $7`,
-		allocationPhaseUnavailable, AllocationRolloutLost, message, []byte("[]"), nodeLoss, now, allocationID,
-	)
-	return err
 }

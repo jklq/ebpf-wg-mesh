@@ -18,6 +18,9 @@ var (
 	ErrAgentCredentialRevoked = errors.New("agent credential is revoked")
 	ErrAgentHasAllocations    = errors.New("agent still has allocations or attachments")
 	ErrInvalidAgentTransition = errors.New("invalid agent lifecycle transition")
+	ErrStaleAgentSession      = errors.New("stale agent session")
+	ErrStaleObservation       = errors.New("stale allocation observation")
+	ErrAllocationOwnership    = errors.New("allocation is not assigned to authenticated agent")
 	FleetLabelPattern         = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62})$`)
 )
 

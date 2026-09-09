@@ -12,17 +12,6 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-func (s *fleetPersistence) heartbeatAgent(ctx context.Context, agentID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE agents SET
-		lifecycle_state = CASE WHEN lifecycle_state = 'unavailable'
-			THEN CASE WHEN state_before_unavailable IN ('active', 'cordoned', 'draining') THEN state_before_unavailable ELSE 'active' END
-			ELSE lifecycle_state END,
-		state_before_unavailable = CASE WHEN lifecycle_state = 'unavailable' THEN '' ELSE state_before_unavailable END,
-		last_seen_at = statement_timestamp(), updated_at = statement_timestamp()
-		WHERE id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, agentID)
-	return err
-}
-
 func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	type logOwner struct {
 		allocationID  string

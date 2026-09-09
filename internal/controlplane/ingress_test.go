@@ -66,7 +66,8 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 		t.Fatalf("expected healthy IPv4 upstream, got %q", got)
 	}
 
-	if _, err := store.db.ExecContext(ctx, `UPDATE allocations SET healthy_ipv4_ports = '[]' WHERE service_id = $1`, service.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE allocation_observations SET healthy_ipv4_ports = '[]'
+		WHERE allocation_id IN (SELECT id FROM allocation_assignments WHERE service_id = $1)`, service.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "fd00:200:1::10", 8080); err != nil {
@@ -455,6 +456,7 @@ func agentHello(id string) *agentv1.AgentHello {
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 		SoftwareVersion:         "test",
+		SessionId:               "test-session-" + id,
 	}
 }
 

@@ -40,7 +40,7 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 	if int32(len(existing)) > desired {
 		removed, remaining := selectAllocationsToRemove(existing, int(desired))
 		for _, alloc := range removed {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE id = $1`, alloc.ID); err != nil {
+			if err := s.deleteAllocationAssignmentTx(ctx, tx, alloc.ID); err != nil {
 				return nil, err
 			}
 		}
