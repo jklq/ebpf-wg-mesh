@@ -233,7 +233,7 @@ make test-e2e-vm
 
 - `test-unit-go`: pure Go tests only. Cockroach-backed store coverage is excluded from this tier.
 - `test-unit-console`: Vitest unit tests for console session logic, loaders, and React rendering.
-- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag, plus console Vitest tests that run against `cmd/testcockroach`.
+- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag, plus console Vitest tests that run against `cmd/testdb`.
 - `test-e2e-local`: thin Playwright smoke against an ephemeral local Cockroach + control plane + console stack.
 - `test-e2e-vm`: Hetzner-backed smoke that provisions disposable VMs, deploys pinned binaries, runs remote checks, collects artifacts, and destroys the environment.
 

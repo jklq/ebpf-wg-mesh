@@ -3,8 +3,12 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
 func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
@@ -104,4 +108,25 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID 
 		}
 		return nil
 	})
+}
+
+func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	environment, err := s.environmentByIDQuerier(ctx, tx, userID, environmentID)
+	if err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	rec := deliverycore.VolumeRecord{
+		ID:            uuid.NewString(),
+		EnvironmentID: environment.ID,
+		Name:          name,
+		SizeBytes:     sizeBytes,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO volumes(id, environment_id, name, size_bytes, created_at) VALUES ($1, $2, $3, $4, $5)`,
+		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
+	); err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	return rec, nil
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -129,8 +130,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, agentID string, repor
 				prevPhase != cond.GetPhase() ||
 				prevMessage != cond.GetMessage() ||
 				prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 ||
-				!equalInt32Slices(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) ||
-				!equalInt32Slices(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) ||
+				!slices.Equal(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) ||
+				!slices.Equal(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) ||
 				prevHealthy != cond.GetHealthy() ||
 				string(prevRestartRaw) != string(restartRaw)
 			if !statusChanged {
@@ -178,7 +179,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, agentID string, repor
 			} else if err := s.applyAgentDeploymentObservationTx(ctx, tx, serviceID, cond.GetDesiredRolloutGeneration(), phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), agentID); err != nil {
 				return fmt.Errorf("apply deployment observation: %w", err)
 			}
-			if hasDomain && (prevHealthy != healthy || prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 || !equalInt32Slices(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) || !equalInt32Slices(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) || prevPhase != phase) {
+			if hasDomain && (prevHealthy != healthy || prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 || !slices.Equal(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) || !slices.Equal(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) || prevPhase != phase) {
 				ingressChanged = true
 			}
 		}
