@@ -2,10 +2,20 @@ package delivery
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"fmt"
 )
+
+type placementCandidate struct {
+	ID                     string
+	Region                 string
+	Zone                   string
+	FailureDomain          string
+	RuntimeCapabilities    []string
+	CPUMillisCapacity      int64
+	MemoryMebibytesCapcity int64
+	ServiceCount           int64
+	UsedCPUMillis          int64
+	UsedMemoryMebibytes    int64
+}
 
 func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQueryer) ([]placementCandidate, error) {
 	rows, err := q.QueryContext(ctx,
@@ -61,52 +71,4 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 		candidates = append(candidates, candidate)
 	}
 	return candidates, rows.Err()
-}
-
-func (s *persistence) requireVolumeQuerier(ctx context.Context, q ServiceQueryer, environmentID, volumeName string) error {
-	var one int
-	err := q.QueryRowContext(ctx, `SELECT 1 FROM volumes WHERE environment_id = $1 AND name = $2`, environmentID, volumeName).Scan(&one)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("%w: %q", ErrVolumeNotFound, volumeName)
-	default:
-		return err
-	}
-}
-
-func (s *persistence) domainTargetPortsForService(ctx context.Context, serviceID string) ([]int32, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT target_port
-		   FROM domain_bindings
-		  WHERE service_id = $1
-		  ORDER BY hostname ASC`,
-		serviceID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ports []int32
-	for rows.Next() {
-		var port int32
-		if err := rows.Scan(&port); err != nil {
-			return nil, err
-		}
-		ports = append(ports, port)
-	}
-	return ports, rows.Err()
-}
-
-func equalInt32Slices(a, b []int32) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -1,11 +1,7 @@
 package main
 
 import (
-	"context"
-	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"ebof-wg-mesh/internal/agent"
 	"ebof-wg-mesh/internal/bootstrap"
@@ -13,22 +9,8 @@ import (
 )
 
 func main() {
-	cfg, err := bootstrap.Agent(os.Args[1:])
-	if err != nil {
-		slog.Error("bootstrap agent", "error", err)
-		os.Exit(1)
-	}
-	slog.Info(config.AgentStartupContract(cfg).String())
-	app, err := agent.New(cfg)
-	if err != nil {
-		slog.Error("create agent", "error", err)
-		os.Exit(1)
-	}
-	defer app.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	if err := app.Run(ctx); err != nil && ctx.Err() == nil {
-		slog.Error("agent run failed", "error", err)
-		os.Exit(1)
-	}
+	bootstrap.Run(os.Args[1:], "agent", bootstrap.Agent, config.AgentStartupContract,
+		func(cfg config.AgentConfig) (*agent.App, error) {
+			return agent.New(cfg)
+		})
 }

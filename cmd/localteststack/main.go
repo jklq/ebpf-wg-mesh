@@ -19,9 +19,8 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
 	"ebof-wg-mesh/internal/localteststack"
+	"ebof-wg-mesh/internal/testdb"
 	"ebof-wg-mesh/internal/testutil"
-
-	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
 type stackSummary struct {
@@ -68,13 +67,17 @@ func main() {
 	// against a freshly generated JWT secret once /healthz becomes ready.
 	_ = os.Remove(filepath.Join(artifactsDir, "stack.json"))
 
-	cockroach, err := testserver.NewTestServer(testserver.CustomVersionOpt("v26.1.0"))
+	cockroach, err := testdb.Start("")
 	if err != nil {
 		log.Fatalf("start cockroach testserver: %v", err)
 	}
 	defer cockroach.Stop()
 
-	dbURL := normalizeURL(cockroach.PGURL()).String()
+	cockroachURL := testdb.NormalizeURL(cockroach.PGURL())
+	if cockroachURL == nil {
+		log.Fatal("nil cockroach pg url")
+	}
+	dbURL := cockroachURL.String()
 	stateDir := filepath.Join(os.TempDir(), fmt.Sprintf("ebpf-wg-mesh-localtest-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		log.Fatalf("mkdir state dir: %v", err)

@@ -10,7 +10,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -241,19 +240,6 @@ func stopConsoleProcess(proc *consoleProcess) {
 		_ = proc.cmd.Process.Kill()
 		<-proc.done
 	}
-}
-
-func normalizeURL(source *url.URL) *url.URL {
-	if source == nil {
-		log.Fatal("nil cockroach pg url")
-	}
-	clone := *source
-	query := clone.Query()
-	if strings.TrimSpace(query.Get("sslmode")) == "" {
-		query.Set("sslmode", "disable")
-	}
-	clone.RawQuery = query.Encode()
-	return &clone
 }
 
 func waitForLocalAgent(ctx context.Context, server *controlplane.Server, agentID string, runErrCh <-chan error) error {

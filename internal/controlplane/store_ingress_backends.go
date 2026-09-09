@@ -42,7 +42,7 @@ func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]rout
 			allocationIPv6   string
 			allocationID     string
 		)
-		if err := rows.Scan(&domain, &targetPort, (*deliverycore.JsonInt32Slice)(&healthyIPv4Ports), (*deliverycore.JsonInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
+		if err := rows.Scan(&domain, &targetPort, (*deliverycore.JSONInt32Slice)(&healthyIPv4Ports), (*deliverycore.JSONInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
 			return nil, err
 		}
 		if slices.Contains(healthyIPv4Ports, targetPort) && net.ParseIP(allocationIPv4) != nil {

@@ -14,6 +14,12 @@ import (
 // durable event index in the same commit.
 type Transaction func(context.Context, func(*sql.Tx) error) error
 
+type ServiceQueryer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 type UserIdentity struct{ UserID string }
 
 // Events reads the global revision advanced atomically by every committed
