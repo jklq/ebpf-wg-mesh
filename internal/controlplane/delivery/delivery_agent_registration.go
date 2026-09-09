@@ -104,7 +104,10 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if err != nil {
 			return err
 		}
-		if err := s.beginAgentSessionTx(ctx, tx, hello.GetAgentId(), hello.GetSessionId(), now); err != nil {
+		if err := s.beginAgentSessionTx(ctx, tx, AgentPresence{
+			AgentID: hello.GetAgentId(), SessionID: hello.GetSessionId(), LastContactAt: now,
+			Ready: true, Reachable: true, UpdatedAt: now,
+		}); err != nil {
 			return err
 		}
 		if changed {

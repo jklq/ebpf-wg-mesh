@@ -182,6 +182,7 @@ type AllocationAssignment struct {
 	Intent               string
 	IntentMessage        string
 	OperatorRestartNonce int64
+	RolloutState         string
 	DrainStartedAt       sql.NullTime
 	DrainDeadline        sql.NullTime
 	CreatedAt            time.Time

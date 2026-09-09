@@ -41,8 +41,11 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_bootstrap_tokens SET consumed_at = $1 WHERE agent_id = $2 AND consumed_at IS NULL`, now, agentID); err != nil {
 				return err
 			}
-			if err := s.setAgentAdministrationTx(ctx, tx, agentID, AgentStateRetired, "retire",
-				"credentials revoked; mesh identity removed", sql.NullTime{Time: now, Valid: true}, now); err != nil {
+			if err := s.setAgentAdministrationTx(ctx, tx, AgentAdministration{
+				AgentID: agentID, LifecycleState: AgentStateRetired, OperatorIntent: "retire",
+				MaintenanceMessage:  "credentials revoked; mesh identity removed",
+				CredentialRevokedAt: sql.NullTime{Time: now, Valid: true}, UpdatedAt: now,
+			}); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET advertise_addr = '',
@@ -60,7 +63,10 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 			} else if target == AgentStateDraining {
 				message = "draining stateless allocations"
 			}
-			if err := s.setAgentAdministrationTx(ctx, tx, agentID, target, string(target), message, current.CredentialRevokedAt, now); err != nil {
+			if err := s.setAgentAdministrationTx(ctx, tx, AgentAdministration{
+				AgentID: agentID, LifecycleState: target, OperatorIntent: string(target),
+				MaintenanceMessage: message, CredentialRevokedAt: current.CredentialRevokedAt, UpdatedAt: now,
+			}); err != nil {
 				return err
 			}
 		}

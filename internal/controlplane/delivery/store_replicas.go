@@ -95,16 +95,13 @@ func (s *persistence) insertAllocationTx(ctx context.Context, tx *sql.Tx, servic
 		ORDER BY is_current DESC, created_at DESC, id DESC LIMIT 1`, service.ID, service.RolloutGeneration).Scan(&deploymentID); err != nil {
 		return AllocationRecord{}, fmt.Errorf("load allocation deployment: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO allocation_assignments(
-		id, service_id, deployment_id, agent_id, desired_spec_revision,
-		desired_rollout_generation, allocation_ipv4, allocation_ipv6,
-		operator_restart_nonce, rollout_state, intent, intent_message,
-		drain_started_at, drain_deadline, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, '', NULL, NULL, $11, $11)`,
-		alloc.ID, alloc.ServiceID, deploymentID, alloc.AgentID,
-		alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration, alloc.AllocationIPv4, alloc.AllocationIPv6,
-		alloc.RolloutState, allocationIntentRun, now,
-	); err != nil {
+	if err := s.insertAllocationAssignmentTx(ctx, tx, AllocationAssignment{
+		ID: alloc.ID, ServiceID: alloc.ServiceID, DeploymentID: deploymentID, AgentID: alloc.AgentID,
+		SpecRevision: alloc.DesiredSpecRevision, RolloutGeneration: alloc.DesiredRolloutGeneration,
+		IPv4: alloc.AllocationIPv4, IPv6: alloc.AllocationIPv6,
+		RolloutState: alloc.RolloutState, Intent: allocationIntentRun,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
 		return AllocationRecord{}, err
 	}
 	return alloc, nil

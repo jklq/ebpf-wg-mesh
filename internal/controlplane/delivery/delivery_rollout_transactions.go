@@ -85,7 +85,9 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		}
 	}
 	for _, alloc := range plan.Promote {
-		if err := s.setAllocationStateTx(ctx, tx, alloc.ID, AllocationRolloutServing, allocationIntentRun, "", sql.NullTime{}, sql.NullTime{}, now); err != nil {
+		if err := s.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+			AllocationID: alloc.ID, RolloutState: AllocationRolloutServing, Intent: allocationIntentRun, UpdatedAt: now,
+		}); err != nil {
 			return result, err
 		}
 	}
@@ -159,7 +161,10 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 
 func (d *Delivery) persistRolloutWithdrawalsTx(ctx context.Context, tx *sql.Tx, withdrawals []rolloutWithdrawal, now time.Time) error {
 	for _, withdrawal := range withdrawals {
-		if err := d.store.setAllocationStateTx(ctx, tx, withdrawal.AllocationID, AllocationRolloutWithdrawing, allocationIntentRun, withdrawal.Message, sql.NullTime{}, sql.NullTime{}, now); err != nil {
+		if err := d.store.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+			AllocationID: withdrawal.AllocationID, RolloutState: AllocationRolloutWithdrawing,
+			Intent: allocationIntentRun, IntentMessage: withdrawal.Message, UpdatedAt: now,
+		}); err != nil {
 			return err
 		}
 	}
@@ -221,9 +226,12 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 			return nil
 		}
 		for _, alloc := range withdrawing {
-			if err := s.setAllocationStateTx(ctx, tx, alloc.id, AllocationRolloutDraining, allocationIntentDrain,
-				"ingress converged; gracefully draining", sql.NullTime{Time: now.UTC(), Valid: true},
-				sql.NullTime{Time: deadline, Valid: true}, now.UTC()); err != nil {
+			if err := s.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+				AllocationID: alloc.id, RolloutState: AllocationRolloutDraining, Intent: allocationIntentDrain,
+				IntentMessage: "ingress converged; gracefully draining",
+				DrainStarted:  sql.NullTime{Time: now.UTC(), Valid: true},
+				DrainDeadline: sql.NullTime{Time: deadline, Valid: true}, UpdatedAt: now.UTC(),
+			}); err != nil {
 				return err
 			}
 			result.AgentIDs = append(result.AgentIDs, alloc.agentID)
@@ -292,9 +300,12 @@ func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service Servic
 	s := d.store
 	deadline := now.Add(time.Duration(rollout.Strategy.GetDrainingSeconds()) * time.Second)
 	for _, alloc := range target {
-		if err := s.setAllocationStateTx(ctx, tx, alloc.ID, AllocationRolloutDraining, allocationIntentDrain,
-			"failed replacement; cleaning up", sql.NullTime{Time: now, Valid: true},
-			sql.NullTime{Time: deadline, Valid: true}, now); err != nil {
+		if err := s.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+			AllocationID: alloc.ID, RolloutState: AllocationRolloutDraining, Intent: allocationIntentDrain,
+			IntentMessage: "failed replacement; cleaning up",
+			DrainStarted:  sql.NullTime{Time: now, Valid: true},
+			DrainDeadline: sql.NullTime{Time: deadline, Valid: true}, UpdatedAt: now,
+		}); err != nil {
 			return err
 		}
 	}

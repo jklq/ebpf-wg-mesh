@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 
 var currentSchema = []string{
 	`CREATE TABLE control_plane_leases (
@@ -201,10 +201,11 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_allocation_assignments_agent ON allocation_assignments(agent_id, updated_at, id)`,
 	`CREATE INDEX idx_allocation_assignments_service ON allocation_assignments(service_id, id)`,
+	`CREATE UNIQUE INDEX idx_allocation_assignments_owner ON allocation_assignments(id, agent_id)`,
 	`CREATE UNIQUE INDEX idx_allocation_assignments_ipv4 ON allocation_assignments(allocation_ipv4) WHERE allocation_ipv4 <> ''`,
 	`CREATE UNIQUE INDEX idx_allocation_assignments_ipv6 ON allocation_assignments(allocation_ipv6) WHERE allocation_ipv6 <> ''`,
 	`CREATE TABLE allocation_observations (
-			allocation_id STRING NOT NULL REFERENCES allocation_assignments(id) ON DELETE CASCADE,
+			allocation_id STRING NOT NULL,
 			rollout_generation INT8 NOT NULL,
 			applied_spec_revision INT8 NOT NULL,
 			applied_rollout_generation INT8 NOT NULL,
@@ -218,7 +219,8 @@ var currentSchema = []string{
 			session_id STRING NOT NULL,
 			observation_sequence INT8 NOT NULL,
 			observed_at TIMESTAMPTZ NOT NULL,
-			PRIMARY KEY (allocation_id, rollout_generation)
+			PRIMARY KEY (allocation_id, rollout_generation),
+			FOREIGN KEY (allocation_id, agent_id) REFERENCES allocation_assignments(id, agent_id) ON DELETE CASCADE
 		)`,
 	`CREATE VIEW allocations AS SELECT a.id, a.service_id, a.agent_id, a.desired_spec_revision,
 			COALESCE(o.applied_spec_revision, 0::INT8) AS applied_spec_revision,

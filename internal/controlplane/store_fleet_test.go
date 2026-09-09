@@ -377,6 +377,50 @@ func TestCordonedNodesAreExcludedFromNewPlacement(t *testing.T) {
 	}
 }
 
+func TestDisconnectedNodesAreExcludedFromNewPlacement(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a", "node-b"})
+	if err := newTestDelivery(store, nil, nil, nil).EndAgentSession(ctx, "node-a", "test-session-node-a"); err != nil {
+		t.Fatalf("end node-a session: %v", err)
+	}
+
+	agentID, err := chooseAgentForService(ctx, store, envID, replicaSpec(100, 64))
+	if err != nil {
+		t.Fatalf("chooseAgentForService: %v", err)
+	}
+	if agentID != "node-b" {
+		t.Fatalf("new placement selected disconnected agent %q, want node-b", agentID)
+	}
+}
+
+func TestAgentReconnectPreservesOperatorAdministration(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	seedReplicaFixture(t, store, ctx, []string{"node-a"})
+	seedFleetOperator(t, store, ctx)
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-a", deliverycore.AgentStateCordoned); err != nil {
+		t.Fatalf("cordon node-a: %v", err)
+	}
+
+	hello := agentHello("node-a")
+	hello.SessionId = "replacement-session"
+	if _, err := registerAgent(ctx, store, hello); err != nil {
+		t.Fatalf("reconnect node-a: %v", err)
+	}
+	agent, err := store.reads.AgentByID(ctx, "node-a")
+	if err != nil {
+		t.Fatalf("read node-a: %v", err)
+	}
+	if agent.LifecycleState != deliverycore.AgentStateCordoned {
+		t.Fatalf("reconnect changed operator administration to %q", agent.LifecycleState)
+	}
+}
+
 func seedFleetOperator(t *testing.T, store *persistence, ctx context.Context) {
 	t.Helper()
 	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{

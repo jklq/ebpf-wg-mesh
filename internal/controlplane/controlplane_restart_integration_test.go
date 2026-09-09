@@ -213,6 +213,11 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	first.stop()
 
 	second := startSystemControlPlane(t, opts)
+	reconnectedHello := restartAgentHello(liveID, "fd00:30::32")
+	reconnectedHello.SessionId += "-reconnected"
+	reconnectedStream, reconnectedCancel := openAgentSync(t, second.server, liveCert, reconnectedHello)
+	defer reconnectedCancel()
+	_ = recvDesiredState(t, reconnectedStream)
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
