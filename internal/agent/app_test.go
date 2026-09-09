@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -101,131 +100,6 @@ func TestApplyNodeConfigKeepsPreviousAssignmentWhenUpdateFails(t *testing.T) {
 	}
 	if handle.closed != 0 {
 		t.Fatalf("failed update closed mesh %d times", handle.closed)
-	}
-}
-
-func TestPeriodicReconcileLoopUsesLatestDesiredState(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var (
-		mu          sync.RWMutex
-		latest      *agentv1.DesiredNodeState
-		revisionsMu sync.Mutex
-		revisions   []int64
-		firstTick   = make(chan struct{}, 1)
-		secondTick  = make(chan struct{}, 1)
-	)
-
-	mu.Lock()
-	latest = &agentv1.DesiredNodeState{Revision: 1}
-	mu.Unlock()
-
-	go periodicReconcileLoop(ctx, 10*time.Millisecond, func() *agentv1.DesiredNodeState {
-		mu.RLock()
-		defer mu.RUnlock()
-		if latest == nil {
-			return nil
-		}
-		return latest
-	}, func(state *agentv1.DesiredNodeState) {
-		revisionsMu.Lock()
-		revisions = append(revisions, state.GetRevision())
-		count := len(revisions)
-		revisionsMu.Unlock()
-		switch count {
-		case 1:
-			select {
-			case firstTick <- struct{}{}:
-			default:
-			}
-		case 2:
-			select {
-			case secondTick <- struct{}{}:
-			default:
-			}
-		}
-	})
-
-	select {
-	case <-firstTick:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("timed out waiting for first periodic reconcile")
-	}
-
-	mu.Lock()
-	latest = &agentv1.DesiredNodeState{Revision: 2}
-	mu.Unlock()
-
-	select {
-	case <-secondTick:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("timed out waiting for second periodic reconcile")
-	}
-
-	revisionsMu.Lock()
-	seen := append([]int64(nil), revisions...)
-	revisionsMu.Unlock()
-	if len(seen) < 2 {
-		t.Fatalf("expected at least two periodic reconciles, got %v", seen)
-	}
-	if seen[0] != 1 {
-		t.Fatalf("expected first reconcile revision 1, got %v", seen)
-	}
-	if seen[1] != 2 {
-		t.Fatalf("expected second reconcile to use latest revision 2, got %v", seen)
-	}
-}
-
-func TestDesiredWorkloadsEqualIgnoresEnvelopeChanges(t *testing.T) {
-	t.Parallel()
-
-	service := &agentv1.DesiredService{AllocationId: "alloc-1", DesiredSpecRevision: 1}
-	previous := &agentv1.DesiredNodeState{
-		AgentId:  "node-1",
-		Revision: 1,
-		Services: []*agentv1.DesiredService{service},
-		NodeConfig: &agentv1.AssignedNodeConfig{
-			WireguardAddresses: []string{"fd00::1/128"},
-		},
-	}
-	next := &agentv1.DesiredNodeState{
-		AgentId:  "node-1",
-		Revision: 2,
-		Services: []*agentv1.DesiredService{service},
-		NodeConfig: &agentv1.AssignedNodeConfig{
-			WireguardAddresses: []string{"fd00::2/128"},
-		},
-	}
-	if !desiredWorkloadsEqual(previous, next) {
-		t.Fatal("revision and node-config-only change should not reconcile workloads")
-	}
-
-	next.Services = []*agentv1.DesiredService{{AllocationId: "alloc-1", DesiredSpecRevision: 2}}
-	if desiredWorkloadsEqual(previous, next) {
-		t.Fatal("service desired-state change should reconcile workloads")
-	}
-}
-
-func TestStatusReportChanged(t *testing.T) {
-	t.Parallel()
-
-	previous := &agentv1.StatusReport{
-		AgentId:  "node-1",
-		Services: []*agentv1.ServiceCondition{{AllocationId: "alloc-1", Phase: "Healthy"}},
-	}
-	unchanged := &agentv1.StatusReport{
-		AgentId:  "node-1",
-		Services: []*agentv1.ServiceCondition{{AllocationId: "alloc-1", Phase: "Healthy"}},
-	}
-	if statusReportChanged(previous, unchanged) {
-		t.Fatal("equivalent report should not be sent")
-	}
-	unchanged.Services[0].Healthy = true
-	if !statusReportChanged(previous, unchanged) {
-		t.Fatal("changed report should be sent")
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 )
 
+const AgentAuthorityEpoch uint64 = 1
+
 func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
 	s := d.store
 	revision, err := s.currentDesiredRevisionForAgent(ctx, agentID)
@@ -16,9 +18,10 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 		return nil, err
 	}
 	state := &agentv1.DesiredNodeState{
-		AgentId:     agentID,
-		Revision:    revision,
-		GeneratedAt: ts(time.Now().UTC()),
+		AgentId:              agentID,
+		ReconciliationCursor: revision,
+		AuthorityEpoch:       AgentAuthorityEpoch,
+		GeneratedAt:          ts(time.Now().UTC()),
 	}
 	vols, err := d.listDesiredVolumes(ctx, agentID)
 	if err != nil {

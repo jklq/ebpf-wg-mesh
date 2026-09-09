@@ -196,9 +196,11 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 	}
 
 	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: &agentv1.StatusReport{
-		AgentId:             agentID,
-		SessionId:           sessionID,
-		ObservationSequence: 1,
+		AgentId:              agentID,
+		SessionId:            sessionID,
+		ObservationSequence:  1,
+		AuthorityEpoch:       desired.GetAuthorityEpoch(),
+		ReconciliationCursor: desired.GetReconciliationCursor(),
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             desiredService.GetAllocationId(),
 			ServiceId:                service.GetId(),

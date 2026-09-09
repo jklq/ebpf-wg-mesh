@@ -87,12 +87,26 @@ func (r *DockerRuntime) environmentNetworkName(environmentID string) string {
 }
 
 func (r *DockerRuntime) pruneStaleServices(ctx context.Context, desired map[string]*agentv1.DesiredService) error {
+	staleCandidates := make(map[string]struct{})
+	resources, err := r.DiscoverRuntimeResources(ctx)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		if resource.AllocationID != "" {
+			staleCandidates[resource.AllocationID] = struct{}{}
+		}
+	}
+
 	paths, err := filepath.Glob(filepath.Join(r.cfg.DataDir, "desired", "*.json"))
 	if err != nil {
 		return fmt.Errorf("glob desired files: %w", err)
 	}
 	for _, path := range paths {
 		allocationID := strings.TrimSuffix(filepath.Base(path), ".json")
+		staleCandidates[allocationID] = struct{}{}
+	}
+	for allocationID := range staleCandidates {
 		if _, ok := desired[allocationID]; ok {
 			continue
 		}
@@ -100,8 +114,12 @@ func (r *DockerRuntime) pruneStaleServices(ctx context.Context, desired map[stri
 			return err
 		}
 		delete(r.ready, allocationID)
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove desired file %s: %w", path, err)
+		path, err := safeRuntimeChildPath(filepath.Join(r.cfg.DataDir, "desired"), "allocation ID", allocationID)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove desired file %s: %w", path+".json", err)
 		}
 	}
 	return nil
