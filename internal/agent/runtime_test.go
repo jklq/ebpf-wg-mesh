@@ -29,6 +29,11 @@ type fakeEngine struct {
 	stopped    map[string]bool
 	drained    map[string]bool
 	forced     map[string]bool
+	inventory  []RuntimeResource
+}
+
+func (f *fakeEngine) DiscoverServices(context.Context) ([]RuntimeResource, error) {
+	return append([]RuntimeResource(nil), f.inventory...), nil
 }
 
 func (f *fakeEngine) DrainService(_ context.Context, allocationID string, _ time.Time) (bool, bool, error) {
@@ -124,9 +129,9 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 		t.Fatal(err)
 	}
 	state := &agentv1.DesiredNodeState{
-		AgentId:  "node-1",
-		Revision: 2,
-		Volumes:  []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data"}},
+		AgentId:              "node-1",
+		ReconciliationCursor: 2,
+		Volumes:              []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data"}},
 		Services: []*agentv1.DesiredService{{
 			AllocationId:             "alloc-1",
 			ServiceId:                "svc-1",
@@ -158,6 +163,29 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 	}
 	if probedNamespace != "/run/netns/alloc-1" {
 		t.Fatalf("probe did not receive workload namespace path: %q", probedNamespace)
+	}
+}
+
+func TestContainerdRuntimePrunesDiscoveredAllocationWithoutSidecarState(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := &fakeEngine{inventory: []RuntimeResource{{AllocationID: "stale", RuntimeID: "platform-stale"}}}
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: engine,
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "volumes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.removed) != 1 || engine.removed[0] != "stale" {
+		t.Fatalf("removed allocations = %v, want [stale]", engine.removed)
 	}
 }
 

@@ -75,7 +75,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if len(deployed.GetServices()) != 1 || deployed.GetServices()[0].GetServiceId() != service.GetId() {
 		t.Fatalf("deployed desired state: %+v", deployed)
 	}
-	beforeRev := deployed.GetRevision()
+	beforeRev := deployed.GetReconciliationCursor()
 	streamCancel()
 	first.stop()
 
@@ -129,8 +129,8 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if mutated == nil {
 		t.Fatal("exact redeploy did not persist a newer desired rollout on either eligible agent")
 	}
-	if mutated.GetRevision() <= beforeRev {
-		t.Fatalf("expected a newer revision after redeploy, before=%d after=%d", beforeRev, mutated.GetRevision())
+	if mutated.GetReconciliationCursor() <= beforeRev {
+		t.Fatalf("expected a newer revision after redeploy, before=%d after=%d", beforeRev, mutated.GetReconciliationCursor())
 	}
 	if mutated.GetServices()[0].GetDesiredRolloutGeneration() <= deployed.GetServices()[0].GetDesiredRolloutGeneration() {
 		t.Fatalf("redeploy did not advance rollout: before=%d after=%d",

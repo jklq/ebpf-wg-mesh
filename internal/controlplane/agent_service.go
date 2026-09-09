@@ -2,8 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"ebof-wg-mesh/internal/controlplane/identity"
-	"ebof-wg-mesh/internal/controlplane/logs"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +9,9 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/grpc/codes"
@@ -36,7 +37,7 @@ type AgentServiceOption func(*AgentService)
 
 type agentDelivery interface {
 	ObserveAgentStatus(context.Context, string, *agentv1.StatusReport) error
-	ObserveAgentHeartbeat(context.Context, string, string) error
+	ObserveAgentHeartbeat(context.Context, string, string, bool) error
 	EndAgentSession(context.Context, string, string) error
 	ReconcileFleetCapacity(context.Context) error
 	DesiredStateForAgent(context.Context, string) (*agentv1.DesiredNodeState, error)
@@ -117,6 +118,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
 	}
+	if hello.GetAcceptedAuthorityEpoch() > deliverycore.AgentAuthorityEpoch {
+		return status.Errorf(codes.FailedPrecondition, "agent authority epoch %d is newer than control-plane epoch %d", hello.GetAcceptedAuthorityEpoch(), deliverycore.AgentAuthorityEpoch)
+	}
 	if err := s.store.AuthorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
 		return status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
 	}
@@ -176,7 +180,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if payload.Heartbeat.GetSessionId() != hello.GetSessionId() {
 				return status.Error(codes.FailedPrecondition, "heartbeat session_id is stale")
 			}
-			if err := s.delivery.ObserveAgentHeartbeat(ctx, hello.GetAgentId(), payload.Heartbeat.GetSessionId()); err != nil {
+			if err := s.delivery.ObserveAgentHeartbeat(ctx, hello.GetAgentId(), payload.Heartbeat.GetSessionId(), payload.Heartbeat.GetRecoveryMode()); err != nil {
 				return status.Errorf(codes.FailedPrecondition, "heartbeat: %v", err)
 			}
 		case *agentv1.AgentClientMessage_StatusReport:
@@ -186,7 +190,10 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if payload.StatusReport.GetSessionId() != hello.GetSessionId() {
 				return status.Error(codes.FailedPrecondition, "status report session_id is stale")
 			}
-			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()))
+			if payload.StatusReport.GetAuthorityEpoch() != deliverycore.AgentAuthorityEpoch {
+				return status.Errorf(codes.FailedPrecondition, "status report authority epoch %d does not match %d", payload.StatusReport.GetAuthorityEpoch(), deliverycore.AgentAuthorityEpoch)
+			}
+			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()), "recovery_mode", payload.StatusReport.GetRecoveryMode())
 			if err := s.delivery.ObserveAgentStatus(ctx, hello.GetAgentId(), payload.StatusReport); err != nil {
 				return status.Errorf(codes.FailedPrecondition, "status report: %v", err)
 			}
@@ -214,7 +221,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 }
 
 func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID string, notifyCh <-chan struct{}) error {
-	var lastRevision int64 = -1
+	var lastCursor int64 = -1
 	for {
 		select {
 		case <-ctx.Done():
@@ -224,7 +231,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 				return nil
 			}
 			slog.Info("notify received", "agent_id", agentID)
-			nextRevision, err := sendLatestDesiredState(ctx, agentID, lastRevision, func() (*agentv1.DesiredNodeState, error) {
+			nextCursor, err := sendLatestDesiredState(ctx, agentID, lastCursor, func() (*agentv1.DesiredNodeState, error) {
 				state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 				if err != nil {
 					return nil, err
@@ -241,7 +248,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			if err != nil {
 				return status.Errorf(codes.Internal, "desired state: %v", err)
 			}
-			lastRevision = nextRevision
+			lastCursor = nextCursor
 		}
 	}
 }
@@ -314,7 +321,7 @@ func (s *AgentService) attachRegistryPullCredentials(agentID string, state *agen
 func sendLatestDesiredState(
 	ctx context.Context,
 	agentID string,
-	lastRevision int64,
+	lastCursor int64,
 	load func() (*agentv1.DesiredNodeState, error),
 	send func(*agentv1.DesiredNodeState) error,
 ) (int64, error) {
@@ -322,17 +329,17 @@ func sendLatestDesiredState(
 	for {
 		state, err := load()
 		if err != nil {
-			return lastRevision, err
+			return lastCursor, err
 		}
-		if state.Revision == lastRevision {
-			slog.Info("desired state unchanged", "agent_id", agentID, "revision", state.Revision)
-			return lastRevision, nil
+		if state.GetReconciliationCursor() == lastCursor {
+			slog.Info("desired state unchanged", "agent_id", agentID, "cursor", state.GetReconciliationCursor())
+			return lastCursor, nil
 		}
-		slog.Info("sending desired state", "agent_id", agentID, "revision", state.Revision, "services", len(state.Services), "volumes", len(state.Volumes))
+		slog.Info("sending desired state", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.Services), "volumes", len(state.Volumes))
 		if err := send(state); err != nil {
-			return lastRevision, err
+			return lastCursor, err
 		}
-		slog.Info("desired state sent", "agent_id", agentID, "revision", state.Revision)
-		lastRevision = state.Revision
+		slog.Info("desired state sent", "agent_id", agentID, "cursor", state.GetReconciliationCursor())
+		lastCursor = state.GetReconciliationCursor()
 	}
 }
