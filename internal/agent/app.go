@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 )
 
 type App struct {
@@ -27,7 +25,8 @@ type App struct {
 	mesh           MeshHandle
 	meshFactory    MeshFactory
 	meshAssignment mesh.Assignment
-	ready          atomic.Bool
+	stateStore     *localStateStore
+	supervisor     *workloadSupervisor
 	healthStop     func(context.Context) error
 }
 
@@ -35,6 +34,7 @@ const (
 	initialReconnectDelay   = time.Second
 	maxReconnectDelay       = 30 * time.Second
 	reconcileSafetyInterval = time.Minute
+	credentialCheckInterval = time.Minute
 )
 
 var errRotateSession = errors.New("rotate mTLS session")
@@ -68,6 +68,9 @@ func (a *App) Close() error {
 	if a.mesh != nil {
 		_ = a.mesh.Close()
 	}
+	if a.stateStore != nil {
+		_ = a.stateStore.Close()
+	}
 	return nil
 }
 
@@ -79,6 +82,25 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		a.healthStop = shutdown
 	}
+	clusterID, err := a.persistedClusterIdentity()
+	if err != nil {
+		return err
+	}
+	store, err := openLocalStateStore(a.cfg.Runtime.DataDir, a.cfg.Node.ID)
+	if err != nil {
+		return fmt.Errorf("open local state: %w", err)
+	}
+	a.stateStore = store
+	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
+	if err := a.supervisor.Start(ctx, clusterID); err != nil {
+		_ = store.Close()
+		a.stateStore = nil
+		return fmt.Errorf("start workload supervision: %w", err)
+	}
+	return a.runConnections(ctx)
+}
+
+func (a *App) runConnections(ctx context.Context) error {
 	delay := initialReconnectDelay
 	for {
 		err := a.runSession(ctx)
@@ -113,16 +135,15 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) readyReport(context.Context) health.Report {
-	if a.ready.Load() {
+	if a.supervisor != nil && a.supervisor.Ready() {
 		return health.Report{Status: health.StatusReady}
 	}
-	return health.Report{Status: health.StatusNotReady, Failed: []string{"control_plane"}}
+	return health.Report{Status: health.StatusNotReady, Failed: []string{"local_state_recovery"}}
 }
 
 func (a *App) runSession(ctx context.Context) error {
-	defer a.ready.Store(false)
 	slog.Info("starting agent session", "agent_id", a.cfg.Node.ID)
-	creds, certNotAfter, err := a.clientCredentials(ctx)
+	creds, certNotAfter, clusterID, err := a.clientCredentials(ctx)
 	if err != nil {
 		return fmt.Errorf("build control plane credentials: %w", err)
 	}
@@ -143,7 +164,6 @@ func (a *App) runSession(ctx context.Context) error {
 	sessionID := uuid.NewString()
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
-		a.ready.Store(false)
 		return fmt.Errorf("open sync stream: %w", err)
 	}
 	slog.Info("opened sync stream", "agent_id", a.cfg.Node.ID)
@@ -157,6 +177,14 @@ func (a *App) runSession(ctx context.Context) error {
 		defer sendMu.Unlock()
 		return stream.Send(msg)
 	}
+	summary, err := a.supervisor.Summary()
+	if err != nil {
+		return fmt.Errorf("read local inventory: %w", err)
+	}
+	runtimeResources := make([]*agentv1.RuntimeResource, 0, len(summary.RuntimeResources))
+	for _, resource := range summary.RuntimeResources {
+		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
+	}
 	if err := send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
 			AgentId:                 a.cfg.Node.ID,
@@ -169,6 +197,10 @@ func (a *App) runSession(ctx context.Context) error {
 			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 			SoftwareVersion:         Version,
 			SessionId:               sessionID,
+			AcceptedAuthorityEpoch:  summary.AuthorityEpoch,
+			ReconciliationCursor:    summary.ReconciliationCursor,
+			RecoveryMode:            summary.Initialization == initializationRecovery,
+			RuntimeResources:        runtimeResources,
 		}},
 	}); err != nil {
 		return err
@@ -182,129 +214,111 @@ func (a *App) runSession(ctx context.Context) error {
 			logSink.Close()
 		}()
 	}
-	var (
-		desiredStateMu   sync.RWMutex
-		latestDesired    *agentv1.DesiredNodeState
-		reconcileStateMu sync.Mutex
-		lastReport       *agentv1.StatusReport
-		observationSeq   uint64
-	)
-	reconcileAndReport := func(state *agentv1.DesiredNodeState) error {
-		reconcileStateMu.Lock()
-		defer reconcileStateMu.Unlock()
-		identityChanged, reconcileErr := a.ensureManagedDashboardIdentity(sessionCtx, client, state)
-		if reconcileErr != nil {
-			reconcileErr = fmt.Errorf("ensure managed dashboard identity: %w", reconcileErr)
-		}
-		if reconcileErr == nil && identityChanged {
-			restarter, ok := a.runtime.(managedDashboardRestartRuntime)
-			if !ok {
-				reconcileErr = errors.New("runtime cannot restart the managed dashboard after certificate renewal")
-			} else if err := restarter.RestartManagedDashboard(sessionCtx, state); err != nil {
-				reconcileErr = err
+	go a.heartbeatLoop(sessionCtx, sessionID, send)
+	credentialTicker := time.NewTicker(credentialCheckInterval)
+	defer credentialTicker.Stop()
+	type receiveResult struct {
+		message *agentv1.AgentServerMessage
+		err     error
+	}
+	received := make(chan receiveResult, 1)
+	go func() {
+		for {
+			message, err := stream.Recv()
+			select {
+			case received <- receiveResult{message: message, err: err}:
+			case <-sessionCtx.Done():
+				return
+			}
+			if err != nil {
+				return
 			}
 		}
-		var report *agentv1.StatusReport
-		if reconcileErr == nil {
-			report, reconcileErr = a.runtime.Reconcile(sessionCtx, state)
-		}
-		if reconcileErr != nil {
-			slog.Error("reconcile failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", reconcileErr)
-			report = &agentv1.StatusReport{AgentId: a.cfg.Node.ID}
-		}
-		report.AgentId = a.cfg.Node.ID
-		report.SessionId = sessionID
-		if lastReport != nil {
-			report.ObservationSequence = lastReport.GetObservationSequence()
-		}
-		if !statusReportChanged(lastReport, report) {
-			return nil
-		}
-		observationSeq++
-		report.ObservationSequence = observationSeq
-		if err := send(&agentv1.AgentClientMessage{
-			Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: report},
-		}); err != nil {
+	}()
+	var lastSentSequence uint64
+	authorityConfirmed := false
+	sendCurrentReport := func() error {
+		report, err := a.supervisor.CurrentReport()
+		if err != nil || report == nil {
 			return err
 		}
-		lastReport = proto.Clone(report).(*agentv1.StatusReport)
-		return nil
-	}
-	go a.heartbeatLoop(sessionCtx, sessionID, send)
-	latestDesiredState := func() *agentv1.DesiredNodeState {
-		desiredStateMu.RLock()
-		defer desiredStateMu.RUnlock()
-		if latestDesired == nil {
+		if report.GetObservationSequence() <= lastSentSequence {
 			return nil
 		}
-		return proto.Clone(latestDesired).(*agentv1.DesiredNodeState)
-	}
-	reconcileLatest := func(source string) {
-		state := latestDesiredState()
-		if state == nil {
-			return
+		report.SessionId = sessionID
+		if err := send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: report}}); err != nil {
+			return err
 		}
-		if err := reconcileAndReport(state); err != nil && sessionCtx.Err() == nil {
-			slog.Warn("runtime reconciliation failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "source", source, "error", err)
-		}
+		lastSentSequence = report.GetObservationSequence()
+		return nil
 	}
-	go periodicReconcileLoop(sessionCtx, reconcileSafetyInterval, latestDesiredState, func(*agentv1.DesiredNodeState) {
-		reconcileLatest("safety-resync")
-	})
-	if source, ok := a.runtime.(RuntimeEventSource); ok {
-		events, eventErrors := source.ReconcileEvents(sessionCtx)
-		go runtimeEventReconcileLoop(sessionCtx, events, eventErrors, func() {
-			reconcileLatest("runtime-event")
-		}, func(err error) {
-			slog.Warn("runtime event watch ended", "agent_id", a.cfg.Node.ID, "error", err)
-		})
-	}
-
 	for {
-		msg, err := stream.Recv()
-		if err != nil {
+		select {
+		case <-sessionCtx.Done():
 			if errors.Is(context.Cause(sessionCtx), errRotateSession) {
 				return errRotateSession
 			}
-			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-				return nil
+			return nil
+		case <-a.supervisor.ReportNotifications():
+			if !authorityConfirmed {
+				continue
 			}
-			return err
-		}
-		state := msg.GetDesiredState()
-		if state == nil {
-			continue
-		}
-		if err := a.applyNodeConfig(sessionCtx, state.GetNodeConfig()); err != nil {
-			return fmt.Errorf("apply assigned node config: %w", err)
-		}
-		desiredStateMu.Lock()
-		workloadsChanged := !desiredWorkloadsEqual(latestDesired, state)
-		latestDesired = proto.Clone(state).(*agentv1.DesiredNodeState)
-		desiredStateMu.Unlock()
-		a.ready.Store(true)
-		slog.Info("received desired state", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-		if !workloadsChanged {
-			continue
-		}
-		if err := reconcileAndReport(state); err != nil {
-			return err
+			if err := sendCurrentReport(); err != nil {
+				return err
+			}
+		case <-credentialTicker.C:
+			state, err := a.stateStore.desiredState()
+			if err != nil {
+				return fmt.Errorf("load desired state for credential renewal: %w", err)
+			}
+			if state == nil {
+				continue
+			}
+			if err := a.refreshManagedDashboardIdentity(sessionCtx, client, state); err != nil {
+				slog.Warn("refresh managed dashboard identity", "agent_id", a.cfg.Node.ID, "error", err)
+			}
+		case result := <-received:
+			if result.err != nil {
+				if errors.Is(result.err, context.Canceled) || ctx.Err() != nil {
+					return nil
+				}
+				return result.err
+			}
+			state := result.message.GetDesiredState()
+			if state == nil {
+				continue
+			}
+			changed, err := a.supervisor.AcceptDesired(clusterID, state)
+			if err != nil {
+				return fmt.Errorf("accept desired state: %w", err)
+			}
+			if err := a.refreshManagedDashboardIdentity(sessionCtx, client, state); err != nil {
+				a.supervisor.ReconcileAcceptedDesired()
+				return err
+			}
+			a.supervisor.ReconcileAcceptedDesired()
+			authorityConfirmed = true
+			slog.Info("accepted desired state", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
+			if !changed {
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
+			}
 		}
 	}
 }
 
-func desiredWorkloadsEqual(previous, next *agentv1.DesiredNodeState) bool {
-	if previous == nil || next == nil {
-		return previous == next
+func (a *App) refreshManagedDashboardIdentity(ctx context.Context, issuer dashboardCertificateIssuer, state *agentv1.DesiredNodeState) error {
+	changed, err := a.ensureManagedDashboardIdentity(ctx, issuer, state)
+	if err != nil {
+		return fmt.Errorf("ensure managed dashboard identity: %w", err)
 	}
-	return proto.Equal(
-		&agentv1.DesiredNodeState{Services: previous.GetServices(), Volumes: previous.GetVolumes()},
-		&agentv1.DesiredNodeState{Services: next.GetServices(), Volumes: next.GetVolumes()},
-	)
-}
-
-func statusReportChanged(previous, next *agentv1.StatusReport) bool {
-	return !proto.Equal(previous, next)
+	if changed {
+		if err := a.supervisor.RestartManagedDashboard(ctx, state); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runtimeEventReconcileLoop(
@@ -338,31 +352,6 @@ func runtimeEventReconcileLoop(
 	}
 }
 
-func periodicReconcileLoop(
-	ctx context.Context,
-	interval time.Duration,
-	desiredState func() *agentv1.DesiredNodeState,
-	reconcile func(*agentv1.DesiredNodeState),
-) {
-	if interval <= 0 || desiredState == nil || reconcile == nil {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			state := desiredState()
-			if state == nil {
-				continue
-			}
-			reconcile(state)
-		}
-	}
-}
-
 func (a *App) rotateSessionAt(ctx context.Context, cancel context.CancelCauseFunc, renewAt time.Time) {
 	delay := time.Until(renewAt)
 	if delay <= 0 {
@@ -387,7 +376,9 @@ func (a *App) heartbeatLoop(ctx context.Context, sessionID string, send func(*ag
 			return
 		case <-ticker.C:
 			_ = send(&agentv1.AgentClientMessage{
-				Payload: &agentv1.AgentClientMessage_Heartbeat{Heartbeat: &agentv1.AgentHeartbeat{AgentId: a.cfg.Node.ID, SessionId: sessionID}},
+				Payload: &agentv1.AgentClientMessage_Heartbeat{Heartbeat: &agentv1.AgentHeartbeat{
+					AgentId: a.cfg.Node.ID, SessionId: sessionID, RecoveryMode: a.supervisor == nil || !a.supervisor.Ready(),
+				}},
 			})
 		}
 	}

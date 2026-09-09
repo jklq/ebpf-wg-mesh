@@ -106,7 +106,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		}
 		if err := s.beginAgentSessionTx(ctx, tx, AgentPresence{
 			AgentID: hello.GetAgentId(), SessionID: hello.GetSessionId(), LastContactAt: now,
-			Ready: true, Reachable: true, UpdatedAt: now,
+			Ready: !hello.GetRecoveryMode(), Reachable: true, UpdatedAt: now,
 		}); err != nil {
 			return err
 		}
@@ -123,13 +123,13 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 
 // ObserveAgentHeartbeat refreshes presence only for the currently registered
 // session incarnation.
-func (d *Delivery) ObserveAgentHeartbeat(ctx context.Context, agentID, sessionID string) error {
+func (d *Delivery) ObserveAgentHeartbeat(ctx context.Context, agentID, sessionID string, recoveryMode bool) error {
 	return d.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}
-		return d.store.recordAgentContactTx(ctx, tx, agentID, sessionID, now)
+		return d.store.recordAgentContactTx(ctx, tx, agentID, sessionID, !recoveryMode, now)
 	})
 }
 

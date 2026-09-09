@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/agent"
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/restartpolicy"
 	"ebof-wg-mesh/internal/runtimeutil"
@@ -58,6 +58,8 @@ type dockerContainerState struct {
 }
 
 type dockerContainerInspect struct {
+	ID     string               `json:"Id"`
+	Name   string               `json:"Name"`
 	State  dockerContainerState `json:"State"`
 	Config struct {
 		Image  string            `json:"Image"`
@@ -109,38 +111,78 @@ func NewDockerRuntime(cfg DockerRuntimeConfig) (*DockerRuntime, error) {
 }
 
 func (r *DockerRuntime) Close() error {
-	if r == nil {
-		return nil
-	}
-	paths, err := filepath.Glob(filepath.Join(r.cfg.DataDir, "desired", "*.json"))
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, path := range paths {
-		allocationID := strings.TrimSuffix(filepath.Base(path), ".json")
-		if err := r.removeService(context.Background(), allocationID); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	for network := range r.environmentNetworks {
-		if err := RemoveDockerNetwork(context.Background(), r.runner, network); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+	// Closing the agent releases only its client-side resources. Containers,
+	// volumes, and networks remain available for discovery and reattachment by
+	// the next agent process.
+	return nil
 }
 
 func (r *DockerRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNodeState) (*agentv1.StatusReport, error) {
+	return r.ReconcileWithCleanup(ctx, state, true)
+}
+
+func (r *DockerRuntime) DiscoverRuntimeResources(ctx context.Context) ([]agent.RuntimeResource, error) {
+	if r == nil {
+		return nil, nil
+	}
+	ids, err := listContainerIDs(ctx, r.runner, "label="+localRuntimeLabel+"="+localRuntimeManagedBy)
+	if err != nil {
+		return nil, fmt.Errorf("discover docker workloads: %w", err)
+	}
+	resources := make([]agent.RuntimeResource, 0, len(ids))
+	seenAllocations := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		inspect, exists, err := r.inspectContainer(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("inspect discovered docker workload %s: %w", id, err)
+		}
+		if !exists {
+			continue
+		}
+		allocationID := strings.TrimSpace(inspect.Config.Labels[meshlabels.AllocationID])
+		if err := validateRuntimeIdentifier("allocation ID", allocationID); err != nil {
+			return nil, fmt.Errorf("discover docker workload %s: %w", id, err)
+		}
+		expectedName := r.containerName(allocationID)
+		if actualName := strings.TrimPrefix(inspect.Name, "/"); actualName != "" && actualName != expectedName {
+			return nil, fmt.Errorf("discover docker workload %s: runtime name %q does not match stable identity %q", id, actualName, expectedName)
+		}
+		if _, duplicate := seenAllocations[allocationID]; duplicate {
+			return nil, fmt.Errorf("discover docker workload %s: duplicate allocation %q", id, allocationID)
+		}
+		seenAllocations[allocationID] = struct{}{}
+		resources = append(resources, agent.RuntimeResource{AllocationID: allocationID, RuntimeID: expectedName})
+	}
+
+	entries, err := os.ReadDir(r.cfg.VolumesDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("discover docker volumes: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path, err := safeRuntimeChildPath(r.cfg.VolumesDir, "volume ID", entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, agent.RuntimeResource{VolumeID: entry.Name(), RuntimeID: path})
+	}
+	return resources, nil
+}
+
+func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1.DesiredNodeState, allowCleanup bool) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
 	desiredVolumes := runtimeutil.IndexDesiredVolumes(state.GetVolumes())
 	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
-	if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
-		return nil, err
-	}
-	if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
-		return nil, err
+	if allowCleanup {
+		if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
+			return nil, err
+		}
+		if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, vol := range state.GetVolumes() {

@@ -1,13 +1,16 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -31,16 +34,17 @@ const (
 )
 
 type clientTLSMaterial struct {
-	certificate tls.Certificate
-	rootCAs     *x509.CertPool
-	notAfter    time.Time
+	certificate     tls.Certificate
+	rootCAs         *x509.CertPool
+	notAfter        time.Time
+	clusterIdentity string
 }
 
-func (a *App) clientCredentials(ctx context.Context) (credentials.TransportCredentials, time.Time, error) {
+func (a *App) clientCredentials(ctx context.Context) (credentials.TransportCredentials, time.Time, string, error) {
 	slog.Info("ensuring client tls material", "agent_id", a.cfg.Node.ID)
 	material, err := a.ensureClientTLSMaterial(ctx)
 	if err != nil {
-		return nil, time.Time{}, err
+		return nil, time.Time{}, "", err
 	}
 	slog.Info("client tls material ready", "agent_id", a.cfg.Node.ID, "not_after", material.notAfter)
 	return credentials.NewTLS(&tls.Config{
@@ -48,7 +52,7 @@ func (a *App) clientCredentials(ctx context.Context) (credentials.TransportCrede
 		RootCAs:      material.rootCAs,
 		ServerName:   a.cfg.ControlPlane.TLS.ServerName,
 		MinVersion:   tls.VersionTLS13,
-	}), material.notAfter, nil
+	}), material.notAfter, material.clusterIdentity, nil
 }
 
 func (a *App) ensureClientTLSMaterial(ctx context.Context) (*clientTLSMaterial, error) {
@@ -164,10 +168,16 @@ func (a *App) loadClientTLSMaterial() (*clientTLSMaterial, error) {
 		return nil, errors.New("append enrolled ca")
 	}
 	return &clientTLSMaterial{
-		certificate: cert,
-		rootCAs:     pool,
-		notAfter:    leaf.NotAfter,
+		certificate:     cert,
+		rootCAs:         pool,
+		notAfter:        leaf.NotAfter,
+		clusterIdentity: clusterIdentity(caPEM),
 	}, nil
+}
+
+func clusterIdentity(caPEM []byte) string {
+	digest := sha256.Sum256(bytes.TrimSpace(caPEM))
+	return hex.EncodeToString(digest[:])
 }
 
 func (a *App) loadOrCreateClientKey() (*ecdsa.PrivateKey, []byte, error) {
@@ -177,12 +187,18 @@ func (a *App) loadOrCreateClientKey() (*ecdsa.PrivateKey, []byte, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := os.Chmod(keyPath, 0o600); err != nil {
+			return nil, nil, fmt.Errorf("secure client key: %w", err)
+		}
 		return key, keyPEM, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, fmt.Errorf("read client key: %w", err)
 	}
 	if err := os.MkdirAll(a.clientTLSDir(), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("mkdir client tls dir: %w", err)
+	}
+	if err := os.Chmod(a.clientTLSDir(), 0o700); err != nil {
+		return nil, nil, fmt.Errorf("secure client tls dir: %w", err)
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -193,7 +209,7 @@ func (a *App) loadOrCreateClientKey() (*ecdsa.PrivateKey, []byte, error) {
 		return nil, nil, fmt.Errorf("marshal client key: %w", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+	if err := writeFileAtomic(keyPath, keyPEM, 0o600); err != nil {
 		return nil, nil, fmt.Errorf("write client key: %w", err)
 	}
 	return key, keyPEM, nil
@@ -203,13 +219,16 @@ func (a *App) persistClientTLSMaterial(keyPEM, certPEM, caPEM []byte) error {
 	if err := os.MkdirAll(a.clientTLSDir(), 0o700); err != nil {
 		return fmt.Errorf("mkdir client tls dir: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(a.clientTLSDir(), agentKeyFileName), keyPEM, 0o600); err != nil {
+	if err := os.Chmod(a.clientTLSDir(), 0o700); err != nil {
+		return fmt.Errorf("secure client tls dir: %w", err)
+	}
+	if err := writeFileAtomic(filepath.Join(a.clientTLSDir(), agentKeyFileName), keyPEM, 0o600); err != nil {
 		return fmt.Errorf("write client key: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(a.clientTLSDir(), agentCertFileName), certPEM, 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(a.clientTLSDir(), agentCertFileName), certPEM, 0o644); err != nil {
 		return fmt.Errorf("write client cert: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(a.clientTLSDir(), agentCAFileName), caPEM, 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(a.clientTLSDir(), agentCAFileName), caPEM, 0o644); err != nil {
 		return fmt.Errorf("write client ca: %w", err)
 	}
 	return nil
@@ -217,6 +236,20 @@ func (a *App) persistClientTLSMaterial(keyPEM, certPEM, caPEM []byte) error {
 
 func (a *App) clientTLSDir() string {
 	return filepath.Join(a.cfg.Runtime.DataDir, agentTLSDirName)
+}
+
+func (a *App) persistedClusterIdentity() (string, error) {
+	caPEM, err := os.ReadFile(filepath.Join(a.clientTLSDir(), agentCAFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read enrolled cluster identity: %w", err)
+	}
+	if len(bytes.TrimSpace(caPEM)) == 0 {
+		return "", errors.New("enrolled cluster identity is empty")
+	}
+	return clusterIdentity(caPEM), nil
 }
 
 func createCSR(agentID string, key *ecdsa.PrivateKey) ([]byte, error) {

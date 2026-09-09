@@ -33,6 +33,7 @@ var jsonEncoderPool = sync.Pool{
 }
 
 type serviceEngine interface {
+	DiscoverServices(context.Context) ([]RuntimeResource, error)
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
 	DrainService(context.Context, string, time.Time) (bool, bool, error)
 	RemoveService(context.Context, string) error
@@ -152,15 +153,46 @@ func (r *ContainerdRuntime) RestartManagedDashboard(ctx context.Context, state *
 }
 
 func (r *ContainerdRuntime) Reconcile(ctx context.Context, state *agentv1.DesiredNodeState) (*agentv1.StatusReport, error) {
+	return r.ReconcileWithCleanup(ctx, state, true)
+}
+
+func (r *ContainerdRuntime) DiscoverRuntimeResources(ctx context.Context) ([]RuntimeResource, error) {
+	if r == nil || r.engine == nil {
+		return nil, nil
+	}
+	resources, err := r.engine.DiscoverServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(r.cfg.Runtime.VolumesDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("discover runtime volumes: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path, err := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, RuntimeResource{VolumeID: entry.Name(), RuntimeID: path})
+	}
+	return resources, nil
+}
+
+func (r *ContainerdRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1.DesiredNodeState, allowCleanup bool) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
 	desiredVolumes := runtimeutil.IndexDesiredVolumes(state.GetVolumes())
 	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
-	if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
-		return nil, err
-	}
-	if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
-		return nil, err
+	if allowCleanup {
+		if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
+			return nil, err
+		}
+		if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, vol := range state.GetVolumes() {
@@ -464,12 +496,26 @@ func explicitHTTPLivenessCheck(svc *agentv1.DesiredService) *platformv1.HealthCh
 }
 
 func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[string]*agentv1.DesiredService) error {
+	staleCandidates := make(map[string]struct{})
+	resources, err := r.engine.DiscoverServices(ctx)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		if resource.AllocationID != "" {
+			staleCandidates[resource.AllocationID] = struct{}{}
+		}
+	}
+
 	paths, err := filepath.Glob(filepath.Join(r.cfg.Runtime.DataDir, "desired", "*.json"))
 	if err != nil {
 		return fmt.Errorf("glob desired files: %w", err)
 	}
 	for _, path := range paths {
 		allocationID := strings.TrimSuffix(filepath.Base(path), ".json")
+		staleCandidates[allocationID] = struct{}{}
+	}
+	for allocationID := range staleCandidates {
 		if _, ok := desired[allocationID]; ok {
 			continue
 		}
@@ -480,8 +526,12 @@ func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[
 		if err := r.removeObservation(allocationID); err != nil {
 			return err
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove desired file %s: %w", path, err)
+		path, err := runtimeChildPath(filepath.Join(r.cfg.Runtime.DataDir, "desired"), "allocation ID", allocationID)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove desired file %s: %w", path+".json", err)
 		}
 	}
 	return nil

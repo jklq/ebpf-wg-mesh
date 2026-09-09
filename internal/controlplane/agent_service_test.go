@@ -13,9 +13,9 @@ func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 	t.Parallel()
 
 	states := []*agentv1.DesiredNodeState{
-		{Revision: 2},
+		{ReconciliationCursor: 2},
 		{
-			Revision: 3,
+			ReconciliationCursor: 3,
 			Services: []*agentv1.DesiredService{{
 				AllocationId:             "alloc-1",
 				ServiceId:                "svc-1",
@@ -23,7 +23,7 @@ func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 				DesiredRolloutGeneration: 2,
 			}},
 		},
-		{Revision: 3},
+		{ReconciliationCursor: 3},
 	}
 	var loads int
 	var sent []int64
@@ -41,7 +41,7 @@ func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 			return state, nil
 		},
 		func(state *agentv1.DesiredNodeState) error {
-			sent = append(sent, state.GetRevision())
+			sent = append(sent, state.GetReconciliationCursor())
 			return nil
 		},
 	)

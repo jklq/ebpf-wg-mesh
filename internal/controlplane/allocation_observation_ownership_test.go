@@ -67,7 +67,7 @@ func TestAllocationObservationRejectsStaleSessionSequenceAndForeignOwner(t *test
 	if _, err := registerAgent(ctx, store, reconnected); err != nil {
 		t.Fatal(err)
 	}
-	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, "node-1", "test-session-node-1"); !errors.Is(err, deliverycore.ErrStaleAgentSession) {
+	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, "node-1", "test-session-node-1", false); !errors.Is(err, deliverycore.ErrStaleAgentSession) {
 		t.Fatalf("old-session heartbeat: got %v", err)
 	}
 	report.ObservationSequence = 2

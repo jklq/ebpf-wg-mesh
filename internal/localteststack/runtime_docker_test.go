@@ -291,6 +291,119 @@ func TestDockerRuntimeReconcileRemovesStaleContainerAndVolume(t *testing.T) {
 	}
 }
 
+func TestDockerRuntimeRecoveryPreservesUnknownResources(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "desired", "unknown.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unknownVolume := filepath.Join(dir, "volumes", "unknown-vol")
+	if err := os.MkdirAll(unknownVolume, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runtime.ReconcileWithCleanup(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"}, false); err != nil {
+		t.Fatalf("ReconcileWithCleanup: %v", err)
+	}
+	if runner.hasCommand("rm", "--force", "localteststack-svc-unknown") {
+		t.Fatalf("recovery removed an unowned container: %+v", runner.commands)
+	}
+	if _, err := os.Stat(unknownVolume); err != nil {
+		t.Fatalf("recovery removed an unowned volume: %v", err)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "desired", "unknown.json")); err != nil {
+		t.Fatalf("Close removed durable runtime state: %v", err)
+	}
+}
+
+func TestDockerRuntimeDiscoversStableRuntimeResources(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runner.containers["container-id"] = dockerContainerInspect{
+		ID:   "container-id",
+		Name: "/localteststack-svc-alloc-1",
+		Config: struct {
+			Image  string            `json:"Image"`
+			Labels map[string]string `json:"Labels"`
+		}{Labels: map[string]string{
+			localRuntimeLabel:        localRuntimeManagedBy,
+			"platform.allocation_id": "alloc-1",
+		}},
+	}
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	volumePath := filepath.Join(dir, "volumes", "vol-1")
+	if err := os.MkdirAll(volumePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := runtime.DiscoverRuntimeResources(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeResources: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("resources = %+v, want allocation and volume", resources)
+	}
+	if resources[0].AllocationID != "alloc-1" || resources[0].RuntimeID != "localteststack-svc-alloc-1" {
+		t.Fatalf("allocation resource = %+v", resources[0])
+	}
+	if resources[1].VolumeID != "vol-1" || resources[1].RuntimeID != volumePath {
+		t.Fatalf("volume resource = %+v", resources[1])
+	}
+}
+
+func TestDockerRuntimePrunesDiscoveredContainerWithoutSidecarState(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	container := dockerContainerInspect{Name: "/localteststack-svc-stale"}
+	container.Config.Labels = map[string]string{
+		localRuntimeLabel:        localRuntimeManagedBy,
+		"platform.allocation_id": "stale",
+	}
+	runner.containers["container-id"] = container
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir: dir, VolumesDir: filepath.Join(dir, "volumes"), DockerNetwork: "mesh-local",
+		Runner: runner, ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.hasCommand("rm", "--force", "localteststack-svc-stale") {
+		t.Fatalf("expected discovered stale container removal, got %+v", runner.commands)
+	}
+}
+
 func TestDockerRuntimeDrainSendsSIGTERMThenForceRemovesAfterDeadline(t *testing.T) {
 	t.Parallel()
 
@@ -392,6 +505,15 @@ func (f *fakeDockerRunner) Run(_ context.Context, args ...string) ([]byte, error
 		f.onRun(args)
 	}
 	switch {
+	case len(args) >= 2 && args[0] == "ps":
+		ids := make([]string, 0, len(f.containers))
+		for id, container := range f.containers {
+			if container.Config.Labels[localRuntimeLabel] == localRuntimeManagedBy {
+				ids = append(ids, id)
+			}
+		}
+		slices.Sort(ids)
+		return []byte(strings.Join(ids, "\n")), nil
 	case len(args) >= 3 && args[0] == "network" && args[1] == "inspect":
 		return nil, fmt.Errorf("not found")
 	case len(args) >= 3 && args[0] == "network" && args[1] == "create":

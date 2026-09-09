@@ -46,7 +46,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		if err != nil {
 			return err
 		}
-		if err := s.acceptAgentReportTx(ctx, tx, authenticatedAgentID, report.GetSessionId(), report.GetObservationSequence(), now); err != nil {
+		if err := s.acceptAgentReportTx(ctx, tx, authenticatedAgentID, report.GetSessionId(), report.GetObservationSequence(), !report.GetRecoveryMode(), now); err != nil {
 			return err
 		}
 

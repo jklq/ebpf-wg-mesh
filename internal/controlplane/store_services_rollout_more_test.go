@@ -97,7 +97,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("desiredStateForAgent: %v", err)
 	}
-	if got := state.GetRevision(); got != node1AfterDeleteService {
+	if got := state.GetReconciliationCursor(); got != node1AfterDeleteService {
 		t.Fatalf("expected desired state revision %d, got %d", node1AfterDeleteService, got)
 	}
 

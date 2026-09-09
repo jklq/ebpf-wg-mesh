@@ -54,10 +54,10 @@ func (s *persistence) beginAgentSessionTx(ctx context.Context, tx *sql.Tx, prese
 	return err
 }
 
-func (s *persistence) recordAgentContactTx(ctx context.Context, tx *sql.Tx, agentID, sessionID string, now time.Time) error {
+func (s *persistence) recordAgentContactTx(ctx context.Context, tx *sql.Tx, agentID, sessionID string, ready bool, now time.Time) error {
 	result, err := tx.ExecContext(ctx, `UPDATE agent_presence
-		SET last_contact_at = $3, ready = TRUE, reachable = TRUE, updated_at = $3
-		WHERE agent_id = $1 AND session_id = $2`, agentID, strings.TrimSpace(sessionID), now)
+		SET last_contact_at = $3, ready = $4, reachable = TRUE, updated_at = $3
+		WHERE agent_id = $1 AND session_id = $2`, agentID, strings.TrimSpace(sessionID), now, ready)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (s *persistence) endAgentSessionTx(ctx context.Context, tx *sql.Tx, agentID
 	return err
 }
 
-func (s *persistence) acceptAgentReportTx(ctx context.Context, tx *sql.Tx, agentID, sessionID string, sequence uint64, now time.Time) error {
+func (s *persistence) acceptAgentReportTx(ctx context.Context, tx *sql.Tx, agentID, sessionID string, sequence uint64, ready bool, now time.Time) error {
 	var current string
 	var previousSequence int64
 	if err := tx.QueryRowContext(ctx, `SELECT session_id, last_observation_sequence FROM agent_presence WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&current, &previousSequence); err != nil {
@@ -91,8 +91,8 @@ func (s *persistence) acceptAgentReportTx(ctx context.Context, tx *sql.Tx, agent
 		return fmt.Errorf("%w: report sequence %d follows %d", ErrStaleObservation, sequence, previousSequence)
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE agent_presence
-		SET last_observation_sequence = $3, last_contact_at = $4, ready = TRUE, reachable = TRUE, updated_at = $4
-		WHERE agent_id = $1 AND session_id = $2`, agentID, sessionID, int64(sequence), now)
+		SET last_observation_sequence = $3, last_contact_at = $4, ready = $5, reachable = TRUE, updated_at = $4
+		WHERE agent_id = $1 AND session_id = $2`, agentID, sessionID, int64(sequence), now, ready)
 	return err
 }
 

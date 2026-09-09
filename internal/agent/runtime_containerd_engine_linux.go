@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +99,33 @@ func (e *containerdEngine) SetLogSink(sink LogSink) {
 	e.logSinkMu.Lock()
 	defer e.logSinkMu.Unlock()
 	e.logSink = sink
+}
+
+func (e *containerdEngine) DiscoverServices(ctx context.Context) ([]RuntimeResource, error) {
+	containers, err := e.client.Containers(e.namespaced(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("list containerd resources: %w", err)
+	}
+	resources := make([]RuntimeResource, 0, len(containers))
+	for _, container := range containers {
+		info, err := container.Info(e.namespaced(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("inspect containerd resource %s: %w", container.ID(), err)
+		}
+		if info.Labels[meshlabels.Managed] != "true" {
+			continue
+		}
+		allocationID := strings.TrimSpace(info.Labels[meshlabels.AllocationID])
+		if err := validateRuntimeID("allocation ID", allocationID); err != nil {
+			return nil, fmt.Errorf("managed runtime resource %s: %w", container.ID(), err)
+		}
+		if container.ID() != containerName(allocationID) {
+			return nil, fmt.Errorf("managed runtime resource %s does not match stable allocation identity %s", container.ID(), allocationID)
+		}
+		resources = append(resources, RuntimeResource{AllocationID: allocationID, RuntimeID: container.ID()})
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i].AllocationID < resources[j].AllocationID })
+	return resources, nil
 }
 
 func (e *containerdEngine) ReconcileEvents(ctx context.Context) (<-chan struct{}, <-chan error) {
