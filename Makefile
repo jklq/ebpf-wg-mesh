@@ -23,7 +23,7 @@ test-integration-go:
 	./scripts/go-test-integration.zsh
 
 test-integration-console:
-	go run ./cmd/testcockroach -- bun --cwd=console run test:integration
+	go run ./cmd/testdb -- bun --cwd=console run test:integration
 
 test-e2e-local:
 	LOCALTESTSTACK_PRODUCT_E2E=1 \
