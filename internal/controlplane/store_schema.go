@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
 
 var currentSchema = []string{
 	`CREATE TABLE control_plane_leases (
@@ -69,11 +69,9 @@ var currentSchema = []string{
 	`CREATE UNIQUE INDEX idx_environments_one_production
 			ON environments(project_id) WHERE is_production = TRUE`,
 	`CREATE INDEX idx_environments_project_created ON environments(project_id, created_at, id)`,
-	`CREATE TABLE agents (
+	`CREATE TABLE agent_registrations (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
-			lifecycle_state STRING NOT NULL,
-			state_before_unavailable STRING NOT NULL DEFAULT '',
 			region STRING NOT NULL,
 			zone STRING NOT NULL DEFAULT '',
 			failure_domain STRING NOT NULL,
@@ -89,17 +87,43 @@ var currentSchema = []string{
 			memory_mebibytes_capacity INT8 NOT NULL DEFAULT 0,
 			runtime_capabilities JSONB NOT NULL DEFAULT '[]',
 			software_version STRING NOT NULL DEFAULT '',
-			maintenance_message STRING NOT NULL DEFAULT '',
-			credential_revoked_at TIMESTAMPTZ NULL,
-			last_seen_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			desired_revision INT8 NOT NULL DEFAULT 0
 		)`,
-	`CREATE INDEX idx_agents_state_seen_id ON agents(lifecycle_state, last_seen_at DESC, id)
-			STORING (region, failure_domain, cpu_millis_capacity, memory_mebibytes_capacity,
-			         reserved_cpu_millis, reserved_memory_mebibytes)`,
-	`CREATE UNIQUE INDEX idx_agents_workload_ipv4_subnet ON agents(workload_ipv4_subnet) WHERE workload_ipv4_subnet <> ''`,
+	`CREATE UNIQUE INDEX idx_agent_registrations_workload_ipv4_subnet ON agent_registrations(workload_ipv4_subnet) WHERE workload_ipv4_subnet <> ''`,
+	`CREATE TABLE agent_administration (
+			agent_id STRING PRIMARY KEY REFERENCES agent_registrations(id) ON DELETE CASCADE,
+			lifecycle_state STRING NOT NULL,
+			operator_intent STRING NOT NULL DEFAULT '',
+			maintenance_message STRING NOT NULL DEFAULT '',
+			credential_revoked_at TIMESTAMPTZ NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE TABLE agent_presence (
+			agent_id STRING PRIMARY KEY REFERENCES agent_registrations(id) ON DELETE CASCADE,
+			session_id STRING NOT NULL,
+			last_observation_sequence INT8 NOT NULL DEFAULT 0,
+			last_contact_at TIMESTAMPTZ NOT NULL,
+			ready BOOL NOT NULL,
+			reachable BOOL NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_agent_presence_contact ON agent_presence(last_contact_at DESC, agent_id)`,
+	`CREATE VIEW agents AS SELECT r.id, r.name,
+			CASE WHEN ad.lifecycle_state NOT IN ('enrolling', 'retired')
+			          AND (NOT p.ready OR NOT p.reachable OR p.last_contact_at <= statement_timestamp() - INTERVAL '30 seconds')
+			     THEN 'unavailable' ELSE ad.lifecycle_state END AS lifecycle_state,
+			ad.lifecycle_state AS state_before_unavailable,
+			r.region, r.zone, r.failure_domain, r.reserved_cpu_millis, r.reserved_memory_mebibytes,
+			r.advertise_addr, r.workload_ipv4_subnet, r.workload_ipv6_subnet, r.wireguard_public_key,
+			r.wireguard_listen_port, r.wireguard_ipv6, r.cpu_millis_capacity, r.memory_mebibytes_capacity,
+			r.runtime_capabilities, r.software_version, ad.maintenance_message, ad.credential_revoked_at,
+			p.last_contact_at AS last_seen_at, r.created_at, GREATEST(r.updated_at, ad.updated_at, p.updated_at) AS updated_at,
+			r.desired_revision
+		FROM agent_registrations r
+		JOIN agent_administration ad ON ad.agent_id = r.id
+		JOIN agent_presence p ON p.agent_id = r.id`,
 	`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
@@ -157,33 +181,69 @@ var currentSchema = []string{
 	`CREATE INDEX idx_domain_bindings_service ON domain_bindings(service_id, hostname)`,
 	`CREATE UNIQUE INDEX idx_domain_bindings_generated_service
 			ON domain_bindings(service_id) WHERE platform_generated = TRUE`,
-	`CREATE TABLE allocations (
+	`CREATE TABLE allocation_assignments (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-			agent_id STRING NOT NULL REFERENCES agents(id),
+			deployment_id STRING NOT NULL,
+			agent_id STRING NOT NULL REFERENCES agent_registrations(id),
 			desired_spec_revision INT8 NOT NULL,
-			applied_spec_revision INT8 NOT NULL,
 			desired_rollout_generation INT8 NOT NULL,
-			applied_rollout_generation INT8 NOT NULL,
-			phase STRING NOT NULL,
-			message STRING NOT NULL,
 			allocation_ipv4 STRING NOT NULL DEFAULT '',
 			allocation_ipv6 STRING NOT NULL DEFAULT '',
-			healthy_ipv4_ports JSONB NOT NULL DEFAULT '[]',
-			healthy_ipv6_ports JSONB NOT NULL DEFAULT '[]',
-			healthy BOOL NOT NULL,
-			restart_observation_json JSONB NOT NULL DEFAULT '{}',
 			operator_restart_nonce INT8 NOT NULL DEFAULT 0,
 			rollout_state STRING NOT NULL,
+			intent STRING NOT NULL,
+			intent_message STRING NOT NULL DEFAULT '',
 			drain_started_at TIMESTAMPTZ NULL,
 			drain_deadline TIMESTAMPTZ NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-	`CREATE INDEX idx_allocations_agent ON allocations(agent_id, updated_at, id)`,
-	`CREATE INDEX idx_allocations_service ON allocations(service_id, id)`,
-	`CREATE UNIQUE INDEX idx_allocations_ipv4 ON allocations(allocation_ipv4) WHERE allocation_ipv4 <> ''`,
-	`CREATE UNIQUE INDEX idx_allocations_ipv6 ON allocations(allocation_ipv6) WHERE allocation_ipv6 <> ''`,
+	`CREATE INDEX idx_allocation_assignments_agent ON allocation_assignments(agent_id, updated_at, id)`,
+	`CREATE INDEX idx_allocation_assignments_service ON allocation_assignments(service_id, id)`,
+	`CREATE UNIQUE INDEX idx_allocation_assignments_ipv4 ON allocation_assignments(allocation_ipv4) WHERE allocation_ipv4 <> ''`,
+	`CREATE UNIQUE INDEX idx_allocation_assignments_ipv6 ON allocation_assignments(allocation_ipv6) WHERE allocation_ipv6 <> ''`,
+	`CREATE TABLE allocation_observations (
+			allocation_id STRING NOT NULL REFERENCES allocation_assignments(id) ON DELETE CASCADE,
+			rollout_generation INT8 NOT NULL,
+			applied_spec_revision INT8 NOT NULL,
+			applied_rollout_generation INT8 NOT NULL,
+			phase STRING NOT NULL,
+			message STRING NOT NULL,
+			healthy_ipv4_ports JSONB NOT NULL DEFAULT '[]',
+			healthy_ipv6_ports JSONB NOT NULL DEFAULT '[]',
+			healthy BOOL NOT NULL,
+			restart_observation_json JSONB NOT NULL DEFAULT '{}',
+			agent_id STRING NOT NULL REFERENCES agent_registrations(id),
+			session_id STRING NOT NULL,
+			observation_sequence INT8 NOT NULL,
+			observed_at TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (allocation_id, rollout_generation)
+		)`,
+	`CREATE VIEW allocations AS SELECT a.id, a.service_id, a.agent_id, a.desired_spec_revision,
+			COALESCE(o.applied_spec_revision, 0::INT8) AS applied_spec_revision,
+			a.desired_rollout_generation,
+			COALESCE(o.applied_rollout_generation, 0::INT8) AS applied_rollout_generation,
+			CASE WHEN a.rollout_state = 'lost' OR ag.state_before_unavailable = 'retired'
+			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN 'Unavailable'
+			     WHEN a.rollout_state = 'withdrawing' THEN 'Withdrawing'
+			     WHEN a.rollout_state = 'draining' AND COALESCE(o.phase, '') <> 'Drained' THEN 'Draining'
+			     ELSE COALESCE(o.phase, 'Pending') END AS phase,
+			CASE WHEN a.intent_message <> '' THEN a.intent_message ELSE COALESCE(o.message, '') END AS message,
+			a.allocation_ipv4, a.allocation_ipv6,
+			CASE WHEN a.rollout_state IN ('lost', 'withdrawing', 'draining') OR ag.state_before_unavailable = 'retired'
+			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN '[]'::JSONB ELSE COALESCE(o.healthy_ipv4_ports, '[]'::JSONB) END AS healthy_ipv4_ports,
+			CASE WHEN a.rollout_state IN ('lost', 'withdrawing', 'draining') OR ag.state_before_unavailable = 'retired'
+			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN '[]'::JSONB ELSE COALESCE(o.healthy_ipv6_ports, '[]'::JSONB) END AS healthy_ipv6_ports,
+			CASE WHEN a.rollout_state IN ('lost', 'withdrawing', 'draining') OR ag.state_before_unavailable = 'retired'
+			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN FALSE ELSE COALESCE(o.healthy, FALSE) END AS healthy,
+			COALESCE(o.restart_observation_json, '{}'::JSONB) AS restart_observation_json,
+			a.operator_restart_nonce, a.rollout_state, a.drain_started_at, a.drain_deadline,
+			a.created_at, GREATEST(a.updated_at, COALESCE(o.observed_at, a.updated_at)) AS updated_at,
+			a.deployment_id, a.intent
+		FROM allocation_assignments a
+		JOIN agents ag ON ag.id = a.agent_id
+		LEFT JOIN allocation_observations o ON o.allocation_id = a.id AND o.rollout_generation = a.desired_rollout_generation`,
 	`CREATE TABLE service_rollouts (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			rollout_generation INT8 NOT NULL,
@@ -230,6 +290,8 @@ var currentSchema = []string{
 			ON deployments(service_id, rollout_generation DESC, created_at DESC, id)`,
 	`CREATE INDEX idx_deployments_service_updated
 			ON deployments(service_id, updated_at DESC, id)`,
+	`ALTER TABLE allocation_assignments ADD CONSTRAINT fk_allocation_assignment_deployment
+			FOREIGN KEY (deployment_id) REFERENCES deployments(id)`,
 	`CREATE TABLE deployment_transitions (
 			id STRING PRIMARY KEY,
 			deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,

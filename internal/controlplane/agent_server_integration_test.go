@@ -136,6 +136,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
+	sessionID := "agent-server-session"
 	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
 		AgentId:                 agentID,
 		Name:                    "E2E agent",
@@ -146,6 +147,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 		SoftwareVersion:         "test",
+		SessionId:               sessionID,
 	}}}); err != nil {
 		t.Fatalf("send hello: %v", err)
 	}
@@ -194,7 +196,9 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 	}
 
 	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: &agentv1.StatusReport{
-		AgentId: agentID,
+		AgentId:             agentID,
+		SessionId:           sessionID,
+		ObservationSequence: 1,
 		Services: []*agentv1.ServiceCondition{{
 			AllocationId:             desiredService.GetAllocationId(),
 			ServiceId:                service.GetId(),

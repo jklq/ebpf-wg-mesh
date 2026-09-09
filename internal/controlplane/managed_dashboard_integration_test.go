@@ -6,7 +6,6 @@ import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"testing"
-	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -62,7 +61,7 @@ func TestManagedDashboardUsesReservedTrustedAgentWithoutReportedCapacity(t *test
 	}
 }
 
-func TestManagedDashboardSameAgentSyncPreservesServingAllocationState(t *testing.T) {
+func TestManagedDashboardSameAgentSyncRequiresNewGenerationObservation(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -95,8 +94,8 @@ func TestManagedDashboardSameAgentSyncPreservesServingAllocationState(t *testing
 	if got.ID != serving.ID || got.AgentID != trusted.AgentId {
 		t.Fatalf("same-agent sync replaced or moved allocation: %+v", got)
 	}
-	if got.Phase != "Healthy" || !got.Healthy || got.RolloutState != deliverycore.AllocationRolloutServing {
-		t.Fatalf("same-agent sync punched serving state: %+v", got)
+	if got.Phase != "Pending" || got.Healthy || got.AppliedRolloutGeneration != 0 || got.RolloutState != deliverycore.AllocationRolloutServing {
+		t.Fatalf("older observation satisfied the new managed generation: %+v", got)
 	}
 	if got.DesiredSpecRevision != updated.SpecRevision || got.DesiredRolloutGeneration != updated.RolloutGeneration {
 		t.Fatalf("desired generation was not updated: allocation=%+v service=%+v", got, updated)
@@ -169,15 +168,7 @@ func completeManagedAllocation(t *testing.T, store *persistence, ctx context.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE allocations
-		    SET applied_spec_revision = desired_spec_revision,
-		        applied_rollout_generation = desired_rollout_generation,
-		        allocation_ipv6 = 'fd00:200::10', phase = 'Healthy', healthy = TRUE,
-		        rollout_state = $1, updated_at = $2
-		  WHERE id = $3`,
-		deliverycore.AllocationRolloutServing, time.Now().UTC(), allocation.ID,
-	); err != nil {
+	if err := store.markAllocationIDHealthyForTest(ctx, allocation.ID, allocation.AllocationIPv6); err != nil {
 		t.Fatal(err)
 	}
 	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {

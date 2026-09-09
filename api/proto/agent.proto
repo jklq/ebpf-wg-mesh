@@ -17,6 +17,9 @@ message AgentHello {
   int32 wireguard_listen_port = 7;
   repeated string runtime_capabilities = 8;
   string software_version = 9;
+  // A fresh opaque identity for this process incarnation. Reconnecting with a
+  // new session fences reports and heartbeats from an older stream.
+  string session_id = 10;
 }
 
 message EnrollRequest {
@@ -68,6 +71,7 @@ message WorkloadIdentity {
 
 message AgentHeartbeat {
   string agent_id = 1;
+  string session_id = 2;
 }
 
 message DesiredVolume {
@@ -100,6 +104,7 @@ message DesiredService {
   AllocationIntent intent = 17;
   google.protobuf.Timestamp drain_deadline = 18;
   string private_ipv4 = 19;
+  string deployment_id = 20;
 }
 
 enum AllocationIntent {
@@ -150,6 +155,8 @@ message StatusReport {
   string agent_id = 1;
   repeated VolumeCondition volumes = 2;
   repeated ServiceCondition services = 3;
+  string session_id = 4;
+  uint64 observation_sequence = 5;
 }
 
 message LogEntry {

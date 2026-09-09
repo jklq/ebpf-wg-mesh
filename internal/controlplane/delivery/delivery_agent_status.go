@@ -3,18 +3,20 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"net"
+	"math"
 	"slices"
 	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/restartpolicy"
 )
 
-func (d *Delivery) ObserveAgentStatus(ctx context.Context, agentID string, report *agentv1.StatusReport) error {
-	ingressChanged, _, err := d.recordStatusReport(ctx, agentID, report)
+func (d *Delivery) ObserveAgentStatus(ctx context.Context, authenticatedAgentID string, report *agentv1.StatusReport) error {
+	ingressChanged, _, err := d.recordStatusReport(ctx, authenticatedAgentID, report)
 	if err != nil {
 		return err
 	}
@@ -24,7 +26,14 @@ func (d *Delivery) ObserveAgentStatus(ctx context.Context, agentID string, repor
 	return nil
 }
 
-func (d *Delivery) recordStatusReport(ctx context.Context, agentID string, report *agentv1.StatusReport) (bool, []string, error) {
+func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID string, report *agentv1.StatusReport) (bool, []string, error) {
+	if report == nil || strings.TrimSpace(report.GetAgentId()) == "" || report.GetAgentId() != authenticatedAgentID {
+		return false, nil, fmt.Errorf("%w: report agent_id does not match authenticated agent", ErrAllocationOwnership)
+	}
+	if report.GetObservationSequence() == 0 || report.GetObservationSequence() > math.MaxInt64 {
+		return false, nil, fmt.Errorf("%w: observation_sequence must be between 1 and %d", ErrStaleObservation, int64(math.MaxInt64))
+	}
+
 	s := d.store
 	var ingressChanged bool
 	changedEnvironments := make(map[string]struct{})
@@ -33,153 +42,87 @@ func (d *Delivery) recordStatusReport(ctx context.Context, agentID string, repor
 		ingressChanged = false
 		changedEnvironments = make(map[string]struct{})
 		rolloutServiceIDs = make(map[string]struct{})
-		now := time.Now().UTC()
-		for _, cond := range report.Services {
-			var (
-				prevAppliedSpecRevision      int64
-				prevAppliedRolloutGeneration int64
-				desiredSpecRevision          int64
-				prevPhase                    string
-				prevMessage                  string
-				prevHealthy                  bool
-				prevAllocationIPv4           string
-				prevAllocationIPv6           string
-				prevHealthyIPv4Ports         []int32
-				prevHealthyIPv6Ports         []int32
-				hasDomain                    bool
-				environmentID                string
-				serviceID                    string
-				prevRestartRaw               []byte
-			)
-			err := tx.QueryRowContext(ctx,
-				`SELECT a.applied_spec_revision,
-				        a.applied_rollout_generation,
-				        a.desired_spec_revision,
-				        a.phase,
-				        a.message,
-				        a.healthy,
-				        a.allocation_ipv4,
-				        a.allocation_ipv6,
-				        a.healthy_ipv4_ports,
-				        a.healthy_ipv6_ports,
-				        a.restart_observation_json,
-				        EXISTS(SELECT 1 FROM domain_bindings d WHERE d.service_id = a.service_id),
-				        s.environment_id,
-				        a.service_id
-				   FROM allocations a
-				   JOIN services s ON s.id = a.service_id
-				   JOIN agents ag ON ag.id = a.agent_id
-				  WHERE a.id = $1 AND a.agent_id = $2`,
-				cond.AllocationId, agentID,
-			).Scan(
-				&prevAppliedSpecRevision,
-				&prevAppliedRolloutGeneration,
-				&desiredSpecRevision,
-				&prevPhase,
-				&prevMessage,
-				&prevHealthy,
-				&prevAllocationIPv4,
-				&prevAllocationIPv6,
-				(*jsonInt32Slice)(&prevHealthyIPv4Ports),
-				(*jsonInt32Slice)(&prevHealthyIPv6Ports),
-				&prevRestartRaw,
-				&hasDomain,
-				&environmentID,
-				&serviceID,
-			)
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := s.acceptAgentReportTx(ctx, tx, authenticatedAgentID, report.GetSessionId(), report.GetObservationSequence(), now); err != nil {
+			return err
+		}
+
+		for _, cond := range report.GetServices() {
+			if cond.GetAllocationId() == "" || cond.GetServiceId() == "" {
+				return fmt.Errorf("%w: allocation_id and service_id are required", ErrAllocationOwnership)
+			}
+			target, err := s.allocationObservationTargetTx(ctx, tx, cond.GetAllocationId(), authenticatedAgentID, cond.GetDesiredRolloutGeneration())
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: allocation %q", ErrAllocationOwnership, cond.GetAllocationId())
+			}
 			if err != nil {
-				if err == sql.ErrNoRows {
-					continue
-				}
-				return fmt.Errorf("load allocation status: %w", err)
+				return fmt.Errorf("load allocation assignment: %w", err)
 			}
-			healthyIPv4Ports, err := encodeHealthyPorts(cond.GetHealthyIpv4Ports())
-			if err != nil {
-				return fmt.Errorf("encode healthy IPv4 ports: %w", err)
+			if cond.GetServiceId() != target.serviceID {
+				return fmt.Errorf("%w: allocation %q belongs to service %q", ErrAllocationOwnership, cond.GetAllocationId(), target.serviceID)
 			}
-			healthyIPv6Ports, err := encodeHealthyPorts(cond.GetHealthyIpv6Ports())
-			if err != nil {
-				return fmt.Errorf("encode healthy IPv6 ports: %w", err)
+			generation := cond.GetDesiredRolloutGeneration()
+			if generation <= 0 || generation > target.desiredGeneration {
+				return fmt.Errorf("%w: allocation %q generation %d is not assigned (current %d)", ErrAllocationOwnership, cond.GetAllocationId(), generation, target.desiredGeneration)
 			}
-			allocationIPv4 := strings.TrimSpace(cond.GetAllocationIpv4())
-			allocationIPv6 := strings.TrimSpace(cond.GetAllocationIpv6())
-			if s.useReportedAllocationIP {
-				if allocationIPv4 == "" {
-					allocationIPv4 = prevAllocationIPv4
-				}
-				if allocationIPv6 == "" {
-					allocationIPv6 = prevAllocationIPv6
-				}
-				if allocationIPv4 != "" && (net.ParseIP(allocationIPv4) == nil || net.ParseIP(allocationIPv4).To4() == nil) {
-					return fmt.Errorf("reported allocation IPv4 %q is invalid", allocationIPv4)
-				}
-				if allocationIPv6 != "" && (net.ParseIP(allocationIPv6) == nil || net.ParseIP(allocationIPv6).To4() != nil) {
-					return fmt.Errorf("reported allocation IPv6 %q is invalid", allocationIPv6)
-				}
-			} else {
-				if allocationIPv4 != prevAllocationIPv4 || allocationIPv6 != prevAllocationIPv6 {
-					return fmt.Errorf("allocation %s reported addresses %q/%q, want %q/%q", cond.GetAllocationId(), allocationIPv4, allocationIPv6, prevAllocationIPv4, prevAllocationIPv6)
-				}
+			if cond.GetAppliedRolloutGeneration() > generation {
+				return fmt.Errorf("%w: applied generation %d exceeds observed generation %d", ErrAllocationOwnership, cond.GetAppliedRolloutGeneration(), generation)
 			}
+			if generation == target.desiredGeneration && (cond.GetDesiredSpecRevision() != target.desiredSpecRevision || cond.GetAppliedSpecRevision() > target.desiredSpecRevision) {
+				return fmt.Errorf("%w: allocation %q spec revision %d/%d does not match assignment %d", ErrAllocationOwnership, cond.GetAllocationId(), cond.GetDesiredSpecRevision(), cond.GetAppliedSpecRevision(), target.desiredSpecRevision)
+			}
+			if strings.TrimSpace(cond.GetAllocationIpv4()) != target.assignedIPv4 || strings.TrimSpace(cond.GetAllocationIpv6()) != target.assignedIPv6 {
+				return fmt.Errorf("%w: allocation %s reported addresses %q/%q, assigned %q/%q", ErrAllocationOwnership, cond.GetAllocationId(), cond.GetAllocationIpv4(), cond.GetAllocationIpv6(), target.assignedIPv4, target.assignedIPv6)
+			}
+
 			restartRaw, err := encodeRestartObservation(cond.GetRestart())
 			if err != nil {
 				return fmt.Errorf("encode restart observation: %w", err)
 			}
-			statusChanged := prevAppliedSpecRevision != cond.GetAppliedSpecRevision() ||
-				prevAppliedRolloutGeneration != cond.GetAppliedRolloutGeneration() ||
-				prevPhase != cond.GetPhase() ||
-				prevMessage != cond.GetMessage() ||
-				prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 ||
-				!slices.Equal(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) ||
-				!slices.Equal(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) ||
-				prevHealthy != cond.GetHealthy() ||
-				string(prevRestartRaw) != string(restartRaw)
+			phase, healthy := cond.GetPhase(), cond.GetHealthy()
+			if cond.GetRestart().GetCrashLoop() || phase == restartpolicy.PhaseCrashLoop {
+				phase, healthy = restartpolicy.PhaseCrashLoop, false
+			}
+			observation := AllocationObservation{
+				AllocationID: cond.GetAllocationId(), RolloutGeneration: generation,
+				AppliedSpecRevision: cond.GetAppliedSpecRevision(), AppliedGeneration: cond.GetAppliedRolloutGeneration(),
+				Phase: phase, Message: cond.GetMessage(), Healthy: healthy,
+				HealthyIPv4Ports: cond.GetHealthyIpv4Ports(), HealthyIPv6Ports: cond.GetHealthyIpv6Ports(), Restart: cond.GetRestart(),
+				AgentID: authenticatedAgentID, SessionID: report.GetSessionId(), Sequence: report.GetObservationSequence(), ObservedAt: now,
+			}
+			if err := s.recordAllocationObservationTx(ctx, tx, observation); err != nil {
+				return fmt.Errorf("record allocation observation: %w", err)
+			}
+
+			// Older-generation observations remain useful diagnostics, but they
+			// cannot affect current readiness, ingress, or deployment history.
+			if generation != target.desiredGeneration {
+				continue
+			}
+			statusChanged := !target.previousAppliedSpec.Valid || target.previousAppliedSpec.Int64 != cond.GetAppliedSpecRevision() ||
+				!target.previousAppliedGeneration.Valid || target.previousAppliedGeneration.Int64 != cond.GetAppliedRolloutGeneration() ||
+				!target.previousPhase.Valid || target.previousPhase.String != phase || !target.previousMessage.Valid || target.previousMessage.String != cond.GetMessage() ||
+				!target.previousHealthy.Valid || target.previousHealthy.Bool != healthy ||
+				!slices.Equal(target.previousIPv4Ports, cond.GetHealthyIpv4Ports()) || !slices.Equal(target.previousIPv6Ports, cond.GetHealthyIpv6Ports()) ||
+				string(target.previousRestartRaw) != string(restartRaw)
 			if !statusChanged {
 				continue
 			}
-			phase := cond.Phase
-			healthy := cond.Healthy
-			if cond.GetRestart().GetCrashLoop() || phase == restartpolicy.PhaseCrashLoop {
-				phase = restartpolicy.PhaseCrashLoop
-				healthy = false
-			}
-			appliedSpec := cond.GetAppliedSpecRevision()
-			if appliedSpec == 0 && healthy && cond.GetAppliedRolloutGeneration() >= cond.GetDesiredRolloutGeneration() {
-				appliedSpec = desiredSpecRevision
-			}
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE allocations
-				    SET applied_spec_revision = $1,
-				        applied_rollout_generation = $2,
-				        phase = $3,
-				        message = $4,
-				        allocation_ipv4 = $5,
-				        allocation_ipv6 = $6,
-				        healthy_ipv4_ports = $7,
-				        healthy_ipv6_ports = $8,
-				        healthy = $9,
-				        restart_observation_json = $10,
-				        updated_at = $11
-				  WHERE id = $12 AND agent_id = $13`,
-				appliedSpec, cond.AppliedRolloutGeneration, phase, cond.Message, allocationIPv4, allocationIPv6, healthyIPv4Ports, healthyIPv6Ports, healthy, restartRaw, now, cond.AllocationId, agentID,
-			); err != nil {
-				return fmt.Errorf("update allocation status: %w", err)
-			}
-			changedEnvironments[environmentID] = struct{}{}
+			changedEnvironments[target.environmentID] = struct{}{}
 			var rolloutState string
-			err = tx.QueryRowContext(ctx,
-				`SELECT state FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
-				serviceID, cond.GetDesiredRolloutGeneration(),
-			).Scan(&rolloutState)
-			if err != nil && err != sql.ErrNoRows {
+			err = tx.QueryRowContext(ctx, `SELECT state FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`, target.serviceID, generation).Scan(&rolloutState)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			if rolloutState == rolloutStateInProgress {
-				rolloutServiceIDs[serviceID] = struct{}{}
-			} else if err := s.applyAgentDeploymentObservationTx(ctx, tx, serviceID, cond.GetDesiredRolloutGeneration(), phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), agentID); err != nil {
+				rolloutServiceIDs[target.serviceID] = struct{}{}
+			} else if err := s.applyAgentDeploymentObservationTx(ctx, tx, target.serviceID, generation, phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), authenticatedAgentID); err != nil {
 				return fmt.Errorf("apply deployment observation: %w", err)
 			}
-			if hasDomain && (prevHealthy != healthy || prevAllocationIPv4 != allocationIPv4 || prevAllocationIPv6 != allocationIPv6 || !slices.Equal(prevHealthyIPv4Ports, cond.GetHealthyIpv4Ports()) || !slices.Equal(prevHealthyIPv6Ports, cond.GetHealthyIpv6Ports()) || prevPhase != phase) {
+			if target.hasDomain && (!target.previousHealthy.Valid || target.previousHealthy.Bool != healthy || !slices.Equal(target.previousIPv4Ports, cond.GetHealthyIpv4Ports()) || !slices.Equal(target.previousIPv6Ports, cond.GetHealthyIpv6Ports()) || !target.previousPhase.Valid || target.previousPhase.String != phase) {
 				ingressChanged = true
 			}
 		}
@@ -188,9 +131,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, agentID string, repor
 	if err != nil {
 		return false, nil, err
 	}
-	now := time.Now().UTC()
 	for serviceID := range rolloutServiceIDs {
-		advanced, advanceErr := d.advanceRollout(ctx, serviceID, now)
+		advanced, advanceErr := d.advanceRollout(ctx, serviceID, time.Now().UTC())
 		if advanceErr != nil {
 			return false, nil, fmt.Errorf("advance rollout after status: %w", advanceErr)
 		}

@@ -18,11 +18,15 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 	}
 	var rec AgentRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		current, err := agentByIDQuerier(ctx, tx, agentID, true)
+		current, err := agentByIDQuerier(ctx, tx, agentID, false)
 		if err != nil {
 			return err
 		}
-		if err := validateAgentTransition(current.LifecycleState, target); err != nil {
+		var administrationState AgentLifecycleState
+		if err := tx.QueryRowContext(ctx, `SELECT lifecycle_state FROM agent_administration WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&administrationState); err != nil {
+			return err
+		}
+		if err := validateAgentTransition(administrationState, target); err != nil {
 			return err
 		}
 		now := time.Now().UTC()
@@ -37,9 +41,12 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_bootstrap_tokens SET consumed_at = $1 WHERE agent_id = $2 AND consumed_at IS NULL`, now, agentID); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE agents SET lifecycle_state = 'retired',
-				credential_revoked_at = $1, maintenance_message = 'credentials revoked; mesh identity removed',
-				advertise_addr = '', workload_ipv4_subnet = '', workload_ipv6_subnet = '', wireguard_public_key = '',
+			if err := s.setAgentAdministrationTx(ctx, tx, agentID, AgentStateRetired, "retire",
+				"credentials revoked; mesh identity removed", sql.NullTime{Time: now, Valid: true}, now); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET advertise_addr = '',
+				workload_ipv4_subnet = '', workload_ipv6_subnet = '', wireguard_public_key = '',
 				wireguard_listen_port = 0, wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
 				return err
 			}
@@ -53,8 +60,7 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 			} else if target == AgentStateDraining {
 				message = "draining stateless allocations"
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE agents SET lifecycle_state = $1,
-				state_before_unavailable = '', maintenance_message = $2, updated_at = $3 WHERE id = $4`, target, message, now, agentID); err != nil {
+			if err := s.setAgentAdministrationTx(ctx, tx, agentID, target, string(target), message, current.CredentialRevokedAt, now); err != nil {
 				return err
 			}
 		}

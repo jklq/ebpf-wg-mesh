@@ -70,7 +70,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
-	store.useReportedAllocationIP = cfg.Ingress.UseReportedAllocationIP
 	archiveStore, err := source.NewFileArchiveStore(cfg.SourceArchives.Directory)
 	if err != nil {
 		_ = store.Close()

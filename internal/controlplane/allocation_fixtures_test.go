@@ -23,17 +23,25 @@ func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceI
 	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE allocations
-			    SET healthy = TRUE,
-			        %s = $1,
-			        %s = $2,
-			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-			        rollout_state = $5,
-			        updated_at = $3
-			  WHERE service_id = $4`, addressColumn, portsColumn),
-			allocationIP, encodedPorts, time.Now().UTC(), serviceID, deliverycore.AllocationRolloutServing,
+			fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, rollout_state = $4, updated_at = $2 WHERE service_id = $3`, addressColumn),
+			allocationIP, time.Now().UTC(), serviceID, deliverycore.AllocationRolloutServing,
 		); err != nil {
+			return err
+		}
+		ipv4Ports, ipv6Ports := []byte("[]"), []byte("[]")
+		if portsColumn == "healthy_ipv4_ports" {
+			ipv4Ports = encodedPorts
+		} else {
+			ipv6Ports = encodedPorts
+		}
+		if _, err := tx.ExecContext(ctx, `UPSERT INTO allocation_observations(
+			allocation_id, rollout_generation, applied_spec_revision, applied_rollout_generation,
+			phase, message, healthy_ipv4_ports, healthy_ipv6_ports, healthy,
+			restart_observation_json, agent_id, session_id, observation_sequence, observed_at)
+			SELECT a.id, a.desired_rollout_generation, a.desired_spec_revision, a.desired_rollout_generation,
+			       'Healthy', '', $1, $2, TRUE, '{}', a.agent_id, p.session_id, 1, $3
+			FROM allocation_assignments a JOIN agent_presence p ON p.agent_id = a.agent_id
+			WHERE a.service_id = $4`, ipv4Ports, ipv6Ports, time.Now().UTC(), serviceID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -55,24 +63,35 @@ func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, alloca
 	}
 	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		var serviceID string
-		var desiredRollout int64
-		if err := tx.QueryRowContext(ctx,
-			fmt.Sprintf(`UPDATE allocations
-			    SET healthy = TRUE,
-			        %s = $1,
-			        %s = $2,
-			        applied_spec_revision = GREATEST(applied_spec_revision, desired_spec_revision),
-			        applied_rollout_generation = GREATEST(applied_rollout_generation, desired_rollout_generation),
-			        rollout_state = $5,
-			        updated_at = $3
-			  WHERE id = $4
-			  RETURNING service_id, desired_rollout_generation`, addressColumn, portsColumn),
-			allocationIP, encodedPorts, time.Now().UTC(), allocationID, deliverycore.AllocationRolloutServing,
-		).Scan(&serviceID, &desiredRollout); err != nil {
+		now := time.Now().UTC()
+		if strings.TrimSpace(allocationIP) != "" {
+			if _, err := tx.ExecContext(ctx,
+				fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, updated_at = $2 WHERE id = $3`, addressColumn),
+				allocationIP, now, allocationID,
+			); err != nil {
+				return err
+			}
+		}
+		ipv4Ports, ipv6Ports := []byte("[]"), []byte("[]")
+		if portsColumn == "healthy_ipv4_ports" {
+			ipv4Ports = encodedPorts
+		} else {
+			ipv6Ports = encodedPorts
+		}
+		if _, err := tx.ExecContext(ctx, `UPSERT INTO allocation_observations(
+			allocation_id, rollout_generation, applied_spec_revision, applied_rollout_generation,
+			phase, message, healthy_ipv4_ports, healthy_ipv6_ports, healthy,
+			restart_observation_json, agent_id, session_id, observation_sequence, observed_at)
+			SELECT a.id, a.desired_rollout_generation, a.desired_spec_revision, a.desired_rollout_generation,
+			       'Healthy', '', $1, $2, TRUE, '{}', a.agent_id, p.session_id, p.last_observation_sequence + 1, $3
+			FROM allocation_assignments a JOIN agent_presence p ON p.agent_id = a.agent_id WHERE a.id = $4`,
+			ipv4Ports, ipv6Ports, now, allocationID); err != nil {
 			return err
 		}
-		return seedActiveDeploymentTx(ctx, tx, serviceID)
+		_, err := tx.ExecContext(ctx, `UPDATE agent_presence
+			SET last_observation_sequence = last_observation_sequence + 1, last_contact_at = $1, updated_at = $1
+			WHERE agent_id = (SELECT agent_id FROM allocation_assignments WHERE id = $2)`, now, allocationID)
+		return err
 	})
 }
 func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColumn string) {

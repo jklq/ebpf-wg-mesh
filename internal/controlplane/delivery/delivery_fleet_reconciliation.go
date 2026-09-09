@@ -21,7 +21,11 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 	var notify []string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		notify = nil
-		agent, err := agentByIDQuerier(ctx, tx, agentID, true)
+		var locked string
+		if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM agent_administration WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&locked); err != nil {
+			return err
+		}
+		agent, err := agentByIDQuerier(ctx, tx, locked, false)
 		if err != nil {
 			return err
 		}
@@ -118,7 +122,7 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 		case remaining > 0:
 			message = fmt.Sprintf("drain in progress: replacing %d allocation(s) through rolling replacement", remaining)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE agents SET maintenance_message = $1, updated_at = $2 WHERE id = $3 AND lifecycle_state = 'draining'`, message, now, agentID); err != nil {
+		if err := s.setAgentMaintenanceMessageTx(ctx, tx, agentID, message, now); err != nil {
 			return err
 		}
 		if !started {

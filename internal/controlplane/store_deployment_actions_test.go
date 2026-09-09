@@ -268,17 +268,26 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 
 	alloc, err := store.reads.allocationByServiceID(ctx, service.ID)
 	if err == nil {
-		if _, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
+		staleGeneration := current.RolloutGeneration
+		if staleGeneration > 1 {
+			staleGeneration--
+		}
+		_, _, err := testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 			AgentId: "node-1",
 			Services: []*agentv1.ServiceCondition{{
 				AllocationId:             alloc.ID,
 				ServiceId:                service.ID,
-				DesiredRolloutGeneration: current.RolloutGeneration,
-				AppliedRolloutGeneration: current.RolloutGeneration,
+				AllocationIpv4:           alloc.AllocationIPv4,
+				AllocationIpv6:           alloc.AllocationIPv6,
+				DesiredSpecRevision:      alloc.DesiredSpecRevision,
+				AppliedSpecRevision:      alloc.DesiredSpecRevision,
+				DesiredRolloutGeneration: staleGeneration,
+				AppliedRolloutGeneration: staleGeneration,
 				Phase:                    "Healthy",
 				Healthy:                  true,
 			}},
-		}); err != nil {
+		})
+		if err != nil && !errors.Is(err, deliverycore.ErrStaleObservation) && !errors.Is(err, deliverycore.ErrAllocationOwnership) {
 			t.Fatalf("late agent: %v", err)
 		}
 	}

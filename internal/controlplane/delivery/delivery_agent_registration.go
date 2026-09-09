@@ -21,7 +21,13 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			return err
 		}
 
-		existing, err := agentByIDQuerier(ctx, tx, hello.GetAgentId(), true)
+		var lockedAgentID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_registrations WHERE id = $1 FOR UPDATE`, hello.GetAgentId()).Scan(&lockedAgentID); errors.Is(err, sql.ErrNoRows) {
+			return ErrAgentNotEnrolled
+		} else if err != nil {
+			return err
+		}
+		existing, err := agentByIDQuerier(ctx, tx, lockedAgentID, false)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrAgentNotEnrolled
 		}
@@ -58,15 +64,6 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			}
 		}
 
-		nextState := existing.LifecycleState
-		if nextState == AgentStateEnrolling {
-			nextState = AgentStateActive
-		} else if nextState == AgentStateUnavailable {
-			nextState = existing.StateBeforeUnavailable
-			if nextState == "" || nextState == AgentStateUnavailable || nextState == AgentStateRetired {
-				nextState = AgentStateActive
-			}
-		}
 		capabilities := CanonicalCapabilities(hello.GetRuntimeCapabilities())
 		changed = existing.AdvertiseAddr != hello.AdvertiseAddr ||
 			existing.WireGuardPublicKey != hello.GetWireguardPublicKey() ||
@@ -75,7 +72,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			existing.MemoryMebibytesCapcity != hello.MemoryMebibytesCapacity ||
 			!slices.Equal(existing.RuntimeCapabilities, capabilities) ||
 			existing.SoftwareVersion != strings.TrimSpace(hello.GetSoftwareVersion()) ||
-			existing.LifecycleState != nextState ||
+			existing.LifecycleState == AgentStateEnrolling || existing.LifecycleState == AgentStateUnavailable ||
 			addressesBackfilled ||
 			existing.WorkloadIPv4Subnet != workloadIPv4Subnet ||
 			existing.WorkloadIPv6Subnet != workloadSubnet ||
@@ -86,13 +83,12 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE agents SET lifecycle_state = $1, state_before_unavailable = '',
-				advertise_addr = $2, workload_ipv4_subnet = $3, workload_ipv6_subnet = $4, wireguard_public_key = $5,
-				wireguard_listen_port = $6, wireguard_ipv6 = $7, cpu_millis_capacity = $8,
-				memory_mebibytes_capacity = $9, runtime_capabilities = $10,
-				software_version = $11, last_seen_at = $12, updated_at = $12
-			 WHERE id = $13`,
-			nextState,
+			`UPDATE agent_registrations SET
+				advertise_addr = $1, workload_ipv4_subnet = $2, workload_ipv6_subnet = $3, wireguard_public_key = $4,
+				wireguard_listen_port = $5, wireguard_ipv6 = $6, cpu_millis_capacity = $7,
+				memory_mebibytes_capacity = $8, runtime_capabilities = $9,
+				software_version = $10, updated_at = $11
+			 WHERE id = $12`,
 			hello.AdvertiseAddr,
 			workloadIPv4Subnet,
 			workloadSubnet,
@@ -103,10 +99,12 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			hello.MemoryMebibytesCapacity,
 			capabilitiesJSON,
 			strings.TrimSpace(hello.GetSoftwareVersion()),
-			now,
-			hello.AgentId,
+			now, hello.AgentId,
 		)
 		if err != nil {
+			return err
+		}
+		if err := s.beginAgentSessionTx(ctx, tx, hello.GetAgentId(), hello.GetSessionId(), now); err != nil {
 			return err
 		}
 		if changed {
@@ -118,4 +116,28 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		return false, err
 	}
 	return changed, nil
+}
+
+// ObserveAgentHeartbeat refreshes presence only for the currently registered
+// session incarnation.
+func (d *Delivery) ObserveAgentHeartbeat(ctx context.Context, agentID, sessionID string) error {
+	return d.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return d.store.recordAgentContactTx(ctx, tx, agentID, sessionID, now)
+	})
+}
+
+// EndAgentSession makes disconnects visible immediately. The session predicate
+// prevents an old stream's cleanup from fencing a replacement session.
+func (d *Delivery) EndAgentSession(ctx context.Context, agentID, sessionID string) error {
+	return d.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return d.store.endAgentSessionTx(ctx, tx, agentID, sessionID, now)
+	})
 }

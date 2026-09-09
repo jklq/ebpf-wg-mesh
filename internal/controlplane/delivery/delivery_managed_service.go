@@ -138,7 +138,8 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {
 			return err
 		}
-		if _, err := s.insertDeploymentTx(ctx, tx, current.ID, DeploymentStateScheduling, deploymentActor{Kind: DeploymentCauseSystem}, reasonManagedSync, "Managed service synchronized", nextSpecRevision, nextRolloutGeneration, "", directImageRef(spec), "", now); err != nil {
+		deployment, err := s.insertDeploymentTx(ctx, tx, current.ID, DeploymentStateScheduling, deploymentActor{Kind: DeploymentCauseSystem}, reasonManagedSync, "Managed service synchronized", nextSpecRevision, nextRolloutGeneration, "", directImageRef(spec), "", now)
+		if err != nil {
 			return err
 		}
 		rec = current
@@ -157,16 +158,8 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 				return err
 			}
 		} else {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE allocations
-				    SET desired_spec_revision = $1,
-				        desired_rollout_generation = $2,
-				        updated_at = $3
-				  WHERE service_id = $4 AND agent_id = $5
-				    AND rollout_state IN ($6, $7)`,
-				nextSpecRevision, nextRolloutGeneration, now, current.ID, trustedAgentID,
-				AllocationRolloutStarting, AllocationRolloutServing,
-			); err != nil {
+			if err := s.retargetAssignmentsTx(ctx, tx, current.ID, trustedAgentID,
+				deployment.ID, nextSpecRevision, nextRolloutGeneration, now); err != nil {
 				return err
 			}
 		}

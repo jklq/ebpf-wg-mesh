@@ -18,6 +18,9 @@ type placementCandidate struct {
 }
 
 func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQueryer) ([]placementCandidate, error) {
+	// Last-contact TTL is the liveness gate. Administrative intent comes from
+	// state_before_unavailable so a dropped session (control-plane restart)
+	// does not exclude a recently-seen agent from replacement placement.
 	rows, err := q.QueryContext(ctx,
 		`SELECT a.id,
 		        a.region,
@@ -43,7 +46,8 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 			 GROUP BY a.agent_id
 		   ) AS stats
 		     ON stats.agent_id = a.id
-		  WHERE a.last_seen_at > statement_timestamp() - INTERVAL '30 seconds' AND a.lifecycle_state = 'active'
+		  WHERE a.last_seen_at > statement_timestamp() - INTERVAL '30 seconds'
+		    AND a.state_before_unavailable = 'active'
 		  ORDER BY COALESCE(stats.service_count, 0) ASC, a.id ASC`,
 	)
 	if err != nil {

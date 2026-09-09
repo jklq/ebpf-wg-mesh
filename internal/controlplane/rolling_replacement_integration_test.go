@@ -173,10 +173,12 @@ func TestRollingReplacementReadinessFailureKeepsHealthyGeneration(t *testing.T) 
 		t.Fatalf("releaseEnvironment: %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE allocations SET phase = 'Error', message = 'readiness HTTP 503', updated_at = now() WHERE id = $1`, target.ID,
-	); err != nil {
-		t.Fatal(err)
+	report := observationReport(target, "test-session-"+target.AgentID, 1, target.DesiredRolloutGeneration)
+	report.Services[0].Phase = "Error"
+	report.Services[0].Message = "readiness HTTP 503"
+	report.Services[0].Healthy = false
+	if _, _, err := testDelivery(store).recordStatusReport(ctx, target.AgentID, report); err != nil {
+		t.Fatalf("record readiness failure: %v", err)
 	}
 	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatalf("advanceRollout: %v", err)
@@ -319,7 +321,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	originalAgent := target.AgentID
 	originalTargetID := target.ID
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().Add(-time.Hour), originalAgent); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, time.Now().Add(-time.Hour), originalAgent); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), time.Minute); err != nil {
@@ -403,15 +405,7 @@ func rollingTestSpec(image string, replicas, _ int32) *platformv1.ServiceSpec {
 
 func markRolloutAllocationReady(t *testing.T, store *persistence, alloc deliverycore.AllocationRecord) {
 	t.Helper()
-	if _, err := store.db.ExecContext(context.Background(),
-		`UPDATE allocations
-		    SET applied_spec_revision = desired_spec_revision,
-		        applied_rollout_generation = desired_rollout_generation,
-		        phase = 'Healthy', message = '', allocation_ipv6 = $1,
-		        healthy_ipv6_ports = $2, healthy = TRUE, updated_at = now()
-		  WHERE id = $3`,
-		"fd00:200::"+alloc.ID[len(alloc.ID)-4:], []byte("[8080]"), alloc.ID,
-	); err != nil {
+	if err := store.markAllocationIDHealthyForTest(context.Background(), alloc.ID, alloc.AllocationIPv6, 8080); err != nil {
 		t.Fatalf("mark allocation %s ready: %v", alloc.ID, err)
 	}
 }
@@ -419,8 +413,8 @@ func markRolloutAllocationReady(t *testing.T, store *persistence, alloc delivery
 func markAllDrainingComplete(t *testing.T, store *persistence, serviceID string) {
 	t.Helper()
 	if _, err := store.db.ExecContext(context.Background(),
-		`UPDATE allocations SET phase = 'Drained', message = 'graceful exit', updated_at = now()
-		  WHERE service_id = $1 AND rollout_state = $2`, serviceID, deliverycore.AllocationRolloutDraining,
+		`UPDATE allocation_observations SET phase = 'Drained', message = 'graceful exit', healthy = FALSE, observed_at = now()
+		 WHERE allocation_id IN (SELECT id FROM allocation_assignments WHERE service_id = $1 AND rollout_state = $2)`, serviceID, deliverycore.AllocationRolloutDraining,
 	); err != nil {
 		t.Fatalf("mark drains complete: %v", err)
 	}

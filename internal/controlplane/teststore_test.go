@@ -53,6 +53,9 @@ func upsertTestAgent(t *testing.T, store *persistence, ctx context.Context, hell
 	if strings.TrimSpace(hello.SoftwareVersion) == "" {
 		hello.SoftwareVersion = "test"
 	}
+	if strings.TrimSpace(hello.SessionId) == "" {
+		hello.SessionId = "test-session-" + hello.GetAgentId()
+	}
 	if err := enrollTestAgent(ctx, store, hello); err != nil {
 		return false, err
 	}
@@ -67,11 +70,17 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 	}
 	failureDomain := strings.ToLower(id)
 	now := time.Now().UTC()
-	_, err := store.db.ExecContext(ctx, `INSERT INTO agents(
-		id, name, lifecycle_state, region, zone, failure_domain,
-		reserved_cpu_millis, reserved_memory_mebibytes, last_seen_at, created_at, updated_at
-	) VALUES ($1, $2, 'enrolling', 'default', '', $3, 0, 0, $4, $5, $5)
-	ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, time.Unix(0, 0).UTC(), now)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO agent_registrations(
+		id, name, region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
+	) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
+		return err
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
+		VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now); err != nil {
+		return err
+	}
+	_, err := store.db.ExecContext(ctx, `INSERT INTO agent_presence(agent_id, session_id, last_observation_sequence, last_contact_at, ready, reachable, updated_at)
+		VALUES ($1, '', 0, $2, FALSE, FALSE, $2) ON CONFLICT(agent_id) DO NOTHING`, id, time.Unix(0, 0).UTC())
 	return err
 }
 
@@ -145,9 +154,10 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"build_runs",
 		"builder_workers",
 		"deployment_transitions",
+		"allocation_observations",
+		"allocation_assignments",
 		"deployments",
 		"service_rollouts",
-		"allocations",
 		"domain_bindings",
 		"service_revisions",
 		"services",
@@ -155,7 +165,9 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"project_memberships",
 		"environments",
 		"projects",
-		"agents",
+		"agent_presence",
+		"agent_administration",
+		"agent_registrations",
 		"workload_ipv4_prefix_allocator",
 		"agent_bootstrap_tokens",
 		"agent_certificates",

@@ -106,6 +106,29 @@ type AgentRecord struct {
 	LastSeenAt              time.Time
 }
 
+// AgentAdministration is operator-owned intent. Runtime connectivity never
+// mutates this record; effective unavailability is composed with AgentPresence.
+type AgentAdministration struct {
+	AgentID             string
+	LifecycleState      AgentLifecycleState
+	OperatorIntent      string
+	MaintenanceMessage  string
+	CredentialRevokedAt sql.NullTime
+	UpdatedAt           time.Time
+}
+
+// AgentPresence is owned by the live authenticated session. SessionID fences
+// traffic from prior process incarnations.
+type AgentPresence struct {
+	AgentID                 string
+	SessionID               string
+	LastObservationSequence uint64
+	LastContactAt           time.Time
+	Ready                   bool
+	Reachable               bool
+	UpdatedAt               time.Time
+}
+
 type AgentLifecycleState string
 
 const (
@@ -143,6 +166,46 @@ type AllocationRecord struct {
 	RolloutState             string
 	DrainStartedAt           sql.NullTime
 	DrainDeadline            sql.NullTime
+}
+
+// AllocationAssignment is scheduler-owned desired state. An allocation is
+// immutable with respect to its agent and addresses.
+type AllocationAssignment struct {
+	ID                   string
+	AgentID              string
+	ServiceID            string
+	DeploymentID         string
+	SpecRevision         int64
+	RolloutGeneration    int64
+	IPv4                 string
+	IPv6                 string
+	Intent               string
+	IntentMessage        string
+	OperatorRestartNonce int64
+	DrainStartedAt       sql.NullTime
+	DrainDeadline        sql.NullTime
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+// AllocationObservation is assigned-agent-owned runtime state. Observations
+// are retained per generation; only the assignment's current generation can
+// contribute readiness.
+type AllocationObservation struct {
+	AllocationID        string
+	RolloutGeneration   int64
+	AppliedSpecRevision int64
+	AppliedGeneration   int64
+	Phase               string
+	Message             string
+	Healthy             bool
+	HealthyIPv4Ports    []int32
+	HealthyIPv6Ports    []int32
+	Restart             *platformv1.RestartObservation
+	AgentID             string
+	SessionID           string
+	Sequence            uint64
+	ObservedAt          time.Time
 }
 
 type BuildRunRecord struct {

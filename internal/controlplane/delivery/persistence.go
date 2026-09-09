@@ -51,9 +51,8 @@ type Dependencies struct {
 	Events              Events
 	// LogEmitter is optional; when set, delivery emits synthetic build/deploy
 	// log lines for the builds it queues. A nil emitter is a no-op.
-	LogEmitter              *logs.LogEmitter
-	ReservedAgentIDs        []string
-	UseReportedAllocationIP bool
+	LogEmitter       *logs.LogEmitter
+	ReservedAgentIDs []string
 }
 
 // SourceStore is the source-table surface delivery needs inside its own
@@ -73,12 +72,11 @@ type persistence struct {
 	enqueueSourceWorkItemTx  func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
 	sourceStore              SourceStore
 
-	db                      *sql.DB
-	mesh                    config.ControlPlaneMeshConfig
-	reservedAgentIDs        []string
-	useReportedAllocationIP bool
-	withTx                  Transaction
-	withTxUnfenced          Transaction
+	db               *sql.DB
+	mesh             config.ControlPlaneMeshConfig
+	reservedAgentIDs []string
+	withTx           Transaction
+	withTxUnfenced   Transaction
 }
 
 func New(deps Dependencies) *Delivery {
@@ -87,7 +85,6 @@ func New(deps Dependencies) *Delivery {
 			db:                       deps.DB,
 			mesh:                     deps.Mesh,
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
-			useReportedAllocationIP:  deps.UseReportedAllocationIP,
 			withTx:                   deps.Transaction,
 			withTxUnfenced:           deps.UnfencedTransaction,
 			createEnvironmentQuerier: deps.CreateEnvironment,

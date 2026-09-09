@@ -207,7 +207,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 
 	deadCancel()
 	liveCancel()
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL), deadID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL), deadID); err != nil {
 		t.Fatalf("mark stale: %v", err)
 	}
 	first.stop()
@@ -279,5 +279,6 @@ func restartAgentHello(id, addr string) *agentv1.AgentHello {
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 		SoftwareVersion:         "test",
+		SessionId:               "restart-session-" + id,
 	}
 }

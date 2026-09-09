@@ -89,14 +89,21 @@ func (s *persistence) insertAllocationTx(ctx context.Context, tx *sql.Tx, servic
 	if err != nil {
 		return AllocationRecord{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO allocations(
-		id, service_id, agent_id, desired_spec_revision, applied_spec_revision,
-		desired_rollout_generation, applied_rollout_generation, phase, message,
-		allocation_ipv4, allocation_ipv6, healthy_ipv4_ports, healthy_ipv6_ports, healthy, restart_observation_json, operator_restart_nonce,
-		rollout_state, drain_started_at, drain_deadline, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, 0, $5, 0, 'Pending', '', $6, $7, $8, $8, FALSE, '{}', 0, $9, NULL, NULL, $10, $10)`,
-		alloc.ID, alloc.ServiceID, alloc.AgentID, alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration,
-		alloc.AllocationIPv4, alloc.AllocationIPv6, []byte("[]"), alloc.RolloutState, now,
+	var deploymentID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments
+		WHERE service_id = $1 AND rollout_generation = $2
+		ORDER BY is_current DESC, created_at DESC, id DESC LIMIT 1`, service.ID, service.RolloutGeneration).Scan(&deploymentID); err != nil {
+		return AllocationRecord{}, fmt.Errorf("load allocation deployment: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO allocation_assignments(
+		id, service_id, deployment_id, agent_id, desired_spec_revision,
+		desired_rollout_generation, allocation_ipv4, allocation_ipv6,
+		operator_restart_nonce, rollout_state, intent, intent_message,
+		drain_started_at, drain_deadline, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, '', NULL, NULL, $11, $11)`,
+		alloc.ID, alloc.ServiceID, deploymentID, alloc.AgentID,
+		alloc.DesiredSpecRevision, alloc.DesiredRolloutGeneration, alloc.AllocationIPv4, alloc.AllocationIPv6,
+		alloc.RolloutState, allocationIntentRun, now,
 	); err != nil {
 		return AllocationRecord{}, err
 	}
@@ -236,10 +243,23 @@ func (s *persistence) listAllocationsByServiceID(ctx context.Context, serviceID 
 }
 
 func (s *persistence) listAllocationsByServiceIDQuerier(ctx context.Context, q ServiceQueryer, serviceID string, forUpdate bool) ([]AllocationRecord, error) {
-	query := allocationSelectSQL + ` WHERE a.service_id = $1 ORDER BY a.id ASC`
 	if forUpdate {
-		query += ` FOR UPDATE OF a`
+		locked, err := q.QueryContext(ctx, `SELECT id FROM allocation_assignments WHERE service_id = $1 ORDER BY id FOR UPDATE`, serviceID)
+		if err != nil {
+			return nil, err
+		}
+		for locked.Next() {
+			var id string
+			if err := locked.Scan(&id); err != nil {
+				locked.Close()
+				return nil, err
+			}
+		}
+		if err := locked.Close(); err != nil {
+			return nil, err
+		}
 	}
+	query := allocationSelectSQL + ` WHERE a.service_id = $1 ORDER BY a.id ASC`
 	rows, err := q.QueryContext(ctx, query, serviceID)
 	if err != nil {
 		return nil, err
