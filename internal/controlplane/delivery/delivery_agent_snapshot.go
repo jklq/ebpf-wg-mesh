@@ -77,9 +77,9 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT a.id, s.id, s.environment_id, s.name, a.desired_spec_revision, a.desired_rollout_generation,
+		`SELECT a.id, s.id, s.environment_id, s.name, a.deployment_id, a.desired_spec_revision, a.desired_rollout_generation,
 		        ro.image_digest, r.spec_json, e.network_identity, e.name, p.id, p.name,
-		        a.restart_observation_json, a.operator_restart_nonce, a.rollout_state, a.drain_deadline,
+		        a.restart_observation_json, a.operator_restart_nonce, a.rollout_state, a.intent, a.drain_deadline,
 		        a.allocation_ipv4, a.allocation_ipv6
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id
@@ -106,15 +106,16 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 		var environmentName, projectID, projectName string
 		var restartRaw []byte
 		var rolloutState string
+		var intent string
 		var drainDeadline sql.NullTime
-		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &drainDeadline, &svc.PrivateIpv4, &svc.PrivateIpv6); err != nil {
+		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DeploymentId, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &intent, &drainDeadline, &svc.PrivateIpv4, &svc.PrivateIpv6); err != nil {
 			return nil, err
 		}
 		if rolloutState == AllocationRolloutLost {
 			continue
 		}
 		svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_RUN
-		if rolloutState == AllocationRolloutDraining {
+		if intent == allocationIntentDrain {
 			svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN
 			if drainDeadline.Valid {
 				svc.DrainDeadline = ts(drainDeadline.Time)
@@ -145,7 +146,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 			"PLATFORM_PROJECT_ID": projectID, "PLATFORM_PROJECT_NAME": projectName,
 			"PLATFORM_ENVIRONMENT_ID": svc.EnvironmentId, "PLATFORM_ENVIRONMENT_NAME": environmentName,
 			"PLATFORM_SERVICE_ID": svc.ServiceId, "PLATFORM_SERVICE_NAME": svc.Name,
-			"PLATFORM_DEPLOYMENT_ID": deploymentRecordIDForRollout(svc.ServiceId, svc.DesiredRolloutGeneration),
+			"PLATFORM_DEPLOYMENT_ID": svc.GetDeploymentId(),
 		}
 		for key, value := range platformEnv {
 			svc.Spec.Runtime.Env[key] = value

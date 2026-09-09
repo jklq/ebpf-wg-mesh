@@ -80,16 +80,18 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 	result = plan.Result
 	result.EnvironmentID = service.EnvironmentID
 	for _, alloc := range plan.Remove {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE id = $1`, alloc.ID); err != nil {
+		if err := s.deleteAllocationAssignmentTx(ctx, tx, alloc.ID); err != nil {
 			return result, err
 		}
 	}
 	for _, alloc := range plan.Promote {
-		if _, err := tx.ExecContext(ctx, `UPDATE allocations SET rollout_state = $1, updated_at = $2 WHERE id = $3`, AllocationRolloutServing, now, alloc.ID); err != nil {
+		if err := s.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+			AllocationID: alloc.ID, RolloutState: AllocationRolloutServing, Intent: allocationIntentRun, UpdatedAt: now,
+		}); err != nil {
 			return result, err
 		}
 	}
-	if err := persistRolloutWithdrawalsTx(ctx, tx, plan.Withdraw, now); err != nil {
+	if err := d.persistRolloutWithdrawalsTx(ctx, tx, plan.Withdraw, now); err != nil {
 		return result, err
 	}
 	if plan.CompleteRemoval {
@@ -128,7 +130,7 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		created++
 	}
 	finish := decideRolloutPlacement(rolloutSnapshot{Rollout: rollout, Allocations: plan.Allocations}, created, result.NeedsIngressConvergence, now)
-	if err := persistRolloutWithdrawalsTx(ctx, tx, finish.Withdraw, now); err != nil {
+	if err := d.persistRolloutWithdrawalsTx(ctx, tx, finish.Withdraw, now); err != nil {
 		return result, err
 	}
 	result.Changed = result.Changed || finish.Result.Changed
@@ -157,9 +159,12 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 	return result, nil
 }
 
-func persistRolloutWithdrawalsTx(ctx context.Context, tx *sql.Tx, withdrawals []rolloutWithdrawal, now time.Time) error {
+func (d *Delivery) persistRolloutWithdrawalsTx(ctx context.Context, tx *sql.Tx, withdrawals []rolloutWithdrawal, now time.Time) error {
 	for _, withdrawal := range withdrawals {
-		if _, err := tx.ExecContext(ctx, `UPDATE allocations SET rollout_state = $1, phase = 'Withdrawing', message = $2, updated_at = $3 WHERE id = $4`, AllocationRolloutWithdrawing, withdrawal.Message, now, withdrawal.AllocationID); err != nil {
+		if err := d.store.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+			AllocationID: withdrawal.AllocationID, RolloutState: AllocationRolloutWithdrawing,
+			Intent: allocationIntentRun, IntentMessage: withdrawal.Message, UpdatedAt: now,
+		}); err != nil {
 			return err
 		}
 	}
@@ -196,7 +201,7 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 		}
 		deadline := now.UTC().Add(time.Duration(strategy.GetDrainingSeconds()) * time.Second)
 		rows, err := tx.QueryContext(ctx,
-			`SELECT id, agent_id FROM allocations
+			`SELECT id, agent_id FROM allocation_assignments
 			  WHERE service_id = $1 AND rollout_state = $2
 			  ORDER BY created_at, id FOR UPDATE`,
 			serviceID, AllocationRolloutWithdrawing,
@@ -221,14 +226,12 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 			return nil
 		}
 		for _, alloc := range withdrawing {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE allocations
-				    SET rollout_state = $1, healthy = FALSE, healthy_ipv4_ports = $2, healthy_ipv6_ports = $2,
-				        phase = 'Draining', message = 'ingress converged; gracefully draining',
-				        drain_started_at = $3, drain_deadline = $4, updated_at = $3
-				  WHERE id = $5 AND rollout_state = $6`,
-				AllocationRolloutDraining, []byte("[]"), now.UTC(), deadline, alloc.id, AllocationRolloutWithdrawing,
-			); err != nil {
+			if err := s.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+				AllocationID: alloc.id, RolloutState: AllocationRolloutDraining, Intent: allocationIntentDrain,
+				IntentMessage: "ingress converged; gracefully draining",
+				DrainStarted:  sql.NullTime{Time: now.UTC(), Valid: true},
+				DrainDeadline: sql.NullTime{Time: deadline, Valid: true}, UpdatedAt: now.UTC(),
+			}); err != nil {
 				return err
 			}
 			result.AgentIDs = append(result.AgentIDs, alloc.agentID)
@@ -295,12 +298,12 @@ func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service Servic
 	s := d.store
 	deadline := now.Add(time.Duration(rollout.Strategy.GetDrainingSeconds()) * time.Second)
 	for _, alloc := range target {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations SET rollout_state = $1, healthy = FALSE, healthy_ipv4_ports = $2, healthy_ipv6_ports = $2,
-			        phase = 'Draining', message = $3, drain_started_at = $4, drain_deadline = $5, updated_at = $4
-			  WHERE id = $6`,
-			AllocationRolloutDraining, []byte("[]"), "failed replacement; cleaning up", now, deadline, alloc.ID,
-		); err != nil {
+		if err := s.setAllocationStateTx(ctx, tx, allocationAssignmentState{
+			AllocationID: alloc.ID, RolloutState: AllocationRolloutDraining, Intent: allocationIntentDrain,
+			IntentMessage: "failed replacement; cleaning up",
+			DrainStarted:  sql.NullTime{Time: now, Valid: true},
+			DrainDeadline: sql.NullTime{Time: deadline, Valid: true}, UpdatedAt: now,
+		}); err != nil {
 			return err
 		}
 	}
@@ -436,7 +439,7 @@ func (d *Delivery) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, se
 		if alloc.RolloutState != AllocationRolloutStarting {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE id = $1`, alloc.ID); err != nil {
+		if err := s.deleteAllocationAssignmentTx(ctx, tx, alloc.ID); err != nil {
 			return err
 		}
 	}

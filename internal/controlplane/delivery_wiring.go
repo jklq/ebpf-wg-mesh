@@ -17,8 +17,8 @@ func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNoti
 	return deliverycore.Dependencies{
 		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.EnqueueSourceWorkItemTx, SourceStore: store.source,
 		DB: store.db, Mesh: store.mesh, Transaction: store.withTx, UnfencedTransaction: store.withTxUnfenced,
-		ReservedAgentIDs: store.reservedAgentIDs, UseReportedAllocationIP: store.useReportedAllocationIP,
-		Notifier: notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
+		ReservedAgentIDs: store.reservedAgentIDs,
+		Notifier:         notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
 		UserFromContext: func(ctx context.Context) (deliverycore.UserIdentity, error) {
 			user, err := identity.DelegatedUserFromContext(ctx)
 			return deliverycore.UserIdentity{UserID: user.UserID}, err

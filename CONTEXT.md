@@ -47,9 +47,24 @@ _Avoid_: Deployment
 One concrete replica of a deployment assigned to a fleet agent. An allocation identity is never moved between agents.
 _Avoid_: Instance, container
 
+**Allocation Assignment**:
+The scheduler-owned desired state for one allocation: its fleet agent, deployment, service revision, rollout generation, addresses, runtime intent, and any drain deadline.
+
+**Allocation Observation**:
+One fleet agent's durable report of an assigned allocation's applied generation and runtime state. Observations belong to an agent session and are ordered within that session. An observation for an older generation cannot establish readiness for a newer assignment.
+
+**Agent Administration**:
+Operator-owned intent for a fleet agent, including whether it is cordoned, draining, or retired. Runtime connectivity does not alter administrative intent.
+
+**Agent Presence**:
+The live owner record for a fleet agent session: its current process incarnation, last contact, readiness, and reachability. Presence is not durable operator intent.
+
 **Fleet Agent**:
 An operator-managed compute node that reconciles assigned allocations.
 _Avoid_: Host, worker, node
+
+**Deployment History**:
+The durable, user-visible sequence of deployment transitions. Runtime reports may cause a transition, but do not rewrite prior transitions.
 
 **Domain Binding**:
 A public hostname attached to one service port.

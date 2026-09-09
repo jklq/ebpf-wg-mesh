@@ -16,6 +16,7 @@ import (
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/mesh"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
@@ -139,6 +140,7 @@ func (a *App) runSession(ctx context.Context) error {
 	slog.Info("dialed control plane", "agent_id", a.cfg.Node.ID, "address", a.cfg.ControlPlane.Address)
 
 	client := agentv1.NewAgentControlClient(conn)
+	sessionID := uuid.NewString()
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
 		a.ready.Store(false)
@@ -166,6 +168,7 @@ func (a *App) runSession(ctx context.Context) error {
 			WireguardListenPort:     int32(a.cfg.Mesh.WireGuard.ListenPort),
 			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 			SoftwareVersion:         Version,
+			SessionId:               sessionID,
 		}},
 	}); err != nil {
 		return err
@@ -184,6 +187,7 @@ func (a *App) runSession(ctx context.Context) error {
 		latestDesired    *agentv1.DesiredNodeState
 		reconcileStateMu sync.Mutex
 		lastReport       *agentv1.StatusReport
+		observationSeq   uint64
 	)
 	reconcileAndReport := func(state *agentv1.DesiredNodeState) error {
 		reconcileStateMu.Lock()
@@ -206,17 +210,18 @@ func (a *App) runSession(ctx context.Context) error {
 		}
 		if reconcileErr != nil {
 			slog.Error("reconcile failed", "agent_id", a.cfg.Node.ID, "revision", state.GetRevision(), "error", reconcileErr)
-			report = &agentv1.StatusReport{
-				AgentId: a.cfg.Node.ID,
-				Services: []*agentv1.ServiceCondition{{
-					Phase:   "Error",
-					Message: reconcileErr.Error(),
-				}},
-			}
+			report = &agentv1.StatusReport{AgentId: a.cfg.Node.ID}
+		}
+		report.AgentId = a.cfg.Node.ID
+		report.SessionId = sessionID
+		if lastReport != nil {
+			report.ObservationSequence = lastReport.GetObservationSequence()
 		}
 		if !statusReportChanged(lastReport, report) {
 			return nil
 		}
+		observationSeq++
+		report.ObservationSequence = observationSeq
 		if err := send(&agentv1.AgentClientMessage{
 			Payload: &agentv1.AgentClientMessage_StatusReport{StatusReport: report},
 		}); err != nil {
@@ -225,7 +230,7 @@ func (a *App) runSession(ctx context.Context) error {
 		lastReport = proto.Clone(report).(*agentv1.StatusReport)
 		return nil
 	}
-	go a.heartbeatLoop(sessionCtx, send)
+	go a.heartbeatLoop(sessionCtx, sessionID, send)
 	latestDesiredState := func() *agentv1.DesiredNodeState {
 		desiredStateMu.RLock()
 		defer desiredStateMu.RUnlock()
@@ -373,7 +378,7 @@ func (a *App) rotateSessionAt(ctx context.Context, cancel context.CancelCauseFun
 	}
 }
 
-func (a *App) heartbeatLoop(ctx context.Context, send func(*agentv1.AgentClientMessage) error) {
+func (a *App) heartbeatLoop(ctx context.Context, sessionID string, send func(*agentv1.AgentClientMessage) error) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -382,7 +387,7 @@ func (a *App) heartbeatLoop(ctx context.Context, send func(*agentv1.AgentClientM
 			return
 		case <-ticker.C:
 			_ = send(&agentv1.AgentClientMessage{
-				Payload: &agentv1.AgentClientMessage_Heartbeat{Heartbeat: &agentv1.AgentHeartbeat{AgentId: a.cfg.Node.ID}},
+				Payload: &agentv1.AgentClientMessage_Heartbeat{Heartbeat: &agentv1.AgentHeartbeat{AgentId: a.cfg.Node.ID, SessionId: sessionID}},
 			})
 		}
 	}

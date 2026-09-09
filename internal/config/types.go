@@ -85,11 +85,6 @@ type IngressConfig struct {
 	StaticRoutes             []StaticIngressRouteConfig
 	PublicAddr               string
 	ControlPlaneHTTPUpstream string
-	// UseReportedAllocationIP is for runtimes whose workload address is
-	// reachable directly by the ingress network (for example local Docker).
-	// Production mesh deployments should keep the default false so ingress
-	// uses the control-plane-derived workload IPv6 address.
-	UseReportedAllocationIP bool
 }
 
 type StaticIngressRouteConfig struct {

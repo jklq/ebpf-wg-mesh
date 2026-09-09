@@ -403,13 +403,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 		if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 			return "", err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE allocations
-			    SET rollout_state = $1, phase = 'Withdrawing',
-			        message = 'cancelled; waiting for ingress withdrawal', updated_at = $2
-			  WHERE service_id = $3 AND rollout_state NOT IN ($1, $4, $5)`,
-			AllocationRolloutWithdrawing, now, service.ID, AllocationRolloutDraining, AllocationRolloutLost,
-		); err != nil {
+		if _, err := s.withdrawServiceAssignmentsTx(ctx, tx, service.ID, "cancelled; waiting for ingress withdrawal", now); err != nil {
 			return "", err
 		}
 		return "", dbtx.BumpAllDesiredRevisions(ctx, tx)
@@ -417,10 +411,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM allocations WHERE service_id = $1 AND rollout_state = $2`,
-		service.ID, AllocationRolloutStarting,
-	); err != nil {
+	if err := s.deleteStartingAssignmentsTx(ctx, tx, service.ID, nil); err != nil {
 		return "", err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_resolved_image = '', updated_at = $1 WHERE id = $2`, now, service.ID); err != nil {
@@ -440,11 +431,7 @@ func allocationsHaveServedTraffic(allocs []AllocationRecord) bool {
 }
 
 func (d *Delivery) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, now time.Time) error {
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM allocations
-		  WHERE service_id = $1 AND desired_rollout_generation = $2 AND rollout_state = $3`,
-		service.ID, service.RolloutGeneration, AllocationRolloutStarting,
-	); err != nil {
+	if err := d.store.deleteStartingAssignmentsTx(ctx, tx, service.ID, &service.RolloutGeneration); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx,
@@ -475,17 +462,7 @@ func (d *Delivery) removeDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx,
-		`UPDATE allocations
-		    SET rollout_state = $1, phase = 'Withdrawing',
-		        message = 'removal requested; waiting for ingress withdrawal', updated_at = $2
-		  WHERE service_id = $3 AND rollout_state NOT IN ($1, $4)`,
-		AllocationRolloutWithdrawing, now, service.ID, AllocationRolloutDraining,
-	)
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
+	affected, err := s.withdrawServiceAssignmentsTx(ctx, tx, service.ID, "removal requested; waiting for ingress withdrawal", now)
 	if err != nil {
 		return err
 	}

@@ -47,12 +47,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalID := mustAllocationOnAgent(t, store, service.ID, "old-node").ID
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE allocations
-		    SET applied_spec_revision = desired_spec_revision,
-		        applied_rollout_generation = desired_rollout_generation,
-		        phase = 'Running', message = '', allocation_ipv6 = 'fd00:200::10', healthy_ipv6_ports = $1, healthy = TRUE
-		  WHERE service_id = $2`, []byte("[8080]"), service.ID); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, mustAllocationOnAgent(t, store, service.ID, "old-node").AllocationIPv6, 8080); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -306,7 +301,7 @@ func bootstrapFailoverProject(t *testing.T, store *persistence) string {
 
 func makeAgentUnhealthy(t *testing.T, store *persistence, agentID string, lastSeen time.Time) {
 	t.Helper()
-	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, lastSeen.UTC(), agentID); err != nil {
+	if _, err := store.db.ExecContext(context.Background(), `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, lastSeen.UTC(), agentID); err != nil {
 		t.Fatal(err)
 	}
 }

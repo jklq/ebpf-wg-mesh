@@ -62,6 +62,8 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 			ServiceId:                service.ID,
 			AllocationIpv4:           alloc.AllocationIPv4,
 			AllocationIpv6:           alloc.AllocationIPv6,
+			DesiredSpecRevision:      alloc.DesiredSpecRevision,
+			AppliedSpecRevision:      alloc.DesiredSpecRevision,
 			DesiredRolloutGeneration: scheduled.RolloutGeneration,
 			AppliedRolloutGeneration: scheduled.RolloutGeneration,
 			Phase:                    "Healthy",
@@ -240,7 +242,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	raceWG.Wait()
 	close(raceErrs)
 	for err := range raceErrs {
-		if err != nil && !errors.Is(err, deliverycore.ErrBuildNotOwned) {
+		if err != nil && !errors.Is(err, deliverycore.ErrBuildNotOwned) && !errors.Is(err, deliverycore.ErrStaleObservation) {
 			t.Fatalf("builder/agent race: %v", err)
 		}
 	}

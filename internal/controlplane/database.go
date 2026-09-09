@@ -16,10 +16,9 @@ import (
 )
 
 type database struct {
-	db                      *sql.DB
-	mesh                    config.ControlPlaneMeshConfig
-	reservedAgentIDs        []string
-	useReportedAllocationIP bool
+	db               *sql.DB
+	mesh             config.ControlPlaneMeshConfig
+	reservedAgentIDs []string
 }
 
 func (s *database) reserveAgents(agentIDs ...string) {

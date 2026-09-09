@@ -208,12 +208,11 @@ func TestDevelopmentProfileAllowsLocalConveniences(t *testing.T) {
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
 		Ingress: IngressConfig{
-			PublicAddr:              "platform.local",
-			DisableAutomaticHTTPS:   true,
-			AllowNonLoopbackAdmin:   true,
-			AdminURL:                "http://10.0.0.2:2019/load",
-			AdminListen:             "10.0.0.2:2019",
-			UseReportedAllocationIP: true,
+			PublicAddr:            "platform.local",
+			DisableAutomaticHTTPS: true,
+			AllowNonLoopbackAdmin: true,
+			AdminURL:              "http://10.0.0.2:2019/load",
+			AdminListen:           "10.0.0.2:2019",
 		},
 		Dashboard: ManagedDashboardConfig{
 			DevUsers: []BootstrapUser{{ID: "dev", Email: "dev@example.test"}},

@@ -7,7 +7,6 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"testing"
-	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
@@ -205,6 +204,9 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-2")); err != nil {
+		t.Fatal(err)
+	}
 
 	routedService, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
 	if err != nil {
@@ -248,8 +250,8 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 			Healthy:        false,
 		}},
 	})
-	if err != nil {
-		t.Fatalf("recordStatusReport(foreign agent): %v", err)
+	if !errors.Is(err, deliverycore.ErrAllocationOwnership) {
+		t.Fatalf("recordStatusReport(foreign agent): got %v", err)
 	}
 	if changed {
 		t.Fatal("expected foreign agent report to leave ingress unchanged")
@@ -259,11 +261,6 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	if routedAllocAfterForeignReport.AllocationIPv6 != expectedAllocationIPv6 || !routedAllocAfterForeignReport.Healthy {
 		t.Fatalf("foreign agent changed allocation state: %+v", routedAllocAfterForeignReport)
 	}
-	sentinelUpdatedAt := time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
-	if _, err := store.db.ExecContext(ctx, `UPDATE allocations SET updated_at = $1 WHERE id = $2`, sentinelUpdatedAt, routedAlloc.ID); err != nil {
-		t.Fatalf("set sentinel allocation updated_at: %v", err)
-	}
-
 	changed, _, err = testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{
 		AgentId: "node-1",
 		Services: []*agentv1.ServiceCondition{{
@@ -282,10 +279,6 @@ func TestRecordStatusReportTracksIngressVisibleChanges(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("expected unchanged routed status to skip ingress update")
-	}
-	routedAllocAfterUnchangedReport := mustPrimaryAllocation(t, store, ctx, "user-1", projects[0].ID, routedService.ID)
-	if !routedAllocAfterUnchangedReport.UpdatedAt.Equal(sentinelUpdatedAt) {
-		t.Fatalf("unchanged status rewrote allocation: updated_at = %v, want %v", routedAllocAfterUnchangedReport.UpdatedAt, sentinelUpdatedAt)
 	}
 
 	changed, _, err = testDelivery(store).recordStatusReport(ctx, "node-1", &agentv1.StatusReport{

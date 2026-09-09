@@ -4,11 +4,13 @@ package controlplane
 
 import (
 	"context"
+	"errors"
+	"time"
+
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -60,9 +62,59 @@ type observedIngress struct{ changed bool }
 func (i *observedIngress) RequestSync()               { i.changed = true }
 func (i *observedIngress) Sync(context.Context) error { return nil }
 func (d *testDeliveryHarness) recordStatusReport(ctx context.Context, id string, report *agentv1.StatusReport) (bool, []string, error) {
-	ingress := &observedIngress{}
-	err := newDelivery(d.store, nil, ingress, nil, nil).ObserveAgentStatus(ctx, id, report)
-	return ingress.changed, nil, err
+	var lastErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		prepareTestStatusReport(ctx, d.store, id, report)
+		ingress := &observedIngress{}
+		err := newDelivery(d.store, nil, ingress, nil, nil).ObserveAgentStatus(ctx, id, report)
+		if err == nil {
+			return ingress.changed, nil, nil
+		}
+		if !errors.Is(err, deliverycore.ErrStaleObservation) {
+			return false, nil, err
+		}
+		lastErr = err
+	}
+	return false, nil, lastErr
+}
+
+func prepareTestStatusReport(ctx context.Context, store *persistence, agentID string, report *agentv1.StatusReport) {
+	if report == nil {
+		return
+	}
+	report.AgentId = agentID
+	_ = store.db.QueryRowContext(ctx, `SELECT session_id FROM agent_presence WHERE agent_id = $1`, agentID).Scan(&report.SessionId)
+	var sequence int64
+	_ = store.db.QueryRowContext(ctx, `SELECT last_observation_sequence + 1
+		FROM agent_presence WHERE agent_id = $1 AND session_id = $2`, agentID, report.SessionId).Scan(&sequence)
+	report.ObservationSequence = uint64(sequence)
+	for _, condition := range report.GetServices() {
+		if condition.AllocationId == "" {
+			continue
+		}
+		if condition.ServiceId == "" {
+			_ = store.db.QueryRowContext(ctx, `SELECT service_id FROM allocation_assignments WHERE id = $1`, condition.AllocationId).Scan(&condition.ServiceId)
+		}
+		if condition.DesiredRolloutGeneration == 0 {
+			_ = store.db.QueryRowContext(ctx, `SELECT desired_rollout_generation FROM allocation_assignments WHERE id = $1`, condition.AllocationId).Scan(&condition.DesiredRolloutGeneration)
+		}
+		if condition.DesiredSpecRevision == 0 {
+			_ = store.db.QueryRowContext(ctx, `SELECT desired_spec_revision FROM allocation_assignments WHERE id = $1`, condition.AllocationId).Scan(&condition.DesiredSpecRevision)
+		}
+		if condition.AppliedSpecRevision == 0 {
+			condition.AppliedSpecRevision = condition.DesiredSpecRevision
+		}
+		if condition.AllocationIpv4 == "" || condition.AllocationIpv6 == "" {
+			var assignedIPv4, assignedIPv6 string
+			_ = store.db.QueryRowContext(ctx, `SELECT allocation_ipv4, allocation_ipv6 FROM allocation_assignments WHERE id = $1`, condition.AllocationId).Scan(&assignedIPv4, &assignedIPv6)
+			if condition.AllocationIpv4 == "" {
+				condition.AllocationIpv4 = assignedIPv4
+			}
+			if condition.AllocationIpv6 == "" {
+				condition.AllocationIpv6 = assignedIPv6
+			}
+		}
+	}
 }
 func (d *testDeliveryHarness) UpdateFleetAgent(ctx context.Context, userID string, req *platformv1.UpdateAgentRequest) (deliverycore.AgentRecord, error) {
 	return d.Delivery.UpdateFleetAgent(identity.WithDelegatedUser(ctx, userID), req)
@@ -115,8 +167,8 @@ func reportActiveForTest(ctx context.Context, s *persistence, serviceID string) 
 		return err
 	}
 	for _, a := range allocations {
-		err := testDelivery(s).ObserveAgentStatus(ctx, a.AgentID, &agentv1.StatusReport{AgentId: a.AgentID, Services: []*agentv1.ServiceCondition{{AllocationId: a.ID, AppliedSpecRevision: a.DesiredSpecRevision, AppliedRolloutGeneration: a.DesiredRolloutGeneration, Phase: "Running", Healthy: true, AllocationIpv4: a.AllocationIPv4, AllocationIpv6: a.AllocationIPv6, HealthyIpv4Ports: []int32{8080}, HealthyIpv6Ports: []int32{8080}}}})
-		if err != nil {
+		report := &agentv1.StatusReport{AgentId: a.AgentID, Services: []*agentv1.ServiceCondition{{AllocationId: a.ID, ServiceId: a.ServiceID, DesiredRolloutGeneration: a.DesiredRolloutGeneration, AppliedSpecRevision: a.DesiredSpecRevision, AppliedRolloutGeneration: a.DesiredRolloutGeneration, Phase: "Running", Healthy: true, AllocationIpv4: a.AllocationIPv4, AllocationIpv6: a.AllocationIPv6, HealthyIpv4Ports: []int32{8080}, HealthyIpv6Ports: []int32{8080}}}}
+		if _, _, err := testDelivery(s).recordStatusReport(ctx, a.AgentID, report); err != nil {
 			return err
 		}
 	}

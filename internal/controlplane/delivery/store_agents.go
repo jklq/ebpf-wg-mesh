@@ -138,7 +138,7 @@ func (s *persistence) allocateWorkloadIPv4AddressTx(ctx context.Context, tx *sql
 	if strings.TrimSpace(subnet) == "" {
 		return "", fmt.Errorf("agent %s has no IPv4 workload prefix", agentID)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT allocation_ipv4 FROM allocations
+	rows, err := tx.QueryContext(ctx, `SELECT allocation_ipv4 FROM allocation_assignments
 		WHERE agent_id = $1 AND rollout_state <> $2 AND allocation_ipv4 <> ''`, agentID, AllocationRolloutLost)
 	if err != nil {
 		return "", err
@@ -159,7 +159,7 @@ func (s *persistence) allocateWorkloadIPv4AddressTx(ctx context.Context, tx *sql
 }
 
 func (s *persistence) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.Tx, agentID, subnet string) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, allocation_ipv4 FROM allocations
+	rows, err := tx.QueryContext(ctx, `SELECT id, allocation_ipv4 FROM allocation_assignments
 		WHERE agent_id = $1 AND rollout_state <> $2 ORDER BY created_at ASC, id ASC FOR UPDATE`, agentID, AllocationRolloutLost)
 	if err != nil {
 		return false, err
@@ -187,7 +187,7 @@ func (s *persistence) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *s
 		if err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE allocations SET allocation_ipv4 = $1, updated_at = statement_timestamp() WHERE id = $2`, address, allocationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET allocation_ipv4 = $1, updated_at = statement_timestamp() WHERE id = $2`, address, allocationID); err != nil {
 			return false, err
 		}
 		used[address] = struct{}{}

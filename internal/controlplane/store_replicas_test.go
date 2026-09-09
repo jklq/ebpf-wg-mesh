@@ -224,6 +224,9 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 	if err := store.markAllocationIDHealthyForTest(ctx, allocations[0].ID, "fd00:1::10", 8080); err != nil {
 		t.Fatal(err)
 	}
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
+		t.Fatalf("promote ready replica: %v", err)
+	}
 
 	backends, err := store.routing.HealthyIngressBackends(ctx)
 	if err != nil {
@@ -243,6 +246,9 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 
 	if err := store.markAllocationIDHealthyForTest(ctx, allocations[1].ID, "fd00:1::11", 8080); err != nil {
 		t.Fatal(err)
+	}
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
+		t.Fatalf("promote second ready replica: %v", err)
 	}
 	cfg, err = syncer.Render(ctx)
 	if err != nil {
@@ -281,7 +287,7 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 
 	past := time.Now().UTC().Add(-time.Minute)
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = $2`, past, "node-b"); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, past, "node-b"); err != nil {
 		t.Fatal(err)
 	}
 	result, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), 30*time.Second)

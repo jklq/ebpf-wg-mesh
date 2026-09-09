@@ -83,8 +83,11 @@ type AgentHello struct {
 	WireguardListenPort     int32                  `protobuf:"varint,7,opt,name=wireguard_listen_port,json=wireguardListenPort,proto3" json:"wireguard_listen_port,omitempty"`
 	RuntimeCapabilities     []string               `protobuf:"bytes,8,rep,name=runtime_capabilities,json=runtimeCapabilities,proto3" json:"runtime_capabilities,omitempty"`
 	SoftwareVersion         string                 `protobuf:"bytes,9,opt,name=software_version,json=softwareVersion,proto3" json:"software_version,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// A fresh opaque identity for this process incarnation. Reconnecting with a
+	// new session fences reports and heartbeats from an older stream.
+	SessionId     string `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AgentHello) Reset() {
@@ -176,6 +179,13 @@ func (x *AgentHello) GetRuntimeCapabilities() []string {
 func (x *AgentHello) GetSoftwareVersion() string {
 	if x != nil {
 		return x.SoftwareVersion
+	}
+	return ""
+}
+
+func (x *AgentHello) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
 	}
 	return ""
 }
@@ -631,6 +641,7 @@ func (x *WorkloadIdentity) GetWorkloadIpv4() string {
 type AgentHeartbeat struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -668,6 +679,13 @@ func (*AgentHeartbeat) Descriptor() ([]byte, []int) {
 func (x *AgentHeartbeat) GetAgentId() string {
 	if x != nil {
 		return x.AgentId
+	}
+	return ""
+}
+
+func (x *AgentHeartbeat) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
 	}
 	return ""
 }
@@ -764,6 +782,7 @@ type DesiredService struct {
 	Intent               AllocationIntent               `protobuf:"varint,17,opt,name=intent,proto3,enum=agent.v1.AllocationIntent" json:"intent,omitempty"`
 	DrainDeadline        *timestamppb.Timestamp         `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
 	PrivateIpv4          string                         `protobuf:"bytes,19,opt,name=private_ipv4,json=privateIpv4,proto3" json:"private_ipv4,omitempty"`
+	DeploymentId         string                         `protobuf:"bytes,20,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -927,6 +946,13 @@ func (x *DesiredService) GetDrainDeadline() *timestamppb.Timestamp {
 func (x *DesiredService) GetPrivateIpv4() string {
 	if x != nil {
 		return x.PrivateIpv4
+	}
+	return ""
+}
+
+func (x *DesiredService) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
 	}
 	return ""
 }
@@ -1284,12 +1310,14 @@ func (x *ServiceCondition) GetHealthyIpv6Ports() []int32 {
 }
 
 type StatusReport struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Volumes       []*VolumeCondition     `protobuf:"bytes,2,rep,name=volumes,proto3" json:"volumes,omitempty"`
-	Services      []*ServiceCondition    `protobuf:"bytes,3,rep,name=services,proto3" json:"services,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	AgentId             string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Volumes             []*VolumeCondition     `protobuf:"bytes,2,rep,name=volumes,proto3" json:"volumes,omitempty"`
+	Services            []*ServiceCondition    `protobuf:"bytes,3,rep,name=services,proto3" json:"services,omitempty"`
+	SessionId           string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ObservationSequence uint64                 `protobuf:"varint,5,opt,name=observation_sequence,json=observationSequence,proto3" json:"observation_sequence,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *StatusReport) Reset() {
@@ -1341,6 +1369,20 @@ func (x *StatusReport) GetServices() []*ServiceCondition {
 		return x.Services
 	}
 	return nil
+}
+
+func (x *StatusReport) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *StatusReport) GetObservationSequence() uint64 {
+	if x != nil {
+		return x.ObservationSequence
+	}
+	return 0
 }
 
 type LogEntry struct {
@@ -1703,7 +1745,7 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\x92\x03\n" +
+	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xb1\x03\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
@@ -1714,7 +1756,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x14wireguard_public_key\x18\x06 \x01(\tR\x12wireguardPublicKey\x122\n" +
 	"\x15wireguard_listen_port\x18\a \x01(\x05R\x13wireguardListenPort\x121\n" +
 	"\x14runtime_capabilities\x18\b \x03(\tR\x13runtimeCapabilities\x12)\n" +
-	"\x10software_version\x18\t \x01(\tR\x0fsoftwareVersion\"l\n" +
+	"\x10software_version\x18\t \x01(\tR\x0fsoftwareVersion\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\n" +
+	" \x01(\tR\tsessionId\"l\n" +
 	"\rEnrollRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\x12'\n" +
@@ -1751,15 +1796,17 @@ const file_agent_proto_rawDesc = "" +
 	"\x10network_identity\x18\x03 \x01(\rR\x0fnetworkIdentity\x12\"\n" +
 	"\rhost_agent_id\x18\x04 \x01(\tR\vhostAgentId\x12\x1b\n" +
 	"\thost_ipv6\x18\x05 \x01(\tR\bhostIpv6\x12#\n" +
-	"\rworkload_ipv4\x18\x06 \x01(\tR\fworkloadIpv4\"+\n" +
+	"\rworkload_ipv4\x18\x06 \x01(\tR\fworkloadIpv4\"J\n" +
 	"\x0eAgentHeartbeat\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x86\x01\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x86\x01\n" +
 	"\rDesiredVolume\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\x8a\a\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xaf\a\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -1781,7 +1828,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x16operator_restart_nonce\x18\x10 \x01(\x03R\x14operatorRestartNonce\x122\n" +
 	"\x06intent\x18\x11 \x01(\x0e2\x1a.agent.v1.AllocationIntentR\x06intent\x12A\n" +
 	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\x12!\n" +
-	"\fprivate_ipv4\x18\x13 \x01(\tR\vprivateIpv4\"R\n" +
+	"\fprivate_ipv4\x18\x13 \x01(\tR\vprivateIpv4\x12#\n" +
+	"\rdeployment_id\x18\x14 \x01(\tR\fdeploymentId\"R\n" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x12\n" +
@@ -1814,11 +1862,14 @@ const file_agent_proto_rawDesc = "" +
 	"\x12healthy_ipv4_ports\x18\v \x03(\x05R\x10healthyIpv4Ports\x129\n" +
 	"\arestart\x18\f \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\x12'\n" +
 	"\x0fallocation_ipv6\x18\r \x01(\tR\x0eallocationIpv6\x12,\n" +
-	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\x96\x01\n" +
+	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\xe8\x01\n" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
-	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\"\x92\x03\n" +
+	"\bservices\x18\x03 \x03(\v2\x1a.agent.v1.ServiceConditionR\bservices\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x121\n" +
+	"\x14observation_sequence\x18\x05 \x01(\x04R\x13observationSequence\"\x92\x03\n" +
 	"\bLogEntry\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12%\n" +

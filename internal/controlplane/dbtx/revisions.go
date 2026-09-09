@@ -44,7 +44,7 @@ func BumpDesiredRevisions(ctx context.Context, tx *sql.Tx, agentIDs []string) er
 		placeholders = append(placeholders, b.String())
 	}
 	query := fmt.Sprintf(
-		`UPDATE agents SET desired_revision = desired_revision + 1 WHERE id IN (%s)`,
+		`UPDATE agent_registrations SET desired_revision = desired_revision + 1 WHERE id IN (%s)`,
 		strings.Join(placeholders, ", "),
 	)
 	_, err := tx.ExecContext(ctx, query, args...)
@@ -52,6 +52,6 @@ func BumpDesiredRevisions(ctx context.Context, tx *sql.Tx, agentIDs []string) er
 }
 
 func BumpAllDesiredRevisions(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `UPDATE agents SET desired_revision = desired_revision + 1`)
+	_, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET desired_revision = desired_revision + 1`)
 	return err
 }

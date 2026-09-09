@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"strconv"
 )
 
 func (s *persistence) listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]DeploymentRecord, error) {
@@ -62,8 +61,4 @@ func (s *persistence) listServiceDeployments(ctx context.Context, userID, servic
 		records[i].Build = &buildCopy
 	}
 	return records, nil
-}
-
-func deploymentRecordIDForRollout(serviceID string, rolloutGeneration int64) string {
-	return "rollout:" + serviceID + ":" + strconv.FormatInt(rolloutGeneration, 10)
 }

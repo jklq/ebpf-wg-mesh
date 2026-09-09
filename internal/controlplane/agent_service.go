@@ -36,6 +36,8 @@ type AgentServiceOption func(*AgentService)
 
 type agentDelivery interface {
 	ObserveAgentStatus(context.Context, string, *agentv1.StatusReport) error
+	ObserveAgentHeartbeat(context.Context, string, string) error
+	EndAgentSession(context.Context, string, string) error
 	ReconcileFleetCapacity(context.Context) error
 	DesiredStateForAgent(context.Context, string) (*agentv1.DesiredNodeState, error)
 	RegisterAgent(context.Context, *agentv1.AgentHello) (bool, error)
@@ -122,6 +124,13 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if err != nil {
 		return status.Errorf(codes.Internal, "register agent: %v", err)
 	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.delivery.EndAgentSession(closeCtx, hello.GetAgentId(), hello.GetSessionId()); err != nil {
+			slog.Warn("end agent session", "agent_id", hello.GetAgentId(), "error", err)
+		}
+	}()
 	if changed {
 		if err := s.delivery.ReconcileFleetCapacity(ctx); err != nil {
 			return status.Errorf(codes.Internal, "reconcile fleet capacity: %v", err)
@@ -164,16 +173,22 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if payload.Heartbeat.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "heartbeat agent_id does not match session")
 			}
-			if err := s.store.heartbeatAgent(ctx, hello.GetAgentId()); err != nil {
-				return status.Errorf(codes.Internal, "heartbeat: %v", err)
+			if payload.Heartbeat.GetSessionId() != hello.GetSessionId() {
+				return status.Error(codes.FailedPrecondition, "heartbeat session_id is stale")
+			}
+			if err := s.delivery.ObserveAgentHeartbeat(ctx, hello.GetAgentId(), payload.Heartbeat.GetSessionId()); err != nil {
+				return status.Errorf(codes.FailedPrecondition, "heartbeat: %v", err)
 			}
 		case *agentv1.AgentClientMessage_StatusReport:
 			if payload.StatusReport.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "status report agent_id does not match session")
 			}
+			if payload.StatusReport.GetSessionId() != hello.GetSessionId() {
+				return status.Error(codes.FailedPrecondition, "status report session_id is stale")
+			}
 			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()))
 			if err := s.delivery.ObserveAgentStatus(ctx, hello.GetAgentId(), payload.StatusReport); err != nil {
-				return status.Errorf(codes.Internal, "status report: %v", err)
+				return status.Errorf(codes.FailedPrecondition, "status report: %v", err)
 			}
 			s.emitCrashLoopEvents(ctx, hello.GetAgentId(), payload.StatusReport)
 		case *agentv1.AgentClientMessage_LogBatch:

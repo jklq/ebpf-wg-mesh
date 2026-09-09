@@ -38,7 +38,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	originalID := mustAllocationOnAgent(t, store, service.ID, "node-1").ID
 
 	staleAt := time.Now().UTC().Add(-2 * deliverycore.AgentHealthyTTL)
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-1'`, staleAt); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = 'node-1'`, staleAt); err != nil {
 		t.Fatal(err)
 	}
 	notified, environmentsChanged, err := newTestDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-deliverycore.AgentHealthyTTL))
@@ -92,7 +92,7 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-stale'`, lastSeen); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = 'node-stale'`, lastSeen); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,6 +109,13 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 	}
 	if len(agents) != 1 || agents[0].ID != "node-stale" || agents[0].LifecycleState != deliverycore.AgentStateUnavailable {
 		t.Fatalf("agents after reconcile = %+v, want node-stale unavailable", agents)
+	}
+	var administrationState string
+	if err := store.db.QueryRowContext(ctx, `SELECT lifecycle_state FROM agent_administration WHERE agent_id = 'node-stale'`).Scan(&administrationState); err != nil {
+		t.Fatal(err)
+	}
+	if administrationState != string(deliverycore.AgentStateActive) {
+		t.Fatalf("scheduler rewrote operator administration to %q", administrationState)
 	}
 }
 
@@ -138,19 +145,14 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 	original := mustAllocationOnAgent(t, store, service.ID, "node-a")
 	originalID := original.ID
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE allocations
-		    SET applied_spec_revision = desired_spec_revision,
-		        applied_rollout_generation = desired_rollout_generation,
-		        phase = 'Running', message = '', allocation_ipv6 = 'fd00:200::aa', healthy_ipv6_ports = $1, healthy = TRUE
-		  WHERE service_id = $2`, []byte("[8080]"), service.ID); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, original.AllocationIPv6, 8080); err != nil {
 		t.Fatal(err)
 	}
 
 	// Simulate a dead agent whose last heartbeat is already past the healthy TTL.
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = $1 WHERE id = 'node-a'`, lastSeen); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = 'node-a'`, lastSeen); err != nil {
 		t.Fatal(err)
 	}
 
