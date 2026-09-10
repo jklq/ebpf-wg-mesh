@@ -1,11 +1,11 @@
-import { Loader2, RotateCcw, UploadCloud } from "lucide-react";
+import { Loader2, RefreshCw, RotateCcw, UploadCloud, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
 import { cn } from "#/lib/cn";
 import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
-import { btnPrimary, btnSecondary } from "#/lib/ui-classes";
+import { btnPrimary, btnSecondary, panelIconBtn } from "#/lib/ui-classes";
 
 import {
 	deployActionLabel,
@@ -78,7 +78,7 @@ export function DashboardCanvasSkeleton({
 					"overflow-hidden bg-canvas",
 					showTopbar
 						? "relative mt-header h-[calc(100dvh-var(--spacing-header))]"
-						: "absolute inset-0 z-[15]",
+						: "pointer-events-none absolute inset-0 z-[15]",
 				)}
 			>
 				<div className="canvas-world-grid" />
@@ -92,8 +92,12 @@ export function DashboardCanvasSkeleton({
 
 export function ServicePanelFallback({
 	service,
+	onClose,
+	onRefresh,
 }: {
 	service: DashboardServiceRecord;
+	onClose?: () => void;
+	onRefresh?: () => void;
 }) {
 	return (
 		<>
@@ -103,6 +107,24 @@ export function ServicePanelFallback({
 				</strong>
 				<span className="flex-1" />
 				<Loader2 size={13} className="animate-spin" />
+				<button
+					type="button"
+					className={panelIconBtn}
+					onClick={onRefresh}
+					disabled={!onRefresh}
+					title="Refresh service"
+				>
+					<RefreshCw size={13} />
+				</button>
+				<button
+					type="button"
+					className={panelIconBtn}
+					onClick={onClose}
+					disabled={!onClose}
+					title="Close service panel"
+				>
+					<X size={14} />
+				</button>
 			</div>
 			<div className="relative min-h-0 flex-1 overflow-hidden">
 				<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
