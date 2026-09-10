@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
 func TestLiveOwnerTakeoverStartsUnknown(t *testing.T) {
@@ -46,7 +46,7 @@ func TestLiveOwnerTakeoverStartsUnknown(t *testing.T) {
 	}
 
 	testDelivery(store).ResignLive()
-	if store.live.Serving() || store.live.Publishing() {
+	if store.fleet.sessions.Serving() || store.routing.live.Publishing() {
 		t.Fatal("former owner still serving")
 	}
 	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, hello.GetAgentId(), hello.GetSessionId(), false); !errors.Is(err, deliverycore.ErrNotLiveOwner) {
@@ -69,7 +69,7 @@ func TestLiveOwnerTakeoverStartsUnknown(t *testing.T) {
 	if _, err := testDelivery(store).RegisterAgent(ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	if !store.live.Admitted(hello.GetAgentId()) {
+	if !fixtureLive(store).Admitted(hello.GetAgentId()) {
 		t.Fatal("reconciled agent not admitted after takeover")
 	}
 }
@@ -81,8 +81,8 @@ func TestLiveOwnerPausedProcessStopsPublication(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	store.live.SetPublishing(false)
-	if store.live.Publishing() {
+	store.publication.SetPublishing(false)
+	if store.routing.live.Publishing() {
 		t.Fatal("paused owner still publishing")
 	}
 	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, hello.GetAgentId(), hello.GetSessionId(), false); err != nil {
@@ -139,7 +139,7 @@ func TestLiveOwnerDatabaseOutageKeepsMemoryStopsPublication(t *testing.T) {
 	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, hello.GetAgentId(), hello.GetSessionId(), false); err != nil {
 		t.Fatal(err)
 	}
-	store.live.SetPublishing(false)
+	store.publication.SetPublishing(false)
 	closed := store.db
 	if err := closed.Close(); err != nil {
 		t.Fatal(err)
@@ -147,11 +147,11 @@ func TestLiveOwnerDatabaseOutageKeepsMemoryStopsPublication(t *testing.T) {
 	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, hello.GetAgentId(), hello.GetSessionId(), false); err != nil {
 		t.Fatalf("heartbeat during database outage: %v", err)
 	}
-	session, ok := store.live.Session(hello.GetAgentId())
+	session, ok := fixtureLive(store).Session(hello.GetAgentId())
 	if !ok || !session.Reachable {
 		t.Fatal("session lost during database outage")
 	}
-	if store.live.Publishing() {
+	if store.routing.live.Publishing() {
 		t.Fatal("published without a fence")
 	}
 	if err := testDelivery(store).EvaluateObservedDeploymentForTest(ctx, "missing"); err == nil {

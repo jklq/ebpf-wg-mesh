@@ -38,7 +38,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	originalID := mustAllocationOnAgent(t, store, service.ID, "node-1").ID
 
 	staleAt := time.Now().UTC().Add(-2 * deliverycore.AgentHealthyTTL)
-	store.live.SetLastContactForTest("node-1", staleAt)
+	fixtureLive(store).SetLastContactForTest("node-1", staleAt)
 	notified, environmentsChanged, err := newTestDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-deliverycore.AgentHealthyTTL))
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
-	store.live.SetLastContactForTest("node-stale", lastSeen)
+	fixtureLive(store).SetLastContactForTest("node-stale", lastSeen)
 
 	delivery := newTestDelivery(store, nil, nil, nil)
 	delivery.failoverNow = func() time.Time { return now }
@@ -148,7 +148,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	// Simulate a dead agent whose last heartbeat is already past the healthy TTL.
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
-	store.live.SetLastContactForTest("node-a", lastSeen)
+	fixtureLive(store).SetLastContactForTest("node-a", lastSeen)
 
 	delivery := newTestDelivery(store, nil, nil, nil)
 	delivery.failoverNow = func() time.Time { return now }

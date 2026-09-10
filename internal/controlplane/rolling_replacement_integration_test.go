@@ -321,7 +321,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	originalAgent := target.AgentID
 	originalTargetID := target.ID
-	store.live.SetLastContactForTest(originalAgent, time.Now().Add(-time.Hour))
+	fixtureLive(store).SetLastContactForTest(originalAgent, time.Now().Add(-time.Hour))
 	if _, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), time.Minute); err != nil {
 		t.Fatalf("failoverUnhealthyServices: %v", err)
 	}
@@ -418,7 +418,7 @@ func markAllDrainingComplete(t *testing.T, store *persistence, serviceID string)
 		if alloc.RolloutState != deliverycore.AllocationRolloutDraining {
 			continue
 		}
-		session, ok := store.live.Session(alloc.AgentID)
+		session, ok := fixtureLive(store).Session(alloc.AgentID)
 		if !ok {
 			t.Fatalf("no session for %s", alloc.AgentID)
 		}
@@ -427,7 +427,7 @@ func markAllDrainingComplete(t *testing.T, store *persistence, serviceID string)
 			Phase: "Drained", Message: "graceful exit", Healthy: false,
 			AgentID: alloc.AgentID, SessionID: session.SessionID, Sequence: session.Sequence + 1, ObservedAt: time.Now().UTC(),
 		}
-		if _, err := store.live.RecordObservation(obs); err != nil {
+		if _, err := fixtureLive(store).RecordObservation(obs); err != nil {
 			t.Fatalf("mark drains complete: %v", err)
 		}
 	}

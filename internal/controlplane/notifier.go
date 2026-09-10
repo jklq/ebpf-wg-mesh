@@ -1,15 +1,20 @@
 package controlplane
 
 import (
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"log/slog"
 )
 
-type Notifier struct {
-	live *deliverycore.Live
+// liveNotifications coalesces wakeups; cancelling a watch unregisters it.
+type liveNotifications interface {
+	Watch(string) (<-chan struct{}, func())
+	Notify(string)
 }
 
-func NewNotifier(live *deliverycore.Live) *Notifier {
+type Notifier struct {
+	live liveNotifications
+}
+
+func NewNotifier(live liveNotifications) *Notifier {
 	return &Notifier{live: live}
 }
 

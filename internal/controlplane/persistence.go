@@ -10,13 +10,17 @@ import (
 // persistence wires module-owned stores. It deliberately has no domain methods.
 type persistence struct {
 	*database
-	builds  *buildsPersistence
-	catalog *catalogPersistence
-	events  *eventsPersistence
-	fleet   *fleetPersistence
-	reads   *readsPersistence
-	routing *routingPersistence
-	source  *source.SQLStore
+	// The composition root alone retains the concrete instance for delivery construction.
+	liveImplementation *deliverycore.Live
+	notifications      liveNotifications
+	publication        publicationFence
+	builds             *buildsPersistence
+	catalog            *catalogPersistence
+	events             *eventsPersistence
+	fleet              *fleetPersistence
+	reads              *readsPersistence
+	routing            *routingPersistence
+	source             *source.SQLStore
 }
 type buildsPersistence struct {
 	*database
@@ -30,7 +34,9 @@ type eventsPersistence struct {
 }
 type fleetPersistence struct {
 	*database
-	reads *readsPersistence
+	sessions agentSessions
+	live     fleetLiveReader
+	reads    *readsPersistence
 }
 type readsPersistence struct {
 	*database
@@ -38,6 +44,7 @@ type readsPersistence struct {
 }
 type routingPersistence struct {
 	*database
+	live ingressLiveReader
 }
 
 func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error) error {
@@ -45,13 +52,16 @@ func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error
 }
 
 func newPersistence(db *database) *persistence {
-	p := &persistence{database: db}
+	live := deliverycore.NewLive()
+	db.initJournal()
+	db.journal.SetOnApplied(live.ApplyDurable)
+	p := &persistence{database: db, liveImplementation: live, notifications: live, publication: live}
 	p.builds = &buildsPersistence{database: db}
 	p.catalog = &catalogPersistence{database: db}
 	p.events = &eventsPersistence{database: db}
-	p.fleet = &fleetPersistence{database: db}
+	p.fleet = &fleetPersistence{database: db, sessions: live, live: live}
 	p.reads = &readsPersistence{database: db}
-	p.routing = &routingPersistence{database: db}
+	p.routing = &routingPersistence{database: db, live: live}
 	p.source = source.NewSQLStore(db.db, db.withTx, func(ctx context.Context, serviceID string) (source.Service, error) {
 		rec, err := p.reads.ServiceSnapshot(ctx, serviceID)
 		if err != nil {
