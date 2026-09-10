@@ -62,6 +62,30 @@ func (m *LeaseManager) SetFenceHooks(unfenced, fenced func()) {
 	}
 }
 
+func (m *LeaseManager) Lookup(ctx context.Context, name string) (held bool, advertiseAddr string, err error) {
+	if m == nil || m.store == nil || name == "" {
+		return false, "", nil
+	}
+	var holder, addr string
+	err = m.store.db.QueryRowContext(ctx, `
+		SELECT holder_id, advertise_addr FROM control_plane_leases
+		 WHERE name = $1 AND expires_at > statement_timestamp()`, name).Scan(&holder, &addr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	addr = strings.TrimSpace(addr)
+	if holder == m.holderID {
+		return true, addr, nil
+	}
+	if addr == "" || addr == m.advertise {
+		return false, "", nil
+	}
+	return false, addr, nil
+}
+
 func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Context) error) error {
 	if m == nil || m.store == nil || job == nil || name == "" {
 		return nil
@@ -218,13 +242,13 @@ func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bo
 			VALUES ($1, $2, 1, $4, statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond', statement_timestamp())
 			ON CONFLICT(name) DO UPDATE SET
 				holder_id = excluded.holder_id,
+				advertise_addr = excluded.advertise_addr,
 				fencing_token = CASE
 					WHEN control_plane_leases.holder_id = excluded.holder_id
 					 AND control_plane_leases.expires_at > statement_timestamp()
 					THEN control_plane_leases.fencing_token
 					ELSE control_plane_leases.fencing_token + 1
 				END,
-				advertise_addr = excluded.advertise_addr,
 				expires_at = excluded.expires_at,
 				updated_at = excluded.updated_at
 			WHERE control_plane_leases.holder_id = excluded.holder_id

@@ -2,7 +2,10 @@ package identity
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
 	"log/slog"
+	"strings"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
@@ -12,7 +15,7 @@ import (
 
 type EnrollmentStore interface {
 	AuthorizeAgentCredential(context.Context, string) error
-	ConsumeAgentBootstrapToken(context.Context, string, string) error
+	ConsumeOrRecoverAgentBootstrapToken(context.Context, string, string, []byte) error
 	RecordAgentCertificate(context.Context, string, string) error
 }
 
@@ -50,8 +53,19 @@ func (e *Enrollment) EnrollAgent(ctx context.Context, req *agentv1.EnrollRequest
 	if err := e.store.AuthorizeAgentCredential(ctx, req.GetAgentId()); err != nil {
 		return nil, status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
 	}
+	csr, err := parseClientCSR(req.GetCsrPem())
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(csr.Subject.CommonName) != strings.TrimSpace(req.GetAgentId()) {
+		return nil, status.Error(codes.InvalidArgument, "csr common name must match agent_id")
+	}
 	if !authenticated {
-		if err := e.store.ConsumeAgentBootstrapToken(ctx, req.GetAgentId(), req.GetBootstrapToken()); err != nil {
+		keyHash, err := PublicKeySHA256(csr.PublicKey)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "csr public key: %v", err)
+		}
+		if err := e.store.ConsumeOrRecoverAgentBootstrapToken(ctx, req.GetAgentId(), req.GetBootstrapToken(), keyHash); err != nil {
 			return nil, status.Error(codes.Unauthenticated, "invalid bootstrap token")
 		}
 	}
@@ -68,4 +82,13 @@ func (e *Enrollment) EnrollAgent(ctx context.Context, req *agentv1.EnrollRequest
 	}
 	slog.Info("agent certificate issued", "agent_id", req.GetAgentId(), "authenticated_renewal", authenticated)
 	return resp, nil
+}
+
+func PublicKeySHA256(publicKey any) ([]byte, error) {
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(der)
+	return sum[:], nil
 }

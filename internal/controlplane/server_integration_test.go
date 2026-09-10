@@ -87,6 +87,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	})
 
 	waitForListener(t, server.InternalAddr())
+	waitForSingletonLease(t, server)
 
 	identity, err := server.EnsureDashboardClientIdentity("dashboard-test")
 	if err != nil {
@@ -164,6 +165,20 @@ func waitForListener(t *testing.T, address string) {
 		return true, nil
 	}); err != nil {
 		t.Fatalf("wait for listener %s: %v", address, err)
+	}
+}
+
+func waitForSingletonLease(t *testing.T, server *Server) {
+	t.Helper()
+
+	if err := testutil.Poll(context.Background(), testutil.PollConfig{Timeout: 10 * time.Second}, func(ctx context.Context) (bool, error) {
+		held, _, err := server.leases.Lookup(ctx, SingletonLeaseName)
+		if err != nil {
+			return false, nil
+		}
+		return held, nil
+	}); err != nil {
+		t.Fatalf("wait for singleton lease: %v", err)
 	}
 }
 

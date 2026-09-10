@@ -7,7 +7,54 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type stubLiveOwner struct {
+	held bool
+	addr string
+	err  error
+}
+
+func (s stubLiveOwner) Lookup(context.Context) (bool, string, error) {
+	return s.held, s.addr, s.err
+}
+
+func TestAgentServiceRedirectsNonOwnerRPCs(t *testing.T) {
+	t.Parallel()
+
+	service := NewAgentService(nil, nil, nil, nil, nil, nil, true, "agent-trusted", "dashboard-1",
+		WithLiveOwner(stubLiveOwner{held: false, addr: "owner:9443"}))
+	_, err := service.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-1"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Enroll status = %v", err)
+	}
+	if got, ok := parseLiveOwner(err); !ok || got != "owner:9443" {
+		t.Fatalf("Enroll redirect = %q, %v", got, err)
+	}
+
+	_, err = service.IssueManagedDashboardCertificate(context.Background(), &agentv1.ManagedDashboardCertificateRequest{AgentId: "agent-trusted"})
+	if got, ok := parseLiveOwner(err); !ok || got != "owner:9443" {
+		t.Fatalf("dashboard redirect = %q, %v", got, err)
+	}
+
+	unavailable := NewAgentService(nil, nil, nil, nil, nil, nil, false, "", "",
+		WithLiveOwner(stubLiveOwner{held: false, addr: ""}))
+	_, err = unavailable.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-1"})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("missing owner status = %v", err)
+	}
+}
+
+func parseLiveOwner(err error) (string, bool) {
+	st, ok := status.FromError(err)
+	if !ok || !strings.HasPrefix(st.Message(), agentv1.LiveOwnerRedirectPrefix) {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(st.Message(), agentv1.LiveOwnerRedirectPrefix)), true
+}
 
 func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 	t.Parallel()
@@ -28,10 +75,11 @@ func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 	var loads int
 	var sent []int64
 
-	lastRevision, err := sendLatestDesiredState(
+	lastRevision, lastReplicas, err := sendLatestDesiredState(
 		context.Background(),
 		"agent-1",
 		1,
+		nil,
 		func() (*agentv1.DesiredNodeState, error) {
 			if loads >= len(states) {
 				return states[len(states)-1], nil
@@ -51,8 +99,53 @@ func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 	if lastRevision != 3 {
 		t.Fatalf("expected last revision 3, got %d", lastRevision)
 	}
+	if lastReplicas != nil {
+		t.Fatalf("expected no replica metadata, got %v", lastReplicas)
+	}
 	if len(sent) != 2 || sent[0] != 2 || sent[1] != 3 {
 		t.Fatalf("expected revisions [2 3], got %v", sent)
+	}
+}
+
+func TestSendLatestDesiredStateResendsWhenReplicaAddressesChange(t *testing.T) {
+	t.Parallel()
+
+	states := []*agentv1.DesiredNodeState{
+		{ReconciliationCursor: 3, ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"}},
+		{ReconciliationCursor: 3, ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"}},
+	}
+	var loads int
+	var sent [][]string
+
+	lastRevision, lastReplicas, err := sendLatestDesiredState(
+		context.Background(),
+		"agent-1",
+		3,
+		[]string{"replica-a:9443"},
+		func() (*agentv1.DesiredNodeState, error) {
+			if loads >= len(states) {
+				return states[len(states)-1], nil
+			}
+			state := states[loads]
+			loads++
+			return state, nil
+		},
+		func(state *agentv1.DesiredNodeState) error {
+			sent = append(sent, append([]string(nil), state.GetReplicaAddresses()...))
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("sendLatestDesiredState: %v", err)
+	}
+	if lastRevision != 3 {
+		t.Fatalf("expected last revision 3, got %d", lastRevision)
+	}
+	if got, want := strings.Join(lastReplicas, ","), "replica-a:9443,replica-b:9443"; got != want {
+		t.Fatalf("last replicas = %q, want %q", got, want)
+	}
+	if len(sent) != 1 || strings.Join(sent[0], ",") != "replica-a:9443,replica-b:9443" {
+		t.Fatalf("expected one replica-metadata resend, got %v", sent)
 	}
 }
 

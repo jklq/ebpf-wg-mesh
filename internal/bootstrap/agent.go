@@ -21,6 +21,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	var profile string
 	var underlayInterface string
 	var advertiseAddr string
+	var controlPlaneAddresses string
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	stringFlag(fs, &profile, "profile", "AGENT_PROFILE", "", "development or production; empty defaults to production")
@@ -31,7 +32,9 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &underlayInterface, "underlay-interface", "AGENT_UNDERLAY_INTERFACE", "", "")
 	int64Flag(fs, &cfg.Node.Resources.CPUMillis, "cpu-millis", "AGENT_CPU_MILLIS", detectedCPUMillis(), "")
 	int64Flag(fs, &cfg.Node.Resources.MemoryMebibytes, "memory-mebibytes", "AGENT_MEMORY_MEBIBYTES", detectedMemoryMebibytes(), "")
-	stringFlag(fs, &cfg.ControlPlane.Address, "controlplane-address", "AGENT_CONTROLPLANE_ADDRESS", "", "")
+	int64Flag(fs, &cfg.Node.Resources.ReservedCPUMillis, "reserved-cpu-millis", "AGENT_RESERVED_CPU_MILLIS", 500, "")
+	int64Flag(fs, &cfg.Node.Resources.ReservedMemoryMebibytes, "reserved-memory-mebibytes", "AGENT_RESERVED_MEMORY_MEBIBYTES", 512, "")
+	stringFlag(fs, &controlPlaneAddresses, "controlplane-addresses", "AGENT_CONTROLPLANE_ADDRESSES", "", "comma-separated control-plane discovery seeds")
 	stringFlag(fs, &cfg.ControlPlane.TLS.CAFile, "ca-file", "AGENT_CA_FILE", "", "")
 	stringFlag(fs, &cfg.ControlPlane.TLS.ServerName, "server-name", "AGENT_SERVER_NAME", "controlplane", "")
 	stringFlag(fs, &cfg.ControlPlane.TLS.BootstrapToken, "bootstrap-token", "AGENT_BOOTSTRAP_TOKEN", "", "")
@@ -60,6 +63,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 		return config.AgentConfig{}, err
 	}
 	cfg.Profile = normalized
+	cfg.ControlPlane.Addresses = splitCommaList(controlPlaneAddresses)
 
 	hostName, err := os.Hostname()
 	if err != nil {

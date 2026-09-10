@@ -3,6 +3,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
@@ -163,6 +164,30 @@ func TestAgentBootstrapTokensAreBoundDurableAndSingleUse(t *testing.T) {
 	}
 	if err := store.fleet.ConsumeAgentBootstrapToken(ctx, "node-1", "one-time-secret"); !errors.Is(err, errInvalidBootstrapToken) {
 		t.Fatalf("expected consumed token rejection after reseed, got %v", err)
+	}
+}
+
+func TestConsumeOrRecoverAgentBootstrapTokenAllowsSameKeyRetry(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.fleet.ensureAgentBootstrapTokens(ctx, []config.AgentBootstrapToken{{AgentID: "node-1", Token: "retry-secret"}}); err != nil {
+		t.Fatalf("ensureAgentBootstrapTokens: %v", err)
+	}
+	keyA := bytes.Repeat([]byte{1}, 32)
+	keyB := bytes.Repeat([]byte{2}, 32)
+	if err := store.fleet.ConsumeOrRecoverAgentBootstrapToken(ctx, "node-1", "retry-secret", keyA); err != nil {
+		t.Fatalf("first consume: %v", err)
+	}
+	if err := store.fleet.ConsumeOrRecoverAgentBootstrapToken(ctx, "node-1", "retry-secret", keyA); err != nil {
+		t.Fatalf("same-key recovery: %v", err)
+	}
+	if err := store.fleet.ConsumeOrRecoverAgentBootstrapToken(ctx, "node-1", "retry-secret", keyB); !errors.Is(err, errInvalidBootstrapToken) {
+		t.Fatalf("different-key recovery = %v", err)
+	}
+	if err := store.fleet.ConsumeOrRecoverAgentBootstrapToken(ctx, "node-2", "retry-secret", keyA); !errors.Is(err, errInvalidBootstrapToken) {
+		t.Fatalf("wrong-agent recovery = %v", err)
 	}
 }
 
