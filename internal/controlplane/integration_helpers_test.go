@@ -9,6 +9,7 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func registerAgent(ctx context.Context, store *persistence, hello *agentv1.Agent
 		hello.SessionId = "test-session-" + hello.GetAgentId()
 	}
 	if hello != nil {
-		if err := store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil {
+		if err := store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return false, err
 		}
 	}
