@@ -298,3 +298,85 @@ func restartAgentHello(id, addr string) *agentv1.AgentHello {
 		SessionId:               "restart-session-" + id,
 	}
 }
+
+// TestControlPlaneRestartBootsFromCompactedJournal proves a process restart
+// after compaction reconstructs the same desired state from the snapshot plus
+// the retained tail instead of replaying the truncated log.
+func TestControlPlaneRestartBootsFromCompactedJournal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const (
+		agentID = "compaction-agent"
+		token   = "compaction-bootstrap"
+	)
+	dbURL := createTestDatabase(t)
+	opts := systemControlPlaneOptions{
+		databaseURL:     dbURL,
+		stateDir:        t.TempDir(),
+		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}},
+		withDashboard:   true,
+	}
+	first := startSystemControlPlane(t, opts)
+	cert := enrollAgentTLS(t, first.server, agentID, token)
+	hello := restartAgentHello(agentID, "fd00:30::41")
+	stream, streamCancel := openAgentSync(t, first.server, cert, hello)
+	_ = recvDesiredState(t, stream)
+
+	userCtx := userContext(t, ctx, "compaction-user")
+	project, err := first.dashboard.CreateProject(userCtx, &platformv1.CreateProjectRequest{Name: "compaction-app"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	envs, err := first.dashboard.ListEnvironments(userCtx, &platformv1.ListEnvironmentsRequest{ProjectId: project.GetId()})
+	if err != nil || len(envs.GetEnvironments()) != 1 {
+		t.Fatalf("ListEnvironments: %v", err)
+	}
+	service, err := first.dashboard.CreateService(userCtx, &platformv1.CreateServiceRequest{
+		EnvironmentId: envs.GetEnvironments()[0].GetId(),
+		Service: &platformv1.ServiceInput{
+			Name: "web",
+			Spec: directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+				CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080}),
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+	if _, err := first.dashboard.ReleaseEnvironment(userCtx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: envs.GetEnvironments()[0].GetId()}); err != nil {
+		t.Fatalf("ReleaseEnvironment: %v", err)
+	}
+	deployed := recvDesiredState(t, stream)
+	if len(deployed.GetServices()) != 1 || deployed.GetServices()[0].GetServiceId() != service.GetId() {
+		t.Fatalf("deployed desired state: %+v", deployed)
+	}
+
+	store := first.server.store
+	watermark, err := store.compactJournal(ctx, 0)
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	var preWatermark int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal WHERE cluster_id = 'default' AND log_index <= $1`, watermark).Scan(&preWatermark); err != nil {
+		t.Fatal(err)
+	}
+	if preWatermark != 0 {
+		t.Fatalf("%d entries survived compaction below watermark %d", preWatermark, watermark)
+	}
+	streamCancel()
+	first.stop()
+
+	second := startSystemControlPlane(t, opts)
+	restored, err := desiredStateForAgent(ctx, second.server.store, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.GetServices()) != 1 || restored.GetServices()[0].GetServiceId() != service.GetId() {
+		t.Fatalf("restart after compaction did not rebuild desired state: %+v", restored)
+	}
+	if restored.GetServices()[0].GetAllocationId() != deployed.GetServices()[0].GetAllocationId() {
+		t.Fatalf("snapshot boot changed allocation: before=%s after=%s",
+			deployed.GetServices()[0].GetAllocationId(), restored.GetServices()[0].GetAllocationId())
+	}
+}

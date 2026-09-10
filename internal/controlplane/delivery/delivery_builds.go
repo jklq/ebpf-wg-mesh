@@ -9,6 +9,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -25,7 +26,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 	var serviceID string
 	var changed, rolloutScheduled bool
 	var completed BuildRunRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed, rolloutScheduled = false, false
 		completed = BuildRunRecord{}
 		build, err := s.buildRunByIDQuerier(ctx, tx, buildID)
@@ -231,6 +232,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		); err != nil {
 			return err
 		}
+		journal.RecordService(ctx, build.ServiceID)
 		if usePendingRollout {
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE service_rollouts
@@ -240,6 +242,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			); err != nil {
 				return err
 			}
+			journal.RecordRollout(ctx, build.ServiceID, nextRolloutGeneration)
 		} else if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", now); err != nil {
 			return err
 		}
@@ -262,7 +265,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			return err
 		}
 		rolloutScheduled = true
-		return dbtx.BumpAllDesiredRevisions(ctx, tx)
+		return nil
 	})
 	if err != nil || !changed {
 		return BuildCompletion{}, err
@@ -404,6 +407,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	); err != nil {
 		return BuildRunRecord{}, err
 	}
+	journal.RecordService(ctx, service.ID)
 	if actor.Kind == "" {
 		actor.Kind = DeploymentCauseSystem
 	}
@@ -422,7 +426,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName string, staleAfter time.Duration) (BuildRunRecord, error) {
 	s := d.store
 	var rec BuildRunRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rec = BuildRunRecord{}
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
@@ -546,7 +550,7 @@ func (d *Delivery) RecoverExpiredBuilds(ctx context.Context, staleAfter time.Dur
 	if staleAfter <= 0 {
 		return nil
 	}
-	return d.store.withTx(ctx, func(tx *sql.Tx) error {
+	return d.store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err

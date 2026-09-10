@@ -241,15 +241,10 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	go func() {
 		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), epoch, notifyCh)
 	}()
-	if changed {
-		ids, err := s.store.reads.AgentIDs(ctx)
-		if err != nil {
-			return status.Errorf(codes.Internal, "list agents for notify: %v", err)
-		}
-		s.notifier.NotifyAll(ids)
-	} else {
-		s.notifier.Notify(hello.AgentId)
-	}
+	// The registration command already advanced affected agents' revisions and
+	// applied them to the live view. Wake this agent's fresh watcher so the
+	// initial snapshot sends.
+	s.notifier.Notify(hello.AgentId)
 
 	type receivedMessage struct {
 		message *agentv1.AgentClientMessage

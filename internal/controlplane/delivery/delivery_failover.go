@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,7 +28,7 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 	s := d.store
 	var notifyAgentIDs []string
 	var changedEnvironmentIDs []string
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		notifyAgentIDs = nil
 		changedEnvironmentIDs = nil
 		if d.live == nil || !d.live.Serving() {
@@ -46,7 +45,6 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 
 		now := time.Now().UTC()
 		needBump := false
-		alreadyBumped := false
 		changedEnvironments := make(map[string]struct{})
 		for _, allocation := range allocations {
 			result, err := d.replaceLostNodeAllocationTx(ctx, tx, agentID, allocation, now)
@@ -58,16 +56,8 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 			}
 			needBump = true
 			changedEnvironments[allocation.EnvironmentID] = struct{}{}
-			if result.Bumped {
-				alreadyBumped = true
-			}
 		}
 
-		if needBump && !alreadyBumped {
-			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-				return err
-			}
-		}
 		if needBump {
 			agentRows, err := tx.QueryContext(ctx, `SELECT id FROM agents ORDER BY id`)
 			if err != nil {

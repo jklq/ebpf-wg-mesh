@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -16,7 +17,7 @@ import (
 
 func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
 	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
-	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, rollout_state = $4, updated_at = $2 WHERE service_id = $3`, addressColumn),
 			allocationIP, time.Now().UTC(), serviceID, deliverycore.AllocationRolloutServing,
@@ -30,6 +31,9 @@ func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceI
 			    AND rollout_generation = (SELECT current_rollout_generation FROM services WHERE id = $3)`,
 			"succeeded", time.Now().UTC(), serviceID,
 		); err != nil {
+			return err
+		}
+		if err := recordServiceAssignmentsAndRollout(ctx, tx, serviceID); err != nil {
 			return err
 		}
 		return seedActiveDeploymentTx(ctx, tx, serviceID)
@@ -49,16 +53,19 @@ func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceI
 }
 func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
 	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
-	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if strings.TrimSpace(allocationIP) == "" {
 			return nil
 		}
-		_, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, updated_at = $2 WHERE id = $3`, addressColumn),
 			allocationIP, now, allocationID,
-		)
-		return err
+		); err != nil {
+			return err
+		}
+		journal.RecordAssignment(ctx, allocationID)
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -100,13 +107,47 @@ func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColum
 	return "allocation_ipv6", "healthy_ipv6_ports"
 }
 func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO deployment_transitions(id,deployment_id,from_state,to_state,cause_kind,cause_id,reason_code,detail,spec_revision,image_digest,rollout_generation,occurred_at)
- SELECT $1,id,state,'active','system','','DEPLOYMENT_ACTIVE','Marked healthy for test',spec_revision,image_digest,rollout_generation,statement_timestamp() FROM deployments WHERE service_id=$2 AND is_current AND state<>'active'`, uuid.NewString(), serviceID)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_transitions(id,deployment_id,from_state,to_state,cause_kind,cause_id,reason_code,detail,spec_revision,image_digest,rollout_generation,occurred_at)
+ SELECT $1,id,state,'active','system','','DEPLOYMENT_ACTIVE','Marked healthy for test',spec_revision,image_digest,rollout_generation,statement_timestamp() FROM deployments WHERE service_id=$2 AND is_current AND state<>'active'`, uuid.NewString(), serviceID); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `UPDATE deployments SET state='active',cause_kind='system',reason_code='DEPLOYMENT_ACTIVE',detail='Marked healthy for test',updated_at=statement_timestamp() WHERE service_id=$1 AND is_current RETURNING id`, serviceID)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE deployments SET state='active',cause_kind='system',reason_code='DEPLOYMENT_ACTIVE',detail='Marked healthy for test',updated_at=statement_timestamp() WHERE service_id=$1 AND is_current`, serviceID)
-	return err
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		journal.RecordDeployment(ctx, id)
+	}
+	return rows.Err()
+}
+
+func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, serviceID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id::STRING FROM allocation_assignments WHERE service_id = $1`, serviceID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		journal.RecordAssignment(ctx, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	var generation int64
+	if err := tx.QueryRowContext(ctx, `SELECT current_rollout_generation FROM services WHERE id = $1`, serviceID).Scan(&generation); err != nil {
+		return err
+	}
+	journal.RecordRollout(ctx, serviceID, generation)
+	return nil
 }
 func (s *persistence) currentDesiredRevisionForAgent(ctx context.Context, id string) (int64, error) {
 	_ = ctx

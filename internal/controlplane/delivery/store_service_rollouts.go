@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"time"
 
+	"ebof-wg-mesh/internal/controlplane/journal"
+
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -48,13 +50,16 @@ func (s *persistence) insertServiceRolloutTx(
 	if image == "" {
 		state = rolloutStatePendingBuild
 	}
-	_, err = tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`INSERT INTO service_rollouts(
 			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_user_id,
 			state, strategy_json, desired_replica_count, image_digest, failure_reason, created_at, progress_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '', $11, $11)`,
 		serviceID, rolloutGeneration, specRevision, reason, buildID, requestedByUserID,
 		state, strategyJSON, desired, image, now,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	journal.RecordRollout(ctx, serviceID, rolloutGeneration)
+	return nil
 }

@@ -3,7 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"time"
 )
@@ -17,7 +17,7 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 		return AgentRecord{}, nil, fmt.Errorf("%w: operators may set active, cordoned, draining, or retired", ErrInvalidAgentTransition)
 	}
 	var rec AgentRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := agentByIDQuerier(ctx, tx, agentID, false)
 		if err != nil {
 			return err
@@ -53,9 +53,7 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 				wireguard_listen_port = 0, wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
 				return err
 			}
-			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-				return err
-			}
+			journal.RecordAgent(ctx, agentID)
 		} else {
 			message := ""
 			if target == AgentStateCordoned {

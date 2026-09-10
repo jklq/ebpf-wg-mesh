@@ -9,6 +9,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func (d *Delivery) CreateFleetAgent(ctx context.Context, req *platformv1.CreateAgentRequest) (AgentRecord, string, error) {
@@ -32,7 +33,7 @@ func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *pla
 		return AgentRecord{}, "", err
 	}
 	var rec AgentRecord
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
+	err = s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		_, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
 			id, name, region, zone, failure_domain,
@@ -44,10 +45,12 @@ func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *pla
 		if err != nil {
 			return err
 		}
+		journal.RecordAgent(ctx, req.GetAgentId())
 		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
 			VALUES ($1, 'enrolling', $2)`, req.GetAgentId(), now); err != nil {
 			return err
 		}
+		journal.RecordAdministration(ctx, req.GetAgentId())
 		if err := insertAgentBootstrapTokenTx(ctx, tx, req.GetAgentId(), token, "operator", now); err != nil {
 			return err
 		}
@@ -74,7 +77,7 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *pla
 		return AgentRecord{}, err
 	}
 	var rec AgentRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var locked string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_registrations WHERE id = $1 FOR UPDATE`, req.GetAgentId()).Scan(&locked); err != nil {
 			return err
@@ -100,6 +103,7 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *pla
 		if err != nil {
 			return err
 		}
+		journal.RecordAgent(ctx, req.GetAgentId())
 		rec, err = agentByIDQuerier(ctx, tx, req.GetAgentId(), false)
 		return err
 	})

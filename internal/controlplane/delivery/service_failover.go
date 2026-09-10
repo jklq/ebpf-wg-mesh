@@ -34,7 +34,7 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 		return result, fmt.Errorf("unhealthy threshold must be greater than zero")
 	}
 
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		// Serialize placement repair with concurrent repair loops. CockroachDB's
 		// serializable retry then also protects capacity reads from service creates.
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM services ORDER BY id FOR UPDATE`)
@@ -87,7 +87,6 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 		}
 
 		moved := false
-		alreadyBumped := false
 		changedEnvironments := make(map[string]struct{})
 		for i := range allocations {
 			allocation := allocations[i]
@@ -108,9 +107,6 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 			result.IngressChanged = true
 			changedEnvironments[service.EnvironmentID] = struct{}{}
 			moved = true
-			if replacement.Bumped {
-				alreadyBumped = true
-			}
 			if replacement.Blocked {
 				result.BlockedServiceIDs = append(result.BlockedServiceIDs, service.ID)
 				continue
@@ -120,11 +116,6 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 			}
 		}
 
-		if moved && !alreadyBumped {
-			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-				return err
-			}
-		}
 		if moved {
 			for _, agent := range agents {
 				result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)

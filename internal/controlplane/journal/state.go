@@ -35,7 +35,14 @@ func (s DurableState) Apply(entry Entry) (DurableState, error) {
 		return s, fmt.Errorf("unsupported journal command %q version %d", entry.CommandType, entry.CommandVersion)
 	}
 	var batch Batch
-	decoder := json.NewDecoder(bytes.NewReader(entry.Payload))
+	// The payload column is JSONB, so CockroachDB may re-render whitespace on
+	// read-back. Compact before decoding so nested RawMessage values compare
+	// canonically against a fresh product read.
+	var payload bytes.Buffer
+	if err := json.Compact(&payload, entry.Payload); err != nil {
+		return s, err
+	}
+	decoder := json.NewDecoder(&payload)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&batch); err != nil {
 		return s, err
@@ -155,49 +162,60 @@ func (s DurableState) applyBatch(batch Batch) (DurableState, error) {
 	}
 	next := s
 	var err error
-	next.Projects, err = applyChanges(s.Projects, batch.Projects)
-	if err != nil {
-		return s, err
+	if len(batch.Projects) > 0 {
+		if next.Projects, err = applyChanges(s.Projects, batch.Projects); err != nil {
+			return s, err
+		}
 	}
-	next.Services, err = applyChanges(s.Services, batch.Services)
-	if err != nil {
-		return s, err
+	if len(batch.Services) > 0 {
+		if next.Services, err = applyChanges(s.Services, batch.Services); err != nil {
+			return s, err
+		}
 	}
-	next.Revisions, err = applyChanges(s.Revisions, batch.Revisions)
-	if err != nil {
-		return s, err
+	if len(batch.Revisions) > 0 {
+		if next.Revisions, err = applyChanges(s.Revisions, batch.Revisions); err != nil {
+			return s, err
+		}
 	}
-	next.Assignments, err = applyChanges(s.Assignments, batch.Assignments)
-	if err != nil {
-		return s, err
+	if len(batch.Assignments) > 0 {
+		if next.Assignments, err = applyChanges(s.Assignments, batch.Assignments); err != nil {
+			return s, err
+		}
 	}
-	next.Rollouts, err = applyChanges(s.Rollouts, batch.Rollouts)
-	if err != nil {
-		return s, err
+	if len(batch.Rollouts) > 0 {
+		if next.Rollouts, err = applyChanges(s.Rollouts, batch.Rollouts); err != nil {
+			return s, err
+		}
 	}
-	next.Deployments, err = applyChanges(s.Deployments, batch.Deployments)
-	if err != nil {
-		return s, err
+	if len(batch.Deployments) > 0 {
+		if next.Deployments, err = applyChanges(s.Deployments, batch.Deployments); err != nil {
+			return s, err
+		}
 	}
-	next.Agents, err = applyChanges(s.Agents, batch.Agents)
-	if err != nil {
-		return s, err
+	if len(batch.Agents) > 0 {
+		if next.Agents, err = applyChanges(s.Agents, batch.Agents); err != nil {
+			return s, err
+		}
 	}
-	next.Administration, err = applyChanges(s.Administration, batch.Administration)
-	if err != nil {
-		return s, err
+	if len(batch.Administration) > 0 {
+		if next.Administration, err = applyChanges(s.Administration, batch.Administration); err != nil {
+			return s, err
+		}
 	}
-	next.Environments, err = applyChanges(s.Environments, batch.Environments)
-	if err != nil {
-		return s, err
+	if len(batch.Environments) > 0 {
+		if next.Environments, err = applyChanges(s.Environments, batch.Environments); err != nil {
+			return s, err
+		}
 	}
-	next.Volumes, err = applyChanges(s.Volumes, batch.Volumes)
-	if err != nil {
-		return s, err
+	if len(batch.Volumes) > 0 {
+		if next.Volumes, err = applyChanges(s.Volumes, batch.Volumes); err != nil {
+			return s, err
+		}
 	}
-	next.Domains, err = applyChanges(s.Domains, batch.Domains)
-	if err != nil {
-		return s, err
+	if len(batch.Domains) > 0 {
+		if next.Domains, err = applyChanges(s.Domains, batch.Domains); err != nil {
+			return s, err
+		}
 	}
 	if err := next.validateReservations(); err != nil {
 		return s, err
