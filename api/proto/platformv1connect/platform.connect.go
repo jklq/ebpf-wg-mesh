@@ -14,159 +14,60 @@ import (
 	strings "strings"
 )
 
-// This is a compile-time assertion to ensure that this generated file and the connect package are
-// compatible. If you get a compiler error that this constant is not defined, this code was
-// generated with a version of connect newer than the one compiled into your binary. You can fix the
-// problem by either regenerating this code with an older version of connect or updating the connect
-// version compiled into your binary.
 const _ = connect.IsAtLeastVersion1_13_0
 
 const (
-	// PlatformServiceName is the fully-qualified name of the PlatformService service.
 	PlatformServiceName = "platform.v1.PlatformService"
-	// BuilderServiceName is the fully-qualified name of the BuilderService service.
-	BuilderServiceName = "platform.v1.BuilderService"
-	// OpsServiceName is the fully-qualified name of the OpsService service.
-	OpsServiceName = "platform.v1.OpsService"
+	BuilderServiceName  = "platform.v1.BuilderService"
+	OpsServiceName      = "platform.v1.OpsService"
 )
 
-// These constants are the fully-qualified names of the RPCs defined in this package. They're
-// exposed at runtime as Spec.Procedure and as the final two segments of the HTTP route.
-//
-// Note that these are different from the fully-qualified method names used by
-// google.golang.org/protobuf/reflect/protoreflect. To convert from these constants to
-// reflection-formatted method names, remove the leading slash and convert the remaining slash to a
-// period.
 const (
-	// PlatformServiceCreateProjectProcedure is the fully-qualified name of the PlatformService's
-	// CreateProject RPC.
-	PlatformServiceCreateProjectProcedure = "/platform.v1.PlatformService/CreateProject"
-	// PlatformServiceListProjectsProcedure is the fully-qualified name of the PlatformService's
-	// ListProjects RPC.
-	PlatformServiceListProjectsProcedure = "/platform.v1.PlatformService/ListProjects"
-	// PlatformServiceGetProjectProcedure is the fully-qualified name of the PlatformService's
-	// GetProject RPC.
-	PlatformServiceGetProjectProcedure = "/platform.v1.PlatformService/GetProject"
-	// PlatformServiceListEnvironmentsProcedure is the fully-qualified name of the PlatformService's
-	// ListEnvironments RPC.
-	PlatformServiceListEnvironmentsProcedure = "/platform.v1.PlatformService/ListEnvironments"
-	// PlatformServiceGetEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// GetEnvironment RPC.
-	PlatformServiceGetEnvironmentProcedure = "/platform.v1.PlatformService/GetEnvironment"
-	// PlatformServiceCreateEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// CreateEnvironment RPC.
-	PlatformServiceCreateEnvironmentProcedure = "/platform.v1.PlatformService/CreateEnvironment"
-	// PlatformServiceDuplicateEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// DuplicateEnvironment RPC.
-	PlatformServiceDuplicateEnvironmentProcedure = "/platform.v1.PlatformService/DuplicateEnvironment"
-	// PlatformServiceRenameEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// RenameEnvironment RPC.
-	PlatformServiceRenameEnvironmentProcedure = "/platform.v1.PlatformService/RenameEnvironment"
-	// PlatformServiceDeleteEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// DeleteEnvironment RPC.
-	PlatformServiceDeleteEnvironmentProcedure = "/platform.v1.PlatformService/DeleteEnvironment"
-	// PlatformServiceReleaseEnvironmentProcedure is the fully-qualified name of the PlatformService's
-	// ReleaseEnvironment RPC.
-	PlatformServiceReleaseEnvironmentProcedure = "/platform.v1.PlatformService/ReleaseEnvironment"
-	// PlatformServiceLinkGitHubRepositoryProcedure is the fully-qualified name of the PlatformService's
-	// LinkGitHubRepository RPC.
-	PlatformServiceLinkGitHubRepositoryProcedure = "/platform.v1.PlatformService/LinkGitHubRepository"
-	// PlatformServiceInspectSourceProcedure is the fully-qualified name of the PlatformService's
-	// InspectSource RPC.
-	PlatformServiceInspectSourceProcedure = "/platform.v1.PlatformService/InspectSource"
-	// PlatformServiceCreateServiceProcedure is the fully-qualified name of the PlatformService's
-	// CreateService RPC.
-	PlatformServiceCreateServiceProcedure = "/platform.v1.PlatformService/CreateService"
-	// PlatformServiceUpdateServiceProcedure is the fully-qualified name of the PlatformService's
-	// UpdateService RPC.
-	PlatformServiceUpdateServiceProcedure = "/platform.v1.PlatformService/UpdateService"
-	// PlatformServiceScaleServiceProcedure is the fully-qualified name of the PlatformService's
-	// ScaleService RPC.
-	PlatformServiceScaleServiceProcedure = "/platform.v1.PlatformService/ScaleService"
-	// PlatformServiceApplyDeploymentActionProcedure is the fully-qualified name of the
-	// PlatformService's ApplyDeploymentAction RPC.
-	PlatformServiceApplyDeploymentActionProcedure = "/platform.v1.PlatformService/ApplyDeploymentAction"
-	// PlatformServiceDiscardServiceChangesProcedure is the fully-qualified name of the
-	// PlatformService's DiscardServiceChanges RPC.
-	PlatformServiceDiscardServiceChangesProcedure = "/platform.v1.PlatformService/DiscardServiceChanges"
-	// PlatformServiceDeleteServiceProcedure is the fully-qualified name of the PlatformService's
-	// DeleteService RPC.
-	PlatformServiceDeleteServiceProcedure = "/platform.v1.PlatformService/DeleteService"
-	// PlatformServiceGetServiceProcedure is the fully-qualified name of the PlatformService's
-	// GetService RPC.
-	PlatformServiceGetServiceProcedure = "/platform.v1.PlatformService/GetService"
-	// PlatformServiceListServicesProcedure is the fully-qualified name of the PlatformService's
-	// ListServices RPC.
-	PlatformServiceListServicesProcedure = "/platform.v1.PlatformService/ListServices"
-	// PlatformServiceCreateVolumeProcedure is the fully-qualified name of the PlatformService's
-	// CreateVolume RPC.
-	PlatformServiceCreateVolumeProcedure = "/platform.v1.PlatformService/CreateVolume"
-	// PlatformServiceDeleteVolumeProcedure is the fully-qualified name of the PlatformService's
-	// DeleteVolume RPC.
-	PlatformServiceDeleteVolumeProcedure = "/platform.v1.PlatformService/DeleteVolume"
-	// PlatformServiceListVolumesProcedure is the fully-qualified name of the PlatformService's
-	// ListVolumes RPC.
-	PlatformServiceListVolumesProcedure = "/platform.v1.PlatformService/ListVolumes"
-	// PlatformServiceCreateDomainBindingProcedure is the fully-qualified name of the PlatformService's
-	// CreateDomainBinding RPC.
-	PlatformServiceCreateDomainBindingProcedure = "/platform.v1.PlatformService/CreateDomainBinding"
-	// PlatformServiceGenerateDomainBindingProcedure is the fully-qualified name of the
-	// PlatformService's GenerateDomainBinding RPC.
-	PlatformServiceGenerateDomainBindingProcedure = "/platform.v1.PlatformService/GenerateDomainBinding"
-	// PlatformServiceGetDomainBindingProcedure is the fully-qualified name of the PlatformService's
-	// GetDomainBinding RPC.
-	PlatformServiceGetDomainBindingProcedure = "/platform.v1.PlatformService/GetDomainBinding"
-	// PlatformServiceListDomainBindingsProcedure is the fully-qualified name of the PlatformService's
-	// ListDomainBindings RPC.
-	PlatformServiceListDomainBindingsProcedure = "/platform.v1.PlatformService/ListDomainBindings"
-	// PlatformServiceUpdateDomainBindingProcedure is the fully-qualified name of the PlatformService's
-	// UpdateDomainBinding RPC.
-	PlatformServiceUpdateDomainBindingProcedure = "/platform.v1.PlatformService/UpdateDomainBinding"
-	// PlatformServiceDeleteDomainBindingProcedure is the fully-qualified name of the PlatformService's
-	// DeleteDomainBinding RPC.
-	PlatformServiceDeleteDomainBindingProcedure = "/platform.v1.PlatformService/DeleteDomainBinding"
-	// PlatformServiceGetServiceStatusProcedure is the fully-qualified name of the PlatformService's
-	// GetServiceStatus RPC.
-	PlatformServiceGetServiceStatusProcedure = "/platform.v1.PlatformService/GetServiceStatus"
-	// PlatformServiceListServiceLogsProcedure is the fully-qualified name of the PlatformService's
-	// ListServiceLogs RPC.
-	PlatformServiceListServiceLogsProcedure = "/platform.v1.PlatformService/ListServiceLogs"
-	// PlatformServiceListServiceDeploymentsProcedure is the fully-qualified name of the
-	// PlatformService's ListServiceDeployments RPC.
+	PlatformServiceCreateProjectProcedure          = "/platform.v1.PlatformService/CreateProject"
+	PlatformServiceListProjectsProcedure           = "/platform.v1.PlatformService/ListProjects"
+	PlatformServiceGetProjectProcedure             = "/platform.v1.PlatformService/GetProject"
+	PlatformServiceListEnvironmentsProcedure       = "/platform.v1.PlatformService/ListEnvironments"
+	PlatformServiceGetEnvironmentProcedure         = "/platform.v1.PlatformService/GetEnvironment"
+	PlatformServiceCreateEnvironmentProcedure      = "/platform.v1.PlatformService/CreateEnvironment"
+	PlatformServiceDuplicateEnvironmentProcedure   = "/platform.v1.PlatformService/DuplicateEnvironment"
+	PlatformServiceRenameEnvironmentProcedure      = "/platform.v1.PlatformService/RenameEnvironment"
+	PlatformServiceDeleteEnvironmentProcedure      = "/platform.v1.PlatformService/DeleteEnvironment"
+	PlatformServiceReleaseEnvironmentProcedure     = "/platform.v1.PlatformService/ReleaseEnvironment"
+	PlatformServiceLinkGitHubRepositoryProcedure   = "/platform.v1.PlatformService/LinkGitHubRepository"
+	PlatformServiceInspectSourceProcedure          = "/platform.v1.PlatformService/InspectSource"
+	PlatformServiceCreateServiceProcedure          = "/platform.v1.PlatformService/CreateService"
+	PlatformServiceUpdateServiceProcedure          = "/platform.v1.PlatformService/UpdateService"
+	PlatformServiceScaleServiceProcedure           = "/platform.v1.PlatformService/ScaleService"
+	PlatformServiceApplyDeploymentActionProcedure  = "/platform.v1.PlatformService/ApplyDeploymentAction"
+	PlatformServiceDiscardServiceChangesProcedure  = "/platform.v1.PlatformService/DiscardServiceChanges"
+	PlatformServiceDeleteServiceProcedure          = "/platform.v1.PlatformService/DeleteService"
+	PlatformServiceGetServiceProcedure             = "/platform.v1.PlatformService/GetService"
+	PlatformServiceListServicesProcedure           = "/platform.v1.PlatformService/ListServices"
+	PlatformServiceCreateVolumeProcedure           = "/platform.v1.PlatformService/CreateVolume"
+	PlatformServiceDeleteVolumeProcedure           = "/platform.v1.PlatformService/DeleteVolume"
+	PlatformServiceListVolumesProcedure            = "/platform.v1.PlatformService/ListVolumes"
+	PlatformServiceCreateDomainBindingProcedure    = "/platform.v1.PlatformService/CreateDomainBinding"
+	PlatformServiceGenerateDomainBindingProcedure  = "/platform.v1.PlatformService/GenerateDomainBinding"
+	PlatformServiceGetDomainBindingProcedure       = "/platform.v1.PlatformService/GetDomainBinding"
+	PlatformServiceListDomainBindingsProcedure     = "/platform.v1.PlatformService/ListDomainBindings"
+	PlatformServiceUpdateDomainBindingProcedure    = "/platform.v1.PlatformService/UpdateDomainBinding"
+	PlatformServiceDeleteDomainBindingProcedure    = "/platform.v1.PlatformService/DeleteDomainBinding"
+	PlatformServiceGetServiceStatusProcedure       = "/platform.v1.PlatformService/GetServiceStatus"
+	PlatformServiceListServiceLogsProcedure        = "/platform.v1.PlatformService/ListServiceLogs"
 	PlatformServiceListServiceDeploymentsProcedure = "/platform.v1.PlatformService/ListServiceDeployments"
-	// PlatformServiceListAgentsProcedure is the fully-qualified name of the PlatformService's
-	// ListAgents RPC.
-	PlatformServiceListAgentsProcedure = "/platform.v1.PlatformService/ListAgents"
-	// BuilderServiceClaimBuildProcedure is the fully-qualified name of the BuilderService's ClaimBuild
-	// RPC.
-	BuilderServiceClaimBuildProcedure = "/platform.v1.BuilderService/ClaimBuild"
-	// BuilderServiceDownloadSourceSnapshotProcedure is the fully-qualified name of the BuilderService's
-	// DownloadSourceSnapshot RPC.
-	BuilderServiceDownloadSourceSnapshotProcedure = "/platform.v1.BuilderService/DownloadSourceSnapshot"
-	// BuilderServiceReportBuildHeartbeatProcedure is the fully-qualified name of the BuilderService's
-	// ReportBuildHeartbeat RPC.
-	BuilderServiceReportBuildHeartbeatProcedure = "/platform.v1.BuilderService/ReportBuildHeartbeat"
-	// BuilderServiceReportBuildLogsProcedure is the fully-qualified name of the BuilderService's
-	// ReportBuildLogs RPC.
-	BuilderServiceReportBuildLogsProcedure = "/platform.v1.BuilderService/ReportBuildLogs"
-	// BuilderServiceCompleteBuildProcedure is the fully-qualified name of the BuilderService's
-	// CompleteBuild RPC.
-	BuilderServiceCompleteBuildProcedure = "/platform.v1.BuilderService/CompleteBuild"
-	// OpsServiceIngestGitHubWebhookProcedure is the fully-qualified name of the OpsService's
-	// IngestGitHubWebhook RPC.
-	OpsServiceIngestGitHubWebhookProcedure = "/platform.v1.OpsService/IngestGitHubWebhook"
-	// OpsServiceListFleetProcedure is the fully-qualified name of the OpsService's ListFleet RPC.
-	OpsServiceListFleetProcedure = "/platform.v1.OpsService/ListFleet"
-	// OpsServiceCreateAgentProcedure is the fully-qualified name of the OpsService's CreateAgent RPC.
-	OpsServiceCreateAgentProcedure = "/platform.v1.OpsService/CreateAgent"
-	// OpsServiceUpdateAgentProcedure is the fully-qualified name of the OpsService's UpdateAgent RPC.
-	OpsServiceUpdateAgentProcedure = "/platform.v1.OpsService/UpdateAgent"
-	// OpsServiceSetAgentLifecycleProcedure is the fully-qualified name of the OpsService's
-	// SetAgentLifecycle RPC.
-	OpsServiceSetAgentLifecycleProcedure = "/platform.v1.OpsService/SetAgentLifecycle"
+	PlatformServiceListAgentsProcedure             = "/platform.v1.PlatformService/ListAgents"
+	BuilderServiceClaimBuildProcedure              = "/platform.v1.BuilderService/ClaimBuild"
+	BuilderServiceDownloadSourceSnapshotProcedure  = "/platform.v1.BuilderService/DownloadSourceSnapshot"
+	BuilderServiceReportBuildHeartbeatProcedure    = "/platform.v1.BuilderService/ReportBuildHeartbeat"
+	BuilderServiceReportBuildLogsProcedure         = "/platform.v1.BuilderService/ReportBuildLogs"
+	BuilderServiceCompleteBuildProcedure           = "/platform.v1.BuilderService/CompleteBuild"
+	OpsServiceIngestGitHubWebhookProcedure         = "/platform.v1.OpsService/IngestGitHubWebhook"
+	OpsServiceListFleetProcedure                   = "/platform.v1.OpsService/ListFleet"
+	OpsServiceCreateAgentProcedure                 = "/platform.v1.OpsService/CreateAgent"
+	OpsServiceUpdateAgentProcedure                 = "/platform.v1.OpsService/UpdateAgent"
+	OpsServiceSetAgentLifecycleProcedure           = "/platform.v1.OpsService/SetAgentLifecycle"
 )
 
-// PlatformServiceClient is a client for the platform.v1.PlatformService service.
 type PlatformServiceClient interface {
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
 	ListProjects(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error)
@@ -203,13 +104,6 @@ type PlatformServiceClient interface {
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 }
 
-// NewPlatformServiceClient constructs a client for the platform.v1.PlatformService service. By
-// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
-// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
-// connect.WithGRPC() or connect.WithGRPCWeb() options.
-//
-// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
-// http://api.acme.com or https://acme.com/grpc).
 func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) PlatformServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
 	platformServiceMethods := platformv1.File_platform_proto.Services().ByName("PlatformService").Methods()
@@ -415,7 +309,6 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 	}
 }
 
-// platformServiceClient implements PlatformServiceClient.
 type platformServiceClient struct {
 	createProject          *connect.Client[platformv1.CreateProjectRequest, platformv1.Project]
 	listProjects           *connect.Client[emptypb.Empty, platformv1.ListProjectsResponse]
@@ -452,172 +345,138 @@ type platformServiceClient struct {
 	listAgents             *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
 }
 
-// CreateProject calls platform.v1.PlatformService.CreateProject.
 func (c *platformServiceClient) CreateProject(ctx context.Context, req *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return c.createProject.CallUnary(ctx, req)
 }
 
-// ListProjects calls platform.v1.PlatformService.ListProjects.
 func (c *platformServiceClient) ListProjects(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error) {
 	return c.listProjects.CallUnary(ctx, req)
 }
 
-// GetProject calls platform.v1.PlatformService.GetProject.
 func (c *platformServiceClient) GetProject(ctx context.Context, req *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return c.getProject.CallUnary(ctx, req)
 }
 
-// ListEnvironments calls platform.v1.PlatformService.ListEnvironments.
 func (c *platformServiceClient) ListEnvironments(ctx context.Context, req *connect.Request[platformv1.ListEnvironmentsRequest]) (*connect.Response[platformv1.ListEnvironmentsResponse], error) {
 	return c.listEnvironments.CallUnary(ctx, req)
 }
 
-// GetEnvironment calls platform.v1.PlatformService.GetEnvironment.
 func (c *platformServiceClient) GetEnvironment(ctx context.Context, req *connect.Request[platformv1.GetEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
 	return c.getEnvironment.CallUnary(ctx, req)
 }
 
-// CreateEnvironment calls platform.v1.PlatformService.CreateEnvironment.
 func (c *platformServiceClient) CreateEnvironment(ctx context.Context, req *connect.Request[platformv1.CreateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
 	return c.createEnvironment.CallUnary(ctx, req)
 }
 
-// DuplicateEnvironment calls platform.v1.PlatformService.DuplicateEnvironment.
 func (c *platformServiceClient) DuplicateEnvironment(ctx context.Context, req *connect.Request[platformv1.DuplicateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
 	return c.duplicateEnvironment.CallUnary(ctx, req)
 }
 
-// RenameEnvironment calls platform.v1.PlatformService.RenameEnvironment.
 func (c *platformServiceClient) RenameEnvironment(ctx context.Context, req *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
 	return c.renameEnvironment.CallUnary(ctx, req)
 }
 
-// DeleteEnvironment calls platform.v1.PlatformService.DeleteEnvironment.
 func (c *platformServiceClient) DeleteEnvironment(ctx context.Context, req *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteEnvironment.CallUnary(ctx, req)
 }
 
-// ReleaseEnvironment calls platform.v1.PlatformService.ReleaseEnvironment.
 func (c *platformServiceClient) ReleaseEnvironment(ctx context.Context, req *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error) {
 	return c.releaseEnvironment.CallUnary(ctx, req)
 }
 
-// LinkGitHubRepository calls platform.v1.PlatformService.LinkGitHubRepository.
 func (c *platformServiceClient) LinkGitHubRepository(ctx context.Context, req *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error) {
 	return c.linkGitHubRepository.CallUnary(ctx, req)
 }
 
-// InspectSource calls platform.v1.PlatformService.InspectSource.
 func (c *platformServiceClient) InspectSource(ctx context.Context, req *connect.Request[platformv1.InspectSourceRequest]) (*connect.Response[platformv1.InspectSourceResponse], error) {
 	return c.inspectSource.CallUnary(ctx, req)
 }
 
-// CreateService calls platform.v1.PlatformService.CreateService.
 func (c *platformServiceClient) CreateService(ctx context.Context, req *connect.Request[platformv1.CreateServiceRequest]) (*connect.Response[platformv1.Service], error) {
 	return c.createService.CallUnary(ctx, req)
 }
 
-// UpdateService calls platform.v1.PlatformService.UpdateService.
 func (c *platformServiceClient) UpdateService(ctx context.Context, req *connect.Request[platformv1.UpdateServiceRequest]) (*connect.Response[platformv1.Service], error) {
 	return c.updateService.CallUnary(ctx, req)
 }
 
-// ScaleService calls platform.v1.PlatformService.ScaleService.
 func (c *platformServiceClient) ScaleService(ctx context.Context, req *connect.Request[platformv1.ScaleServiceRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	return c.scaleService.CallUnary(ctx, req)
 }
 
-// ApplyDeploymentAction calls platform.v1.PlatformService.ApplyDeploymentAction.
 func (c *platformServiceClient) ApplyDeploymentAction(ctx context.Context, req *connect.Request[platformv1.ApplyDeploymentActionRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	return c.applyDeploymentAction.CallUnary(ctx, req)
 }
 
-// DiscardServiceChanges calls platform.v1.PlatformService.DiscardServiceChanges.
 func (c *platformServiceClient) DiscardServiceChanges(ctx context.Context, req *connect.Request[platformv1.DiscardServiceChangesRequest]) (*connect.Response[platformv1.Service], error) {
 	return c.discardServiceChanges.CallUnary(ctx, req)
 }
 
-// DeleteService calls platform.v1.PlatformService.DeleteService.
 func (c *platformServiceClient) DeleteService(ctx context.Context, req *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteService.CallUnary(ctx, req)
 }
 
-// GetService calls platform.v1.PlatformService.GetService.
 func (c *platformServiceClient) GetService(ctx context.Context, req *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error) {
 	return c.getService.CallUnary(ctx, req)
 }
 
-// ListServices calls platform.v1.PlatformService.ListServices.
 func (c *platformServiceClient) ListServices(ctx context.Context, req *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error) {
 	return c.listServices.CallUnary(ctx, req)
 }
 
-// CreateVolume calls platform.v1.PlatformService.CreateVolume.
 func (c *platformServiceClient) CreateVolume(ctx context.Context, req *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
 	return c.createVolume.CallUnary(ctx, req)
 }
 
-// DeleteVolume calls platform.v1.PlatformService.DeleteVolume.
 func (c *platformServiceClient) DeleteVolume(ctx context.Context, req *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteVolume.CallUnary(ctx, req)
 }
 
-// ListVolumes calls platform.v1.PlatformService.ListVolumes.
 func (c *platformServiceClient) ListVolumes(ctx context.Context, req *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error) {
 	return c.listVolumes.CallUnary(ctx, req)
 }
 
-// CreateDomainBinding calls platform.v1.PlatformService.CreateDomainBinding.
 func (c *platformServiceClient) CreateDomainBinding(ctx context.Context, req *connect.Request[platformv1.CreateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
 	return c.createDomainBinding.CallUnary(ctx, req)
 }
 
-// GenerateDomainBinding calls platform.v1.PlatformService.GenerateDomainBinding.
 func (c *platformServiceClient) GenerateDomainBinding(ctx context.Context, req *connect.Request[platformv1.GenerateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
 	return c.generateDomainBinding.CallUnary(ctx, req)
 }
 
-// GetDomainBinding calls platform.v1.PlatformService.GetDomainBinding.
 func (c *platformServiceClient) GetDomainBinding(ctx context.Context, req *connect.Request[platformv1.GetDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
 	return c.getDomainBinding.CallUnary(ctx, req)
 }
 
-// ListDomainBindings calls platform.v1.PlatformService.ListDomainBindings.
 func (c *platformServiceClient) ListDomainBindings(ctx context.Context, req *connect.Request[platformv1.ListDomainBindingsRequest]) (*connect.Response[platformv1.ListDomainBindingsResponse], error) {
 	return c.listDomainBindings.CallUnary(ctx, req)
 }
 
-// UpdateDomainBinding calls platform.v1.PlatformService.UpdateDomainBinding.
 func (c *platformServiceClient) UpdateDomainBinding(ctx context.Context, req *connect.Request[platformv1.UpdateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
 	return c.updateDomainBinding.CallUnary(ctx, req)
 }
 
-// DeleteDomainBinding calls platform.v1.PlatformService.DeleteDomainBinding.
 func (c *platformServiceClient) DeleteDomainBinding(ctx context.Context, req *connect.Request[platformv1.DeleteDomainBindingRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteDomainBinding.CallUnary(ctx, req)
 }
 
-// GetServiceStatus calls platform.v1.PlatformService.GetServiceStatus.
 func (c *platformServiceClient) GetServiceStatus(ctx context.Context, req *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	return c.getServiceStatus.CallUnary(ctx, req)
 }
 
-// ListServiceLogs calls platform.v1.PlatformService.ListServiceLogs.
 func (c *platformServiceClient) ListServiceLogs(ctx context.Context, req *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error) {
 	return c.listServiceLogs.CallUnary(ctx, req)
 }
 
-// ListServiceDeployments calls platform.v1.PlatformService.ListServiceDeployments.
 func (c *platformServiceClient) ListServiceDeployments(ctx context.Context, req *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error) {
 	return c.listServiceDeployments.CallUnary(ctx, req)
 }
 
-// ListAgents calls platform.v1.PlatformService.ListAgents.
 func (c *platformServiceClient) ListAgents(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error) {
 	return c.listAgents.CallUnary(ctx, req)
 }
 
-// PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
 	ListProjects(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error)
@@ -654,11 +513,6 @@ type PlatformServiceHandler interface {
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 }
 
-// NewPlatformServiceHandler builds an HTTP handler from the service implementation. It returns the
-// path on which to mount the handler and the handler itself.
-//
-// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
-// and JSON codecs. They also support gzip compression.
 func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	platformServiceMethods := platformv1.File_platform_proto.Services().ByName("PlatformService").Methods()
 	platformServiceCreateProjectHandler := connect.NewUnaryHandler(
@@ -933,7 +787,6 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 	})
 }
 
-// UnimplementedPlatformServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedPlatformServiceHandler struct{}
 
 func (UnimplementedPlatformServiceHandler) CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error) {
@@ -1068,7 +921,6 @@ func (UnimplementedPlatformServiceHandler) ListAgents(context.Context, *connect.
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListAgents is not implemented"))
 }
 
-// BuilderServiceClient is a client for the platform.v1.BuilderService service.
 type BuilderServiceClient interface {
 	ClaimBuild(context.Context, *connect.Request[platformv1.ClaimBuildRequest]) (*connect.Response[platformv1.BuildJob], error)
 	DownloadSourceSnapshot(context.Context, *connect.Request[platformv1.DownloadSourceSnapshotRequest]) (*connect.ServerStreamForClient[platformv1.SourceSnapshotChunk], error)
@@ -1077,13 +929,6 @@ type BuilderServiceClient interface {
 	CompleteBuild(context.Context, *connect.Request[platformv1.CompleteBuildRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
-// NewBuilderServiceClient constructs a client for the platform.v1.BuilderService service. By
-// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
-// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
-// connect.WithGRPC() or connect.WithGRPCWeb() options.
-//
-// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
-// http://api.acme.com or https://acme.com/grpc).
 func NewBuilderServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) BuilderServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
 	builderServiceMethods := platformv1.File_platform_proto.Services().ByName("BuilderService").Methods()
@@ -1121,7 +966,6 @@ func NewBuilderServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	}
 }
 
-// builderServiceClient implements BuilderServiceClient.
 type builderServiceClient struct {
 	claimBuild             *connect.Client[platformv1.ClaimBuildRequest, platformv1.BuildJob]
 	downloadSourceSnapshot *connect.Client[platformv1.DownloadSourceSnapshotRequest, platformv1.SourceSnapshotChunk]
@@ -1130,32 +974,26 @@ type builderServiceClient struct {
 	completeBuild          *connect.Client[platformv1.CompleteBuildRequest, emptypb.Empty]
 }
 
-// ClaimBuild calls platform.v1.BuilderService.ClaimBuild.
 func (c *builderServiceClient) ClaimBuild(ctx context.Context, req *connect.Request[platformv1.ClaimBuildRequest]) (*connect.Response[platformv1.BuildJob], error) {
 	return c.claimBuild.CallUnary(ctx, req)
 }
 
-// DownloadSourceSnapshot calls platform.v1.BuilderService.DownloadSourceSnapshot.
 func (c *builderServiceClient) DownloadSourceSnapshot(ctx context.Context, req *connect.Request[platformv1.DownloadSourceSnapshotRequest]) (*connect.ServerStreamForClient[platformv1.SourceSnapshotChunk], error) {
 	return c.downloadSourceSnapshot.CallServerStream(ctx, req)
 }
 
-// ReportBuildHeartbeat calls platform.v1.BuilderService.ReportBuildHeartbeat.
 func (c *builderServiceClient) ReportBuildHeartbeat(ctx context.Context, req *connect.Request[platformv1.BuilderHeartbeatRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.reportBuildHeartbeat.CallUnary(ctx, req)
 }
 
-// ReportBuildLogs calls platform.v1.BuilderService.ReportBuildLogs.
 func (c *builderServiceClient) ReportBuildLogs(ctx context.Context, req *connect.Request[platformv1.ReportBuildLogsRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.reportBuildLogs.CallUnary(ctx, req)
 }
 
-// CompleteBuild calls platform.v1.BuilderService.CompleteBuild.
 func (c *builderServiceClient) CompleteBuild(ctx context.Context, req *connect.Request[platformv1.CompleteBuildRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.completeBuild.CallUnary(ctx, req)
 }
 
-// BuilderServiceHandler is an implementation of the platform.v1.BuilderService service.
 type BuilderServiceHandler interface {
 	ClaimBuild(context.Context, *connect.Request[platformv1.ClaimBuildRequest]) (*connect.Response[platformv1.BuildJob], error)
 	DownloadSourceSnapshot(context.Context, *connect.Request[platformv1.DownloadSourceSnapshotRequest], *connect.ServerStream[platformv1.SourceSnapshotChunk]) error
@@ -1164,11 +1002,6 @@ type BuilderServiceHandler interface {
 	CompleteBuild(context.Context, *connect.Request[platformv1.CompleteBuildRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
-// NewBuilderServiceHandler builds an HTTP handler from the service implementation. It returns the
-// path on which to mount the handler and the handler itself.
-//
-// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
-// and JSON codecs. They also support gzip compression.
 func NewBuilderServiceHandler(svc BuilderServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	builderServiceMethods := platformv1.File_platform_proto.Services().ByName("BuilderService").Methods()
 	builderServiceClaimBuildHandler := connect.NewUnaryHandler(
@@ -1219,7 +1052,6 @@ func NewBuilderServiceHandler(svc BuilderServiceHandler, opts ...connect.Handler
 	})
 }
 
-// UnimplementedBuilderServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedBuilderServiceHandler struct{}
 
 func (UnimplementedBuilderServiceHandler) ClaimBuild(context.Context, *connect.Request[platformv1.ClaimBuildRequest]) (*connect.Response[platformv1.BuildJob], error) {
@@ -1242,7 +1074,6 @@ func (UnimplementedBuilderServiceHandler) CompleteBuild(context.Context, *connec
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.BuilderService.CompleteBuild is not implemented"))
 }
 
-// OpsServiceClient is a client for the platform.v1.OpsService service.
 type OpsServiceClient interface {
 	IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error)
 	ListFleet(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.Fleet], error)
@@ -1251,13 +1082,6 @@ type OpsServiceClient interface {
 	SetAgentLifecycle(context.Context, *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error)
 }
 
-// NewOpsServiceClient constructs a client for the platform.v1.OpsService service. By default, it
-// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
-// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
-// connect.WithGRPCWeb() options.
-//
-// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
-// http://api.acme.com or https://acme.com/grpc).
 func NewOpsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) OpsServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
 	opsServiceMethods := platformv1.File_platform_proto.Services().ByName("OpsService").Methods()
@@ -1295,7 +1119,6 @@ func NewOpsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 	}
 }
 
-// opsServiceClient implements OpsServiceClient.
 type opsServiceClient struct {
 	ingestGitHubWebhook *connect.Client[platformv1.IngestGitHubWebhookRequest, emptypb.Empty]
 	listFleet           *connect.Client[emptypb.Empty, platformv1.Fleet]
@@ -1304,32 +1127,26 @@ type opsServiceClient struct {
 	setAgentLifecycle   *connect.Client[platformv1.SetAgentLifecycleRequest, platformv1.Agent]
 }
 
-// IngestGitHubWebhook calls platform.v1.OpsService.IngestGitHubWebhook.
 func (c *opsServiceClient) IngestGitHubWebhook(ctx context.Context, req *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.ingestGitHubWebhook.CallUnary(ctx, req)
 }
 
-// ListFleet calls platform.v1.OpsService.ListFleet.
 func (c *opsServiceClient) ListFleet(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.Fleet], error) {
 	return c.listFleet.CallUnary(ctx, req)
 }
 
-// CreateAgent calls platform.v1.OpsService.CreateAgent.
 func (c *opsServiceClient) CreateAgent(ctx context.Context, req *connect.Request[platformv1.CreateAgentRequest]) (*connect.Response[platformv1.AgentEnrollment], error) {
 	return c.createAgent.CallUnary(ctx, req)
 }
 
-// UpdateAgent calls platform.v1.OpsService.UpdateAgent.
 func (c *opsServiceClient) UpdateAgent(ctx context.Context, req *connect.Request[platformv1.UpdateAgentRequest]) (*connect.Response[platformv1.Agent], error) {
 	return c.updateAgent.CallUnary(ctx, req)
 }
 
-// SetAgentLifecycle calls platform.v1.OpsService.SetAgentLifecycle.
 func (c *opsServiceClient) SetAgentLifecycle(ctx context.Context, req *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error) {
 	return c.setAgentLifecycle.CallUnary(ctx, req)
 }
 
-// OpsServiceHandler is an implementation of the platform.v1.OpsService service.
 type OpsServiceHandler interface {
 	IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error)
 	ListFleet(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.Fleet], error)
@@ -1338,11 +1155,6 @@ type OpsServiceHandler interface {
 	SetAgentLifecycle(context.Context, *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error)
 }
 
-// NewOpsServiceHandler builds an HTTP handler from the service implementation. It returns the path
-// on which to mount the handler and the handler itself.
-//
-// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
-// and JSON codecs. They also support gzip compression.
 func NewOpsServiceHandler(svc OpsServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	opsServiceMethods := platformv1.File_platform_proto.Services().ByName("OpsService").Methods()
 	opsServiceIngestGitHubWebhookHandler := connect.NewUnaryHandler(
@@ -1393,7 +1205,6 @@ func NewOpsServiceHandler(svc OpsServiceHandler, opts ...connect.HandlerOption) 
 	})
 }
 
-// UnimplementedOpsServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedOpsServiceHandler struct{}
 
 func (UnimplementedOpsServiceHandler) IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {

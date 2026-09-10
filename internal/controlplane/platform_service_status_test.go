@@ -17,8 +17,6 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 	var reads atomic.Int32
 	service := NewPlatformService(&fakePlatformStore{
 		serviceStatusFn: func(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
-			// The first read only resolves the environment to watch; by the time
-			// the wait returns, the rollout has completed.
 			applied := int64(1)
 			healthy := false
 			if reads.Add(1) > 1 {
@@ -26,23 +24,23 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				healthy = true
 			}
 			return deliverycore.ServiceRecord{
-					ID:               serviceID,
-					ProjectID:        "project-1",
-					AllocatedAgentID: "node-1",
-					CreatedAt:        now.Add(-10 * time.Minute),
-					Spec:             directImageServiceSpec("nginx:1.27", nil),
-					LatestBuild: &platformv1.BuildStatus{
-						BuildId: "build-1",
-					},
-				}, []deliverycore.AllocationRecord{{
-					ID:                       "alloc-status",
-					ServiceID:                serviceID,
-					AgentID:                  "node-1",
-					DesiredRolloutGeneration: 2,
-					AppliedRolloutGeneration: applied,
-					Healthy:                  healthy,
-					UpdatedAt:                now,
-				}}, nil
+				ID:               serviceID,
+				ProjectID:        "project-1",
+				AllocatedAgentID: "node-1",
+				CreatedAt:        now.Add(-10 * time.Minute),
+				Spec:             directImageServiceSpec("nginx:1.27", nil),
+				LatestBuild: &platformv1.BuildStatus{
+					BuildId: "build-1",
+				},
+			}, []deliverycore.AllocationRecord{{
+				ID:                       "alloc-status",
+				ServiceID:                serviceID,
+				AgentID:                  "node-1",
+				DesiredRolloutGeneration: 2,
+				AppliedRolloutGeneration: applied,
+				Healthy:                  healthy,
+				UpdatedAt:                now,
+			}}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 

@@ -20,9 +20,6 @@ const (
 	maxLogQueryLimit     = 5000
 )
 
-// LogType identifies where a log line was produced. The string values match
-// the low-cardinality column in ClickHouse so we can directly compare without
-// mapping boilerplate.
 type LogType string
 
 const (
@@ -54,9 +51,6 @@ type ServiceLog struct {
 	Stage             string
 }
 
-// LogLineInput is the unit used by internal control-plane callers (builder
-// service, reconciler, etc.) to synthesize log entries. Runtime logs arrive
-// via the agent gRPC stream and skip this path.
 type LogLineInput struct {
 	ObservedAt        time.Time
 	EnvironmentID     string
@@ -77,8 +71,6 @@ type logStoreMigration struct {
 	stmts []string
 }
 
-// logStoreMigrations returns the clean ClickHouse baseline used by this
-// breaking release.
 func logStoreMigrations(retentionDays int) []logStoreMigration {
 	if retentionDays <= 0 {
 		retentionDays = 14
@@ -181,8 +173,6 @@ func (s *LogStore) ensureSchema(ctx context.Context, retentionDays int) error {
 	return nil
 }
 
-// WriteAgentBatch persists runtime log entries reported by an agent over the
-// long-lived gRPC stream.
 func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	if !s.Enabled() || batch == nil || len(batch.GetEntries()) == 0 {
 		return nil
@@ -213,9 +203,6 @@ func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *a
 	return s.WriteLogLines(ctx, inputs)
 }
 
-// WriteLogLines persists log entries authored by the control plane itself
-// (build lifecycle, deploy phase transitions, …). Runtime logs produced by
-// agents go through WriteAgentBatch instead.
 func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) error {
 	if !s.Enabled() || len(inputs) == 0 {
 		return nil
@@ -306,8 +293,6 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 		filters = append(filters, "observed_at <= ?")
 		args = append(args, end.AsTime().UTC())
 	}
-	// Case-insensitive substring match. Using positionCaseInsensitive avoids
-	// building server-side regex and keeps the query cheap on ClickHouse.
 	if search := strings.TrimSpace(req.GetSearch()); search != "" {
 		filters = append(filters, "positionCaseInsensitive(line, ?) > 0")
 		args = append(args, search)
@@ -392,9 +377,6 @@ func normalizeStageName(stage string) string {
 	return strings.ToLower(stage)
 }
 
-// logTypeFromProto returns the internal LogType that corresponds to a proto
-// enum. Unspecified maps to the empty string which the query builder treats as
-// "no filter" and the writer treats as runtime.
 func logTypeFromProto(t platformv1.ServiceLogType) LogType {
 	switch t {
 	case platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME:

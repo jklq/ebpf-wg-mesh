@@ -42,8 +42,6 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			return ErrAgentCredentialRevoked
 		}
 
-		// Bind enrollment to one durable store. An empty replacement store is
-		// not evidence that the old process or its workloads have stopped.
 		if hello.GetLocalStoreId() == "" {
 			return fmt.Errorf("local_store_id is required")
 		}
@@ -174,15 +172,11 @@ func assignedAllocationIDs(d *Delivery, ctx context.Context, agentID string) []s
 	return d.live.AssignedIDs(agentID)
 }
 
-// ObserveAgentHeartbeat refreshes presence only for the currently registered
-// session incarnation.
 func (d *Delivery) ObserveAgentHeartbeat(ctx context.Context, agentID, sessionID string, recoveryMode bool) error {
 	_ = ctx
 	return d.live.Heartbeat(agentID, sessionID, !recoveryMode)
 }
 
-// EndAgentSession makes disconnects visible immediately. The session predicate
-// prevents an old stream's cleanup from fencing a replacement session.
 func (d *Delivery) EndAgentSession(ctx context.Context, agentID, sessionID string) error {
 	_ = ctx
 	return d.live.EndSession(agentID, sessionID)

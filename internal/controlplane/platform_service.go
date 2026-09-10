@@ -105,9 +105,6 @@ func WithServiceLogs(logStore serviceLogStore) PlatformServiceOption {
 	}
 }
 
-// WithServiceLogEmitter wires a LogEmitter so the platform service can write
-// synthetic deploy/initialization log lines (for example, when a service is
-// first scheduled or released). A nil emitter is a valid no-op.
 func WithServiceLogEmitter(emitter *logs.LogEmitter) PlatformServiceOption {
 	return func(service *PlatformService) {
 		service.emitter = emitter

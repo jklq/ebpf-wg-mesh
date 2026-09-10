@@ -85,17 +85,11 @@ func RemoveDockerNetwork(ctx context.Context, runner DockerRunner, name string) 
 	return err
 }
 
-// CleanupStaleLocalteststackContainers removes leftover infrastructure and
-// workload containers from a previous localteststack run. Without this, dirty
-// Docker state (containers still present after a killed process) can hold the
-// fixed ingress publish port or other host ports and leave the next run wedged
-// waiting on health checks.
 func CleanupStaleLocalteststackContainers(ctx context.Context, runner DockerRunner) (int, error) {
 	if runner == nil {
 		runner = ExecDockerRunner{}
 	}
 	ids := make(map[string]struct{})
-	// Workload containers from the Docker agent runtime.
 	labeled, err := listContainerIDs(ctx, runner, "label="+localRuntimeLabel+"="+localRuntimeManagedBy)
 	if err != nil {
 		return 0, err
@@ -103,7 +97,6 @@ func CleanupStaleLocalteststackContainers(ctx context.Context, runner DockerRunn
 	for _, id := range labeled {
 		ids[id] = struct{}{}
 	}
-	// Infrastructure + any other localteststack-* leftovers (name filter is a substring match).
 	prefixed, err := listContainerIDs(ctx, runner, "name=localteststack-")
 	if err != nil {
 		return 0, err

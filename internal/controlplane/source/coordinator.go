@@ -304,8 +304,6 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 
 	var pendingSnapshot SourceSnapshotRecord
 	if _, err := c.store.SourceSnapshotByRevisionID(ctx, revision.ID); errors.Is(err, sql.ErrNoRows) {
-		// Network download, validation, and object storage deliberately happen
-		// outside the serializable CockroachDB transaction.
 		archive, err := c.client.FetchArchive(ctx, owner, repo, commitSHA, installationID)
 		if err != nil {
 			return err

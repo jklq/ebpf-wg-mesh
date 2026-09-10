@@ -54,8 +54,6 @@ export function EnvironmentSwitcher({
 		if (!open) return;
 		const onPointerDown = (event: MouseEvent) => {
 			const target = event.target as Node;
-			// The row menu is portalled to <body> so it can escape the scrolling
-			// environment list — it is outside rootRef but still "inside" the menu.
 			if (
 				!rootRef.current?.contains(target) &&
 				!rowMenuRef.current?.contains(target)
@@ -76,8 +74,6 @@ export function EnvironmentSwitcher({
 		};
 	}, [open, deleting, closeMenus]);
 
-	// The row menu is anchored to viewport coordinates captured when it opened,
-	// so any scroll or resize invalidates its position.
 	useEffect(() => {
 		if (!menuFor) return;
 		const dismiss = () => setMenuFor(null);
@@ -99,8 +95,6 @@ export function EnvironmentSwitcher({
 
 	if (!environment) return null;
 
-	// The active environment is normally part of the list; keep it visible even
-	// if a refresh raced the list update.
 	const environments = state.environments.some(
 		(entry) => entry.id === environment.id,
 	)
@@ -356,10 +350,6 @@ export function EnvironmentSwitcher({
 	);
 }
 
-/**
- * Portalled to <body> so the row actions are never clipped by the scrolling
- * environment list they belong to — they lay out against the whole viewport.
- */
 function RowMenu({
 	anchor,
 	menuRef,

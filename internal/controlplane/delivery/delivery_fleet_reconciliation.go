@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-// reconcileDrainingAgent replaces stateless allocations on a draining node by
-// starting targeted rolling replacements. Volume-backed allocations remain
-// fenced until the Stage 7 handoff contract exists. Existing allocation rows
-// are never rewritten onto another agent.
 func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) ([]string, error) {
 	s := d.store
 	var notify []string
@@ -157,8 +153,6 @@ func allocationReplacementInProgressTx(ctx context.Context, tx *sql.Tx, service 
 	return rollout.TargetAllocationID == "" || rollout.TargetAllocationID == allocation.ID, nil
 }
 
-// reconcileFleetCapacity retries pending replica placement and interrupted
-// drains whenever observed fleet capacity changes (for example a node return).
 func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()

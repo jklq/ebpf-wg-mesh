@@ -285,9 +285,6 @@ func readArchiveFile(archiveTGZ []byte, target string) ([]byte, error) {
 	}
 }
 
-// validExposedPort reports whether a Dockerfile EXPOSE port is usable. This is
-// intentionally a small local check: the service-spec port validation stays in
-// delivery and this package must not import it.
 func validExposedPort(port int32) bool {
 	return port >= 1 && port <= 65535
 }

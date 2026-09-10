@@ -16,14 +16,6 @@ type nodeLossReplacementResult struct {
 	Bumped   bool
 }
 
-// failoverServicesFromAgent evaluates only allocations currently assigned to
-// the expired agent. A session whose last contact is still inside the TTL
-// aborts the replacement. Missing sessions, including after takeover, are
-// treated as expired.
-//
-// Existing allocation rows are never rewritten onto another agent. The dead
-// node's allocation is marked lost/unavailable and a new allocation is placed
-// through rolling replacement, matching fleet drain.
 func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string, cutoff time.Time) ([]string, []string, error) {
 	s := d.store
 	var notifyAgentIDs []string
@@ -83,9 +75,6 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 	return notifyAgentIDs, changedEnvironmentIDs, err
 }
 
-// replaceLostNodeAllocationTx fences or replaces one allocation on a dead node.
-// It never rewrites allocations.agent_id. Volume-backed and managed workloads
-// stay pinned; stateless replacements use the same targeted rolling path as drain.
 func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, deadAgentID string, allocation AllocationRecord, now time.Time) (nodeLossReplacementResult, error) {
 	s := d.store
 	var result nodeLossReplacementResult

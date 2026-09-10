@@ -617,8 +617,6 @@ function SourceRepositoryDialog({
 	const matches = repositories.filter((repository) =>
 		repository.fullName.toLowerCase().includes(repoSearch.toLowerCase()),
 	);
-	// A repo can be set by hand — e.g. before the GitHub App has been installed,
-	// when the catalog is empty. A well-formed owner/repo is offered as a row.
 	const typed = repoSearch.trim();
 	const manualEntry =
 		MANUAL_SELECTOR.test(typed) &&

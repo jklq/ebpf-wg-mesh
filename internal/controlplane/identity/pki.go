@@ -87,8 +87,6 @@ func NewTLSAuthority(cfg config.ControlPlaneConfig) (*TLSAuthority, error) {
 	}, nil
 }
 
-// HTTPConfig returns the TLS configuration for serving the internal
-// dual-protocol listener (gRPC and Connect share one TLS + HTTP/2 listener).
 func (a *TLSAuthority) HTTPConfig() *tls.Config {
 	pool := x509.NewCertPool()
 	pool.AddCert(a.caCert)
@@ -442,7 +440,6 @@ func firstServerName(names []string) string {
 	return "controlplane"
 }
 
-// ClusterIdentity binds an agent's durable state to its enrolled trust root.
 func (a *TLSAuthority) ClusterIdentity() string {
 	digest := sha256.Sum256(bytes.TrimSpace(a.caPEM))
 	return hex.EncodeToString(digest[:])

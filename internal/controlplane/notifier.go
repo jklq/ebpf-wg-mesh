@@ -4,7 +4,6 @@ import (
 	"log/slog"
 )
 
-// liveNotifications coalesces wakeups; cancelling a watch unregisters it.
 type liveNotifications interface {
 	Watch(string) (<-chan struct{}, func())
 	Notify(string)

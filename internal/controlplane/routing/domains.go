@@ -16,10 +16,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// Domains owns domain mutation policy and all work required after its commit.
-// The persistence methods commit authorization, binding changes, desired
-// revisions, and the durable event revision together. Agent and ingress wakes
-// are hints emitted only after that commit.
 type Domains struct {
 	store                Store
 	notifier             deliverycore.PlatformNotifier

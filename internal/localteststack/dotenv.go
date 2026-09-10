@@ -9,14 +9,6 @@ import (
 	"time"
 )
 
-// LoadDotEnvFile loads KEY=VALUE pairs from path into the process environment.
-// Existing environment variables are not overwritten. A missing file is a no-op.
-// Supports basic dotenv syntax: blank lines, # comments, optional export prefix,
-// and single- or double-quoted values. Does not expand variables or interpolate.
-//
-// 1Password Environments mounts a local .env as a UNIX FIFO that may briefly
-// return empty content until the desktop app authorizes the read. Empty FIFO
-// reads are retried briefly before succeeding with zero variables.
 func LoadDotEnvFile(path string) (int, error) {
 	const (
 		maxAttempts = 15
@@ -72,7 +64,6 @@ func loadDotEnvFileOnce(path string) (setCount int, emptyFIFO bool, err error) {
 
 func applyDotEnvReader(r io.Reader, path string) (setCount int, lineCount int, err error) {
 	scanner := bufio.NewScanner(r)
-	// Allow long secret values (e.g. PEM / tokens).
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	lineNo := 0
 	for scanner.Scan() {
@@ -127,7 +118,6 @@ func unquoteDotEnvValue(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	// Inline comments for unquoted values: KEY=value # comment
 	if !strings.HasPrefix(raw, `"`) && !strings.HasPrefix(raw, `'`) {
 		if i := strings.Index(raw, " #"); i >= 0 {
 			raw = strings.TrimSpace(raw[:i])
@@ -143,7 +133,6 @@ func unquoteDotEnvValue(raw string) (string, error) {
 	}
 	inner := raw[1 : len(raw)-1]
 	if quote == '"' {
-		// Minimal escapes used in dotenv files.
 		replacer := strings.NewReplacer(
 			`\n`, "\n",
 			`\r`, "\r",

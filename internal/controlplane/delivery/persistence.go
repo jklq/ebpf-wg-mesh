@@ -11,9 +11,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
-// Transaction runs a retryable, lease-fenced transaction and advances the
-// durable event index in the same commit. The callback receives a context that
-// carries the command's change recorder when the transaction is journalled.
 type Transaction func(context.Context, func(context.Context, *sql.Tx) error) error
 
 type ServiceQueryer interface {
@@ -24,17 +21,10 @@ type ServiceQueryer interface {
 
 type UserIdentity struct{ UserID string }
 
-// Events reads the global revision advanced atomically by every committed
-// transaction. Delivery never publishes: the bump already happened in withTx
-// by the time these methods run, so callers only read.
 type Events interface {
 	Current(context.Context) (int64, error)
 }
 
-// Dependencies supplies connection infrastructure, transactional catalog/source
-// operations, and post-commit effects. Catalog/source callbacks must use the
-// supplied transaction so environment copies and source queues commit with delivery.
-// Delivery never lends its persistence or transaction helpers to callers.
 type Dependencies struct {
 	CreateEnvironment func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
 	CreateVolume      func(context.Context, *sql.Tx, string, string, string, int64) (VolumeRecord, error)
@@ -54,14 +44,10 @@ type Dependencies struct {
 	Notifier               PlatformNotifier
 	Ingress                PlatformIngress
 	Events                 Events
-	// LogEmitter is optional; when set, delivery emits synthetic build/deploy
-	// log lines for the builds it queues. A nil emitter is a no-op.
-	LogEmitter       *logs.LogEmitter
-	ReservedAgentIDs []string
+	LogEmitter             *logs.LogEmitter
+	ReservedAgentIDs       []string
 }
 
-// SourceStore is the source-table surface delivery needs inside its own
-// transactions. It is implemented by *source.SQLStore.
 type SourceStore interface {
 	SourceBindingByServiceIDQuerier(context.Context, source.Querier, string) (source.SourceBindingRecord, error)
 	SourceRevisionByBindingAndCommitTx(context.Context, source.Querier, string, string) (source.SourceRevisionRecord, error)
@@ -116,7 +102,6 @@ func New(deps Dependencies) *Delivery {
 	}
 }
 
-// LivePosition reports the live owner's applied durable index and observation revision.
 func (d *Delivery) LivePosition() LivePosition {
 	if d == nil {
 		return LivePosition{}
@@ -124,8 +109,6 @@ func (d *Delivery) LivePosition() LivePosition {
 	return d.live.Position()
 }
 
-// ReadModel exposes the snapshots used by transports and other modules.
-// Its persistence remains private to delivery.
 type ReadModel interface {
 	ListAgents(context.Context) ([]AgentRecord, error)
 	AgentByID(context.Context, string) (AgentRecord, error)
@@ -146,7 +129,6 @@ type readModel struct{ store *persistence }
 
 func (d *Delivery) ReadModel() ReadModel { return &readModel{store: d.store} }
 
-// Clock overrides are useful for deterministic reconciliation tests.
 func (d *Delivery) SetClocks(rollout, failover func() time.Time) {
 	d.rolloutNow = rollout
 	d.failoverNow = failover

@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// SchedulerCause describes why the scheduler was asked to evaluate state. It
-// is input to policy, not an instruction to mutate storage directly.
 type SchedulerCause string
 
 const (
@@ -22,24 +20,15 @@ const (
 	SchedulerDeadline           SchedulerCause = "deadline"
 )
 
-// SchedulerEvaluation is the consistent, immutable view used for one policy
-// decision. DecidedAt is supplied by the caller (normally database time), so
-// replay never consults a process clock.
 type SchedulerEvaluation struct {
 	Cause       SchedulerCause
 	DecidedAt   time.Time
 	Services    []ServiceRecord
 	Agents      []AgentRecord
 	Allocations []AllocationRecord
-	// Requested contains already-resolved actions from release, rollout,
-	// failover, report, or fleet policy. The evaluator records those concrete
-	// values; it never repeats placement while applying a plan.
-	Requested []SchedulingDecision
+	Requested   []SchedulingDecision
 }
 
-// EvaluateScheduler is storage independent. Deadline policy is evaluated from
-// the supplied snapshot and all requested decisions are copied into the plan.
-// Calling it twice with the same input produces the same plan.
 func EvaluateScheduler(input SchedulerEvaluation) SchedulingPlan {
 	plan := SchedulingPlan{
 		DecidedAt: input.DecidedAt.UTC(),
@@ -90,8 +79,6 @@ const (
 	DecisionEvaluateAt       SchedulingDecisionKind = "evaluate_at"
 )
 
-// SchedulingDecision is a concrete, replayable decision. IDs, addresses and
-// timestamps are values in the decision; applying it does not rerun placement.
 type SchedulingDecision struct {
 	Kind         SchedulingDecisionKind
 	Allocation   AllocationAssignment
@@ -107,7 +94,6 @@ type SchedulingPlan struct {
 	Decisions []SchedulingDecision
 }
 
-// validate makes malformed plans fail before their first desired-state write.
 func (p SchedulingPlan) validate() error {
 	if p.DecidedAt.IsZero() {
 		return fmt.Errorf("scheduler plan has no decision timestamp")
@@ -149,9 +135,6 @@ func (p SchedulingPlan) validate() error {
 	return nil
 }
 
-// applySchedulingPlanTx is the sole write gateway for scheduler-owned
-// allocation assignments. A recorded plan can be applied verbatim; placement,
-// clocks and ID generation are deliberately absent from this method.
 func (d *Delivery) applySchedulingPlanTx(ctx context.Context, tx *sql.Tx, plan SchedulingPlan) error {
 	if err := plan.validate(); err != nil {
 		return err
@@ -196,8 +179,6 @@ func (d *Delivery) applySchedulingPlanTx(ctx context.Context, tx *sql.Tx, plan S
 			}
 			journal.RecordAssignment(ctx, decision.AllocationID)
 		case DecisionAdvanceDeploy, DecisionFailDeploy, DecisionEvaluateAt:
-			// Deployment transitions and wake scheduling are consumed by the
-			// orchestration layer after allocation decisions are committed.
 		}
 	}
 	return nil

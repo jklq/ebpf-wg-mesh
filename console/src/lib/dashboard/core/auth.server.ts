@@ -354,9 +354,7 @@ function parseAuthStateCookie(rawState: string): AuthStateCookie {
 				redirectTo: parsed.redirectTo,
 			};
 		}
-	} catch {
-		// Fall through.
-	}
+	} catch {}
 	throw new AuthConflictError({
 		code: "invalid_signin_state",
 		message: "invalid sign-in state cookie",

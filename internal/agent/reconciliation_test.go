@@ -54,9 +54,6 @@ func TestGrantExpiryDuringPersistenceCannotChangeAcceptedState(t *testing.T) {
 				if checks == 1 {
 					return issued
 				}
-				// The second check must see a committed candidate, while readers
-				// still see the old accepted state. Simulate persistence/process
-				// delay crossing takeover, at the slowest allowed agent clock.
 				if err := store.db.View(func(tx *bbolt.Tx) error {
 					var staged agentv1.DesiredNodeState
 					if err := proto.Unmarshal(tx.Bucket(localDesiredBucket).Get(stagedDesiredStateKey), &staged); err != nil {
@@ -106,8 +103,6 @@ func TestGrantExpiryDuringPersistenceCannotChangeAcceptedState(t *testing.T) {
 			}
 			defer restored.Close()
 			assertUnchanged(restored)
-			// A fresh complete snapshot can still make progress after the
-			// expired candidate has been discarded by startup.
 			candidate.AuthorityNotAfter = timestamppb.New(time.Now().Add(reconciliation.GrantLifetime))
 			if changed, err := restored.acceptDesired("cluster-a", "test-session", candidate); err != nil || !changed {
 				t.Fatalf("fresh grant did not recover: changed=%v err=%v", changed, err)
@@ -122,8 +117,6 @@ func TestRestartDoesNotAcceptStagedSnapshot(t *testing.T) {
 	if _, err := store.acceptDesired("cluster-a", "test-session", accepted); err != nil {
 		t.Fatal(err)
 	}
-	// Crash after the candidate commits, before any acceptance decision. Even
-	// a still-valid grant does not let startup complete that old operation.
 	staged, err := store.stageDesired("test-session", testDesiredState(1, 2))
 	if err != nil {
 		t.Fatal(err)
@@ -275,8 +268,6 @@ func TestInterruptedDesiredTransactionRetainsSnapshotAndCursor(t *testing.T) {
 	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1, "allocation")); err != nil {
 		t.Fatal(err)
 	}
-	// Force a failure after the desired snapshot, cursor, and credentials have
-	// been written inside the transaction, at allocation-state decoding.
 	if err := store.db.Update(func(tx *bbolt.Tx) error {
 		return tx.Bucket(localAllocationsBucket).Put([]byte("allocation"), []byte("broken"))
 	}); err != nil {

@@ -184,8 +184,6 @@ func (i *IngressSyncer) RequestSync() {
 	}
 }
 
-// Run owns asynchronous ingress writes under the server's singleton lease.
-// Periodic convergence also catches requests received by a non-owner replica.
 func (i *IngressSyncer) Run(ctx context.Context) error {
 	if i == nil || i.adminURL == "" {
 		<-ctx.Done()
@@ -221,17 +219,11 @@ func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 		return err
 	}
 
-	// Render before taking the lease-row lock so database reads cannot deadlock
-	// behind a concurrent lease renewal. Only the external write needs fencing:
-	// takeover waits for it, and a former owner cannot enter this section.
 	return i.store.WithLeaseGuard(ctx, func() error {
 		if bytes.Equal(body, i.lastPayload) {
 			return nil
 		}
 
-		// POST /load replaces Caddy's HTTP server and drops live connections,
-		// including the dashboard Vite HMR websocket. After the initial load,
-		// only swap the route list.
 		if i.loaded {
 			if err := i.pushRoutes(ctx, cfg); err != nil {
 				slog.Warn("ingress route patch failed; falling back to full load", "error", err)

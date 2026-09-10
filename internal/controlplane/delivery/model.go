@@ -156,8 +156,6 @@ type AllocationRecord struct {
 	DrainDeadline            sql.NullTime
 }
 
-// AllocationAssignment is scheduler-owned desired state. An allocation is
-// immutable with respect to its agent and addresses.
 type AllocationAssignment struct {
 	ID                   string
 	AgentID              string
@@ -177,9 +175,6 @@ type AllocationAssignment struct {
 	UpdatedAt            time.Time
 }
 
-// AllocationObservation is assigned-agent-owned runtime state. Observations
-// are retained per generation; only the assignment's current generation can
-// contribute readiness.
 type AllocationObservation struct {
 	AllocationID        string
 	RolloutGeneration   int64

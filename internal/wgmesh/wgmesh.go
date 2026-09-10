@@ -168,8 +168,6 @@ func parsePeer(p config.PeerConfig) (wgtypes.PeerConfig, error) {
 	}, nil
 }
 
-// Update changes addresses, peers, routes, and device settings in place. The
-// interface and its attached eBPF programs remain intact.
 func (r *Runtime) Update(cfg config.WireGuard) error {
 	if r == nil {
 		return errors.New("wireguard runtime is not running")

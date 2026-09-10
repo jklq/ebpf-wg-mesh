@@ -77,7 +77,6 @@ func (r *cleanupDockerRunner) Run(_ context.Context, args ...string) ([]byte, er
 		if out, ok := r.psResults[key]; ok {
 			return []byte(out), nil
 		}
-		// Single filter lookups use the filter value as key.
 		if len(filters) == 1 {
 			if out, ok := r.psResults[filters[0]]; ok {
 				return []byte(out), nil

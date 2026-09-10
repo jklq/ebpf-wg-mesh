@@ -1,7 +1,3 @@
-// Package meshlabels defines the container labels the agent stamps onto managed
-// workloads and the firewall reads back to recover their mesh identity. Both
-// sides must agree on the key names and the value encoding, so neither writes
-// them by hand.
 package meshlabels
 
 import (
@@ -10,7 +6,6 @@ import (
 	"strconv"
 )
 
-// Bookkeeping labels present on every workload the platform manages.
 const (
 	Managed                  = "platform.managed"
 	AllocationID             = "platform.allocation_id"
@@ -19,31 +14,24 @@ const (
 	DesiredRolloutGeneration = "platform.desired_rollout_generation"
 )
 
-// Default keys for the identity labels, which operators may rename.
 const (
 	DefaultEnvironmentKey = "mesh.environment_id"
 	DefaultIPv4Key        = "mesh.ipv4"
 	DefaultIPv6Key        = "mesh.ipv6"
 )
 
-// Identity is a workload's mesh identity: the network identity its datapath
-// policy is keyed by, and the address it owns inside the mesh.
 type Identity struct {
 	NetworkIdentity uint32
 	IPv4            netip.Addr
 	IPv6            netip.Addr
 }
 
-// Keys names the labels carrying an Identity. Because they are configurable,
-// the writing and reading sides must be handed the same pair.
 type Keys struct {
 	Environment string
 	IPv4        string
 	IPv6        string
 }
 
-// NewKeys resolves configured label keys, substituting the defaults for empty
-// ones so a partially configured agent and firewall still agree.
 func NewKeys(environmentKey, ipv4Key, ipv6Key string) Keys {
 	if environmentKey == "" {
 		environmentKey = DefaultEnvironmentKey
@@ -57,7 +45,6 @@ func NewKeys(environmentKey, ipv4Key, ipv6Key string) Keys {
 	return Keys{Environment: environmentKey, IPv4: ipv4Key, IPv6: ipv6Key}
 }
 
-// Encode renders id into the label pair named by k.
 func (k Keys) Encode(id Identity) map[string]string {
 	ipv4 := ""
 	if id.IPv4.IsValid() {
@@ -74,8 +61,6 @@ func (k Keys) Encode(id Identity) map[string]string {
 	}
 }
 
-// Decode recovers the identity Encode wrote, rejecting missing or malformed
-// values rather than attaching a workload to the wrong environment.
 func (k Keys) Decode(labels map[string]string) (Identity, error) {
 	if labels == nil {
 		return Identity{}, fmt.Errorf("missing label %q", k.Environment)
@@ -111,9 +96,6 @@ func (k Keys) Decode(labels map[string]string) (Identity, error) {
 	return Identity{NetworkIdentity: uint32(networkIdentity), IPv4: ipv4, IPv6: ip}, nil
 }
 
-// NetworkIdentity reports the network identity stamped under k.Environment, or zero when
-// the label is absent or malformed. Callers comparing against a desired
-// identity use this to avoid treating a decode failure as a mismatch reason.
 func (k Keys) NetworkIdentity(labels map[string]string) uint32 {
 	value, _ := strconv.ParseUint(labels[k.Environment], 10, 32)
 	return uint32(value)

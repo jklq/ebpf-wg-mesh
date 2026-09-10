@@ -13,19 +13,12 @@ import (
 
 const defaultRegistryAuthProxyImage = "alpine/socat:1.8.0.0"
 
-// LocalRegistryAuthProxyConfig publishes the host control-plane registry token
-// service on 127.0.0.1 so Docker Desktop BuildKit can reach it the same way it
-// reaches the local registry (localhost published ports). BuildKit often cannot
-// dial the host-gateway IP for arbitrary host listeners (i/o timeout).
 type LocalRegistryAuthProxyConfig struct {
 	ContainerName string
-	// UpstreamHost is reachable from the proxy container (typically host.docker.internal).
-	UpstreamHost string
-	// UpstreamPort is the control-plane registry auth listen port on the host.
-	UpstreamPort int
-	// HostPort is the loopback publish port advertised in the registry token realm.
-	HostPort int
-	Image    string
+	UpstreamHost  string
+	UpstreamPort  int
+	HostPort      int
+	Image         string
 }
 
 type ManagedRegistryAuthProxy struct {
@@ -56,8 +49,6 @@ func StartManagedRegistryAuthProxy(ctx context.Context, cfg LocalRegistryAuthPro
 	if err := removeContainer(context.Background(), runner, cfg.ContainerName); err != nil {
 		return nil, fmt.Errorf("remove existing registry auth proxy container %s: %w", cfg.ContainerName, err)
 	}
-	// Listen inside the container on the same port we publish so the realm URL
-	// path is stable and only loopback is exposed on the host.
 	listenPort := cfg.HostPort
 	args := []string{
 		"run", "--detach", "--rm",

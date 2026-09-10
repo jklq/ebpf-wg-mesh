@@ -30,7 +30,6 @@ func TestLoadDotEnvFileNamedPipe(t *testing.T) {
 	content := "PIPE_DOTENV_TEST=from-fifo\n"
 	errCh := make(chan error, 1)
 	go func() {
-		// Writer side of the FIFO (1Password-style mount).
 		f, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err != nil {
 			errCh <- err
@@ -71,7 +70,6 @@ func TestLoadDotEnvFileSetsMissingOnly(t *testing.T) {
 	}
 
 	t.Setenv("DOTENV_TEST_EXISTING", "from-shell")
-	// Ensure clean slate for the others.
 	for _, key := range []string{"DOTENV_TEST_A", "DOTENV_TEST_B", "DOTENV_TEST_C"} {
 		_ = os.Unsetenv(key)
 	}

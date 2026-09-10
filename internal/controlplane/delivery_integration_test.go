@@ -33,8 +33,6 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Release visits IDs in order. Make the last draft invalid so the first
-	// service's rollout and allocation must roll back when validation fails.
 	if first.ID > second.ID {
 		first, second = second, first
 	}
@@ -45,7 +43,6 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", &platformv1.ServiceRuntime{VolumeName: "missing"})); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate a resource disappearing after the draft was validated.
 	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volume.ID); err != nil {
 			return err

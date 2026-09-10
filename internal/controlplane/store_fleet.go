@@ -12,7 +12,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// fleetLiveReader supplies product reads without session or publication mutation.
 type fleetLiveReader interface {
 	AgentUsage() map[string]deliverycore.AgentUsage
 	Position() deliverycore.LivePosition

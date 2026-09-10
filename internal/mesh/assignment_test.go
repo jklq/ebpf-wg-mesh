@@ -99,7 +99,6 @@ func TestRuntimeConfigOverlaysAssignment(t *testing.T) {
 		t.Fatalf("cluster identity assignment not applied: %+v", got)
 	}
 
-	// The caller's config must survive being overlaid repeatedly.
 	if len(cfg.Mesh.WireGuard.Peers) != 1 || cfg.Mesh.WireGuard.Peers[0].Name != "stale" {
 		t.Fatalf("RuntimeConfig mutated the source config: %+v", cfg.Mesh.WireGuard)
 	}

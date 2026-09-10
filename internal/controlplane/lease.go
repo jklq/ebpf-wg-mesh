@@ -24,9 +24,6 @@ type leaseClaim struct {
 
 type leaseContextKey struct{}
 
-// LeaseManager gives one replica ownership of a named background job. The
-// monotonically increasing token is checked by database.withTx, making lease loss
-// a commit fence rather than merely a best-effort leader hint.
 const SingletonLeaseName = "control-plane-singleton"
 
 type LeaseManager struct {
@@ -304,11 +301,6 @@ func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-// withLeaseGuard serializes an external side effect with lease takeover. The
-// lease row remains locked until fn finishes, so a successor cannot acquire the
-// lease and publish a newer external state while the former owner is still able
-// to publish an older one. It deliberately does not use the retrying transaction
-// helper: an external side effect must never be replayed automatically.
 func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
 	claim, ok := ctx.Value(leaseContextKey{}).(leaseClaim)
 	if !ok {

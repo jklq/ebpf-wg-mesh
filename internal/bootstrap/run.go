@@ -10,14 +10,11 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-// Runner is a constructed service application.
 type Runner interface {
 	Run(context.Context) error
 	Close() error
 }
 
-// Run bootstraps a service and runs it until interrupted. It exits the
-// process on bootstrap, construction, or run failure.
 func Run[Cfg any, A Runner](
 	args []string,
 	component string,

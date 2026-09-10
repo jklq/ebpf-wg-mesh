@@ -12,8 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Source-domain records, states, and helpers. Delivery imports this package;
-// nothing here may import delivery.
 type SourceBindingRecord struct {
 	ID                           string
 	ServiceID                    string
@@ -122,8 +120,6 @@ func UnmarshalBuildRecipe(raw []byte) (*platformv1.BuildRecipe, error) {
 	return recipe, nil
 }
 
-// DesiredSourceSpec returns the git-source portion of a service spec, or nil
-// for image-based services.
 func DesiredSourceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSourceSpec {
 	if spec == nil || spec.GetSource() == nil {
 		return nil
@@ -156,9 +152,6 @@ func ToProtoSourceAccessState(value string) platformv1.SourceAccessState {
 	}
 }
 
-// Service is the minimal service identity the source domain needs to resolve
-// bindings. Full service snapshots stay in delivery; the root store adapts
-// them into this view.
 type Service struct {
 	ID           string
 	ProjectID    string
@@ -166,7 +159,6 @@ type Service struct {
 	SpecRevision int64
 }
 
-// QueuedBuild is the minimal handle returned when a source build is queued.
 type QueuedBuild struct {
 	BuildID string
 }

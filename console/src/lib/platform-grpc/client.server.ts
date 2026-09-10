@@ -53,8 +53,6 @@ function getTransport(runtime: PlatformRuntimeConfig): Transport {
 	return transportInstance;
 }
 
-/** The delegated-user assertion links a dashboard client certificate to the
- * signed-in user whose action is being taken on their behalf. */
 export function userAssertionMetadata(
 	runtime: PlatformRuntimeConfig,
 	user: DashboardUser | undefined,

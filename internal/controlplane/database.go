@@ -149,8 +149,6 @@ func (s *database) withTx(ctx context.Context, fn func(context.Context, *sql.Tx)
 		if err := assertLeaseTx(ctx, tx); err != nil {
 			return err
 		}
-		// Hold command authority throughout planning as well as append. A
-		// cutover cannot relabel a plan computed before it with the new epoch.
 		var epoch int64
 		if err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch); err != nil {
 			return err
@@ -163,9 +161,6 @@ func (s *database) withTx(ctx context.Context, fn func(context.Context, *sql.Tx)
 	return err
 }
 
-// compactJournal snapshots and truncates the durable journal. It runs only from
-// the lease-owned singleton job; the fence asserts the live owner inside the
-// compaction transaction.
 func (s *database) compactJournal(ctx context.Context, retain int64) (int64, error) {
 	s.initJournal()
 	return s.journal.CompactSnapshot(ctx, retain, func(ctx context.Context, tx *sql.Tx) error {

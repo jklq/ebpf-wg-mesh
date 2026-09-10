@@ -70,8 +70,6 @@ func TestJournalReleaseBatchAndReplay(t *testing.T) {
 			t.Fatalf("published assignment differs from committed assignment: %+v", recorded)
 		}
 	}
-	// A new process has no prior in-memory state, and may have a different
-	// authority epoch. Neither condition changes the meaning of committed entries.
 	if err := store.advanceAgentAuthority(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +127,6 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 	if committed.Assignments[allocation.ID].OperatorRestartNonce != before.Assignments[allocation.ID].OperatorRestartNonce+1 {
 		t.Fatal("committed command not applied")
 	}
-	// This also models a retry after losing the commit response and restarting.
 	restarted := journal.New(store.db, "default", nil)
 	receipt, err := restarted.Execute(commandCtx, func(context.Context, *sql.Tx) error {
 		t.Error("committed command ran twice")
@@ -209,9 +206,6 @@ func TestJournalExcludesTransientHeartbeat(t *testing.T) {
 	}
 }
 
-// TestJournalRecordingMatchesFullStateDiff enables the recording verifier while
-// exercising the production mutation APIs. Every command must record exactly
-// the durable rows it changed; a mismatch fails the command.
 func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -312,9 +306,6 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	}
 }
 
-// TestJournalPayloadIsIndependentOfUnrelatedRows seeds many unrelated durable
-// rows and then runs an unrelated one-row command. The command payload must
-// carry only the environment row, not the full product state.
 func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -376,9 +367,6 @@ func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 	}
 }
 
-// TestJournalConcurrentAppendsStayContiguous appends from two independent
-// stores against the same database and verifies the journal stays contiguous
-// and every command applies exactly once.
 func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -441,9 +429,6 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 	}
 }
 
-// TestJournalCompactionBootsFromSnapshot seeds durable state, compacts every
-// entry into a snapshot, and verifies a fresh store boots from the snapshot
-// without the truncated log.
 func TestJournalCompactionBootsFromSnapshot(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -491,8 +476,6 @@ func TestJournalCompactionBootsFromSnapshot(t *testing.T) {
 	if remaining != 0 {
 		t.Fatalf("%d entries at or below the watermark survived", remaining)
 	}
-	// A fresh process has no in-memory prefix. Replaying from index 0 would hit
-	// a gap; it must boot from the snapshot.
 	restarted := journal.New(store.db, "default", nil)
 	replayed, err := restarted.Snapshot(ctx)
 	if err != nil {
@@ -506,10 +489,6 @@ func TestJournalCompactionBootsFromSnapshot(t *testing.T) {
 	}
 }
 
-// TestJournalRetryAfterCompactionReturnsReceipt verifies command-ID
-// idempotency survives log truncation: receipts live in
-// cluster_journal_receipts, so a retry after retain=0 compaction returns the
-// original receipt without re-running the command.
 func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -568,9 +547,6 @@ func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 	}
 }
 
-// TestJournalBehindReplicaReloadsSnapshot covers a replica whose in-memory
-// prefix predates the compaction watermark: it must recover by re-reading the
-// snapshot path rather than assuming a complete log.
 func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -590,7 +566,6 @@ func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 	if _, err := replica.Snapshot(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// The replica now holds a prefix. Advance and compact past it.
 	if _, err := store.catalog.renameEnvironment(ctx, "owner", environmentID, "advanced"); err != nil {
 		t.Fatal(err)
 	}
@@ -613,11 +588,6 @@ func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 	}
 }
 
-// TestAffectedAgentFanoutIsScoped proves that a change is applied to the live
-// view only for the agents whose desired snapshot can change: service and
-// volume changes wake every host of the environment (InternalHosts is
-// environment-wide), a reconnect hello does not wake peers, assignment changes
-// are cluster-wide, and deployment staging wakes no one.
 func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -651,14 +621,11 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	drainWatch(node2)
 	drainWatch(node3)
 
-	// A new empty environment changes no agent's snapshot.
 	if _, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "empty"); err != nil {
 		t.Fatal(err)
 	}
 	assertNoWatch(t, "empty environment creation", node1, node2, node3)
 
-	// InternalHosts includes every serving allocation in the environment, so a
-	// rename must wake sibling hosts, not only the service's own agent.
 	if _, _, err := updateService(ctx, store, "owner", service.ID, "web-renamed", directImageServiceSpec("example.test/web:1", nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -743,8 +710,6 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	}
 	assertNoWatch(t, "deployment staging", node1, node2, node3)
 
-	// Assignment changes are part of the cluster-wide workload identity catalog,
-	// so every agent must rebuild its snapshot.
 	allocs, err := store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	if err != nil || len(allocs) == 0 {
 		t.Fatalf("list allocations: %v", err)

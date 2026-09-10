@@ -57,8 +57,6 @@ func dialInNetworkNamespace(ctx context.Context, namespacePath, network, address
 		if conn != nil {
 			_ = conn.Close()
 		}
-		// Leaving this goroutine locked causes the Go runtime to retire the OS
-		// thread instead of returning a workload-namespaced thread to its pool.
 		unlockThread = false
 		return nil, fmt.Errorf("restore agent network namespace: %w", restoreErr)
 	}

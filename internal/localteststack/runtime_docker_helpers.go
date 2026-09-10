@@ -90,12 +90,6 @@ func (r *DockerRuntime) environmentNetworkPrefix() string {
 	return r.cfg.DockerNetwork + "-env-"
 }
 
-// pruneStaleEnvironmentNetworks removes per-environment Docker networks that
-// no desired service references. Every Docker network permanently holds one
-// daemon address-pool subnet until removed, so leaking them exhausts the
-// daemon ("all predefined address pools have been fully subnetted") and every
-// later network create fails. Discovery is by daemon listing so networks
-// leaked by previous processes are reclaimed too.
 func (r *DockerRuntime) pruneStaleEnvironmentNetworks(ctx context.Context, desired map[string]*agentv1.DesiredService) error {
 	keep := make(map[string]struct{})
 	for _, svc := range desired {

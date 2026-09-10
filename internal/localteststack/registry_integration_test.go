@@ -96,7 +96,6 @@ func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
 
 	exact := "mesh/project-1/build-1/service-1"
 	exactToken := requestRegistryToken("repository:" + exact + ":pull")
-	// The empty registry returns NAME_UNKNOWN only after authorization succeeds.
 	if status, body := requestTags(exact, exactToken); status != http.StatusNotFound {
 		logs, _ := exec.Command("docker", "logs", registry.cfg.ContainerName).CombinedOutput()
 		t.Fatalf("exact repository status = %d, want 404; body=%s; registry logs:\n%s", status, body, logs)

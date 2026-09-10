@@ -24,7 +24,7 @@ import (
 type consoleProcess struct {
 	cmd     *exec.Cmd
 	done    <-chan struct{}
-	waitErr error // set before done is closed; read only after <-done
+	waitErr error
 }
 
 func startConsole(ctx context.Context, consoleDir string, env map[string]string, port int, bindAddress string, reserved net.Listener) (*consoleProcess, error) {
@@ -59,7 +59,6 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = commandEnv
-	// Release the reserved port only immediately before the console binds it.
 	if reserved != nil {
 		if err := reserved.Close(); err != nil {
 			return nil, fmt.Errorf("release reserved console port %d: %w", port, err)
@@ -76,9 +75,6 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 		close(done)
 	}()
 
-	// Per-attempt timeout so a single hung cold-compile or half-open port does
-	// not consume the full startup budget without retrying. Fail fast if the
-	// process exits (port conflict, crash) instead of polling for 2 minutes.
 	client := &http.Client{Timeout: 5 * time.Second}
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: consoleStartupTimeout, Interval: 200 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		select {
@@ -160,9 +156,6 @@ func pickLoopbackPort() (int, error) {
 	_ = listener.Close()
 	return port, nil
 }
-
-// reservePort binds bindAddress:0 and returns the listener still held open so
-// callers can keep the port reserved until the real server is ready to bind it.
 
 func reservePort(bindAddress string) (net.Listener, int, error) {
 	listener, err := net.Listen("tcp", net.JoinHostPort(bindAddress, "0"))

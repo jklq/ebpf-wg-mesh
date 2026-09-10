@@ -21,7 +21,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// BuildOperations owns builder authorization, job preparation, and committed build effects.
 type BuildOperations struct {
 	builds      *buildsPersistence
 	reads       deliverycore.ReadModel
@@ -43,12 +42,8 @@ type buildCredentials interface {
 	CredentialsForBuild(ctx context.Context, projectID, buildID, pushRef string) (string, string, error)
 }
 
-// BuildOperationsOption configures optional build observability.
 type BuildOperationsOption func(*BuildOperations)
 
-// WithBuilderLogEmitter wires a LogEmitter into BuildOperations so that
-// build state transitions (claim, complete) persist human-readable log lines
-// under the "build" log type. A nil emitter is treated as a no-op.
 func WithBuilderLogEmitter(emitter *logs.LogEmitter) BuildOperationsOption {
 	return func(s *BuildOperations) {
 		s.emitter = emitter
@@ -185,8 +180,6 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	if err != nil {
 		return nil, err
 	}
-	// Load build + service up-front so we can emit synthetic logs keyed to
-	// the correct service/allocation regardless of the terminal state.
 	build, err := s.reads.BuildByID(ctx, req.GetBuildId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
@@ -235,9 +228,6 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	}
 	var allocationAgentIDs []string
 	if req.GetState() == platformv1.BuildState_BUILD_STATE_SUCCEEDED {
-		// A first source build has no allocation before completion. Completing the
-		// build creates its rollout allocations, so use the durable post-completion
-		// allocation set when describing the rollout in synthetic logs.
 		allocations, err := s.reads.ListAllocationsByServiceID(ctx, build.ServiceID)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "load build allocations after completion: %v", err)
@@ -259,9 +249,6 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	switch req.GetState() {
 	case platformv1.BuildState_BUILD_STATE_SUCCEEDED:
 		s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Image build succeeded for commit %s (digest %s)", shortSHA(req.GetCommitSha()), shortDigest(req.GetImageDigest()))
-		// We synthesize a deploy-stage line so the "Deploy" tab shows
-		// activity immediately even before the agent applies the new
-		// rollout; the runtime condition stream later adds more detail.
 		target := strings.Join(allocationAgentIDs, ", ")
 		if target == "" {
 			target = "pending placement"
@@ -326,9 +313,6 @@ func buildJobSourceFromRecord(rec deliverycore.BuildRunRecord) *platformv1.Build
 	}
 }
 
-// shortSHA truncates a git SHA for human-friendly log lines. We keep the first
-// 7 hex characters which is git's default short-hash width and enough to
-// disambiguate commits in practical cases.
 func shortSHA(sha string) string {
 	sha = strings.TrimSpace(sha)
 	if len(sha) <= 7 {
@@ -337,8 +321,6 @@ func shortSHA(sha string) string {
 	return sha[:7]
 }
 
-// shortDigest trims a `sha256:…` image digest down to a human-sized prefix so
-// log lines stay readable in the terminal-style log viewer.
 func shortDigest(digest string) string {
 	digest = strings.TrimSpace(digest)
 	if colon := strings.Index(digest, ":"); colon >= 0 && colon+12 < len(digest) {

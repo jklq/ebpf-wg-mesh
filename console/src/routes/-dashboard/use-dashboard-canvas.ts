@@ -443,9 +443,6 @@ export function useDashboardCanvas({
 		hasUserPanned.current = false;
 	};
 
-	// Safety cap: the skeleton must never outstay a slow measurement or a
-	// missed centering pass. Centering still runs first via layout effect;
-	// this only bounds the worst case.
 	useEffect(() => {
 		if (canvasReady || services.length === 0) return;
 		const id = window.setTimeout(() => setCanvasReady(true), 1500);
