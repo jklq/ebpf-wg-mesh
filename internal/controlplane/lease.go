@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,11 +27,16 @@ type leaseContextKey struct{}
 // LeaseManager gives one replica ownership of a named background job. The
 // monotonically increasing token is checked by database.withTx, making lease loss
 // a commit fence rather than merely a best-effort leader hint.
+const SingletonLeaseName = "control-plane-singleton"
+
 type LeaseManager struct {
 	store         *database
 	holderID      string
 	ttl           time.Duration
 	retryInterval time.Duration
+	advertise     string
+	onUnfenced    func()
+	onFenced      func()
 }
 
 func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseManager {
@@ -41,6 +47,19 @@ func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseMa
 		retryInterval = time.Second
 	}
 	return &LeaseManager{store: store, holderID: uuid.NewString(), ttl: ttl, retryInterval: retryInterval}
+}
+
+func (m *LeaseManager) SetAdvertise(addr string) {
+	if m != nil {
+		m.advertise = strings.TrimSpace(addr)
+	}
+}
+
+func (m *LeaseManager) SetFenceHooks(unfenced, fenced func()) {
+	if m != nil {
+		m.onUnfenced = unfenced
+		m.onFenced = fenced
+	}
 }
 
 func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Context) error) error {
@@ -92,12 +111,18 @@ func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Co
 				ok, err := m.renew(ctx, claim)
 				if err != nil {
 					slog.Warn("renew control-plane lease failed", "lease", name, "error", err)
+					if m.onUnfenced != nil {
+						m.onUnfenced()
+					}
+					continue
 				}
 				if !ok {
 					cancel()
 					renew.Stop()
 					<-jobDone
 					lost = true
+				} else if m.onFenced != nil {
+					m.onFenced()
 				}
 			}
 		}
@@ -147,10 +172,17 @@ func (m *LeaseManager) hold(ctx context.Context, name string) (context.Context, 
 				ok, err := m.renew(leaseCtx, claim)
 				if err != nil {
 					slog.Warn("renew held control-plane lease failed", "lease", name, "error", err)
+					if m.onUnfenced != nil {
+						m.onUnfenced()
+					}
+					continue
 				}
 				if !ok {
 					cancel()
 					return
+				}
+				if m.onFenced != nil {
+					m.onFenced()
 				}
 			}
 		}
@@ -182,8 +214,8 @@ func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bo
 	claim := leaseClaim{name: name, holder: m.holderID}
 	err := m.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
-			INSERT INTO control_plane_leases(name, holder_id, fencing_token, expires_at, updated_at)
-			VALUES ($1, $2, 1, statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond', statement_timestamp())
+			INSERT INTO control_plane_leases(name, holder_id, fencing_token, advertise_addr, expires_at, updated_at)
+			VALUES ($1, $2, 1, $4, statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond', statement_timestamp())
 			ON CONFLICT(name) DO UPDATE SET
 				holder_id = excluded.holder_id,
 				fencing_token = CASE
@@ -192,11 +224,12 @@ func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bo
 					THEN control_plane_leases.fencing_token
 					ELSE control_plane_leases.fencing_token + 1
 				END,
+				advertise_addr = excluded.advertise_addr,
 				expires_at = excluded.expires_at,
 				updated_at = excluded.updated_at
 			WHERE control_plane_leases.holder_id = excluded.holder_id
 			   OR control_plane_leases.expires_at <= statement_timestamp()
-			RETURNING fencing_token`, name, m.holderID, m.ttl.Microseconds()).Scan(&claim.token)
+			RETURNING fencing_token`, name, m.holderID, m.ttl.Microseconds(), m.advertise).Scan(&claim.token)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return leaseClaim{}, false, nil
@@ -207,9 +240,9 @@ func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bo
 func (m *LeaseManager) renew(ctx context.Context, claim leaseClaim) (bool, error) {
 	result, err := m.store.db.ExecContext(ctx, `
 		UPDATE control_plane_leases
-		   SET expires_at = statement_timestamp() + $1::INT8 * INTERVAL '1 microsecond', updated_at = statement_timestamp()
+		   SET expires_at = statement_timestamp() + $1::INT8 * INTERVAL '1 microsecond', updated_at = statement_timestamp(), advertise_addr = $5
 		 WHERE name = $2 AND holder_id = $3 AND fencing_token = $4
-		   AND expires_at > statement_timestamp()`, m.ttl.Microseconds(), claim.name, claim.holder, claim.token)
+		   AND expires_at > statement_timestamp()`, m.ttl.Microseconds(), claim.name, claim.holder, claim.token, m.advertise)
 	if err != nil {
 		return false, err
 	}
@@ -277,6 +310,16 @@ func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *database) liveOwnerAddr(ctx context.Context) (string, error) {
+	var addr string
+	err := s.db.QueryRowContext(ctx, `SELECT advertise_addr FROM control_plane_leases
+		WHERE name = $1 AND expires_at > statement_timestamp()`, SingletonLeaseName).Scan(&addr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return strings.TrimSpace(addr), err
 }
 
 func waitContext(ctx context.Context, delay time.Duration) bool {

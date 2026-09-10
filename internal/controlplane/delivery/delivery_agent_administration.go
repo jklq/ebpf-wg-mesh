@@ -48,10 +48,6 @@ func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *pla
 			VALUES ($1, 'enrolling', $2)`, req.GetAgentId(), now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_presence(agent_id, session_id, last_observation_sequence, last_contact_at, ready, reachable, updated_at)
-			VALUES ($1, '', 0, $2, FALSE, FALSE, $2)`, req.GetAgentId(), time.Unix(0, 0).UTC()); err != nil {
-			return err
-		}
 		if err := insertAgentBootstrapTokenTx(ctx, tx, req.GetAgentId(), token, "operator", now); err != nil {
 			return err
 		}

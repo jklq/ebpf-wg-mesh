@@ -107,7 +107,7 @@ type AgentRecord struct {
 }
 
 // AgentAdministration is operator-owned intent. Runtime connectivity never
-// mutates this record; effective unavailability is composed with AgentPresence.
+// mutates this record; effective unavailability is composed with the live session.
 type AgentAdministration struct {
 	AgentID             string
 	LifecycleState      AgentLifecycleState
@@ -115,18 +115,6 @@ type AgentAdministration struct {
 	MaintenanceMessage  string
 	CredentialRevokedAt sql.NullTime
 	UpdatedAt           time.Time
-}
-
-// AgentPresence is owned by the live authenticated session. SessionID fences
-// traffic from prior process incarnations.
-type AgentPresence struct {
-	AgentID                 string
-	SessionID               string
-	LastObservationSequence uint64
-	LastContactAt           time.Time
-	Ready                   bool
-	Reachable               bool
-	UpdatedAt               time.Time
 }
 
 type AgentLifecycleState string

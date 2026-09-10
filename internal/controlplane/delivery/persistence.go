@@ -44,6 +44,7 @@ type Dependencies struct {
 
 	DB                     *sql.DB
 	Mesh                   config.ControlPlaneMeshConfig
+	Live                   *Live
 	Transaction            Transaction
 	UnfencedTransaction    Transaction
 	ObservationTransaction Transaction
@@ -77,6 +78,7 @@ type persistence struct {
 
 	db                *sql.DB
 	mesh              config.ControlPlaneMeshConfig
+	live              *Live
 	reservedAgentIDs  []string
 	withTx            Transaction
 	withTxUnfenced    Transaction
@@ -85,10 +87,15 @@ type persistence struct {
 }
 
 func New(deps Dependencies) *Delivery {
+	live := deps.Live
+	if live == nil {
+		live = NewLive()
+	}
 	return &Delivery{
 		store: &persistence{
 			db:                       deps.DB,
 			mesh:                     deps.Mesh,
+			live:                     live,
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
 			withTx:                   deps.Transaction,
 			withTxUnfenced:           deps.UnfencedTransaction,
@@ -99,12 +106,20 @@ func New(deps Dependencies) *Delivery {
 			enqueueSourceWorkItemTx:  deps.EnqueueSourceWork,
 			sourceStore:              deps.SourceStore,
 		},
+		live:            live,
 		notifier:        deps.Notifier,
 		ingress:         deps.Ingress,
 		events:          deps.Events,
 		logEmitter:      deps.LogEmitter,
 		userFromContext: deps.UserFromContext,
 	}
+}
+
+func (d *Delivery) Live() *Live {
+	if d == nil {
+		return nil
+	}
+	return d.live
 }
 
 // ReadModel exposes the snapshots used by transports and other modules.

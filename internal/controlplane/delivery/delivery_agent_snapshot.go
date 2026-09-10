@@ -96,29 +96,20 @@ func (d *Delivery) listDesiredServices(ctx context.Context, q ServiceQueryer, li
 
 	// Restart samples are transient. Assignment intent and addresses come only
 	// from the applied committed prefix, never from an attempted SQL mutation.
-	rows, err := q.QueryContext(ctx, `SELECT allocation_id, rollout_generation, restart_observation_json FROM allocation_observations WHERE agent_id = $1`, agentID)
-	if err != nil {
-		return nil, err
-	}
 	samples := make(map[string][]byte)
-	for rows.Next() {
-		var id string
-		var generation int64
-		var raw []byte
-		if err := rows.Scan(&id, &generation, &raw); err != nil {
-			rows.Close()
+	for id, a := range live.Assignments {
+		if a.AgentID != agentID {
+			continue
+		}
+		obs, ok := d.store.live.Observation(id, a.DesiredRolloutGeneration)
+		if !ok || obs.Restart == nil {
+			continue
+		}
+		raw, err := encodeRestartObservation(obs.Restart)
+		if err != nil {
 			return nil, err
 		}
-		if a, exists := live.Assignments[id]; exists && a.DesiredRolloutGeneration == generation {
-			samples[id] = raw
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
+		samples[id] = raw
 	}
 
 	type serviceRow struct {
@@ -214,7 +205,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, q ServiceQueryer, li
 			svc.VolumeId = volumeIDs[volumeKey(svc.EnvironmentId, volumeName)]
 		}
 		svc.InternalHostname = InternalServiceHostname(svc.Name, svc.ServiceId)
-		svc.InternalHosts, err = d.internalHostsForEnvironment(ctx, q, svc.EnvironmentId)
+		svc.InternalHosts, err = d.internalHostsForEnvironment(live, svc.EnvironmentId)
 		if err != nil {
 			return nil, err
 		}
@@ -223,45 +214,55 @@ func (d *Delivery) listDesiredServices(ctx context.Context, q ServiceQueryer, li
 	return out, nil
 }
 
-func (d *Delivery) internalHostsForEnvironment(ctx context.Context, q ServiceQueryer, environmentID string) ([]*agentv1.InternalHost, error) {
-	rows, err := q.QueryContext(ctx,
-		`SELECT s.id, s.name, a.allocation_ipv4, a.allocation_ipv6,
-		        a.healthy_ipv4_ports, a.healthy_ipv6_ports
-		   FROM services s
-		   JOIN allocations a ON a.service_id = s.id
-		  WHERE s.environment_id = $1
-		    AND a.healthy = TRUE
-		    AND a.rollout_state = 'serving'
-		    AND a.applied_spec_revision >= a.desired_spec_revision
-		    AND a.applied_rollout_generation >= a.desired_rollout_generation
-		  ORDER BY s.created_at ASC, a.id ASC`,
-		environmentID,
-	)
-	if err != nil {
-		return nil, err
+func (d *Delivery) internalHostsForEnvironment(durable journal.DurableState, environmentID string) ([]*agentv1.InternalHost, error) {
+	type hostRow struct {
+		created time.Time
+		id, name, ipv4, ipv6 string
 	}
-	defer rows.Close()
-
+	var rows []hostRow
+	for _, service := range durable.Services {
+		if service.EnvironmentID != environmentID {
+			continue
+		}
+		for _, assignment := range durable.Assignments {
+			if assignment.ServiceID != service.ID {
+				continue
+			}
+			rec := d.store.overlayAllocation(AllocationRecord{
+				ID: assignment.ID, ServiceID: service.ID, AgentID: assignment.AgentID,
+				DesiredSpecRevision: assignment.DesiredSpecRevision, DesiredRolloutGeneration: assignment.DesiredRolloutGeneration,
+				AllocationIPv4: assignment.AllocationIPv4, AllocationIPv6: assignment.AllocationIPv6,
+				RolloutState: assignment.RolloutState, Message: assignment.IntentMessage,
+			})
+			if !rec.Healthy || rec.RolloutState != AllocationRolloutServing ||
+				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration {
+				continue
+			}
+			ipv4, ipv6 := rec.AllocationIPv4, rec.AllocationIPv6
+			if len(rec.HealthyIPv4Ports) == 0 {
+				ipv4 = ""
+			}
+			if len(rec.HealthyIPv6Ports) == 0 {
+				ipv6 = ""
+			}
+			rows = append(rows, hostRow{service.CreatedAt, service.ID, service.Name, ipv4, ipv6})
+		}
+	}
+	slices.SortFunc(rows, func(a, b hostRow) int {
+		if n := a.created.Compare(b.created); n != 0 {
+			return n
+		}
+		return strings.Compare(a.id, b.id)
+	})
 	var hosts []*agentv1.InternalHost
-	for rows.Next() {
-		var serviceID, name, ipv4, ipv6 string
-		var healthyIPv4Ports, healthyIPv6Ports []int32
-		if err := rows.Scan(&serviceID, &name, &ipv4, &ipv6, (*jsonInt32Slice)(&healthyIPv4Ports), (*jsonInt32Slice)(&healthyIPv6Ports)); err != nil {
-			return nil, err
-		}
-		if len(healthyIPv4Ports) == 0 {
-			ipv4 = ""
-		}
-		if len(healthyIPv6Ports) == 0 {
-			ipv6 = ""
-		}
+	for _, row := range rows {
 		hosts = append(hosts, &agentv1.InternalHost{
-			Hostname: InternalServiceHostname(name, serviceID),
-			Ipv4:     ipv4,
-			Ipv6:     ipv6,
+			Hostname: InternalServiceHostname(row.name, row.id),
+			Ipv4:     row.ipv4,
+			Ipv6:     row.ipv6,
 		})
 	}
-	return hosts, rows.Err()
+	return hosts, nil
 }
 
 func (d *Delivery) assignedNodeConfigForAgent(live journal.DurableState, agentID string) (*agentv1.AssignedNodeConfig, error) {

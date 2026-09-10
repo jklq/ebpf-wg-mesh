@@ -4,67 +4,77 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/restartpolicy"
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]routing.Backend, error) {
+	live := s.live
+	if live != nil && !live.Publishing() {
+		return nil, nil
+	}
+	if live == nil {
+		live = deliverycore.NewLive()
+	}
 	var backends []routing.Backend
-	err := s.withCommittedState(ctx, func(tx *sql.Tx) error {
-		var err error
-		backends, err = healthyIngressBackendsTx(ctx, tx)
-		return err
+	err := s.readLiveState(ctx, func(_ *sql.Tx, durable journal.DurableState) error {
+		backends = healthyIngressBackends(durable, live)
+		return nil
 	})
 	return backends, err
 }
 
-func healthyIngressBackendsTx(ctx context.Context, tx *sql.Tx) ([]routing.Backend, error) {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT d.hostname, d.target_port, a.healthy_ipv4_ports, a.healthy_ipv6_ports,
-		        a.allocation_ipv4, a.allocation_ipv6, a.id
-		   FROM domain_bindings d
-		   JOIN allocations a ON a.service_id = d.service_id
-		   JOIN services s ON s.id = a.service_id
-		  WHERE a.healthy = TRUE
-		    AND a.rollout_state = $1
-		    AND a.applied_spec_revision >= a.desired_spec_revision
-		    AND a.applied_rollout_generation >= a.desired_rollout_generation
-		    AND a.phase <> $2
-		  ORDER BY d.hostname ASC, a.id ASC`,
-		deliverycore.AllocationRolloutServing,
-		restartpolicy.PhaseCrashLoop,
-	)
-	if err != nil {
-		return nil, err
+func healthyIngressBackends(durable journal.DurableState, live *deliverycore.Live) []routing.Backend {
+	type row struct {
+		hostname, allocationID, ipv4, ipv6 string
+		port                               int32
+		ipv4Ports, ipv6Ports               []int32
 	}
-	defer rows.Close()
-
+	var rows []row
+	for _, domain := range durable.Domains {
+		for _, assignment := range durable.Assignments {
+			if assignment.ServiceID != domain.ServiceID {
+				continue
+			}
+			rec := live.OverlayAllocation(deliverycore.AllocationRecord{
+				ID: assignment.ID, ServiceID: assignment.ServiceID, AgentID: assignment.AgentID,
+				DesiredSpecRevision: assignment.DesiredSpecRevision, DesiredRolloutGeneration: assignment.DesiredRolloutGeneration,
+				AllocationIPv4: assignment.AllocationIPv4, AllocationIPv6: assignment.AllocationIPv6,
+				RolloutState: assignment.RolloutState, Message: assignment.IntentMessage,
+			})
+			if !rec.Healthy || rec.RolloutState != deliverycore.AllocationRolloutServing ||
+				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration ||
+				rec.Phase == restartpolicy.PhaseCrashLoop {
+				continue
+			}
+			rows = append(rows, row{
+				hostname: domain.Hostname, allocationID: rec.ID, ipv4: rec.AllocationIPv4, ipv6: rec.AllocationIPv6,
+				port: int32(domain.TargetPort), ipv4Ports: rec.HealthyIPv4Ports, ipv6Ports: rec.HealthyIPv6Ports,
+			})
+		}
+	}
+	slices.SortFunc(rows, func(a, b row) int {
+		if n := strings.Compare(a.hostname, b.hostname); n != 0 {
+			return n
+		}
+		return strings.Compare(a.allocationID, b.allocationID)
+	})
 	var backends []routing.Backend
-	for rows.Next() {
-		var (
-			domain           string
-			targetPort       int32
-			healthyIPv4Ports []int32
-			healthyIPv6Ports []int32
-			allocationIPv4   string
-			allocationIPv6   string
-			allocationID     string
-		)
-		if err := rows.Scan(&domain, &targetPort, (*deliverycore.JSONInt32Slice)(&healthyIPv4Ports), (*deliverycore.JSONInt32Slice)(&healthyIPv6Ports), &allocationIPv4, &allocationIPv6, &allocationID); err != nil {
-			return nil, err
-		}
-		if slices.Contains(healthyIPv4Ports, targetPort) && net.ParseIP(allocationIPv4) != nil {
+	for _, item := range rows {
+		if slices.Contains(item.ipv4Ports, item.port) && net.ParseIP(item.ipv4) != nil {
 			backends = append(backends, routing.Backend{
-				Domain: domain, Upstream: net.JoinHostPort(allocationIPv4, strconv.Itoa(int(targetPort))), AllocationID: allocationID,
+				Domain: item.hostname, Upstream: net.JoinHostPort(item.ipv4, strconv.Itoa(int(item.port))), AllocationID: item.allocationID,
 			})
-		} else if slices.Contains(healthyIPv6Ports, targetPort) && net.ParseIP(allocationIPv6) != nil {
+		} else if slices.Contains(item.ipv6Ports, item.port) && net.ParseIP(item.ipv6) != nil {
 			backends = append(backends, routing.Backend{
-				Domain: domain, Upstream: net.JoinHostPort(allocationIPv6, strconv.Itoa(int(targetPort))), AllocationID: allocationID,
+				Domain: item.hostname, Upstream: net.JoinHostPort(item.ipv6, strconv.Itoa(int(item.port))), AllocationID: item.allocationID,
 			})
 		}
 	}
-	return backends, rows.Err()
+	return backends
 }

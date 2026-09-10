@@ -15,13 +15,6 @@ type JSONInt32Slice = jsonInt32Slice
 
 type jsonStringSlice []string
 
-func encodeHealthyPorts(ports []int32) ([]byte, error) {
-	if ports == nil {
-		ports = []int32{}
-	}
-	return json.Marshal(ports)
-}
-
 func encodeRestartObservation(obs *platformv1.RestartObservation) ([]byte, error) {
 	if obs == nil {
 		return []byte("{}"), nil

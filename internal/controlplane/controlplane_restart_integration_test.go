@@ -205,18 +205,26 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 
 	deadCancel()
 	liveCancel()
-	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL), deadID); err != nil {
-		t.Fatalf("mark stale: %v", err)
-	}
+	store.live.SetLastContactForTest(deadID, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL))
 	first.stop()
 
 	second := startSystemControlPlane(t, opts)
 	reconnectedHello := restartAgentHello(liveID, "fd00:30::32")
 	reconnectedHello.SessionId += "-reconnected"
+	if allocs, err := second.server.store.reads.ListAllocationsByServiceID(ctx, ingressSvc.ID); err == nil {
+		for _, alloc := range allocs {
+			if alloc.AgentID == liveID {
+				reconnectedHello.Allocations = append(reconnectedHello.Allocations, &agentv1.ServiceCondition{AllocationId: alloc.ID})
+			}
+		}
+	}
 	reconnectedStream, reconnectedCancel := openAgentSync(t, second.server, liveCert, reconnectedHello)
 	defer reconnectedCancel()
 	_ = recvDesiredState(t, reconnectedStream)
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+		if _, err := second.server.failover.Reconcile(ctx); err != nil {
+			return false, err
+		}
 		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
 			return false, err
@@ -238,6 +246,11 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		if svc.GetServiceId() == failing.ID {
 			t.Fatal("dead agent still has the failed-over service in desired state")
 		}
+	}
+	// Takeover starts observations unknown. Ingress publication waits for a
+	// fresh report from the surviving session.
+	if err := second.server.store.markAllocationHealthyForTest(ctx, ingressSvc.ID, "fd00:200:1::10", 8080); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := second.server.ingress.Sync(ctx); err != nil {

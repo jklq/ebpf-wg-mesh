@@ -117,7 +117,12 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
+			delivery := newDelivery(store, nil, nil, nil, nil)
+			if err := delivery.BecomeLive(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			t.Cleanup(func() {
+				delivery.ResignLive()
 				if err := store.Close(); err != nil {
 					t.Error(err)
 				}

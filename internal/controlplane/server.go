@@ -320,7 +320,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	leaseDone := make(chan error, 1)
 	go func() {
-		err := s.leases.Run(runCtx, "control-plane-singleton", s.runSingletonJobs)
+		s.leases.SetAdvertise(s.InternalAddr())
+		s.leases.SetFenceHooks(func() { s.delivery.Live().SetPublishing(false) }, func() { s.delivery.Live().SetPublishing(true) })
+		err := s.leases.Run(runCtx, SingletonLeaseName, s.runSingletonJobs)
 		leaseDone <- err
 		errCh <- err
 	}()
@@ -338,15 +340,20 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) runSingletonJobs(ctx context.Context) error {
+	if err := s.delivery.BecomeLive(ctx); err != nil {
+		return err
+	}
+	defer s.delivery.ResignLive()
 	if s.reconciler != nil {
 		if err := s.reconciler.Bootstrap(ctx); err != nil {
 			slog.Warn("github bootstrap reconcile failed", "error", err)
 		}
 	}
-	errCh := make(chan error, 7)
+	errCh := make(chan error, 8)
 	if s.webhooks != nil {
 		go func() { errCh <- s.webhooks.Run(ctx) }()
 	}
+	go func() { errCh <- s.delivery.ServeLive(ctx) }()
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Run(ctx) }()
 	}
@@ -523,11 +530,7 @@ func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, err
 	rec, err := s.store.reads.AgentByID(ctx, agentID)
 	switch {
 	case err == nil:
-		now, err := dbtx.DatabaseTime(ctx, s.store.db)
-		if err != nil {
-			return false, err
-		}
-		return rec.LastSeenAt.After(now.Add(-deliverycore.AgentHealthyTTL)), nil
+		return rec.Healthy(time.Now().UTC()), nil
 	case errors.Is(err, sql.ErrNoRows):
 		return false, nil
 	default:

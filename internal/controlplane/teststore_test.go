@@ -81,12 +81,8 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 	) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
 		return err
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
-		VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now); err != nil {
-		return err
-	}
-	_, err := store.db.ExecContext(ctx, `INSERT INTO agent_presence(agent_id, session_id, last_observation_sequence, last_contact_at, ready, reachable, updated_at)
-		VALUES ($1, '', 0, $2, FALSE, FALSE, $2) ON CONFLICT(agent_id) DO NOTHING`, id, time.Unix(0, 0).UTC())
+	_, err := store.db.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
+		VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now)
 	return err
 }
 
@@ -114,9 +110,20 @@ func openTestStore(t *testing.T) *persistence {
 		t.Fatalf("create source archive store: %v", err)
 	}
 	store.source.ConfigureSourceArchives(archiveStore)
-	newDelivery(store, nil, nil, nil, nil)
+	delivery := newDelivery(store, nil, nil, nil, nil)
 	resetTestStore(t, store)
+	lease := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	leaseCtx, releaseLease, err := lease.hold(context.Background(), SingletonLeaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := delivery.BecomeLive(leaseCtx); err != nil {
+		releaseLease()
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
+		delivery.ResignLive()
+		releaseLease()
 		if err := store.Close(); err != nil {
 			t.Fatalf("Close: %v", err)
 		}
@@ -161,7 +168,6 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"build_runs",
 		"builder_workers",
 		"deployment_transitions",
-		"allocation_observations",
 		"allocation_assignments",
 		"deployments",
 		"service_rollouts",
@@ -172,7 +178,6 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"project_memberships",
 		"environments",
 		"projects",
-		"agent_presence",
 		"agent_administration",
 		"agent_registrations",
 		"workload_ipv4_prefix_allocator",

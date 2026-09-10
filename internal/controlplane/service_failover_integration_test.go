@@ -301,7 +301,5 @@ func bootstrapFailoverProject(t *testing.T, store *persistence) string {
 
 func makeAgentUnhealthy(t *testing.T, store *persistence, agentID string, lastSeen time.Time) {
 	t.Helper()
-	if _, err := store.db.ExecContext(context.Background(), `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, lastSeen.UTC(), agentID); err != nil {
-		t.Fatal(err)
-	}
+	store.live.SetLastContactForTest(agentID, lastSeen.UTC())
 }

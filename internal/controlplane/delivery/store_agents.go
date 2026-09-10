@@ -15,7 +15,11 @@ func (s *persistence) listAgents(ctx context.Context) ([]AgentRecord, error) {
 }
 
 func (s *persistence) agentByID(ctx context.Context, agentID string) (AgentRecord, error) {
-	return agentByIDQuerier(ctx, s.db, agentID, false)
+	rec, err := agentByIDQuerier(ctx, s.db, agentID, false)
+	if err != nil {
+		return AgentRecord{}, err
+	}
+	return s.overlayAgent(rec), nil
 }
 
 func (s *persistence) agentIDs(ctx context.Context) ([]string, error) {
@@ -273,7 +277,7 @@ func (s *persistence) listAgentsQuerier(ctx context.Context, q ServiceQueryer) (
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rec)
+		out = append(out, s.overlayAgent(rec))
 	}
 	return out, rows.Err()
 }

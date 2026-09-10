@@ -79,7 +79,12 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 		if err := store.markAllocationHealthyForTest(ctx, item.ID, allocation.AllocationIPv4, 8080); err != nil {
 			t.Fatalf("mark %s healthy: %v", label, err)
 		}
-		if _, err := store.db.ExecContext(ctx, `UPDATE allocation_observations SET healthy_ipv6_ports = '[8080]' WHERE allocation_id = $1 AND rollout_generation = $2`, allocation.ID, allocation.DesiredRolloutGeneration); err != nil {
+		obs, ok := store.live.Observation(allocation.ID, allocation.DesiredRolloutGeneration)
+		if !ok {
+			t.Fatalf("missing live observation for %s", label)
+		}
+		obs.HealthyIPv6Ports = []int32{8080}
+		if _, err := store.live.RecordObservation(obs); err != nil {
 			t.Fatalf("mark %s IPv6 healthy: %v", label, err)
 		}
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
 )
 
 type App struct {
@@ -25,9 +26,10 @@ type App struct {
 	mesh           MeshHandle
 	meshFactory    MeshFactory
 	meshAssignment mesh.Assignment
-	stateStore     *localStateStore
-	supervisor     *workloadSupervisor
-	healthStop     func(context.Context) error
+	stateStore       *localStateStore
+	supervisor       *workloadSupervisor
+	healthStop       func(context.Context) error
+	controlPlaneAddr string
 }
 
 const (
@@ -37,7 +39,12 @@ const (
 	credentialCheckInterval = time.Minute
 )
 
-var errRotateSession = errors.New("rotate mTLS session")
+var (
+	errRotateSession = errors.New("rotate mTLS session")
+	errRedirectOwner = errors.New("redirect to live owner")
+)
+
+const liveOwnerRedirectPrefix = "not the live owner; reconnect at "
 
 func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
 	options := defaultOptions()
@@ -52,9 +59,10 @@ func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
 		return nil, err
 	}
 	return &App{
-		cfg:         cfg,
-		runtime:     runtime,
-		meshFactory: options.meshFactory,
+		cfg:              cfg,
+		runtime:          runtime,
+		meshFactory:      options.meshFactory,
+		controlPlaneAddr: cfg.ControlPlane.Address,
 	}, nil
 }
 
@@ -111,6 +119,10 @@ func (a *App) runConnections(ctx context.Context) error {
 			slog.Info("rotating agent mTLS session", "agent_id", a.cfg.Node.ID)
 			delay = initialReconnectDelay
 			continue
+		case errors.Is(err, errRedirectOwner):
+			slog.Info("following live owner redirect", "agent_id", a.cfg.Node.ID, "address", a.controlPlaneAddr)
+			delay = initialReconnectDelay
+			continue
 		case ctx.Err() != nil:
 			return nil
 		default:
@@ -153,12 +165,16 @@ func (a *App) runSession(ctx context.Context) error {
 	if renewAt := certNotAfter.Add(-time.Duration(a.cfg.ControlPlane.TLS.RenewBeforeMinutes) * time.Minute); !renewAt.IsZero() {
 		go a.rotateSessionAt(sessionCtx, cancel, renewAt)
 	}
-	conn, err := grpc.NewClient(a.cfg.ControlPlane.Address, grpc.WithTransportCredentials(creds))
+	addr := a.controlPlaneAddr
+	if addr == "" {
+		addr = a.cfg.ControlPlane.Address
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return fmt.Errorf("dial control plane: %w", err)
 	}
 	defer conn.Close()
-	slog.Info("dialed control plane", "agent_id", a.cfg.Node.ID, "address", a.cfg.ControlPlane.Address)
+	slog.Info("dialed control plane", "agent_id", a.cfg.Node.ID, "address", addr)
 
 	client := agentv1.NewAgentControlClient(conn)
 	sessionID := uuid.NewString()
@@ -168,6 +184,10 @@ func (a *App) runSession(ctx context.Context) error {
 	}
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
+		if owner, ok := liveOwnerAddr(err); ok {
+			a.controlPlaneAddr = owner
+			return errRedirectOwner
+		}
 		return fmt.Errorf("open sync stream: %w", err)
 	}
 	slog.Info("opened sync stream", "agent_id", a.cfg.Node.ID)
@@ -424,4 +444,17 @@ func (a *App) applyNodeConfig(ctx context.Context, assigned *agentv1.AssignedNod
 	a.mesh = meshRuntime
 	a.meshAssignment = next
 	return nil
+}
+
+func liveOwnerAddr(err error) (string, bool) {
+	st, ok := status.FromError(err)
+	if !ok {
+		return "", false
+	}
+	msg := st.Message()
+	if !strings.HasPrefix(msg, liveOwnerRedirectPrefix) {
+		return "", false
+	}
+	addr := strings.TrimSpace(strings.TrimPrefix(msg, liveOwnerRedirectPrefix))
+	return addr, addr != ""
 }

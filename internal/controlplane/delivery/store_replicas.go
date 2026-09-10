@@ -278,7 +278,7 @@ func (s *persistence) listAllocationsByServiceIDQuerier(ctx context.Context, q S
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rec)
+		out = append(out, s.overlayAllocation(rec))
 	}
 	return out, rows.Err()
 }

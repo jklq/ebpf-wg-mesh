@@ -23,6 +23,7 @@ type Delivery struct {
 	// is shown to be necessary.
 	schedulerMu     sync.Mutex
 	store           *persistence
+	live            *Live
 	notifier        PlatformNotifier
 	ingress         PlatformIngress
 	events          Events
