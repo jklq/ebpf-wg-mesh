@@ -1,6 +1,6 @@
 # 2 — Host untrusted code without a shared disk
 
-These items make the dogfood loop safe to offer a design partner. Control-plane replicas already exist; they still share node-local source and keys. Builds still run as a host process. Ingress is still one Caddy. Agents still get a full-cluster identity catalog over a full WireGuard mesh.
+These items make the dogfood loop safe to offer a design partner. Control-plane replicas and failover-aware durable agents already exist; replicas still share node-local source and keys. Builds still run as a host process. Ingress is still one Caddy. Agents still get a full-cluster identity catalog over a full WireGuard mesh, and allocation delivery still uses complete per-node snapshots instead of bounded diffs.
 
 Do not wait to empty this file before starting 3.x items that have no dependency here. Do wait to invite a second tenant’s source onto a shared builder until 2.4b exists.
 
@@ -114,10 +114,12 @@ Depends on: 1.6 so Railpack and Dockerfile builds both emit the artifact record.
 
 Design-partner minimum. Mutable tags must never be the runtime identity of what is scheduled.
 
+Built-image deployments already validate and persist a digest-pinned runtime reference, and deployment actions reuse that reference. The remaining contract is the immutable artifact record, direct-image tag resolution, architecture selection, and retention.
+
 Prompt:
 
 ```text
-Create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, image manifest digest, target architecture, build actor, and timestamps. Deployments must resolve and persist a digest before scheduling; mutable tags are accepted only as user input and never as the runtime identity. Direct-image deploys resolve the tag to a digest at deploy time and store that digest. Preserve exact artifacts needed for rollback according to retention policy. Test tag mutation after resolve (the stored digest still runs) and multi-arch selection against 1.10. Do not add SBOM generation, image signing, or vulnerability-policy gates in this item.
+Preserve the existing digest-pinned build completion and deployment-action behavior, and create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, image manifest digest, target architecture, build actor, and timestamps. Make that artifact, rather than an unstructured image string on the deployment, the source of runtime identity. Direct-image deploys must resolve a tag to a digest at deploy time and store the same artifact shape; mutable tags remain user input only. Preserve exact artifacts needed for rollback according to retention policy. Test tag mutation after resolve (the stored digest still runs) and multi-arch selection against 1.10. Do not add SBOM generation, image signing, or vulnerability-policy gates in this item.
 ```
 
 ## 2.7a xDS control plane and Caddy cutover
@@ -172,17 +174,17 @@ Prompt:
 Harden the existing ClickHouse log path for multi-tenant production use. Preserve runtime, build, deploy, HTTP, and network log types; add structured attributes for known platform events without parsing arbitrary customer output; define ordering and duplicate handling across reconnects; and retain the raw line exactly within a documented size limit. Agents and builders need bounded disk-backed spooling, batching, backpressure, retry, and explicit dropped-line counters so a ClickHouse outage cannot consume unbounded memory or block workload reconciliation. Enforce per-allocation rate and burst limits, tenant retention policies, and safe deletion after project expiry. Reads need authorized time-range queries with pagination or streaming, and must report an explicit gap where data was dropped rather than silently closing it. Test backend outage, retry duplication, oversized lines, abusive log rates, retention, and tenant isolation.
 ```
 
-## 2.10 Nomad-style per-node allocation sync
+## 2.10 Incremental per-node allocation sync
 
 Status: open
-Depends on: none. Replaces the full desired-state snapshot as the agent wire and recovery format.
+Depends on: none. Replaces the complete per-node snapshot as the steady-state wire format while preserving the durable acceptance and recovery invariants already implemented.
 
-Nomad servers send each client only that client’s allocations. Reconnect is “what I run” reconciled against “what this node should run,” not a cluster dump. This item and 2.11–2.12 remove code rather than add it, and they get harder the longer other code assumes the snapshot.
+Agents already persist their accepted node snapshot, allocation generations, runtime identities, pending operations, and observation cursor. They reconcile before connecting, report inventory in hello, accept only complete agent-scoped snapshots under fenced authority, and avoid restarting matching healthy allocations. The remaining problem is that every change and reconnect still sends the complete per-node configuration. This item and 2.11–2.12 remove that coupling, and they get harder the longer other code assumes the snapshot.
 
 Prompt:
 
 ```text
-Stop sending each agent a full cluster desired-state snapshot. The control plane remains authoritative for placement. The agent stream carries only allocations assigned to that agent: start, update, and stop diffs, each with a monotonically increasing per-node revision. The agent persists its local alloc set, reports observed state, and on reconnect sends the alloc IDs and versions it is running. The control plane replies with the desired set for that node; the agent starts missing allocs, stops extras, and must not restart a healthy alloc whose desired spec and generation still match. Unknown local containers are stopped (fail closed). Other nodes’ allocations never appear as “run this.” Identity/policy (2.11) and WireGuard peers (2.12) are separate messages, not stuffed into the alloc body. Cap payload size per revision and skip a resend when the agent already has that per-node revision. Test reconnect without container restart, missed stop, control-plane failover mid-sync, and a node that comes back with extra containers.
+Replace complete per-node snapshot delivery with a checkpoint-plus-diff protocol. The control plane remains authoritative for placement. After reconciling the allocation inventory and accepted cursor sent in hello, it sends only bounded start, update, and stop changes for allocations assigned to that agent, ordered by a monotonically increasing per-node revision. A checkpoint may establish or repair the desired set on initialization, recovery, compaction, or cursor mismatch, but an unchanged reconnect must not resend the full node configuration. Preserve the current durable staging/publication boundary, agent-scoped removal authority, expiry and epoch fencing, session takeover, recovery quarantine, idempotent acknowledgement, and no-restart behavior for matching healthy allocations. Identity/policy (2.11), WireGuard peers (2.12), credentials, and replica discovery are independently versioned messages, not allocation changes. Cap each payload and retained diff history; fall back to a checkpoint when the agent's cursor is no longer available. Test reconnect without container restart or full resend, missed stop, compacted-history recovery, control-plane failover mid-sync, stale-epoch diffs, and a node that returns with extra or unowned containers.
 ```
 
 ## 2.11 Scoped identity policy
@@ -216,6 +218,8 @@ Stop forming a WireGuard peer between every pair of agents. Create and maintain 
 Was: 9.1
 Status: open
 Depends on: none. Grow the existing testvm as 2.2, 2.4b, 2.7b, and 2.9 need components. Done when the topology below exists.
+
+The harness now proves two control-plane processes, live-owner takeover, and two-agent reconnect/failover against one colocated CockroachDB process. The remaining work is to turn that proof harness into the distributed topology below.
 
 Prompt:
 

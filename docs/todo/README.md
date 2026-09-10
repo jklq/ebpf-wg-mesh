@@ -22,8 +22,8 @@ Files are slices of that queue, not sequential gates. Category is a tag, not a m
 
 ## Architecture to preserve
 
-- CockroachDB is the authoritative control-plane store. High-frequency probe ticks, logs, and metrics samples do not become Cockroach rows.
-- Agents stay dumb. The control plane is authoritative for placement. Each agent is sent only the allocations assigned to that agent, as Nomad sends clients only their allocs: diffs to start, update, or stop, plus a reconnect reconcile of “what I am running” against “what this node should run.” A full cluster snapshot is not the wire format and not the recovery format.
+- CockroachDB is the authoritative control-plane store. High-frequency probe ticks, logs, and metrics samples do not become Cockroach rows. The product journal boots from a snapshot plus a 1024-entry tail; command-ID idempotency lives in `cluster_journal_receipts` and is not truncated with the log.
+- The control plane is authoritative for placement; an agent is authoritative for supervising work already assigned to it. Agents durably retain accepted allocation state and continue supervision through control-plane loss. Steady-state delivery is bounded per-node start, update, and stop diffs, plus a reconnect reconcile of “what I am running” against “what this node should run.” The current complete per-node snapshot is a safe foundation for that cutover, not the target wire or recovery format.
 - Policy is fail-closed and identity-based. An agent receives a pool deny plus exact allows for environments it currently hosts (including remote allocations in those environments). It does not receive a cluster-wide identity catalog. Ingress proxies receive the backends they route, not the mesh catalog.
 - The platform's own surface is unreachable from a customer container regardless of configuration: metadata addresses, host and management networks, control-plane and agent administration, registry credentials, and other tenants' overlays. That is a platform invariant (2.15), not a customer-configurable egress feature (3.8), and no customer rule may relax it.
 - WireGuard is the overlay transport and eBPF is the identity policy. There is no full mesh. Peers exist only between nodes that share an environment and between those nodes and the Envoy instances that publish their services. Unused peers are removed.
@@ -109,7 +109,7 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | 2.7b | Envoy fleet and availability policy (5.2) | M | [02](02-host-untrusted-code.md#27b-envoy-fleet-and-availability-policy) |
 | 2.8 | Domain and certificate lifecycle (5.3) | L | [02](02-host-untrusted-code.md#28-domain-and-certificate-lifecycle) |
 | ★ 2.9 | Durable bounded logs (3.3) | M | [02](02-host-untrusted-code.md#29-durable-bounded-logs) |
-| 2.10 | Nomad-style per-node allocation sync | L | [02](02-host-untrusted-code.md#210-nomad-style-per-node-allocation-sync) |
+| 2.10 | Incremental per-node allocation sync | M | [02](02-host-untrusted-code.md#210-incremental-per-node-allocation-sync) |
 | 2.11 | Scoped identity policy | M | [02](02-host-untrusted-code.md#211-scoped-identity-policy) |
 | 2.12 | Environment-scoped WireGuard peering | M | [02](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) |
 | 2.13 | Production-like topology harness (9.1) | L | [02](02-host-untrusted-code.md#213-production-like-topology-harness) |
