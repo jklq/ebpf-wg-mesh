@@ -38,8 +38,6 @@ func main() {
 		log.Fatal("nil cockroach pg url")
 	}
 
-	// No command: print the database URL as JSON and serve until
-	// interrupted or stdin closes.
 	if len(args) == 0 {
 		if err := json.NewEncoder(os.Stdout).Encode(output{URL: pgURL.String()}); err != nil {
 			log.Fatalf("write output: %v", err)

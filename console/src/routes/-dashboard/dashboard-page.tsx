@@ -67,10 +67,6 @@ import { useDashboardCanvas } from "./use-dashboard-canvas";
 
 export { DashboardCanvasSkeleton } from "./dashboard-canvas";
 
-/**
- * A service creation that left the picker but has no server record yet. It
- * renders as a building node on the canvas until the request resolves.
- */
 interface PendingServiceCreation {
 	clientId: string;
 	selector: string;
@@ -130,11 +126,6 @@ export function DashboardPage({
 	urlSelectedServiceId,
 }: {
 	state: DashboardHomeState;
-	/**
-	 * Selection from route search state (`?serviceId=`). The route owns the
-	 * URL; this component reflects it and navigates on change so selection
-	 * survives the `/` → `/environments/:id` remount.
-	 */
 	urlSelectedServiceId?: string | null;
 }) {
 	const router = useRouter();
@@ -144,11 +135,6 @@ export function DashboardPage({
 			selectedServiceId: urlSelectedServiceId ?? undefined,
 		}),
 	);
-	// Selection lives here as a plain ID; service data lives once in the
-	// normalized map. The route mirrors the ID into `?serviceId=` so it
-	// survives the `/` → `/environments/:id` remount and history navigation.
-	// The first render keeps the loader default; later URL changes (history
-	// navigation, env switches) become the selection.
 	const selectedId = view.selectedServiceId;
 	const prevUrlSelectionRef = useRef(urlSelectedServiceId);
 	useEffect(() => {
@@ -173,9 +159,6 @@ export function DashboardPage({
 			),
 		[pendingCreations, environmentId],
 	);
-	// Pending creations render alongside real services so the loading
-	// instance is on the canvas from the moment the picker closes. They
-	// carry no unapplied changes, so deploy and prompt math ignores them.
 	const services = useMemo(
 		() => [...selectServicesArray(view), ...pendingRecords],
 		[view, pendingRecords],
@@ -224,8 +207,6 @@ export function DashboardPage({
 	});
 	const { setNodePositions, nodePositionsRef } = canvas;
 	const liveStatus = selectedId ? selectSelectedStatus(view) : null;
-	// Legacy presentational props read the same fields; derive them from the
-	// single normalized source instead of storing them twice.
 	const homeState: DashboardHomeState = useMemo(
 		() => ({
 			...view.base,
@@ -422,10 +403,6 @@ export function DashboardPage({
 		[],
 	);
 
-	// Loader refresh. Static fields always update; the service list goes
-	// through the single revision gate, so a stale loader rerender can never
-	// clear newer stream or mutation data. Retained created services cover
-	// the backend list until it includes them.
 	useEffect(() => {
 		setView((current) =>
 			applyLoaderState(
@@ -534,9 +511,6 @@ export function DashboardPage({
 		setCreateError(undefined);
 	};
 
-	// Eagerly warm the deploy picker chunk on mount so the Deploy button
-	// answers instantly even without a prior hover. The catalog itself stays
-	// lazy (hover/open) so mounting the dashboard never fires a GitHub fetch.
 	useEffect(() => {
 		const id = window.setTimeout(() => {
 			void loadNewServiceModal();
@@ -652,10 +626,6 @@ export function DashboardPage({
 			}
 		}
 
-		// Retain the created service above the remount: the first service
-		// materialises an environment, which navigates `/` to
-		// `/environments/:id` and remounts this component. The cache carries
-		// the row and the selection travels in the URL.
 		createdCache?.remember(result.service, result.environment);
 		previousEnvironmentIdRef.current = result.environment.id ?? null;
 
@@ -717,9 +687,6 @@ export function DashboardPage({
 		currentEnvironmentId: string,
 	) => {
 		const applying = servicesToDeploy.map(snapshotApplyingChanges);
-		// Basis revision: a newer snapshot arriving mid-deploy already
-		// reflects the committed server state, so this response must not
-		// overwrite it when it lands.
 		const basisRevision = revisionRef.current;
 		setDeployError(undefined);
 		setShowChangeDetails(false);

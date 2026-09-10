@@ -12,10 +12,6 @@ import (
 
 var hostGatewayIPLabel = regexp.MustCompile(`(?m)host-gateway-ip:\s*([0-9a-fA-F:.]+)`)
 
-// ResolveDockerHostGateway returns an address containers and Docker Desktop
-// BuildKit can use to reach processes on the Docker host. Prefer an IPv4
-// host-gateway address: BuildKit's push path often cannot resolve
-// host.docker.internal even when regular containers can.
 func ResolveDockerHostGateway(ctx context.Context) (string, error) {
 	if override := strings.TrimSpace(os.Getenv("LOCALTESTSTACK_DOCKER_HOST_GATEWAY")); override != "" {
 		if ip := net.ParseIP(override); ip == nil {
@@ -29,8 +25,6 @@ func ResolveDockerHostGateway(ctx context.Context) (string, error) {
 	if ip, err := dockerHostGatewayFromContainer(ctx); err == nil && ip != "" {
 		return ip, nil
 	}
-	// Last resort: hostname used by Docker Desktop / Compose. May fail inside
-	// BuildKit (lookup host.docker.internal: no such host).
 	return "host.docker.internal", nil
 }
 
@@ -47,7 +41,6 @@ func dockerHostGatewayFromBuildx(ctx context.Context) (string, error) {
 	if net.ParseIP(ip) == nil {
 		return "", fmt.Errorf("invalid host-gateway-ip %q", ip)
 	}
-	// Prefer IPv4 for host listeners bound on 0.0.0.0.
 	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
 		return "", fmt.Errorf("host-gateway-ip %q is not IPv4", ip)
 	}

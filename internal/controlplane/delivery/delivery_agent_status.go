@@ -124,9 +124,6 @@ func domainForService(durable journal.DurableState, serviceID string) (journal.D
 	return journal.Domain{}, false
 }
 
-// Observations request evaluation; only this separately fenced transaction
-// decides a deployment transition. Re-read the current session and generation
-// so a delayed evaluation cannot apply an obsolete health sample.
 func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID string) error {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()

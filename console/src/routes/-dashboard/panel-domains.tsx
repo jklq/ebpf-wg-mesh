@@ -112,9 +112,7 @@ export function PanelDomains({
 				setBindings(
 					await fetchDomainBindings({ data: { serviceId: service.id } }),
 				);
-			} catch {
-				// Keep the last known bindings during a transient refresh failure.
-			}
+			} catch {}
 		},
 		{ enabled: needsOwnershipPoll, intervalMs: 5000 },
 	);
@@ -135,7 +133,6 @@ export function PanelDomains({
 		setSuccess(undefined);
 		setGenerating(true);
 		if (!keepFlowOpen) {
-			// Close immediately — the pending row in the list carries the progress.
 			setDomainFlow(null);
 			setPendingDomain({});
 		}
@@ -151,8 +148,6 @@ export function PanelDomains({
 				binding,
 			]);
 			if (!keepFlowOpen) {
-				// Keep the spinner on the row until the platform lists the binding —
-				// that is when routing for it is actually in place.
 				setPendingDomain({ hostname: binding.hostname });
 				await fetchDomainBindings({ data: { serviceId: service.id } })
 					.then(setBindings)

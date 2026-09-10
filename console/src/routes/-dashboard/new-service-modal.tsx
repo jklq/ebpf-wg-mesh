@@ -28,13 +28,7 @@ export function NewServiceModal({
 	initialError?: string;
 	onClose: () => void;
 	onCreated: (result: CreateServiceFastResult) => void;
-	/**
-	 * Fires synchronously when the user confirms a repository, before the
-	 * server request resolves. The owner closes the picker immediately and
-	 * renders the loading instance on the canvas; this component unmounts.
-	 */
 	onCreating?: (selector: string) => void;
-	/** Fires when the server request rejects after `onCreating` ran. */
 	onCreateFailed?: (selector: string, error: string) => void;
 	confirmRepository?: ConfirmRepositoryFn;
 }) {
@@ -88,9 +82,6 @@ export function NewServiceModal({
 		const selector = (selectorOverride ?? repoSelector).trim();
 		if (!selector) return;
 		setError(undefined);
-		// Pop out to the canvas immediately: the owner renders a loading
-		// service instance and unmounts this picker. The request below still
-		// resolves into onCreated/onCreateFailed through this closure.
 		onCreating?.(selector);
 		setLoading(true);
 		try {

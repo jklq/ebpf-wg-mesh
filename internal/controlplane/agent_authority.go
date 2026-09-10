@@ -14,17 +14,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// agentSessions validates grants and acknowledgements against the active session.
-// Admission, observations, and desired-state construction remain owned by delivery.
 type agentSessions interface {
 	Serving() bool
 	Grant(string, string, uint64, int64) error
 	Acknowledge(string, string, uint64, int64) error
 }
 
-// grantAgentCommand checks the current session and authority transactionally.
-// A paused sender cannot extend a grant after authority has changed. The
-// persisted maximum expiry survives sender death, disconnect and early release.
 func (s *fleetPersistence) grantAgentCommand(ctx context.Context, agentID, sessionID string, epoch uint64, cursor int64) (time.Time, error) {
 	if s.sessions == nil {
 		return time.Time{}, deliverycore.ErrNotLiveOwner
@@ -64,9 +59,6 @@ func (s *database) agentAuthorityEpoch(ctx context.Context) (uint64, error) {
 	return epoch, err
 }
 
-// advanceAgentAuthority is the cutover gate. Callers must stop grant issuance
-// and retry after the outstanding deadline; disconnecting a holder is not a
-// release of its grants. There is deliberately no automatic cutover on reconnect.
 func (s *database) advanceAgentAuthority(ctx context.Context, expected uint64) error {
 	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var epoch uint64

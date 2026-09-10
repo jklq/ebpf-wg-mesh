@@ -1,4 +1,3 @@
-// Package dbtx contains transaction infrastructure shared by control-plane modules.
 package dbtx
 
 import (

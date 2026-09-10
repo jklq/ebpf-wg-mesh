@@ -130,7 +130,6 @@ describe("dashboard-services revision contract", () => {
 			revision: 4,
 		});
 		expect(stale.servicesById["service-1"]?.name).toBe("web");
-		// Another service is unaffected by the first service's revision.
 		const other = applyServiceStatusSnapshot(withStatus, {
 			status: { service: record("service-2"), allocation: undefined },
 			revision: 1,

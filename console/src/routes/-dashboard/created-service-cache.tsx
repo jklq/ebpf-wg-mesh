@@ -35,13 +35,6 @@ const CreatedServiceCacheContext = createContext<CreatedServiceCache | null>(
 	null,
 );
 
-/**
- * Owns newly created services above the dashboard remount (`/` vs
- * `/environments/:id` render different route components, so component state
- * does not survive the switch). Entries are explicit: remembered on create,
- * forgotten on delete or once the backend list includes them. No TTL, no
- * module global.
- */
 export function CreatedServiceCacheProvider({
 	children,
 }: {
@@ -99,7 +92,6 @@ export function CreatedServiceCacheProvider({
 	);
 }
 
-/** Null outside the provider (tests); callers must tolerate that. */
 export function useCreatedServiceCache(): CreatedServiceCache | null {
 	return useContext(CreatedServiceCacheContext);
 }

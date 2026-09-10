@@ -14,10 +14,6 @@ const (
 	globalEnvironmentEventID   = "__control_plane_global__"
 )
 
-// PlatformEvents provides durable monotonic indexes and blocking waits. The
-// revision is intentionally global: false-positive wakes are cheap, while
-// advancing it in every database.withTx transaction makes state and notification
-// atomic without requiring callers to remember an environment-specific outbox.
 type PlatformEvents struct {
 	store        globalRevisionStore
 	pollInterval time.Duration
@@ -34,10 +30,6 @@ func NewPlatformEvents(store globalRevisionStore, pollInterval time.Duration) *P
 	return &PlatformEvents{store: store, pollInterval: pollInterval}
 }
 
-// Current reads the global revision. Mutations advance it in database.withTx
-// in the same transaction as the state change, so there is no separate
-// publish step: by the time a mutation has committed, Current already
-// reflects it.
 func (e *PlatformEvents) Current(ctx context.Context) (int64, error) {
 	if e == nil || e.store == nil {
 		return initialEnvironmentRevision, nil
@@ -63,7 +55,6 @@ func bumpGlobalEnvironmentEventTx(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
-// Wait returns the current index and whether it advanced beyond after.
 func (e *PlatformEvents) Wait(ctx context.Context, after int64, timeout time.Duration) (int64, bool, error) {
 	current, err := e.Current(ctx)
 	if err != nil {

@@ -55,10 +55,6 @@ func dialPlatform(ctx context.Context, address string, identity clientIdentity) 
 	)
 }
 
-// runCrossReplicaNotificationScenario deliberately sends mutations to the lease-owning
-// replica while every agent stream and the blocked platform read are connected to the
-// other process. A healthy allocation therefore proves that notifications cross the
-// process boundary rather than relying on in-memory channels.
 func runCrossReplicaNotificationScenario(
 	ctx context.Context,
 	writeAddress string,

@@ -266,8 +266,6 @@ describe("DashboardPage canvas", () => {
 			onboarding: emptyState().onboarding,
 		});
 
-		// The provider owns the created row above the remount; the selection
-		// travels in route search state, like the real route components do.
 		const { rerender } = render(
 			<CreatedServiceCacheProvider>
 				<DashboardPage key="before-remount" state={emptyState()} />
@@ -344,8 +342,6 @@ describe("DashboardPage canvas", () => {
 			await screen.findByRole("button", { name: /octocat\/hello/i }),
 		);
 
-		// The picker closes immediately; the loading instance lives on the
-		// canvas while the server request is still in flight.
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 		const pendingNodes = container.querySelectorAll("[data-service-node]");
 		expect(pendingNodes).toHaveLength(1);

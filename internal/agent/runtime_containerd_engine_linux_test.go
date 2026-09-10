@@ -64,8 +64,6 @@ func TestContainerdEngineDrainSendsSIGTERMThenSIGKILLAfterDeadline(t *testing.T)
 	engine, cfg := newTestContainerdEngine(t)
 	allocID := uniqueRuntimeID("drain")
 	svc := busyboxHTTPService(allocID, 12, 1, "10.200.9.18", "fd00:200:0:9::12", "waiting")
-	// Join on newlines, not "; ": a "&" already terminates the command, so
-	// "httpd ... &; trap ..." is a shell syntax error and nothing ever starts.
 	svc.Spec.Runtime.Args = []string{strings.Join([]string{
 		"mkdir -p /tmp/www",
 		"printf waiting > /tmp/www/index.html",
@@ -216,7 +214,6 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 	dataDir := t.TempDir()
 	cfg := config.AgentConfig{
 		Profile: config.ProfileDevelopment,
-		// The underlay advertise address stays IPv6 even though workloads are dual-stack.
 		Node: config.NodeConfig{
 			ID:            "node-" + uniqueRuntimeID("id"),
 			Name:          "runtime-test-node",
@@ -356,8 +353,6 @@ func httpGetInNamespace(t *testing.T, ctx context.Context, netnsPath, ip string,
 
 func httpGetInNamespaceErr(ctx context.Context, netnsPath, ip string, port int, path string) (string, error) {
 	client := healthHTTPClient(2*time.Second, workloadNamespaceDialer(netnsPath))
-	// JoinHostPort brackets IPv6 literals and leaves IPv4 bare; formatting "[%s]"
-	// unconditionally produces an invalid URL for IPv4 workload addresses.
 	url := "http://" + net.JoinHostPort(ip, strconv.Itoa(port)) + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

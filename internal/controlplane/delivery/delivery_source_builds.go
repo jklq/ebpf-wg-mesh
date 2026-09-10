@@ -10,8 +10,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
-// queueSourceBuild atomically resolves the durable source snapshot and queues
-// the deployment build.
 func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBindingRecord, commitSHA string, pendingSnapshot source.SourceSnapshotRecord) (source.QueuedBuild, error) {
 	var result source.QueuedBuild
 	var service ServiceRecord
@@ -45,9 +43,6 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 	if err != nil {
 		return source.QueuedBuild{}, err
 	}
-	// The coordinator no longer emits logs (it owns no emitter); delivery emits
-	// the queued-build line itself so the service panel still shows progress
-	// while the builder claims the job. The emitter is nil-safe.
 	d.logEmitter.EmitBuildf(ctx, logs.ServiceScope{
 		EnvironmentID:     service.EnvironmentID,
 		ServiceID:         service.ID,

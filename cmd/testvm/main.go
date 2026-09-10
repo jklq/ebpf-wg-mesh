@@ -33,7 +33,6 @@ const (
 	replicaControlPlanePort    = "9444"
 )
 
-// Per-agent bootstrap tokens must be unique: controlplane rejects a token bound to more than one agent.
 var vmAgentBootstrapTokens = map[string]string{
 	"agent-a": "vm-bootstrap-token-agent-a",
 	"agent-b": "vm-bootstrap-token-agent-b",
@@ -63,7 +62,6 @@ type summary struct {
 }
 
 func main() {
-	// failf panics so deferred cleanup (tofu destroy) still runs before process exit.
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", r)
@@ -92,8 +90,6 @@ func main() {
 	if err != nil {
 		failf("getwd: %v", err)
 	}
-	// Optional local overrides (e.g. HCLOUD_TOKEN), including a 1Password-mounted .env FIFO.
-	// Existing process env wins; missing .env is fine.
 	if n, err := localteststack.LoadDotEnvFile(filepath.Join(repoRoot, ".env")); err != nil {
 		failf("load .env: %v", err)
 	} else if n > 0 {
@@ -235,7 +231,6 @@ func main() {
 	for agentID, token := range vmAgentBootstrapTokens {
 		bootstrapBindings = append(bootstrapBindings, agentID+"="+token)
 	}
-	// Stable order for systemd unit / logs.
 	sort.Strings(bootstrapBindings)
 	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-controlplane.sh"), map[string]string{
 		"PUBLIC_ADDR":            "platform.local",
@@ -310,9 +305,6 @@ func main() {
 			failf("copy ca to %s: %v", host.Name, err)
 		}
 		infof("installing agent on %s (node-id=%s)", host.Name, key)
-		// NODE_ID must match the agent_id in AGENT_BOOTSTRAP_TOKENS and the hosts map key used for lookups.
-		// Reach the control plane over public IPv4 so enrollment does not depend on private-network
-		// route readiness. Mesh peer endpoints still use each agent's advertised public IPv6.
 		if err := runRemoteScript(ctx, sshKeyPath, host.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-agent.sh"), map[string]string{
 			"NODE_ID":                key,
 			"NODE_NAME":              host.Name,
@@ -483,8 +475,6 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	allocationID := status.GetAllocation().GetAllocationId()
 	endpoint := allocationEndpoint(status.GetAllocation())
 
-	// Host-network curls to workload ULAs are denied by the eBPF veth firewall (only same-identity
-	// workload traffic is allowed). Probe the way the agent does: enter the allocation netns.
 	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV1); err != nil {
 		return fmt.Errorf("verify service response in allocation netns: %w", err)
 	}
@@ -590,7 +580,6 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 		return err
 	}
 
-	// Stateless-only: node-bound volumes stay pinned and surface Unavailable instead of moving.
 	if err := runAgentFailureRollover(ctx, userCtx, client, sshKeyPath, hosts, environmentID); err != nil {
 		return err
 	}
@@ -629,8 +618,6 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	return nil
 }
 
-// runAgentFailureRollover stops the agent hosting a stateless service and waits for
-// control-plane expiry failover to reschedule it onto the surviving agent.
 func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.PlatformServiceClient, sshKeyPath string, hosts map[string]hostInfo, environmentID string) error {
 	failoverMarker := fmt.Sprintf("vm-e2e-failover-%08x", rand.Uint32())
 	infof("scenario: creating stateless failover service with marker %q", failoverMarker)
@@ -684,7 +671,6 @@ func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.Pla
 	if _, err := runRemoteCommand(ctx, sshKeyPath, failedHost.PublicIPv4, "systemctl stop ebpf-wg-mesh-agent"); err != nil {
 		return fmt.Errorf("stop agent %s: %w", failedAgentID, err)
 	}
-	// Always restart so later scenario steps and artifact collection can still talk to the node.
 	defer func() {
 		infof("scenario: restarting agent %s after rollover check", failedAgentID)
 		if _, err := runRemoteCommand(context.Background(), sshKeyPath, failedHost.PublicIPv4, "systemctl start ebpf-wg-mesh-agent"); err != nil {
@@ -692,7 +678,6 @@ func runAgentFailureRollover(ctx, userCtx context.Context, client platformv1.Pla
 		}
 	}()
 
-	// agentHealthyTTL is 30s; leave headroom for expiry evaluation + pull/start on the peer.
 	after, err := waitForServiceOnAgent(ctx, userCtx, client, failoverService.GetId(), survivingAgentID, failoverService.GetSpecRevision(), 1)
 	if err != nil {
 		return fmt.Errorf("wait for failover onto %s: %w", survivingAgentID, err)

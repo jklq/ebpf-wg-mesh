@@ -34,10 +34,6 @@ export function hydrateServiceSnapshots(
 	return Array.isArray(raw) ? raw.map(hydrateServiceSnapshot) : [];
 }
 
-/**
- * Revisioned list payload: `{ services, revision }`. Accepts a bare array
- * for tolerance and treats it as revision 0 (older than any real snapshot).
- */
 export function hydrateServicesSnapshot(raw: unknown): ServicesSnapshot {
 	if (Array.isArray(raw)) {
 		return { services: raw.map(hydrateServiceSnapshot), revision: 0 };
@@ -53,10 +49,6 @@ export function hydrateServicesSnapshot(raw: unknown): ServicesSnapshot {
 	};
 }
 
-/**
- * Revisioned status payload: `{ status, revision }`. Accepts a bare status
- * for tolerance and treats it as revision 0.
- */
 export function hydrateStatusSnapshot(raw: unknown): ServiceStatusSnapshot {
 	const snapshot = raw as {
 		status?: unknown;

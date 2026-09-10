@@ -49,7 +49,6 @@ type firewallIdentityValue struct {
 	VethIfindex     uint32
 }
 
-// loadFirewall returns the embedded CollectionSpec for firewall.
 func loadFirewall() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_FirewallBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
@@ -60,15 +59,6 @@ func loadFirewall() (*ebpf.CollectionSpec, error) {
 	return spec, err
 }
 
-// loadFirewallObjects loads firewall and converts it into a struct.
-//
-// The following types are suitable as obj argument:
-//
-//	*firewallObjects
-//	*firewallPrograms
-//	*firewallMaps
-//
-// See ebpf.CollectionSpec.LoadAndAssign documentation for details.
 func loadFirewallObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	spec, err := loadFirewall()
 	if err != nil {
@@ -78,26 +68,17 @@ func loadFirewallObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// firewallSpecs contains maps and programs before they are loaded into the kernel.
-//
-// It can be passed ebpf.CollectionSpec.Assign.
 type firewallSpecs struct {
 	firewallProgramSpecs
 	firewallMapSpecs
 	firewallVariableSpecs
 }
 
-// firewallProgramSpecs contains programs before they are loaded into the kernel.
-//
-// It can be passed ebpf.CollectionSpec.Assign.
 type firewallProgramSpecs struct {
 	TcxEgress  *ebpf.ProgramSpec `ebpf:"tcx_egress"`
 	TcxIngress *ebpf.ProgramSpec `ebpf:"tcx_ingress"`
 }
 
-// firewallMapSpecs contains maps before they are loaded into the kernel.
-//
-// It can be passed ebpf.CollectionSpec.Assign.
 type firewallMapSpecs struct {
 	ClusterIdentityTrie    *ebpf.MapSpec `ebpf:"cluster_identity_trie"`
 	ConntrackInnerTemplate *ebpf.MapSpec `ebpf:"conntrack_inner_template"`
@@ -107,15 +88,9 @@ type firewallMapSpecs struct {
 	LocalNodeMap           *ebpf.MapSpec `ebpf:"local_node_map"`
 }
 
-// firewallVariableSpecs contains global variables before they are loaded into the kernel.
-//
-// It can be passed ebpf.CollectionSpec.Assign.
 type firewallVariableSpecs struct {
 }
 
-// firewallObjects contains all objects after they have been loaded into the kernel.
-//
-// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallObjects struct {
 	firewallPrograms
 	firewallMaps
@@ -129,9 +104,6 @@ func (o *firewallObjects) Close() error {
 	)
 }
 
-// firewallMaps contains all maps after they have been loaded into the kernel.
-//
-// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallMaps struct {
 	ClusterIdentityTrie    *ebpf.Map `ebpf:"cluster_identity_trie"`
 	ConntrackInnerTemplate *ebpf.Map `ebpf:"conntrack_inner_template"`
@@ -152,15 +124,9 @@ func (m *firewallMaps) Close() error {
 	)
 }
 
-// firewallVariables contains all global variables after they have been loaded into the kernel.
-//
-// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallVariables struct {
 }
 
-// firewallPrograms contains all programs after they have been loaded into the kernel.
-//
-// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallPrograms struct {
 	TcxEgress  *ebpf.Program `ebpf:"tcx_egress"`
 	TcxIngress *ebpf.Program `ebpf:"tcx_ingress"`

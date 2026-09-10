@@ -12,8 +12,6 @@ const config = defineConfig({
 		{
 			name: "extend-bun-dev-idle-timeout",
 			configureServer(server) {
-				// Bun's Node-compatible HTTP server otherwise aborts quiet SSR and SSE
-				// requests after ten seconds, surfacing as a Vite socket failure.
 				server.httpServer?.setTimeout(120_000);
 			},
 		},

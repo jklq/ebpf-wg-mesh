@@ -60,10 +60,6 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "reload service: %v", err)
 	}
-	// Emit an initialization-stage line so the right panel immediately shows
-	// activity. For image-based services this is the only pre-build step; for
-	// source-based services the github/build coordinators will emit follow-up
-	// lines as the pipeline progresses.
 	s.emitInitialization(ctx, service)
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
@@ -72,10 +68,6 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	return toProtoService(service), nil
 }
 
-// emitInitialization writes a single synthetic log line describing the initial
-// service scheduling decision. It is a small convenience that keeps the
-// platform service methods concise and the phrasing consistent whenever a
-// service is first scheduled.
 func (s *PlatformService) emitInitialization(ctx context.Context, service deliverycore.ServiceRecord) {
 	if s.emitter == nil || !s.emitter.Enabled() {
 		return

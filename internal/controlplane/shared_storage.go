@@ -14,11 +14,6 @@ import (
 
 const controlPlaneStorageMarker = ".control-plane-storage-id"
 
-// verifySharedControlPlaneDirectory binds a filesystem directory to the
-// CockroachDB cluster. Replicas using the same shared mount observe the same
-// marker. A replica accidentally using node-local storage gets a different
-// marker and fails startup before it can issue incompatible certificates or
-// advertise source objects that other replicas cannot read.
 func verifySharedControlPlaneDirectory(ctx context.Context, store *persistence, name, directory string) error {
 	if store == nil || store.db == nil {
 		return errors.New("control-plane store is required")

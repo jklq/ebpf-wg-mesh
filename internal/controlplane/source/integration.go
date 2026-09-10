@@ -114,7 +114,6 @@ func sourceTrackedRef(spec *platformv1.ServiceSourceSpec, defaultRef string) str
 	return strings.TrimSpace(defaultRef)
 }
 
-// SplitGitHubRepositorySelector splits a lowercase "owner/repo" selector.
 func SplitGitHubRepositorySelector(selector string) (string, string, error) {
 	parts := strings.Split(strings.TrimSpace(selector), "/")
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {

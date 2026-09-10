@@ -78,8 +78,6 @@ export async function loadDashboardHome(
 				(entry) => entry.name === onboarding.repositorySelector,
 			);
 		}
-		// Returning users (and product e2e fixtures) may already own projects
-		// without an onboarding draft pointer.
 		if (!project && projects.length > 0) {
 			project = projects[0];
 		}

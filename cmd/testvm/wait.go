@@ -309,10 +309,6 @@ func waitForVolumeDeletion(ctx context.Context, userCtx context.Context, client 
 	})
 }
 
-// assertHTTPResponseInAllocationNetNS curls the service from inside its workload netns.
-// Host-network access to workload ULAs is dropped by the eBPF mesh firewall on the veth
-// (handle_container_egress only allows same-identity peers or reverse-conntrack replies).
-
 func assertHTTPResponseInAllocationNetNS(ctx context.Context, sshKeyPath, host, allocationID, endpointAddr, path, expected string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {

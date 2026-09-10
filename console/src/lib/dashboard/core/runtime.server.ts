@@ -288,8 +288,6 @@ export async function storeAuthCall<A>(
 	}
 }
 
-// The single owner of store-initialization caching: successful initialization
-// is shared, and a failure drops the promise so the next use retries.
 async function ensureStoreInitialized(
 	runtime: DashboardRuntime,
 ): Promise<void> {

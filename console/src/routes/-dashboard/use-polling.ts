@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 
-/** Polls without overlapping requests and keeps the latest callback identity. */
 export function usePolling(
 	callback: () => void | Promise<void>,
 	{

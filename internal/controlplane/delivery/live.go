@@ -42,7 +42,6 @@ type liveEval struct {
 	AgentID      string
 }
 
-// LivePosition is the generation a product read was served from.
 type LivePosition struct {
 	AcceptedDurable      int64
 	AppliedLive          uint64
@@ -69,12 +68,6 @@ const (
 	liveEvalRollout     = "rollout"
 )
 
-// Live is the leaseholder's in-memory authority for sessions, observations,
-// admission, local timers, and the applied durable prefix. Product reads and
-// watches are served from indexed snapshots. Replacement and deployment
-// decisions still commit through the journal.
-// Only composition wiring shares this concrete instance; consumers define
-// narrow interfaces for the capabilities they need.
 type Live struct {
 	mu sync.Mutex
 
@@ -250,8 +243,6 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 			break
 		}
 	}
-	// Observations start unknown. Publication waits until the owner is
-	// accepting sessions; the fencing contract still gates the external write.
 	l.publishing = true
 	l.accepting = true
 	return nil
@@ -673,8 +664,6 @@ func overlayAgentAbsent(rec AgentRecord) AgentRecord {
 		rec.StateBeforeUnavailable = rec.LifecycleState
 		rec.LifecycleState = AgentStateUnavailable
 	}
-	// Durable last_seen_at is registration time, not contact. No session
-	// means last contact is unknown, including after takeover.
 	rec.LastSeenAt = time.Unix(0, 0).UTC()
 	return rec
 }

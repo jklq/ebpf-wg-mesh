@@ -1,5 +1,3 @@
-// Package reconciliation defines the transport authority contract shared by
-// agents and the control plane. Workload ownership is a separate contract.
 package reconciliation
 
 import (
@@ -18,9 +16,6 @@ const (
 	MaxClockSkew = time.Second
 )
 
-// ValidateCommand fences new acceptance decisions. The agent must durably stage
-// the exact candidate before its final check; committing that decision and
-// reconciling already accepted state may finish after grant expiry.
 func ValidateCommand(state *agentv1.DesiredNodeState, sessionID string, now time.Time) error {
 	if sessionID == "" || state.GetSessionId() != sessionID {
 		return errors.New("desired state belongs to another session")

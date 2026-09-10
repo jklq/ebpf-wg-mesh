@@ -117,7 +117,6 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if err != nil || metadata.Digest != digest || !bytes.Equal(downloaded, archive) {
 		t.Fatalf("open snapshot: metadata=%+v, err=%v", metadata, err)
 	}
-	// Corrupt metadata must be detected by the operation reader, independent of gRPC framing.
 	if _, err := store.db.ExecContext(ctx, `UPDATE source_snapshots SET digest = $2 WHERE id = $1`, snapshot.ID, "sha256:"+string(bytes.Repeat([]byte("0"), 64))); err != nil {
 		t.Fatal(err)
 	}

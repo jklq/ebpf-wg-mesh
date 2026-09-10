@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// SnapshotMetadata describes a snapshot archive available for streaming.
 type SnapshotMetadata struct {
 	ID               string
 	Digest           string
@@ -21,27 +20,20 @@ type SnapshotMetadata struct {
 }
 
 var (
-	// ErrSnapshotNotFound marks a missing snapshot row.
 	ErrSnapshotNotFound = errors.New("source snapshot not found")
 	// ErrSnapshotNotReady marks a snapshot that exists but cannot be served yet.
-	ErrSnapshotNotReady = errors.New("source snapshot not ready")
-	// ErrSnapshotTooLarge marks a snapshot over the compressed size limit.
-	ErrSnapshotTooLarge = errors.New("source snapshot exceeds size limit")
-	// ErrSnapshotCorrupt marks a digest mismatch, including mid-stream.
-	ErrSnapshotCorrupt = errors.New("source snapshot digest verification failed")
-	// ErrSnapshotUnavailable marks a snapshot whose archive object is missing.
+	ErrSnapshotNotReady    = errors.New("source snapshot not ready")
+	ErrSnapshotTooLarge    = errors.New("source snapshot exceeds size limit")
+	ErrSnapshotCorrupt     = errors.New("source snapshot digest verification failed")
 	ErrSnapshotUnavailable = errors.New("source snapshot archive is unavailable")
 )
 
-// SnapshotService opens digest-verified snapshot archives.
 type SnapshotService interface {
 	OpenSnapshotArchive(context.Context, string) (SnapshotMetadata, io.Reader, error)
 }
 
 var _ SnapshotService = (*SQLStore)(nil)
 
-// OpenSnapshotArchive resolves a snapshot and returns its metadata with a
-// bounded, digest-verifying archive reader.
 func (s *SQLStore) OpenSnapshotArchive(ctx context.Context, snapshotID string) (SnapshotMetadata, io.Reader, error) {
 	if strings.TrimSpace(snapshotID) == "" {
 		return SnapshotMetadata{}, nil, errors.New("snapshot id is required")

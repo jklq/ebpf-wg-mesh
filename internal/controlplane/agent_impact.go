@@ -11,18 +11,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
-// bumpAffectedAgents advances desired_revision for exactly the agents whose
-// desired snapshot can change because of the durable rows this command
-// recorded. The bump runs inside the same command transaction, so it commits
-// with the product change and is itself recorded for replay.
-//
-// Assignments and peer-visible agent/admin fields (WireGuard key/port/endpoint,
-// overlay subnets, name, retire/revoke) are cluster-wide: every snapshot embeds
-// the identity catalog and a full-mesh peer list. Environments, projects,
-// volumes, services, and revisions are scoped to agents that currently host
-// that environment. Rollouts and domains appear only on the hosting agent's
-// own DesiredService, so they stay service-scoped. Session, capacity, software,
-// timestamps, and deployment staging do not appear in a snapshot.
 func (s *database) bumpAffectedAgents(ctx context.Context, tx *sql.Tx, base journal.DurableState, batch journal.Batch) error {
 	recorder := journal.RecorderFromContext(ctx)
 	var domainServices map[string][]string

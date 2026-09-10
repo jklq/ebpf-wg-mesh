@@ -22,7 +22,6 @@ func (s *memoryGlobalRevision) currentGlobalRevision(_ context.Context) (int64, 
 	return s.revision, nil
 }
 
-// advance simulates a committed transaction's revision bump.
 func (s *memoryGlobalRevision) advance() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -13,8 +13,6 @@ import (
 	"ebof-wg-mesh/internal/restartpolicy"
 )
 
-// ingressLiveReader combines durable assignments with current session observations.
-// Publication must be enabled before these backends can be published.
 type ingressLiveReader interface {
 	Publishing() bool
 	Durable() journal.DurableState

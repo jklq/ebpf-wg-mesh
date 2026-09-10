@@ -130,7 +130,6 @@ func releaseEnvironmentServiceForTest(ctx context.Context, store *persistence, u
 	return deliverycore.ServiceRecord{}, sql.ErrNoRows
 }
 
-// Release fixtures use the same authorized operation as the transport.
 func releaseEnvironmentForTest(ctx context.Context, store *persistence, userID, environmentID string) ([]deliverycore.ServiceRecord, []string, error) {
 	notifier := &releaseTestNotifier{}
 	released, err := newTestDelivery(store, notifier, nil, nil).ReleaseEnvironment(identity.WithDelegatedUser(ctx, userID), environmentID)

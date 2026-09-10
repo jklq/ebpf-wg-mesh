@@ -30,9 +30,6 @@ func configuredIdentities(cfg config.MeshRuntimeConfig) ([]configuredIdentity, e
 	}
 	ipv4Pool = ipv4Pool.Masked()
 	ipv6Pool = ipv6Pool.Masked()
-	// Environment network identity zero is never assigned to a tenant. This less-specific
-	// LPM entry makes an unknown workload-pool destination resolve to a tenant mismatch
-	// in the eBPF policy; known workload entries override it for both families.
 	identities := []configuredIdentity{{prefix: ipv4Pool}, {prefix: ipv6Pool}}
 	for _, seed := range cfg.Containerd.IdentitySeeds {
 		workloadIPv4, err := netip.ParseAddr(seed.IPv4)

@@ -60,8 +60,6 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 	if bindings, err := store.reads.ListDomainBindings(ctx, "owner", service.ID); err != nil || len(bindings) != 2 {
 		t.Fatalf("generated binding removed too early: %v, %v", bindings, err)
 	}
-	// Make generated-domain cleanup fail after the custom DELETE. Both writes
-	// must roll back, including the durable event revision and all wake hints.
 	if _, err := store.db.ExecContext(ctx, `CREATE TABLE domain_delete_blocker (hostname TEXT PRIMARY KEY REFERENCES domain_bindings(hostname) ON DELETE RESTRICT)`); err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +135,6 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	if _, err := operations.UpdateDomainBinding(attacker, &platformv1.UpdateDomainBindingRequest{Hostname: "missing.example.com", Binding: &platformv1.DomainBindingTarget{ServiceId: target.ID, TargetPort: 8080}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("update created a missing domain: %v", err)
 	}
-	// Grant write access to both ends: custom reassignment now succeeds, while
-	// the generated hostname remains tied to the service it identifies.
 	if _, err := store.db.ExecContext(owner, `UPDATE project_memberships SET role = 'editor' WHERE user_id = 'attacker' AND project_id = $1`, source.ProjectID); err != nil {
 		t.Fatal(err)
 	}

@@ -217,9 +217,6 @@ func (c *GitHubClient) GetRepository(ctx context.Context, owner, repo string, in
 	}, nil
 }
 
-// GetUserRepository resolves a repository with the signed-in user's OAuth
-// token. It is deliberately separate from GetRepository so a caller cannot
-// accidentally substitute GitHub App installation access for user access.
 func (c *GitHubClient) GetUserRepository(ctx context.Context, owner, repo, accessToken string) (githubRepositoryView, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {

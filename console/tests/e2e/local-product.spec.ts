@@ -40,9 +40,6 @@ test("login, deploy, redeploy, and generated domain route work through the local
 		);
 	}
 
-	// Authenticate with a per-run session token from the local artifact. Public
-	// tunnel mode deliberately leaves DASHBOARD_DEV_USERS empty so the internet
-	// hostname has no open login link.
 	const cookieURL = baseURL ?? "http://platform.localtest.me:8080";
 	await context.addCookies([
 		{
@@ -64,7 +61,6 @@ test("login, deploy, redeploy, and generated domain route work through the local
 		timeout: 30_000,
 	});
 
-	// Public product route (Cloudflare tunnel → local ingress → workload).
 	const response = await request.get(stack.product_e2e.route_url);
 	expect(response.status()).toBe(200);
 	expect(await response.text()).toContain(stack.product_e2e.marker);

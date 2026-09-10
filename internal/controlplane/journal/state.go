@@ -35,9 +35,6 @@ func (s DurableState) Apply(entry Entry) (DurableState, error) {
 		return s, fmt.Errorf("unsupported journal command %q version %d", entry.CommandType, entry.CommandVersion)
 	}
 	var batch Batch
-	// The payload column is JSONB, so CockroachDB may re-render whitespace on
-	// read-back. Compact before decoding so nested RawMessage values compare
-	// canonically against a fresh product read.
 	var payload bytes.Buffer
 	if err := json.Compact(&payload, entry.Payload); err != nil {
 		return s, err
@@ -133,8 +130,6 @@ func (s DurableState) validateReservations() error {
 	return nil
 }
 
-// Clone returns an owned copy. Index maps are cloned; nested byte slices are
-// shared and must be treated as immutable.
 func (s DurableState) Clone() DurableState {
 	return DurableState{
 		Projects:       maps.Clone(s.Projects),

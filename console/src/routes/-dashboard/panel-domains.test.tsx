@@ -66,7 +66,6 @@ describe("domains panel", () => {
 		expect(document.activeElement).toBe(portInput);
 		fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
 
-		// The dialog is gone right away and the list carries the progress.
 		await waitFor(() =>
 			expect(
 				screen.queryByRole("dialog", { name: "Generate domain" }),

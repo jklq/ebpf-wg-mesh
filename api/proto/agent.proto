@@ -17,8 +17,6 @@ message AgentHello {
   int32 wireguard_listen_port = 7;
   repeated string runtime_capabilities = 8;
   string software_version = 9;
-  // A fresh opaque identity for this stream incarnation. Reconnecting with a
-  // new session fences reports and heartbeats from an older stream.
   string session_id = 10;
   // Last durable control-plane position accepted by the agent. These fields
   // describe local inventory; the connection does not own that state.
@@ -30,7 +28,6 @@ message AgentHello {
   string local_store_id = 16;
   string initialization_state = 17;
   repeated ServiceCondition allocations = 18;
-  // Durably incremented before each hello; prevents delayed hello replay.
   uint64 session_incarnation = 19;
 }
 
@@ -50,7 +47,6 @@ message EnrollResponse {
   string cert_pem = 1;
   string ca_pem = 2;
   google.protobuf.Timestamp not_after = 3;
-  // Current control-plane replica addresses, excluding any agent-local seeds.
   repeated string replica_addresses = 4;
 }
 
@@ -113,13 +109,10 @@ message DesiredService {
   string volume_id = 8;
   int64 desired_rollout_generation = 9;
   uint32 network_identity = 10;
-  // Exact-repository pull credential for a platform-built private image.
   string registry_username = 11;
   string registry_password = 12;
   string internal_hostname = 13;
   repeated InternalHost internal_hosts = 14;
-  // Last persisted restart observation from the control plane. The agent
-  // uses this after a local data-dir loss; local files still win when newer.
   platform.v1.RestartObservation restart_observation = 15;
   int64 operator_restart_nonce = 16;
   AllocationIntent intent = 17;
@@ -148,13 +141,11 @@ message DesiredNodeState {
   google.protobuf.Timestamp generated_at = 5;
   AssignedNodeConfig node_config = 6;
   uint64 authority_epoch = 7;
-  // Only a complete AGENT scope permits removal by omission.
   SnapshotScope scope = 8;
   bool complete = 9;
   string session_id = 10;
   google.protobuf.Timestamp authority_not_after = 11;
   string cluster_id = 12;
-  // Current control-plane replica addresses, excluding any agent-local seeds.
   repeated string replica_addresses = 13;
 }
 

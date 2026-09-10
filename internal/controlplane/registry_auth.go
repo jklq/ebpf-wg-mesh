@@ -192,8 +192,6 @@ func (a *RegistryAuth) serveToken(w http.ResponseWriter, r *http.Request) {
 		Access:    access,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	// Distribution v2 can validate this chain against rootcertbundle without
-	// coupling registry configuration to an implementation-specific key ID.
 	token.Header["x5c"] = []string{base64.StdEncoding.EncodeToString(a.certificate.Raw)}
 	signed, err := token.SignedString(a.key)
 	if err != nil {

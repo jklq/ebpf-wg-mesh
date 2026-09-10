@@ -51,8 +51,6 @@ func TestRolloutAdvancementRollbackAndConcurrency(t *testing.T) {
 		t.Fatalf("revision escaped rollback: %d -> %d", revision, got)
 	}
 
-	// Competing transactions must plan from the locked state. The loser observes
-	// the durable withdrawal and cannot promote or bump the revision again.
 	waiting := errors.New("ingress has not converged")
 	probe := &blockedRolloutIngress{err: waiting}
 	engine = deliverycore.New(deliveryDependencies(store, nil, probe, nil, nil))

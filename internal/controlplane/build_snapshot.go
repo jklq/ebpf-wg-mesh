@@ -12,14 +12,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// SourceSnapshotMetadata describes the archive returned to a builder.
 type SourceSnapshotMetadata struct {
 	ID               string
 	Digest           string
 	ArchiveSizeBytes int64
 }
 
-// OpenSourceSnapshot authorizes the builder and returns a bounded, digest-verified archive reader.
 func (s *BuildOperations) OpenSourceSnapshot(ctx context.Context, snapshotID string) (SourceSnapshotMetadata, io.Reader, error) {
 	caller, err := identity.ServiceCallerFromContext(ctx)
 	if err != nil {
@@ -64,8 +62,6 @@ func (s *BuildOperations) OpenSourceSnapshot(ctx context.Context, snapshotID str
 	return out, snapshotReadWrapper{reader: reader}, nil
 }
 
-// snapshotReadWrapper maps source read failures to gRPC codes so a mid-stream
-// digest failure stays DataLoss instead of surfacing as Internal.
 type snapshotReadWrapper struct {
 	reader io.Reader
 }

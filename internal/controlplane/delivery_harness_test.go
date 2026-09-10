@@ -174,8 +174,6 @@ func reportActiveForTest(ctx context.Context, s *persistence, serviceID string) 
 	return nil
 }
 
-// liveFixture is confined to integration fixtures that arrange session observations
-// or deterministic expiry. Production consumers receive their own narrower roles.
 type liveFixture interface {
 	Admitted(string) bool
 	Session(string) (deliverycore.AgentSession, bool)

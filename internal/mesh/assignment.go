@@ -5,8 +5,6 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-// Assignment is the per-node mesh topology handed down by the control plane:
-// the addresses this node answers for and the peers it tunnels to.
 type Assignment struct {
 	WorkloadIPv4Subnet string
 	WorkloadIPv4Pool   string
@@ -17,8 +15,6 @@ type Assignment struct {
 	IdentitySeeds      []config.IdentitySeed
 }
 
-// AssignmentFrom reads the control plane's node config into an Assignment.
-// A nil assigned config yields the zero Assignment, i.e. a node with no peers.
 func AssignmentFrom(assigned *agentv1.AssignedNodeConfig) Assignment {
 	assignment := Assignment{
 		WorkloadIPv4Subnet: assigned.GetWorkloadIpv4Subnet(),
@@ -47,9 +43,6 @@ func AssignmentFrom(assigned *agentv1.AssignedNodeConfig) Assignment {
 	return assignment
 }
 
-// RuntimeConfig folds an assignment into the node's static mesh config,
-// producing the config Start consumes. The assignment owns the WireGuard
-// addresses and peers; everything else comes from the node's own config.
 func RuntimeConfig(cfg config.AgentConfig, assignment Assignment) config.MeshRuntimeConfig {
 	wireGuard := cfg.Mesh.WireGuard
 	wireGuard.Addresses = append([]string(nil), assignment.WireGuardAddresses...)

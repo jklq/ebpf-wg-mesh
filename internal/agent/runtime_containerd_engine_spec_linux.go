@@ -226,7 +226,6 @@ func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string
 		meshlabels.DesiredSpecRevision:      strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
 		meshlabels.DesiredRolloutGeneration: strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
 	}
-	// The firewall recovers this identity from the labels once the task starts.
 	ipv4, _ := netip.ParseAddr(svc.GetPrivateIpv4())
 	ipv6, _ := netip.ParseAddr(svc.GetPrivateIpv6())
 	maps.Copy(labels, e.cfg.Containerd.LabelKeys().Encode(meshlabels.Identity{

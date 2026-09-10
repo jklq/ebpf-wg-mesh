@@ -200,9 +200,7 @@ export async function withTransaction<A>(
 	} catch (cause) {
 		try {
 			await queryVoid(client, `${operation}.rollback`, "ROLLBACK");
-		} catch {
-			// Keep the original failure.
-		}
+		} catch {}
 		throw cause;
 	} finally {
 		client.release();

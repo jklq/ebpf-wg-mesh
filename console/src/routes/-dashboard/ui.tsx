@@ -39,8 +39,6 @@ export function ModalOverlay({
 		</div>
 	);
 
-	// Service panels are transformed, so a fixed overlay rendered inside one
-	// would otherwise be constrained to the panel rather than the viewport.
 	return typeof document === "undefined"
 		? overlay
 		: createPortal(overlay, document.body);

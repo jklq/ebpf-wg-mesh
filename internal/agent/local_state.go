@@ -63,8 +63,6 @@ const (
 	initializationRecovery      initializationState = "recovery"
 )
 
-// RuntimeResource is an allocation- or volume-derived identity discovered from
-// the runtime independently of local desired-state records.
 type RuntimeResource struct {
 	AllocationID string `json:"allocation_id"`
 	VolumeID     string `json:"volume_id"`
@@ -106,10 +104,6 @@ type localStateSummary struct {
 	QuarantinedStore     string
 }
 
-// localStateStore is the durable seam between transport and supervision. A
-// desired snapshot, its cursor, allocation operation state, and observations
-// are committed atomically. Ephemeral pull credentials live in a separate
-// bucket so renewing them does not manufacture an allocation change.
 type localStateStore struct {
 	path        string
 	db          *bbolt.DB
@@ -367,9 +361,6 @@ func (s *localStateStore) setReplicaSeeds(addresses []string) error {
 	})
 }
 
-// setReplicaAddresses replaces the last control-plane view while retaining
-// every configured seed. The response is a current replica list, not an
-// ever-growing history of addresses.
 func (s *localStateStore) setReplicaAddresses(addresses []string) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		discovery, err := readReplicaDiscovery(tx.Bucket(localMetaBucket))
@@ -583,10 +574,6 @@ func (s *localStateStore) acceptDesired(clusterID, sessionID string, incoming *a
 	return s.acceptStagedDesired(clusterID, sessionID, staged)
 }
 
-// stageDesired makes the entire candidate, including its cursor and credentials,
-// durable without changing anything visible to the supervisor or hello. The
-// grant check here only avoids writing an already expired candidate; acceptance
-// requires another check after this commit has completed.
 func (s *localStateStore) stageDesired(sessionID string, incoming *agentv1.DesiredNodeState) ([]byte, error) {
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(incoming)
 	if err != nil {
@@ -601,11 +588,6 @@ func (s *localStateStore) stageDesired(sessionID string, incoming *agentv1.Desir
 	return encoded, err
 }
 
-// acceptStagedDesired decides acceptance only after the candidate is durable.
-// The final grant check is the decision's linearization point. Committing that
-// decision can finish later, but cannot introduce a candidate that wasn't
-// already durable under a live grant. Until the decision commits, the previous
-// accepted snapshot remains the only state available to runtime reconciliation.
 func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, staged []byte) (bool, error) {
 	incoming := &agentv1.DesiredNodeState{}
 	if err := proto.Unmarshal(staged, incoming); err != nil {
@@ -678,8 +660,6 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 			}
 		}
 		if initializationState(meta.Get(initStateKey)) == initializationRecovery {
-			// A trust-root match alone does not assign unknown runtime
-			// resources to this agent. Recovery needs an explicit inventory claim.
 			established, err := recoveryOwnershipEstablished(tx.Bucket(localInventoryBucket), clean)
 			if err != nil {
 				return err
@@ -693,9 +673,6 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 		if err := desired.Delete(stagedDesiredStateKey); err != nil {
 			return err
 		}
-		// All preparation is complete and the candidate was durably staged
-		// before this transaction. A pause during staging or preparation must
-		// not turn an expired grant into an acceptance decision.
 		return reconciliation.ValidateCommand(incoming, sessionID, s.now())
 	})
 	return changed && err == nil, err
@@ -1241,9 +1218,6 @@ func readInt64(raw []byte) int64 {
 	return int64(readUint64(raw))
 }
 
-// Identity recovery is sticky. Reconnecting, even to the old root, does not
-// authorize a reset. Recovery requires retiring this identity and enrolling a
-// replacement after accounting for any surviving workloads.
 func (s *localStateStore) requireClusterIdentity(clusterID string) error {
 	var recoveryErr error
 	err := s.db.Update(func(tx *bbolt.Tx) error {

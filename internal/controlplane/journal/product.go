@@ -12,9 +12,6 @@ import (
 	"strings"
 )
 
-// productTable describes one durable product table: how to produce its
-// canonical durable key and JSON value in SQL, how to decode it into the
-// durable state, and how to resolve a recorded key set into typed changes.
 type productTable struct {
 	name    string
 	keySQL  string
@@ -23,8 +20,6 @@ type productTable struct {
 	resolve func(context.Context, *sql.Tx, DurableState, []string) (Batch, error)
 }
 
-// readProductState reads only durable product tables. It is the bootstrap and
-// snapshot primitive; ordinary commands record their changes instead.
 func readProductState(ctx context.Context, tx *sql.Tx) (DurableState, error) {
 	state := DurableState{}
 	for _, table := range productTables {
@@ -57,9 +52,6 @@ func scanProductRows(rows *sql.Rows, state *DurableState, table productTable) er
 	return rows.Err()
 }
 
-// resolveRecorded reads back exactly the recorded keys and returns the minimal
-// change set relative to base. Absent recorded rows become deletions; rows that
-// match base are dropped so payloads stay proportional to real changes.
 func resolveRecorded(ctx context.Context, tx *sql.Tx, base DurableState, recorded map[Table]map[string]struct{}) (Batch, error) {
 	batch := Batch{BaseIndex: base.LogIndex}
 	for _, table := range productTables {
@@ -105,7 +97,6 @@ func sortedKeys(keys map[string]struct{}) []string {
 	return out
 }
 
-// keyedRead is the typed half of a product table: single-row reads by durable key.
 type keyedRead[T any] struct {
 	keySQL  string
 	jsonSQL string
@@ -355,8 +346,6 @@ func decodeRecord[T any](records *map[string]T, key string, raw []byte) error {
 
 func decodeValue[T any](raw []byte) (T, error) {
 	var value T
-	// JSONB renders whitespace differently from encoding/json. Normalize nested
-	// RawMessage fields too, so replay and a fresh product read compare equally.
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err != nil {
 		return value, err

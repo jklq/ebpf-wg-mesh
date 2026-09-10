@@ -287,10 +287,6 @@ func mergedDockerConfigJSON(baseDir, host, auth string) ([]byte, error) {
 	auths[host] = entry
 	config["auths"] = auths
 
-	// A registry-specific helper takes precedence over auths, and Docker's
-	// global credsStore is otherwise used for every registry. An explicit empty
-	// helper selects the file-backed auth entry for this host while preserving
-	// helper-backed credentials for every other registry.
 	credentialHelpers, ok := config["credHelpers"].(map[string]any)
 	if !ok || credentialHelpers == nil {
 		credentialHelpers = map[string]any{}

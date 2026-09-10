@@ -11,20 +11,14 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// connectPlatformService adapts the gRPC-style PlatformService implementation
-// to the typed Connect handler interface so both transports share one service.
 type connectPlatformService struct {
 	service *PlatformService
 }
 
-// connectOpsService adapts the gRPC-style OpsService implementation to the
-// typed Connect handler interface.
 type connectOpsService struct {
 	service *OpsService
 }
 
-// toConnectError maps gRPC status errors returned by the service
-// implementations to Connect errors so both protocols return equivalent codes.
 func toConnectError(err error) error {
 	if err == nil {
 		return nil
@@ -36,7 +30,6 @@ func toConnectError(err error) error {
 	return connect.NewError(connect.Code(uint32(status.Code(err))), err)
 }
 
-// connectPlatformService methods delegate to the shared service implementation.
 func (a connectPlatformService) CreateProject(ctx context.Context, req *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	result, err := a.service.CreateProject(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
@@ -202,7 +195,6 @@ func (a connectPlatformService) ListAgents(ctx context.Context, req *connect.Req
 	return connect.NewResponse(result), toConnectError(err)
 }
 
-// connectOpsService methods delegate to the shared service implementation.
 func (a connectOpsService) IngestGitHubWebhook(ctx context.Context, req *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
 	result, err := a.service.IngestGitHubWebhook(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

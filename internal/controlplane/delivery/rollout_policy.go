@@ -26,19 +26,15 @@ type rolloutPlan struct {
 	FailureTargets            []AllocationRecord
 	Complete, CompleteRemoval bool
 	PlacementSlots            int
-	// Allocations is the projected state after removals and promotions.
-	Allocations      []AllocationRecord
-	Continue         bool
-	PlacementMessage string
+	Allocations               []AllocationRecord
+	Continue                  bool
+	PlacementMessage          string
 }
 
 func decideRollout(snapshot rolloutSnapshot, now time.Time) rolloutPlan {
 	plan := rolloutPlan{}
 	rollout := snapshot.Rollout
 	allocs := append([]AllocationRecord(nil), snapshot.Allocations...)
-	// A drained allocation is no longer desired. An expired drain deadline is
-	// also safe to remove: the agent can only observe the removal at or after
-	// that absolute deadline and will force-delete a survivor then.
 	kept := make([]AllocationRecord, 0, len(allocs))
 	for _, alloc := range allocs {
 		drained := alloc.RolloutState == AllocationRolloutDraining &&
@@ -53,9 +49,6 @@ func decideRollout(snapshot rolloutSnapshot, now time.Time) rolloutPlan {
 	}
 	allocs = kept
 
-	// Withdrawal is a durable ingress barrier. The old process keeps running
-	// until the reconciler has synchronously applied a routing snapshot that no
-	// longer contains it; only then is SIGTERM made desired.
 	for _, alloc := range allocs {
 		if alloc.RolloutState == AllocationRolloutWithdrawing {
 			plan.Result.NeedsIngressConvergence = true
@@ -169,7 +162,6 @@ func decideRollout(snapshot rolloutSnapshot, now time.Time) rolloutPlan {
 	return plan
 }
 
-// Placement stays transactional. Its actual outcome determines withdrawal and timeout.
 func decideRolloutPlacement(snapshot rolloutSnapshot, created int, ingressPending bool, now time.Time) rolloutPlan {
 	plan := rolloutPlan{Result: rolloutAdvanceResult{NeedsIngressConvergence: ingressPending}}
 	rollout, allocs := snapshot.Rollout, snapshot.Allocations
@@ -178,9 +170,6 @@ func decideRolloutPlacement(snapshot rolloutSnapshot, created int, ingressPendin
 	missing := int(desiredTargetCount) - len(target)
 	servingTarget := filterAllocations(target, func(a AllocationRecord) bool { return a.RolloutState == AllocationRolloutServing && AllocationReady(a) })
 	var servingOld []AllocationRecord
-	// Withdraw old replicas when scaling down without crossing the platform's
-	// availability floor. Draining leftovers from a previous attempt do not
-	// occupy surge slots.
 	if !plan.Result.NeedsIngressConvergence {
 		servingOld = filterAllocations(predecessors, func(a AllocationRecord) bool {
 			return a.RolloutState == AllocationRolloutServing

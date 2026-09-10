@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// EnvironmentOperations owns environment removal, including cluster and ingress wakes.
 type EnvironmentOperations struct {
 	store    environmentStore
 	notifier deliverycore.PlatformNotifier

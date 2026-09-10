@@ -75,8 +75,6 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 		t.Fatalf("ingress convergence did not contain only the healthy replacement: %+v", probe.snapshots)
 	}
 
-	// A new reconciler models control-plane restart. The durable withdrawing
-	// state makes it retry Caddy before permitting SIGTERM.
 	probe.err = nil
 	restartedDelivery := newTestDelivery(store, nil, probe, nil)
 	restarted := NewRolloutReconciler(restartedDelivery, time.Second)

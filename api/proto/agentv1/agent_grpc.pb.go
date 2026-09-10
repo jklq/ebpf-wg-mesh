@@ -13,9 +13,6 @@ import (
 	status "google.golang.org/grpc/status"
 )
 
-// This is a compile-time assertion to ensure that this generated file
-// is compatible with the grpc package it is being compiled against.
-// Requires gRPC-Go v1.64.0 or later.
 const _ = grpc.SupportPackageIsVersion9
 
 const (
@@ -24,9 +21,6 @@ const (
 	AgentControl_Sync_FullMethodName                             = "/agent.v1.AgentControl/Sync"
 )
 
-// AgentControlClient is the client API for AgentControl service.
-//
-// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentControlClient interface {
 	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
 	IssueManagedDashboardCertificate(ctx context.Context, in *ManagedDashboardCertificateRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
@@ -71,12 +65,8 @@ func (c *agentControlClient) Sync(ctx context.Context, opts ...grpc.CallOption) 
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentControl_SyncClient = grpc.BidiStreamingClient[AgentClientMessage, AgentServerMessage]
 
-// AgentControlServer is the server API for AgentControl service.
-// All implementations must embed UnimplementedAgentControlServer
-// for forward compatibility.
 type AgentControlServer interface {
 	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
 	IssueManagedDashboardCertificate(context.Context, *ManagedDashboardCertificateRequest) (*EnrollResponse, error)
@@ -84,11 +74,6 @@ type AgentControlServer interface {
 	mustEmbedUnimplementedAgentControlServer()
 }
 
-// UnimplementedAgentControlServer must be embedded to have
-// forward compatible implementations.
-//
-// NOTE: this should be embedded by value instead of pointer to avoid a nil
-// pointer dereference when methods are called.
 type UnimplementedAgentControlServer struct{}
 
 func (UnimplementedAgentControlServer) Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error) {
@@ -103,18 +88,11 @@ func (UnimplementedAgentControlServer) Sync(grpc.BidiStreamingServer[AgentClient
 func (UnimplementedAgentControlServer) mustEmbedUnimplementedAgentControlServer() {}
 func (UnimplementedAgentControlServer) testEmbeddedByValue()                      {}
 
-// UnsafeAgentControlServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to AgentControlServer will
-// result in compilation errors.
 type UnsafeAgentControlServer interface {
 	mustEmbedUnimplementedAgentControlServer()
 }
 
 func RegisterAgentControlServer(s grpc.ServiceRegistrar, srv AgentControlServer) {
-	// If the following call panics, it indicates UnimplementedAgentControlServer was
-	// embedded by pointer and is nil.  This will cause panics if an
-	// unimplemented method is ever invoked, so we test this at initialization
-	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
@@ -161,12 +139,8 @@ func _AgentControl_Sync_Handler(srv interface{}, stream grpc.ServerStream) error
 	return srv.(AgentControlServer).Sync(&grpc.GenericServerStream[AgentClientMessage, AgentServerMessage]{ServerStream: stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentControl_SyncServer = grpc.BidiStreamingServer[AgentClientMessage, AgentServerMessage]
 
-// AgentControl_ServiceDesc is the grpc.ServiceDesc for AgentControl service.
-// It's only intended for direct use with grpc.RegisterService,
-// and not to be introspected or modified (even as a copy)
 var AgentControl_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "agent.v1.AgentControl",
 	HandlerType: (*AgentControlServer)(nil),

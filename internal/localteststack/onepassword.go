@@ -94,9 +94,6 @@ func EnvironmentLoaderConfigFromLookup(lookup func(string) string) EnvironmentLo
 	}
 }
 
-// OverlayKeys are feature keys that can enable GitHub/devstack mode when present
-// in process environment (including a 1Password-mounted local .env) or a remote
-// 1Password Environment loaded via the SDK.
 func OverlayKeys() []string {
 	return []string{
 		ControlPlaneGitHubAppIDKey,
@@ -116,8 +113,6 @@ func OverlayKeys() []string {
 	}
 }
 
-// OverlayEnvFromLookup collects known overlay keys from a getenv-style lookup.
-// Empty values are omitted.
 func OverlayEnvFromLookup(lookup func(string) string) map[string]string {
 	if lookup == nil {
 		return nil
@@ -125,8 +120,6 @@ func OverlayEnvFromLookup(lookup func(string) string) map[string]string {
 	env := make(map[string]string)
 	for _, key := range OverlayKeys() {
 		if value := strings.TrimSpace(lookup(key)); value != "" {
-			// Preserve original value for secrets where leading/trailing space is unlikely
-			// but TrimSpace is correct for typical env/dotenv sources.
 			env[key] = value
 		}
 	}
@@ -136,7 +129,6 @@ func OverlayEnvFromLookup(lookup func(string) string) map[string]string {
 	return env
 }
 
-// MergeOverlayEnv returns a map where non-empty values in primary win over base.
 func MergeOverlayEnv(base, primary map[string]string) map[string]string {
 	if len(base) == 0 && len(primary) == 0 {
 		return nil

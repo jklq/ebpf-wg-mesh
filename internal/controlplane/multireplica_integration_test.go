@@ -314,9 +314,6 @@ func TestSharedStorageBindingRejectsReplicaLocalDirectory(t *testing.T) {
 	}
 }
 
-// TestReplicaRecoversAfterJournalCompaction proves a standby replica whose
-// in-memory prefix predates the compaction watermark recovers by re-reading the
-// snapshot path and converges on the live owner's durable state.
 func TestReplicaRecoversAfterJournalCompaction(t *testing.T) {
 	ctx := context.Background()
 	storeA := openTestStore(t)

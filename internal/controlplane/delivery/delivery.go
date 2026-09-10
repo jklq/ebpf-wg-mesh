@@ -14,13 +14,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
-// Delivery owns deployment lifecycle policy, its transactional state changes,
-// and the wake and ingress effects that follow a commit. Its
-// persistence and transaction helpers are private to this package.
 type Delivery struct {
-	// schedulerMu intentionally serializes evaluations. The database transaction
-	// remains the durability boundary; this avoids parallel planners until one
-	// is shown to be necessary.
 	schedulerMu     sync.Mutex
 	store           *persistence
 	live            *Live
@@ -44,10 +38,6 @@ type DeploymentActionResult struct {
 	EventIndex  int64
 }
 
-// ApplyDeploymentAction applies restart, rollback, cancellation, removal, and
-// retry policy atomically, then performs every wake required to
-// make the committed state observable. Callers do not need to finish the
-// operation themselves.
 func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (DeploymentActionResult, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
@@ -81,10 +71,6 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploym
 	return DeploymentActionResult{Service: service, Allocations: allocations, EventIndex: eventIndex}, nil
 }
 
-// ReleaseEnvironment authorizes the delegated user and atomically releases all
-// pending drafts, queues source work, advances rollouts and desired revisions,
-// and snapshots the result. The transaction also advances the durable platform
-// event index. Agent notifications are wake hints sent only after commit.
 func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string) ([]ReleasedService, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
@@ -222,10 +208,6 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 	return services, nil
 }
 
-// serviceNeedsSourceBuildTx distinguishes source changes from runtime-only
-// changes. A source-backed service needs a build for its first rollout and when
-// its repository/ref/build recipe changes. Runtime, restart, and replica-only
-// revisions reuse the image already resolved by the deployed rollout.
 func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord) (bool, error) {
 	if source.DesiredSourceSpec(service.Spec) == nil {
 		return false, nil
@@ -328,7 +310,6 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 	return current, nil
 }
 
-// DuplicateEnvironment copies drafts, volumes, and staged deployments atomically.
 func (r *Delivery) DuplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (EnvironmentRecord, error) {
 	return r.store.duplicateEnvironment(ctx, userID, sourceEnvironmentID, name, copyVariables)
 }

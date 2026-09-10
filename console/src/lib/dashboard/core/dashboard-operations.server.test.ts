@@ -311,7 +311,6 @@ describe("dashboard operations", () => {
 				},
 			},
 		];
-		// Pre-link the project in the onboarding draft so it is reused by ID
 		await harness.store.saveOnboardingDraft("user-1", {
 			projectId: "project-1",
 			environmentId: "environment-project-1",

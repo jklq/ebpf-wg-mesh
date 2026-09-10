@@ -177,8 +177,6 @@ type Change[T any] struct {
 	Value *T     `json:"value"`
 }
 
-// Batch records the concrete durable result of one product transaction.
-// BaseIndex fences plans computed from an older committed prefix.
 type Batch struct {
 	Projects       []Change[Project]             `json:"projects,omitempty"`
 	BaseIndex      int64                         `json:"base_index"`

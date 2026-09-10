@@ -249,10 +249,6 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 	return changed, nil
 }
 
-// allocationByServiceID returns the first allocation row associated with a
-// service, if any. A missing allocation is treated as a non-error empty record
-// so callers that just want stage projections can keep going without
-// special-casing the not-yet-scheduled path.
 func (s *readsPersistence) allocationByServiceID(ctx context.Context, serviceID string) (deliverycore.AllocationRecord, error) {
 	allocs, err := s.ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {

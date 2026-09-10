@@ -5,10 +5,6 @@ import { btnGhost, modalCard } from "#/lib/ui-classes";
 
 import { ModalOverlay } from "./ui";
 
-/**
- * Instant modal shell while the deploy picker chunk loads, so the Deploy
- * button always answers the click synchronously instead of appearing dead.
- */
 export function NewServiceModalFallback({ onClose }: { onClose: () => void }) {
 	return (
 		<ModalOverlay onClose={onClose} ariaLabel="Deploy service">

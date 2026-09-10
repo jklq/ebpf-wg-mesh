@@ -5,31 +5,22 @@ import type {
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 
-/** Services list snapshot with its backend revision. */
 export interface ServicesSnapshot {
 	services: Array<DashboardServiceRecord>;
 	revision: number;
 }
 
-/** Single service-status snapshot with its backend revision. */
 export interface ServiceStatusSnapshot {
 	status: DashboardServiceStatus;
 	revision: number;
 }
 
-/** Allocation details for one service, stored separately from the record. */
 export interface ServiceAllocations {
 	allocation?: DashboardAllocationStatus;
 	allocations?: Array<DashboardAllocationStatus>;
 	revision: number;
 }
 
-/**
- * Normalized dashboard view state. Service records live exactly once in
- * `servicesById`; selection is a plain ID; allocation details live in
- * `allocationsByServiceId` keyed by the same ID. Nothing is duplicated, so
- * there is a single merge path per snapshot kind below.
- */
 export interface NormalizedDashboardState {
 	base: Omit<
 		DashboardHomeState,
@@ -71,7 +62,6 @@ export function createNormalizedState(
 	};
 }
 
-/** Ordered service array derived from the single by-ID source. */
 export function selectServicesArray(
 	state: NormalizedDashboardState,
 ): Array<DashboardServiceRecord> {
@@ -88,11 +78,6 @@ export function selectSelectedService(
 		: undefined;
 }
 
-/**
- * Reconstructed status for the selected service. The record comes from the
- * single by-ID source; only allocation details come from the status map, so
- * the two can never drift apart.
- */
 export function selectSelectedStatus(
 	state: NormalizedDashboardState,
 ): DashboardServiceStatus | null {
@@ -109,12 +94,6 @@ export function selectSelectedStatus(
 	};
 }
 
-/**
- * The single ordering gate for list snapshots (loader, list stream). A
- * snapshot at or below the applied revision is stale and ignored entirely,
- * which keeps a late loader from clearing fresher stream data. Causal
- * single-record writes bypass this gate via `upsertServiceRecord`.
- */
 export function applyServicesSnapshot(
 	state: NormalizedDashboardState,
 	snapshot: ServicesSnapshot,
@@ -142,14 +121,6 @@ export function applyServicesSnapshot(
 	};
 }
 
-/**
- * Loader refresh. Static fields (project, environments, catalog) always come
- * from the loader; the service list still goes through the revision gate so a
- * stale loader rerender can never clear newer stream or mutation data. An
- * environment switch is a new scope: revisions are incomparable across
- * environments, so the incoming snapshot is accepted and selection resets to
- * the loader default.
- */
 export function applyLoaderState(
 	state: NormalizedDashboardState,
 	loader: DashboardHomeState,
@@ -160,9 +131,6 @@ export function applyLoaderState(
 		base: stripLoaderFields(loader),
 	};
 	if (loader.environment?.id !== state.base.environment?.id) {
-		// A loader with no environment is stale relative to optimistic
-		// created state, not a scope switch: keep the current selection and
-		// let the presence check below drop it only if the row is gone.
 		const reset: NormalizedDashboardState = {
 			...next,
 			selectedServiceId: loader.environment
@@ -178,9 +146,6 @@ export function applyLoaderState(
 	}
 	if (loader.servicesRevision <= state.servicesRevision) {
 		if (!retained || retained.length === 0) return next;
-		// The loader hasn't caught up with created rows yet: union the
-		// retained entries without moving the revision, so the next real
-		// snapshot still applies.
 		const byId = { ...next.servicesById };
 		const order = [...next.serviceOrder];
 		for (const service of retained) {
@@ -206,11 +171,6 @@ export function applyLoaderState(
 	);
 }
 
-/**
- * Causal single-record write (mutation responses, created-service cache
- * hydration). The caller just performed this write, so it always wins over
- * prior snapshots; future snapshots with a higher revision replace it.
- */
 export function upsertServiceRecord(
 	state: NormalizedDashboardState,
 	service: DashboardServiceRecord,
@@ -225,12 +185,6 @@ export function upsertServiceRecord(
 	};
 }
 
-/**
- * The single ordering gate for status snapshots. Each service has its own
- * status revision; stale status data for one service never touches another.
- * The embedded service record is upserted through the same single path as
- * every other service write.
- */
 export function applyServiceStatusSnapshot(
 	state: NormalizedDashboardState,
 	snapshot: ServiceStatusSnapshot,
@@ -259,14 +213,6 @@ export function applyServiceStatusSnapshot(
 	};
 }
 
-/**
- * Mutation response with a basis revision captured when the request was
- * dispatched. If a newer list snapshot arrived while the request was in
- * flight, the response predates it and is ignored; the snapshot already
- * reflects the committed server state (backend indexes increment on every
- * mutation). Otherwise the causal write applies. This is the same revision
- * contract as snapshots, extended to request/response flows.
- */
 export function applyMutationRecord(
 	state: NormalizedDashboardState,
 	service: DashboardServiceRecord,
@@ -276,11 +222,6 @@ export function applyMutationRecord(
 	return upsertServiceRecord(state, service);
 }
 
-/**
- * Mutation status response with a dispatch-time basis revision. The embedded
- * record goes through the same gate as every other service write;
- * allocation details apply alongside it.
- */
 export function applyMutationStatus(
 	state: NormalizedDashboardState,
 	status: DashboardServiceStatus,
@@ -325,11 +266,6 @@ export function removeService(
 	};
 }
 
-/**
- * Newly created services live in the above-remount cache until the backend
- * list includes them. Union them into snapshots so the optimistic row never
- * flickers; once the snapshot contains the ID the cache entry is redundant.
- */
 function mergeRetainingCreated(
 	services: Array<DashboardServiceRecord>,
 	retained?: Array<DashboardServiceRecord>,
