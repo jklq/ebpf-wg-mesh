@@ -22,7 +22,6 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -92,13 +91,6 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(a.cfg.ControlPlane.Address, grpc.WithTransportCredentials(creds))
-	if err != nil {
-		return nil, fmt.Errorf("dial control plane enroll: %w", err)
-	}
-	defer conn.Close()
-	slog.Info("dialed control plane for enroll", "agent_id", a.cfg.Node.ID, "address", a.cfg.ControlPlane.Address)
-	client := agentv1.NewAgentControlClient(conn)
 	req := &agentv1.EnrollRequest{
 		AgentId: a.cfg.Node.ID,
 		CsrPem:  string(csrPEM),
@@ -106,20 +98,68 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 	if current == nil {
 		req.BootstrapToken = a.cfg.ControlPlane.TLS.BootstrapToken
 	}
-	resp, err := client.Enroll(ctx, req)
+	addresses, err := a.controlPlaneCandidates()
 	if err != nil {
-		return nil, fmt.Errorf("enroll client certificate: %w", err)
+		return nil, fmt.Errorf("load control-plane discovery set for enroll: %w", err)
 	}
-	if a.stateStore != nil {
-		if err := a.stateStore.requireClusterIdentity(clusterIdentity([]byte(resp.GetCaPem()))); err != nil {
+	if len(addresses) == 0 {
+		return nil, errors.New("control-plane discovery set is empty")
+	}
+	var failures []error
+	for _, address := range addresses {
+		conn, err := dialControlPlane(ctx, address, creds)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			err = a.replicaAttemptError(address, err)
+			if errors.Is(err, errRedirectOwner) {
+				return nil, err
+			}
+			if !shouldWalkNextReplica(err) {
+				return nil, fmt.Errorf("enroll client certificate: %w", err)
+			}
+			failures = append(failures, err)
+			continue
+		}
+		client := agentv1.NewAgentControlClient(conn)
+		rpcCtx, cancel := replicaRPCContext(ctx)
+		resp, err := client.Enroll(rpcCtx, req)
+		cancel()
+		_ = conn.Close()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			err = a.replicaAttemptError(address, err)
+			if errors.Is(err, errRedirectOwner) {
+				return nil, err
+			}
+			if !shouldWalkNextReplica(err) {
+				return nil, fmt.Errorf("enroll client certificate: %w", err)
+			}
+			failures = append(failures, err)
+			continue
+		}
+		if resp == nil {
+			return nil, errors.New("enroll client certificate: empty response")
+		}
+		if a.stateStore != nil {
+			if err := a.stateStore.requireClusterIdentity(clusterIdentity([]byte(resp.GetCaPem()))); err != nil {
+				return nil, err
+			}
+			if err := a.stateStore.setReplicaAddresses(resp.GetReplicaAddresses()); err != nil {
+				return nil, fmt.Errorf("persist control-plane replica addresses: %w", err)
+			}
+		}
+		a.controlPlaneAddr = address
+		slog.Info("client certificate enrolled", "agent_id", a.cfg.Node.ID, "address", address)
+		if err := a.persistClientTLSMaterial(keyPEM, []byte(resp.GetCertPem()), []byte(resp.GetCaPem())); err != nil {
 			return nil, err
 		}
+		return a.loadClientTLSMaterial()
 	}
-	slog.Info("client certificate enrolled", "agent_id", a.cfg.Node.ID)
-	if err := a.persistClientTLSMaterial(keyPEM, []byte(resp.GetCertPem()), []byte(resp.GetCaPem())); err != nil {
-		return nil, err
-	}
-	return a.loadClientTLSMaterial()
+	return nil, fmt.Errorf("no reachable control-plane replica for enrollment: %w", errors.Join(failures...))
 }
 
 func (a *App) enrollmentCredentials(current *clientTLSMaterial) (credentials.TransportCredentials, error) {

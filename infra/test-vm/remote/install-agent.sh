@@ -7,7 +7,7 @@ CA_FILE=${CA_FILE:-/opt/ebpf-wg-mesh/controlplane-ca.crt}
 NODE_ID=${NODE_ID:?NODE_ID is required}
 NODE_NAME=${NODE_NAME:?NODE_NAME is required}
 ADVERTISE_ADDR=${ADVERTISE_ADDR:?ADVERTISE_ADDR is required}
-CONTROLPLANE_ADDRESS=${CONTROLPLANE_ADDRESS:?CONTROLPLANE_ADDRESS is required}
+CONTROLPLANE_ADDRESSES=${CONTROLPLANE_ADDRESSES:?CONTROLPLANE_ADDRESSES is required}
 BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN:-vm-bootstrap-token}
 WORKLOAD_CNI_IPV4_POOL=${WORKLOAD_CNI_IPV4_POOL:-10.200.0.0/16}
 WORKLOAD_CNI_IPV6_POOL=${WORKLOAD_CNI_IPV6_POOL:-fd00:200::/48}
@@ -91,7 +91,7 @@ Requires=containerd.service
 
 [Service]
 Type=simple
-ExecStart=${AGENT_BIN} -profile development -node-id ${NODE_ID} -node-name ${NODE_NAME} -advertise-addr ${ADVERTISE_ADDR} -controlplane-address ${CONTROLPLANE_ADDRESS} -ca-file ${CA_FILE} -bootstrap-token ${BOOTSTRAP_TOKEN} -data-dir ${STATE_DIR}
+ExecStart=${AGENT_BIN} -profile development -node-id ${NODE_ID} -node-name ${NODE_NAME} -advertise-addr ${ADVERTISE_ADDR} -controlplane-addresses "${CONTROLPLANE_ADDRESSES}" -ca-file ${CA_FILE} -bootstrap-token ${BOOTSTRAP_TOKEN} -data-dir ${STATE_DIR}
 Restart=always
 RestartSec=3
 OOMScoreAdjust=-500
