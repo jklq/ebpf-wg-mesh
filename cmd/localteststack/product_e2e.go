@@ -261,6 +261,9 @@ func mintDashboardAccessToken(secret, userID, email string) (string, error) {
 	return token, nil
 }
 
+// seedProductE2EDashboardUser applies the dashboard v1 schema (if needed) and
+// inserts the fixture owner so a minted access cookie can load home without
+// open public dev logins. Must stay aligned with console dashboardStoreMigrations.
 func seedProductE2EDashboardUser(ctx context.Context, databaseURL, schema, userID, email string) error {
 	schema = strings.TrimSpace(schema)
 	userID = strings.TrimSpace(userID)
