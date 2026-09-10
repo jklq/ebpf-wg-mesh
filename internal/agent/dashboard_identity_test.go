@@ -16,6 +16,8 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type testDashboardCertificateIssuer struct {
@@ -129,6 +131,13 @@ func TestManagedDashboardIdentityKeepsValidCertificateWhenRenewalFails(t *testin
 	}
 	if changed || issuer.calls != 2 {
 		t.Fatalf("expected failed renewal to retain existing identity, changed=%t calls=%d", changed, issuer.calls)
+	}
+
+	issuer.err = status.Error(codes.FailedPrecondition, agentv1.LiveOwnerRedirectPrefix+"owner:9443")
+	if _, err := app.ensureManagedDashboardIdentity(context.Background(), issuer, state); err == nil {
+		t.Fatal("expected live-owner redirect to surface during renewal")
+	} else if got, ok := liveOwnerAddr(err); !ok || got != "owner:9443" {
+		t.Fatalf("renewal redirect = %q, %v", got, err)
 	}
 }
 

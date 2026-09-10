@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"ebof-wg-mesh/internal/meshlabels"
 )
@@ -162,6 +163,28 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Mesh.PersistentKeepaliveSeconds <= 0 {
 		cfg.Mesh.PersistentKeepaliveSeconds = 5
 	}
+	cfg.AdvertiseAddr = strings.TrimSpace(cfg.AdvertiseAddr)
+	cfg.ReplicaAddresses = uniqueAddresses(append([]string{cfg.AdvertiseAddr}, cfg.ReplicaAddresses...))
+	if cfg.AdvertiseAddr == "" && len(cfg.ReplicaAddresses) == 1 {
+		cfg.AdvertiseAddr = cfg.ReplicaAddresses[0]
+	}
+}
+
+func uniqueAddresses(addresses []string) []string {
+	result := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		result = append(result, address)
+	}
+	return result
 }
 
 func applyAgentDefaults(cfg *AgentConfig) {
@@ -171,6 +194,13 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	if cfg.Node.Resources.MemoryMebibytes <= 0 {
 		cfg.Node.Resources.MemoryMebibytes = 4096
 	}
+	if cfg.Node.Resources.ReservedCPUMillis <= 0 {
+		cfg.Node.Resources.ReservedCPUMillis = 500
+	}
+	if cfg.Node.Resources.ReservedMemoryMebibytes <= 0 {
+		cfg.Node.Resources.ReservedMemoryMebibytes = 512
+	}
+	cfg.ControlPlane.Addresses = uniqueAddresses(cfg.ControlPlane.Addresses)
 	if cfg.ControlPlane.TLS.ServerName == "" {
 		cfg.ControlPlane.TLS.ServerName = "controlplane"
 	}

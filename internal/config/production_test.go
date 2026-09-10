@@ -174,7 +174,7 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 	t.Run("loopback control plane for agent", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionAgent()
-		cfg.ControlPlane.Address = "127.0.0.1:9443"
+		cfg.ControlPlane.Addresses = []string{"127.0.0.1:9443"}
 		mustReject(t, FinalizeAgent(&cfg), "loopback host")
 	})
 	t.Run("wildcard agent tls identity", func(t *testing.T) {
@@ -231,7 +231,7 @@ func TestDevelopmentProfileAllowsLocalConveniences(t *testing.T) {
 			AdvertiseAddr: "fd00:30::10",
 		},
 		ControlPlane: ControlPlaneClientConfig{
-			Address: "127.0.0.1:9443",
+			Addresses: []string{"127.0.0.1:9443"},
 			TLS: ClientTLSConfig{
 				CAFile:         "ca.crt",
 				BootstrapToken: "token-a",
@@ -290,7 +290,7 @@ func validMinimalProductionAgent() AgentConfig {
 			AdvertiseAddr: "2001:db8::10",
 		},
 		ControlPlane: ControlPlaneClientConfig{
-			Address: "controlplane.example.test:9443",
+			Addresses: []string{"controlplane.example.test:9443"},
 			TLS: ClientTLSConfig{
 				CAFile:         "/etc/ebpf-wg-mesh/ca.crt",
 				ServerName:     "controlplane.example.test",

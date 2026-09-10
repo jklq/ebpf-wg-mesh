@@ -84,12 +84,16 @@ func AgentStartupContract(cfg AgentConfig) StartupContract {
 		features = append(features, "cgroups")
 	}
 	features = append(features, "workload_sandbox")
+	controlPlaneAddress := ""
+	if len(cfg.ControlPlane.Addresses) > 0 {
+		controlPlaneAddress = cfg.ControlPlane.Addresses[0]
+	}
 	return StartupContract{
 		Component: "agent",
 		Profile:   cfg.Profile,
 		Features:  features,
 		Dependencies: []DependencyRef{
-			{Name: "control_plane", Class: dependencyClassForURL(cfg.ControlPlane.Address)},
+			{Name: "control_plane", Class: dependencyClassForURL(controlPlaneAddress)},
 		},
 	}
 }

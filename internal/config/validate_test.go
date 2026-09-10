@@ -53,6 +53,31 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestFinalizeControlPlaneRequiresAdvertiseAddrForMultipleReplicas(t *testing.T) {
+	t.Parallel()
+
+	cfg := ControlPlaneConfig{
+		Profile:        ProfileDevelopment,
+		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
+			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
+		}},
+		ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"},
+	}
+	if err := FinalizeControlPlane(&cfg); err == nil || !strings.Contains(err.Error(), "advertiseAddr") {
+		t.Fatalf("expected advertiseAddr requirement, got %v", err)
+	}
+
+	cfg.AdvertiseAddr = "replica-a:9443"
+	if err := FinalizeControlPlane(&cfg); err != nil {
+		t.Fatalf("FinalizeControlPlane: %v", err)
+	}
+	if got := strings.Join(cfg.ReplicaAddresses, ","); got != "replica-a:9443,replica-b:9443" {
+		t.Fatalf("replica addresses = %q", got)
+	}
+}
+
 func TestFinalizeControlPlaneRejectsNonLoopbackCaddyAdminWithoutOptIn(t *testing.T) {
 	t.Parallel()
 
@@ -195,7 +220,7 @@ func TestFinalizeAgentRejectsReservedResourcesThatConsumeAllCapacity(t *testing.
 			},
 		},
 		ControlPlane: ControlPlaneClientConfig{
-			Address: "controlplane:9443",
+			Addresses: []string{"controlplane:9443"},
 			TLS: ClientTLSConfig{
 				CAFile:             "ca.crt",
 				ServerName:         "controlplane",
@@ -224,7 +249,7 @@ func TestFinalizeAgentRejectsInvalidWireGuardPeerEndpoint(t *testing.T) {
 			AdvertiseAddr: "fd00:30::10",
 		},
 		ControlPlane: ControlPlaneClientConfig{
-			Address: "controlplane:9443",
+			Addresses: []string{"controlplane:9443"},
 			TLS: ClientTLSConfig{
 				CAFile:             "ca.crt",
 				ServerName:         "controlplane",

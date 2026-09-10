@@ -16,20 +16,20 @@ import (
 	"ebof-wg-mesh/internal/mesh"
 
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/credentials"
 )
 
 type App struct {
-	cfg            config.AgentConfig
-	runtime        Runtime
-	mesh           MeshHandle
-	meshFactory    MeshFactory
-	meshAssignment mesh.Assignment
+	cfg              config.AgentConfig
+	runtime          Runtime
+	mesh             MeshHandle
+	meshFactory      MeshFactory
+	meshAssignment   mesh.Assignment
 	stateStore       *localStateStore
 	supervisor       *workloadSupervisor
 	healthStop       func(context.Context) error
 	controlPlaneAddr string
+	deadOwners       map[string]time.Time
 }
 
 const (
@@ -44,8 +44,6 @@ var (
 	errRedirectOwner = errors.New("redirect to live owner")
 )
 
-const liveOwnerRedirectPrefix = "not the live owner; reconnect at "
-
 func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
 	options := defaultOptions()
 	for _, opt := range opts {
@@ -59,10 +57,9 @@ func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
 		return nil, err
 	}
 	return &App{
-		cfg:              cfg,
-		runtime:          runtime,
-		meshFactory:      options.meshFactory,
-		controlPlaneAddr: cfg.ControlPlane.Address,
+		cfg:         cfg,
+		runtime:     runtime,
+		meshFactory: options.meshFactory,
 	}, nil
 }
 
@@ -99,6 +96,11 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("open local state: %w", err)
 	}
 	a.stateStore = store
+	if err := store.setReplicaSeeds(a.cfg.ControlPlane.Addresses); err != nil {
+		_ = store.Close()
+		a.stateStore = nil
+		return fmt.Errorf("persist control-plane discovery seeds: %w", err)
+	}
 	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
 	if err := a.supervisor.Start(ctx, clusterID); err != nil {
 		_ = store.Close()
@@ -159,21 +161,53 @@ func (a *App) runSession(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build control plane credentials: %w", err)
 	}
+	addresses, err := a.controlPlaneCandidates()
+	if err != nil {
+		return fmt.Errorf("load control-plane discovery set: %w", err)
+	}
+	if len(addresses) == 0 {
+		return errors.New("control-plane discovery set is empty")
+	}
+	var failures []error
+	for _, address := range addresses {
+		err := a.runSessionAt(ctx, creds, certNotAfter, clusterID, address)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		previousPin := a.controlPlaneAddr
+		err = a.replicaAttemptError(address, err)
+		if errors.Is(err, errRedirectOwner) || errors.Is(err, errRotateSession) {
+			return err
+		}
+		if !shouldWalkNextReplica(err) {
+			return err
+		}
+		if a.controlPlaneAddr == "" && strings.TrimSpace(previousPin) != "" {
+			slog.Info("forgetting unavailable control-plane pin", "agent_id", a.cfg.Node.ID, "address", address)
+		}
+		failures = append(failures, err)
+	}
+	return fmt.Errorf("no reachable control-plane replica: %w", errors.Join(failures...))
+}
 
+func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCredentials, certNotAfter time.Time, clusterID, addr string) error {
 	sessionCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	if renewAt := certNotAfter.Add(-time.Duration(a.cfg.ControlPlane.TLS.RenewBeforeMinutes) * time.Minute); !renewAt.IsZero() {
 		go a.rotateSessionAt(sessionCtx, cancel, renewAt)
 	}
-	addr := a.controlPlaneAddr
-	if addr == "" {
-		addr = a.cfg.ControlPlane.Address
-	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	conn, err := dialControlPlane(sessionCtx, addr, creds)
 	if err != nil {
+		if cause := handshakeCause(sessionCtx); cause != nil {
+			return cause
+		}
 		return fmt.Errorf("dial control plane: %w", err)
 	}
 	defer conn.Close()
+	a.controlPlaneAddr = addr
 	slog.Info("dialed control plane", "agent_id", a.cfg.Node.ID, "address", addr)
 
 	client := agentv1.NewAgentControlClient(conn)
@@ -184,9 +218,8 @@ func (a *App) runSession(ctx context.Context) error {
 	}
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
-		if owner, ok := liveOwnerAddr(err); ok {
-			a.controlPlaneAddr = owner
-			return errRedirectOwner
+		if cause := handshakeCause(sessionCtx); cause != nil {
+			return cause
 		}
 		return fmt.Errorf("open sync stream: %w", err)
 	}
@@ -212,6 +245,10 @@ func (a *App) runSession(ctx context.Context) error {
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
 	}
+	handshakeExpire := time.AfterFunc(replicaRPCTimeout, func() {
+		cancel(errHandshakeTimeout)
+	})
+	defer handshakeExpire.Stop()
 	if err := send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
 			AgentId:                 a.cfg.Node.ID,
@@ -235,6 +272,9 @@ func (a *App) runSession(ctx context.Context) error {
 			RuntimeResources:        runtimeResources,
 		}},
 	}); err != nil {
+		if cause := handshakeCause(sessionCtx); cause != nil {
+			return cause
+		}
 		return err
 	}
 	slog.Info("sent agent hello", "agent_id", a.cfg.Node.ID)
@@ -269,6 +309,7 @@ func (a *App) runSession(ctx context.Context) error {
 	}()
 	var lastSentSequence uint64
 	authorityConfirmed := false
+	handshake := true
 	sendCurrentReport := func() error {
 		report, err := a.supervisor.CurrentReport()
 		if err != nil || report == nil {
@@ -287,18 +328,21 @@ func (a *App) runSession(ctx context.Context) error {
 	for {
 		select {
 		case <-sessionCtx.Done():
-			if errors.Is(context.Cause(sessionCtx), errRotateSession) {
-				return errRotateSession
+			if cause := handshakeCause(sessionCtx); cause != nil {
+				return cause
 			}
 			return nil
 		case <-a.supervisor.ReportNotifications():
-			if !authorityConfirmed {
+			if handshake || !authorityConfirmed {
 				continue
 			}
 			if err := sendCurrentReport(); err != nil {
 				return err
 			}
 		case <-credentialTicker.C:
+			if handshake {
+				continue
+			}
 			state, err := a.stateStore.desiredState()
 			if err != nil {
 				return fmt.Errorf("load desired state for credential renewal: %w", err)
@@ -307,18 +351,34 @@ func (a *App) runSession(ctx context.Context) error {
 				continue
 			}
 			if err := a.refreshManagedDashboardIdentity(sessionCtx, client, state); err != nil {
+				if _, ok := liveOwnerAddr(err); ok {
+					return a.followLiveOwner(err)
+				}
 				slog.Warn("refresh managed dashboard identity", "agent_id", a.cfg.Node.ID, "error", err)
 			}
 		case result := <-received:
+			if handshake {
+				handshake = false
+				handshakeExpire.Stop()
+			}
 			if result.err != nil {
+				if cause := handshakeCause(sessionCtx); cause != nil {
+					return cause
+				}
 				if errors.Is(result.err, context.Canceled) || ctx.Err() != nil {
 					return nil
 				}
 				return result.err
 			}
+			if result.message == nil {
+				continue
+			}
 			state := result.message.GetDesiredState()
 			if state == nil {
 				continue
+			}
+			if err := a.stateStore.setReplicaAddresses(state.GetReplicaAddresses()); err != nil {
+				return fmt.Errorf("persist control-plane replica addresses: %w", err)
 			}
 			changed, err := a.supervisor.AcceptDesired(clusterID, sessionID, state)
 			if err != nil {
@@ -444,17 +504,4 @@ func (a *App) applyNodeConfig(ctx context.Context, assigned *agentv1.AssignedNod
 	a.mesh = meshRuntime
 	a.meshAssignment = next
 	return nil
-}
-
-func liveOwnerAddr(err error) (string, bool) {
-	st, ok := status.FromError(err)
-	if !ok {
-		return "", false
-	}
-	msg := st.Message()
-	if !strings.HasPrefix(msg, liveOwnerRedirectPrefix) {
-		return "", false
-	}
-	addr := strings.TrimSpace(strings.TrimPrefix(msg, liveOwnerRedirectPrefix))
-	return addr, addr != ""
 }
