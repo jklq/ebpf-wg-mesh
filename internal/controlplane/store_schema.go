@@ -23,6 +23,7 @@ var currentSchema = []string{
 	`CREATE TABLE control_plane_leases (
 			name STRING PRIMARY KEY,
 			holder_id STRING NOT NULL,
+			advertise_addr STRING NOT NULL DEFAULT '',
 			fencing_token INT8 NOT NULL,
 			advertise_addr STRING NOT NULL DEFAULT '',
 			expires_at TIMESTAMPTZ NOT NULL,
@@ -141,7 +142,8 @@ var currentSchema = []string{
 			agent_id STRING NOT NULL,
 			origin STRING NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			consumed_at TIMESTAMPTZ NULL
+			consumed_at TIMESTAMPTZ NULL,
+			csr_public_key_sha256 BYTES NULL
 		)`,
 	`CREATE INDEX idx_agent_bootstrap_tokens_agent ON agent_bootstrap_tokens(agent_id, consumed_at)`,
 	`CREATE TABLE agent_certificates (

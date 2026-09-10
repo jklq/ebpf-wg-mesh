@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
@@ -133,6 +134,50 @@ func (s *fleetPersistence) ConsumeAgentBootstrapToken(ctx context.Context, agent
 	}
 	if rows != 1 {
 		return errInvalidBootstrapToken
+	}
+	return nil
+}
+
+func (s *fleetPersistence) ConsumeOrRecoverAgentBootstrapToken(ctx context.Context, agentID, token string, publicKeySHA256 []byte) error {
+	agentID = strings.TrimSpace(agentID)
+	token = strings.TrimSpace(token)
+	if agentID == "" || token == "" || len(publicKeySHA256) != sha256.Size {
+		return errInvalidBootstrapToken
+	}
+	hash := deliverycore.BootstrapTokenHash(token)
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE agent_bootstrap_tokens
+		    SET consumed_at = $1, csr_public_key_sha256 = $2
+		  WHERE token_hash = $3
+		    AND agent_id = $4
+		    AND consumed_at IS NULL`,
+		now, publicKeySHA256, hash[:], agentID,
+	)
+	if err != nil {
+		return fmt.Errorf("consume agent bootstrap token: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("bootstrap token rows affected: %w", err)
+	}
+	if rows == 1 {
+		return nil
+	}
+	var one int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM agent_bootstrap_tokens
+		  WHERE token_hash = $1
+		    AND agent_id = $2
+		    AND consumed_at IS NOT NULL
+		    AND csr_public_key_sha256 = $3`,
+		hash[:], agentID, publicKeySHA256,
+	).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errInvalidBootstrapToken
+	}
+	if err != nil {
+		return fmt.Errorf("recover agent bootstrap token: %w", err)
 	}
 	return nil
 }

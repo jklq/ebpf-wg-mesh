@@ -80,6 +80,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		}
 	})
 	waitForListener(t, server.InternalAddr())
+	waitForSingletonLease(t, server)
 
 	dashboardIdentity, err := server.EnsureDashboardClientIdentity("dashboard-test")
 	if err != nil {
@@ -109,13 +110,25 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		t.Fatal("Enroll returned incomplete certificate material")
 	}
 
-	_, err = bootstrapClient.Enroll(ctx, &agentv1.EnrollRequest{
+	retry, err := bootstrapClient.Enroll(ctx, &agentv1.EnrollRequest{
 		AgentId:        agentID,
 		CsrPem:         string(csrPEM),
 		BootstrapToken: bootstrapToken,
 	})
+	if err != nil {
+		t.Fatalf("same-key enrollment retry after success: %v", err)
+	}
+	if retry.GetCertPem() == "" {
+		t.Fatal("same-key enrollment retry returned no certificate")
+	}
+	_, otherKeyPEM := newAgentCSR(t, agentID)
+	_, err = bootstrapClient.Enroll(ctx, &agentv1.EnrollRequest{
+		AgentId:        agentID,
+		CsrPem:         string(otherKeyPEM),
+		BootstrapToken: bootstrapToken,
+	})
 	if got := status.Code(err); got != codes.Unauthenticated {
-		t.Fatalf("second bootstrap token use: got %s, want Unauthenticated", got)
+		t.Fatalf("consumed token with a different key: got %s, want Unauthenticated", got)
 	}
 	if err := bootstrapConn.Close(); err != nil {
 		t.Fatalf("close bootstrap connection: %v", err)

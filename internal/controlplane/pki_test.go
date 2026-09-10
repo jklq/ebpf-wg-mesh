@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -82,7 +83,7 @@ func TestAgentServiceIssuesManagedDashboardCertificateOnlyToTrustedAgent(t *test
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
-	service := NewAgentService(nil, nil, nil, nil, authority, nil, true, "agent-trusted", "dashboard-1")
+	service := NewAgentService(nil, nil, nil, nil, authority, nil, true, "agent-trusted", "dashboard-1", WithReplicaAddresses([]string{" replica-a:9443", "replica-b:9443", "replica-a:9443"}))
 	req := &agentv1.ManagedDashboardCertificateRequest{
 		AgentId: "agent-trusted",
 		CsrPem:  string(mustCreateCSR(t, "locally-generated")),
@@ -94,6 +95,9 @@ func TestAgentServiceIssuesManagedDashboardCertificateOnlyToTrustedAgent(t *test
 	)
 	if err != nil {
 		t.Fatalf("IssueManagedDashboardCertificate: %v", err)
+	}
+	if got, want := strings.Join(resp.GetReplicaAddresses(), ","), "replica-a:9443,replica-b:9443"; got != want {
+		t.Fatalf("replica addresses = %q, want %q", got, want)
 	}
 	cert := mustParseCertificate(t, resp.GetCertPem())
 	if cert.Subject.CommonName != "dashboard-1" {

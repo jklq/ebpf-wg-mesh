@@ -63,12 +63,20 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 	if resp.GetCertPem() == "" {
 		t.Fatal("expected replacement client certificate")
 	}
-	_, err = service.Enroll(context.Background(), &agentv1.EnrollRequest{
+	if _, err := service.Enroll(context.Background(), &agentv1.EnrollRequest{
 		AgentId:        "node-1",
 		CsrPem:         csr,
 		BootstrapToken: freshToken.Token,
+	}); err != nil {
+		t.Fatalf("same-key enrollment retry: %v", err)
+	}
+	otherCSR := string(mustCreateCSR(t, "node-1"))
+	_, err = service.Enroll(context.Background(), &agentv1.EnrollRequest{
+		AgentId:        "node-1",
+		CsrPem:         otherCSR,
+		BootstrapToken: freshToken.Token,
 	})
 	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("expected replacement token to remain single-use, got %v", err)
+		t.Fatalf("expected consumed token to reject a different key, got %v", err)
 	}
 }
