@@ -10,11 +10,13 @@ import {
 	useTransition,
 } from "react";
 import { cn } from "#/lib/cn";
-import type {
-	CreateServiceFastResult,
-	DashboardHomeState,
-	DashboardServiceRecord,
-	DashboardServiceStatus,
+import {
+	type CreateServiceFastResult,
+	type DashboardHomeState,
+	type DashboardServiceRecord,
+	type DashboardServiceStatus,
+	DEFAULT_SERVICE_CPU_MILLIS,
+	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
 } from "#/lib/dashboard/core/types.server";
 
 import { useCreatedServiceCache } from "./created-service-cache";
@@ -51,6 +53,7 @@ import {
 } from "./dashboard-unapplied";
 import { EnvironmentDialog } from "./environment-dialog";
 import { nextNodePositionNear, nodePosition } from "./layout";
+import { NewServiceModalFallback } from "./new-service-modal-fallback";
 import {
 	doDiscardServiceChanges,
 	doReleaseEnvironment,
@@ -63,6 +66,53 @@ import type { DashboardTab } from "./types";
 import { useDashboardCanvas } from "./use-dashboard-canvas";
 
 export { DashboardCanvasSkeleton } from "./dashboard-canvas";
+
+/**
+ * A service creation that left the picker but has no server record yet. It
+ * renders as a building node on the canvas until the request resolves.
+ */
+interface PendingServiceCreation {
+	clientId: string;
+	selector: string;
+	name: string;
+	position: { x: number; y: number };
+}
+
+function pendingServiceRecord(
+	entry: PendingServiceCreation,
+	environmentId: string | null,
+): DashboardServiceRecord {
+	const id = `pending-${entry.clientId}`;
+	const now = new Date();
+	return {
+		id,
+		environmentId: environmentId ?? "",
+		name: entry.name,
+		spec: {
+			source: {
+				provider: "github",
+				repositorySelector: entry.selector,
+				trackedRef: "main",
+				buildRecipe: { dockerfilePath: "", contextDir: "." },
+			},
+			runtime: {
+				env: {},
+				cpuMillis: DEFAULT_SERVICE_CPU_MILLIS,
+				memoryMebibytes: DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+				ports: [],
+			},
+		},
+		createdAt: now,
+		updatedAt: now,
+		latestBuild: {
+			buildId: id,
+			state: "BUILD_STATE_QUEUED",
+			commitSha: "",
+			imageDigest: "",
+			failureReason: "",
+		},
+	};
+}
 
 const loadNewServiceModal = () =>
 	import("./new-service-modal").then((module) => ({
@@ -112,7 +162,24 @@ export function DashboardPage({
 		);
 	}, [urlSelectedServiceId]);
 	const environmentId = view.base.environment?.id ?? null;
-	const services = useMemo(() => selectServicesArray(view), [view]);
+	const [pendingCreations, setPendingCreations] = useState<
+		Array<PendingServiceCreation>
+	>([]);
+	const [createError, setCreateError] = useState<string>();
+	const pendingRecords = useMemo(
+		() =>
+			pendingCreations.map((entry) =>
+				pendingServiceRecord(entry, environmentId),
+			),
+		[pendingCreations, environmentId],
+	);
+	// Pending creations render alongside real services so the loading
+	// instance is on the canvas from the moment the picker closes. They
+	// carry no unapplied changes, so deploy and prompt math ignores them.
+	const services = useMemo(
+		() => [...selectServicesArray(view), ...pendingRecords],
+		[view, pendingRecords],
+	);
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
 	const [showNewService, setShowNewService] = useState(false);
 	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
@@ -139,6 +206,9 @@ export function DashboardPage({
 	environmentIdRef.current = environmentId;
 	const pendingSpecWritesRef = useRef(pendingSpecWrites);
 	pendingSpecWritesRef.current = pendingSpecWrites;
+	const pendingCreationsRef = useRef(pendingCreations);
+	pendingCreationsRef.current = pendingCreations;
+	const creationCounterRef = useRef(0);
 	const specWriteWaitersRef = useRef<Array<() => void>>([]);
 	const previousEnvironmentIdRef = useRef<string | null>(environmentId);
 	const githubCatalogPromiseRef = useRef<Promise<void> | null>(null);
@@ -311,6 +381,7 @@ export function DashboardPage({
 			}
 			if (showNewService) {
 				setShowNewService(false);
+				setCreateError(undefined);
 				return;
 			}
 			if (showChangeDetails) {
@@ -448,6 +519,7 @@ export function DashboardPage({
 	};
 
 	const openNewService = () => {
+		setCreateError(undefined);
 		setShowNewService(true);
 		void ensureGitHubCatalog();
 	};
@@ -456,6 +528,21 @@ export function DashboardPage({
 		void loadNewServiceModal();
 		void ensureGitHubCatalog();
 	};
+
+	const closeNewService = () => {
+		setShowNewService(false);
+		setCreateError(undefined);
+	};
+
+	// Eagerly warm the deploy picker chunk on mount so the Deploy button
+	// answers instantly even without a prior hover. The catalog itself stays
+	// lazy (hover/open) so mounting the dashboard never fires a GitHub fetch.
+	useEffect(() => {
+		const id = window.setTimeout(() => {
+			void loadNewServiceModal();
+		}, 0);
+		return () => window.clearTimeout(id);
+	}, []);
 
 	const handleTabChange = (tab: DashboardTab) => {
 		setActiveTab(tab);
@@ -468,12 +555,68 @@ export function DashboardPage({
 		setView((current) => upsertServiceRecord(current, service));
 	};
 
+	const handleCreating = (selector: string) => {
+		const trimmed = selector.trim();
+		if (!trimmed) return;
+		creationCounterRef.current += 1;
+		const clientId = `${Date.now().toString(36)}-${creationCounterRef.current}`;
+		const shortName = trimmed.split("/").pop()?.trim() || "New service";
+		const spawnPosition = nextNodePositionNear(
+			servicesRef.current.map(
+				(service, index) =>
+					canvas.servicePositions[service.id] ??
+					service.layoutPosition ??
+					nodePosition(index),
+			),
+		);
+		const provisionalId = `pending-${clientId}`;
+		canvas.setNodePositions((current) => ({
+			...current,
+			[provisionalId]: spawnPosition,
+		}));
+		canvas.nodePositionsRef.current = {
+			...canvas.nodePositionsRef.current,
+			[provisionalId]: spawnPosition,
+		};
+		setPendingCreations((current) => [
+			...current,
+			{ clientId, selector: trimmed, name: shortName, position: spawnPosition },
+		]);
+		setCreateError(undefined);
+		setShowNewService(false);
+	};
+
+	const handleCreateFailed = (selector: string, message: string) => {
+		const normalized = selector.trim().toLowerCase();
+		setPendingCreations((current) =>
+			current.filter(
+				(entry) => entry.selector.trim().toLowerCase() !== normalized,
+			),
+		);
+		setCreateError(message);
+		setShowNewService(true);
+	};
+
 	const handleCreated = (result: CreateServiceFastResult) => {
+		const createdSelector = result.service.spec?.source?.repositorySelector
+			?.trim()
+			.toLowerCase();
+		const matchingPending = createdSelector
+			? pendingCreationsRef.current.find(
+					(entry) => entry.selector.trim().toLowerCase() === createdSelector,
+				)
+			: undefined;
+		if (matchingPending) {
+			setPendingCreations((current) =>
+				current.filter((entry) => entry.clientId !== matchingPending.clientId),
+			);
+		}
 		const existingService = services.some(
 			(service) => service.id === result.service.id,
 		);
 		const spawnPosition =
 			result.service.layoutPosition ??
+			matchingPending?.position ??
 			nextNodePositionNear(
 				services.map(
 					(service, index) =>
@@ -484,14 +627,20 @@ export function DashboardPage({
 			);
 
 		if (!existingService && !result.service.layoutPosition) {
-			canvas.setNodePositions((current) => ({
-				...current,
-				[result.service.id]: spawnPosition,
-			}));
-			canvas.nodePositionsRef.current = {
+			const provisionalId = matchingPending
+				? `pending-${matchingPending.clientId}`
+				: undefined;
+			canvas.setNodePositions((current) => {
+				const next = { ...current, [result.service.id]: spawnPosition };
+				if (provisionalId) delete next[provisionalId];
+				return next;
+			});
+			const positions = {
 				...canvas.nodePositionsRef.current,
 				[result.service.id]: spawnPosition,
 			};
+			if (provisionalId) delete positions[provisionalId];
+			canvas.nodePositionsRef.current = positions;
 			if (result.environment.id) {
 				void doSaveServicePosition({
 					data: {
@@ -718,7 +867,15 @@ export function DashboardPage({
 			>
 				<div className="panel-grain" />
 				{selected && (
-					<Suspense fallback={<ServicePanelFallback service={selected} />}>
+					<Suspense
+						fallback={
+							<ServicePanelFallback
+								service={selected}
+								onClose={clearSelection}
+								onRefresh={handleRefresh}
+							/>
+						}
+					>
 						<ServicePanel
 							service={selected}
 							status={liveStatus}
@@ -739,12 +896,17 @@ export function DashboardPage({
 			</div>
 
 			{showNewService && (
-				<Suspense fallback={null}>
+				<Suspense
+					fallback={<NewServiceModalFallback onClose={closeNewService} />}
+				>
 					<NewServiceModal
 						state={homeState}
 						catalogLoading={githubCatalogLoading}
-						onClose={() => setShowNewService(false)}
+						initialError={createError}
+						onClose={closeNewService}
 						onCreated={handleCreated}
+						onCreating={handleCreating}
+						onCreateFailed={handleCreateFailed}
 					/>
 				</Suspense>
 			)}

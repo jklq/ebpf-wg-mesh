@@ -12,6 +12,7 @@ import { CreatedServiceCacheProvider } from "./created-service-cache";
 import { DashboardPage } from "./dashboard-page";
 import {
 	dashboardState,
+	deferred,
 	emptyState,
 	MockEventSource,
 	serviceRecord,
@@ -314,6 +315,83 @@ describe("DashboardPage canvas", () => {
 		expect(
 			screen.getByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();
+	});
+
+	it("renders a loading service on the canvas immediately while creation is in flight", async () => {
+		const creation = deferred<{
+			project: { id: string; name: string; kind: string };
+			environment: {
+				id: string;
+				projectId: string;
+				name: string;
+				kind: "persistent";
+				isProduction: boolean;
+			};
+			service: ReturnType<typeof serviceRecord>;
+			serviceStatus: null;
+			onboarding: ReturnType<typeof emptyState>["onboarding"];
+		}>();
+		doCreateServiceFastMock.mockReturnValue(creation.promise);
+
+		const { container } = render(<DashboardPage state={emptyState()} />);
+
+		fireEvent.click(
+			screen.getAllByRole("button", {
+				name: /deploy service/i,
+			})[0] as HTMLElement,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /octocat\/hello/i }),
+		);
+
+		// The picker closes immediately; the loading instance lives on the
+		// canvas while the server request is still in flight.
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		const pendingNodes = container.querySelectorAll("[data-service-node]");
+		expect(pendingNodes).toHaveLength(1);
+		expect(pendingNodes[0].textContent).toMatch(/hello/i);
+
+		const created = serviceRecord();
+		creation.resolve({
+			project: { id: "project-1", name: "test-project", kind: "user" },
+			environment: {
+				id: "environment-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: "persistent",
+				isProduction: true,
+			},
+			service: created,
+			serviceStatus: null,
+			onboarding: emptyState().onboarding,
+		});
+
+		expect(
+			await screen.findByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
+		expect(container.querySelectorAll("[data-service-node]")).toHaveLength(1);
+	});
+
+	it("reopens the repository picker with the error when creation fails", async () => {
+		doCreateServiceFastMock.mockRejectedValue(
+			new Error("Repository access is not available yet."),
+		);
+
+		const { container } = render(<DashboardPage state={emptyState()} />);
+
+		fireEvent.click(
+			screen.getAllByRole("button", {
+				name: /deploy service/i,
+			})[0] as HTMLElement,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /octocat\/hello/i }),
+		);
+
+		expect(
+			await screen.findByText(/Repository access is not available yet\./),
+		).toBeTruthy();
+		expect(container.querySelectorAll("[data-service-node]")).toHaveLength(0);
 	});
 
 	it("keeps the panel open after a live snapshot and remount for the first service", async () => {
