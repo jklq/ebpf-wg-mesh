@@ -12,12 +12,12 @@ Was: 1.2
 Status: open
 Depends on: 1.1 for probing both overlay families. Restart policy already exists.
 
-Readiness is still a latched rollout gate. A wedged process stays “healthy” and keeps receiving traffic.
+Readiness is still a latched rollout gate. The existing HTTP liveness loop can restart a wedged process, but a post-rollout readiness failure alone does not withdraw ingress and the allocation stays “healthy.”
 
 Prompt:
 
 ```text
-Replace the latched rollout readiness gate with continuous HTTP readiness and liveness probes. Readiness controls whether an allocation receives ingress. Liveness detects a wedged process and requests a restart according to the existing restart policy. Support path, port, interval, timeout, and initial delay with bounded safe defaults. Probes must originate inside the persisted workload network namespace, target only the assigned workload address and declared port, refuse redirects and proxy environment variables, and work over both overlay families. Report recent probe result, failure reason, and transition time without writing CockroachDB on every successful tick. Remove the permanent readiness latch. Test recovery, intermittent failure, stale namespaces, undeclared ports, and post-readiness failure. Do not add startup probes, TCP probes, or Kubernetes-style success/failure thresholds.
+Replace the latched rollout readiness gate with continuous HTTP readiness, using the existing HTTP liveness and restart-policy path rather than creating a second probe system. Readiness controls whether an allocation receives ingress; liveness requests a restart for a wedged process. Support path, port, interval, timeout, and initial delay with bounded safe defaults. Probes must originate inside the persisted workload network namespace, target only the assigned workload address and declared port, refuse redirects and proxy environment variables, and work over both overlay families. Report recent readiness and liveness results, failure reasons, and transition times without writing CockroachDB on every successful tick. Remove the permanent readiness latch. Test recovery, intermittent failure, stale namespaces, undeclared ports, and post-readiness failure. Do not add startup probes, TCP probes, or Kubernetes-style success/failure thresholds.
 ```
 
 ## 1.4 Crash evidence in the console

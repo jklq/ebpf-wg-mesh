@@ -38,7 +38,11 @@ Single untrusted-workload sandbox, cgroup isolation, no customer-selectable priv
 
 ## Multi-replica control plane (2.1)
 
-Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases. Replicas still share node-local source archives and keys until [2.2](02-host-untrusted-code.md#22-source-object-storage), [2.3a](02-host-untrusted-code.md#23a-secret-envelope-key-provider), and [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
+Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases, a durable product-state journal and indexed live views. Agents persist replica discovery, follow live-owner redirects, quarantine a failed owner briefly, and reconnect after fenced takeover. Replicas still share node-local source archives and keys until [2.2](02-host-untrusted-code.md#22-source-object-storage), [2.3a](02-host-untrusted-code.md#23a-secret-envelope-key-provider), and [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
+
+## Durable agent reconciliation foundation
+
+Agents durably stage and accept complete agent-scoped snapshots under expiring, epoch-fenced authority. They retain allocation generations, runtime identities, pending operations, drains, and observation order; supervise accepted work while disconnected; reconcile discovered runtime resources before reconnecting; quarantine corrupt state; and require authoritative ownership before destructive recovery. Incremental delivery remains [2.10](02-host-untrusted-code.md#210-incremental-per-node-allocation-sync).
 
 ## 1.1 Dual-stack workload overlay
 
