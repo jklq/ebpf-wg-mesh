@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
@@ -19,6 +21,8 @@ type database struct {
 	db               *sql.DB
 	mesh             config.ControlPlaneMeshConfig
 	reservedAgentIDs []string
+	journalOnce      sync.Once
+	journal          *journal.Store
 }
 
 func (s *database) reserveAgents(agentIDs ...string) {
@@ -48,6 +52,11 @@ func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMes
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	store.initJournal()
+	if _, err := store.journal.Snapshot(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("replay cluster journal: %w", err)
 	}
 	if err := store.fleet.validateWorkloadIPv4Pool(context.Background()); err != nil {
 		_ = db.Close()
@@ -121,9 +130,29 @@ func (s *database) migrate(ctx context.Context) error {
 	})
 }
 
+func (s *database) initJournal() {
+	s.journalOnce.Do(func() {
+		s.journal = journal.New(s.db, "default", func(ctx context.Context, tx *sql.Tx) (int64, error) {
+			if err := assertLeaseTx(ctx, tx); err != nil {
+				return 0, err
+			}
+			var epoch int64
+			err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch)
+			return epoch, err
+		})
+	})
+}
+
 func (s *database) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+	s.initJournal()
+	_, err := s.journal.Execute(ctx, func(tx *sql.Tx) error {
 		if err := assertLeaseTx(ctx, tx); err != nil {
+			return err
+		}
+		// Hold command authority throughout planning as well as append. A
+		// cutover cannot relabel a plan computed before it with the new epoch.
+		var epoch int64
+		if err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch); err != nil {
 			return err
 		}
 		if err := fn(tx); err != nil {
@@ -131,10 +160,30 @@ func (s *database) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		}
 		return bumpGlobalEnvironmentEventTx(ctx, tx)
 	})
+	return err
 }
 
 func (s *database) withTxUnfenced(ctx context.Context, fn func(*sql.Tx) error) error {
 	return crdb.ExecuteTx(ctx, s.db, nil, fn)
+}
+
+func (s *database) withObservationTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return bumpGlobalEnvironmentEventTx(ctx, tx)
+	})
+}
+
+func (s *database) withCommittedState(ctx context.Context, fn func(*sql.Tx) error) error {
+	s.initJournal()
+	return s.journal.Read(ctx, func(tx *sql.Tx, _ journal.DurableState) error { return fn(tx) })
+}
+
+func (s *database) readLiveState(ctx context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
+	s.initJournal()
+	return s.journal.Read(ctx, fn)
 }
 
 func (s *catalogPersistence) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {

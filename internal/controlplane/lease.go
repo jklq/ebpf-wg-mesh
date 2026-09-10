@@ -233,10 +233,12 @@ func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 		return nil
 	}
 	var valid bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM control_plane_leases
-		 WHERE name = $1 AND holder_id = $2 AND fencing_token = $3
-		   AND expires_at > statement_timestamp())`, claim.name, claim.holder, claim.token).Scan(&valid); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT holder_id = $2 AND fencing_token = $3
+		   AND expires_at > statement_timestamp()
+		FROM control_plane_leases WHERE name = $1 FOR UPDATE`, claim.name, claim.holder, claim.token).Scan(&valid); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", errLeaseLost, claim.name)
+		}
 		return err
 	}
 	if !valid {

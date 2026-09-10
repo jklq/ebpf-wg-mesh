@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/restartpolicy"
@@ -11,7 +12,17 @@ import (
 )
 
 func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]routing.Backend, error) {
-	rows, err := s.db.QueryContext(ctx,
+	var backends []routing.Backend
+	err := s.withCommittedState(ctx, func(tx *sql.Tx) error {
+		var err error
+		backends, err = healthyIngressBackendsTx(ctx, tx)
+		return err
+	})
+	return backends, err
+}
+
+func healthyIngressBackendsTx(ctx context.Context, tx *sql.Tx) ([]routing.Backend, error) {
+	rows, err := tx.QueryContext(ctx,
 		`SELECT d.hostname, d.target_port, a.healthy_ipv4_ports, a.healthy_ipv6_ports,
 		        a.allocation_ipv4, a.allocation_ipv6, a.id
 		   FROM domain_bindings d

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
@@ -41,14 +42,16 @@ type Dependencies struct {
 	// transactions. Delivery never touches source tables directly.
 	SourceStore SourceStore
 
-	DB                  *sql.DB
-	Mesh                config.ControlPlaneMeshConfig
-	Transaction         Transaction
-	UnfencedTransaction Transaction
-	UserFromContext     func(context.Context) (UserIdentity, error)
-	Notifier            PlatformNotifier
-	Ingress             PlatformIngress
-	Events              Events
+	DB                     *sql.DB
+	Mesh                   config.ControlPlaneMeshConfig
+	Transaction            Transaction
+	UnfencedTransaction    Transaction
+	ObservationTransaction Transaction
+	ReadState              func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	UserFromContext        func(context.Context) (UserIdentity, error)
+	Notifier               PlatformNotifier
+	Ingress                PlatformIngress
+	Events                 Events
 	// LogEmitter is optional; when set, delivery emits synthetic build/deploy
 	// log lines for the builds it queues. A nil emitter is a no-op.
 	LogEmitter       *logs.LogEmitter
@@ -72,11 +75,13 @@ type persistence struct {
 	enqueueSourceWorkItemTx  func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
 	sourceStore              SourceStore
 
-	db               *sql.DB
-	mesh             config.ControlPlaneMeshConfig
-	reservedAgentIDs []string
-	withTx           Transaction
-	withTxUnfenced   Transaction
+	db                *sql.DB
+	mesh              config.ControlPlaneMeshConfig
+	reservedAgentIDs  []string
+	withTx            Transaction
+	withTxUnfenced    Transaction
+	withObservationTx Transaction
+	readState         func(context.Context, func(*sql.Tx, journal.DurableState) error) error
 }
 
 func New(deps Dependencies) *Delivery {
@@ -87,6 +92,8 @@ func New(deps Dependencies) *Delivery {
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
 			withTx:                   deps.Transaction,
 			withTxUnfenced:           deps.UnfencedTransaction,
+			withObservationTx:        deps.ObservationTransaction,
+			readState:                deps.ReadState,
 			createEnvironmentQuerier: deps.CreateEnvironment,
 			createVolumeTx:           deps.CreateVolume,
 			enqueueSourceWorkItemTx:  deps.EnqueueSourceWork,
