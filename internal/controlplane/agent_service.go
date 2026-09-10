@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/grpc/codes"
@@ -118,13 +120,31 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
 	}
-	if hello.GetAcceptedAuthorityEpoch() > deliverycore.AgentAuthorityEpoch {
-		return status.Errorf(codes.FailedPrecondition, "agent authority epoch %d is newer than control-plane epoch %d", hello.GetAcceptedAuthorityEpoch(), deliverycore.AgentAuthorityEpoch)
+	epoch, err := s.store.agentAuthorityEpoch(ctx)
+	if err != nil {
+		return status.Errorf(codes.Internal, "read agent authority: %v", err)
+	}
+	if hello.GetClusterId() != s.authority.ClusterIdentity() {
+		return status.Error(codes.FailedPrecondition, "identity recovery required: cluster differs from authenticated authority")
+	}
+	switch hello.GetInitializationState() {
+	case "uninitialized", "ready", "recovery":
+	default:
+		return status.Error(codes.InvalidArgument, "local-store initialization_state is required")
+	}
+	if hello.GetAcceptedAuthorityEpoch() > epoch {
+		return status.Errorf(codes.FailedPrecondition, "agent authority epoch %d is newer than control-plane epoch %d", hello.GetAcceptedAuthorityEpoch(), epoch)
 	}
 	if err := s.store.AuthorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
 		return status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
 	}
 	changed, err := s.delivery.RegisterAgent(ctx, hello)
+	if errors.Is(err, deliverycore.ErrStaleAgentSession) {
+		return status.Error(codes.FailedPrecondition, "stale session incarnation")
+	}
+	if errors.Is(err, reconciliation.ErrIdentityRecovery) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
 	if err != nil {
 		return status.Errorf(codes.Internal, "register agent: %v", err)
 	}
@@ -146,7 +166,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 
 	sendErr := make(chan error, 1)
 	go func() {
-		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, notifyCh)
+		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), epoch, notifyCh)
 	}()
 	if changed {
 		ids, err := s.store.reads.AgentIDs(ctx)
@@ -158,8 +178,35 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		s.notifier.Notify(hello.AgentId)
 	}
 
+	type receivedMessage struct {
+		message *agentv1.AgentClientMessage
+		err     error
+	}
+	received := make(chan receivedMessage, 1)
+	go func() {
+		for {
+			message, err := stream.Recv()
+			select {
+			case received <- receivedMessage{message, err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	for {
-		msg, err := stream.Recv()
+		var msg *agentv1.AgentClientMessage
+		var err error
+		select {
+		case result := <-received:
+			msg, err = result.message, result.err
+		case err := <-sendErr:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		if err == io.EOF {
 			return nil
 		}
@@ -173,6 +220,14 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			return status.Error(codes.PermissionDenied, "agent credentials were revoked")
 		}
 		switch payload := msg.Payload.(type) {
+		case *agentv1.AgentClientMessage_Acknowledgement:
+			ack := payload.Acknowledgement
+			if ack.GetAgentId() != hello.GetAgentId() || ack.GetSessionId() != hello.GetSessionId() || ack.GetAuthorityEpoch() != epoch {
+				return status.Error(codes.FailedPrecondition, "acknowledgement does not match session authority")
+			}
+			if err := s.store.acknowledgeAgentDesired(ctx, ack); err != nil {
+				return status.Errorf(codes.FailedPrecondition, "acknowledgement: %v", err)
+			}
 		case *agentv1.AgentClientMessage_Heartbeat:
 			if payload.Heartbeat.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "heartbeat agent_id does not match session")
@@ -190,8 +245,8 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if payload.StatusReport.GetSessionId() != hello.GetSessionId() {
 				return status.Error(codes.FailedPrecondition, "status report session_id is stale")
 			}
-			if payload.StatusReport.GetAuthorityEpoch() != deliverycore.AgentAuthorityEpoch {
-				return status.Errorf(codes.FailedPrecondition, "status report authority epoch %d does not match %d", payload.StatusReport.GetAuthorityEpoch(), deliverycore.AgentAuthorityEpoch)
+			if payload.StatusReport.GetAuthorityEpoch() != epoch {
+				return status.Errorf(codes.FailedPrecondition, "status report authority epoch %d does not match %d", payload.StatusReport.GetAuthorityEpoch(), epoch)
 			}
 			slog.Info("agent status report", "agent_id", payload.StatusReport.GetAgentId(), "services", len(payload.StatusReport.GetServices()), "volumes", len(payload.StatusReport.GetVolumes()), "recovery_mode", payload.StatusReport.GetRecoveryMode())
 			if err := s.delivery.ObserveAgentStatus(ctx, hello.GetAgentId(), payload.StatusReport); err != nil {
@@ -212,16 +267,13 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 				}
 			}
 		}
-		select {
-		case err := <-sendErr:
-			return err
-		default:
-		}
 	}
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID string, notifyCh <-chan struct{}) error {
+func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID string, epoch uint64, notifyCh <-chan struct{}) error {
 	var lastCursor int64 = -1
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -230,26 +282,36 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			if !ok {
 				return nil
 			}
-			slog.Info("notify received", "agent_id", agentID)
-			nextCursor, err := sendLatestDesiredState(ctx, agentID, lastCursor, func() (*agentv1.DesiredNodeState, error) {
-				state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
-				if err != nil {
-					return nil, err
-				}
-				if err := s.attachRegistryPullCredentials(agentID, state); err != nil {
-					return nil, err
-				}
-				return state, nil
-			}, func(state *agentv1.DesiredNodeState) error {
-				return stream.Send(&agentv1.AgentServerMessage{
-					Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
-				})
-			})
-			if err != nil {
-				return status.Errorf(codes.Internal, "desired state: %v", err)
-			}
-			lastCursor = nextCursor
+		case <-ticker.C:
 		}
+		slog.Info("checking desired state", "agent_id", agentID)
+		nextCursor, err := sendLatestDesiredState(ctx, agentID, lastCursor, func() (*agentv1.DesiredNodeState, error) {
+			state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
+			if err != nil {
+				return nil, err
+			}
+			if state.GetAuthorityEpoch() != epoch {
+				return nil, errors.New("snapshot authority changed; reconnect required")
+			}
+			if err := s.attachRegistryPullCredentials(agentID, state); err != nil {
+				return nil, err
+			}
+			return state, nil
+		}, func(state *agentv1.DesiredNodeState) error {
+			deadline, err := s.store.grantAgentCommand(ctx, agentID, sessionID, epoch, state.GetReconciliationCursor())
+			if err != nil {
+				return err
+			}
+			stampAgentCommand(state, sessionID, epoch, deadline)
+			state.ClusterId = s.authority.ClusterIdentity()
+			return stream.Send(&agentv1.AgentServerMessage{
+				Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
+			})
+		})
+		if err != nil {
+			return status.Errorf(codes.Internal, "desired state: %v", err)
+		}
+		lastCursor = nextCursor
 	}
 }
 

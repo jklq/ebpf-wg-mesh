@@ -165,6 +165,8 @@ func allocationReplacementInProgressTx(ctx context.Context, tx *sql.Tx, service 
 // reconcileFleetCapacity retries pending replica placement and interrupted
 // drains whenever observed fleet capacity changes (for example a node return).
 func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	s := d.store
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM services WHERE placement_message <> '' ORDER BY id FOR UPDATE`)

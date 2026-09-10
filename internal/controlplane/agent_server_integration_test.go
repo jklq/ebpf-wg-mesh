@@ -148,6 +148,8 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 		SoftwareVersion:         "test",
 		SessionId:               sessionID,
+		SessionIncarnation:      1,
+		ClusterId:               server.authority.ClusterIdentity(), LocalStoreId: "test-store-" + agentID, InitializationState: "ready",
 	}}}); err != nil {
 		t.Fatalf("send hello: %v", err)
 	}

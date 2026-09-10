@@ -59,10 +59,16 @@ func upsertTestAgent(t *testing.T, store *persistence, ctx context.Context, hell
 	if err := enrollTestAgent(ctx, store, hello); err != nil {
 		return false, err
 	}
+	if err := store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil {
+		return false, err
+	}
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 
 func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.AgentHello) error {
+	if hello.LocalStoreId == "" {
+		hello.LocalStoreId = "test-store-" + hello.GetAgentId()
+	}
 	id := strings.TrimSpace(hello.GetAgentId())
 	name := strings.TrimSpace(hello.GetName())
 	if name == "" {
@@ -176,6 +182,9 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"environment_network_identity_counter",
 	}
 	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(context.Background(), `UPDATE agent_authority SET epoch = 1, outstanding_not_after = '1970-01-01' WHERE id = 1`); err != nil {
+			return err
+		}
 		for _, table := range tables {
 			if _, err := tx.ExecContext(context.Background(), `DELETE FROM `+table); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)

@@ -403,7 +403,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 		if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 			return "", err
 		}
-		if _, err := s.withdrawServiceAssignmentsTx(ctx, tx, service.ID, "cancelled; waiting for ingress withdrawal", now); err != nil {
+		if _, err := d.withdrawServiceAllocationsTx(ctx, tx, service.ID, "cancelled; waiting for ingress withdrawal", now); err != nil {
 			return "", err
 		}
 		return "", dbtx.BumpAllDesiredRevisions(ctx, tx)
@@ -411,7 +411,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 		return "", err
 	}
-	if err := s.deleteStartingAssignmentsTx(ctx, tx, service.ID, nil); err != nil {
+	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, nil, now); err != nil {
 		return "", err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_resolved_image = '', updated_at = $1 WHERE id = $2`, now, service.ID); err != nil {
@@ -431,7 +431,7 @@ func allocationsHaveServedTraffic(allocs []AllocationRecord) bool {
 }
 
 func (d *Delivery) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, now time.Time) error {
-	if err := d.store.deleteStartingAssignmentsTx(ctx, tx, service.ID, &service.RolloutGeneration); err != nil {
+	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, &service.RolloutGeneration, now); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx,
@@ -462,7 +462,7 @@ func (d *Delivery) removeDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 			return err
 		}
 	}
-	affected, err := s.withdrawServiceAssignmentsTx(ctx, tx, service.ID, "removal requested; waiting for ingress withdrawal", now)
+	affected, err := d.withdrawServiceAllocationsTx(ctx, tx, service.ID, "removal requested; waiting for ingress withdrawal", now)
 	if err != nil {
 		return err
 	}

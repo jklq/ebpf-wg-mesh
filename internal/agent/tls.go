@@ -110,6 +110,11 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 	if err != nil {
 		return nil, fmt.Errorf("enroll client certificate: %w", err)
 	}
+	if a.stateStore != nil {
+		if err := a.stateStore.requireClusterIdentity(clusterIdentity([]byte(resp.GetCaPem()))); err != nil {
+			return nil, err
+		}
+	}
 	slog.Info("client certificate enrolled", "agent_id", a.cfg.Node.ID)
 	if err := a.persistClientTLSMaterial(keyPEM, []byte(resp.GetCertPem()), []byte(resp.GetCaPem())); err != nil {
 		return nil, err

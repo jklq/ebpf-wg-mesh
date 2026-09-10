@@ -43,6 +43,8 @@ func (d *Delivery) createScheduledService(ctx context.Context, userID, environme
 
 // CreateService deploys a service with an explicit initial placement.
 func (d *Delivery) CreateService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	s := d.store
 	var rec ServiceRecord
 	err := s.withTx(ctx, func(tx *sql.Tx) error {

@@ -91,8 +91,10 @@ func (s *workloadSupervisor) run(ctx context.Context) {
 	}
 }
 
-func (s *workloadSupervisor) AcceptDesired(clusterID string, state *agentv1.DesiredNodeState) (bool, error) {
-	changed, err := s.store.acceptDesired(clusterID, state)
+func (s *workloadSupervisor) AcceptDesired(clusterID, sessionID string, state *agentv1.DesiredNodeState) (bool, error) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	changed, err := s.store.acceptDesired(clusterID, sessionID, state)
 	if err != nil {
 		return false, err
 	}
