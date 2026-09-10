@@ -243,6 +243,8 @@ func main() {
 		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
 		"SERVICE_NAME":           primaryControlPlaneService,
 		"INTERNAL_LISTEN":        "0.0.0.0:" + primaryControlPlanePort,
+		"REPLICA_ADDRESSES":      controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
+		"ADVERTISE_ADDR":         controlplane.PublicIPv4 + ":" + primaryControlPlanePort,
 	}); err != nil {
 		failf("install primary controlplane replica: %v", err)
 	}
@@ -263,6 +265,8 @@ func main() {
 		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
 		"SERVICE_NAME":           replicaControlPlaneService,
 		"INTERNAL_LISTEN":        "0.0.0.0:" + replicaControlPlanePort,
+		"REPLICA_ADDRESSES":      controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
+		"ADVERTISE_ADDR":         controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
 	}); err != nil {
 		failf("install second controlplane replica: %v", err)
 	}
@@ -310,11 +314,11 @@ func main() {
 		// Reach the control plane over public IPv4 so enrollment does not depend on private-network
 		// route readiness. Mesh peer endpoints still use each agent's advertised public IPv6.
 		if err := runRemoteScript(ctx, sshKeyPath, host.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-agent.sh"), map[string]string{
-			"NODE_ID":              key,
-			"NODE_NAME":            host.Name,
-			"ADVERTISE_ADDR":       trimCIDR(host.PublicIPv6),
-			"CONTROLPLANE_ADDRESS": controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
-			"BOOTSTRAP_TOKEN":      bootstrapToken,
+			"NODE_ID":                key,
+			"NODE_NAME":              host.Name,
+			"ADVERTISE_ADDR":         trimCIDR(host.PublicIPv6),
+			"CONTROLPLANE_ADDRESSES": controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
+			"BOOTSTRAP_TOKEN":        bootstrapToken,
 		}); err != nil {
 			failf("install agent on %s: %v", host.Name, err)
 		}

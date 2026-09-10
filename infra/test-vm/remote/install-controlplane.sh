@@ -12,6 +12,8 @@ PUBLIC_ADDR=${PUBLIC_ADDR:-platform.local}
 BOOTSTRAP_USER=${BOOTSTRAP_USER:-vm-user:vm@example.com}
 SERVICE_NAME=${SERVICE_NAME:-ebpf-wg-mesh-controlplane}
 INGRESS_ADMIN_URL=${INGRESS_ADMIN_URL:-http://127.0.0.1:2019/load}
+REPLICA_ADDRESSES=${REPLICA_ADDRESSES:-}
+ADVERTISE_ADDR=${ADVERTISE_ADDR:-}
 
 if [[ ! "${SERVICE_NAME}" =~ ^[a-zA-Z0-9_.@-]+$ ]]; then
   echo "invalid SERVICE_NAME: ${SERVICE_NAME}" >&2
@@ -53,7 +55,7 @@ Requires=ebpf-wg-mesh-cockroach.service
 
 [Service]
 Type=simple
-ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-admin-url ${INGRESS_ADMIN_URL} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
+ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -replica-addresses "${REPLICA_ADDRESSES}" -advertise-addr "${ADVERTISE_ADDR}" -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-admin-url ${INGRESS_ADMIN_URL} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
 Restart=always
 RestartSec=3
 

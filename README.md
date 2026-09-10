@@ -44,12 +44,14 @@ The stream contract, durable acknowledgements, removal scope and authority-expir
 
 Control-plane replicas coordinate singleton reconcilers through a fenced CockroachDB lease. Agent streams and platform blocking reads observe durable database revisions, so a write handled by one replica wakes clients connected to another. Replica clocks are not used for lease, rollout, or failover decisions.
 
+Agents accept a comma-separated `AGENT_CONTROLPLANE_ADDRESSES` (or `--controlplane-addresses`) seed list. Each agent start replaces the durable seed set with that config; successful enrollment, dashboard-certificate, and sync responses replace the durable replica view independently. Agents use the union only to find a reachable replica; a non-owner replica returns a live-owner redirect so the agent pins and reconnects to the leaseholder. A dead owner is quarantined briefly so a redirect cannot immediately re-pin it, and that cooldown is not extended by later redirects. Bootstrap enrollment is retry-safe for the same agent key after a lost response.
+
 Every replica for one database must currently mount the same read-write `CONTROLPLANE_STATE_DIR` and `CONTROLPLANE_SOURCE_ARCHIVES_DIR`. These directories contain the shared internal PKI, registry identity, revocation data, and source objects. Startup binds both mounts to the database using persistent storage markers and fails if a replica is pointed at node-local or replacement storage. That shared-disk contract is scheduled to go away once source object storage and a key provider land. Every replica must currently point at the same Caddy admin target; when Envoy lands, that becomes a shared xDS snapshot identity.
 
 Common bootstrap inputs:
 
-- control plane: listen addresses, single-use agent-bound bootstrap token(s) (`agent_id=token`), DB URL, state dir, ingress admin URL, managed console service settings
-- agent: control-plane address, control-plane CA, bootstrap token, data dir
+- control plane: listen addresses, advertised replica addresses (`CONTROLPLANE_REPLICA_ADDRESSES`), this replica's dial address (`CONTROLPLANE_ADVERTISE_ADDR`, required when more than one replica address is set), single-use agent-bound bootstrap token(s) (`agent_id=token`), DB URL, state dir, ingress admin URL, managed console service settings
+- agent: control-plane seed address(es), control-plane CA, bootstrap token, data dir
 
 ### Ingress admin security (current Caddy)
 

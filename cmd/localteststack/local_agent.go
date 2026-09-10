@@ -50,7 +50,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 			},
 		},
 		ControlPlane: config.ControlPlaneClientConfig{
-			Address: controlPlaneAddr,
+			Addresses: []string{controlPlaneAddr},
 			TLS: config.ClientTLSConfig{
 				CAFile:         caPath,
 				ServerName:     "localhost",
