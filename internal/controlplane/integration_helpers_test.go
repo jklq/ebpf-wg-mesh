@@ -71,8 +71,16 @@ func chooseAgentForService(ctx context.Context, store *persistence, environmentI
 }
 
 func registerAgent(ctx context.Context, store *persistence, hello *agentv1.AgentHello) (bool, error) {
+	if hello != nil && hello.LocalStoreId == "" {
+		hello.LocalStoreId = "test-store-" + hello.GetAgentId()
+	}
 	if hello != nil && hello.GetSessionId() == "" {
 		hello.SessionId = "test-session-" + hello.GetAgentId()
+	}
+	if hello != nil {
+		if err := store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil {
+			return false, err
+		}
 	}
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }

@@ -17,7 +17,7 @@ message AgentHello {
   int32 wireguard_listen_port = 7;
   repeated string runtime_capabilities = 8;
   string software_version = 9;
-  // A fresh opaque identity for this process incarnation. Reconnecting with a
+  // A fresh opaque identity for this stream incarnation. Reconnecting with a
   // new session fences reports and heartbeats from an older stream.
   string session_id = 10;
   // Last durable control-plane position accepted by the agent. These fields
@@ -26,6 +26,12 @@ message AgentHello {
   int64 reconciliation_cursor = 12;
   bool recovery_mode = 13;
   repeated RuntimeResource runtime_resources = 14;
+  string cluster_id = 15;
+  string local_store_id = 16;
+  string initialization_state = 17;
+  repeated ServiceCondition allocations = 18;
+  // Durably incremented before each hello; prevents delayed hello replay.
+  uint64 session_incarnation = 19;
 }
 
 message RuntimeResource {
@@ -140,6 +146,26 @@ message DesiredNodeState {
   google.protobuf.Timestamp generated_at = 5;
   AssignedNodeConfig node_config = 6;
   uint64 authority_epoch = 7;
+  // Only a complete AGENT scope permits removal by omission.
+  SnapshotScope scope = 8;
+  bool complete = 9;
+  string session_id = 10;
+  google.protobuf.Timestamp authority_not_after = 11;
+  string cluster_id = 12;
+}
+
+enum SnapshotScope {
+  SNAPSHOT_SCOPE_UNSPECIFIED = 0;
+  SNAPSHOT_SCOPE_AGENT = 1;
+}
+
+// Sent only after the desired snapshot and its cursor are durably committed.
+// Does not imply runtime success or release of any allocation or volume.
+message DesiredStateAcknowledgement {
+  string agent_id = 1;
+  string session_id = 2;
+  uint64 authority_epoch = 3;
+  int64 reconciliation_cursor = 4;
 }
 
 message VolumeCondition {
@@ -201,6 +227,7 @@ message AgentClientMessage {
     AgentHeartbeat heartbeat = 2;
     StatusReport status_report = 3;
     LogBatch log_batch = 4;
+    DesiredStateAcknowledgement acknowledgement = 5;
   }
 }
 

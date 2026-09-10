@@ -51,7 +51,7 @@ _Avoid_: Instance, container
 The scheduler-owned desired state for one allocation: its fleet agent, deployment, service revision, rollout generation, addresses, runtime intent, and any drain deadline.
 
 **Allocation Observation**:
-One fleet agent's durable report of an assigned allocation's applied generation and runtime state. Observations belong to an agent session and are ordered within that session. An observation for an older generation cannot establish readiness for a newer assignment.
+One fleet agent's durable report of an assigned allocation's applied generation and runtime state. Observations belong to the durable agent identity and are ordered across connection sessions. A session fences transport from older process incarnations; it does not reset local observation state. An observation for an older generation cannot establish readiness for a newer assignment.
 
 **Agent Administration**:
 Operator-owned intent for a fleet agent, including whether it is cordoned, draining, or retired. Runtime connectivity does not alter administrative intent.

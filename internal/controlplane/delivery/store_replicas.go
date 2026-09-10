@@ -62,7 +62,8 @@ func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.
 	return err
 }
 
-func (s *persistence) insertAllocationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, error) {
+func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, SchedulingDecision, error) {
+	s := d.store
 	alloc := AllocationRecord{
 		ID:                       uuid.NewString(),
 		ServiceID:                service.ID,
@@ -78,30 +79,39 @@ func (s *persistence) insertAllocationTx(ctx context.Context, tx *sql.Tx, servic
 	}
 	var workloadIPv6Subnet string
 	if err := tx.QueryRowContext(ctx, `SELECT workload_ipv6_subnet FROM agents WHERE id = $1`, agentID).Scan(&workloadIPv6Subnet); err != nil {
-		return AllocationRecord{}, err
+		return AllocationRecord{}, SchedulingDecision{}, err
 	}
 	var err error
 	alloc.AllocationIPv4, err = s.allocateWorkloadIPv4AddressTx(ctx, tx, agentID)
 	if err != nil {
-		return AllocationRecord{}, err
+		return AllocationRecord{}, SchedulingDecision{}, err
 	}
 	alloc.AllocationIPv6, err = privateIPv6(workloadIPv6Subnet, service.EnvironmentID, alloc.ID)
 	if err != nil {
-		return AllocationRecord{}, err
+		return AllocationRecord{}, SchedulingDecision{}, err
 	}
 	var deploymentID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments
 		WHERE service_id = $1 AND rollout_generation = $2
 		ORDER BY is_current DESC, created_at DESC, id DESC LIMIT 1`, service.ID, service.RolloutGeneration).Scan(&deploymentID); err != nil {
-		return AllocationRecord{}, fmt.Errorf("load allocation deployment: %w", err)
+		return AllocationRecord{}, SchedulingDecision{}, fmt.Errorf("load allocation deployment: %w", err)
 	}
-	if err := s.insertAllocationAssignmentTx(ctx, tx, AllocationAssignment{
+	assignment := AllocationAssignment{
 		ID: alloc.ID, ServiceID: alloc.ServiceID, DeploymentID: deploymentID, AgentID: alloc.AgentID,
 		SpecRevision: alloc.DesiredSpecRevision, RolloutGeneration: alloc.DesiredRolloutGeneration,
 		IPv4: alloc.AllocationIPv4, IPv6: alloc.AllocationIPv6,
 		RolloutState: alloc.RolloutState, Intent: allocationIntentRun,
 		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
+	}
+	return alloc, SchedulingDecision{Kind: DecisionCreateAllocation, Allocation: assignment}, nil
+}
+
+func (d *Delivery) insertAllocationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, error) {
+	alloc, decision, err := d.planAllocationCreationTx(ctx, tx, service, agentID, now)
+	if err != nil {
+		return AllocationRecord{}, err
+	}
+	if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, decision)); err != nil {
 		return AllocationRecord{}, err
 	}
 	return alloc, nil

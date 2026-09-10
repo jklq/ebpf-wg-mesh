@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -24,7 +26,7 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 	desired := testDesiredState(4, 12, "alloc-1")
 	desired.Services[0].RegistryUsername = "pull-user"
 	desired.Services[0].RegistryPassword = "pull-secret"
-	changed, err := store.acceptDesired("cluster-a", desired)
+	changed, err := store.acceptDesired("cluster-a", "test-session", desired)
 	if err != nil {
 		t.Fatalf("accept desired: %v", err)
 	}
@@ -62,7 +64,7 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 	// Credential renewal is accepted at the same cursor and does not look like
 	// an allocation configuration change.
 	desired.Services[0].RegistryPassword = "renewed-secret"
-	changed, err = store.acceptDesired("cluster-a", desired)
+	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
 	if err != nil {
 		t.Fatalf("renew credential: %v", err)
 	}
@@ -78,20 +80,20 @@ func TestLocalStateFencesStaleAuthorityAndCursor(t *testing.T) {
 	if err := store.prepareStartup("cluster-a", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(3, 10, "alloc-1")); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(3, 10, "alloc-1")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(2, 99, "alloc-1")); err == nil || !strings.Contains(err.Error(), "stale authority epoch") {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(2, 99, "alloc-1")); err == nil || !strings.Contains(err.Error(), "stale authority epoch") {
 		t.Fatalf("stale epoch error = %v", err)
 	}
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(3, 9, "alloc-1")); err == nil || !strings.Contains(err.Error(), "stale reconciliation cursor") {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(3, 9, "alloc-1")); err == nil || !strings.Contains(err.Error(), "stale reconciliation cursor") {
 		t.Fatalf("stale cursor error = %v", err)
 	}
 	mutated := testDesiredState(3, 10, "alloc-2")
-	if _, err := store.acceptDesired("cluster-a", mutated); err == nil || !strings.Contains(err.Error(), "without advancing") {
+	if _, err := store.acceptDesired("cluster-a", "test-session", mutated); err == nil || !strings.Contains(err.Error(), "without advancing") {
 		t.Fatalf("same-cursor mutation error = %v", err)
 	}
-	if _, err := store.acceptDesired("cluster-b", testDesiredState(4, 1, "alloc-1")); err == nil || !strings.Contains(err.Error(), "belongs to cluster") {
+	if _, err := store.acceptDesired("cluster-b", "test-session", testDesiredState(4, 1, "alloc-1")); err == nil || !strings.Contains(err.Error(), "belongs to cluster") {
 		t.Fatalf("cluster identity error = %v", err)
 	}
 }
@@ -109,20 +111,20 @@ func TestLocalStateRecoveryRequiresOwnershipOfEveryDiscoveredResource(t *testing
 	}
 	assertInitializationState(t, store, initializationRecovery)
 
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(1, 1, "alloc-1")); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1, "alloc-1")); err != nil {
 		t.Fatal(err)
 	}
 	assertInitializationState(t, store, initializationRecovery)
 
 	owned := testDesiredState(1, 2, "alloc-1", "orphan")
 	owned.Volumes = append(owned.Volumes, &agentv1.DesiredVolume{VolumeId: "orphan-volume", EnvironmentId: "env-1", Name: "orphan", SizeBytes: 1024})
-	if _, err := store.acceptDesired("cluster-a", owned); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", owned); err != nil {
 		t.Fatal(err)
 	}
 	assertInitializationState(t, store, initializationReady)
 }
 
-func TestLocalStateKnownClusterSnapshotLiftsRecoveryFence(t *testing.T) {
+func TestLocalStateKnownClusterDoesNotAuthorizeUnownedRemoval(t *testing.T) {
 	t.Parallel()
 
 	store := openTestLocalState(t)
@@ -130,10 +132,16 @@ func TestLocalStateKnownClusterSnapshotLiftsRecoveryFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInitializationState(t, store, initializationRecovery)
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(1, 1)); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1)); err != nil {
 		t.Fatal(err)
 	}
-	assertInitializationState(t, store, initializationReady)
+	assertInitializationState(t, store, initializationRecovery)
+	// Repetition must not turn the newly persisted cluster binding into an
+	// ownership claim for the omitted orphan.
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	assertInitializationState(t, store, initializationRecovery)
 }
 
 func TestCorruptLocalStateIsQuarantinedInRecoveryMode(t *testing.T) {
@@ -237,7 +245,7 @@ func TestLocalStatePersistsObservationSequenceAndAppliedGeneration(t *testing.T)
 	if err := store.prepareStartup("cluster-a", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(1, 7, "alloc-1")); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 7, "alloc-1")); err != nil {
 		t.Fatal(err)
 	}
 	report := &agentv1.StatusReport{AgentId: "node-1", Services: []*agentv1.ServiceCondition{{
@@ -278,7 +286,7 @@ func TestLocalStatePersistsObservationSequenceAndAppliedGeneration(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reopened.acceptDesired("cluster-a", testDesiredState(1, 8)); err != nil {
+	if _, err := reopened.acceptDesired("cluster-a", "test-session", testDesiredState(1, 8)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := reopened.recordReport(&agentv1.StatusReport{AgentId: "node-1"}); err != nil {
@@ -307,7 +315,7 @@ func TestLocalStateRetainsDrainOperationUntilTerminalObservation(t *testing.T) {
 	}
 	desired := testDesiredState(1, 1, "alloc-1")
 	desired.Services[0].Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN
-	if _, err := store.acceptDesired("cluster-a", desired); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", desired); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.recordRuntimeInventory([]RuntimeResource{{AllocationID: "alloc-1", RuntimeID: "platform-alloc-1"}}); err != nil {
@@ -377,7 +385,7 @@ func TestSupervisorRestoresAndReconcilesWithoutControlPlane(t *testing.T) {
 	if err := store.prepareStartup("cluster-a", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(1, 3, "alloc-1")); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 3, "alloc-1")); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -418,7 +426,7 @@ func TestSupervisorDisablesCleanupWhileRuntimeOwnershipIsUnknown(t *testing.T) {
 	if err := store.prepareStartup("", inventory); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.acceptDesired("cluster-a", testDesiredState(1, 1, "alloc-1")); err != nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1, "alloc-1")); err != nil {
 		t.Fatal(err)
 	}
 	runtime := &supervisorTestRuntime{inventory: inventory}
@@ -478,6 +486,8 @@ func assertAllocationState(t *testing.T, store *localStateStore, allocationID st
 
 func testDesiredState(epoch uint64, cursor int64, allocationIDs ...string) *agentv1.DesiredNodeState {
 	state := &agentv1.DesiredNodeState{
+		ClusterId: "cluster-a", Scope: agentv1.SnapshotScope_SNAPSHOT_SCOPE_AGENT, Complete: true,
+		SessionId: "test-session", AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
 		AgentId: "node-1", AuthorityEpoch: epoch, ReconciliationCursor: cursor,
 		NodeConfig: &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24"},
 		Volumes:    []*agentv1.DesiredVolume{{VolumeId: "volume-1", EnvironmentId: "env-1", Name: "data", SizeBytes: 1024}},

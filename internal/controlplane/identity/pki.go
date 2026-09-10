@@ -1,13 +1,16 @@
 package identity
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -437,4 +440,10 @@ func firstServerName(names []string) string {
 		}
 	}
 	return "controlplane"
+}
+
+// ClusterIdentity binds an agent's durable state to its enrolled trust root.
+func (a *TLSAuthority) ClusterIdentity() string {
+	digest := sha256.Sum256(bytes.TrimSpace(a.caPEM))
+	return hex.EncodeToString(digest[:])
 }

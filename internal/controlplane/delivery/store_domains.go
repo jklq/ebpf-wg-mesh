@@ -30,7 +30,11 @@ func (s *persistence) listDomainBindings(ctx context.Context, userID, serviceID 
 }
 
 func (s *persistence) domainTargetPortsForService(ctx context.Context, serviceID string) ([]int32, error) {
-	rows, err := s.db.QueryContext(ctx,
+	return domainTargetPortsForServiceQuerier(ctx, s.db, serviceID)
+}
+
+func domainTargetPortsForServiceQuerier(ctx context.Context, q ServiceQueryer, serviceID string) ([]int32, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT target_port
 		   FROM domain_bindings
 		  WHERE service_id = $1

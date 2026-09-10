@@ -173,13 +173,19 @@ func (s *persistence) markAllocationUnavailableForFailoverTx(ctx context.Context
 	if current.phase == allocationPhaseUnavailable && current.message == message && len(current.healthyIPv4Ports) == 0 && len(current.healthyIPv6Ports) == 0 && !current.healthy {
 		return false, nil
 	}
-	err := s.setAssignmentMessageTx(ctx, tx, allocationID, message, now)
+	// A blocked failover changes scheduler-owned intent detail through the same
+	// plan application boundary as placement and drain decisions.
+	err := (&Delivery{store: s}).applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{
+		Kind: DecisionSetMessage, AllocationID: allocationID, Message: message,
+	}))
 	return err == nil, err
 }
 
 // ReconcileFailover detects unhealthy agents, applies placement repair in one
 // transaction, then wakes agents and requests ingress sync.
 func (d *Delivery) ReconcileFailover(ctx context.Context, unhealthyThreshold time.Duration) (ServiceFailoverResult, error) {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	if d == nil || d.store == nil {
 		return ServiceFailoverResult{}, nil
 	}

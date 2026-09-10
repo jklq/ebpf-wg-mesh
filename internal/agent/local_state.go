@@ -14,13 +14,15 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/reconciliation"
 
+	"github.com/google/uuid"
 	"go.etcd.io/bbolt"
 	"google.golang.org/protobuf/proto"
 )
 
 const (
-	localStateFormatVersion uint64 = 1
+	localStateFormatVersion uint64 = 2
 	localStateFileName             = "agent-state.db"
 )
 
@@ -35,12 +37,17 @@ var (
 	localInventoryBucket    = []byte("runtime_inventory")
 
 	formatVersionKey       = []byte("format_version")
+	identityRecoveryKey    = []byte("identity_recovery")
+	sessionIncarnationKey  = []byte("session_incarnation")
+	localStoreIDKey        = []byte("local_store_id")
 	initStateKey           = []byte("initialization_state")
 	agentIdentityKey       = []byte("agent_identity")
 	clusterIdentityKey     = []byte("cluster_identity")
+	highestEpochKey        = []byte("highest_observed_epoch")
 	authorityEpochKey      = []byte("accepted_authority_epoch")
 	cursorKey              = []byte("reconciliation_cursor")
 	desiredStateKey        = []byte("accepted_state")
+	stagedDesiredStateKey  = []byte("staged_state")
 	statusReportKey        = []byte("status_report")
 	reportEpochKey         = []byte("report_authority_epoch")
 	reportCursorKey        = []byte("report_reconciliation_cursor")
@@ -82,6 +89,8 @@ type pullCredential struct {
 }
 
 type localStateSummary struct {
+	LocalStoreID         string
+	Allocations          []*agentv1.ServiceCondition
 	Initialization       initializationState
 	AgentIdentity        string
 	ClusterIdentity      string
@@ -99,6 +108,7 @@ type localStateStore struct {
 	path        string
 	db          *bbolt.DB
 	quarantined string
+	now         func() time.Time
 }
 
 func openLocalStateStore(dataDir, agentID string) (*localStateStore, error) {
@@ -131,7 +141,7 @@ func openLocalStateStore(dataDir, agentID string) (*localStateStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("secure local state: %w", err)
 	}
-	store := &localStateStore{path: path, db: db}
+	store := &localStateStore{path: path, db: db, now: time.Now}
 	if err := store.initialize(agentID, existed, false); err != nil {
 		if errors.Is(err, errLocalStateCorrupt) {
 			return quarantineLocalState(path, agentID, db, err)
@@ -159,7 +169,7 @@ func quarantineLocalState(path, agentID string, db *bbolt.DB, cause error) (*loc
 	if err != nil {
 		return nil, fmt.Errorf("recreate local state after corruption: %w", err)
 	}
-	store := &localStateStore{path: path, db: recreated, quarantined: quarantined}
+	store := &localStateStore{path: path, db: recreated, quarantined: quarantined, now: time.Now}
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = recreated.Close()
 		return nil, fmt.Errorf("secure recreated local state: %w", err)
@@ -186,6 +196,11 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 				return err
 			}
 		}
+		// A staged snapshot has no acceptance decision. A crash must never
+		// promote it, even if its grant was valid when persistence started.
+		if err := tx.Bucket(localDesiredBucket).Delete(stagedDesiredStateKey); err != nil {
+			return err
+		}
 		rawVersion := meta.Get(formatVersionKey)
 		if len(rawVersion) != 0 && len(rawVersion) != 8 {
 			return fmt.Errorf("%w: invalid format version encoding", errLocalStateCorrupt)
@@ -202,6 +217,11 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 		if err := meta.Put(agentIdentityKey, []byte(agentID)); err != nil {
 			return err
 		}
+		if len(meta.Get(localStoreIDKey)) == 0 {
+			if err := meta.Put(localStoreIDKey, []byte(uuid.NewString())); err != nil {
+				return err
+			}
+		}
 		if len(meta.Get(initStateKey)) == 0 {
 			state := initializationUninitialized
 			if corrupt || existed {
@@ -216,7 +236,7 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 func (s *localStateStore) validateRecords() error {
 	return s.db.View(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)
-		for _, key := range [][]byte{authorityEpochKey, cursorKey} {
+		for _, key := range [][]byte{authorityEpochKey, highestEpochKey, cursorKey, sessionIncarnationKey} {
 			if err := validateIntegerEncoding(meta, key); err != nil {
 				return err
 			}
@@ -321,6 +341,9 @@ func (s *localStateStore) Close() error {
 }
 
 func (s *localStateStore) prepareStartup(clusterID string, inventory []RuntimeResource) error {
+	if err := s.requireClusterIdentity(clusterID); err != nil {
+		return err
+	}
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)
 		if err := validateClusterIdentity(meta, clusterID); err != nil {
@@ -333,7 +356,6 @@ func (s *localStateStore) prepareStartup(clusterID string, inventory []RuntimeRe
 		}
 		state := initializationState(meta.Get(initStateKey))
 		if state == initializationUninitialized {
-			state = initializationReady
 			if len(inventory) > 0 {
 				state = initializationRecovery
 			}
@@ -396,12 +418,69 @@ func (s *localStateStore) recordRuntimeInventory(inventory []RuntimeResource) er
 	})
 }
 
-func (s *localStateStore) acceptDesired(clusterID string, incoming *agentv1.DesiredNodeState) (bool, error) {
+func (s *localStateStore) acceptDesired(clusterID, sessionID string, incoming *agentv1.DesiredNodeState) (bool, error) {
+	if err := s.requireClusterIdentity(clusterID); err != nil {
+		return false, err
+	}
+	if incoming != nil {
+		if err := s.db.View(func(tx *bbolt.Tx) error {
+			if incoming.GetAgentId() != string(tx.Bucket(localMetaBucket).Get(agentIdentityKey)) {
+				return errors.New("snapshot agent identity does not match local identity")
+			}
+			return nil
+		}); err != nil {
+			return false, err
+		}
+		if incoming.GetClusterId() != clusterID {
+			return false, errors.New("snapshot cluster identity does not match authenticated cluster")
+		}
+		if sessionID == "" || incoming.GetSessionId() != sessionID {
+			return false, errors.New("desired state belongs to another session")
+		}
+		if err := s.observeAuthorityEpoch(incoming.GetAuthorityEpoch()); err != nil {
+			return false, err
+		}
+	}
 	if incoming == nil {
 		return false, errors.New("desired state is nil")
 	}
 	if err := validateDesiredState(incoming); err != nil {
 		return false, err
+	}
+	staged, err := s.stageDesired(sessionID, incoming)
+	if err != nil {
+		return false, err
+	}
+	return s.acceptStagedDesired(clusterID, sessionID, staged)
+}
+
+// stageDesired makes the entire candidate, including its cursor and credentials,
+// durable without changing anything visible to the supervisor or hello. The
+// grant check here only avoids writing an already expired candidate; acceptance
+// requires another check after this commit has completed.
+func (s *localStateStore) stageDesired(sessionID string, incoming *agentv1.DesiredNodeState) ([]byte, error) {
+	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(incoming)
+	if err != nil {
+		return nil, fmt.Errorf("encode desired candidate: %w", err)
+	}
+	err = s.db.Update(func(tx *bbolt.Tx) error {
+		if err := reconciliation.ValidateCommand(incoming, sessionID, s.now()); err != nil {
+			return err
+		}
+		return tx.Bucket(localDesiredBucket).Put(stagedDesiredStateKey, encoded)
+	})
+	return encoded, err
+}
+
+// acceptStagedDesired decides acceptance only after the candidate is durable.
+// The final grant check is the decision's linearization point. Committing that
+// decision can finish later, but cannot introduce a candidate that wasn't
+// already durable under a live grant. Until the decision commits, the previous
+// accepted snapshot remains the only state available to runtime reconciliation.
+func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, staged []byte) (bool, error) {
+	incoming := &agentv1.DesiredNodeState{}
+	if err := proto.Unmarshal(staged, incoming); err != nil {
+		return false, fmt.Errorf("decode desired candidate: %w", err)
 	}
 	clean, credentials := splitDesiredCredentials(incoming)
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(clean)
@@ -410,6 +489,9 @@ func (s *localStateStore) acceptDesired(clusterID string, incoming *agentv1.Desi
 	}
 	changed := false
 	err = s.db.Update(func(tx *bbolt.Tx) error {
+		if !bytes.Equal(tx.Bucket(localDesiredBucket).Get(stagedDesiredStateKey), staged) {
+			return errors.New("desired candidate is not staged")
+		}
 		meta := tx.Bucket(localMetaBucket)
 		if incoming.GetAgentId() != string(meta.Get(agentIdentityKey)) {
 			return fmt.Errorf("desired state agent %q does not match local identity %q", incoming.GetAgentId(), meta.Get(agentIdentityKey))
@@ -417,7 +499,6 @@ func (s *localStateStore) acceptDesired(clusterID string, incoming *agentv1.Desi
 		if err := validateClusterIdentity(meta, clusterID); err != nil {
 			return err
 		}
-		clusterWasKnown := string(meta.Get(clusterIdentityKey)) != ""
 		if string(meta.Get(clusterIdentityKey)) == "" {
 			if clusterID == "" {
 				return errors.New("authenticated cluster identity is unavailable")
@@ -429,8 +510,8 @@ func (s *localStateStore) acceptDesired(clusterID string, incoming *agentv1.Desi
 		acceptedEpoch := readUint64(meta.Get(authorityEpochKey))
 		acceptedCursor := readInt64(meta.Get(cursorKey))
 		switch {
-		case incoming.GetAuthorityEpoch() < acceptedEpoch:
-			return fmt.Errorf("stale authority epoch %d follows %d", incoming.GetAuthorityEpoch(), acceptedEpoch)
+		case incoming.GetAuthorityEpoch() < max(acceptedEpoch, readUint64(meta.Get(highestEpochKey))):
+			return fmt.Errorf("stale authority epoch %d", incoming.GetAuthorityEpoch())
 		case incoming.GetAuthorityEpoch() == acceptedEpoch && incoming.GetReconciliationCursor() < acceptedCursor:
 			return fmt.Errorf("stale reconciliation cursor %d follows %d", incoming.GetReconciliationCursor(), acceptedCursor)
 		}
@@ -462,18 +543,17 @@ func (s *localStateStore) acceptDesired(clusterID string, incoming *agentv1.Desi
 		if err := updateDesiredAllocations(tx.Bucket(localAllocationsBucket), clean); err != nil {
 			return err
 		}
+		if initializationState(meta.Get(initStateKey)) == initializationUninitialized {
+			if err := meta.Put(initStateKey, []byte(initializationReady)); err != nil {
+				return err
+			}
+		}
 		if initializationState(meta.Get(initStateKey)) == initializationRecovery {
-			// When the store or its cluster binding survived, an authenticated
-			// complete snapshot from that same authority establishes ownership of
-			// both present and absent allocation IDs. Without a prior cluster
-			// binding, only an exact inventory claim can safely lift the fence.
-			established := clusterWasKnown
-			if !established {
-				var err error
-				established, err = recoveryOwnershipEstablished(tx.Bucket(localInventoryBucket), clean)
-				if err != nil {
-					return err
-				}
+			// A trust-root match alone does not assign unknown runtime
+			// resources to this agent. Recovery needs an explicit inventory claim.
+			established, err := recoveryOwnershipEstablished(tx.Bucket(localInventoryBucket), clean)
+			if err != nil {
+				return err
 			}
 			if established {
 				if err := meta.Put(initStateKey, []byte(initializationReady)); err != nil {
@@ -481,12 +561,24 @@ func (s *localStateStore) acceptDesired(clusterID string, incoming *agentv1.Desi
 				}
 			}
 		}
-		return nil
+		if err := desired.Delete(stagedDesiredStateKey); err != nil {
+			return err
+		}
+		// All preparation is complete and the candidate was durably staged
+		// before this transaction. A pause during staging or preparation must
+		// not turn an expired grant into an acceptance decision.
+		return reconciliation.ValidateCommand(incoming, sessionID, s.now())
 	})
-	return changed, err
+	return changed && err == nil, err
 }
 
 func validateDesiredState(state *agentv1.DesiredNodeState) error {
+	if state.GetClusterId() == "" {
+		return errors.New("desired state cluster_id is required")
+	}
+	if state.GetScope() != agentv1.SnapshotScope_SNAPSHOT_SCOPE_AGENT || !state.GetComplete() {
+		return errors.New("desired state requires a complete authoritative agent scope")
+	}
 	if strings.TrimSpace(state.GetAgentId()) == "" {
 		return errors.New("desired state agent_id is required")
 	}
@@ -646,11 +738,26 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 	result := localStateSummary{QuarantinedStore: s.quarantined}
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)
+		result.LocalStoreID = string(meta.Get(localStoreIDKey))
 		result.Initialization = initializationState(meta.Get(initStateKey))
 		result.AgentIdentity = string(meta.Get(agentIdentityKey))
 		result.ClusterIdentity = string(meta.Get(clusterIdentityKey))
 		result.AuthorityEpoch = readUint64(meta.Get(authorityEpochKey))
 		result.ReconciliationCursor = readInt64(meta.Get(cursorKey))
+		if err := tx.Bucket(localAllocationsBucket).ForEach(func(_, value []byte) error {
+			var a localAllocationState
+			if err := json.Unmarshal(value, &a); err != nil {
+				return err
+			}
+			result.Allocations = append(result.Allocations, &agentv1.ServiceCondition{
+				AllocationId: a.AllocationID, DesiredSpecRevision: a.DesiredSpecRevision,
+				AppliedSpecRevision: a.AppliedSpecRevision, DesiredRolloutGeneration: a.DesiredGeneration,
+				AppliedRolloutGeneration: a.AppliedGeneration, Phase: a.Phase,
+			})
+			return nil
+		}); err != nil {
+			return err
+		}
 		return tx.Bucket(localInventoryBucket).ForEach(func(_, value []byte) error {
 			var resource RuntimeResource
 			if err := json.Unmarshal(value, &resource); err != nil {
@@ -688,6 +795,8 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left := proto.Clone(a).(*agentv1.DesiredNodeState)
 	right := proto.Clone(b).(*agentv1.DesiredNodeState)
 	left.GeneratedAt, right.GeneratedAt = nil, nil
+	left.SessionId, right.SessionId = "", ""
+	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
 	return proto.Equal(left, right)
 }
 
@@ -999,4 +1108,52 @@ func putInt64(bucket *bbolt.Bucket, key []byte, value int64) error {
 
 func readInt64(raw []byte) int64 {
 	return int64(readUint64(raw))
+}
+
+// Identity recovery is sticky. Reconnecting, even to the old root, does not
+// authorize a reset. Recovery requires retiring this identity and enrolling a
+// replacement after accounting for any surviving workloads.
+func (s *localStateStore) requireClusterIdentity(clusterID string) error {
+	var recoveryErr error
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		if reason := meta.Get(identityRecoveryKey); len(reason) != 0 {
+			recoveryErr = errors.New(string(reason))
+			return nil
+		}
+		if err := validateClusterIdentity(meta, clusterID); err != nil {
+			recoveryErr = fmt.Errorf("identity recovery required: %w", err)
+			if err := meta.Put(identityRecoveryKey, []byte(recoveryErr.Error())); err != nil {
+				return err
+			}
+			return meta.Put(initStateKey, []byte(initializationRecovery))
+		}
+		return nil
+	})
+	return errors.Join(err, recoveryErr)
+}
+
+func (s *localStateStore) observeAuthorityEpoch(epoch uint64) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		highest := max(readUint64(meta.Get(highestEpochKey)), readUint64(meta.Get(authorityEpochKey)))
+		if epoch < highest {
+			return fmt.Errorf("stale authority epoch %d follows %d", epoch, highest)
+		}
+		return putUint64(meta, highestEpochKey, epoch)
+	})
+}
+
+func (s *localStateStore) nextSessionIncarnation() (uint64, error) {
+	var incarnation uint64
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		previous := readUint64(meta.Get(sessionIncarnationKey))
+		if previous >= math.MaxInt64 {
+			return errors.New("session incarnation exhausted")
+		}
+		incarnation = previous + 1
+		return putUint64(meta, sessionIncarnationKey, incarnation)
+	})
+	return incarnation, err
 }

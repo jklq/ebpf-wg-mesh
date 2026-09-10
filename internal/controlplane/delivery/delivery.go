@@ -6,6 +6,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -17,6 +18,10 @@ import (
 // and the wake and ingress effects that follow a commit. Its
 // persistence and transaction helpers are private to this package.
 type Delivery struct {
+	// schedulerMu intentionally serializes evaluations. The database transaction
+	// remains the durability boundary; this avoids parallel planners until one
+	// is shown to be necessary.
+	schedulerMu     sync.Mutex
 	store           *persistence
 	notifier        PlatformNotifier
 	ingress         PlatformIngress
@@ -43,6 +48,8 @@ type DeploymentActionResult struct {
 // make the committed state observable. Callers do not need to finish the
 // operation themselves.
 func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (DeploymentActionResult, error) {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	identity, err := d.userFromContext(ctx)
 	if err != nil {
 		return DeploymentActionResult{}, err
@@ -78,6 +85,8 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploym
 // and snapshots the result. The transaction also advances the durable platform
 // event index. Agent notifications are wake hints sent only after commit.
 func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string) ([]ReleasedService, error) {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	identity, err := d.userFromContext(ctx)
 	if err != nil {
 		return nil, err

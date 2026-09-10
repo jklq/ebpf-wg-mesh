@@ -149,38 +149,6 @@ func (s *persistence) deleteAllocationAssignmentTx(ctx context.Context, tx *sql.
 	return err
 }
 
-func (s *persistence) deleteStartingAssignmentsTx(ctx context.Context, tx *sql.Tx, serviceID string, generation *int64) error {
-	query := `DELETE FROM allocation_assignments WHERE service_id = $1 AND rollout_state = $2`
-	args := []any{serviceID, AllocationRolloutStarting}
-	if generation != nil {
-		query += ` AND desired_rollout_generation = $3`
-		args = append(args, *generation)
-	}
-	_, err := tx.ExecContext(ctx, query, args...)
-	return err
-}
-
-func (s *persistence) withdrawServiceAssignmentsTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) (int64, error) {
-	result, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
-		SET rollout_state = $2, intent = $3, intent_message = $4, updated_at = $5
-		WHERE service_id = $1 AND rollout_state NOT IN ($2, $6, $7)`,
-		serviceID, AllocationRolloutWithdrawing, allocationIntentRun, message, now, AllocationRolloutDraining, AllocationRolloutLost)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (s *persistence) retargetAssignmentsTx(ctx context.Context, tx *sql.Tx, serviceID, agentID, deploymentID string, specRevision, generation int64, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
-		SET deployment_id = $1, desired_spec_revision = $2, desired_rollout_generation = $3,
-		    intent = $4, intent_message = '', updated_at = $5
-		WHERE service_id = $6 AND agent_id = $7 AND rollout_state IN ($8, $9)`,
-		deploymentID, specRevision, generation, allocationIntentRun, now, serviceID, agentID,
-		AllocationRolloutStarting, AllocationRolloutServing)
-	return err
-}
-
 func (s *persistence) markAssignmentLostTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 		SET rollout_state = $2, intent = $3, intent_message = $4,

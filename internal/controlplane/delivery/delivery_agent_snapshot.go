@@ -4,52 +4,58 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 )
 
-const AgentAuthorityEpoch uint64 = 1
-
 func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
-	s := d.store
-	revision, err := s.currentDesiredRevisionForAgent(ctx, agentID)
+	var state *agentv1.DesiredNodeState
+	err := d.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+		var revision int64
+		var epoch uint64
+		if err := tx.QueryRowContext(ctx, `SELECT desired_revision FROM agent_registrations WHERE id = $1`, agentID).Scan(&revision); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1`).Scan(&epoch); err != nil {
+			return err
+		}
+		candidate := &agentv1.DesiredNodeState{AgentId: agentID, ReconciliationCursor: revision,
+			AuthorityEpoch: epoch, Scope: agentv1.SnapshotScope_SNAPSHOT_SCOPE_AGENT, GeneratedAt: ts(time.Now().UTC())}
+		var err error
+		candidate.Volumes, err = d.listDesiredVolumes(ctx, tx, agentID)
+		if err != nil {
+			return err
+		}
+		candidate.Services, err = d.listDesiredServices(ctx, tx, agentID)
+		if err != nil {
+			return err
+		}
+		candidate.NodeConfig, err = d.assignedNodeConfigForAgent(ctx, tx, agentID)
+		if err != nil {
+			return err
+		}
+		candidate.Complete = true
+		state = candidate
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	state := &agentv1.DesiredNodeState{
-		AgentId:              agentID,
-		ReconciliationCursor: revision,
-		AuthorityEpoch:       AgentAuthorityEpoch,
-		GeneratedAt:          ts(time.Now().UTC()),
-	}
-	vols, err := d.listDesiredVolumes(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state.Volumes = vols
-	services, err := d.listDesiredServices(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state.Services = services
-	nodeConfig, err := d.assignedNodeConfigForAgent(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	state.NodeConfig = nodeConfig
 	return state, nil
 }
 
-func (d *Delivery) listDesiredVolumes(ctx context.Context, agentID string) ([]*agentv1.DesiredVolume, error) {
-	rows, err := d.store.db.QueryContext(ctx,
+func (d *Delivery) listDesiredVolumes(ctx context.Context, q ServiceQueryer, agentID string) ([]*agentv1.DesiredVolume, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT DISTINCT v.id, v.environment_id, v.name, v.size_bytes, v.created_at
 		   FROM volumes v
 		   JOIN services s ON s.environment_id = v.environment_id
 		   JOIN allocations a ON a.service_id = s.id
 		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
 		  WHERE a.agent_id = $1 AND COALESCE(r.spec_json->'runtime'->>'volumeName', '') = v.name
-		  ORDER BY v.created_at ASC`,
+		  ORDER BY v.created_at ASC, v.id ASC`,
 		agentID,
 	)
 	if err != nil {
@@ -68,9 +74,8 @@ func (d *Delivery) listDesiredVolumes(ctx context.Context, agentID string) ([]*a
 	return out, rows.Err()
 }
 
-func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*agentv1.DesiredService, error) {
-	s := d.store
-	volumes, err := d.listDesiredVolumes(ctx, agentID)
+func (d *Delivery) listDesiredServices(ctx context.Context, q ServiceQueryer, agentID string) ([]*agentv1.DesiredService, error) {
+	volumes, err := d.listDesiredVolumes(ctx, q, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +84,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 		volumeIDs[volumeKey(vol.GetEnvironmentId(), vol.GetName())] = vol.GetVolumeId()
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := q.QueryContext(ctx,
 		`SELECT a.id, s.id, s.environment_id, s.name, a.deployment_id, a.desired_spec_revision, a.desired_rollout_generation,
 		        ro.image_digest, r.spec_json, e.network_identity, e.name, p.id, p.name,
 		        a.restart_observation_json, a.operator_restart_nonce, a.rollout_state, a.intent, a.drain_deadline,
@@ -92,7 +97,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 		   JOIN service_rollouts ro ON ro.service_id = s.id AND ro.rollout_generation = a.desired_rollout_generation
 		  WHERE a.agent_id = $1
 		    AND ro.image_digest <> ''
-		  ORDER BY s.created_at ASC`,
+		  ORDER BY s.created_at ASC, a.id ASC`,
 		agentID,
 	)
 	if err != nil {
@@ -100,7 +105,17 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 	}
 	defer rows.Close()
 
-	var out []*agentv1.DesiredService
+	type serviceRow struct {
+		svc                                     *agentv1.DesiredService
+		resolvedImage                           string
+		rawSpec                                 []byte
+		networkIdentity                         int64
+		environmentName, projectID, projectName string
+		restartRaw                              []byte
+		rolloutState, intent                    string
+		drainDeadline                           sql.NullTime
+	}
+	var pending []serviceRow
 	for rows.Next() {
 		svc := &agentv1.DesiredService{}
 		var resolvedImage string
@@ -114,6 +129,19 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 		if err := rows.Scan(&svc.AllocationId, &svc.ServiceId, &svc.EnvironmentId, &svc.Name, &svc.DeploymentId, &svc.DesiredSpecRevision, &svc.DesiredRolloutGeneration, &resolvedImage, &rawSpec, &networkIdentity, &environmentName, &projectID, &projectName, &restartRaw, &svc.OperatorRestartNonce, &rolloutState, &intent, &drainDeadline, &svc.PrivateIpv4, &svc.PrivateIpv6); err != nil {
 			return nil, err
 		}
+		pending = append(pending, serviceRow{svc, resolvedImage, rawSpec, networkIdentity, environmentName, projectID, projectName, restartRaw, rolloutState, intent, drainDeadline})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var out []*agentv1.DesiredService
+	for _, row := range pending {
+		svc, resolvedImage, rawSpec, networkIdentity := row.svc, row.resolvedImage, row.rawSpec, row.networkIdentity
+		environmentName, projectID, projectName := row.environmentName, row.projectID, row.projectName
+		restartRaw, rolloutState, intent, drainDeadline := row.restartRaw, row.rolloutState, row.intent, row.drainDeadline
 		if rolloutState == AllocationRolloutLost {
 			continue
 		}
@@ -132,7 +160,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 		if err != nil {
 			return nil, err
 		}
-		targetPorts, err := s.domainTargetPortsForService(ctx, svc.ServiceId)
+		targetPorts, err := domainTargetPortsForServiceQuerier(ctx, q, svc.ServiceId)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +186,7 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 			svc.VolumeId = volumeIDs[volumeKey(svc.EnvironmentId, volumeName)]
 		}
 		svc.InternalHostname = InternalServiceHostname(svc.Name, svc.ServiceId)
-		svc.InternalHosts, err = d.internalHostsForEnvironment(ctx, svc.EnvironmentId)
+		svc.InternalHosts, err = d.internalHostsForEnvironment(ctx, q, svc.EnvironmentId)
 		if err != nil {
 			return nil, err
 		}
@@ -167,8 +195,8 @@ func (d *Delivery) listDesiredServices(ctx context.Context, agentID string) ([]*
 	return out, rows.Err()
 }
 
-func (d *Delivery) internalHostsForEnvironment(ctx context.Context, environmentID string) ([]*agentv1.InternalHost, error) {
-	rows, err := d.store.db.QueryContext(ctx,
+func (d *Delivery) internalHostsForEnvironment(ctx context.Context, q ServiceQueryer, environmentID string) ([]*agentv1.InternalHost, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT s.id, s.name, a.allocation_ipv4, a.allocation_ipv6,
 		        a.healthy_ipv4_ports, a.healthy_ipv6_ports
 		   FROM services s
@@ -208,17 +236,18 @@ func (d *Delivery) internalHostsForEnvironment(ctx context.Context, environmentI
 	return hosts, rows.Err()
 }
 
-func (d *Delivery) assignedNodeConfigForAgent(ctx context.Context, agentID string) (*agentv1.AssignedNodeConfig, error) {
+func (d *Delivery) assignedNodeConfigForAgent(ctx context.Context, q ServiceQueryer, agentID string) (*agentv1.AssignedNodeConfig, error) {
 	s := d.store
-	agent, err := s.agentByID(ctx, agentID)
+	agent, err := agentByIDQuerier(ctx, q, agentID, false)
 	if err != nil {
 		return nil, err
 	}
-	agents, err := s.listAgents(ctx)
+	agents, err := s.listAgentsQuerier(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 
+	slices.SortFunc(agents, func(a, b AgentRecord) int { return strings.Compare(a.ID, b.ID) })
 	assigned := &agentv1.AssignedNodeConfig{
 		WorkloadIpv4Subnet:     agent.WorkloadIPv4Subnet,
 		WorkloadIpv4Pool:       s.mesh.WorkloadIPv4PoolCIDR,
@@ -228,7 +257,7 @@ func (d *Delivery) assignedNodeConfigForAgent(ctx context.Context, agentID strin
 		WireguardAddresses:     []string{agent.WireGuardIPv6},
 		WireguardListenPort:    int32(agent.WireGuardListenPort),
 	}
-	assigned.WorkloadIdentities, err = d.listWorkloadIdentities(ctx)
+	assigned.WorkloadIdentities, err = d.listWorkloadIdentities(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +281,8 @@ func (d *Delivery) assignedNodeConfigForAgent(ctx context.Context, agentID strin
 	return assigned, nil
 }
 
-func (d *Delivery) listWorkloadIdentities(ctx context.Context) ([]*agentv1.WorkloadIdentity, error) {
-	rows, err := d.store.db.QueryContext(ctx,
+func (d *Delivery) listWorkloadIdentities(ctx context.Context, q ServiceQueryer) ([]*agentv1.WorkloadIdentity, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT a.allocation_ipv4, a.allocation_ipv6, s.environment_id, e.network_identity, a.agent_id, ag.advertise_addr
 		   FROM allocations a
 		   JOIN services s ON s.id = a.service_id

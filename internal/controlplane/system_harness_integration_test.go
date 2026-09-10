@@ -459,6 +459,12 @@ func openAgentSync(t *testing.T, server *Server, cert tls.Certificate, hello *ag
 		cancel()
 		t.Fatalf("Sync: %v", err)
 	}
+	if err := server.store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil {
+		t.Fatal(err)
+	}
+	hello.ClusterId = server.authority.ClusterIdentity()
+	hello.LocalStoreId = "test-store-" + hello.GetAgentId()
+	hello.InitializationState = "ready"
 	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Hello{Hello: hello}}); err != nil {
 		cancel()
 		t.Fatalf("hello: %v", err)

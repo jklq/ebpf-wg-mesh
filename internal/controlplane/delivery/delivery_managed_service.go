@@ -16,6 +16,8 @@ import (
 )
 
 func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, trustedAgentID string) (ServiceRecord, []string, error) {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	s := d.store
 	var rec ServiceRecord
 	var affectedAgentIDs []string
@@ -151,14 +153,14 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		rec.DesiredReplicaCount = desiredReplicas
 		rec.UpdatedAt = now
 		if placementChanged {
-			if _, err := s.insertAllocationTx(ctx, tx, rec, trustedAgentID, now); err != nil {
+			if _, err := d.insertAllocationTx(ctx, tx, rec, trustedAgentID, now); err != nil {
 				return err
 			}
 			if _, err := d.advanceRolloutTx(ctx, tx, current.ID, now); err != nil {
 				return err
 			}
 		} else {
-			if err := s.retargetAssignmentsTx(ctx, tx, current.ID, trustedAgentID,
+			if err := d.retargetAllocationsTx(ctx, tx, current.ID, trustedAgentID,
 				deployment.ID, nextSpecRevision, nextRolloutGeneration, now); err != nil {
 				return err
 			}

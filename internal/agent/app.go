@@ -162,6 +162,10 @@ func (a *App) runSession(ctx context.Context) error {
 
 	client := agentv1.NewAgentControlClient(conn)
 	sessionID := uuid.NewString()
+	incarnation, err := a.stateStore.nextSessionIncarnation()
+	if err != nil {
+		return err
+	}
 	stream, err := client.Sync(sessionCtx)
 	if err != nil {
 		return fmt.Errorf("open sync stream: %w", err)
@@ -181,6 +185,9 @@ func (a *App) runSession(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read local inventory: %w", err)
 	}
+	if err := a.stateStore.requireClusterIdentity(clusterID); err != nil {
+		return err
+	}
 	runtimeResources := make([]*agentv1.RuntimeResource, 0, len(summary.RuntimeResources))
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
@@ -197,6 +204,11 @@ func (a *App) runSession(ctx context.Context) error {
 			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 			SoftwareVersion:         Version,
 			SessionId:               sessionID,
+			SessionIncarnation:      incarnation,
+			ClusterId:               clusterID,
+			LocalStoreId:            summary.LocalStoreID,
+			InitializationState:     string(summary.Initialization),
+			Allocations:             summary.Allocations,
 			AcceptedAuthorityEpoch:  summary.AuthorityEpoch,
 			ReconciliationCursor:    summary.ReconciliationCursor,
 			RecoveryMode:            summary.Initialization == initializationRecovery,
@@ -288,9 +300,15 @@ func (a *App) runSession(ctx context.Context) error {
 			if state == nil {
 				continue
 			}
-			changed, err := a.supervisor.AcceptDesired(clusterID, state)
+			changed, err := a.supervisor.AcceptDesired(clusterID, sessionID, state)
 			if err != nil {
 				return fmt.Errorf("accept desired state: %w", err)
+			}
+			if err := send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
+				Acknowledgement: &agentv1.DesiredStateAcknowledgement{AgentId: a.cfg.Node.ID, SessionId: sessionID,
+					AuthorityEpoch: state.GetAuthorityEpoch(), ReconciliationCursor: state.GetReconciliationCursor()},
+			}}); err != nil {
+				return err
 			}
 			if err := a.refreshManagedDashboardIdentity(sessionCtx, client, state); err != nil {
 				a.supervisor.ReconcileAcceptedDesired()
