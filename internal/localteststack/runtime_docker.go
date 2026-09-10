@@ -38,10 +38,9 @@ type DockerRuntimeConfig struct {
 }
 
 type DockerRuntime struct {
-	cfg                 DockerRuntimeConfig
-	runner              DockerRunner
-	ready               map[string]dockerRolloutReadiness
-	environmentNetworks map[string]struct{}
+	cfg    DockerRuntimeConfig
+	runner DockerRunner
+	ready  map[string]dockerRolloutReadiness
 }
 
 type dockerRolloutReadiness struct {
@@ -104,9 +103,8 @@ func NewDockerRuntime(cfg DockerRuntimeConfig) (*DockerRuntime, error) {
 		return nil, err
 	}
 	return &DockerRuntime{
-		cfg:                 cfg,
-		runner:              runner,
-		environmentNetworks: make(map[string]struct{}),
+		cfg:    cfg,
+		runner: runner,
 	}, nil
 }
 
@@ -181,6 +179,11 @@ func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1
 			return nil, err
 		}
 		if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
+			return nil, err
+		}
+		// Prune before ensuring services so a reclaimed address-pool subnet
+		// unblocks the network create for a replacement allocation below.
+		if err := r.pruneStaleEnvironmentNetworks(ctx, desiredServices); err != nil {
 			return nil, err
 		}
 	}
@@ -398,12 +401,6 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 	}
 	if err := EnsureDockerNetwork(ctx, r.runner, environmentNetwork); err != nil {
 		return dockerServiceStatus{}, false, err
-	}
-	if environmentNetwork != r.cfg.DockerNetwork {
-		if r.environmentNetworks == nil {
-			r.environmentNetworks = make(map[string]struct{})
-		}
-		r.environmentNetworks[environmentNetwork] = struct{}{}
 	}
 
 	args, err := r.dockerRunArgs(svc)

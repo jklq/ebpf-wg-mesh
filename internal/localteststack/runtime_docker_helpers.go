@@ -86,6 +86,44 @@ func (r *DockerRuntime) environmentNetworkName(environmentID string) string {
 	return fmt.Sprintf("%s-env-%x", r.cfg.DockerNetwork, digest[:6])
 }
 
+func (r *DockerRuntime) environmentNetworkPrefix() string {
+	return r.cfg.DockerNetwork + "-env-"
+}
+
+// pruneStaleEnvironmentNetworks removes per-environment Docker networks that
+// no desired service references. Every Docker network permanently holds one
+// daemon address-pool subnet until removed, so leaking them exhausts the
+// daemon ("all predefined address pools have been fully subnetted") and every
+// later network create fails. Discovery is by daemon listing so networks
+// leaked by previous processes are reclaimed too.
+func (r *DockerRuntime) pruneStaleEnvironmentNetworks(ctx context.Context, desired map[string]*agentv1.DesiredService) error {
+	keep := make(map[string]struct{})
+	for _, svc := range desired {
+		if name := r.environmentNetworkName(svc.GetEnvironmentId()); name != r.cfg.DockerNetwork {
+			keep[name] = struct{}{}
+		}
+	}
+	names, err := listDockerNetworks(ctx, r.runner)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if !strings.HasPrefix(name, r.environmentNetworkPrefix()) {
+			continue
+		}
+		if _, ok := keep[name]; ok {
+			continue
+		}
+		if _, err := r.runner.Run(ctx, "network", "rm", name); err != nil {
+			if isDockerMissingObjectError(err) || isDockerActiveEndpointsError(err) {
+				continue
+			}
+			return fmt.Errorf("remove stale docker network %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (r *DockerRuntime) pruneStaleServices(ctx context.Context, desired map[string]*agentv1.DesiredService) error {
 	staleCandidates := make(map[string]struct{})
 	resources, err := r.DiscoverRuntimeResources(ctx)
