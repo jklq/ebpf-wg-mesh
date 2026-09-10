@@ -14,6 +14,7 @@ import type {
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
 
+import { ServicePanelFallback } from "./dashboard-canvas";
 import { ServicePanel } from "./service-panel";
 
 const { doScaleServiceMock, doUpdateServiceMock } = vi.hoisted(() => ({
@@ -261,6 +262,24 @@ describe("ServicePanel replica scaling", () => {
 		fireEvent.blur(input);
 		expect(screen.getByText("Enter a whole number from 1 to 64")).toBeTruthy();
 		expect(doUpdateServiceMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("ServicePanelFallback", () => {
+	it("keeps a working close button while the panel chunk loads", () => {
+		const onClose = vi.fn();
+		render(
+			<ServicePanelFallback
+				service={service()}
+				onClose={onClose}
+				onRefresh={() => {}}
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /close service panel/i }),
+		);
+		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 });
 

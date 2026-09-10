@@ -37,6 +37,7 @@ export function DeployButton({
 			className={btnPrimary}
 			onFocus={onPreload}
 			onMouseEnter={onPreload}
+			onPointerDown={onPreload}
 			onMouseDown={stopPropagation ? stop : undefined}
 			onClick={
 				stopPropagation
