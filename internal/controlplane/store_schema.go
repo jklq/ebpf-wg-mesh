@@ -1,8 +1,25 @@
 package controlplane
 
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 var currentSchema = []string{
+	`CREATE TABLE cluster_journal_heads (
+		cluster_id STRING PRIMARY KEY,
+		log_index INT8 NOT NULL CHECK (log_index >= 0)
+	)`,
+	`INSERT INTO cluster_journal_heads VALUES ('default', 0)`,
+	`CREATE TABLE cluster_journal (
+		cluster_id STRING NOT NULL REFERENCES cluster_journal_heads(cluster_id),
+		log_index INT8 NOT NULL CHECK (log_index > 0),
+		command_id STRING NOT NULL,
+		command_version INT8 NOT NULL,
+		command_type STRING NOT NULL,
+		payload JSONB NOT NULL,
+		authorizing_epoch INT8 NULL CHECK (authorizing_epoch > 0),
+		created_at TIMESTAMPTZ NOT NULL,
+		PRIMARY KEY (cluster_id, log_index),
+		UNIQUE (cluster_id, command_id)
+	)`,
 	`CREATE TABLE control_plane_leases (
 			name STRING PRIMARY KEY,
 			holder_id STRING NOT NULL,

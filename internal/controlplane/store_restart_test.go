@@ -92,7 +92,9 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if ingress.requests.Load() != 1 {
 		t.Fatalf("expected one ingress request, got %d", ingress.requests.Load())
 	}
-	if got, err := store.events.currentGlobalRevision(ctx); err != nil || got != beforeReportRevision+1 {
+	// Recording the transient sample and applying the resulting durable
+	// deployment decision are intentionally separate transactions.
+	if got, err := store.events.currentGlobalRevision(ctx); err != nil || got != beforeReportRevision+2 {
 		t.Fatalf("global revision after status report = %d, %v", got, err)
 	}
 	updated, err := store.reads.allocationByServiceID(ctx, service.ID)

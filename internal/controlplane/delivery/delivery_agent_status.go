@@ -38,10 +38,12 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 	var ingressChanged bool
 	changedEnvironments := make(map[string]struct{})
 	rolloutServiceIDs := make(map[string]struct{})
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	deploymentAllocationIDs := make(map[string]struct{})
+	err := s.withObservationTx(ctx, func(tx *sql.Tx) error {
 		ingressChanged = false
 		changedEnvironments = make(map[string]struct{})
 		rolloutServiceIDs = make(map[string]struct{})
+		deploymentAllocationIDs = make(map[string]struct{})
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
@@ -119,8 +121,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 			}
 			if rolloutState == rolloutStateInProgress {
 				rolloutServiceIDs[target.serviceID] = struct{}{}
-			} else if err := s.applyAgentDeploymentObservationTx(ctx, tx, target.serviceID, generation, phase, cond.GetMessage(), healthy, cond.GetAppliedRolloutGeneration(), authenticatedAgentID); err != nil {
-				return fmt.Errorf("apply deployment observation: %w", err)
+			} else {
+				deploymentAllocationIDs[cond.GetAllocationId()] = struct{}{}
 			}
 			if target.hasDomain && (!target.previousHealthy.Valid || target.previousHealthy.Bool != healthy || !slices.Equal(target.previousIPv4Ports, cond.GetHealthyIpv4Ports()) || !slices.Equal(target.previousIPv6Ports, cond.GetHealthyIpv6Ports()) || !target.previousPhase.Valid || target.previousPhase.String != phase) {
 				ingressChanged = true
@@ -130,6 +132,11 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 	})
 	if err != nil {
 		return false, nil, err
+	}
+	for allocationID := range deploymentAllocationIDs {
+		if err := d.evaluateObservedDeployment(ctx, allocationID); err != nil {
+			return false, nil, fmt.Errorf("evaluate deployment after observation: %w", err)
+		}
 	}
 	for serviceID := range rolloutServiceIDs {
 		advanced, advanceErr := d.advanceRollout(ctx, serviceID, time.Now().UTC())
@@ -146,4 +153,30 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		environmentIDs = append(environmentIDs, environmentID)
 	}
 	return ingressChanged, environmentIDs, nil
+}
+
+// Observations request evaluation; only this separately fenced transaction
+// decides a deployment transition. Re-read the current session and generation
+// so a delayed evaluation cannot apply an obsolete health sample.
+func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID string) error {
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
+	return d.store.withTx(ctx, func(tx *sql.Tx) error {
+		var serviceID, agentID, phase, message string
+		var desired, applied int64
+		var healthy bool
+		err := tx.QueryRowContext(ctx, `SELECT a.service_id, a.agent_id,
+			a.desired_rollout_generation, o.applied_rollout_generation, o.phase, o.message, o.healthy
+			FROM allocation_assignments a
+			JOIN allocation_observations o ON o.allocation_id = a.id AND o.rollout_generation = a.desired_rollout_generation
+			JOIN agent_presence p ON p.agent_id = a.agent_id AND p.session_id = o.session_id
+			WHERE a.id = $1`, allocationID).Scan(&serviceID, &agentID, &desired, &applied, &phase, &message, &healthy)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return d.store.applyAgentDeploymentObservationTx(ctx, tx, serviceID, desired, phase, message, healthy, applied, agentID)
+	})
 }
