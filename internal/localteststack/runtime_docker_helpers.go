@@ -186,25 +186,6 @@ func safeRuntimeChildPath(base, kind, id string) (string, error) {
 	return path, nil
 }
 
-func dockerAllocationAddresses(inspect dockerContainerInspect, networkName string) (string, string) {
-	if inspect.NetworkSettings.Networks == nil {
-		return "", ""
-	}
-	if networkName != "" {
-		if network, ok := inspect.NetworkSettings.Networks[networkName]; ok {
-			if ipv4, ipv6 := strings.TrimSpace(network.IPAddress), strings.TrimSpace(network.GlobalIPv6Address); ipv4 != "" || ipv6 != "" {
-				return ipv4, ipv6
-			}
-		}
-	}
-	for _, network := range inspect.NetworkSettings.Networks {
-		if ipv4, ipv6 := strings.TrimSpace(network.IPAddress), strings.TrimSpace(network.GlobalIPv6Address); ipv4 != "" || ipv6 != "" {
-			return ipv4, ipv6
-		}
-	}
-	return "", ""
-}
-
 func healthyFamilyPorts(healthy bool, ports []int32) []int32 {
 	if !healthy {
 		return nil

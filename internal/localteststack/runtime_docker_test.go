@@ -114,7 +114,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	if !service.Healthy || service.Phase != "Healthy" {
 		t.Fatalf("expected healthy service, got %+v", service)
 	}
-	if service.AllocationIpv4 != "172.18.0.10" || service.AllocationIpv6 != "fd00:18::10" {
+	if service.AllocationIpv4 != "10.200.0.2" || service.AllocationIpv6 != "fd00:200::2" {
 		t.Fatalf("unexpected allocation addresses %q, %q", service.AllocationIpv4, service.AllocationIpv6)
 	}
 	if len(service.HealthyIpv4Ports) != 1 || service.HealthyIpv4Ports[0] != 8080 ||
@@ -233,6 +233,8 @@ func TestDockerRuntimeReconcileWithoutHealthCheckIsReadyAfterStart(t *testing.T)
 			AllocationId:             "alloc-1",
 			ServiceId:                "svc-1",
 			Name:                     "echo",
+			PrivateIpv4:              "10.200.0.2",
+			PrivateIpv6:              "fd00:200::2",
 			DesiredSpecRevision:      2,
 			DesiredRolloutGeneration: 3,
 			Spec: &platformv1.ResolvedServiceSpec{
@@ -245,6 +247,12 @@ func TestDockerRuntimeReconcileWithoutHealthCheckIsReadyAfterStart(t *testing.T)
 	})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
+	}
+	if got, want := report.Services[0].AllocationIpv4, "10.200.0.2"; got != want {
+		t.Fatalf("AllocationIpv4 = %q, want assigned %q", got, want)
+	}
+	if got, want := report.Services[0].AllocationIpv6, "fd00:200::2"; got != want {
+		t.Fatalf("AllocationIpv6 = %q, want assigned %q", got, want)
 	}
 	if got := report.Services[0].Phase; got != "Healthy" {
 		t.Fatalf("expected Healthy phase, got %q", got)

@@ -214,6 +214,8 @@ func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1
 			ServiceId:                svc.GetServiceId(),
 			DesiredSpecRevision:      svc.GetDesiredSpecRevision(),
 			DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+			AllocationIpv4:           svc.GetPrivateIpv4(),
+			AllocationIpv6:           svc.GetPrivateIpv6(),
 			Phase:                    "Pending",
 		}
 		if err := validateRuntimeIdentifier("allocation ID", svc.GetAllocationId()); err != nil {
@@ -249,6 +251,8 @@ func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1
 			}
 			cond.AppliedSpecRevision = svc.GetDesiredSpecRevision()
 			cond.AppliedRolloutGeneration = svc.GetDesiredRolloutGeneration()
+			cond.AllocationIpv4 = svc.GetPrivateIpv4()
+			cond.AllocationIpv6 = svc.GetPrivateIpv6()
 			cond.Healthy = false
 			if drained {
 				cond.Phase = "Drained"
@@ -378,7 +382,7 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 		return dockerServiceStatus{}, false, err
 	} else if exists {
 		if labelsMatchDesired(inspect.Config.Labels, svc) {
-			return dockerServiceStatusFor(inspect, svc, r.cfg.DockerNetwork), false, nil
+			return dockerServiceStatusFor(inspect, svc), false, nil
 		}
 		if err := r.removeService(ctx, svc.GetAllocationId()); err != nil {
 			return dockerServiceStatus{}, false, err
@@ -422,16 +426,19 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 	if !exists {
 		return dockerServiceStatus{}, false, fmt.Errorf("docker container %s did not start", containerName)
 	}
-	return dockerServiceStatusFor(inspect, svc, r.cfg.DockerNetwork), true, nil
+	return dockerServiceStatusFor(inspect, svc), true, nil
 }
 
-func dockerServiceStatusFor(inspect dockerContainerInspect, svc *agentv1.DesiredService, networkName string) dockerServiceStatus {
-	ipv4, ipv6 := dockerAllocationAddresses(inspect, networkName)
+// dockerServiceStatusFor reports the controlplane-assigned workload addresses.
+// Like the production containerd engine, the local runtime echoes
+// PrivateIpv4/PrivateIpv6 verbatim: the status ownership check requires an
+// exact match, and Docker bridge addresses never equal the assignment.
+func dockerServiceStatusFor(inspect dockerContainerInspect, svc *agentv1.DesiredService) dockerServiceStatus {
 	return dockerServiceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
-		AllocationIPv4:           ipv4,
-		AllocationIPv6:           ipv6,
+		AllocationIPv4:           svc.GetPrivateIpv4(),
+		AllocationIPv6:           svc.GetPrivateIpv6(),
 		Running:                  inspect.State.Running,
 		inspect:                  inspect,
 	}
