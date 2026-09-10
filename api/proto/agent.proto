@@ -50,6 +50,8 @@ message EnrollResponse {
   string cert_pem = 1;
   string ca_pem = 2;
   google.protobuf.Timestamp not_after = 3;
+  // Current control-plane replica addresses, excluding any agent-local seeds.
+  repeated string replica_addresses = 4;
 }
 
 message ManagedDashboardCertificateRequest {
@@ -152,6 +154,8 @@ message DesiredNodeState {
   string session_id = 10;
   google.protobuf.Timestamp authority_not_after = 11;
   string cluster_id = 12;
+  // Current control-plane replica addresses, excluding any agent-local seeds.
+  repeated string replica_addresses = 13;
 }
 
 enum SnapshotScope {

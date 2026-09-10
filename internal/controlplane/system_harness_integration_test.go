@@ -103,6 +103,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		}
 	})
 	waitForListener(t, server.InternalAddr())
+	waitForSingletonLease(t, server)
 
 	if opts.withDashboard {
 		identity, err := server.EnsureDashboardClientIdentity(systemTestDashboardID)

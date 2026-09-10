@@ -22,11 +22,15 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var dashboardContainerPort int
 	var githubPrivateKeyFile string
 	var userAssertionSecretFile string
+	var replicaAddresses string
+	var advertiseAddr string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
 	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "CONTROLPLANE_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.InternalGRPC.Listen, "internal-listen", "CONTROLPLANE_INTERNAL_LISTEN", "0.0.0.0:9443", "")
+	stringFlag(fs, &replicaAddresses, "replica-addresses", "CONTROLPLANE_REPLICA_ADDRESSES", "", "comma-separated control-plane addresses advertised to agents")
+	stringFlag(fs, &advertiseAddr, "advertise-addr", "CONTROLPLANE_ADVERTISE_ADDR", "", "this replica's control-plane address as agents should dial it")
 	stringFlag(fs, &internalServerNames, "internal-server-names", "CONTROLPLANE_INTERNAL_SERVER_NAMES", "controlplane,controlplane-internal,localhost", "")
 	stringFlag(fs, &agentBootstrapTokens, "agent-bootstrap-tokens", "CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS", "", "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ServerCertValidityHours, "internal-server-cert-validity-hours", "CONTROLPLANE_INTERNAL_SERVER_CERT_VALIDITY_HOURS", 24*30, "")
@@ -112,6 +116,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 		cfg.UserAssertions.HMACSecret = strings.TrimSpace(string(secret))
 	}
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
+	cfg.ReplicaAddresses = splitCommaList(replicaAddresses)
+	cfg.AdvertiseAddr = strings.TrimSpace(advertiseAddr)
 	cfg.InternalGRPC.TLS.BootstrapTokens, err = parseAgentBootstrapTokens(agentBootstrapTokens)
 	if err != nil {
 		return config.ControlPlaneConfig{}, err

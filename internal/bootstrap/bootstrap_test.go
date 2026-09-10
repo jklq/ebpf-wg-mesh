@@ -14,6 +14,8 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 		"-profile", "development",
 		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
 		"-internal-server-names", "controlplane,controlplane-internal",
+		"-replica-addresses", "replica-a:9443,replica-b:9443",
+		"-advertise-addr", "replica-a:9443",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		"-logs-clickhouse-url", "clickhouse://127.0.0.1:9000/default",
 		"-logs-retention-days", "30",
@@ -41,6 +43,12 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 	if got := strings.Join(cfg.InternalGRPC.TLS.ServerNames, ","); got != "controlplane,controlplane-internal" {
 		t.Fatalf("unexpected internal server names %q", got)
+	}
+	if got := strings.Join(cfg.ReplicaAddresses, ","); got != "replica-a:9443,replica-b:9443" {
+		t.Fatalf("unexpected replica addresses %q", got)
+	}
+	if cfg.AdvertiseAddr != "replica-a:9443" {
+		t.Fatalf("unexpected advertise addr %q", cfg.AdvertiseAddr)
 	}
 	if got := cfg.InternalGRPC.TLS.BootstrapTokens; len(got) != 2 || got[0].AgentID != "node-a" || got[0].Token != "token-a" || got[0].Region != "us-east" || got[0].FailureDomain != "zone-1" || got[0].ReservedCPUMillis != 500 || got[1].AgentID != "node-b" || got[1].Token != "token-b" {
 		t.Fatalf("unexpected bootstrap tokens %#v", got)
@@ -102,7 +110,7 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 		"-node-id", "node-1",
 		"-node-name", "node-1",
 		"-advertise-addr", "fd00:30::10",
-		"-controlplane-address", "controlplane:9443",
+		"-controlplane-addresses", "replica-a:9443, replica-b:9443",
 		"-ca-file", "ca.crt",
 		"-bootstrap-token", "test-token",
 		"-data-dir", dataDir,
@@ -130,6 +138,9 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 	}
 	if cfg.ControlPlane.TLS.BootstrapToken != "test-token" {
 		t.Fatalf("unexpected bootstrap token %q", cfg.ControlPlane.TLS.BootstrapToken)
+	}
+	if got, want := strings.Join(cfg.ControlPlane.Addresses, ","), "replica-a:9443,replica-b:9443"; got != want {
+		t.Fatalf("unexpected control-plane discovery seeds %q, want %q", got, want)
 	}
 	if got := cfg.Node.Resources.AdvertisedCPUMillis(); got != 3250 {
 		t.Fatalf("unexpected advertised CPU capacity %d", got)

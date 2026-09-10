@@ -71,6 +71,64 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 	if changed {
 		t.Fatal("credential renewal manufactured an allocation change")
 	}
+
+	// Discovery metadata is connection topology, not desired workload
+	// configuration. A refreshed replica view must be accepted at the same
+	// authority cursor.
+	desired.ReplicaAddresses = []string{"replica-a:9443"}
+	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
+	if err != nil {
+		t.Fatalf("accept desired with replica metadata: %v", err)
+	}
+	if changed {
+		t.Fatal("replica metadata manufactured an allocation change")
+	}
+}
+
+func TestLocalStateReplacesConfiguredSeedsAndReplicaView(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store, err := openLocalStateStore(dir, "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.setReplicaSeeds([]string{" seed-a ", "seed-b", "seed-a"}); err != nil {
+		t.Fatalf("set replica seeds: %v", err)
+	}
+	if err := store.setReplicaAddresses([]string{"seed-b", "replica-a", "replica-a"}); err != nil {
+		t.Fatalf("set replica addresses: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openLocalStateStore(dir, "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	addresses, err := reopened.replicaAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(addresses, ","), "seed-a,seed-b,replica-a"; got != want {
+		t.Fatalf("replica discovery set = %q, want %q", got, want)
+	}
+
+	if err := reopened.setReplicaSeeds([]string{"seed-b"}); err != nil {
+		t.Fatalf("replace replica seeds: %v", err)
+	}
+	if err := reopened.setReplicaAddresses([]string{"replica-c"}); err != nil {
+		t.Fatalf("replace replica addresses: %v", err)
+	}
+	addresses, err = reopened.replicaAddresses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(addresses, ","), "seed-b,replica-c"; got != want {
+		t.Fatalf("updated replica discovery set = %q, want %q", got, want)
+	}
 }
 
 func TestLocalStateFencesStaleAuthorityAndCursor(t *testing.T) {

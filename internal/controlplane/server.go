@@ -70,6 +70,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
+	leases.SetAdvertise(cfg.AdvertiseAddr)
 	archiveStore, err := source.NewFileArchiveStore(cfg.SourceArchives.Directory)
 	if err != nil {
 		_ = store.Close()
@@ -185,6 +186,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		store.fleet, delivery, logStore, notifier, authority, dashboard,
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
 		WithAgentRegistry(registry),
+		WithReplicaAddresses(cfg.ReplicaAddresses),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
@@ -320,7 +322,11 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	leaseDone := make(chan error, 1)
 	go func() {
-		s.leases.SetAdvertise(s.InternalAddr())
+		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
+		if advertise == "" {
+			advertise = s.InternalAddr()
+		}
+		s.leases.SetAdvertise(advertise)
 		s.leases.SetFenceHooks(func() { s.delivery.Live().SetPublishing(false) }, func() { s.delivery.Live().SetPublishing(true) })
 		err := s.leases.Run(runCtx, SingletonLeaseName, s.runSingletonJobs)
 		leaseDone <- err

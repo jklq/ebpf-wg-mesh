@@ -156,22 +156,24 @@ type SourceArchiveConfig struct {
 }
 
 type ControlPlaneConfig struct {
-	Profile        Profile
-	Health         HealthConfig
-	InternalGRPC   ListenerConfig
-	UserAssertions UserAssertionConfig
-	Database       DatabaseConfig
-	Logs           LogCaptureConfig
-	StateDir       string
-	SourceArchives SourceArchiveConfig
-	Ingress        IngressConfig
-	Dashboard      ManagedDashboardConfig
-	Bootstrap      BootstrapConfig
-	GitHub         GitHubAppConfig
-	Registry       RegistryConfig
-	Builder        ControlPlaneBuilderConfig
-	Failover       ControlPlaneFailoverConfig
-	Mesh           ControlPlaneMeshConfig
+	Profile          Profile
+	Health           HealthConfig
+	InternalGRPC     ListenerConfig
+	ReplicaAddresses []string
+	AdvertiseAddr    string
+	UserAssertions   UserAssertionConfig
+	Database         DatabaseConfig
+	Logs             LogCaptureConfig
+	StateDir         string
+	SourceArchives   SourceArchiveConfig
+	Ingress          IngressConfig
+	Dashboard        ManagedDashboardConfig
+	Bootstrap        BootstrapConfig
+	GitHub           GitHubAppConfig
+	Registry         RegistryConfig
+	Builder          ControlPlaneBuilderConfig
+	Failover         ControlPlaneFailoverConfig
+	Mesh             ControlPlaneMeshConfig
 }
 
 type ControlPlaneMeshConfig struct {
@@ -207,8 +209,8 @@ func (r NodeResourcesConfig) AdvertisedMemoryMebibytes() int64 {
 }
 
 type ControlPlaneClientConfig struct {
-	Address string
-	TLS     ClientTLSConfig
+	Addresses []string
+	TLS       ClientTLSConfig
 }
 
 type InternalClientTLSConfig struct {

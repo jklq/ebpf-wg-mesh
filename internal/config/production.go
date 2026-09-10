@@ -63,8 +63,10 @@ func validateProductionAgent(cfg AgentConfig) error {
 	if err := validateProductionTLSName("agent.controlPlane.tls.serverName", cfg.ControlPlane.TLS.ServerName); err != nil {
 		return err
 	}
-	if err := validateProductionDurableTarget("agent.controlPlane.address", cfg.ControlPlane.Address); err != nil {
-		return err
+	for _, address := range cfg.ControlPlane.Addresses {
+		if err := validateProductionDurableTarget("agent.controlPlane.addresses", address); err != nil {
+			return err
+		}
 	}
 	if cfg.Runtime.DisableCgroups {
 		return errors.New("agent.runtime.disableCgroups is not allowed in production")

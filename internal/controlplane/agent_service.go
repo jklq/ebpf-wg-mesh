@@ -33,6 +33,24 @@ type AgentService struct {
 	dashboardTrustedAgentID string
 	dashboardCallerID       string
 	registry                *RegistryPolicy
+	replicaAddresses        []string
+	liveOwner               liveOwner
+}
+
+type liveOwner interface {
+	Lookup(context.Context) (held bool, advertiseAddr string, err error)
+}
+
+type leaseLiveOwner struct {
+	leases *LeaseManager
+	name   string
+}
+
+func (o leaseLiveOwner) Lookup(ctx context.Context) (bool, string, error) {
+	if o.leases == nil {
+		return false, "", nil
+	}
+	return o.leases.Lookup(ctx, o.name)
 }
 
 type AgentServiceOption func(*AgentService)
@@ -52,6 +70,48 @@ func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
 	}
 }
 
+func WithReplicaAddresses(addresses []string) AgentServiceOption {
+	return func(service *AgentService) {
+		service.replicaAddresses = normalizeReplicaAddresses(addresses)
+	}
+}
+
+func WithLiveOwner(owner liveOwner) AgentServiceOption {
+	return func(service *AgentService) {
+		service.liveOwner = owner
+	}
+}
+
+func (s *AgentService) requireLiveOwner(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if s.liveOwner != nil {
+		held, ownerAddr, err := s.liveOwner.Lookup(ctx)
+		if err != nil {
+			return status.Errorf(codes.Unavailable, "lookup live owner: %v", err)
+		}
+		if held {
+			return nil
+		}
+		if strings.TrimSpace(ownerAddr) == "" {
+			return status.Error(codes.Unavailable, "live owner is not ready")
+		}
+		return agentv1.LiveOwnerRedirect(ownerAddr)
+	}
+	if s.store == nil || s.store.live == nil || s.store.live.Serving() {
+		return nil
+	}
+	addr, err := s.store.liveOwnerAddr(ctx)
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "lookup live owner: %v", err)
+	}
+	if addr != "" {
+		return status.Error(codes.FailedPrecondition, deliverycore.LiveOwnerRedirectMessage(addr))
+	}
+	return status.Error(codes.Unavailable, "live owner is not ready")
+}
+
 func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *logs.LogStore, notifier *Notifier, authority *identity.TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
 	service := &AgentService{
 		store: store, delivery: delivery, logStore: logStore, notifier: notifier, authority: authority, dashboard: dashboard,
@@ -69,10 +129,20 @@ func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *
 }
 
 func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
-	return s.enrollment.EnrollAgent(ctx, req)
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	resp, err := s.enrollment.EnrollAgent(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.withReplicaAddresses(resp), nil
 }
 
 func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	if err := identity.CheckClientCertificateRevocation(s.authority.Revocations(), identity.VerifiedClientCertificateFromContext(ctx)); err != nil {
 		return nil, err
 	}
@@ -91,20 +161,13 @@ func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req
 		return nil, err
 	}
 	slog.Info("managed dashboard certificate issued", "agent_id", caller.ID, "dashboard_caller_id", s.dashboardCallerID)
-	return resp, nil
+	return s.withReplicaAddresses(resp), nil
 }
 
 func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	ctx := stream.Context()
-	if s.store.live != nil && !s.store.live.Serving() {
-		addr, err := s.store.liveOwnerAddr(ctx)
-		if err != nil {
-			return status.Errorf(codes.Unavailable, "lookup live owner: %v", err)
-		}
-		if addr != "" {
-			return status.Error(codes.FailedPrecondition, deliverycore.LiveOwnerRedirectMessage(addr))
-		}
-		return status.Error(codes.Unavailable, "live owner is not ready")
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return err
 	}
 	if err := identity.CheckClientCertificateRevocation(s.authority.Revocations(), identity.VerifiedClientCertificateFromContext(ctx)); err != nil {
 		return err
@@ -282,11 +345,15 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 
 func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID string, epoch uint64, notifyCh <-chan struct{}) error {
 	var lastCursor int64 = -1
+	var lastReplicas []string
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
+		if err := s.requireLiveOwner(ctx); err != nil {
+			return err
+		}
 		slog.Info("checking desired state", "agent_id", agentID)
-		nextCursor, err := sendLatestDesiredState(ctx, agentID, lastCursor, func() (*agentv1.DesiredNodeState, error) {
+		nextCursor, nextReplicas, err := sendLatestDesiredState(ctx, agentID, lastCursor, lastReplicas, func() (*agentv1.DesiredNodeState, error) {
 			state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 			if err != nil {
 				return nil, err
@@ -297,8 +364,12 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			if err := s.attachRegistryPullCredentials(agentID, state); err != nil {
 				return nil, err
 			}
+			state.ReplicaAddresses = append([]string(nil), s.replicaAddresses...)
 			return state, nil
 		}, func(state *agentv1.DesiredNodeState) error {
+			if state == nil {
+				return errors.New("desired state is missing")
+			}
 			deadline, err := s.store.grantAgentCommand(ctx, agentID, sessionID, epoch, state.GetReconciliationCursor())
 			if err != nil {
 				return err
@@ -313,6 +384,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			return status.Errorf(codes.Internal, "desired state: %v", err)
 		}
 		lastCursor = nextCursor
+		lastReplicas = nextReplicas
 		select {
 		case <-ctx.Done():
 			return nil
@@ -323,6 +395,31 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *AgentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agentv1.EnrollResponse {
+	if resp == nil {
+		return nil
+	}
+	resp.ReplicaAddresses = append([]string(nil), s.replicaAddresses...)
+	return resp
+}
+
+func normalizeReplicaAddresses(addresses []string) []string {
+	result := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		result = append(result, address)
+	}
+	return result
 }
 
 func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, report *agentv1.StatusReport) {
@@ -394,24 +491,39 @@ func sendLatestDesiredState(
 	ctx context.Context,
 	agentID string,
 	lastCursor int64,
+	lastReplicas []string,
 	load func() (*agentv1.DesiredNodeState, error),
 	send func(*agentv1.DesiredNodeState) error,
-) (int64, error) {
+) (int64, []string, error) {
 	_ = ctx
 	for {
 		state, err := load()
 		if err != nil {
-			return lastCursor, err
+			return lastCursor, lastReplicas, err
 		}
-		if state.GetReconciliationCursor() == lastCursor {
+		replicas := append([]string(nil), state.GetReplicaAddresses()...)
+		if state.GetReconciliationCursor() == lastCursor && replicaAddressesEqual(replicas, lastReplicas) {
 			slog.Info("desired state unchanged", "agent_id", agentID, "cursor", state.GetReconciliationCursor())
-			return lastCursor, nil
+			return lastCursor, lastReplicas, nil
 		}
 		slog.Info("sending desired state", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.Services), "volumes", len(state.Volumes))
 		if err := send(state); err != nil {
-			return lastCursor, err
+			return lastCursor, lastReplicas, err
 		}
 		slog.Info("desired state sent", "agent_id", agentID, "cursor", state.GetReconciliationCursor())
 		lastCursor = state.GetReconciliationCursor()
+		lastReplicas = replicas
 	}
+}
+
+func replicaAddressesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }

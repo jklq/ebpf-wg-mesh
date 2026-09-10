@@ -225,13 +225,13 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 		// The engine under test never dials the control plane; these only satisfy
 		// FinalizeAgent, which validates the whole agent config.
 		ControlPlane: config.ControlPlaneClientConfig{
-			Address: "[fd00:44::1]:8443",
+			Addresses: []string{"[fd00:44::1]:8443"},
 			TLS: config.ClientTLSConfig{
 				CAFile:         filepath.Join(dataDir, "ca.crt"),
 				BootstrapToken: "runtime-test-token",
 			},
 		},
-		Mesh:         config.MeshConfig{Host: config.HostConfig{IPv6: "fd00:44::10"}},
+		Mesh: config.MeshConfig{Host: config.HostConfig{IPv6: "fd00:44::10"}},
 		Runtime: config.RuntimeConfig{
 			DataDir:     dataDir,
 			VolumesDir:  filepath.Join(dataDir, "volumes"),
