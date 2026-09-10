@@ -42,7 +42,6 @@ func TestReplayDurableStateAndDeadline(t *testing.T) {
 	}
 	replayed := DurableState{ClusterID: "test"}
 	for _, entry := range []Entry{first, second} {
-		// Epochs are append authorization, not a replay precondition.
 		replayed, err = replayed.Apply(entry)
 		if err != nil {
 			t.Fatal(err)

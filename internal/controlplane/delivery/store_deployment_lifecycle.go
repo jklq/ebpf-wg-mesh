@@ -217,9 +217,6 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 		journal.RecordDeployment(ctx, current.ID)
 		return nil
 	}
-	// The last active deployment remains active while its allocations keep
-	// serving. It becomes draining only after healthy replacements enter
-	// ingress; merely requesting a rollout must not lie about that cutover.
 	if current.State == DeploymentStateActive {
 		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 			return err

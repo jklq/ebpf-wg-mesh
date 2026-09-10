@@ -33,8 +33,6 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (*Runtime, error) 
 	return &Runtime{wireguard: wgRuntime, firewall: fw}, nil
 }
 
-// Update applies mutable mesh state without replacing the WireGuard interface
-// or the eBPF programs and maps attached to it.
 func (r *Runtime) Update(cfg config.MeshRuntimeConfig) error {
 	if r == nil || r.wireguard == nil || r.firewall == nil {
 		return errors.New("mesh runtime is not running")

@@ -318,7 +318,6 @@ func illegalTransitionError(from, to string) error {
 	return fmt.Errorf("%w: %s -> %s", errIllegalDeploymentTransition, from, to)
 }
 
-// decideDeploymentTransition applies lifecycle policy to a copy of the locked record.
 func decideDeploymentTransition(rec DeploymentRecord, input deploymentTransitionInput, now time.Time) (DeploymentRecord, bool, error) {
 	toState := input.ToState
 	if toState == "" {
@@ -372,9 +371,6 @@ func decideAgentDeploymentTransition(rec DeploymentRecord, observation deploymen
 	if deploymentStateTerminal(rec.State) {
 		return deploymentTransitionInput{}, false
 	}
-	// Removal is durable operator intent. A late status from an allocation that
-	// is being withdrawn must not turn the current deployment into active or
-	// crashed and strand the persisted drain.
 	if rec.State == DeploymentStateDraining && rec.ReasonCode == reasonUserRemove {
 		return deploymentTransitionInput{}, false
 	}

@@ -6,8 +6,6 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// GeneratePrivateKey returns a fresh WireGuard private key in the text form
-// stored in agent config.
 func GeneratePrivateKey() (string, error) {
 	key, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
@@ -16,7 +14,6 @@ func GeneratePrivateKey() (string, error) {
 	return key.String(), nil
 }
 
-// PublicKey derives the public key peers must configure for privateKey.
 func PublicKey(privateKey string) (string, error) {
 	key, err := wgtypes.ParseKey(privateKey)
 	if err != nil {

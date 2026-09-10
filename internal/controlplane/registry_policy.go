@@ -15,8 +15,6 @@ type registryCredentialMinter interface {
 	MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error)
 }
 
-// RegistryPolicy owns platform image names and asks the embedded registry auth
-// service for credentials bound to one exact repository.
 type RegistryPolicy struct {
 	host            string
 	namespacePrefix string
@@ -39,8 +37,6 @@ func (p *RegistryPolicy) Enabled() bool {
 	return p != nil && p.host != "" && p.credentialTTL > 0
 }
 
-// PushRef places the build ID in the repository path. Registry ACLs are thus
-// unique to a build even when a project rebuilds the same service and commit.
 func (p *RegistryPolicy) PushRef(projectID, environmentID, buildID, serviceID, commitSHA string) string {
 	if !p.Enabled() {
 		return ""
@@ -86,10 +82,6 @@ func (p *RegistryPolicy) CredentialsForBuild(_ context.Context, projectID, build
 	return p.minter.MintCredential("build-"+buildID, repository, registryPushActions, &expiresAt)
 }
 
-// CredentialsForPull returns a durable read-only capability for one platform
-// image repository. The registry access tokens minted from it remain short
-// lived; keeping the capability durable lets an assigned agent cold-pull after
-// a restart without granting access to a sibling repository.
 func (p *RegistryPolicy) CredentialsForPull(subject, environmentID, serviceID, imageRef string) (string, string, error) {
 	if !p.Enabled() || p.minter == nil {
 		return "", "", nil

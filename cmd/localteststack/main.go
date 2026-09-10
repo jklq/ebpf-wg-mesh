@@ -47,8 +47,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("getwd: %v", err)
 	}
-	// Optional local overrides, including a 1Password Environments-mounted .env FIFO.
-	// Existing process env wins; missing .env is fine.
 	if n, err := localteststack.LoadDotEnvFile(filepath.Join(repoRoot, ".env")); err != nil {
 		log.Fatalf("load .env: %v", err)
 	} else if n > 0 {
@@ -63,8 +61,6 @@ func main() {
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
 		log.Fatalf("mkdir artifacts: %v", err)
 	}
-	// Drop stale summary so Playwright cannot race a previous run's session cookie
-	// against a freshly generated JWT secret once /healthz becomes ready.
 	_ = os.Remove(filepath.Join(artifactsDir, "stack.json"))
 
 	cockroach, err := testdb.Start("")
@@ -83,16 +79,11 @@ func main() {
 		log.Fatalf("mkdir state dir: %v", err)
 	}
 	defer os.RemoveAll(stateDir)
-	// A killed previous run leaves fixed-name containers and published ports
-	// (especially :8080). Clean them before reserving host ports or starting
-	// managed containers so health waits do not hang on a wedged bind.
 	if removed, err := localteststack.CleanupStaleLocalteststackContainers(ctx, localteststack.ExecDockerRunner{}); err != nil {
 		log.Fatalf("cleanup stale localteststack containers: %v", err)
 	} else if removed > 0 {
 		log.Printf("removed %d stale localteststack container(s) from a previous run", removed)
 	}
-	// Hold the console listen port until vite/bun starts. pick-and-release leaves
-	// a long race with Docker port publishes while cockroach/ingress/agent boot.
 	consoleListener, consolePort, err := reservePort(stackCfg.ConsoleBindAddress)
 	if err != nil {
 		log.Fatalf("reserve console port: %v", err)
@@ -242,9 +233,6 @@ func main() {
 		"DASHBOARD_LOCAL_DOMAIN_SUFFIX":                stackCfg.LocalDomainSuffix,
 		"DASHBOARD_OPERATOR_GITHUB_LOGIN":              stackCfg.OperatorGitHubLogin,
 	}
-	// Public tunnel mode must not expose open dev logins on the internet-facing
-	// hostname. Product e2e authenticates via a per-run session cookie written
-	// only to the local stack artifact (signed with this run's JWT secret).
 	productE2EEnabled := os.Getenv("LOCALTESTSTACK_PRODUCT_E2E") == "1"
 	if !stackCfg.EnablePublicTunnel {
 		consoleEnv["DASHBOARD_DEV_USERS"] = "dev-user:dev@example.com"
@@ -253,9 +241,6 @@ func main() {
 	}
 
 	overlay := localteststack.OverlayResult{}
-	// Prefer secrets already in process env (shell exports and/or mounted .env).
-	// The SDK path is only needed for headless/automation when OP_* is configured
-	// and the local contract is still incomplete.
 	processOverlay := localteststack.OverlayEnvFromLookup(os.Getenv)
 	overlayEnv := processOverlay
 	loader := localteststack.NewEnvironmentLoader(localteststack.EnvironmentLoaderConfigFromLookup(os.Getenv))
@@ -291,7 +276,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s", describeOnePasswordLoadError(err))
 		}
-		// Process/shell/.env values win over remote SDK values.
 		overlayEnv = localteststack.MergeOverlayEnv(env, processOverlay)
 		log.Printf("loaded 1Password environment via SDK")
 		missingGitHubKeys := localteststack.MissingGitHubKeys(overlayEnv)
@@ -362,9 +346,6 @@ func main() {
 	if parsedPublicURL, err := url.Parse(overlay.PublicBaseURL); err == nil && parsedPublicURL.Host != "" && len(cfg.Ingress.StaticRoutes) > 0 {
 		cfg.Ingress.StaticRoutes[0].Hosts = appendUniqueStrings(cfg.Ingress.StaticRoutes[0].Hosts, parsedPublicURL.Host)
 	}
-	// Optional separate platform domain suffix keeps generated service hosts on
-	// free Universal SSL (e.g. *.relay5.com) while the dashboard/public base
-	// stays on a non-apex tunnel hostname (e.g. mesh.relay5.com).
 	if stackCfg.PlatformDomainSuffix != "" {
 		cfg.Ingress.PublicAddr = stackCfg.PlatformDomainSuffix
 		log.Printf("platform domain suffix: %s", stackCfg.PlatformDomainSuffix)
@@ -380,10 +361,8 @@ func main() {
 	}
 	registryHost := fmt.Sprintf("localhost:%d", registryPort)
 	cfg.Registry = config.RegistryConfig{
-		Host:            registryHost,
-		NamespacePrefix: "mesh",
-		// Registry clients run inside Docker Desktop/BuildKit and reach this
-		// host process through Docker's host gateway.
+		Host:                 registryHost,
+		NamespacePrefix:      "mesh",
 		AuthListen:           "0.0.0.0:0",
 		TokenIssuer:          "ebpf-wg-mesh-local",
 		TokenService:         registryHost,
@@ -424,10 +403,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("parse registry auth port: %v", err)
 	}
-	// Docker Desktop BuildKit can push to localhost:<published-port> (same as the
-	// registry) but often cannot dial host-gateway IPs for host listeners
-	// (i/o timeout) and cannot resolve host.docker.internal. Publish a tiny
-	// localhost proxy container that forwards to the control-plane token service.
 	registryAuthProxyPort, err := pickLoopbackPort()
 	if err != nil {
 		log.Fatalf("pick registry auth proxy port: %v", err)
@@ -504,8 +479,6 @@ func main() {
 		}
 		productFixture = &result
 		log.Printf("local product fixture ready: %s", result.RouteURL)
-		// Seed before the console becomes healthy so Playwright cannot start
-		// against /healthz with a missing dashboard user or stale stack.json.
 		if err := seedProductE2EDashboardUser(
 			ctx,
 			dbURL,
@@ -534,7 +507,6 @@ func main() {
 	consoleEnv["DASHBOARD_CONTROLPLANE_CERT_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CertPEM)
 	consoleEnv["DASHBOARD_CONTROLPLANE_KEY_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.KeyPEM)
 
-	// Publish stack.json before /healthz is up so Playwright always reads this run.
 	summary := stackSummary{
 		ControlPlaneURL:   controlPlaneURL,
 		DashboardURL:      ingressURL,
@@ -556,7 +528,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("start console: %v", err)
 	}
-	// startConsole closes the reserved listener before binding the real server.
 	defer stopConsoleProcess(consoleProc)
 	if err := waitForIngressDashboard(ctx, ingressURL+"healthz"); err != nil {
 		log.Fatalf("wait for ingress dashboard health: %v", err)

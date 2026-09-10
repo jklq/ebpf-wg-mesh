@@ -25,7 +25,6 @@ export default defineConfig({
         },
         url: dashboardReadyURL,
         reuseExistingServer: false,
-        // Product fixture deploy/redeploy plus Cloudflare tunnel startup.
         timeout: 300_000,
       },
   use: {

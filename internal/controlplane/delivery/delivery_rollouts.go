@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// ReconcileRollouts advances every active rollout through placement, ingress
-// withdrawal, draining, and failover, then performs the wake effects required
-// by the committed changes.
 func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 	var now time.Time
 	if d.rolloutNow == nil {

@@ -135,8 +135,6 @@ func sameDesiredSourceSpec(a, b *platformv1.ServiceSpec) bool {
 	return equalDesiredSourceSpec(source.DesiredSourceSpec(a), source.DesiredSourceSpec(b))
 }
 
-// equalDesiredSourceSpec reports whether two desired source specs agree,
-// treating unset fields as their canonical defaults ("main", "Dockerfile", ".").
 func equalDesiredSourceSpec(a, b *platformv1.ServiceSourceSpec) bool {
 	if (a == nil) != (b == nil) {
 		return false

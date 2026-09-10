@@ -19,7 +19,6 @@ func TestReservePortHoldsBindUntilClosed(t *testing.T) {
 	if port <= 0 {
 		t.Fatalf("unexpected port %d", port)
 	}
-	// While reserved, another bind to the same port must fail.
 	_, err = net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err == nil {
 		t.Fatal("expected second listen on reserved port to fail")
@@ -27,7 +26,6 @@ func TestReservePortHoldsBindUntilClosed(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatalf("close reserved listener: %v", err)
 	}
-	// After release the port can be bound again.
 	second, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatalf("listen after release: %v", err)

@@ -249,8 +249,6 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 			t.Fatal("dead agent still has the failed-over service in desired state")
 		}
 	}
-	// Takeover starts observations unknown. Ingress publication waits for a
-	// fresh report from the surviving session.
 	if err := second.server.store.markAllocationHealthyForTest(ctx, ingressSvc.ID, "fd00:200:1::10", 8080); err != nil {
 		t.Fatal(err)
 	}
@@ -301,9 +299,6 @@ func restartAgentHello(id, addr string) *agentv1.AgentHello {
 	}
 }
 
-// TestControlPlaneRestartBootsFromCompactedJournal proves a process restart
-// after compaction reconstructs the same desired state from the snapshot plus
-// the retained tail instead of replaying the truncated log.
 func TestControlPlaneRestartBootsFromCompactedJournal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

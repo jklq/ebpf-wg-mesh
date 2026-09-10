@@ -326,9 +326,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 
 func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, error) {
 	s := d.store
-	// Build enqueue, claim, and completion all mutate the service's current
-	// deployment. Take the same lock before reading rollout state so concurrent
-	// webhook and user-triggered builds have one durable order.
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 		return BuildRunRecord{}, err
 	}
@@ -448,8 +445,6 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 				return err
 			}
 		}
-		// Retrying job preparation must return the same lease, not strand a running
-		// build and claim another one for the same worker.
 		existing, err := scanBuildRunRow(tx.QueryRowContext(ctx, `SELECT `+buildRunSelectColumns+` FROM build_runs WHERE state = $1 AND builder_id = $2 ORDER BY started_at, id LIMIT 1`, BuildStateRunning, builderID))
 		if err == nil {
 			rec, err = s.buildRunByIDQuerier(ctx, tx, existing.ID)

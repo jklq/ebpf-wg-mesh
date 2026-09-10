@@ -356,9 +356,6 @@ func (e *containerdEngine) RemoveService(ctx context.Context, allocationID strin
 	return errors.Join(errs...)
 }
 
-// DrainService asks the workload to exit with SIGTERM and keeps its container
-// and network namespace intact until it exits or the absolute deadline passes.
-// SIGKILL is never used before that deadline.
 func (e *containerdEngine) DrainService(ctx context.Context, allocationID string, deadline time.Time) (bool, bool, error) {
 	ctx = e.namespaced(ctx)
 	containerID := containerName(allocationID)

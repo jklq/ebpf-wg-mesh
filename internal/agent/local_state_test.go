@@ -61,8 +61,6 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 		t.Fatalf("state database mode = %o, want 600", got)
 	}
 
-	// Credential renewal is accepted at the same cursor and does not look like
-	// an allocation configuration change.
 	desired.Services[0].RegistryPassword = "renewed-secret"
 	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
 	if err != nil {
@@ -72,9 +70,6 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 		t.Fatal("credential renewal manufactured an allocation change")
 	}
 
-	// Discovery metadata is connection topology, not desired workload
-	// configuration. A refreshed replica view must be accepted at the same
-	// authority cursor.
 	desired.ReplicaAddresses = []string{"replica-a:9443"}
 	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
 	if err != nil {

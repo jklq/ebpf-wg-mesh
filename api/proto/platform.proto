@@ -85,26 +85,17 @@ enum RestartCause {
   RESTART_CAUSE_NODE_LOSS = 7;
 }
 
-// ServiceRestart is the explicit process restart setting for a service.
-// Unspecified fields receive platform defaults at canonicalization time.
 message ServiceRestart {
   RestartPolicy policy = 1;
-  // Maximum number of restarts in the current crash window. Zero means no
-  // count bound; the window, if set, is then the only budget.
   int32 max_restarts = 2;
-  // Crash window measured from the first restart in the current streak.
-  // Zero means no time bound; max_restarts, if set, is then the only budget.
   int32 window_seconds = 3;
   int32 initial_delay_ms = 4;
   int32 max_delay_ms = 5;
   double backoff_multiplier = 6;
-  // Fractional jitter applied to the backoff delay, in [0, 1].
   double jitter = 7;
-  // Running this long without a crash resets the crash history.
   int32 stable_after_seconds = 8;
 }
 
-// RestartObservation is the durable restart view shared by agent and control plane.
 message RestartObservation {
   int32 restart_count = 1;
   google.protobuf.Timestamp window_started_at = 2;
@@ -216,9 +207,6 @@ message ServiceSpec {
   string placement_region = 5;
 }
 
-// RollingStrategy contains the application-specific timing controls for a
-// rolling deployment. Replacement concurrency is platform-managed. Unset
-// fields receive platform defaults during canonicalization.
 message RollingStrategy {
   optional int32 healthcheck_timeout_seconds = 1;
   optional int32 draining_seconds = 2;
@@ -569,7 +557,6 @@ message ApplyDeploymentActionRequest {
   string deployment_id = 2;
   DeploymentAction action = 3;
   string idempotency_key = 4;
-  // Empty restarts every allocation. Only valid for RESTART.
   string allocation_id = 5;
 }
 
@@ -755,7 +742,6 @@ message CreateAgentRequest {
 
 message AgentEnrollment {
   Agent agent = 1;
-  // Returned only when a new enrollment is created. Store it as a secret.
   string bootstrap_token = 2 [debug_redact = true];
 }
 
@@ -804,11 +790,7 @@ message BuildJob {
   string service_name = 4;
   string commit_sha = 5;
   BuildJobSource source = 6;
-  // The exact build-specific repository and tag assigned by the control plane.
   string registry_push_reference = 7;
-  // Short-lived credentials whose registry-side ACL permits pull/push only on
-  // registry_push_reference's repository. These are never shared platform
-  // registry credentials.
   string registry_username = 8;
   string registry_password = 9;
   string environment_id = 10;

@@ -13,9 +13,6 @@ import (
 
 var ErrClientCertificateRevoked = errors.New("client certificate is revoked")
 
-// CertificateRevocations is a file-backed denylist of client leaf certificate
-// serials. The file is read for every check so an atomic file replacement takes
-// effect for new handshakes and RPCs without restarting the control plane.
 type CertificateRevocations struct {
 	path string
 }

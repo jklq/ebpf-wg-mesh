@@ -96,10 +96,6 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 func openTestStore(t *testing.T) *persistence {
 	t.Helper()
 
-	// Most integration tests only need isolated data, not an independently
-	// migrated database. Reuse one database and hold the lease until the test's
-	// cleanup runs; rebuilding the full CockroachDB schema for every parallel
-	// test makes the suite spend minutes contending on DDL.
 	testStoreMu.Lock()
 	t.Cleanup(testStoreMu.Unlock)
 
@@ -153,9 +149,6 @@ func sharedTestDatabase(t *testing.T) string {
 func resetTestStore(t *testing.T, store *persistence) {
 	t.Helper()
 
-	// TRUNCATE is a schema change in CockroachDB and takes roughly a second even
-	// for empty tables. These tables hold only a handful of test rows, so ordered
-	// deletes are substantially faster.
 	tables := []string{
 		"control_plane_leases",
 		"control_plane_storage",
@@ -231,9 +224,6 @@ func createTestDatabase(t *testing.T) string {
 	return dbURL
 }
 
-// recordAllProductRows records every durable product key before the test
-// harness bulk-deletes the product tables, so the reset command journals the
-// same deletions a full-state diff would have captured.
 func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 	single := []struct {
 		query  string

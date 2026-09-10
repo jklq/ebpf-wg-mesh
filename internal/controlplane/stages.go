@@ -2,17 +2,13 @@ package controlplane
 
 import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// deploymentStages projects the persisted lifecycle onto the four-stage
-// console timeline. The deployment row is the source of truth; build and
-// allocation records only supply timestamps and detail when the lifecycle
-// has not recorded them yet.
 func deploymentStages(service deliverycore.ServiceRecord, build *deliverycore.BuildRunRecord) []*platformv1.DeploymentStage {
 	if service.LatestDeployment == nil {
 		return nil

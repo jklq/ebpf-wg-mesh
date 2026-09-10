@@ -12,9 +12,6 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 )
 
-// workloadSupervisor owns accepted desired state and all runtime activity for
-// the lifetime of the agent process. Connections only feed it updates and
-// consume its durable observations.
 type workloadSupervisor struct {
 	agentID         string
 	runtime         Runtime
@@ -55,9 +52,6 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 		s.ready.Store(true)
 	}
 
-	// Restore and reconcile before opening a control-plane connection. Runtime
-	// discovery plus allocation-derived identities make this idempotent after a
-	// crash on either side of a runtime/store write.
 	if desired, err := s.store.desiredState(); err != nil {
 		return err
 	} else if desired != nil {
@@ -106,10 +100,6 @@ func (s *workloadSupervisor) AcceptDesired(clusterID, sessionID string, state *a
 	return changed, nil
 }
 
-// ReconcileAcceptedDesired is called after connection-scoped credential
-// renewal completes. This keeps credential lifecycle separate from the
-// desired-state transaction while making every authenticated snapshot an
-// inventory reconciliation point.
 func (s *workloadSupervisor) ReconcileAcceptedDesired() { s.requestReconcile() }
 
 func (s *workloadSupervisor) RestartManagedDashboard(ctx context.Context, state *agentv1.DesiredNodeState) error {

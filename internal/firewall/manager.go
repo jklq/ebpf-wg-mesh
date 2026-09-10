@@ -220,11 +220,6 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 	return m, nil
 }
 
-// UpdateIdentityCatalog changes the configured identity catalog in the
-// existing BPF map without reloading programs. Removed /128 identities are
-// deleted even when a local container still owns the address, so catalog
-// shrink is fail-closed. Remaining local containers keep their live veth
-// redirect and pick up the catalog's network identity.
 func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	if m == nil {
 		return errors.New("firewall manager is not running")
@@ -261,8 +256,6 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	for key, value := range next {
 		if key.Prefixlen == 128 {
 			if runtime := localRuntimeByIP(m.containers, key.IpAddress); runtime != nil {
-				// Keep the live veth redirect, but take the catalog identity so a
-				// shrink/restore changes policy without recreating the container.
 				value.HostIp = m.localHostIP
 				value.VethIfindex = runtime.ifindex
 			}
@@ -737,8 +730,6 @@ func identityKeyForPrefix(prefix netip.Prefix) firewallIdentityKey {
 	prefix = prefix.Masked()
 	bits := prefix.Bits()
 	if prefix.Addr().Is4() {
-		// netip.Addr.As16 represents IPv4 as ::ffff:a.b.c.d. The fixed 96-bit
-		// mapped prefix participates in LPM matching before the IPv4 CIDR bits.
 		bits += 96
 	}
 	return firewallIdentityKey{

@@ -391,8 +391,6 @@ func dockerBuildxCommand(dockerBinary, contextDir, repoDir, dockerfilePath, push
 		Args: []string{
 			"buildx", "build",
 			"--progress=plain",
-			// Help BuildKit / intermediate steps reach host services when a
-			// registry challenge still references host.docker.internal.
 			"--add-host", "host.docker.internal:host-gateway",
 			"--file", filepath.Join(repoDir, filepath.FromSlash(dockerfilePath)),
 			"--tag", pushRef,

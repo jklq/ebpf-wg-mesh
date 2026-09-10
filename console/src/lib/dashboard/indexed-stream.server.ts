@@ -57,9 +57,7 @@ function indexedEventStream<T>({
 				signal.removeEventListener("abort", close);
 				try {
 					controller.close();
-				} catch {
-					// The client may already have cancelled the stream.
-				}
+				} catch {}
 			};
 			closeStream = close;
 

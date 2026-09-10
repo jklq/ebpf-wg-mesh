@@ -287,8 +287,6 @@ type ContainerdConfig struct {
 	StaticAssignments []ContainerAssignment
 }
 
-// LabelKeys resolves the identity label keys shared by the agent, which stamps
-// them, and the firewall, which reads them back.
 func (cfg ContainerdConfig) LabelKeys() meshlabels.Keys {
 	return meshlabels.NewKeys(cfg.EnvironmentLabel, cfg.IPv4Label, cfg.IPv6Label)
 }

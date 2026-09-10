@@ -450,9 +450,6 @@ func (d *Delivery) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, 
 func (d *Delivery) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, rollout rolloutRecord, existing []AllocationRecord, now time.Time) error {
 	s := d.store
 	for _, alloc := range existing {
-		// Starting allocations have never entered ingress and can be removed
-		// immediately. Serving allocations become predecessors of the newer
-		// generation, while an already-started withdrawal or drain must finish.
 		if alloc.RolloutState != AllocationRolloutStarting {
 			continue
 		}

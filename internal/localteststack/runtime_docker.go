@@ -109,9 +109,6 @@ func NewDockerRuntime(cfg DockerRuntimeConfig) (*DockerRuntime, error) {
 }
 
 func (r *DockerRuntime) Close() error {
-	// Closing the agent releases only its client-side resources. Containers,
-	// volumes, and networks remain available for discovery and reattachment by
-	// the next agent process.
 	return nil
 }
 
@@ -181,8 +178,6 @@ func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1
 		if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
 			return nil, err
 		}
-		// Prune before ensuring services so a reclaimed address-pool subnet
-		// unblocks the network create for a replacement allocation below.
 		if err := r.pruneStaleEnvironmentNetworks(ctx, desiredServices); err != nil {
 			return nil, err
 		}
@@ -426,10 +421,6 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 	return dockerServiceStatusFor(inspect, svc), true, nil
 }
 
-// dockerServiceStatusFor reports the controlplane-assigned workload addresses.
-// Like the production containerd engine, the local runtime echoes
-// PrivateIpv4/PrivateIpv6 verbatim: the status ownership check requires an
-// exact match, and Docker bridge addresses never equal the assignment.
 func dockerServiceStatusFor(inspect dockerContainerInspect, svc *agentv1.DesiredService) dockerServiceStatus {
 	return dockerServiceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),

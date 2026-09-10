@@ -145,7 +145,6 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate a dead agent whose last heartbeat is already past the healthy TTL.
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
 	fixtureLive(store).SetLastContactForTest("node-a", lastSeen)
@@ -169,8 +168,6 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	if replacement.AppliedSpecRevision != 0 || replacement.AppliedRolloutGeneration != 0 {
 		t.Fatalf("applied state was not cleared on the replacement: %+v", replacement)
 	}
-	// Addresses come from the owning node's prefixes, so failover must re-address
-	// the workload on both families rather than carry the dead node's addresses over.
 	survivor, err := store.reads.AgentByID(ctx, "node-b")
 	if err != nil {
 		t.Fatal(err)

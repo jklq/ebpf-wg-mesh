@@ -20,9 +20,6 @@ type serviceCallerContextKey struct{}
 
 type delegatedUserContextKey struct{}
 
-// verifiedClientCertificateContextKey carries the verified client certificate
-// leaf into request contexts. The internal HTTP handler derives it from
-// request.TLS, so both the gRPC and Connect paths see the same identity.
 type verifiedClientCertificateContextKey struct{}
 
 type CallerClass string
@@ -90,8 +87,6 @@ func (a *InternalAuth) StreamServerInterceptor() grpc.StreamServerInterceptor {
 	}
 }
 
-// ConnectInterceptor enforces the same authorization rules for Connect
-// requests that the gRPC interceptors enforce for gRPC requests.
 func (a *InternalAuth) ConnectInterceptor() connect.Interceptor {
 	return connect.UnaryInterceptorFunc(a.connectUnary)
 }
@@ -110,10 +105,6 @@ func (a *InternalAuth) authorizeGRPCContext(ctx context.Context, fullMethod stri
 	return a.authorize(ctx, fullMethod, callerIdentityFromGRPCContext(ctx))
 }
 
-// callerIdentity is the transport-agnostic view of who is calling: the
-// verified client certificate (if any), the derived service caller, and any
-// user assertions accompanying the request. identityErr carries peer identity
-// failures (for example an unusable certificate subject).
 type callerIdentity struct {
 	identityErr         error
 	caller              ServiceCaller
@@ -153,9 +144,6 @@ func metadataAssertions(ctx context.Context) []string {
 	return md.Get(userAssertionHeader)
 }
 
-// VerifiedClientCertificateFromContext returns the verified client certificate
-// leaf, or nil when the caller presented none. The internal HTTP handler
-// populates it from the TLS handshake for both gRPC and Connect requests.
 func VerifiedClientCertificateFromContext(ctx context.Context) *x509.Certificate {
 	cert, _ := ctx.Value(verifiedClientCertificateContextKey{}).(*x509.Certificate)
 	return cert

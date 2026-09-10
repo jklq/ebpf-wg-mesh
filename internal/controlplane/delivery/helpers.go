@@ -50,9 +50,6 @@ func nextIPv4AddressFromSubnet(subnetCIDR string, used map[string]struct{}) (str
 	baseBytes := subnet.Addr().As4()
 	base := binary.BigEndian.Uint32(baseBytes[:])
 	size := uint64(1) << uint(32-subnet.Bits())
-	// Offset zero is the network address, offset one is the CNI gateway, and
-	// the final address is broadcast. Allocate every usable workload address
-	// in ascending order and reuse gaps only after an allocation is gone.
 	for offset := uint64(2); offset+1 < size; offset++ {
 		var raw [4]byte
 		binary.BigEndian.PutUint32(raw[:], base+uint32(offset))

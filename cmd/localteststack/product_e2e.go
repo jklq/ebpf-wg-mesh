@@ -222,8 +222,6 @@ func runProductE2EScenario(
 	}, nil
 }
 
-// productRouteURL builds the externally reachable service URL. Public tunnel
-// mode uses HTTPS on the generated platform hostname (no local ingress port).
 func productRouteURL(hostname string, ingressPort int, publicBaseURL string) (string, error) {
 	hostname = strings.TrimSpace(strings.ToLower(hostname))
 	if hostname == "" {
@@ -242,9 +240,6 @@ func productRouteURL(hostname string, ingressPort int, publicBaseURL string) (st
 	return "https://" + hostname + "/", nil
 }
 
-// mintDashboardAccessToken creates a short-lived access cookie value that only
-// works with this run's DASHBOARD_JWT_SECRET. It is written to a local artifact
-// for Playwright and is never exposed as an open login method on the public UI.
 func mintDashboardAccessToken(secret, userID, email string) (string, error) {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
@@ -267,9 +262,6 @@ func mintDashboardAccessToken(secret, userID, email string) (string, error) {
 	return token, nil
 }
 
-// seedProductE2EDashboardUser applies the dashboard v1 schema (if needed) and
-// inserts the fixture owner so a minted access cookie can load home without
-// open public dev logins. Must stay aligned with console dashboardStoreMigrations.
 func seedProductE2EDashboardUser(ctx context.Context, databaseURL, schema, userID, email string) error {
 	schema = strings.TrimSpace(schema)
 	userID = strings.TrimSpace(userID)
@@ -527,7 +519,6 @@ func waitForProductRoute(ctx context.Context, routeURL, marker string) error {
 			}).DialContext,
 		},
 	}
-	// Public tunnel + DNS propagation can take longer than local ingress.
 	return testutil.Poll(ctx, testutil.PollConfig{Timeout: 90 * time.Second, Interval: 500 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, routeURL, nil)
 		if err != nil {

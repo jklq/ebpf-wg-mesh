@@ -92,8 +92,6 @@ export function ServicePanel({
 	onServiceDeleted: (serviceId: string) => void;
 	onSpecSaveStateChange?: (key: string, saving: boolean) => void;
 }) {
-	// The record is the single source of truth; the status only carries
-	// allocation details, reconstructed around the same record upstream.
 	const currentService = service;
 	const build = currentService.latestBuild ?? service.latestBuild;
 	const health = serviceHealth(currentService);
@@ -101,7 +99,6 @@ export function ServicePanel({
 		(currentService.unappliedChangeCount ??
 			(currentService.pendingChanges ? 1 : 0)) > 0;
 	const stages = build?.stages ?? [];
-	// Deploy badge visibility — hidden when healthy, animated out when transitioning to healthy
 	const prevHealthRef = useRef(health);
 	const [heroVisible, setHeroVisible] = useState(health !== "healthy");
 	const [heroExiting, setHeroExiting] = useState(false);
@@ -118,11 +115,9 @@ export function ServicePanel({
 		prevHealthRef.current = health;
 
 		if (health === "healthy" && prevHealth !== "healthy") {
-			// Phase 1: flash all segments green + glimmer sweep (~750ms)
 			setHeroCompleting(true);
 			const t1 = setTimeout(() => {
 				setHeroCompleting(false);
-				// Phase 2: slide the hero out
 				setHeroExiting(true);
 			}, 750);
 			const t2 = setTimeout(() => {
@@ -319,9 +314,7 @@ export function ServicePanel({
 								project &&
 								(VariablesPanel ? (
 									<div className="flex h-full flex-col gap-4 overflow-y-auto px-[18px] pt-[18px] pb-7">
-										{/* The save response is the new record — merging it is
-										    enough; re-running the route loader here only
-										    re-renders the whole dashboard. */}
+										{}
 										<VariablesPanel
 											service={service}
 											seedKey={seedVariableKey}

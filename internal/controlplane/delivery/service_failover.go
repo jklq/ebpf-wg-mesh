@@ -35,8 +35,6 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 	}
 
 	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		// Serialize placement repair with concurrent repair loops. CockroachDB's
-		// serializable retry then also protects capacity reads from service creates.
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM services ORDER BY id FOR UPDATE`)
 		if err != nil {
 			return err
@@ -72,11 +70,6 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 
 		healthyAgents := make(map[string]AgentRecord, len(agents))
 		for _, agent := range agents {
-			// Skip failover while last contact is inside the TTL. Stream
-			// teardown composes as unavailable but keeps LastSeenAt, so the
-			// agent is not replaced until the timer fires. Takeover starts
-			// with no sessions, so LastSeenAt is unknown and allocations
-			// become eligible as soon as a replacement target is admitted.
 			if agent.LastSeenAt.After(cutoff) && agent.StateBeforeUnavailable == AgentStateActive {
 				healthyAgents[agent.ID] = agent
 			}
@@ -165,16 +158,12 @@ func (s *persistence) markAllocationUnavailableForFailoverTx(ctx context.Context
 	if current.phase == allocationPhaseUnavailable && current.message == message && len(current.healthyIPv4Ports) == 0 && len(current.healthyIPv6Ports) == 0 && !current.healthy {
 		return false, nil
 	}
-	// A blocked failover changes scheduler-owned intent detail through the same
-	// plan application boundary as placement and drain decisions.
 	err := (&Delivery{store: s}).applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{
 		Kind: DecisionSetMessage, AllocationID: allocationID, Message: message,
 	}))
 	return err == nil, err
 }
 
-// ReconcileFailover detects unhealthy agents, applies placement repair in one
-// transaction, then wakes agents and requests ingress sync.
 func (d *Delivery) ReconcileFailover(ctx context.Context, unhealthyThreshold time.Duration) (ServiceFailoverResult, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()

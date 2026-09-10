@@ -81,8 +81,6 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 	if err := store.fleet.acknowledgeAgentDesired(ctx, ack); err == nil {
 		t.Fatal("accepted acknowledgement beyond offered state")
 	}
-	// Empty storage cannot take over an existing identity, even with a valid
-	// enrollment credential and no discoverable runtime inventory.
 	replacement := &agentv1.AgentHello{AgentId: hello.AgentId, SessionId: "empty", LocalStoreId: "fresh-store", InitializationState: "uninitialized"}
 	if _, err := testDelivery(store).RegisterAgent(ctx, replacement); err == nil {
 		t.Fatal("fresh storage reused existing identity")

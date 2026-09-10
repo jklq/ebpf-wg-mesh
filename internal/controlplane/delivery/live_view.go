@@ -37,8 +37,6 @@ func (l *Live) applyDurableLocked(state journal.DurableState, force bool) {
 	l.durable = state.Clone()
 	l.rebuildIndexesLocked()
 	l.liveIndex++
-	// Only an agent whose desired revision changed needs to rebuild its
-	// snapshot. Coalescing comes from the buffered per-agent watch channel.
 	for id, agent := range l.durable.Agents {
 		if before, ok := previous.Agents[id]; ok && before.DesiredRevision == agent.DesiredRevision {
 			continue
@@ -135,8 +133,6 @@ func (l *Live) DesiredRevision(agentID string) (int64, bool) {
 	return agent.DesiredRevision, true
 }
 
-// Watch registers a coalesced wake channel. Subscribe before reading so a
-// concurrent apply cannot be missed. Slow consumers keep only the latest wake.
 func (l *Live) Watch(agentID string) (<-chan struct{}, func()) {
 	if l == nil {
 		ch := make(chan struct{})

@@ -83,9 +83,6 @@ func withWorkloadSandbox(cgroupPath string, allowedBindMounts map[string]sandbox
 			spec.Linux.Resources = &specs.LinuxResources{}
 		}
 		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: sandboxProcessLimit}
-		// Replace, rather than prepend to, the device policy so no injected host
-		// device allow rule can survive. The remaining rules cover only the OCI
-		// conventional pseudo devices created in the private /dev mount.
 		spec.Linux.Resources.Devices = sandboxDeviceRules()
 		spec.Linux.Devices = nil
 		spec.Linux.Sysctl = nil
@@ -122,9 +119,6 @@ func isolatedNamespaces(existing []specs.LinuxNamespace) []specs.LinuxNamespace 
 	for _, namespaceType := range required {
 		next := specs.LinuxNamespace{Type: namespaceType}
 		for _, namespace := range existing {
-			// The agent creates one private network namespace before the OCI
-			// spec. Every other namespace must be newly created by runc; keeping
-			// an injected path would permit host or sibling namespace sharing.
 			if namespaceType == specs.NetworkNamespace && namespace.Type == namespaceType {
 				next.Path = namespace.Path
 				break
@@ -191,14 +185,14 @@ func sandboxDeviceRules() []specs.LinuxDeviceCgroup {
 	minor := func(value int64) *int64 { return &value }
 	return []specs.LinuxDeviceCgroup{
 		{Allow: false, Access: "rwm"},
-		device("c", 1, minor(3)), // /dev/null
-		device("c", 1, minor(5)), // /dev/zero
-		device("c", 1, minor(7)), // /dev/full
-		device("c", 1, minor(8)), // /dev/random
-		device("c", 1, minor(9)), // /dev/urandom
-		device("c", 5, minor(0)), // /dev/tty
-		device("c", 5, minor(2)), // /dev/ptmx
-		device("c", 136, nil),    // private /dev/pts
+		device("c", 1, minor(3)),
+		device("c", 1, minor(5)),
+		device("c", 1, minor(7)),
+		device("c", 1, minor(8)),
+		device("c", 1, minor(9)),
+		device("c", 5, minor(0)),
+		device("c", 5, minor(2)),
+		device("c", 136, nil),
 	}
 }
 

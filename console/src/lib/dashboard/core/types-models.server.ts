@@ -488,13 +488,7 @@ export interface DashboardHomeState {
 	environments: Array<DashboardEnvironment>;
 	environment?: DashboardEnvironment;
 	services: Array<DashboardServiceRecord>;
-	/**
-	 * Backend list revision the `services` snapshot was read at. Streams carry
-	 * a newer revision; any snapshot at or below the applied revision is stale
-	 * and must be ignored. Starts at 0 when the backend supplies no index.
-	 */
 	servicesRevision: number;
-	/** Selected service, stored as an ID. Service data lives once in `services`. */
 	selectedServiceId: string | null;
 	domainBindings: Array<DashboardDomainBinding>;
 	controlPlaneReachable: boolean;

@@ -6,9 +6,6 @@ import (
 	"fmt"
 )
 
-// Table names a durable product table recorded by a mutation. Every product
-// write inside a journal command must record its durable key so the command
-// payload can be resolved without reading unrelated state.
 type Table string
 
 const (
@@ -25,9 +22,6 @@ const (
 	TableDomains        Table = "domain_bindings"
 )
 
-// Recorder accumulates the durable keys a journal command touched. Execute
-// resolves them into a minimal Batch after the mutation returns, so the payload
-// and lock hold time scale with the change, not the cluster.
 type Recorder struct {
 	tx             *sql.Tx
 	keys           map[Table]map[string]struct{}
@@ -44,15 +38,11 @@ func withRecorder(ctx context.Context, recorder *Recorder) context.Context {
 	return context.WithValue(ctx, recorderContextKey{}, recorder)
 }
 
-// RecorderFromContext returns the recorder of the executing journal command, or
-// nil outside one.
 func RecorderFromContext(ctx context.Context) *Recorder {
 	recorder, _ := ctx.Value(recorderContextKey{}).(*Recorder)
 	return recorder
 }
 
-// DomainServices maps a changed domain hostname to the services it routes to,
-// including a service a domain was reassigned away from.
 func (r *Recorder) DomainServices() map[string][]string {
 	if r == nil {
 		return nil
@@ -93,8 +83,6 @@ func RecordAdministration(ctx context.Context, id string) { record(ctx, TableAdm
 func RecordEnvironment(ctx context.Context, id string)    { record(ctx, TableEnvironments, id) }
 func RecordVolume(ctx context.Context, id string)         { record(ctx, TableVolumes, id) }
 
-// RecordDomain records a domain change and the service it routes to, so the
-// affected-agent set can be derived even after the domain row is deleted.
 func RecordDomain(ctx context.Context, hostname, serviceID string) {
 	record(ctx, TableDomains, hostname)
 	recorder := RecorderFromContext(ctx)
@@ -117,8 +105,6 @@ func RecordRollout(ctx context.Context, serviceID string, generation int64) {
 	record(ctx, TableRollouts, compositeKey(serviceID, generation))
 }
 
-// RecordServiceRemoval captures the durable rows a service delete cascades to.
-// It must run before the DELETE so the command carries the whole cascade.
 func RecordServiceRemoval(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	RecordService(ctx, serviceID)
 	queries := []struct {
@@ -145,8 +131,6 @@ func RecordServiceRemoval(ctx context.Context, tx *sql.Tx, serviceID string) err
 	return nil
 }
 
-// RecordEnvironmentRemoval captures every durable row an environment delete
-// cascades to. It must run before the DELETE.
 func RecordEnvironmentRemoval(ctx context.Context, tx *sql.Tx, environmentID string) error {
 	RecordEnvironment(ctx, environmentID)
 	serviceIDs, err := queryKeys(ctx, tx, `SELECT id::STRING FROM services WHERE environment_id = $1`, environmentID)

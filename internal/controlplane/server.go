@@ -577,8 +577,6 @@ func serveInternalHTTP(server *http.Server, ln net.Listener) error {
 	return nil
 }
 
-// newConnectHandler exposes PlatformService and OpsService over the Connect
-// protocol, enforcing the same authorization rules as the gRPC interceptors.
 func newConnectHandler(authz *identity.InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
 	options := []connect.HandlerOption{
 		connect.WithInterceptors(authz.ConnectInterceptor()),
@@ -589,10 +587,6 @@ func newConnectHandler(authz *identity.InternalAuth, platformService platformv1c
 	return mux
 }
 
-// dualProtocolHandler routes gRPC traffic (HTTP/2 with an application/grpc
-// content type) to the gRPC server and everything else to the Connect
-// handlers. Both protocols share one TLS listener; the verified client
-// certificate is extracted once and carried into both request contexts.
 func dualProtocolHandler(grpcServer *grpc.Server, connectHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()

@@ -7,10 +7,8 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
-// persistence wires module-owned stores. It deliberately has no domain methods.
 type persistence struct {
 	*database
-	// The composition root alone retains the concrete instance for delivery construction.
 	liveImplementation *deliverycore.Live
 	notifications      liveNotifications
 	publication        publicationFence
@@ -74,8 +72,6 @@ func newPersistence(db *database) *persistence {
 	return p
 }
 
-// platformPersistence supplies the transport's read/catalog/routing view.
-// Delivery mutations are supplied separately through platformDelivery.
 type platformPersistence struct {
 	*catalogPersistence
 	*routingPersistence

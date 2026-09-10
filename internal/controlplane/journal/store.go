@@ -14,12 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Fence must check current decision authority in tx and hold it until commit.
-// A nil fence cannot authorize a scheduling decision.
 type Fence func(context.Context, *sql.Tx) (int64, error)
 
-// CommitError preserves the command ID when a caller must resolve an outcome
-// or resume application. A retry must carry this ID, not allocate a new one.
 type CommitError struct {
 	CommandID string
 	Committed bool
@@ -31,9 +27,6 @@ func (e *CommitError) Error() string {
 }
 func (e *CommitError) Unwrap() error { return e.Err }
 
-// headMovedError reports that the committed prefix advanced while a command
-// planned. It carries the serialization SQLSTATE so the retry helper reruns the
-// plan against the newer prefix.
 type headMovedError struct{}
 
 func (headMovedError) Error() string    { return "journal head advanced during command" }
@@ -49,9 +42,6 @@ type Store struct {
 	verify    bool
 }
 
-// SetVerifyRecordings enables a test-only check that every command's recorded
-// change set equals a full-state diff. It reads full product state and must not
-// be enabled in production.
 func (s *Store) SetVerifyRecordings(enabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,28 +62,14 @@ func (s *Store) SetOnApplied(fn func(DurableState)) {
 
 type commandIDKey struct{}
 
-// WithCommandID lets an operation carry its identity across request retries.
-// Reusing an ID means returning its committed receipt without rerunning writes.
 func WithCommandID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, commandIDKey{}, id)
 }
 
-// Execute runs one journal command. See ExecuteWithMutation.
 func (s *Store) Execute(ctx context.Context, fn func(context.Context, *sql.Tx) error) (Entry, error) {
 	return s.execute(ctx, fn, nil)
 }
 
-// ExecuteWithMutation runs one journal command and then lets afterChanges react
-// to the exact rows the command changed (for example, to bump affected agent
-// revisions). afterChanges receives the pre-command prefix and the resolved
-// batch, and runs in the same transaction before the command is serialized;
-// any rows it changes through the Recorder are included in the command payload.
-//
-// fn must contain only transactional work and must record every durable product
-// row it changes through the Recorder carried by the context it receives.
-// Planning happens outside the cluster_journal_heads lock; the lock is taken
-// only to append the command and its head update. The command is retried on
-// serialization conflicts; no attempted state is published.
 func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
 	return s.execute(ctx, fn, afterChanges)
 }
@@ -158,8 +134,6 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 			}
 		}
 		receipt = Entry{ClusterID: s.clusterID, LogIndex: head + 1, CommandID: id, CommandVersion: CommandVersion, CommandType: CommandType}
-		// Assignment and rollout changes include reservations, allocation intent,
-		// deadlines, and deployment progression. Staged product intent needs no epoch.
 		if batch.requiresAuthority() {
 			if s.fence == nil {
 				return errors.New("scheduling decision requires authority")
@@ -177,8 +151,6 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		if err != nil {
 			return err
 		}
-		// Append/serialization only. If another replica appended while this
-		// command planned, the plan is stale: retry against the newer prefix.
 		var lockedHead int64
 		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1 FOR UPDATE`, s.clusterID).Scan(&lockedHead); err != nil {
 			return err
@@ -234,8 +206,6 @@ func (s *Store) Receipt(ctx context.Context, commandID string) (Entry, error) {
 	return lookup(ctx, s.db, s.clusterID, commandID)
 }
 
-// Snapshot catches up to a committed head and returns an owned copy. Readers
-// cannot mutate the state used to validate subsequent decisions.
 func (s *Store) Snapshot(ctx context.Context) (DurableState, error) {
 	s.mu.Lock()
 	if err := s.catchUp(ctx); err != nil {

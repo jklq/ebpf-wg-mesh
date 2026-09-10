@@ -128,13 +128,6 @@ import {
 	UpdateServiceRequestSchema,
 } from "#/lib/platform-gen/platform_pb";
 
-/**
- * proto-mappers is the single place where generated protobuf messages and
- * dashboard view types meet: responses are mapped into dashboard view types,
- * and requests are built from dashboard-domain inputs. Enum values surface as
- * the symbolic protobuf value names ("DEPLOYMENT_STATE_ACTIVE") everywhere.
- */
-
 function enumValueByNumber(
 	desc: DescEnum,
 	value: number,
@@ -142,9 +135,6 @@ function enumValueByNumber(
 	return desc.values.find((entry) => entry.number === value);
 }
 
-/** The protobuf value name for an enum value. Unknown future values from the
- * control plane degrade to the enum's zero value (every platform enum
- * declares a *_UNSPECIFIED at 0). */
 function enumName(desc: DescEnum, value: number): string {
 	return enumValueByNumber(desc, value)?.name ?? desc.values[0].name;
 }

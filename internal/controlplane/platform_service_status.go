@@ -35,10 +35,6 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if !changed {
 		return &platformv1.ServiceStatus{Index: index, NotModified: true}, nil
 	}
-	// Re-read after the wait: the first read only resolves the environment to
-	// watch. Returning it here would report the state from *before* the change
-	// that woke us, leaving every watcher one event behind — the final "healthy"
-	// status of a rollout would then never reach the client.
 	service, allocations, err = s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
@@ -129,10 +125,6 @@ func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Conte
 	if service.SourceSummary == nil {
 		service.SourceSummary = deliverycore.BuildSourceSummary(service.Spec)
 	}
-	// Stages are projected from the allocations + latest build; if we cannot
-	// load allocations we still return the stages derived from just the
-	// service+build so the UI gets something to render (showing a "waiting"
-	// deploy stage rather than a hard error).
 	if allocs == nil {
 		var err error
 		allocs, err = s.store.ListAllocationsByServiceID(ctx, service.ID)
@@ -181,11 +173,6 @@ func (s *PlatformService) notifyServiceAgents(ctx context.Context, serviceID str
 	}
 }
 
-// buildRunRecordFromProto rebuilds the (minimal) in-memory buildRunRecord we
-// need for stage projection starting from a proto BuildStatus. We don't
-// round-trip every field — the projector only reads state and timestamps, so
-// we only reconstruct those. Keeping this narrow avoids accidentally widening
-// the implicit contract between decorator and projector.
 func buildRunRecordFromProto(status *platformv1.BuildStatus) deliverycore.BuildRunRecord {
 	rec := deliverycore.BuildRunRecord{
 		ID:            status.GetBuildId(),
