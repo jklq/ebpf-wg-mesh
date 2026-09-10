@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"time"
 )
 
 func (s *persistence) listAgents(ctx context.Context) ([]AgentRecord, error) {
@@ -158,7 +159,7 @@ func (s *persistence) allocateWorkloadIPv4AddressTx(ctx context.Context, tx *sql
 	return nextIPv4AddressFromSubnet(subnet, used)
 }
 
-func (s *persistence) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.Tx, agentID, subnet string) (bool, error) {
+func (d *Delivery) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.Tx, agentID, subnet string, now time.Time) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, allocation_ipv4 FROM allocation_assignments
 		WHERE agent_id = $1 AND rollout_state <> $2 ORDER BY created_at ASC, id ASC FOR UPDATE`, agentID, AllocationRolloutLost)
 	if err != nil {
@@ -182,15 +183,17 @@ func (s *persistence) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *s
 	if err := rows.Close(); err != nil {
 		return false, err
 	}
+	decisions := make([]SchedulingDecision, 0, len(missing))
 	for _, allocationID := range missing {
 		address, err := nextIPv4AddressFromSubnet(subnet, used)
 		if err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET allocation_ipv4 = $1, updated_at = statement_timestamp() WHERE id = $2`, address, allocationID); err != nil {
-			return false, err
-		}
+		decisions = append(decisions, SchedulingDecision{Kind: DecisionReserveAddress, AllocationID: allocationID, Allocation: AllocationAssignment{IPv4: address}})
 		used[address] = struct{}{}
+	}
+	if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, decisions...)); err != nil {
+		return false, err
 	}
 	return len(missing) > 0, nil
 }

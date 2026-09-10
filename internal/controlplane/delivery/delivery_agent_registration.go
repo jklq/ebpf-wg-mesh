@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/reconciliation"
 )
 
 func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
@@ -38,6 +41,30 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			return ErrAgentCredentialRevoked
 		}
 
+		// Bind enrollment to one durable store. An empty replacement store is
+		// not evidence that the old process or its workloads have stopped.
+		if hello.GetLocalStoreId() == "" {
+			return fmt.Errorf("local_store_id is required")
+		}
+		var storeID string
+		var previousIncarnation uint64
+		if err := tx.QueryRowContext(ctx, `SELECT local_store_id, session_incarnation FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&storeID, &previousIncarnation); err != nil {
+			return err
+		}
+		if storeID != "" && storeID != hello.GetLocalStoreId() {
+			return fmt.Errorf("%w: local store differs from enrolled store", reconciliation.ErrIdentityRecovery)
+		}
+		if hello.GetSessionIncarnation() <= previousIncarnation || hello.GetSessionIncarnation() > math.MaxInt64 {
+			return ErrStaleAgentSession
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET session_incarnation = $2 WHERE id = $1`, hello.GetAgentId(), int64(hello.GetSessionIncarnation())); err != nil {
+			return err
+		}
+		if storeID == "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET local_store_id = $2 WHERE id = $1`, hello.GetAgentId(), hello.GetLocalStoreId()); err != nil {
+				return err
+			}
+		}
 		workloadIPv4Subnet := existing.WorkloadIPv4Subnet
 		if workloadIPv4Subnet == "" {
 			workloadIPv4Subnet, err = s.allocateWorkloadIPv4SubnetTx(ctx, tx)
@@ -45,7 +72,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 				return err
 			}
 		}
-		addressesBackfilled, err := s.backfillWorkloadIPv4AddressesTx(ctx, tx, existing.ID, workloadIPv4Subnet)
+		addressesBackfilled, err := d.backfillWorkloadIPv4AddressesTx(ctx, tx, existing.ID, workloadIPv4Subnet, now)
 		if err != nil {
 			return err
 		}

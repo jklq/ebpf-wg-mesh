@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 var currentSchema = []string{
 	`CREATE TABLE control_plane_leases (
@@ -69,9 +69,16 @@ var currentSchema = []string{
 	`CREATE UNIQUE INDEX idx_environments_one_production
 			ON environments(project_id) WHERE is_production = TRUE`,
 	`CREATE INDEX idx_environments_project_created ON environments(project_id, created_at, id)`,
+	`CREATE TABLE agent_authority (
+ id INT8 PRIMARY KEY CHECK (id = 1), epoch INT8 NOT NULL CHECK (epoch > 0),
+ outstanding_not_after TIMESTAMPTZ NOT NULL
+ )`,
+	`INSERT INTO agent_authority VALUES (1, 1, '1970-01-01')`,
 	`CREATE TABLE agent_registrations (
 			id STRING PRIMARY KEY,
 			name STRING NOT NULL,
+ local_store_id STRING NOT NULL DEFAULT '',
+ session_incarnation INT8 NOT NULL DEFAULT 0,
 			region STRING NOT NULL,
 			zone STRING NOT NULL DEFAULT '',
 			failure_domain STRING NOT NULL,
@@ -104,6 +111,10 @@ var currentSchema = []string{
 			agent_id STRING PRIMARY KEY REFERENCES agent_registrations(id) ON DELETE CASCADE,
 			session_id STRING NOT NULL,
 			last_observation_sequence INT8 NOT NULL DEFAULT 0,
+ offered_authority_epoch INT8 NOT NULL DEFAULT 0,
+ offered_cursor INT8 NOT NULL DEFAULT -1,
+ accepted_authority_epoch INT8 NOT NULL DEFAULT 0,
+ accepted_cursor INT8 NOT NULL DEFAULT 0,
 			last_contact_at TIMESTAMPTZ NOT NULL,
 			ready BOOL NOT NULL,
 			reachable BOOL NOT NULL,
