@@ -219,6 +219,9 @@ func (i *IngressSyncer) syncLocked(ctx context.Context) error {
 		return err
 	}
 
+	// Render before taking the lease-row lock so database reads cannot deadlock
+	// behind a concurrent lease renewal. Only the external write needs fencing:
+	// takeover waits for it, and a former owner cannot enter this section.
 	return i.store.WithLeaseGuard(ctx, func() error {
 		if bytes.Equal(body, i.lastPayload) {
 			return nil

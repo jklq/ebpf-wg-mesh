@@ -61,6 +61,23 @@ type summary struct {
 	Hosts        map[string]hostInfo `json:"hosts"`
 }
 
+func validateAgentBindings(hosts map[string]hostInfo, tokens map[string]string) error {
+	for key := range hosts {
+		if key == "controlplane" {
+			continue
+		}
+		if _, ok := tokens[key]; !ok {
+			return fmt.Errorf("no bootstrap token configured for agent key %q", key)
+		}
+	}
+	for agentID := range tokens {
+		if _, ok := hosts[agentID]; !ok {
+			return fmt.Errorf("bootstrap token configured for unknown agent %q", agentID)
+		}
+	}
+	return nil
+}
+
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -189,6 +206,9 @@ func main() {
 	if err != nil {
 		failf("read tofu outputs: %v", err)
 	}
+	if err := validateAgentBindings(hosts, vmAgentBootstrapTokens); err != nil {
+		failf("validate agent bindings: %v", err)
+	}
 
 	infof("waiting for Hetzner to report %d running servers", len(hosts))
 	if err := waitForServers(ctx, client, *runID, len(hosts)); err != nil {
@@ -293,10 +313,7 @@ func main() {
 		if key == "controlplane" {
 			continue
 		}
-		bootstrapToken, ok := vmAgentBootstrapTokens[key]
-		if !ok {
-			failf("no bootstrap token configured for agent key %q", key)
-		}
+		bootstrapToken := vmAgentBootstrapTokens[key]
 		infof("copying agent binary to %s", host.Name)
 		if err := copyFile(ctx, sshKeyPath, binaries["agent"], host.PublicIPv4, "/opt/ebpf-wg-mesh/agent"); err != nil {
 			failf("copy agent binary to %s: %v", host.Name, err)

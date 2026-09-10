@@ -70,8 +70,36 @@ func (s *Store) Execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 	return s.execute(ctx, fn, nil)
 }
 
+// ExecuteWithMutation runs one journal command and then lets afterChanges react
+// to the exact rows the command changed (for example, to bump affected agent
+// revisions). afterChanges receives the pre-command prefix and the resolved
+// batch, and runs in the same transaction before the command is serialized;
+// any rows it changes through the Recorder are included in the command payload.
+//
+// fn must contain only transactional work and must record every durable product
+// row it changes through the Recorder carried by the context it receives.
+// Planning happens outside the cluster_journal_heads lock; the lock is taken
+// only to append the command and its head update. The command is retried on
+// serialization conflicts; no attempted state is published.
 func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
 	return s.execute(ctx, fn, afterChanges)
+}
+
+func (s *Store) authorizeScheduling(ctx context.Context, tx *sql.Tx, batch Batch) (*int64, error) {
+	if !batch.requiresAuthority() {
+		return nil, nil
+	}
+	if s.fence == nil {
+		return nil, errors.New("scheduling decision requires authority")
+	}
+	epoch, err := s.fence(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if epoch <= 0 {
+		return nil, errors.New("invalid scheduling authority epoch")
+	}
+	return &epoch, nil
 }
 
 func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
@@ -134,19 +162,11 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 			}
 		}
 		receipt = Entry{ClusterID: s.clusterID, LogIndex: head + 1, CommandID: id, CommandVersion: CommandVersion, CommandType: CommandType}
-		if batch.requiresAuthority() {
-			if s.fence == nil {
-				return errors.New("scheduling decision requires authority")
-			}
-			epoch, err := s.fence(ctx, tx)
-			if err != nil {
-				return err
-			}
-			if epoch <= 0 {
-				return errors.New("invalid scheduling authority epoch")
-			}
-			receipt.AuthorizingEpoch = &epoch
+		epoch, err := s.authorizeScheduling(ctx, tx, batch)
+		if err != nil {
+			return err
 		}
+		receipt.AuthorizingEpoch = epoch
 		receipt.Payload, err = json.Marshal(batch)
 		if err != nil {
 			return err
