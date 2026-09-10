@@ -12,6 +12,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
 )
 
@@ -131,11 +132,19 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if err != nil {
 			return err
 		}
-		if err := s.beginAgentSessionTx(ctx, tx, AgentPresence{
-			AgentID: hello.GetAgentId(), SessionID: hello.GetSessionId(), LastContactAt: now,
-			Ready: !hello.GetRecoveryMode(), Reachable: true, UpdatedAt: now,
-		}); err != nil {
+		administration, err := tx.ExecContext(ctx, `UPDATE agent_administration
+			SET lifecycle_state = CASE WHEN lifecycle_state = 'enrolling' THEN 'active' ELSE lifecycle_state END,
+			    updated_at = CASE WHEN lifecycle_state = 'enrolling' THEN $2 ELSE updated_at END
+			WHERE agent_id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, hello.GetAgentId(), now)
+		if err != nil {
 			return err
+		}
+		rows, err := administration.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrAgentCredentialRevoked
 		}
 		if changed {
 			return dbtx.BumpAllDesiredRevisions(ctx, tx)
@@ -145,29 +154,40 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 	if err != nil {
 		return false, err
 	}
+	assigned := assignedAllocationIDs(d, ctx, hello.GetAgentId())
+	inventory := make([]string, 0, len(hello.GetAllocations()))
+	for _, cond := range hello.GetAllocations() {
+		inventory = append(inventory, cond.GetAllocationId())
+	}
+	if err := d.live.BeginSession(hello.GetAgentId(), hello.GetSessionId(), inventory, assigned, !hello.GetRecoveryMode()); err != nil {
+		return false, err
+	}
 	return changed, nil
+}
+
+func assignedAllocationIDs(d *Delivery, ctx context.Context, agentID string) []string {
+	var ids []string
+	_ = d.store.readState(ctx, func(_ *sql.Tx, state journal.DurableState) error {
+		for _, assignment := range state.Assignments {
+			if assignment.AgentID == agentID && assignment.RolloutState != AllocationRolloutLost {
+				ids = append(ids, assignment.ID)
+			}
+		}
+		return nil
+	})
+	return ids
 }
 
 // ObserveAgentHeartbeat refreshes presence only for the currently registered
 // session incarnation.
 func (d *Delivery) ObserveAgentHeartbeat(ctx context.Context, agentID, sessionID string, recoveryMode bool) error {
-	return d.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
-		now, err := dbtx.DatabaseTime(ctx, tx)
-		if err != nil {
-			return err
-		}
-		return d.store.recordAgentContactTx(ctx, tx, agentID, sessionID, !recoveryMode, now)
-	})
+	_ = ctx
+	return d.live.Heartbeat(agentID, sessionID, !recoveryMode)
 }
 
 // EndAgentSession makes disconnects visible immediately. The session predicate
 // prevents an old stream's cleanup from fencing a replacement session.
 func (d *Delivery) EndAgentSession(ctx context.Context, agentID, sessionID string) error {
-	return d.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
-		now, err := dbtx.DatabaseTime(ctx, tx)
-		if err != nil {
-			return err
-		}
-		return d.store.endAgentSessionTx(ctx, tx, agentID, sessionID, now)
-	})
+	_ = ctx
+	return d.live.EndSession(agentID, sessionID)
 }

@@ -65,17 +65,18 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 			return nil
 		}
 
-		allocations, err := allocationStatesForFailover(ctx, tx)
+		allocations, err := allocationStatesForFailover(ctx, s, tx)
 		if err != nil {
 			return err
 		}
 
 		healthyAgents := make(map[string]AgentRecord, len(agents))
 		for _, agent := range agents {
-			// Placement and failover use administrative intent plus last-contact
-			// TTL. A live session that has ended (control-plane restart, stream
-			// teardown) composes as unavailable in the agents view, but the
-			// agent remains an eligible replacement target until last contact ages out.
+			// Skip failover while last contact is inside the TTL. Stream
+			// teardown composes as unavailable but keeps LastSeenAt, so the
+			// agent is not replaced until the timer fires. Takeover starts
+			// with no sessions, so LastSeenAt is unknown and allocations
+			// become eligible as soon as a replacement target is admitted.
 			if agent.LastSeenAt.After(cutoff) && agent.StateBeforeUnavailable == AgentStateActive {
 				healthyAgents[agent.ID] = agent
 			}
@@ -141,11 +142,11 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 	return result, nil
 }
 
-func allocationStatesForFailover(ctx context.Context, q ServiceQueryer) ([]AllocationRecord, error) {
-	return listAllocationsForFailover(ctx, q, "")
+func allocationStatesForFailover(ctx context.Context, s *persistence, q ServiceQueryer) ([]AllocationRecord, error) {
+	return listAllocationsForFailover(ctx, s, q, "")
 }
 
-func listAllocationsForFailover(ctx context.Context, q ServiceQueryer, agentID string) ([]AllocationRecord, error) {
+func listAllocationsForFailover(ctx context.Context, s *persistence, q ServiceQueryer, agentID string) ([]AllocationRecord, error) {
 	query := allocationSelectSQL
 	args := []any{}
 	if agentID != "" {
@@ -164,7 +165,7 @@ func listAllocationsForFailover(ctx context.Context, q ServiceQueryer, agentID s
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rec)
+		out = append(out, s.overlayAllocation(rec))
 	}
 	return out, rows.Err()
 }

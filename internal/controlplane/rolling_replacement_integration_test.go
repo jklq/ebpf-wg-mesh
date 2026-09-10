@@ -321,9 +321,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 	target := allocationForGeneration(t, store, service.ID, 2)[0]
 	originalAgent := target.AgentID
 	originalTargetID := target.ID
-	if _, err := store.db.ExecContext(ctx, `UPDATE agent_presence SET last_contact_at = $1 WHERE agent_id = $2`, time.Now().Add(-time.Hour), originalAgent); err != nil {
-		t.Fatal(err)
-	}
+	store.live.SetLastContactForTest(originalAgent, time.Now().Add(-time.Hour))
 	if _, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), time.Minute); err != nil {
 		t.Fatalf("failoverUnhealthyServices: %v", err)
 	}
@@ -412,11 +410,26 @@ func markRolloutAllocationReady(t *testing.T, store *persistence, alloc delivery
 
 func markAllDrainingComplete(t *testing.T, store *persistence, serviceID string) {
 	t.Helper()
-	if _, err := store.db.ExecContext(context.Background(),
-		`UPDATE allocation_observations SET phase = 'Drained', message = 'graceful exit', healthy = FALSE, observed_at = now()
-		 WHERE allocation_id IN (SELECT id FROM allocation_assignments WHERE service_id = $1 AND rollout_state = $2)`, serviceID, deliverycore.AllocationRolloutDraining,
-	); err != nil {
-		t.Fatalf("mark drains complete: %v", err)
+	allocs, err := store.reads.ListAllocationsByServiceID(context.Background(), serviceID)
+	if err != nil {
+		t.Fatalf("list allocations: %v", err)
+	}
+	for _, alloc := range allocs {
+		if alloc.RolloutState != deliverycore.AllocationRolloutDraining {
+			continue
+		}
+		session, ok := store.live.Session(alloc.AgentID)
+		if !ok {
+			t.Fatalf("no session for %s", alloc.AgentID)
+		}
+		obs := deliverycore.AllocationObservation{
+			AllocationID: alloc.ID, RolloutGeneration: alloc.DesiredRolloutGeneration,
+			Phase: "Drained", Message: "graceful exit", Healthy: false,
+			AgentID: alloc.AgentID, SessionID: session.SessionID, Sequence: session.Sequence + 1, ObservedAt: time.Now().UTC(),
+		}
+		if _, err := store.live.RecordObservation(obs); err != nil {
+			t.Fatalf("mark drains complete: %v", err)
+		}
 	}
 }
 

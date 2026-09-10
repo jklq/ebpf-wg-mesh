@@ -70,12 +70,12 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 	if err := store.acknowledgeAgentDesired(ctx, ack); err != nil {
 		t.Fatalf("duplicate durable acceptance: %v", err)
 	}
-	var sequence, accepted int64
-	if err := store.db.QueryRowContext(ctx, `SELECT last_observation_sequence, accepted_cursor FROM agent_presence WHERE agent_id = $1`, hello.AgentId).Scan(&sequence, &accepted); err != nil {
-		t.Fatal(err)
+	session, ok := store.live.Session(hello.AgentId)
+	if !ok {
+		t.Fatal("missing live session")
 	}
-	if sequence != 0 || accepted != 7 {
-		t.Fatalf("ack was interpreted as runtime observation: sequence=%d cursor=%d", sequence, accepted)
+	if session.Sequence != 0 || session.AcceptedCursor != 7 {
+		t.Fatalf("ack was interpreted as runtime observation: sequence=%d cursor=%d", session.Sequence, session.AcceptedCursor)
 	}
 	ack.ReconciliationCursor = 8
 	if err := store.acknowledgeAgentDesired(ctx, ack); err == nil {

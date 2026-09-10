@@ -94,7 +94,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}
 	// Recording the transient sample and applying the resulting durable
 	// deployment decision are intentionally separate transactions.
-	if got, err := store.events.currentGlobalRevision(ctx); err != nil || got != beforeReportRevision+2 {
+	if got, err := store.events.currentGlobalRevision(ctx); err != nil || got != beforeReportRevision+1 {
 		t.Fatalf("global revision after status report = %d, %v", got, err)
 	}
 	updated, err := store.reads.allocationByServiceID(ctx, service.ID)

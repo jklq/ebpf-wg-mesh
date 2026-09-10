@@ -34,7 +34,6 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 		        COALESCE(stats.memory_mebibytes, 0)
 		   FROM agent_registrations r
 		   JOIN agent_administration ad ON ad.agent_id = r.id
-		   JOIN agent_presence p ON p.agent_id = r.id
 		   LEFT JOIN (
 				SELECT a.agent_id,
 		               COUNT(*) AS service_count,
@@ -49,9 +48,6 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 		   ) AS stats
 		     ON stats.agent_id = r.id
 		  WHERE ad.lifecycle_state = 'active'
-		    AND p.ready
-		    AND p.reachable
-		    AND p.last_contact_at > statement_timestamp() - INTERVAL '30 seconds'
 		  ORDER BY COALESCE(stats.service_count, 0) ASC, r.id ASC`,
 	)
 	if err != nil {
@@ -75,6 +71,9 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 			&candidate.UsedMemoryMebibytes,
 		); err != nil {
 			return nil, err
+		}
+		if s.live == nil || !s.live.Admitted(candidate.ID) {
+			continue
 		}
 		candidates = append(candidates, candidate)
 	}

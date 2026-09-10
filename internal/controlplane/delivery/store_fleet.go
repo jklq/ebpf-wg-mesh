@@ -21,6 +21,7 @@ var (
 	ErrStaleAgentSession      = errors.New("stale agent session")
 	ErrStaleObservation       = errors.New("stale allocation observation")
 	ErrAllocationOwnership    = errors.New("allocation is not assigned to authenticated agent")
+	ErrNotLiveOwner           = errors.New("replica is not the live owner")
 	FleetLabelPattern         = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62})$`)
 )
 
@@ -47,6 +48,20 @@ func scanAgentRecord(scanner interface{ Scan(...any) error }) (AgentRecord, erro
 	}
 	rec.RuntimeCapabilities = append([]string(nil), capabilities...)
 	return rec, nil
+}
+
+func (s *persistence) overlayAgent(rec AgentRecord) AgentRecord {
+	if s == nil || s.live == nil {
+		return overlayAgentAbsent(rec)
+	}
+	return s.live.OverlayAgent(rec)
+}
+
+func (s *persistence) overlayAllocation(rec AllocationRecord) AllocationRecord {
+	if s == nil || s.live == nil {
+		return overlayAllocation(rec, AgentSession{}, false, AllocationObservation{}, false, time.Time{}, AgentHealthyTTL)
+	}
+	return s.live.OverlayAllocation(rec)
 }
 
 func agentByIDQuerier(ctx context.Context, q ServiceQueryer, agentID string, forUpdate bool) (AgentRecord, error) {

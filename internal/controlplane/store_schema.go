@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 14
+const currentSchemaVersion = 15
 
 var currentSchema = []string{
 	`CREATE TABLE cluster_journal_heads (
@@ -24,6 +24,7 @@ var currentSchema = []string{
 			name STRING PRIMARY KEY,
 			holder_id STRING NOT NULL,
 			fencing_token INT8 NOT NULL,
+			advertise_addr STRING NOT NULL DEFAULT '',
 			expires_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
@@ -124,34 +125,17 @@ var currentSchema = []string{
 			credential_revoked_at TIMESTAMPTZ NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-	`CREATE TABLE agent_presence (
-			agent_id STRING PRIMARY KEY REFERENCES agent_registrations(id) ON DELETE CASCADE,
-			session_id STRING NOT NULL,
-			last_observation_sequence INT8 NOT NULL DEFAULT 0,
- offered_authority_epoch INT8 NOT NULL DEFAULT 0,
- offered_cursor INT8 NOT NULL DEFAULT -1,
- accepted_authority_epoch INT8 NOT NULL DEFAULT 0,
- accepted_cursor INT8 NOT NULL DEFAULT 0,
-			last_contact_at TIMESTAMPTZ NOT NULL,
-			ready BOOL NOT NULL,
-			reachable BOOL NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
-		)`,
-	`CREATE INDEX idx_agent_presence_contact ON agent_presence(last_contact_at DESC, agent_id)`,
 	`CREATE VIEW agents AS SELECT r.id, r.name,
-			CASE WHEN ad.lifecycle_state NOT IN ('enrolling', 'retired')
-			          AND (NOT p.ready OR NOT p.reachable OR p.last_contact_at <= statement_timestamp() - INTERVAL '30 seconds')
-			     THEN 'unavailable' ELSE ad.lifecycle_state END AS lifecycle_state,
+			ad.lifecycle_state,
 			ad.lifecycle_state AS state_before_unavailable,
 			r.region, r.zone, r.failure_domain, r.reserved_cpu_millis, r.reserved_memory_mebibytes,
 			r.advertise_addr, r.workload_ipv4_subnet, r.workload_ipv6_subnet, r.wireguard_public_key,
 			r.wireguard_listen_port, r.wireguard_ipv6, r.cpu_millis_capacity, r.memory_mebibytes_capacity,
 			r.runtime_capabilities, r.software_version, ad.maintenance_message, ad.credential_revoked_at,
-			p.last_contact_at AS last_seen_at, r.created_at, GREATEST(r.updated_at, ad.updated_at, p.updated_at) AS updated_at,
+			r.created_at AS last_seen_at, r.created_at, GREATEST(r.updated_at, ad.updated_at) AS updated_at,
 			r.desired_revision
 		FROM agent_registrations r
-		JOIN agent_administration ad ON ad.agent_id = r.id
-		JOIN agent_presence p ON p.agent_id = r.id`,
+		JOIN agent_administration ad ON ad.agent_id = r.id`,
 	`CREATE TABLE agent_bootstrap_tokens (
 			token_hash BYTES PRIMARY KEY,
 			agent_id STRING NOT NULL,
@@ -232,48 +216,24 @@ var currentSchema = []string{
 	`CREATE UNIQUE INDEX idx_allocation_assignments_owner ON allocation_assignments(id, agent_id)`,
 	`CREATE UNIQUE INDEX idx_allocation_assignments_ipv4 ON allocation_assignments(allocation_ipv4) WHERE allocation_ipv4 <> ''`,
 	`CREATE UNIQUE INDEX idx_allocation_assignments_ipv6 ON allocation_assignments(allocation_ipv6) WHERE allocation_ipv6 <> ''`,
-	`CREATE TABLE allocation_observations (
-			allocation_id STRING NOT NULL,
-			rollout_generation INT8 NOT NULL,
-			applied_spec_revision INT8 NOT NULL,
-			applied_rollout_generation INT8 NOT NULL,
-			phase STRING NOT NULL,
-			message STRING NOT NULL,
-			healthy_ipv4_ports JSONB NOT NULL DEFAULT '[]',
-			healthy_ipv6_ports JSONB NOT NULL DEFAULT '[]',
-			healthy BOOL NOT NULL,
-			restart_observation_json JSONB NOT NULL DEFAULT '{}',
-			agent_id STRING NOT NULL REFERENCES agent_registrations(id),
-			session_id STRING NOT NULL,
-			observation_sequence INT8 NOT NULL,
-			observed_at TIMESTAMPTZ NOT NULL,
-			PRIMARY KEY (allocation_id, rollout_generation),
-			FOREIGN KEY (allocation_id, agent_id) REFERENCES allocation_assignments(id, agent_id) ON DELETE CASCADE
-		)`,
 	`CREATE VIEW allocations AS SELECT a.id, a.service_id, a.agent_id, a.desired_spec_revision,
-			COALESCE(o.applied_spec_revision, 0::INT8) AS applied_spec_revision,
+			0::INT8 AS applied_spec_revision,
 			a.desired_rollout_generation,
-			COALESCE(o.applied_rollout_generation, 0::INT8) AS applied_rollout_generation,
-			CASE WHEN a.rollout_state = 'lost' OR ag.state_before_unavailable = 'retired'
-			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN 'Unavailable'
+			0::INT8 AS applied_rollout_generation,
+			CASE WHEN a.rollout_state = 'lost' THEN 'Unavailable'
 			     WHEN a.rollout_state = 'withdrawing' THEN 'Withdrawing'
-			     WHEN a.rollout_state = 'draining' AND COALESCE(o.phase, '') <> 'Drained' THEN 'Draining'
-			     ELSE COALESCE(o.phase, 'Pending') END AS phase,
-			CASE WHEN a.intent_message <> '' THEN a.intent_message ELSE COALESCE(o.message, '') END AS message,
+			     WHEN a.rollout_state = 'draining' THEN 'Draining'
+			     ELSE 'Pending' END AS phase,
+			a.intent_message AS message,
 			a.allocation_ipv4, a.allocation_ipv6,
-			CASE WHEN a.rollout_state IN ('lost', 'withdrawing', 'draining') OR ag.state_before_unavailable = 'retired'
-			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN '[]'::JSONB ELSE COALESCE(o.healthy_ipv4_ports, '[]'::JSONB) END AS healthy_ipv4_ports,
-			CASE WHEN a.rollout_state IN ('lost', 'withdrawing', 'draining') OR ag.state_before_unavailable = 'retired'
-			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN '[]'::JSONB ELSE COALESCE(o.healthy_ipv6_ports, '[]'::JSONB) END AS healthy_ipv6_ports,
-			CASE WHEN a.rollout_state IN ('lost', 'withdrawing', 'draining') OR ag.state_before_unavailable = 'retired'
-			          OR ag.last_seen_at <= statement_timestamp() - INTERVAL '30 seconds' THEN FALSE ELSE COALESCE(o.healthy, FALSE) END AS healthy,
-			COALESCE(o.restart_observation_json, '{}'::JSONB) AS restart_observation_json,
+			'[]'::JSONB AS healthy_ipv4_ports,
+			'[]'::JSONB AS healthy_ipv6_ports,
+			FALSE AS healthy,
+			'{}'::JSONB AS restart_observation_json,
 			a.operator_restart_nonce, a.rollout_state, a.drain_started_at, a.drain_deadline,
-			a.created_at, GREATEST(a.updated_at, COALESCE(o.observed_at, a.updated_at)) AS updated_at,
+			a.created_at, a.updated_at,
 			a.deployment_id, a.intent
-		FROM allocation_assignments a
-		JOIN agents ag ON ag.id = a.agent_id
-		LEFT JOIN allocation_observations o ON o.allocation_id = a.id AND o.rollout_generation = a.desired_rollout_generation`,
+		FROM allocation_assignments a`,
 	`CREATE TABLE service_rollouts (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			rollout_generation INT8 NOT NULL,
