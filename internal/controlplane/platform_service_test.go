@@ -128,6 +128,8 @@ func (f *fakePlatformDelivery) ScaleService(ctx context.Context, serviceID strin
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1"}, nil, 0, nil
 }
 
+func (f *fakePlatformDelivery) Live() *deliverycore.Live { return nil }
+
 type fakePlatformStore struct {
 	createProjectFn                   func(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error)
 	listProjectsFn                    func(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error)

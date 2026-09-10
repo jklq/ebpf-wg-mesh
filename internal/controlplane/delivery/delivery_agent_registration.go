@@ -12,7 +12,6 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
 )
 
@@ -166,16 +165,11 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 }
 
 func assignedAllocationIDs(d *Delivery, ctx context.Context, agentID string) []string {
-	var ids []string
-	_ = d.store.readState(ctx, func(_ *sql.Tx, state journal.DurableState) error {
-		for _, assignment := range state.Assignments {
-			if assignment.AgentID == agentID && assignment.RolloutState != AllocationRolloutLost {
-				ids = append(ids, assignment.ID)
-			}
-		}
+	_ = ctx
+	if d == nil || d.live == nil {
 		return nil
-	})
-	return ids
+	}
+	return d.live.AssignedIDs(agentID)
 }
 
 // ObserveAgentHeartbeat refreshes presence only for the currently registered

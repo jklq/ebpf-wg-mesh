@@ -2,31 +2,24 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
-	"ebof-wg-mesh/internal/controlplane/routing"
-	"ebof-wg-mesh/internal/restartpolicy"
 	"net"
 	"slices"
 	"strconv"
 	"strings"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/restartpolicy"
 )
 
 func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]routing.Backend, error) {
+	_ = ctx
 	live := s.live
-	if live != nil && !live.Publishing() {
+	if live == nil || !live.Publishing() {
 		return nil, nil
 	}
-	if live == nil {
-		live = deliverycore.NewLive()
-	}
-	var backends []routing.Backend
-	err := s.readLiveState(ctx, func(_ *sql.Tx, durable journal.DurableState) error {
-		backends = healthyIngressBackends(durable, live)
-		return nil
-	})
-	return backends, err
+	return healthyIngressBackends(live.Durable(), live), nil
 }
 
 func healthyIngressBackends(durable journal.DurableState, live *deliverycore.Live) []routing.Backend {

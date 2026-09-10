@@ -60,6 +60,7 @@ type platformDelivery interface {
 	DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	DeleteService(ctx context.Context, serviceID string) error
 	ScaleService(ctx context.Context, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
+	Live() *deliverycore.Live
 }
 
 type environmentStore interface {
@@ -68,6 +69,12 @@ type environmentStore interface {
 	createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error)
 	renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error)
 	deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error)
+}
+
+func (s *PlatformService) protoServiceStatus(rec deliverycore.ServiceRecord, allocations []deliverycore.AllocationRecord, index int64) *platformv1.ServiceStatus {
+	out := toProtoServiceStatus(rec, allocations, index)
+	out.Live = liveReadMeta(s.delivery)
+	return out
 }
 
 func (s *PlatformService) environmentForUser(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
@@ -252,7 +259,7 @@ func (s *PlatformService) ReleaseEnvironment(ctx context.Context, req *platformv
 	}
 	resp := &platformv1.ReleaseEnvironmentResponse{Services: make([]*platformv1.ServiceStatus, 0, len(services))}
 	for _, released := range services {
-		resp.Services = append(resp.Services, toProtoServiceStatus(released.Service, released.Allocations, 0))
+		resp.Services = append(resp.Services, s.protoServiceStatus(released.Service, released.Allocations, 0))
 	}
 	return resp, nil
 }

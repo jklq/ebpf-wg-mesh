@@ -92,34 +92,7 @@ func (s *fleetPersistence) fleetView(ctx context.Context, userID string) (*platf
 	if err != nil {
 		return nil, err
 	}
-	type usage struct {
-		allocations int32
-		cpu         int64
-		memory      int64
-	}
-	usageByAgent := make(map[string]usage, len(agents))
-	rows, err := s.db.QueryContext(ctx, `SELECT a.agent_id, count(*),
-		COALESCE(SUM(COALESCE((r.spec_json->'runtime'->>'cpuMillis')::INT8, 0)), 0),
-		COALESCE(SUM(COALESCE((r.spec_json->'runtime'->>'memoryMebibytes')::INT8, 0)), 0)
-		FROM allocations a
-		JOIN services s ON s.id = a.service_id
-		JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
-		GROUP BY a.agent_id`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id string
-		var item usage
-		if err := rows.Scan(&id, &item.allocations, &item.cpu, &item.memory); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		usageByAgent[id] = item
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
+	usageByAgent := s.live.AgentUsage()
 	versions := make(map[string]int)
 	for _, agent := range agents {
 		if agent.LifecycleState != deliverycore.AgentStateRetired && agent.SoftwareVersion != "" {
@@ -137,11 +110,11 @@ func (s *fleetPersistence) fleetView(ctx context.Context, userID string) (*platf
 	for _, rec := range agents {
 		item := toProtoAgent(rec)
 		used := usageByAgent[rec.ID]
-		item.AllocationCount = used.allocations
-		item.AllocatedCpuMillis = used.cpu
-		item.AllocatedMemoryMebibytes = used.memory
-		item.HeadroomCpuMillis = max(item.SchedulableCpuMillis-used.cpu, 0)
-		item.HeadroomMemoryMebibytes = max(item.SchedulableMemoryMebibytes-used.memory, 0)
+		item.AllocationCount = used.Allocations
+		item.AllocatedCpuMillis = used.CPUMillis
+		item.AllocatedMemoryMebibytes = used.MemoryMebibytes
+		item.HeadroomCpuMillis = max(item.SchedulableCpuMillis-used.CPUMillis, 0)
+		item.HeadroomMemoryMebibytes = max(item.SchedulableMemoryMebibytes-used.MemoryMebibytes, 0)
 		if recommendedVersion != "" && item.SoftwareVersion != "" && item.SoftwareVersion != recommendedVersion && rec.LifecycleState != deliverycore.AgentStateRetired {
 			item.VersionSkewWarning = fmt.Sprintf("reports %s while the fleet majority reports %s", item.SoftwareVersion, recommendedVersion)
 		}
@@ -153,14 +126,17 @@ func (s *fleetPersistence) fleetView(ctx context.Context, userID string) (*platf
 			fleet.Capacity.SchedulableNodeCount++
 			fleet.Capacity.SchedulableCpuMillis += item.SchedulableCpuMillis
 			fleet.Capacity.SchedulableMemoryMebibytes += item.SchedulableMemoryMebibytes
-			fleet.Capacity.AllocatedCpuMillis += used.cpu
-			fleet.Capacity.AllocatedMemoryMebibytes += used.memory
+			fleet.Capacity.AllocatedCpuMillis += used.CPUMillis
+			fleet.Capacity.AllocatedMemoryMebibytes += used.MemoryMebibytes
 			fleet.Capacity.HeadroomCpuMillis += item.HeadroomCpuMillis
 			fleet.Capacity.HeadroomMemoryMebibytes += item.HeadroomMemoryMebibytes
 		}
 	}
 	if len(versions) > 1 {
 		fleet.VersionWarning = fmt.Sprintf("fleet software version skew detected; converge nodes on %s", recommendedVersion)
+	}
+	if s.live != nil {
+		fleet.Live = toProtoLiveRead(s.live.Position())
 	}
 	return fleet, nil
 }

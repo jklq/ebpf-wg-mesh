@@ -13,13 +13,28 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-func TestNotifierObservesDesiredRevisionWrittenByAnotherReplica(t *testing.T) {
+func TestLiveWatchFiresAfterDurableApply(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if _, err := upsertTestAgent(t, store, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
+		t.Fatal(err)
+	}
+	wake, stop := NewNotifier(store.live).Watch("agent-a")
+	defer stop()
+	bumpDesiredRevisionsForTest(t, store, ctx, []string{"agent-a"})
+	select {
+	case <-wake:
+	case <-time.After(time.Second):
+		t.Fatal("live watch did not fire after durable apply")
+	}
+}
+
+func TestReplicaSnapshotAppliesDurableIntoLive(t *testing.T) {
 	ctx := context.Background()
 	storeA := openTestStore(t)
 	if _, err := upsertTestAgent(t, storeA, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
 		t.Fatal(err)
 	}
-
 	storeB, err := openPersistence(config.DatabaseConfig{
 		URL: sharedTestDatabase(t), MaxOpenConns: 2, MaxIdleConns: 2,
 	}, testMeshConfig())
@@ -27,23 +42,16 @@ func TestNotifierObservesDesiredRevisionWrittenByAnotherReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = storeB.Close() })
-
-	notifierB := NewNotifier(ctx, storeB.reads, 5*time.Millisecond)
-	wake, stop := notifierB.Watch("agent-a")
+	wake, stop := NewNotifier(storeB.live).Watch("agent-a")
 	defer stop()
-
-	// The first poll establishes this replica's baseline.
-	select {
-	case <-wake:
-	case <-time.After(time.Second):
-		t.Fatal("notifier did not establish its initial revision")
-	}
-
 	bumpDesiredRevisionsForTest(t, storeA, ctx, []string{"agent-a"})
+	if _, err := storeB.journal.Snapshot(ctx); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-wake:
 	case <-time.After(time.Second):
-		t.Fatal("replica B did not observe replica A's desired-state revision")
+		t.Fatal("replica B live view did not apply replica A's journal prefix")
 	}
 }
 

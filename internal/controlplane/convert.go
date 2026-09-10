@@ -84,6 +84,25 @@ func toProtoServiceStatus(rec deliverycore.ServiceRecord, allocations []delivery
 	}
 }
 
+func liveReadMeta(d platformDelivery) *platformv1.LiveReadMeta {
+	if d == nil || d.Live() == nil {
+		return nil
+	}
+	return toProtoLiveRead(d.Live().Position())
+}
+
+func toProtoLiveRead(pos deliverycore.LivePosition) *platformv1.LiveReadMeta {
+	meta := &platformv1.LiveReadMeta{
+		AcceptedDurablePosition: pos.AcceptedDurable,
+		AppliedLivePosition:     pos.AppliedLive,
+		LiveOwnerReady:          pos.Ready,
+	}
+	if !pos.ObservationFreshness.IsZero() {
+		meta.ObservationFreshness = timestamppb.New(pos.ObservationFreshness)
+	}
+	return meta
+}
+
 func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
 	return &platformv1.DomainBinding{
 		Hostname:          rec.Hostname,

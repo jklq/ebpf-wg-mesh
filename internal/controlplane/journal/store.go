@@ -36,10 +36,19 @@ type Store struct {
 	clusterID string
 	state     DurableState
 	fence     Fence
+	onApplied func(DurableState)
 }
 
 func New(db *sql.DB, clusterID string, fence Fence) *Store {
 	return &Store{db: db, clusterID: clusterID, state: DurableState{ClusterID: clusterID}, fence: fence}
+}
+
+// SetOnApplied registers a listener invoked after the in-memory prefix advances.
+// The callback must not re-enter the journal; it receives an owned snapshot.
+func (s *Store) SetOnApplied(fn func(DurableState)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onApplied = fn
 }
 
 type commandIDKey struct{}
@@ -55,7 +64,12 @@ func WithCommandID(ctx context.Context, id string) context.Context {
 // It is retried on serialization conflicts; no attempted state is published.
 func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	held := true
+	defer func() {
+		if held {
+			s.mu.Unlock()
+		}
+	}()
 	id, _ := ctx.Value(commandIDKey{}).(string)
 	if id == "" {
 		id = uuid.NewString()
@@ -124,13 +138,22 @@ func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, err
 	defer cancel()
 	committed, resolveErr := lookup(resolveCtx, s.db, s.clusterID, id)
 	if resolveErr != nil {
+		held = false
+		s.mu.Unlock()
 		if err != nil {
 			return Entry{}, &CommitError{CommandID: id, Err: err}
 		}
 		return Entry{}, &CommitError{CommandID: id, Committed: true, Err: resolveErr}
 	}
-	if err := s.catchUp(resolveCtx); err != nil {
-		return committed, &CommitError{CommandID: id, Committed: true, Err: err}
+	catchErr := s.catchUp(resolveCtx)
+	hook, snap := s.appliedLocked(catchErr == nil)
+	held = false
+	s.mu.Unlock()
+	if hook != nil {
+		hook(snap)
+	}
+	if catchErr != nil {
+		return committed, &CommitError{CommandID: id, Committed: true, Err: catchErr}
 	}
 	return committed, nil
 }
@@ -143,17 +166,17 @@ func (s *Store) Receipt(ctx context.Context, commandID string) (Entry, error) {
 // cannot mutate the state used to validate subsequent decisions.
 func (s *Store) Snapshot(ctx context.Context) (DurableState, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := s.catchUp(ctx); err != nil {
+		s.mu.Unlock()
 		return DurableState{}, err
 	}
-	raw, err := json.Marshal(s.state)
-	if err != nil {
-		return DurableState{}, err
+	copy := s.state.Clone()
+	hook, snap := s.appliedLocked(true)
+	s.mu.Unlock()
+	if hook != nil {
+		hook(snap)
 	}
-	var copy DurableState
-	err = json.Unmarshal(raw, &copy)
-	return copy, err
+	return copy, nil
 }
 
 func (s *Store) catchUp(ctx context.Context) error {
@@ -164,8 +187,20 @@ func (s *Store) catchUp(ctx context.Context) error {
 // applied journal prefix. The result must not be published inside fn.
 func (s *Store) Read(ctx context.Context, fn func(*sql.Tx, DurableState) error) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.read(ctx, fn)
+	err := s.read(ctx, fn)
+	hook, snap := s.appliedLocked(err == nil)
+	s.mu.Unlock()
+	if hook != nil {
+		hook(snap)
+	}
+	return err
+}
+
+func (s *Store) appliedLocked(ok bool) (func(DurableState), DurableState) {
+	if !ok || s.onApplied == nil {
+		return nil, DurableState{}
+	}
+	return s.onApplied, s.state.Clone()
 }
 
 func (s *Store) read(ctx context.Context, fn func(*sql.Tx, DurableState) error) error {
