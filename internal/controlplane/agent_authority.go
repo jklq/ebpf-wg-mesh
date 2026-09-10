@@ -14,14 +14,22 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// agentSessions validates grants and acknowledgements against the active session.
+// Admission, observations, and desired-state construction remain owned by delivery.
+type agentSessions interface {
+	Serving() bool
+	Grant(string, string, uint64, int64) error
+	Acknowledge(string, string, uint64, int64) error
+}
+
 // grantAgentCommand checks the current session and authority transactionally.
 // A paused sender cannot extend a grant after authority has changed. The
 // persisted maximum expiry survives sender death, disconnect and early release.
-func (s *database) grantAgentCommand(ctx context.Context, agentID, sessionID string, epoch uint64, cursor int64) (time.Time, error) {
-	if s.live == nil {
+func (s *fleetPersistence) grantAgentCommand(ctx context.Context, agentID, sessionID string, epoch uint64, cursor int64) (time.Time, error) {
+	if s.sessions == nil {
 		return time.Time{}, deliverycore.ErrNotLiveOwner
 	}
-	if err := s.live.Grant(agentID, sessionID, epoch, cursor); err != nil {
+	if err := s.sessions.Grant(agentID, sessionID, epoch, cursor); err != nil {
 		if errors.Is(err, deliverycore.ErrStaleAgentSession) {
 			return time.Time{}, errors.New("agent session superseded")
 		}
@@ -78,7 +86,7 @@ func (s *database) advanceAgentAuthority(ctx context.Context, expected uint64) e
 	})
 }
 
-func (s *database) acknowledgeAgentDesired(ctx context.Context, ack *agentv1.DesiredStateAcknowledgement) error {
+func (s *fleetPersistence) acknowledgeAgentDesired(ctx context.Context, ack *agentv1.DesiredStateAcknowledgement) error {
 	var epoch uint64
 	if err := s.db.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1`).Scan(&epoch); err != nil {
 		return err
@@ -86,7 +94,7 @@ func (s *database) acknowledgeAgentDesired(ctx context.Context, ack *agentv1.Des
 	if ack.GetAuthorityEpoch() != epoch {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
-	return s.live.Acknowledge(ack.GetAgentId(), ack.GetSessionId(), ack.GetAuthorityEpoch(), ack.GetReconciliationCursor())
+	return s.sessions.Acknowledge(ack.GetAgentId(), ack.GetSessionId(), ack.GetAuthorityEpoch(), ack.GetReconciliationCursor())
 }
 
 func stampAgentCommand(state *agentv1.DesiredNodeState, sessionID string, epoch uint64, deadline time.Time) {

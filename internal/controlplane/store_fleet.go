@@ -12,6 +12,12 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
+// fleetLiveReader supplies product reads without session or publication mutation.
+type fleetLiveReader interface {
+	AgentUsage() map[string]deliverycore.AgentUsage
+	Position() deliverycore.LivePosition
+}
+
 func (s *fleetPersistence) AuthorizeAgentCredential(ctx context.Context, agentID string) error {
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM agents

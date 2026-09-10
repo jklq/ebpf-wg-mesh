@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"runtime"
@@ -24,7 +23,6 @@ type database struct {
 	reservedAgentIDs []string
 	journalOnce      sync.Once
 	journal          *journal.Store
-	live             *deliverycore.Live
 }
 
 func (s *database) reserveAgents(agentIDs ...string) {
@@ -50,7 +48,7 @@ func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMes
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	store := newPersistence(&database{db: db, mesh: meshCfg, live: deliverycore.NewLive()})
+	store := newPersistence(&database{db: db, mesh: meshCfg})
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -142,7 +140,6 @@ func (s *database) initJournal() {
 			err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch)
 			return epoch, err
 		})
-		s.journal.SetOnApplied(s.live.ApplyDurable)
 	})
 }
 

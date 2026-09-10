@@ -53,7 +53,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 
-	notifier := NewNotifier(store.live)
+	notifier := NewNotifier(store.notifications)
 	watches := make(map[string]<-chan struct{})
 	for _, id := range []string{"old-node", "new-node", "reserved-node"} {
 		ch, stop := notifier.Watch(id)
@@ -301,5 +301,5 @@ func bootstrapFailoverProject(t *testing.T, store *persistence) string {
 
 func makeAgentUnhealthy(t *testing.T, store *persistence, agentID string, lastSeen time.Time) {
 	t.Helper()
-	store.live.SetLastContactForTest(agentID, lastSeen.UTC())
+	fixtureLive(store).SetLastContactForTest(agentID, lastSeen.UTC())
 }

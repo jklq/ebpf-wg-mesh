@@ -19,7 +19,7 @@ func TestLiveWatchFiresAfterDurableApply(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
 		t.Fatal(err)
 	}
-	wake, stop := NewNotifier(store.live).Watch("agent-a")
+	wake, stop := NewNotifier(store.notifications).Watch("agent-a")
 	defer stop()
 	bumpDesiredRevisionsForTest(t, store, ctx, []string{"agent-a"})
 	select {
@@ -42,11 +42,19 @@ func TestReplicaSnapshotAppliesDurableIntoLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = storeB.Close() })
-	wake, stop := NewNotifier(storeB.live).Watch("agent-a")
+	wake, stop := NewNotifier(storeB.notifications).Watch("agent-a")
 	defer stop()
 	bumpDesiredRevisionsForTest(t, storeA, ctx, []string{"agent-a"})
-	if _, err := storeB.journal.Snapshot(ctx); err != nil {
+	snapshot, err := storeB.journal.Snapshot(ctx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	position := newDelivery(storeB, nil, nil, nil, nil).LivePosition()
+	if position.AcceptedDurable != snapshot.LogIndex {
+		t.Fatalf("live durable position = %d, journal = %d", position.AcceptedDurable, snapshot.LogIndex)
+	}
+	if position.Ready || storeB.routing.live.Publishing() {
+		t.Fatal("replaying another replica's journal must not acquire live ownership")
 	}
 	select {
 	case <-wake:

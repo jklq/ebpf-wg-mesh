@@ -13,6 +13,14 @@ import (
 	"ebof-wg-mesh/internal/restartpolicy"
 )
 
+// ingressLiveReader combines durable assignments with current session observations.
+// Publication must be enabled before these backends can be published.
+type ingressLiveReader interface {
+	Publishing() bool
+	Durable() journal.DurableState
+	OverlayAllocation(deliverycore.AllocationRecord) deliverycore.AllocationRecord
+}
+
 func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]routing.Backend, error) {
 	_ = ctx
 	live := s.live
@@ -22,7 +30,7 @@ func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]rout
 	return healthyIngressBackends(live.Durable(), live), nil
 }
 
-func healthyIngressBackends(durable journal.DurableState, live *deliverycore.Live) []routing.Backend {
+func healthyIngressBackends(durable journal.DurableState, live ingressLiveReader) []routing.Backend {
 	type row struct {
 		hostname, allocationID, ipv4, ipv6 string
 		port                               int32

@@ -23,7 +23,6 @@ var currentSchema = []string{
 	`CREATE TABLE control_plane_leases (
 			name STRING PRIMARY KEY,
 			holder_id STRING NOT NULL,
-			advertise_addr STRING NOT NULL DEFAULT '',
 			fencing_token INT8 NOT NULL,
 			advertise_addr STRING NOT NULL DEFAULT '',
 			expires_at TIMESTAMPTZ NOT NULL,
