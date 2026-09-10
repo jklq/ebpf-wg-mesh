@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"time"
 )
@@ -186,12 +187,14 @@ func (d *Delivery) applySchedulingPlanTx(ctx context.Context, tx *sql.Tx, plan S
 				assignment.Intent, plan.DecidedAt); err != nil {
 				return err
 			}
+			journal.RecordAssignment(ctx, assignment.ID)
 		case DecisionReserveAddress:
 			if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 				SET allocation_ipv4 = $2, updated_at = $3 WHERE id = $1`,
 				decision.AllocationID, decision.Allocation.IPv4, plan.DecidedAt); err != nil {
 				return err
 			}
+			journal.RecordAssignment(ctx, decision.AllocationID)
 		case DecisionAdvanceDeploy, DecisionFailDeploy, DecisionEvaluateAt:
 			// Deployment transitions and wake scheduling are consumed by the
 			// orchestration layer after allocation decisions are committed.

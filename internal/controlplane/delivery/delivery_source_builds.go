@@ -16,7 +16,7 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 	var result source.QueuedBuild
 	var service ServiceRecord
 	var build BuildRunRecord
-	err := d.store.withTx(ctx, func(tx *sql.Tx) error {
+	err := d.store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		revision, err := d.store.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
 		if err != nil {
 			return err

@@ -6,6 +6,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -378,12 +379,32 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 		go func() { errCh <- s.dashboard.Run(ctx) }()
 	}
 	go func() { errCh <- s.buildLeaseRepairLoop(ctx) }()
+	go func() { errCh <- s.journalCompactionLoop(ctx) }()
 	go func() { s.sourceArchiveRetentionLoop(ctx); errCh <- nil }()
 	select {
 	case <-ctx.Done():
 		return nil
 	case err := <-errCh:
 		return err
+	}
+}
+
+func (s *Server) journalCompactionLoop(ctx context.Context) error {
+	compact := func() {
+		if _, err := s.store.compactJournal(ctx, journal.DefaultRetainEntries); err != nil && ctx.Err() == nil {
+			slog.Warn("journal compaction failed", "error", err)
+		}
+	}
+	compact()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			compact()
+		}
 	}
 }
 

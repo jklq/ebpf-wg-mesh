@@ -21,7 +21,7 @@ const (
 )
 
 func (s *SQLStore) UpsertGitHubInstallation(ctx context.Context, rec GitHubInstallationRecord) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return s.upsertGitHubInstallationTx(ctx, tx, rec)
 	})
 }
@@ -48,7 +48,7 @@ func (s *SQLStore) upsertGitHubInstallationTx(ctx context.Context, tx *sql.Tx, r
 }
 
 func (s *SQLStore) DeactivateGitHubInstallation(ctx context.Context, installationID int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE github_installations
@@ -69,7 +69,7 @@ func (s *SQLStore) DeactivateGitHubInstallation(ctx context.Context, installatio
 }
 
 func (s *SQLStore) ReplaceGitHubInstallationRepositories(ctx context.Context, installation GitHubInstallationRecord, repos []GitHubRepositoryRecord) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := s.upsertGitHubInstallationTx(ctx, tx, installation); err != nil {
 			return err
 		}
@@ -222,7 +222,7 @@ func (s *SQLStore) EnqueueGitHubWebhookDelivery(ctx context.Context, deliveryID,
 
 func (s *SQLStore) ClaimNextGitHubWebhookDelivery(ctx context.Context, processorID string, staleAfter time.Duration) (GitHubWebhookDeliveryRecord, error) {
 	var rec GitHubWebhookDeliveryRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
@@ -303,7 +303,7 @@ func (s *SQLStore) CompleteGitHubWebhookDelivery(ctx context.Context, deliveryID
 }
 
 func (s *SQLStore) UpsertGitHubRepositorySnapshot(ctx context.Context, rec GitHubRepositorySnapshotRecord) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return s.upsertGitHubRepositorySnapshotTx(ctx, tx, rec)
 	})
 }
@@ -391,7 +391,7 @@ func (s *SQLStore) RecoverGitHubWebhookDeliveries(ctx context.Context, staleAfte
 	if staleAfter <= 0 {
 		return nil
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`UPDATE github_webhook_deliveries
 		    SET state = $1,

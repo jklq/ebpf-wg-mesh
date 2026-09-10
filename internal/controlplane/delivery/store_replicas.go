@@ -11,6 +11,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 const (
@@ -55,11 +56,14 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 }
 
 func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
-	_, err := tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE services SET placement_message = $1, updated_at = $2 WHERE id = $3`,
 		message, now, serviceID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	journal.RecordService(ctx, serviceID)
+	return nil
 }
 
 func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, SchedulingDecision, error) {

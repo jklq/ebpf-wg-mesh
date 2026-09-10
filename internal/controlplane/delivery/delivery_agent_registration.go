@@ -12,13 +12,14 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
 )
 
 func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
 	s := d.store
 	var changed bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
@@ -60,10 +61,12 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET session_incarnation = $2 WHERE id = $1`, hello.GetAgentId(), int64(hello.GetSessionIncarnation())); err != nil {
 			return err
 		}
+		journal.RecordAgent(ctx, hello.GetAgentId())
 		if storeID == "" {
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET local_store_id = $2 WHERE id = $1`, hello.GetAgentId(), hello.GetLocalStoreId()); err != nil {
 				return err
 			}
+			journal.RecordAgent(ctx, hello.GetAgentId())
 		}
 		workloadIPv4Subnet := existing.WorkloadIPv4Subnet
 		if workloadIPv4Subnet == "" {
@@ -131,6 +134,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if err != nil {
 			return err
 		}
+		journal.RecordAgent(ctx, hello.GetAgentId())
 		administration, err := tx.ExecContext(ctx, `UPDATE agent_administration
 			SET lifecycle_state = CASE WHEN lifecycle_state = 'enrolling' THEN 'active' ELSE lifecycle_state END,
 			    updated_at = CASE WHEN lifecycle_state = 'enrolling' THEN $2 ELSE updated_at END
@@ -145,9 +149,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if rows != 1 {
 			return ErrAgentCredentialRevoked
 		}
-		if changed {
-			return dbtx.BumpAllDesiredRevisions(ctx, tx)
-		}
+		journal.RecordAdministration(ctx, hello.GetAgentId())
 		return nil
 	})
 	if err != nil {

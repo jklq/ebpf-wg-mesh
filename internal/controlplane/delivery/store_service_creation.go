@@ -8,6 +8,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -73,11 +74,13 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	); err != nil {
 		return ServiceRecord{}, err
 	}
+	journal.RecordService(ctx, rec.ID)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 		rec.ID, rec.SpecRevision, specJSON, now,
 	); err != nil {
 		return ServiceRecord{}, err
 	}
+	journal.RecordRevision(ctx, rec.ID, rec.SpecRevision)
 	return rec, nil
 }

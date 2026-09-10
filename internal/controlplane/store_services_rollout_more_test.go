@@ -153,7 +153,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 }
 
-func TestAgentTopologyChangesBumpAllDesiredRevisions(t *testing.T) {
+func TestAgentTopologyChangesBumpEveryAgentRevision(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)

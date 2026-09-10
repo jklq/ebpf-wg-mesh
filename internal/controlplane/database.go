@@ -87,7 +87,7 @@ func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 }
 
 func (s *database) migrate(ctx context.Context) error {
-	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 			return fmt.Errorf("create schema_migrations: %w", err)
 		}
@@ -143,9 +143,9 @@ func (s *database) initJournal() {
 	})
 }
 
-func (s *database) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+func (s *database) withTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 	s.initJournal()
-	_, err := s.journal.Execute(ctx, func(tx *sql.Tx) error {
+	_, err := s.journal.ExecuteWithMutation(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := assertLeaseTx(ctx, tx); err != nil {
 			return err
 		}
@@ -155,21 +155,31 @@ func (s *database) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		if err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch); err != nil {
 			return err
 		}
-		if err := fn(tx); err != nil {
+		if err := fn(ctx, tx); err != nil {
 			return err
 		}
 		return bumpGlobalEnvironmentEventTx(ctx, tx)
-	})
+	}, s.bumpAffectedAgents)
 	return err
 }
 
-func (s *database) withTxUnfenced(ctx context.Context, fn func(*sql.Tx) error) error {
-	return crdb.ExecuteTx(ctx, s.db, nil, fn)
+// compactJournal snapshots and truncates the durable journal. It runs only from
+// the lease-owned singleton job; the fence asserts the live owner inside the
+// compaction transaction.
+func (s *database) compactJournal(ctx context.Context, retain int64) (int64, error) {
+	s.initJournal()
+	return s.journal.CompactSnapshot(ctx, retain, func(ctx context.Context, tx *sql.Tx) error {
+		return assertLeaseTx(ctx, tx)
+	})
 }
 
-func (s *database) withObservationTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
-		if err := fn(tx); err != nil {
+func (s *database) withTxUnfenced(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	return crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error { return fn(ctx, tx) })
+}
+
+func (s *database) withObservationTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := fn(ctx, tx); err != nil {
 			return err
 		}
 		return bumpGlobalEnvironmentEventTx(ctx, tx)
@@ -187,7 +197,7 @@ func (s *database) readLiveState(ctx context.Context, fn func(*sql.Tx, journal.D
 }
 
 func (s *catalogPersistence) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		for _, user := range bootstrap.Users {
 			if user.ID == "" {
 				continue

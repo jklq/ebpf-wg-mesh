@@ -27,7 +27,7 @@ func bumpDesiredRevisionsForTest(t *testing.T, store *persistence, ctx context.C
 	if len(agentIDs) == 0 {
 		return
 	}
-	if err := store.withTx(ctx, func(tx *sql.Tx) error {
+	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return dbtx.BumpDesiredRevisions(ctx, tx, agentIDs)
 	}); err != nil {
 		t.Fatalf("bumpDesiredRevisions: %v", err)

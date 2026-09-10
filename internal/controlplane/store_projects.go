@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"time"
 
@@ -36,6 +37,7 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 	); err != nil {
 		return "", fmt.Errorf("insert project: %w", err)
 	}
+	journal.RecordProject(ctx, id)
 	if _, err := s.createEnvironmentQuerier(ctx, q, id, "Production", true, ""); err != nil {
 		return "", fmt.Errorf("create production environment: %w", err)
 	}
@@ -56,7 +58,7 @@ func (s *catalogPersistence) ensureProjectOwnerMembershipQuerier(ctx context.Con
 
 func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, systemKey string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, found, err := s.projectBySystemKeyQuerier(ctx, tx, systemKey)
 		if err != nil {
 			return err
@@ -83,6 +85,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 			if err != nil {
 				return err
 			}
+			journal.RecordProject(ctx, project.ID)
 			_, err = s.createEnvironmentQuerier(ctx, tx, project.ID, "Production", true, "")
 			return err
 		}
@@ -96,6 +99,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 			); err != nil {
 				return err
 			}
+			journal.RecordProject(ctx, current.ID)
 			current.Name = name
 			current.Kind = deliverycore.ProjectKindManaged
 		}
@@ -113,7 +117,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 
 func (s *catalogPersistence) createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, userID, name)
 		if err != nil {
 			return err

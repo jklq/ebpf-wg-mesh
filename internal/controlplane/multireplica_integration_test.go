@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -72,7 +73,7 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.withTx(ctx, func(tx *sql.Tx) error {
+	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO platform_operators(user_id, created_at) VALUES ('operator-a', statement_timestamp())`)
 		return err
 	}); err != nil {
@@ -87,7 +88,7 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	}
 
 	rollbackErr := errors.New("rollback")
-	if err := store.withTx(ctx, func(tx *sql.Tx) error {
+	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO platform_operators(user_id, created_at) VALUES ('operator-b', statement_timestamp())`); err != nil {
 			return err
 		}
@@ -150,12 +151,12 @@ func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 	}
 
 	staleCtx := context.WithValue(ctx, leaseContextKey{}, firstClaim)
-	err = store.withTx(staleCtx, func(*sql.Tx) error { return nil })
+	err = store.withTx(staleCtx, func(context.Context, *sql.Tx) error { return nil })
 	if !errors.Is(err, errLeaseLost) {
 		t.Fatalf("stale owner transaction error = %v, want lease lost", err)
 	}
 	freshCtx := context.WithValue(ctx, leaseContextKey{}, secondClaim)
-	if err := store.withTx(freshCtx, func(*sql.Tx) error { return nil }); err != nil {
+	if err := store.withTx(freshCtx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
 		t.Fatalf("new owner transaction: %v", err)
 	}
 }
@@ -310,5 +311,60 @@ func TestSharedStorageBindingRejectsReplicaLocalDirectory(t *testing.T) {
 	}
 	if err := verifySharedControlPlaneDirectory(ctx, store, "state-test", t.TempDir()); err == nil {
 		t.Fatal("replica-local directory was accepted for registered shared storage")
+	}
+}
+
+// TestReplicaRecoversAfterJournalCompaction proves a standby replica whose
+// in-memory prefix predates the compaction watermark recovers by re-reading the
+// snapshot path and converges on the live owner's durable state.
+func TestReplicaRecoversAfterJournalCompaction(t *testing.T) {
+	ctx := context.Background()
+	storeA := openTestStore(t)
+	if _, err := upsertTestAgent(t, storeA, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := storeA.catalog.createProject(ctx, "owner", "replica-compact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, storeA, project.ID)
+	if _, err := createScheduledService(ctx, storeA, "owner", environmentID, "first", directImageServiceSpec("example.test/web:1", nil)); err != nil {
+		t.Fatal(err)
+	}
+
+	storeB, err := openPersistence(config.DatabaseConfig{
+		URL: sharedTestDatabase(t), MaxOpenConns: 2, MaxIdleConns: 2,
+	}, testMeshConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storeB.Close() })
+	if _, err := storeB.journal.Snapshot(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := storeA.catalog.renameEnvironment(ctx, "owner", environmentID, "compacted"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storeA.compactJournal(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storeA.catalog.renameEnvironment(ctx, "owner", environmentID, "compacted-again"); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := storeA.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := storeB.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(current, recovered) {
+		t.Fatalf("standby replica diverged after compaction: replica=%d owner=%d", recovered.LogIndex, current.LogIndex)
+	}
+	if recovered.Environments[environmentID].Name != "compacted-again" {
+		t.Fatalf("standby did not observe post-compaction change: %+v", recovered.Environments[environmentID])
 	}
 }

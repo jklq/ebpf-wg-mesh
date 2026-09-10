@@ -3,7 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/routing"
 
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
@@ -29,7 +29,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 	}
 	var binding deliverycore.DomainBindingRecord
 	var changed bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed = false
 		binding = deliverycore.DomainBindingRecord{}
 		attemptHostname, attemptCreateOnly := hostname, createOnly
@@ -82,17 +82,6 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 			if existing.ServiceID == serviceID && existing.TargetPort == targetPort && existing.PlatformGenerated == attemptPlatformGenerated {
 				return nil
 			}
-			agentIDs, err := s.agentIDsForService(ctx, tx, serviceID)
-			if err != nil {
-				return err
-			}
-			if existing.ServiceID != serviceID {
-				previousIDs, err := s.agentIDsForService(ctx, tx, existing.ServiceID)
-				if err != nil {
-					return err
-				}
-				agentIDs = append(agentIDs, previousIDs...)
-			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE domain_bindings
 				    SET service_id = $1,
@@ -104,8 +93,9 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 			); err != nil {
 				return err
 			}
-			if err := dbtx.BumpDesiredRevisions(ctx, tx, agentIDs); err != nil {
-				return err
+			journal.RecordDomain(ctx, attemptHostname, serviceID)
+			if existing.ServiceID != serviceID {
+				journal.RecordDomain(ctx, attemptHostname, existing.ServiceID)
 			}
 			binding.ServiceID = serviceID
 			binding.ProjectID = service.ProjectID
@@ -135,13 +125,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 		); err != nil {
 			return err
 		}
-		createAgentIDs, err := s.agentIDsForService(ctx, tx, serviceID)
-		if err != nil {
-			return err
-		}
-		if err := dbtx.BumpDesiredRevisions(ctx, tx, createAgentIDs); err != nil {
-			return err
-		}
+		journal.RecordDomain(ctx, attemptHostname, serviceID)
 		binding = deliverycore.DomainBindingRecord{
 			Hostname:          attemptHostname,
 			ProjectID:         service.ProjectID,
@@ -205,7 +189,7 @@ func (s *routingPersistence) platformDomainBindingForServiceQuerier(ctx context.
 
 func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, userID, hostname string) (bool, error) {
 	var changed bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed = false
 		binding, err := s.domainBindingByHostnameQuerier(ctx, tx, userID, hostname)
 		if err != nil {
@@ -232,10 +216,6 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 		).Scan(&serviceID); err != nil {
 			return err
 		}
-		agentIDs, err := s.agentIDsForService(ctx, tx, serviceID)
-		if err != nil {
-			return err
-		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE hostname = $1`, hostname)
 		if err != nil {
 			return err
@@ -247,13 +227,18 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 		if rows == 0 {
 			return sql.ErrNoRows
 		}
+		journal.RecordDomain(ctx, hostname, serviceID)
 		if !binding.PlatformGenerated {
+			generated, err := queryGeneratedDomainHostnames(ctx, tx, serviceID)
+			if err != nil {
+				return err
+			}
+			for _, platformHostname := range generated {
+				journal.RecordDomain(ctx, platformHostname, serviceID)
+			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE service_id = $1 AND platform_generated AND NOT EXISTS (SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated)`, serviceID); err != nil {
 				return err
 			}
-		}
-		if err := dbtx.BumpDesiredRevisions(ctx, tx, agentIDs); err != nil {
-			return err
 		}
 		changed = true
 		return nil
@@ -309,4 +294,21 @@ func (s *routingPersistence) serviceLocation(ctx context.Context, q deliverycore
  JOIN project_memberships m ON m.project_id = e.project_id
  WHERE s.id = $1 AND m.user_id = $2 AND m.role IN ('owner', 'editor', 'viewer')`, serviceID, userID).Scan(&rec.ID, &rec.ProjectID, &rec.EnvironmentID)
 	return rec, err
+}
+
+func queryGeneratedDomainHostnames(ctx context.Context, tx *sql.Tx, serviceID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT hostname FROM domain_bindings WHERE service_id = $1 AND platform_generated`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var hostnames []string
+	for rows.Next() {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
+			return nil, err
+		}
+		hostnames = append(hostnames, hostname)
+	}
+	return hostnames, rows.Err()
 }

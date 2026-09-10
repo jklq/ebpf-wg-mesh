@@ -3,7 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,7 +27,7 @@ func (d *Delivery) CreateScheduledService(ctx context.Context, environmentID, na
 func (d *Delivery) createScheduledService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		environment, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
@@ -47,7 +47,7 @@ func (d *Delivery) CreateService(ctx context.Context, userID, environmentID, nam
 	defer d.schedulerMu.Unlock()
 	s := d.store
 	var rec ServiceRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		rec, err = d.createServiceTx(ctx, tx, userID, environmentID, name, spec, agentID)
 		return err
@@ -112,6 +112,7 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 		SET current_rollout_generation = 1, current_resolved_image = $1 WHERE id = $2`, rec.ResolvedImage, rec.ID); err != nil {
 		return ServiceRecord{}, err
 	}
+	journal.RecordService(ctx, rec.ID)
 	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, 1, 1, "create", "", "", now); err != nil {
 		return ServiceRecord{}, err
 	}
@@ -137,12 +138,6 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 			return ServiceRecord{}, err
 		}
 	}
-	// Allocations are part of every node's workload identity catalog. Creating
-	// one therefore changes mesh policy globally even though only one agent runs
-	// the workload.
-	if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-		return ServiceRecord{}, err
-	}
 	return rec, nil
 }
 
@@ -158,7 +153,7 @@ func (d *Delivery) updateService(ctx context.Context, userID, serviceID, name st
 	s := d.store
 	var current ServiceRecord
 	var changed bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		current, changed, _, err = d.updateServiceTx(ctx, tx, userID, serviceID, name, spec)
 		return err
@@ -230,11 +225,9 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 		if affected == 0 {
 			return ServiceRecord{}, false, false, ErrConcurrentUpdate
 		}
+		journal.RecordService(ctx, serviceID)
 		current.Name = nextName
 		current.UpdatedAt = now
-		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-			return ServiceRecord{}, false, false, err
-		}
 		return current, false, false, nil
 	}
 
@@ -265,12 +258,14 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 	if affected == 0 {
 		return ServiceRecord{}, false, false, ErrConcurrentUpdate
 	}
+	journal.RecordService(ctx, serviceID)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 		serviceID, nextSpecRevision, specJSON, now,
 	); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
+	journal.RecordRevision(ctx, serviceID, nextSpecRevision)
 	nextRecord := current
 	nextRecord.Name = nextName
 	nextRecord.Spec = spec
@@ -296,7 +291,7 @@ func (d *Delivery) DeleteService(ctx context.Context, serviceID string) error {
 func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) error {
 	s := d.store
 	var hasBindings bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
@@ -312,6 +307,9 @@ func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) 
 		if err := s.markCurrentDeploymentRemovedTx(ctx, tx, serviceID, deploymentActor{Kind: DeploymentCauseUser, ID: userID}); err != nil {
 			return err
 		}
+		if err := journal.RecordServiceRemoval(ctx, tx, serviceID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM services WHERE id = $1`, serviceID)
 		if err != nil {
 			return err
@@ -323,7 +321,7 @@ func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) 
 		if rows == 0 {
 			return sql.ErrNoRows
 		}
-		return dbtx.BumpAllDesiredRevisions(ctx, tx)
+		return nil
 	})
 	if err != nil {
 		return err
@@ -354,7 +352,7 @@ func (d *Delivery) DiscardServiceChanges(ctx context.Context, serviceID string, 
 func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
@@ -407,12 +405,14 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID 
 		if affected == 0 {
 			return ErrConcurrentUpdate
 		}
+		journal.RecordService(ctx, current.ID)
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 			current.ID, nextRevision, specJSON, now,
 		); err != nil {
 			return err
 		}
+		journal.RecordRevision(ctx, current.ID, nextRevision)
 		rec = current
 		rec.Spec = nextSpec
 		rec.SpecRevision = nextRevision
@@ -460,7 +460,7 @@ func (d *Delivery) scaleService(ctx context.Context, userID, serviceID string, d
 		current     ServiceRecord
 		allocations []AllocationRecord
 	)
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		current, allocations, err = d.scaleServiceTx(ctx, tx, userID, serviceID, desired)
 		return err

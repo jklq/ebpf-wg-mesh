@@ -38,16 +38,3 @@ func (n *Notifier) Notify(agentID string) {
 	}
 	n.live.Notify(agentID)
 }
-
-func (n *Notifier) NotifyAll(agentIDs []string) {
-	if n == nil || n.live == nil {
-		return
-	}
-	if len(agentIDs) == 0 {
-		n.live.Notify("")
-		return
-	}
-	for _, id := range agentIDs {
-		n.live.Notify(id)
-	}
-}

@@ -36,7 +36,7 @@ func (s *fleetPersistence) grantAgentCommand(ctx context.Context, agentID, sessi
 		return time.Time{}, err
 	}
 	var deadline time.Time
-	err := s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+	err := s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var current int64
 		if err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&current); err != nil {
 			return err
@@ -68,7 +68,7 @@ func (s *database) agentAuthorityEpoch(ctx context.Context) (uint64, error) {
 // and retry after the outstanding deadline; disconnecting a holder is not a
 // release of its grants. There is deliberately no automatic cutover on reconnect.
 func (s *database) advanceAgentAuthority(ctx context.Context, expected uint64) error {
-	return s.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var epoch uint64
 		var deadline time.Time
 		if err := tx.QueryRowContext(ctx, `SELECT epoch, outstanding_not_after FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch, &deadline); err != nil {

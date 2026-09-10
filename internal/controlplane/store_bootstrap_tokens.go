@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,7 +16,7 @@ import (
 var errInvalidBootstrapToken = errors.New("invalid, consumed, or incorrectly bound bootstrap token")
 
 func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.AgentBootstrapToken) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		configured := make(map[string]struct{}, len(tokens))
 		for _, bootstrap := range tokens {
@@ -54,6 +55,8 @@ func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, token
 				VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, agentID, now); err != nil {
 				return err
 			}
+			journal.RecordAgent(ctx, agentID)
+			journal.RecordAdministration(ctx, agentID)
 			hash := deliverycore.BootstrapTokenHash(token)
 			configured[string(hash[:])] = struct{}{}
 			if _, err := tx.ExecContext(ctx,

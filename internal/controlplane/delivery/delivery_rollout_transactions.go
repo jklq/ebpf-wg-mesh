@@ -3,7 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"errors"
 	"fmt"
 	"time"
@@ -40,14 +40,11 @@ func (d *Delivery) advanceRollout(ctx context.Context, serviceID string, now tim
 	defer d.schedulerMu.Unlock()
 	s := d.store
 	var result rolloutAdvanceResult
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		result, err = d.advanceRolloutTx(ctx, tx, serviceID, now.UTC())
 		if err != nil {
 			return err
-		}
-		if result.Changed {
-			return dbtx.BumpAllDesiredRevisions(ctx, tx)
 		}
 		return nil
 	})
@@ -154,6 +151,7 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		); err != nil {
 			return result, err
 		}
+		journal.RecordRollout(ctx, serviceID, rollout.Generation)
 	}
 	if err := d.updateRolloutProgressDetailTx(ctx, tx, serviceID, rollout, now); err != nil {
 		return result, err
@@ -176,7 +174,7 @@ func (d *Delivery) persistRolloutWithdrawalsTx(ctx context.Context, tx *sql.Tx, 
 func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
 	s := d.store
 	result := rolloutAdvanceResult{}
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		result = rolloutAdvanceResult{}
 		if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
 			return err
@@ -243,14 +241,17 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE service_rollouts SET progress_at = $1 WHERE service_id = $2 AND rollout_generation = $3`,
-			now.UTC(), serviceID, rollout.Generation,
-		); err != nil {
-			return err
+		if ok {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE service_rollouts SET progress_at = $1 WHERE service_id = $2 AND rollout_generation = $3`,
+				now.UTC(), serviceID, rollout.Generation,
+			); err != nil {
+				return err
+			}
+			journal.RecordRollout(ctx, serviceID, rollout.Generation)
 		}
 		result.Changed = true
-		return dbtx.BumpAllDesiredRevisions(ctx, tx)
+		return nil
 	})
 	return result, err
 }
@@ -316,6 +317,7 @@ func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service Servic
 	); err != nil {
 		return err
 	}
+	journal.RecordRollout(ctx, service.ID, rollout.Generation)
 	dep, ok, err := s.deploymentByRolloutTx(ctx, tx, service.ID, rollout.Generation)
 	if err != nil || !ok {
 		return err
@@ -339,6 +341,7 @@ func (d *Delivery) completeRolloutTx(ctx context.Context, tx *sql.Tx, service Se
 	); err != nil {
 		return err
 	}
+	journal.RecordRollout(ctx, service.ID, rollout.Generation)
 	dep, ok, err := s.deploymentByRolloutTx(ctx, tx, service.ID, rollout.Generation)
 	if err != nil || !ok {
 		return err
@@ -401,12 +404,24 @@ func (d *Delivery) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx
 	).Scan(&ready, &starting, &draining); err != nil {
 		return err
 	}
-	detail := fmt.Sprintf("Rolling replacement: %d/%d ready, %d starting, %d draining", ready, rollout.DesiredReplicaCount, starting, draining)
-	_, err := tx.ExecContext(ctx,
+	detail := fmt.Sprintf("Rolling replacement: %d/%d ready, %d starting, %d draining", ready, rolloutTargetReplicaCount(rollout), starting, draining)
+	rows, err := tx.QueryContext(ctx,
 		`UPDATE deployments SET detail = $1, updated_at = $2
-		  WHERE service_id = $3 AND rollout_generation = $4 AND is_current = TRUE AND state NOT IN ('failed','active')`,
+		  WHERE service_id = $3 AND rollout_generation = $4 AND is_current = TRUE AND state NOT IN ('failed','active')
+		  RETURNING id`,
 		detail, now, serviceID, rollout.Generation)
-	return err
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		journal.RecordDeployment(ctx, id)
+	}
+	return rows.Err()
 }
 
 func (d *Delivery) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, existing []AllocationRecord, now time.Time) (bool, error) {
@@ -452,6 +467,7 @@ func (d *Delivery) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, se
 	); err != nil {
 		return err
 	}
+	journal.RecordRollout(ctx, service.ID, rollout.Generation)
 	dep, ok, err := s.deploymentByRolloutTx(ctx, tx, service.ID, rollout.Generation)
 	if err != nil || !ok {
 		return err

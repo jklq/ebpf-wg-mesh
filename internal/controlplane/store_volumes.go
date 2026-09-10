@@ -9,11 +9,12 @@ import (
 	"github.com/google/uuid"
 
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
 	var rec deliverycore.VolumeRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		rec, err = s.createVolumeTx(ctx, tx, userID, environmentID, name, sizeBytes)
 		return err
@@ -52,7 +53,7 @@ func (s *catalogPersistence) listVolumes(ctx context.Context, userID, environmen
 }
 
 func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID string) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var (
 			volumeName    string
 			environmentID string
@@ -106,6 +107,7 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID 
 		if affected == 0 {
 			return sql.ErrNoRows
 		}
+		journal.RecordVolume(ctx, volumeID)
 		return nil
 	})
 }
@@ -128,5 +130,6 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, use
 	); err != nil {
 		return deliverycore.VolumeRecord{}, err
 	}
+	journal.RecordVolume(ctx, rec.ID)
 	return rec, nil
 }

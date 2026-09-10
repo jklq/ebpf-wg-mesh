@@ -97,7 +97,7 @@ func TestLiveOwnerPausedProcessStopsPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := context.WithValue(ctx, leaseContextKey{}, claim)
-	if err := store.withTx(stale, func(*sql.Tx) error { return nil }); !errors.Is(err, errLeaseLost) {
+	if err := store.withTx(stale, func(context.Context, *sql.Tx) error { return nil }); !errors.Is(err, errLeaseLost) {
 		t.Fatalf("paused process committed after lease loss: %v", err)
 	}
 	if err := store.withLeaseGuard(stale, func() error { return errors.New("published") }); !errors.Is(err, errLeaseLost) {
@@ -157,7 +157,7 @@ func TestLiveOwnerDatabaseOutageKeepsMemoryStopsPublication(t *testing.T) {
 	if err := testDelivery(store).EvaluateObservedDeploymentForTest(ctx, "missing"); err == nil {
 		// missing allocation is a no-op; journaled evaluation still cannot commit
 	}
-	if err := store.withTx(ctx, func(*sql.Tx) error { return nil }); err == nil {
+	if err := store.withTx(ctx, func(context.Context, *sql.Tx) error { return nil }); err == nil {
 		t.Fatal("journal commit succeeded with closed database")
 	}
 }

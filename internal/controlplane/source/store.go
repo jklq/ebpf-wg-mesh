@@ -23,7 +23,7 @@ var ErrLeaseLost = errors.New("source lease lost")
 // delivery owns deployment policy.
 type SQLStore struct {
 	db       *sql.DB
-	withTx   func(context.Context, func(*sql.Tx) error) error
+	withTx   func(context.Context, func(context.Context, *sql.Tx) error) error
 	services func(context.Context, string) (Service, error)
 	archives ArchiveStore
 }
@@ -31,7 +31,7 @@ type SQLStore struct {
 // NewSQLStore wires a SQLStore. withTx must provide the control-plane
 // transaction semantics (lease fencing, retries); services adapts the
 // delivery read model into the source service view.
-func NewSQLStore(db *sql.DB, withTx func(context.Context, func(*sql.Tx) error) error, services func(context.Context, string) (Service, error)) *SQLStore {
+func NewSQLStore(db *sql.DB, withTx func(context.Context, func(context.Context, *sql.Tx) error) error, services func(context.Context, string) (Service, error)) *SQLStore {
 	return &SQLStore{db: db, withTx: withTx, services: services}
 }
 

@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"time"
 
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, projectID, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, error) {
@@ -14,13 +14,13 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		return deliverycore.DomainBindingRecord{}, err
 	}
 	var binding deliverycore.DomainBindingRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 			return err
 		}
-		var agentID, environmentID string
-		if err := tx.QueryRowContext(ctx, `SELECT a.agent_id, s.environment_id FROM allocations a JOIN services s ON s.id = a.service_id
-			JOIN environments e ON e.id = s.environment_id WHERE s.id = $1 AND e.project_id = $2`, serviceID, projectID).Scan(&agentID, &environmentID); err != nil {
+		var environmentID string
+		if err := tx.QueryRowContext(ctx, `SELECT s.environment_id FROM allocations a JOIN services s ON s.id = a.service_id
+			JOIN environments e ON e.id = s.environment_id WHERE s.id = $1 AND e.project_id = $2`, serviceID, projectID).Scan(&environmentID); err != nil {
 			return err
 		}
 
@@ -42,9 +42,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 			); err != nil {
 				return err
 			}
-			if err := dbtx.BumpDesiredRevisions(ctx, tx, []string{agentID}); err != nil {
-				return err
-			}
+			journal.RecordDomain(ctx, hostname, serviceID)
 			binding = deliverycore.DomainBindingRecord{
 				Hostname:      hostname,
 				ProjectID:     projectID,
@@ -62,14 +60,6 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		case binding.ServiceID == serviceID && binding.TargetPort == targetPort:
 			return nil
 		default:
-			agentIDs := []string{agentID}
-			if binding.ServiceID != serviceID {
-				previousIDs, err := s.reads.agentIDsForServiceQuerier(ctx, tx, binding.ServiceID)
-				if err != nil {
-					return err
-				}
-				agentIDs = append(agentIDs, previousIDs...)
-			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE domain_bindings
 				    SET service_id = $1,
@@ -80,8 +70,9 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 			); err != nil {
 				return err
 			}
-			if err := dbtx.BumpDesiredRevisions(ctx, tx, agentIDs); err != nil {
-				return err
+			journal.RecordDomain(ctx, hostname, serviceID)
+			if binding.ServiceID != serviceID {
+				journal.RecordDomain(ctx, hostname, binding.ServiceID)
 			}
 			binding.ServiceID = serviceID
 			binding.TargetPort = targetPort

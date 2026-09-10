@@ -130,7 +130,7 @@ func domainForService(durable journal.DurableState, serviceID string) (journal.D
 func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID string) error {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
-	return d.store.withTx(ctx, func(tx *sql.Tx) error {
+	return d.store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var serviceID, agentID string
 		var desired int64
 		err := tx.QueryRowContext(ctx, `SELECT service_id, agent_id, desired_rollout_generation

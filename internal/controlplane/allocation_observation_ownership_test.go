@@ -4,12 +4,14 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func TestAllocationObservationRejectsStaleSessionSequenceAndForeignOwner(t *testing.T) {
@@ -100,7 +102,13 @@ func TestOlderGenerationObservationCannotSatisfyCurrentAssignment(t *testing.T) 
 	}
 	allocations, _ := store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	allocation := allocations[0]
-	if _, err := store.db.ExecContext(ctx, `UPDATE allocation_assignments SET desired_rollout_generation = $1 WHERE id = $2`, allocation.DesiredRolloutGeneration+1, allocation.ID); err != nil {
+	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET desired_rollout_generation = $1 WHERE id = $2`, allocation.DesiredRolloutGeneration+1, allocation.ID); err != nil {
+			return err
+		}
+		journal.RecordAssignment(ctx, allocation.ID)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	report := observationReport(allocation, "test-session-node-1", 1, allocation.DesiredRolloutGeneration)
