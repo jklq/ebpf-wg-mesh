@@ -52,6 +52,7 @@ var (
 	reportEpochKey         = []byte("report_authority_epoch")
 	reportCursorKey        = []byte("report_reconciliation_cursor")
 	observationSequenceKey = []byte("observation_sequence")
+	replicaDiscoveryKey    = []byte("replica_discovery")
 )
 
 type initializationState string
@@ -86,6 +87,11 @@ type localAllocationState struct {
 type pullCredential struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type replicaDiscoveryState struct {
+	Seeds    []string `json:"seeds"`
+	Replicas []string `json:"replicas"`
 }
 
 type localStateSummary struct {
@@ -329,6 +335,16 @@ func (s *localStateStore) validateRecords() error {
 				return errors.New("status report does not match its reconciliation position")
 			}
 		}
+		if raw := meta.Get(replicaDiscoveryKey); len(raw) > 0 {
+			var discovery replicaDiscoveryState
+			if err := json.Unmarshal(raw, &discovery); err != nil {
+				return fmt.Errorf("decode replica discovery state: %w", err)
+			}
+			normalized := normalizeReplicaDiscoveryState(discovery)
+			if !stringSlicesEqual(discovery.Seeds, normalized.Seeds) || !stringSlicesEqual(discovery.Replicas, normalized.Replicas) {
+				return errors.New("replica discovery state contains blank or duplicate addresses")
+			}
+		}
 		return nil
 	})
 }
@@ -338,6 +354,119 @@ func (s *localStateStore) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+func (s *localStateStore) setReplicaSeeds(addresses []string) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		discovery, err := readReplicaDiscovery(tx.Bucket(localMetaBucket))
+		if err != nil {
+			return err
+		}
+		discovery.Seeds = normalizeAddresses(addresses)
+		return writeReplicaDiscovery(tx.Bucket(localMetaBucket), discovery)
+	})
+}
+
+// setReplicaAddresses replaces the last control-plane view while retaining
+// every configured seed. The response is a current replica list, not an
+// ever-growing history of addresses.
+func (s *localStateStore) setReplicaAddresses(addresses []string) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		discovery, err := readReplicaDiscovery(tx.Bucket(localMetaBucket))
+		if err != nil {
+			return err
+		}
+		discovery.Replicas = normalizeAddresses(addresses)
+		return writeReplicaDiscovery(tx.Bucket(localMetaBucket), discovery)
+	})
+}
+
+func (s *localStateStore) replicaAddresses() ([]string, error) {
+	var addresses []string
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		discovery, err := readReplicaDiscovery(tx.Bucket(localMetaBucket))
+		if err != nil {
+			return err
+		}
+		addresses = appendUniqueAddresses(nil, discovery.Seeds...)
+		addresses = appendUniqueAddresses(addresses, discovery.Replicas...)
+		return nil
+	})
+	return addresses, err
+}
+
+func readReplicaDiscovery(meta *bbolt.Bucket) (replicaDiscoveryState, error) {
+	var discovery replicaDiscoveryState
+	if raw := meta.Get(replicaDiscoveryKey); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &discovery); err != nil {
+			return replicaDiscoveryState{}, fmt.Errorf("decode replica discovery state: %w", err)
+		}
+	}
+	return normalizeReplicaDiscoveryState(discovery), nil
+}
+
+func writeReplicaDiscovery(meta *bbolt.Bucket, discovery replicaDiscoveryState) error {
+	raw, err := json.Marshal(normalizeReplicaDiscoveryState(discovery))
+	if err != nil {
+		return fmt.Errorf("encode replica discovery state: %w", err)
+	}
+	return meta.Put(replicaDiscoveryKey, raw)
+}
+
+func normalizeReplicaDiscoveryState(discovery replicaDiscoveryState) replicaDiscoveryState {
+	return replicaDiscoveryState{
+		Seeds:    normalizeAddresses(discovery.Seeds),
+		Replicas: normalizeAddresses(discovery.Replicas),
+	}
+}
+
+func normalizeAddresses(addresses []string) []string {
+	if len(addresses) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		result = append(result, address)
+	}
+	return result
+}
+
+func appendUniqueAddresses(addresses []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(addresses)+len(additions))
+	result := make([]string, 0, len(addresses)+len(additions))
+	for _, address := range append(append([]string(nil), addresses...), additions...) {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		seen[address] = struct{}{}
+		result = append(result, address)
+	}
+	return result
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *localStateStore) prepareStartup(clusterID string, inventory []RuntimeResource) error {
@@ -777,6 +906,7 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 
 func splitDesiredCredentials(state *agentv1.DesiredNodeState) (*agentv1.DesiredNodeState, map[string]pullCredential) {
 	clean := proto.Clone(state).(*agentv1.DesiredNodeState)
+	clean.ReplicaAddresses = nil
 	credentials := make(map[string]pullCredential)
 	for _, service := range clean.GetServices() {
 		if service.GetRegistryUsername() != "" || service.GetRegistryPassword() != "" {
@@ -797,6 +927,7 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left.GeneratedAt, right.GeneratedAt = nil, nil
 	left.SessionId, right.SessionId = "", ""
 	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
+	left.ReplicaAddresses, right.ReplicaAddresses = nil, nil
 	return proto.Equal(left, right)
 }
 

@@ -55,6 +55,9 @@ func (a *App) ensureManagedDashboardIdentity(ctx context.Context, issuer dashboa
 
 	issuedLeaf, err := a.renewManagedDashboardIdentity(ctx, issuer, secretsDir, key, keyPEM)
 	if err != nil {
+		if _, ok := liveOwnerAddr(err); ok {
+			return false, err
+		}
 		if existingValid {
 			slog.Warn("managed dashboard certificate renewal failed; using current certificate", "agent_id", a.cfg.Node.ID, "not_after", leaf.NotAfter, "error", err)
 			return false, nil
@@ -70,18 +73,28 @@ func (a *App) renewManagedDashboardIdentity(ctx context.Context, issuer dashboar
 	if err != nil {
 		return nil, err
 	}
-	resp, err := issuer.IssueManagedDashboardCertificate(ctx, &agentv1.ManagedDashboardCertificateRequest{
+	rpcCtx, cancel := replicaRPCContext(ctx)
+	defer cancel()
+	resp, err := issuer.IssueManagedDashboardCertificate(rpcCtx, &agentv1.ManagedDashboardCertificateRequest{
 		AgentId: a.cfg.Node.ID,
 		CsrPem:  string(csrPEM),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("issue certificate: %w", err)
 	}
+	if resp == nil {
+		return nil, errors.New("issue certificate: empty response")
+	}
 	certPEM := []byte(resp.GetCertPem())
 	caPEM := []byte(resp.GetCaPem())
 	issuedLeaf, err := validateManagedDashboardIdentity(certPEM, keyPEM, caPEM)
 	if err != nil {
 		return nil, err
+	}
+	if a.stateStore != nil {
+		if err := a.stateStore.setReplicaAddresses(resp.GetReplicaAddresses()); err != nil {
+			return nil, fmt.Errorf("persist control-plane replica addresses: %w", err)
+		}
 	}
 	if err := writeFileAtomic(filepath.Join(secretsDir, managedDashboardCAFileName), caPEM, 0o644); err != nil {
 		return nil, fmt.Errorf("write managed dashboard ca: %w", err)

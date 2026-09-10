@@ -14,6 +14,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.InternalGRPC.Listen == "" {
 		return errors.New("controlplane.internalGrpc.listen is required")
 	}
+	if len(cfg.ReplicaAddresses) > 1 && strings.TrimSpace(cfg.AdvertiseAddr) == "" {
+		return errors.New("controlplane.advertiseAddr is required when multiple replica addresses are configured")
+	}
 	if err := validateServerTLS("controlplane.internalGrpc.tls", cfg.InternalGRPC.TLS); err != nil {
 		return err
 	}
@@ -186,8 +189,20 @@ func validateAgent(cfg AgentConfig) error {
 	if cfg.Node.Resources.MemoryMebibytes <= 0 {
 		return errors.New("agent.node.resources.memoryMebibytes must be greater than 0")
 	}
-	if cfg.ControlPlane.Address == "" {
-		return errors.New("agent.controlPlane.address is required")
+	if cfg.Node.Resources.ReservedCPUMillis < 0 {
+		return errors.New("agent.node.resources.reservedCpuMillis must not be negative")
+	}
+	if cfg.Node.Resources.ReservedMemoryMebibytes < 0 {
+		return errors.New("agent.node.resources.reservedMemoryMebibytes must not be negative")
+	}
+	if cfg.Node.Resources.AdvertisedCPUMillis() <= 0 {
+		return errors.New("agent.node.resources.reservedCpuMillis must be less than cpuMillis")
+	}
+	if cfg.Node.Resources.AdvertisedMemoryMebibytes() <= 0 {
+		return errors.New("agent.node.resources.reservedMemoryMebibytes must be less than memoryMebibytes")
+	}
+	if len(cfg.ControlPlane.Addresses) == 0 {
+		return errors.New("agent.controlPlane.addresses is required")
 	}
 	if err := validateClientTLS("agent.controlPlane.tls", cfg.ControlPlane.TLS); err != nil {
 		return err

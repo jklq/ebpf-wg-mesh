@@ -432,12 +432,13 @@ func (x *EnrollRequest) GetBootstrapToken() string {
 }
 
 type EnrollResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CertPem       string                 `protobuf:"bytes,1,opt,name=cert_pem,json=certPem,proto3" json:"cert_pem,omitempty"`
-	CaPem         string                 `protobuf:"bytes,2,opt,name=ca_pem,json=caPem,proto3" json:"ca_pem,omitempty"`
-	NotAfter      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	CertPem          string                 `protobuf:"bytes,1,opt,name=cert_pem,json=certPem,proto3" json:"cert_pem,omitempty"`
+	CaPem            string                 `protobuf:"bytes,2,opt,name=ca_pem,json=caPem,proto3" json:"ca_pem,omitempty"`
+	NotAfter         *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`
+	ReplicaAddresses []string               `protobuf:"bytes,4,rep,name=replica_addresses,json=replicaAddresses,proto3" json:"replica_addresses,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *EnrollResponse) Reset() {
@@ -487,6 +488,13 @@ func (x *EnrollResponse) GetCaPem() string {
 func (x *EnrollResponse) GetNotAfter() *timestamppb.Timestamp {
 	if x != nil {
 		return x.NotAfter
+	}
+	return nil
+}
+
+func (x *EnrollResponse) GetReplicaAddresses() []string {
+	if x != nil {
+		return x.ReplicaAddresses
 	}
 	return nil
 }
@@ -1221,6 +1229,7 @@ type DesiredNodeState struct {
 	SessionId         string                 `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
 	ClusterId         string                 `protobuf:"bytes,12,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	ReplicaAddresses  []string               `protobuf:"bytes,13,rep,name=replica_addresses,json=replicaAddresses,proto3" json:"replica_addresses,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1337,6 +1346,13 @@ func (x *DesiredNodeState) GetClusterId() string {
 		return x.ClusterId
 	}
 	return ""
+}
+
+func (x *DesiredNodeState) GetReplicaAddresses() []string {
+	if x != nil {
+		return x.ReplicaAddresses
+	}
+	return nil
 }
 
 // Sent only after the desired snapshot and its cursor are durably committed.
@@ -2126,11 +2142,12 @@ const file_agent_proto_rawDesc = "" +
 	"\rEnrollRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\x12'\n" +
-	"\x0fbootstrap_token\x18\x03 \x01(\tR\x0ebootstrapToken\"{\n" +
+	"\x0fbootstrap_token\x18\x03 \x01(\tR\x0ebootstrapToken\"\xa8\x01\n" +
 	"\x0eEnrollResponse\x12\x19\n" +
 	"\bcert_pem\x18\x01 \x01(\tR\acertPem\x12\x15\n" +
 	"\x06ca_pem\x18\x02 \x01(\tR\x05caPem\x127\n" +
-	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\"X\n" +
+	"\tnot_after\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\x12+\n" +
+	"\x11replica_addresses\x18\x04 \x03(\tR\x10replicaAddresses\"X\n" +
 	"\"ManagedDashboardCertificateRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\"\xdc\x01\n" +
@@ -2197,7 +2214,7 @@ const file_agent_proto_rawDesc = "" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x12\n" +
-	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xc7\x04\n" +
+	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xf4\x04\n" +
 	"\x10DesiredNodeState\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\x15reconciliation_cursor\x18\x02 \x01(\x03R\x14reconciliationCursor\x121\n" +
@@ -2214,7 +2231,8 @@ const file_agent_proto_rawDesc = "" +
 	" \x01(\tR\tsessionId\x12J\n" +
 	"\x13authority_not_after\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
-	"cluster_id\x18\f \x01(\tR\tclusterId\"\xb5\x01\n" +
+	"cluster_id\x18\f \x01(\tR\tclusterId\x12+\n" +
+	"\x11replica_addresses\x18\r \x03(\tR\x10replicaAddresses\"\xb5\x01\n" +
 	"\x1bDesiredStateAcknowledgement\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
