@@ -231,7 +231,7 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 				BootstrapToken: "runtime-test-token",
 			},
 		},
-		Mesh:         config.MeshConfig{Host: config.HostConfig{IPv6: "fd00:44::10"}},
+		Mesh: config.MeshConfig{Host: config.HostConfig{IPv6: "fd00:44::10"}},
 		Runtime: config.RuntimeConfig{
 			DataDir:     dataDir,
 			VolumesDir:  filepath.Join(dataDir, "volumes"),

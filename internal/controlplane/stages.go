@@ -2,8 +2,8 @@ package controlplane
 
 import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
