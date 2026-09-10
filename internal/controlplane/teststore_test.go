@@ -15,6 +15,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
@@ -76,14 +77,20 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 	}
 	failureDomain := strings.ToLower(id)
 	now := time.Now().UTC()
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO agent_registrations(
-		id, name, region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
-	) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
-		return err
-	}
-	_, err := store.db.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
-		VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now)
-	return err
+	return store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
+			id, name, region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
+		) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
+			return err
+		}
+		journal.RecordAgent(ctx, id)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
+			VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now); err != nil {
+			return err
+		}
+		journal.RecordAdministration(ctx, id)
+		return nil
+	})
 }
 
 func openTestStore(t *testing.T) *persistence {
@@ -185,8 +192,11 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"platform_operators",
 		"environment_network_identity_counter",
 	}
-	if err := store.withTx(context.Background(), func(tx *sql.Tx) error {
+	if err := store.withTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(context.Background(), `UPDATE agent_authority SET epoch = 1, outstanding_not_after = '1970-01-01' WHERE id = 1`); err != nil {
+			return err
+		}
+		if err := recordAllProductRows(ctx, tx); err != nil {
 			return err
 		}
 		for _, table := range tables {
@@ -219,6 +229,73 @@ func createTestDatabase(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dbURL
+}
+
+// recordAllProductRows records every durable product key before the test
+// harness bulk-deletes the product tables, so the reset command journals the
+// same deletions a full-state diff would have captured.
+func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
+	single := []struct {
+		query  string
+		record func(context.Context, string)
+	}{
+		{`SELECT id::STRING FROM projects`, journal.RecordProject},
+		{`SELECT id::STRING FROM services`, journal.RecordService},
+		{`SELECT id::STRING FROM allocation_assignments`, journal.RecordAssignment},
+		{`SELECT id::STRING FROM deployments`, journal.RecordDeployment},
+		{`SELECT id::STRING FROM agent_registrations`, journal.RecordAgent},
+		{`SELECT agent_id::STRING FROM agent_administration`, journal.RecordAdministration},
+		{`SELECT id::STRING FROM environments`, journal.RecordEnvironment},
+		{`SELECT id::STRING FROM volumes`, journal.RecordVolume},
+		{`SELECT hostname::STRING FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.RecordDomain(ctx, hostname, "") }},
+	}
+	for _, item := range single {
+		rows, err := tx.QueryContext(ctx, item.query)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				rows.Close()
+				return err
+			}
+			item.record(ctx, key)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	revisionRows, err := tx.QueryContext(ctx, `SELECT service_id::STRING, spec_revision FROM service_revisions`)
+	if err != nil {
+		return err
+	}
+	for revisionRows.Next() {
+		var serviceID string
+		var revision int64
+		if err := revisionRows.Scan(&serviceID, &revision); err != nil {
+			revisionRows.Close()
+			return err
+		}
+		journal.RecordRevision(ctx, serviceID, revision)
+	}
+	if err := revisionRows.Close(); err != nil {
+		return err
+	}
+	rolloutRows, err := tx.QueryContext(ctx, `SELECT service_id::STRING, rollout_generation FROM service_rollouts`)
+	if err != nil {
+		return err
+	}
+	for rolloutRows.Next() {
+		var serviceID string
+		var generation int64
+		if err := rolloutRows.Scan(&serviceID, &generation); err != nil {
+			rolloutRows.Close()
+			return err
+		}
+		journal.RecordRollout(ctx, serviceID, generation)
+	}
+	return rolloutRows.Close()
 }
 
 func productionEnvironmentID(t *testing.T, store *persistence, projectID string) string {

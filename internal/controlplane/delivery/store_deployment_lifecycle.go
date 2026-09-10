@@ -10,6 +10,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -197,6 +198,7 @@ func (s *persistence) insertDeploymentTx(
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
+	journal.RecordDeployment(ctx, rec.ID)
 	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, "", rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ImageDigest, rec.RolloutGeneration, now); err != nil {
 		return DeploymentRecord{}, err
 	}
@@ -212,14 +214,18 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 			return err
 		}
+		journal.RecordDeployment(ctx, current.ID)
 		return nil
 	}
 	// The last active deployment remains active while its allocations keep
 	// serving. It becomes draining only after healthy replacements enter
 	// ingress; merely requesting a rollout must not lie about that cutover.
 	if current.State == DeploymentStateActive {
-		_, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+			return err
+		}
+		journal.RecordDeployment(ctx, current.ID)
+		return nil
 	}
 	nextState := DeploymentStateSuperseded
 	reasonCode := reasonDeploymentSuperseded
@@ -241,6 +247,7 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 		return err
 	}
+	journal.RecordDeployment(ctx, current.ID)
 	return nil
 }
 
@@ -274,6 +281,7 @@ func (s *persistence) applyDeploymentTransitionTx(ctx context.Context, tx *sql.T
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
+	journal.RecordDeployment(ctx, rec.ID)
 	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, fromState, rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ImageDigest, rec.RolloutGeneration, now); err != nil {
 		return DeploymentRecord{}, err
 	}

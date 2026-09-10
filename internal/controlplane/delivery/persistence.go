@@ -12,8 +12,9 @@ import (
 )
 
 // Transaction runs a retryable, lease-fenced transaction and advances the
-// durable event index in the same commit.
-type Transaction func(context.Context, func(*sql.Tx) error) error
+// durable event index in the same commit. The callback receives a context that
+// carries the command's change recorder when the transaction is journalled.
+type Transaction func(context.Context, func(context.Context, *sql.Tx) error) error
 
 type ServiceQueryer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)

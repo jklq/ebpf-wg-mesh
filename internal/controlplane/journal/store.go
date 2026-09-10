@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -30,6 +31,14 @@ func (e *CommitError) Error() string {
 }
 func (e *CommitError) Unwrap() error { return e.Err }
 
+// headMovedError reports that the committed prefix advanced while a command
+// planned. It carries the serialization SQLSTATE so the retry helper reruns the
+// plan against the newer prefix.
+type headMovedError struct{}
+
+func (headMovedError) Error() string    { return "journal head advanced during command" }
+func (headMovedError) SQLState() string { return "40001" }
+
 type Store struct {
 	mu        sync.Mutex
 	db        *sql.DB
@@ -37,6 +46,16 @@ type Store struct {
 	state     DurableState
 	fence     Fence
 	onApplied func(DurableState)
+	verify    bool
+}
+
+// SetVerifyRecordings enables a test-only check that every command's recorded
+// change set equals a full-state diff. It reads full product state and must not
+// be enabled in production.
+func (s *Store) SetVerifyRecordings(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.verify = enabled
 }
 
 func New(db *sql.DB, clusterID string, fence Fence) *Store {
@@ -59,10 +78,27 @@ func WithCommandID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, commandIDKey{}, id)
 }
 
-// Execute serializes planning with journal application, including across
-// replicas via the transactional head. fn must contain only transactional work.
-// It is retried on serialization conflicts; no attempted state is published.
-func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, error) {
+// Execute runs one journal command. See ExecuteWithMutation.
+func (s *Store) Execute(ctx context.Context, fn func(context.Context, *sql.Tx) error) (Entry, error) {
+	return s.execute(ctx, fn, nil)
+}
+
+// ExecuteWithMutation runs one journal command and then lets afterChanges react
+// to the exact rows the command changed (for example, to bump affected agent
+// revisions). afterChanges receives the pre-command prefix and the resolved
+// batch, and runs in the same transaction before the command is serialized;
+// any rows it changes through the Recorder are included in the command payload.
+//
+// fn must contain only transactional work and must record every durable product
+// row it changes through the Recorder carried by the context it receives.
+// Planning happens outside the cluster_journal_heads lock; the lock is taken
+// only to append the command and its head update. The command is retried on
+// serialization conflicts; no attempted state is published.
+func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
+	return s.execute(ctx, fn, afterChanges)
+}
+
+func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
 	s.mu.Lock()
 	held := true
 	defer func() {
@@ -77,7 +113,7 @@ func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, err
 	var receipt Entry
 	err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		var head int64
-		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1 FOR UPDATE`, s.clusterID).Scan(&head); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&head); err != nil {
 			return err
 		}
 		var err error
@@ -88,18 +124,39 @@ func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, err
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		base, err := replay(ctx, tx, s.state, head)
+		base, err := func() (DurableState, error) {
+			start, err := s.resumeState(ctx, tx)
+			if err != nil {
+				return DurableState{}, err
+			}
+			return replay(ctx, tx, start, head)
+		}()
 		if err != nil {
 			return err
 		}
-		if err := fn(tx); err != nil {
+		recorder := newRecorder(tx)
+		commandCtx := withRecorder(ctx, recorder)
+		if err := fn(commandCtx, tx); err != nil {
 			return err
 		}
-		after, err := readProductState(ctx, tx)
+		batch, err := resolveRecorded(ctx, tx, base, recorder.keys)
 		if err != nil {
 			return err
 		}
-		batch := Diff(base, after)
+		if afterChanges != nil {
+			if err := afterChanges(commandCtx, tx, base, batch); err != nil {
+				return err
+			}
+			batch, err = resolveRecorded(ctx, tx, base, recorder.keys)
+			if err != nil {
+				return err
+			}
+		}
+		if s.verify {
+			if err := verifyRecordings(ctx, tx, base, batch); err != nil {
+				return err
+			}
+		}
 		receipt = Entry{ClusterID: s.clusterID, LogIndex: head + 1, CommandID: id, CommandVersion: CommandVersion, CommandType: CommandType}
 		// Assignment and rollout changes include reservations, allocation intent,
 		// deadlines, and deployment progression. Staged product intent needs no epoch.
@@ -120,6 +177,15 @@ func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, err
 		if err != nil {
 			return err
 		}
+		// Append/serialization only. If another replica appended while this
+		// command planned, the plan is stale: retry against the newer prefix.
+		var lockedHead int64
+		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1 FOR UPDATE`, s.clusterID).Scan(&lockedHead); err != nil {
+			return err
+		}
+		if lockedHead != head {
+			return headMovedError{}
+		}
 		if _, err := base.Apply(receipt); err != nil {
 			return err
 		}
@@ -127,6 +193,12 @@ func (s *Store) Execute(ctx context.Context, fn func(*sql.Tx) error) (Entry, err
    (cluster_id, log_index, command_id, command_version, command_type, payload, authorizing_epoch, created_at)
    VALUES ($1, $2, $3, $4, $5, $6, $7, statement_timestamp()) RETURNING created_at`,
 			receipt.ClusterID, receipt.LogIndex, receipt.CommandID, receipt.CommandVersion, receipt.CommandType, receipt.Payload, receipt.AuthorizingEpoch).Scan(&receipt.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO cluster_journal_receipts
+   (cluster_id, command_id, log_index, command_version, command_type, payload, authorizing_epoch, created_at)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			receipt.ClusterID, receipt.CommandID, receipt.LogIndex, receipt.CommandVersion, receipt.CommandType, receipt.Payload, receipt.AuthorizingEpoch, receipt.CreatedAt); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE cluster_journal_heads SET log_index = $2 WHERE cluster_id = $1`, s.clusterID, receipt.LogIndex)
@@ -211,7 +283,11 @@ func (s *Store) read(ctx context.Context, fn func(*sql.Tx, DurableState) error) 
 			return err
 		}
 		var err error
-		next, err = replay(ctx, tx, s.state, head)
+		start, err := s.resumeState(ctx, tx)
+		if err != nil {
+			return err
+		}
+		next, err = replay(ctx, tx, start, head)
 		if err != nil {
 			return err
 		}
@@ -241,7 +317,26 @@ func scanEntry(row scanner) (Entry, error) {
 }
 
 func lookup(ctx context.Context, q queryer, clusterID, commandID string) (Entry, error) {
-	return scanEntry(q.QueryRowContext(ctx, `SELECT `+entryColumns+` FROM cluster_journal WHERE cluster_id = $1 AND command_id = $2`, clusterID, commandID))
+	return scanEntry(q.QueryRowContext(ctx, `SELECT `+entryColumns+` FROM cluster_journal_receipts WHERE cluster_id = $1 AND command_id = $2`, clusterID, commandID))
+}
+
+func verifyRecordings(ctx context.Context, tx *sql.Tx, base DurableState, recorded Batch) error {
+	after, err := readProductState(ctx, tx)
+	if err != nil {
+		return err
+	}
+	recordedJSON, err := json.Marshal(recorded)
+	if err != nil {
+		return err
+	}
+	actualJSON, err := json.Marshal(Diff(base, after))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(recordedJSON, actualJSON) {
+		return fmt.Errorf("journal recording mismatch\nrecorded: %s\nactual:   %s", recordedJSON, actualJSON)
+	}
+	return nil
 }
 
 func replay(ctx context.Context, tx *sql.Tx, state DurableState, head int64) (DurableState, error) {

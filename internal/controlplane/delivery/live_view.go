@@ -33,9 +33,18 @@ func (l *Live) applyDurableLocked(state journal.DurableState, force bool) {
 	if !force && l.durable.ClusterID == state.ClusterID && l.durable.LogIndex == state.LogIndex && l.durable.LogIndex != 0 {
 		return
 	}
+	previous := l.durable
 	l.durable = state.Clone()
 	l.rebuildIndexesLocked()
-	l.touchLiveLocked()
+	l.liveIndex++
+	// Only an agent whose desired revision changed needs to rebuild its
+	// snapshot. Coalescing comes from the buffered per-agent watch channel.
+	for id, agent := range l.durable.Agents {
+		if before, ok := previous.Agents[id]; ok && before.DesiredRevision == agent.DesiredRevision {
+			continue
+		}
+		l.notifyLocked(id)
+	}
 }
 
 func (l *Live) rebuildIndexesLocked() {

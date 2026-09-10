@@ -3,7 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
+	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"github.com/google/uuid"
 
@@ -30,7 +30,7 @@ func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Cont
 
 func (s *catalogPersistence) createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error) {
 	var rec deliverycore.EnvironmentRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := s.authorizeProjectWriteQuerier(ctx, tx, userID, projectID); err != nil {
 			return err
 		}
@@ -87,7 +87,7 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
 	}
 	var rec deliverycore.EnvironmentRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
@@ -96,6 +96,7 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, environmentID); err != nil {
 			return err
 		}
+		journal.RecordEnvironment(ctx, environmentID)
 		current.Name = name
 		current.UpdatedAt = now
 		rec = current
@@ -106,10 +107,8 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 
 func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error) {
 	var agentIDs []string
-	var identityCatalogChanged bool
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		agentIDs = nil
-		identityCatalogChanged = false
 		rec, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
@@ -133,6 +132,9 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, envi
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		if err := journal.RecordEnvironmentRemoval(ctx, tx, environmentID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM environments WHERE id = $1`, environmentID)
 		if err != nil {
 			return err
@@ -143,12 +145,8 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, envi
 			}
 			return sql.ErrNoRows
 		}
-		identityCatalogChanged = len(agentIDs) > 0
-		if !identityCatalogChanged {
+		if len(agentIDs) == 0 {
 			return nil
-		}
-		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-			return err
 		}
 		agentIDs, err = s.agentIDsQuerier(ctx, tx)
 		return err
@@ -188,6 +186,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 	if err != nil {
 		return deliverycore.EnvironmentRecord{}, err
 	}
+	journal.RecordEnvironment(ctx, rec.ID)
 	return rec, nil
 }
 

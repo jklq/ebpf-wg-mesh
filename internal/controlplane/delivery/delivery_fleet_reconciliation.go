@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 )
 
 // reconcileDrainingAgent replaces stateless allocations on a draining node by
@@ -19,7 +17,7 @@ import (
 func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) ([]string, error) {
 	s := d.store
 	var notify []string
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		notify = nil
 		var locked string
 		if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM agent_administration WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&locked); err != nil {
@@ -128,9 +126,6 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 		if !started {
 			return nil
 		}
-		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-			return err
-		}
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM agents WHERE lifecycle_state <> 'retired' ORDER BY id`)
 		if err != nil {
 			return err
@@ -168,7 +163,7 @@ func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
 	s := d.store
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM services WHERE placement_message <> '' ORDER BY id FOR UPDATE`)
 		if err != nil {
 			return err
@@ -200,9 +195,6 @@ func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 				return err
 			}
 			changed = changed || len(before) != len(after)
-		}
-		if changed {
-			return dbtx.BumpAllDesiredRevisions(ctx, tx)
 		}
 		return nil
 	})

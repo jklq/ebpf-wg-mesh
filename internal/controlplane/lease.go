@@ -236,7 +236,7 @@ func jitter(base time.Duration) time.Duration {
 
 func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bool, error) {
 	claim := leaseClaim{name: name, holder: m.holderID}
-	err := m.store.withTxUnfenced(ctx, func(tx *sql.Tx) error {
+	err := m.store.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO control_plane_leases(name, holder_id, fencing_token, advertise_addr, expires_at, updated_at)
 			VALUES ($1, $2, 1, $4, statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond', statement_timestamp())

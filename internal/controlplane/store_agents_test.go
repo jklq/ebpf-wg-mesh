@@ -4,7 +4,9 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -59,7 +61,13 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 				if err := enrollTestAgent(ctx, store, testAgentHello(2)); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.db.ExecContext(ctx, `UPDATE agent_registrations SET workload_ipv4_subnet = '10.42.0.1/30' WHERE id = 'node-2'`); err != nil {
+				if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+					if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET workload_ipv4_subnet = '10.42.0.1/30' WHERE id = 'node-2'`); err != nil {
+						return err
+					}
+					journal.RecordAgent(ctx, "node-2")
+					return nil
+				}); err != nil {
 					t.Fatal(err)
 				}
 

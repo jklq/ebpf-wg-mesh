@@ -3,13 +3,13 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
@@ -99,7 +99,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 		agentIDs               []string
 		identityCatalogChanged bool
 	)
-	err = d.store.withTx(ctx, func(tx *sql.Tx) error {
+	err = d.store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		services = nil
 		serviceIDs = nil
 		agentIDs = nil
@@ -177,9 +177,6 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			}
 		}
 		if identityCatalogChanged {
-			if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-				return err
-			}
 			rows, err := tx.QueryContext(ctx, `SELECT id FROM agents ORDER BY id`)
 			if err != nil {
 				return err
@@ -200,8 +197,6 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			if err := rows.Close(); err != nil {
 				return err
 			}
-		} else if err := dbtx.BumpDesiredRevisions(ctx, tx, agentIDs); err != nil {
-			return err
 		}
 		for _, id := range serviceIDs {
 			service, err := d.store.serviceByIDQuerier(ctx, tx, userID, id)
@@ -308,6 +303,7 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 	if affected == 0 {
 		return ServiceRecord{}, ErrConcurrentUpdate
 	}
+	journal.RecordService(ctx, serviceID)
 	if err := d.store.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "environment_release", "", userID, now); err != nil {
 		return ServiceRecord{}, err
 	}

@@ -62,7 +62,7 @@ func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetA
 		return nil, err
 	}
 	target := lifecycleStateRecord(req.GetLifecycleState())
-	rec, notify, err := s.delivery.SetAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
+	rec, _, err := s.delivery.SetAgentLifecycle(ctx, identity.UserID, req.GetAgentId(), target)
 	if err != nil {
 		return nil, fleetStatusError("set agent lifecycle", err)
 	}
@@ -74,9 +74,6 @@ func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetA
 		if err := s.authority.RevokeSerials(serials); err != nil {
 			return nil, status.Errorf(codes.Internal, "set agent lifecycle: revoke credentials: %v", err)
 		}
-	}
-	if s.notifier != nil {
-		s.notifier.NotifyAll(notify)
 	}
 	return toProtoAgent(rec), nil
 }

@@ -3,13 +3,13 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -21,7 +21,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 	s := d.store
 	var rec ServiceRecord
 	var affectedAgentIDs []string
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		trustedAgentID = strings.TrimSpace(trustedAgentID)
 		if trustedAgentID == "" {
 			return errors.New("trusted agent id required for managed service")
@@ -127,6 +127,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		); err != nil {
 			return err
 		}
+		journal.RecordService(ctx, current.ID)
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
@@ -137,6 +138,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		); err != nil {
 			return err
 		}
+		journal.RecordRevision(ctx, current.ID, nextSpecRevision)
 		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {
 			return err
 		}
@@ -169,9 +171,6 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 			if err := s.enqueueSourceSpecChangedTx(ctx, tx, rec.ID, rec.SpecRevision, false); err != nil {
 				return err
 			}
-		}
-		if err := dbtx.BumpAllDesiredRevisions(ctx, tx); err != nil {
-			return err
 		}
 		affectedAgentIDs = appendAllocationAgentIDs([]string{trustedAgentID}, existing...)
 		rec.RolloutGeneration = nextRolloutGeneration

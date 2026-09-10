@@ -51,6 +51,10 @@ Interrupted drains retry when capacity returns, including after a node hello res
 
 Retirement consumes remaining bootstrap tokens, sets `credential_revoked_at`, appends issued client-certificate serials to the control-plane revocation file, and clears WireGuard keys and workload subnets so peers drop the mesh identity. The retired node cannot hello, enroll, or receive desired state.
 
+## Control-plane journal
+
+The live owner periodically snapshots product state and truncates `cluster_journal` down to the latest 1024 commands. Restarts replay that snapshot plus the retained tail, not the cluster's entire history. Retried commands are looked up in `cluster_journal_receipts`, which compaction does not delete, so an idempotent retry still returns the original receipt after the log row is gone.
+
 ## Local stack
 
 `make dev-ephemeral` enrolls `localteststack-agent` in region `local` / failure domain `localteststack` and marks the dev user as a platform operator so the Fleet page is usable.

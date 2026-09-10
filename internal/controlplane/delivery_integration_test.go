@@ -4,9 +4,11 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -44,7 +46,13 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate a resource disappearing after the draft was validated.
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volume.ID); err != nil {
+	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volume.ID); err != nil {
+			return err
+		}
+		journal.RecordVolume(ctx, volume.ID)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO project_memberships(user_id, project_id, role) VALUES ('viewer', $1, 'viewer')`, project.ID); err != nil {

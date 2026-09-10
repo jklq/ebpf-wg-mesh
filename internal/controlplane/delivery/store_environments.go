@@ -56,7 +56,7 @@ func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRec
 
 func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (EnvironmentRecord, error) {
 	var duplicate EnvironmentRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		source, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, sourceEnvironmentID)
 		if err != nil {
 			return err

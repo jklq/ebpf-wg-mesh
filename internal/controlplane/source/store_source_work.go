@@ -14,7 +14,7 @@ import (
 
 func (s *SQLStore) ClaimNextSourceWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (SourceWorkItemRecord, error) {
 	var rec SourceWorkItemRecord
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
@@ -76,7 +76,7 @@ func (s *SQLStore) RecoverSourceWorkItems(ctx context.Context, staleAfter time.D
 	if staleAfter <= 0 {
 		return nil
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE source_work_items SET state = $1, processor_id = '', updated_at = statement_timestamp() WHERE state = $3 AND updated_at < statement_timestamp() - $2::INT8 * INTERVAL '1 microsecond'`, SourceWorkStatePending, staleAfter.Microseconds(), SourceWorkStateProcessing)
 		return err
 	})
@@ -84,7 +84,7 @@ func (s *SQLStore) RecoverSourceWorkItems(ctx context.Context, staleAfter time.D
 
 func (s *SQLStore) EnqueueSourceWorkItem(ctx context.Context, rec SourceWorkItemRecord) (bool, error) {
 	inserted := false
-	err := s.withTx(ctx, func(tx *sql.Tx) error {
+	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		inserted, err = s.EnqueueSourceWorkItemTx(ctx, tx, rec)
 		return err
