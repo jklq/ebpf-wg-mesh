@@ -142,6 +142,7 @@ func (s *database) initJournal() {
 			err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch)
 			return epoch, err
 		})
+		s.journal.SetOnApplied(s.live.ApplyDurable)
 	})
 }
 

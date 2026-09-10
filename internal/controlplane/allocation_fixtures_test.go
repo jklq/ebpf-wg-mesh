@@ -109,7 +109,10 @@ func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) e
 	return err
 }
 func (s *persistence) currentDesiredRevisionForAgent(ctx context.Context, id string) (int64, error) {
-	var rev int64
-	err := s.db.QueryRowContext(ctx, `SELECT desired_revision FROM agents WHERE id=$1`, id).Scan(&rev)
-	return rev, err
+	_ = ctx
+	rev, ok := s.live.DesiredRevision(id)
+	if !ok {
+		return 0, sql.ErrNoRows
+	}
+	return rev, nil
 }

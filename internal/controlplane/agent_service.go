@@ -285,15 +285,6 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case _, ok := <-notifyCh:
-			if !ok {
-				return nil
-			}
-		case <-ticker.C:
-		}
 		slog.Info("checking desired state", "agent_id", agentID)
 		nextCursor, err := sendLatestDesiredState(ctx, agentID, lastCursor, func() (*agentv1.DesiredNodeState, error) {
 			state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
@@ -322,6 +313,15 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			return status.Errorf(codes.Internal, "desired state: %v", err)
 		}
 		lastCursor = nextCursor
+		select {
+		case <-ctx.Done():
+			return nil
+		case _, ok := <-notifyCh:
+			if !ok {
+				return nil
+			}
+		case <-ticker.C:
+		}
 	}
 }
 
