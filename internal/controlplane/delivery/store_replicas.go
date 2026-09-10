@@ -246,6 +246,10 @@ func candidateHasCapacity(candidate placementCandidate, spec *platformv1.Service
 }
 
 func (s *persistence) listAllocationsByServiceID(ctx context.Context, serviceID string) ([]AllocationRecord, error) {
+	_ = ctx
+	if s != nil && s.live != nil {
+		return s.live.AllocationsByService(serviceID), nil
+	}
 	return s.listAllocationsByServiceIDQuerier(ctx, s.db, serviceID, false)
 }
 

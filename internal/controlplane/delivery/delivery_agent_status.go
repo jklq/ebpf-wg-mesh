@@ -31,13 +31,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		return false, nil, err
 	}
 
-	var durable journal.DurableState
-	if err := d.store.readState(ctx, func(_ *sql.Tx, state journal.DurableState) error {
-		durable = state
-		return nil
-	}); err != nil {
-		return false, nil, err
-	}
+	durable := d.live.Durable()
 
 	now := d.live.currentTime()
 	ingressChanged := false

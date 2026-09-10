@@ -167,7 +167,7 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate deployment action status: %v", err)
 	}
-	return toProtoServiceStatus(result.Service, result.Allocations, result.EventIndex), nil
+	return s.protoServiceStatus(result.Service, result.Allocations, result.EventIndex), nil
 }
 
 func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.ScaleServiceRequest) (*platformv1.ServiceStatus, error) {
@@ -205,7 +205,7 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate scaled service: %v", err)
 	}
-	return toProtoServiceStatus(service, allocations, index), nil
+	return s.protoServiceStatus(service, allocations, index), nil
 }
 
 func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {

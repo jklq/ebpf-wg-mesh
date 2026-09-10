@@ -47,7 +47,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
 	}
-	return toProtoServiceStatus(service, allocations, index), nil
+	return s.protoServiceStatus(service, allocations, index), nil
 }
 
 func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (*platformv1.ListServiceLogsResponse, error) {
@@ -117,6 +117,7 @@ func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*pl
 	for _, item := range items {
 		resp.Agents = append(resp.Agents, toProtoAgent(item))
 	}
+	resp.Live = liveReadMeta(s.delivery)
 	return resp, nil
 }
 

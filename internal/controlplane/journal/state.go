@@ -126,6 +126,26 @@ func (s DurableState) validateReservations() error {
 	return nil
 }
 
+// Clone returns an owned copy. Index maps are cloned; nested byte slices are
+// shared and must be treated as immutable.
+func (s DurableState) Clone() DurableState {
+	return DurableState{
+		Projects:       maps.Clone(s.Projects),
+		ClusterID:      s.ClusterID,
+		LogIndex:       s.LogIndex,
+		Services:       maps.Clone(s.Services),
+		Revisions:      maps.Clone(s.Revisions),
+		Assignments:    maps.Clone(s.Assignments),
+		Rollouts:       maps.Clone(s.Rollouts),
+		Deployments:    maps.Clone(s.Deployments),
+		Agents:         maps.Clone(s.Agents),
+		Administration: maps.Clone(s.Administration),
+		Environments:   maps.Clone(s.Environments),
+		Volumes:        maps.Clone(s.Volumes),
+		Domains:        maps.Clone(s.Domains),
+	}
+}
+
 func (s DurableState) applyBatch(batch Batch) (DurableState, error) {
 	for _, change := range batch.Assignments {
 		if before, exists := s.Assignments[change.Key]; exists && change.Value != nil &&

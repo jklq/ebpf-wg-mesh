@@ -42,6 +42,26 @@ type liveEval struct {
 	AgentID      string
 }
 
+// LivePosition is the generation a product read was served from.
+type LivePosition struct {
+	AcceptedDurable      int64
+	AppliedLive          uint64
+	ObservationFreshness time.Time
+	Ready                bool
+}
+
+type liveWatcher struct {
+	agentID string
+	ch      chan struct{}
+}
+
+type liveIndexes struct {
+	assignmentsByAgent    map[string][]string
+	assignmentsByService  map[string][]string
+	domainsByService      map[string][]string
+	servicesByEnvironment map[string][]string
+}
+
 const (
 	liveEvalObservation = "observation"
 	liveEvalExpiry      = "expiry"
@@ -50,8 +70,9 @@ const (
 )
 
 // Live is the leaseholder's in-memory authority for sessions, observations,
-// admission, and local timers. Replacement and deployment decisions still
-// commit through the journal.
+// admission, local timers, and the applied durable prefix. Product reads and
+// watches are served from indexed snapshots. Replacement and deployment
+// decisions still commit through the journal.
 type Live struct {
 	mu sync.Mutex
 
@@ -68,6 +89,12 @@ type Live struct {
 	timers       map[string]*time.Timer
 	deadlines    map[string]time.Time
 
+	durable        journal.DurableState
+	liveIndex      uint64
+	authorityEpoch uint64
+	indexes        liveIndexes
+	watchers       []*liveWatcher
+
 	evals chan liveEval
 }
 
@@ -80,6 +107,7 @@ func NewLive() *Live {
 		admitted:     make(map[string]struct{}),
 		timers:       make(map[string]*time.Timer),
 		deadlines:    make(map[string]time.Time),
+		indexes:      newLiveIndexes(),
 		evals:        make(chan liveEval, 128),
 	}
 }
@@ -133,7 +161,7 @@ func (d *Delivery) BecomeLive(ctx context.Context) error {
 	if d == nil || d.live == nil {
 		return nil
 	}
-	return d.live.become(ctx, d.store.readState)
+	return d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch)
 }
 
 func (d *Delivery) ResignLive() {
@@ -152,7 +180,7 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	}
 	owned := false
 	if !d.live.Serving() {
-		if err := d.live.become(ctx, d.store.readState); err != nil {
+		if err := d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch); err != nil {
 			return err
 		}
 		owned = true
@@ -175,7 +203,7 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	}
 }
 
-func (l *Live) become(ctx context.Context, readState func(context.Context, func(*sql.Tx, journal.DurableState) error) error) error {
+func (l *Live) become(ctx context.Context, readState func(context.Context, func(*sql.Tx, journal.DurableState) error) error, readEpoch func(context.Context) (uint64, error)) error {
 	l.mu.Lock()
 	l.resetLocked()
 	l.serving = true
@@ -193,9 +221,22 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 		l.mu.Unlock()
 		return err
 	}
+	var epoch uint64
+	if readEpoch != nil {
+		var err error
+		epoch, err = readEpoch(ctx)
+		if err != nil {
+			l.mu.Lock()
+			l.resetLocked()
+			l.mu.Unlock()
+			return err
+		}
+	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.applyDurableLocked(durable, true)
+	l.authorityEpoch = epoch
 	for id, assignment := range durable.Assignments {
 		if assignment.DrainDeadline != nil && !assignment.DrainDeadline.IsZero() {
 			l.deadlines[id] = assignment.DrainDeadline.UTC()
@@ -226,10 +267,12 @@ func (l *Live) resetLocked() {
 	l.admitted = make(map[string]struct{})
 	l.timers = make(map[string]*time.Timer)
 	l.deadlines = make(map[string]time.Time)
+	l.authorityEpoch = 0
 	for {
 		select {
 		case <-l.evals:
 		default:
+			l.touchLiveLocked()
 			return
 		}
 	}
@@ -343,6 +386,7 @@ func (l *Live) BeginSession(agentID, sessionID string, inventory []string, assig
 		delete(l.admitted, agentID)
 	}
 	l.resetTimerLocked(agentID)
+	l.touchLiveLocked()
 	return nil
 }
 
@@ -398,6 +442,7 @@ func (l *Live) expire(agentID string) {
 	session.Ready = false
 	delete(l.admitted, agentID)
 	l.enqueueEvalLocked(liveEval{Kind: liveEvalExpiry, AgentID: agentID})
+	l.touchLiveLocked()
 	l.mu.Unlock()
 }
 
@@ -441,6 +486,7 @@ func (l *Live) EndSession(agentID, sessionID string) error {
 		timer.Stop()
 		delete(l.timers, session.AgentID)
 	}
+	l.touchLiveLocked()
 	return nil
 }
 
@@ -515,6 +561,7 @@ func (l *Live) RecordObservation(obs AllocationObservation) (changed bool, err e
 		return false, nil
 	}
 	l.observations[key] = obs
+	l.touchLiveLocked()
 	return true, nil
 }
 

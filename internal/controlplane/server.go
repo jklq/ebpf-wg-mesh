@@ -122,7 +122,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	logEmitter := logs.NewLogEmitter(logStore)
-	notifier := NewNotifier(ctx, store.reads, 0)
+	notifier := NewNotifier(store.live)
 	platformEvents := NewPlatformEvents(store.events, 0)
 	ingressOpts := []routing.IngressSyncerOption{
 		routing.WithIngressListenAddrs(cfg.Ingress.ListenAddrs),

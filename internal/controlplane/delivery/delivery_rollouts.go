@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"time"
 )
@@ -13,42 +12,12 @@ import (
 func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 	var now time.Time
 	if d.rolloutNow == nil {
-		var err error
-		now, err = dbtx.DatabaseTime(ctx, d.store.db)
-		if err != nil {
-			return fmt.Errorf("read database time: %w", err)
-		}
+		now = d.live.currentTime()
 	} else {
 		now = d.rolloutNow().UTC()
 	}
 
-	rows, err := d.store.db.QueryContext(ctx,
-		`SELECT DISTINCT sr.service_id
-		   FROM service_rollouts sr
-		   JOIN services s ON s.id = sr.service_id AND s.current_rollout_generation = sr.rollout_generation
-		  WHERE sr.state = $1
-		     OR EXISTS(SELECT 1 FROM allocations a WHERE a.service_id = sr.service_id AND a.rollout_state IN ($2, $3))
-		  ORDER BY sr.service_id`,
-		rolloutStateInProgress, AllocationRolloutDraining, AllocationRolloutWithdrawing)
-	if err != nil {
-		return err
-	}
-	var serviceIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		serviceIDs = append(serviceIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
+	serviceIDs := d.live.InProgressRolloutServiceIDs()
 
 	changed, ingressChanged := false, false
 	var waitingForIngress []string
