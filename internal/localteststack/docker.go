@@ -53,6 +53,23 @@ func EnsureDockerNetwork(ctx context.Context, runner DockerRunner, name string) 
 	return nil
 }
 
+func listDockerNetworks(ctx context.Context, runner DockerRunner) ([]string, error) {
+	if runner == nil {
+		runner = ExecDockerRunner{}
+	}
+	out, err := runner.Run(ctx, "network", "ls", "--format", "{{.Name}}")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, name := range strings.Fields(string(out)) {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
 func RemoveDockerNetwork(ctx context.Context, runner DockerRunner, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -128,6 +145,13 @@ func listContainerIDs(ctx context.Context, runner DockerRunner, filters ...strin
 		}
 	}
 	return ids, nil
+}
+
+func isDockerActiveEndpointsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "active endpoints")
 }
 
 func isDockerMissingObjectError(err error) bool {

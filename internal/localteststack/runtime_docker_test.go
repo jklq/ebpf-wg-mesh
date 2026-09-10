@@ -299,6 +299,101 @@ func TestDockerRuntimeReconcileRemovesStaleContainerAndVolume(t *testing.T) {
 	}
 }
 
+func TestDockerRuntimePrunesStaleEnvironmentNetwork(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runner.imageExists = true
+	runner.onRun = func(args []string) {
+		if len(args) >= 2 && args[0] == "run" && args[1] == "--detach" {
+			runner.containers["localteststack-svc-alloc-keep"] = dockerContainerInspect{
+				State: dockerContainerState{Running: true},
+			}
+		}
+	}
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	keepNetwork := runtime.environmentNetworkName("env-keep")
+	staleNetwork := runtime.environmentNetworkName("env-stale")
+	runner.networks = []string{"mesh-local", keepNetwork, staleNetwork, "some-other-network"}
+
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{
+		AgentId: "node-1",
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-keep",
+			ServiceId:                "svc-keep",
+			EnvironmentId:            "env-keep",
+			Name:                     "echo",
+			PrivateIpv4:              "10.200.0.2",
+			PrivateIpv6:              "fd00:200::2",
+			DesiredSpecRevision:      1,
+			DesiredRolloutGeneration: 1,
+			Spec: &platformv1.ResolvedServiceSpec{
+				Image: "ghcr.io/demo/echo:latest",
+				Runtime: &platformv1.ServiceRuntime{
+					Ports: []*platformv1.ServiceRuntimePort{{Port: 8080, Primary: true}},
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !runner.hasCommand("network", "rm", staleNetwork) {
+		t.Fatalf("expected stale environment network removal, got commands %+v", runner.commands)
+	}
+	if runner.hasCommand("network", "rm", keepNetwork) {
+		t.Fatalf("removed referenced environment network %s: %+v", keepNetwork, runner.commands)
+	}
+	if slices.Contains(runner.networks, staleNetwork) {
+		t.Fatalf("stale network %s still present: %v", staleNetwork, runner.networks)
+	}
+	for _, name := range []string{"mesh-local", keepNetwork, "some-other-network"} {
+		if !slices.Contains(runner.networks, name) {
+			t.Fatalf("network %s should be kept, got %v", name, runner.networks)
+		}
+	}
+	if len(report.Services) != 1 || !report.Services[0].Healthy {
+		t.Fatalf("expected healthy service, got %+v", report.Services)
+	}
+}
+
+func TestDockerRuntimeKeepsEnvironmentNetworkWithActiveEndpoints(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runner := newFakeDockerRunner(t)
+	runtime, err := NewDockerRuntime(DockerRuntimeConfig{
+		DataDir:            dir,
+		VolumesDir:         filepath.Join(dir, "volumes"),
+		DockerNetwork:      "mesh-local",
+		Runner:             runner,
+		ContainerNamePrefx: "localteststack-svc",
+	})
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	staleNetwork := runtime.environmentNetworkName("env-stale")
+	runner.networks = []string{staleNetwork}
+	runner.networkRmErr = fmt.Errorf("docker network rm %s: Error response from daemon: error while removing network: network %s has active endpoints", staleNetwork, staleNetwork)
+
+	if _, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"}); err != nil {
+		t.Fatalf("Reconcile with busy stale network: %v", err)
+	}
+	if !slices.Contains(runner.networks, staleNetwork) {
+		t.Fatalf("busy network %s should be kept, got %v", staleNetwork, runner.networks)
+	}
+}
+
 func TestDockerRuntimeRecoveryPreservesUnknownResources(t *testing.T) {
 	t.Parallel()
 
@@ -483,11 +578,13 @@ func TestDockerRuntimeInspectContainerTreatsLowercaseNoSuchObjectAsMissing(t *te
 }
 
 type fakeDockerRunner struct {
-	t           *testing.T
-	imageExists bool
-	commands    [][]string
-	containers  map[string]dockerContainerInspect
-	onRun       func(args []string)
+	t            *testing.T
+	imageExists  bool
+	commands     [][]string
+	containers   map[string]dockerContainerInspect
+	networks     []string
+	networkRmErr error
+	onRun        func(args []string)
 }
 
 type fakeMissingInspectRunner struct{}
@@ -523,9 +620,30 @@ func (f *fakeDockerRunner) Run(_ context.Context, args ...string) ([]byte, error
 		slices.Sort(ids)
 		return []byte(strings.Join(ids, "\n")), nil
 	case len(args) >= 3 && args[0] == "network" && args[1] == "inspect":
+		for _, name := range f.networks {
+			if len(args) >= 4 && args[2] == name {
+				return []byte(name), nil
+			}
+		}
 		return nil, fmt.Errorf("not found")
 	case len(args) >= 3 && args[0] == "network" && args[1] == "create":
-		return []byte("mesh-local"), nil
+		name := args[len(args)-1]
+		if !slices.Contains(f.networks, name) {
+			f.networks = append(f.networks, name)
+		}
+		return []byte(name), nil
+	case len(args) >= 2 && args[0] == "network" && args[1] == "ls":
+		return []byte(strings.Join(f.networks, "\n")), nil
+	case len(args) >= 3 && args[0] == "network" && args[1] == "rm":
+		if f.networkRmErr != nil {
+			return nil, f.networkRmErr
+		}
+		name := args[len(args)-1]
+		if !slices.Contains(f.networks, name) {
+			return nil, fmt.Errorf("No such network: %s", name)
+		}
+		f.networks = slices.DeleteFunc(f.networks, func(existing string) bool { return existing == name })
+		return []byte(name), nil
 	case len(args) >= 4 && args[0] == "network" && args[1] == "connect":
 		return []byte("connected"), nil
 	case len(args) >= 3 && args[0] == "image" && args[1] == "inspect":
