@@ -287,7 +287,7 @@ func TestReplicaFailoverAvoidsColocationAfterNodeLoss(t *testing.T) {
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 
 	past := time.Now().UTC().Add(-time.Minute)
-	store.live.SetLastContactForTest("node-b", past)
+	fixtureLive(store).SetLastContactForTest("node-b", past)
 	result, err := testDelivery(store).failoverUnhealthyServices(ctx, time.Now().UTC(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("failoverUnhealthyServices: %v", err)

@@ -84,11 +84,15 @@ func toProtoServiceStatus(rec deliverycore.ServiceRecord, allocations []delivery
 	}
 }
 
-func liveReadMeta(d platformDelivery) *platformv1.LiveReadMeta {
-	if d == nil || d.Live() == nil {
+type livePositionReader interface {
+	LivePosition() deliverycore.LivePosition
+}
+
+func liveReadMeta(d livePositionReader) *platformv1.LiveReadMeta {
+	if d == nil {
 		return nil
 	}
-	return toProtoLiveRead(d.Live().Position())
+	return toProtoLiveRead(d.LivePosition())
 }
 
 func toProtoLiveRead(pos deliverycore.LivePosition) *platformv1.LiveReadMeta {

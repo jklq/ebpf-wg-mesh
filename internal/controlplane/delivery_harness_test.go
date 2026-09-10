@@ -83,7 +83,7 @@ func prepareTestStatusReport(ctx context.Context, store *persistence, agentID st
 		return
 	}
 	report.AgentId = agentID
-	if session, ok := store.live.Session(agentID); ok {
+	if session, ok := fixtureLive(store).Session(agentID); ok {
 		report.SessionId = session.SessionID
 		report.ObservationSequence = session.Sequence + 1
 	}
@@ -172,4 +172,20 @@ func reportActiveForTest(ctx context.Context, s *persistence, serviceID string) 
 		}
 	}
 	return nil
+}
+
+// liveFixture is confined to integration fixtures that arrange session observations
+// or deterministic expiry. Production consumers receive their own narrower roles.
+type liveFixture interface {
+	Admitted(string) bool
+	Session(string) (deliverycore.AgentSession, bool)
+	Observation(string, int64) (deliverycore.AllocationObservation, bool)
+	RecordObservation(deliverycore.AllocationObservation) (bool, error)
+	AcceptReport(string, string, uint64, bool) error
+	DesiredRevision(string) (int64, bool)
+	SetLastContactForTest(string, time.Time)
+}
+
+func fixtureLive(store *persistence) liveFixture {
+	return store.fleet.sessions.(liveFixture)
 }

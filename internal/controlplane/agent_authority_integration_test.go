@@ -22,7 +22,7 @@ func TestAuthorityCutoverWaitsForPartitionedAgentGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline, err := store.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, 0)
+	deadline, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestAuthorityCutoverWaitsForPartitionedAgentGrant(t *testing.T) {
 	if err := reconciliation.ValidateCommand(delayed, hello.SessionId, time.Now().Add(-reconciliation.MaxClockSkew)); err == nil {
 		t.Fatal("isolated agent accepted delayed former command")
 	}
-	if _, err := store.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, 1); err == nil {
+	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, 1); err == nil {
 		t.Fatal("paused former holder renewed after takeover")
 	}
 	if err := store.advanceAgentAuthority(ctx, epoch); err == nil {
@@ -60,17 +60,17 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, 1, 7); err != nil {
+	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, 1, 7); err != nil {
 		t.Fatal(err)
 	}
 	ack := &agentv1.DesiredStateAcknowledgement{AgentId: hello.AgentId, SessionId: hello.SessionId, AuthorityEpoch: 1, ReconciliationCursor: 7}
-	if err := store.acknowledgeAgentDesired(ctx, ack); err != nil {
+	if err := store.fleet.acknowledgeAgentDesired(ctx, ack); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.acknowledgeAgentDesired(ctx, ack); err != nil {
+	if err := store.fleet.acknowledgeAgentDesired(ctx, ack); err != nil {
 		t.Fatalf("duplicate durable acceptance: %v", err)
 	}
-	session, ok := store.live.Session(hello.AgentId)
+	session, ok := fixtureLive(store).Session(hello.AgentId)
 	if !ok {
 		t.Fatal("missing live session")
 	}
@@ -78,7 +78,7 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 		t.Fatalf("ack was interpreted as runtime observation: sequence=%d cursor=%d", session.Sequence, session.AcceptedCursor)
 	}
 	ack.ReconciliationCursor = 8
-	if err := store.acknowledgeAgentDesired(ctx, ack); err == nil {
+	if err := store.fleet.acknowledgeAgentDesired(ctx, ack); err == nil {
 		t.Fatal("accepted acknowledgement beyond offered state")
 	}
 	// Empty storage cannot take over an existing identity, even with a valid
@@ -97,10 +97,10 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 		t.Fatal("delayed hello superseded a newer incarnation")
 	}
 	ack.ReconciliationCursor = 7
-	if err := store.acknowledgeAgentDesired(ctx, ack); err == nil {
+	if err := store.fleet.acknowledgeAgentDesired(ctx, ack); err == nil {
 		t.Fatal("accepted delayed acknowledgement from superseded session")
 	}
-	if _, err := store.grantAgentCommand(ctx, hello.AgentId, "first", 1, 8); err == nil {
+	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, "first", 1, 8); err == nil {
 		t.Fatal("superseded session received new command grant")
 	}
 	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, hello.AgentId, "first", false); err == nil {

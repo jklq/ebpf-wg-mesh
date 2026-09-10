@@ -60,7 +60,7 @@ type platformDelivery interface {
 	DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	DeleteService(ctx context.Context, serviceID string) error
 	ScaleService(ctx context.Context, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
-	Live() *deliverycore.Live
+	livePositionReader
 }
 
 type environmentStore interface {

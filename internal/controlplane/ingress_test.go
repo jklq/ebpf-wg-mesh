@@ -71,12 +71,12 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, alloc := range allocs {
-		obs, ok := store.live.Observation(alloc.ID, alloc.DesiredRolloutGeneration)
+		obs, ok := fixtureLive(store).Observation(alloc.ID, alloc.DesiredRolloutGeneration)
 		if !ok {
 			continue
 		}
 		obs.HealthyIPv4Ports = nil
-		if _, err := store.live.RecordObservation(obs); err != nil {
+		if _, err := fixtureLive(store).RecordObservation(obs); err != nil {
 			t.Fatal(err)
 		}
 	}

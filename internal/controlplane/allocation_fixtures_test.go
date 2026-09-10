@@ -72,7 +72,7 @@ func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, alloca
 }
 
 func observeAllocationHealthyForTest(ctx context.Context, store *persistence, alloc deliverycore.AllocationRecord, reportedIP string, healthyPorts ...int32) error {
-	session, ok := store.live.Session(alloc.AgentID)
+	session, ok := fixtureLive(store).Session(alloc.AgentID)
 	if !ok {
 		return fmt.Errorf("no live session for agent %s", alloc.AgentID)
 	}
@@ -82,10 +82,10 @@ func observeAllocationHealthyForTest(ctx context.Context, store *persistence, al
 	} else {
 		ipv6Ports = healthyPorts
 	}
-	if err := store.live.AcceptReport(alloc.AgentID, session.SessionID, session.Sequence+1, true); err != nil {
+	if err := fixtureLive(store).AcceptReport(alloc.AgentID, session.SessionID, session.Sequence+1, true); err != nil {
 		return err
 	}
-	_, err := store.live.RecordObservation(deliverycore.AllocationObservation{
+	_, err := fixtureLive(store).RecordObservation(deliverycore.AllocationObservation{
 		AllocationID: alloc.ID, RolloutGeneration: alloc.DesiredRolloutGeneration,
 		AppliedSpecRevision: alloc.DesiredSpecRevision, AppliedGeneration: alloc.DesiredRolloutGeneration,
 		Phase: "Healthy", Healthy: true, HealthyIPv4Ports: ipv4Ports, HealthyIPv6Ports: ipv6Ports,
@@ -110,7 +110,7 @@ func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) e
 }
 func (s *persistence) currentDesiredRevisionForAgent(ctx context.Context, id string) (int64, error) {
 	_ = ctx
-	rev, ok := s.live.DesiredRevision(id)
+	rev, ok := fixtureLive(s).DesiredRevision(id)
 	if !ok {
 		return 0, sql.ErrNoRows
 	}

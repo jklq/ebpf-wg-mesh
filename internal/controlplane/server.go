@@ -31,6 +31,11 @@ import (
 	"google.golang.org/grpc"
 )
 
+// publicationFence is held by the lease owner, never by product readers.
+type publicationFence interface {
+	SetPublishing(bool)
+}
+
 type Server struct {
 	cfg             config.ControlPlaneConfig
 	store           *persistence
@@ -123,7 +128,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	logEmitter := logs.NewLogEmitter(logStore)
-	notifier := NewNotifier(store.live)
+	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)
 	ingressOpts := []routing.IngressSyncerOption{
 		routing.WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
@@ -327,7 +332,7 @@ func (s *Server) Run(ctx context.Context) error {
 			advertise = s.InternalAddr()
 		}
 		s.leases.SetAdvertise(advertise)
-		s.leases.SetFenceHooks(func() { s.delivery.Live().SetPublishing(false) }, func() { s.delivery.Live().SetPublishing(true) })
+		s.leases.SetFenceHooks(func() { s.store.publication.SetPublishing(false) }, func() { s.store.publication.SetPublishing(true) })
 		err := s.leases.Run(runCtx, SingletonLeaseName, s.runSingletonJobs)
 		leaseDone <- err
 		errCh <- err

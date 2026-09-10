@@ -99,7 +99,7 @@ func (s *AgentService) requireLiveOwner(ctx context.Context) error {
 		}
 		return agentv1.LiveOwnerRedirect(ownerAddr)
 	}
-	if s.store == nil || s.store.live == nil || s.store.live.Serving() {
+	if s.store == nil || s.store.sessions == nil || s.store.sessions.Serving() {
 		return nil
 	}
 	addr, err := s.store.liveOwnerAddr(ctx)

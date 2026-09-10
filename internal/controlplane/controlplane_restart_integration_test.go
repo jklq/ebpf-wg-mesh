@@ -205,7 +205,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 
 	deadCancel()
 	liveCancel()
-	store.live.SetLastContactForTest(deadID, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL))
+	fixtureLive(store).SetLastContactForTest(deadID, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL))
 	first.stop()
 
 	second := startSystemControlPlane(t, opts)

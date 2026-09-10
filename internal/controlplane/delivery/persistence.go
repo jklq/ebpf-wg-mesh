@@ -115,11 +115,12 @@ func New(deps Dependencies) *Delivery {
 	}
 }
 
-func (d *Delivery) Live() *Live {
+// LivePosition reports the live owner's applied durable index and observation revision.
+func (d *Delivery) LivePosition() LivePosition {
 	if d == nil {
-		return nil
+		return LivePosition{}
 	}
-	return d.live
+	return d.live.Position()
 }
 
 // ReadModel exposes the snapshots used by transports and other modules.

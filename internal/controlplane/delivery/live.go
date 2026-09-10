@@ -73,6 +73,8 @@ const (
 // admission, local timers, and the applied durable prefix. Product reads and
 // watches are served from indexed snapshots. Replacement and deployment
 // decisions still commit through the journal.
+// Only composition wiring shares this concrete instance; consumers define
+// narrow interfaces for the capabilities they need.
 type Live struct {
 	mu sync.Mutex
 
