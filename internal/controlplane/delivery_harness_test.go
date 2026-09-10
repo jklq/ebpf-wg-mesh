@@ -83,11 +83,10 @@ func prepareTestStatusReport(ctx context.Context, store *persistence, agentID st
 		return
 	}
 	report.AgentId = agentID
-	_ = store.db.QueryRowContext(ctx, `SELECT session_id FROM agent_presence WHERE agent_id = $1`, agentID).Scan(&report.SessionId)
-	var sequence int64
-	_ = store.db.QueryRowContext(ctx, `SELECT last_observation_sequence + 1
-		FROM agent_presence WHERE agent_id = $1 AND session_id = $2`, agentID, report.SessionId).Scan(&sequence)
-	report.ObservationSequence = uint64(sequence)
+	if session, ok := store.live.Session(agentID); ok {
+		report.SessionId = session.SessionID
+		report.ObservationSequence = session.Sequence + 1
+	}
 	for _, condition := range report.GetServices() {
 		if condition.AllocationId == "" {
 			continue

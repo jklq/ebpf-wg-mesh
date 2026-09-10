@@ -32,7 +32,7 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 		if agent.LifecycleState != AgentStateDraining {
 			return nil
 		}
-		allocations, err := listAllocationsForFailover(ctx, tx, agentID)
+		allocations, err := listAllocationsForFailover(ctx, s, tx, agentID)
 		if err != nil {
 			return err
 		}

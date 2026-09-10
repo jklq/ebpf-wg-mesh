@@ -96,6 +96,16 @@ func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req
 
 func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	ctx := stream.Context()
+	if s.store.live != nil && !s.store.live.Serving() {
+		addr, err := s.store.liveOwnerAddr(ctx)
+		if err != nil {
+			return status.Errorf(codes.Unavailable, "lookup live owner: %v", err)
+		}
+		if addr != "" {
+			return status.Error(codes.FailedPrecondition, deliverycore.LiveOwnerRedirectMessage(addr))
+		}
+		return status.Error(codes.Unavailable, "live owner is not ready")
+	}
 	if err := identity.CheckClientCertificateRevocation(s.authority.Revocations(), identity.VerifiedClientCertificateFromContext(ctx)); err != nil {
 		return err
 	}

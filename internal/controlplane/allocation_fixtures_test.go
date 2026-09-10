@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"encoding/json"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -16,32 +15,12 @@ import (
 )
 
 func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
-	encodedPorts, err := json.Marshal(healthyPorts)
-	if err != nil {
-		return err
-	}
-	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, rollout_state = $4, updated_at = $2 WHERE service_id = $3`, addressColumn),
 			allocationIP, time.Now().UTC(), serviceID, deliverycore.AllocationRolloutServing,
 		); err != nil {
-			return err
-		}
-		ipv4Ports, ipv6Ports := []byte("[]"), []byte("[]")
-		if portsColumn == "healthy_ipv4_ports" {
-			ipv4Ports = encodedPorts
-		} else {
-			ipv6Ports = encodedPorts
-		}
-		if _, err := tx.ExecContext(ctx, `UPSERT INTO allocation_observations(
-			allocation_id, rollout_generation, applied_spec_revision, applied_rollout_generation,
-			phase, message, healthy_ipv4_ports, healthy_ipv6_ports, healthy,
-			restart_observation_json, agent_id, session_id, observation_sequence, observed_at)
-			SELECT a.id, a.desired_rollout_generation, a.desired_spec_revision, a.desired_rollout_generation,
-			       'Healthy', '', $1, $2, TRUE, '{}', a.agent_id, p.session_id, 1, $3
-			FROM allocation_assignments a JOIN agent_presence p ON p.agent_id = a.agent_id
-			WHERE a.service_id = $4`, ipv4Ports, ipv6Ports, time.Now().UTC(), serviceID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -54,45 +33,65 @@ func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceI
 			return err
 		}
 		return seedActiveDeploymentTx(ctx, tx, serviceID)
-	})
-}
-func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
-	encodedPorts, err := json.Marshal(healthyPorts)
+	}); err != nil {
+		return err
+	}
+	allocs, err := s.reads.ListAllocationsByServiceID(ctx, serviceID)
 	if err != nil {
 		return err
 	}
-	addressColumn, portsColumn := testAllocationFamilyColumns(allocationIP)
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC()
-		if strings.TrimSpace(allocationIP) != "" {
-			if _, err := tx.ExecContext(ctx,
-				fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, updated_at = $2 WHERE id = $3`, addressColumn),
-				allocationIP, now, allocationID,
-			); err != nil {
-				return err
-			}
-		}
-		ipv4Ports, ipv6Ports := []byte("[]"), []byte("[]")
-		if portsColumn == "healthy_ipv4_ports" {
-			ipv4Ports = encodedPorts
-		} else {
-			ipv6Ports = encodedPorts
-		}
-		if _, err := tx.ExecContext(ctx, `UPSERT INTO allocation_observations(
-			allocation_id, rollout_generation, applied_spec_revision, applied_rollout_generation,
-			phase, message, healthy_ipv4_ports, healthy_ipv6_ports, healthy,
-			restart_observation_json, agent_id, session_id, observation_sequence, observed_at)
-			SELECT a.id, a.desired_rollout_generation, a.desired_spec_revision, a.desired_rollout_generation,
-			       'Healthy', '', $1, $2, TRUE, '{}', a.agent_id, p.session_id, p.last_observation_sequence + 1, $3
-			FROM allocation_assignments a JOIN agent_presence p ON p.agent_id = a.agent_id WHERE a.id = $4`,
-			ipv4Ports, ipv6Ports, now, allocationID); err != nil {
+	for _, alloc := range allocs {
+		if err := observeAllocationHealthyForTest(ctx, s, alloc, allocationIP, healthyPorts...); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE agent_presence
-			SET last_observation_sequence = last_observation_sequence + 1, last_contact_at = $1, updated_at = $1
-			WHERE agent_id = (SELECT agent_id FROM allocation_assignments WHERE id = $2)`, now, allocationID)
+	}
+	return nil
+}
+func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
+	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		now := time.Now().UTC()
+		if strings.TrimSpace(allocationIP) == "" {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, updated_at = $2 WHERE id = $3`, addressColumn),
+			allocationIP, now, allocationID,
+		)
 		return err
+	}); err != nil {
+		return err
+	}
+	var rec deliverycore.AllocationRecord
+	if err := s.db.QueryRowContext(ctx, `SELECT id, service_id, agent_id, desired_spec_revision, desired_rollout_generation, allocation_ipv4, allocation_ipv6
+		FROM allocation_assignments WHERE id = $1`, allocationID).Scan(
+		&rec.ID, &rec.ServiceID, &rec.AgentID, &rec.DesiredSpecRevision, &rec.DesiredRolloutGeneration, &rec.AllocationIPv4, &rec.AllocationIPv6); err != nil {
+		return err
+	}
+	return observeAllocationHealthyForTest(ctx, s, rec, allocationIP, healthyPorts...)
+}
+
+func observeAllocationHealthyForTest(ctx context.Context, store *persistence, alloc deliverycore.AllocationRecord, reportedIP string, healthyPorts ...int32) error {
+	session, ok := store.live.Session(alloc.AgentID)
+	if !ok {
+		return fmt.Errorf("no live session for agent %s", alloc.AgentID)
+	}
+	ipv4Ports, ipv6Ports := []int32(nil), []int32(nil)
+	if _, col := testAllocationFamilyColumns(reportedIP); col == "healthy_ipv4_ports" {
+		ipv4Ports = healthyPorts
+	} else {
+		ipv6Ports = healthyPorts
+	}
+	if err := store.live.AcceptReport(alloc.AgentID, session.SessionID, session.Sequence+1, true); err != nil {
+		return err
+	}
+	_, err := store.live.RecordObservation(deliverycore.AllocationObservation{
+		AllocationID: alloc.ID, RolloutGeneration: alloc.DesiredRolloutGeneration,
+		AppliedSpecRevision: alloc.DesiredSpecRevision, AppliedGeneration: alloc.DesiredRolloutGeneration,
+		Phase: "Healthy", Healthy: true, HealthyIPv4Ports: ipv4Ports, HealthyIPv6Ports: ipv6Ports,
+		AgentID: alloc.AgentID, SessionID: session.SessionID, Sequence: session.Sequence + 1, ObservedAt: time.Now().UTC(),
 	})
+	return err
 }
 func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColumn string) {
 	if addr, err := netip.ParseAddr(strings.TrimSpace(allocationIP)); err == nil && addr.Is4() {

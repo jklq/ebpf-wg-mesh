@@ -48,12 +48,12 @@ func TestAllocationObservationRejectsStaleSessionSequenceAndForeignOwner(t *test
 	if err := testDelivery(store).ObserveAgentStatus(ctx, "node-1", report); !errors.Is(err, deliverycore.ErrStaleObservation) {
 		t.Fatalf("duplicate sequence: got %v", err)
 	}
-	var message string
-	if err := store.db.QueryRowContext(ctx, `SELECT message FROM allocation_observations WHERE allocation_id = $1 AND rollout_generation = $2`, allocation.ID, allocation.DesiredRolloutGeneration).Scan(&message); err != nil {
-		t.Fatal(err)
+	obs, ok := store.live.Observation(allocation.ID, allocation.DesiredRolloutGeneration)
+	if !ok {
+		t.Fatal("missing live observation")
 	}
-	if message == "must not overwrite" {
-		t.Fatal("stale sequence overwrote the durable observation")
+	if obs.Message == "must not overwrite" {
+		t.Fatal("stale sequence overwrote the observation")
 	}
 
 	foreign := observationReport(allocation, "test-session-node-2", 1, allocation.DesiredRolloutGeneration)
@@ -114,9 +114,8 @@ func TestOlderGenerationObservationCannotSatisfyCurrentAssignment(t *testing.T) 
 	if current[0].Healthy || current[0].AppliedRolloutGeneration != 0 || deliverycore.AllocationReady(current[0]) {
 		t.Fatalf("older generation satisfied current readiness: %+v", current[0])
 	}
-	var retained int
-	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM allocation_observations WHERE allocation_id = $1 AND rollout_generation = $2`, allocation.ID, allocation.DesiredRolloutGeneration).Scan(&retained); err != nil || retained != 1 {
-		t.Fatalf("older observation was not retained: %d, %v", retained, err)
+	if _, ok := store.live.Observation(allocation.ID, allocation.DesiredRolloutGeneration); !ok {
+		t.Fatal("older observation was not retained")
 	}
 }
 

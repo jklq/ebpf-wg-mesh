@@ -66,9 +66,19 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 		t.Fatalf("expected healthy IPv4 upstream, got %q", got)
 	}
 
-	if _, err := store.db.ExecContext(ctx, `UPDATE allocation_observations SET healthy_ipv4_ports = '[]'
-		WHERE allocation_id IN (SELECT id FROM allocation_assignments WHERE service_id = $1)`, service.ID); err != nil {
+	allocs, err := store.reads.ListAllocationsByServiceID(ctx, service.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, alloc := range allocs {
+		obs, ok := store.live.Observation(alloc.ID, alloc.DesiredRolloutGeneration)
+		if !ok {
+			continue
+		}
+		obs.HealthyIPv4Ports = nil
+		if _, err := store.live.RecordObservation(obs); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "fd00:200:1::10", 8080); err != nil {
 		t.Fatal(err)

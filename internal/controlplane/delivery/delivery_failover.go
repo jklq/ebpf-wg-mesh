@@ -18,8 +18,9 @@ type nodeLossReplacementResult struct {
 }
 
 // failoverServicesFromAgent evaluates only allocations currently assigned to
-// the expired agent. The last-seen check and replacement share a serializable
-// transaction so a concurrent heartbeat prevents stale failover.
+// the expired agent. A session whose last contact is still inside the TTL
+// aborts the replacement. Missing sessions, including after takeover, are
+// treated as expired.
 //
 // Existing allocation rows are never rewritten onto another agent. The dead
 // node's allocation is marked lost/unavailable and a new allocation is placed
@@ -31,17 +32,14 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		notifyAgentIDs = nil
 		changedEnvironmentIDs = nil
-		var lastSeen time.Time
-		if err := tx.QueryRowContext(ctx, `SELECT last_contact_at FROM agent_presence WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&lastSeen); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			return err
+		if d.live == nil || !d.live.Serving() {
+			return ErrNotLiveOwner
 		}
-		if lastSeen.After(cutoff) {
+		session, ok := d.live.Session(agentID)
+		if ok && session.LastContact.After(cutoff) {
 			return nil
 		}
-		allocations, err := listAllocationsForFailover(ctx, tx, agentID)
+		allocations, err := listAllocationsForFailover(ctx, s, tx, agentID)
 		if err != nil {
 			return err
 		}
