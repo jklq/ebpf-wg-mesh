@@ -30,6 +30,9 @@ func (s *EnvironmentOperations) DeleteEnvironment(ctx context.Context, req *plat
 	}
 	agentIDs, err := s.store.deleteEnvironment(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
+		if errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost) {
+			return nil, err
+		}
 		if errors.Is(err, errProductionEnvironment) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}

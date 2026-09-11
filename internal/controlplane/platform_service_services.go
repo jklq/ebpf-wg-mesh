@@ -18,6 +18,9 @@ import (
 )
 
 func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.CreateServiceRequest) (*platformv1.Service, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -50,6 +53,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	}
 	service, err := s.delivery.CreateScheduledService(ctx, req.GetEnvironmentId(), req.GetService().GetName(), spec)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
@@ -58,11 +64,17 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	slog.Info("service created", "service_id", service.ID, "environment_id", service.EnvironmentID, "spec_revision", service.SpecRevision, "rollout_generation", service.RolloutGeneration)
 	service, err = s.store.ServiceByID(ctx, identity.UserID, service.ID)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "reload service: %v", err)
 	}
 	s.emitInitialization(ctx, service)
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
 	return toProtoService(service), nil
@@ -80,6 +92,9 @@ func (s *PlatformService) emitInitialization(ctx context.Context, service delive
 }
 
 func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -115,6 +130,9 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	}
 	service, _, err := s.delivery.UpdateService(ctx, req.GetServiceId(), req.GetService().GetName(), spec)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
@@ -128,18 +146,27 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	}
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
 	return toProtoService(service), nil
 }
 
 func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platformv1.ApplyDeploymentActionRequest) (*platformv1.ServiceStatus, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.GetServiceId()) == "" || strings.TrimSpace(req.GetDeploymentId()) == "" ||
 		strings.TrimSpace(req.GetIdempotencyKey()) == "" || deliverycore.DeploymentActionName(req.GetAction()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id, deployment_id, action, and idempotency_key are required")
 	}
 	result, err := s.delivery.ApplyDeploymentAction(ctx, req.GetServiceId(), req.GetDeploymentId(), req.GetAction(), req.GetIdempotencyKey(), req.GetAllocationId())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		switch {
 		case errors.Is(err, deliverycore.ErrDeploymentActionDenied):
 			return nil, status.Errorf(codes.PermissionDenied, "deployment action: %v", err)
@@ -157,12 +184,18 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 	}
 	result.Service, err = s.decorateServiceRecordWithAllocations(ctx, result.Service, result.Allocations)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate deployment action status: %v", err)
 	}
 	return s.protoServiceStatus(result.Service, result.Allocations, result.EventIndex), nil
 }
 
 func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.ScaleServiceRequest) (*platformv1.ServiceStatus, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -182,6 +215,9 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	}
 	service, allocations, index, err := s.delivery.ScaleService(ctx, req.GetServiceId(), req.GetDesiredReplicaCount())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
@@ -195,12 +231,18 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	}
 	service, err = s.decorateServiceRecordWithAllocations(ctx, service, allocations)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate scaled service: %v", err)
 	}
 	return s.protoServiceStatus(service, allocations, index), nil
 }
 
 func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platformv1.DiscardServiceChangesRequest) (*platformv1.Service, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -214,6 +256,9 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 	}
 	service, err := s.delivery.DiscardServiceChanges(ctx, req.GetServiceId(), req.GetChangeIds(), req.GetDiscardAll())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
@@ -224,46 +269,73 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 	}
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
 	return toProtoService(service), nil
 }
 
 func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.DeleteServiceRequest) (*emptypb.Empty, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(req.GetServiceId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_id is required")
+	}
 	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
 	if err := s.requireProjectWriteAccess(ctx, identity.UserID, service.ProjectID); err != nil {
 		return nil, err
 	}
 	if err := s.delivery.DeleteService(ctx, req.GetServiceId()); err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "delete service: %v", err)
 	}
 	return &emptypb.Empty{}, nil
 }
 
 func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetServiceRequest) (*platformv1.Service, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 	}
 	return toProtoService(service), nil
 }
 
 func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.ListServicesRequest) (*platformv1.ListServicesResponse, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -280,12 +352,18 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	}
 	items, err := s.store.ListServices(ctx, identity.UserID, req.GetEnvironmentId())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "list services: %v", err)
 	}
 	resp := &platformv1.ListServicesResponse{Services: make([]*platformv1.Service, 0, len(items)), Index: index}
 	for _, item := range items {
 		item, err = s.decorateServiceRecord(ctx, item)
 		if err != nil {
+			if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+				return nil, mapped
+			}
 			return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 		}
 		resp.Services = append(resp.Services, toProtoService(item))

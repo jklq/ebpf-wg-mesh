@@ -21,6 +21,10 @@ type failoverSnapshot struct {
 	ReusableImage    bool
 	RolloutState     string
 	Generation       int64
+	// PendingChanges is true when the service has an acknowledged but not yet
+	// released spec change. Copying the current deployment would roll that
+	// change back, so failover leaves the allocation to the release path.
+	PendingChanges bool
 }
 
 type failoverDecision struct {
@@ -58,6 +62,11 @@ func failoverPlacementMessage(detail string) string {
 func decideFailover(snapshot failoverSnapshot) failoverDecision {
 	if action := lostAllocationDisposition(snapshot.Allocation, snapshot.DeadAgentID); action != failoverReplace {
 		return failoverDecision{Action: action}
+	}
+	// A staged update supersedes the running deployment. Leave it entirely to
+	// the release path: failover must not probe placement or mutate intent.
+	if snapshot.PendingChanges {
+		return failoverDecision{Action: failoverIgnore}
 	}
 	if message := failoverPinnedMessage(snapshot.ProjectKind, snapshot.VolumeName); message != "" {
 		return failoverDecision{Action: failoverBlocked, Message: message}

@@ -96,6 +96,7 @@ type AgentRecord struct {
 	WorkloadIPv6Subnet      string
 	WireGuardPublicKey      string
 	WireGuardListenPort     int
+	WireGuardEndpoint       string
 	WireGuardIPv6           string
 	CPUMillisCapacity       int64
 	MemoryMebibytesCapcity  int64

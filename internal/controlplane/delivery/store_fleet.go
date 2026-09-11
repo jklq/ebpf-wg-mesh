@@ -28,7 +28,7 @@ var (
 const agentSelectSQL = `SELECT id, name, lifecycle_state, state_before_unavailable,
 		region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes,
 		advertise_addr, workload_ipv4_subnet, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
-		wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity,
+		wireguard_endpoint, wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity,
 		runtime_capabilities, software_version, maintenance_message,
 		credential_revoked_at, last_seen_at
 	FROM agents`
@@ -40,7 +40,7 @@ func scanAgentRecord(scanner interface{ Scan(...any) error }) (AgentRecord, erro
 		&rec.ID, &rec.Name, &rec.LifecycleState, &rec.StateBeforeUnavailable,
 		&rec.Region, &rec.Zone, &rec.FailureDomain, &rec.ReservedCPUMillis, &rec.ReservedMemoryMebibytes,
 		&rec.AdvertiseAddr, &rec.WorkloadIPv4Subnet, &rec.WorkloadIPv6Subnet, &rec.WireGuardPublicKey, &rec.WireGuardListenPort,
-		&rec.WireGuardIPv6, &rec.CPUMillisCapacity, &rec.MemoryMebibytesCapcity,
+		&rec.WireGuardEndpoint, &rec.WireGuardIPv6, &rec.CPUMillisCapacity, &rec.MemoryMebibytesCapcity,
 		&capabilities, &rec.SoftwareVersion, &rec.MaintenanceMessage,
 		&rec.CredentialRevokedAt, &rec.LastSeenAt,
 	); err != nil {

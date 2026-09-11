@@ -26,15 +26,18 @@ func (l *Live) ApplyDurable(state journal.DurableState) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.applyDurableLocked(state, false)
+	l.applyDurableLocked(state)
 }
 
-func (l *Live) applyDurableLocked(state journal.DurableState, force bool) {
-	if !force && l.durable.ClusterID == state.ClusterID && l.durable.LogIndex == state.LogIndex && l.durable.LogIndex != 0 {
+func (l *Live) applyDurableLocked(state journal.DurableState) {
+	if state.ClusterID != "" && l.durableIndexes[state.ClusterID] >= state.LogIndex && l.durableIndexes[state.ClusterID] != 0 {
 		return
 	}
 	previous := l.durable
 	l.durable = state.Clone()
+	if state.ClusterID != "" && state.LogIndex > l.durableIndexes[state.ClusterID] {
+		l.durableIndexes[state.ClusterID] = state.LogIndex
+	}
 	l.rebuildIndexesLocked()
 	l.liveIndex++
 	for id, agent := range l.durable.Agents {
@@ -199,6 +202,24 @@ func (l *Live) AgentIDs() []string {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.agentIDsLocked()
+}
+
+// AgentIDsIfServing performs the live-role check and the read under a single
+// lock so a concurrent resign cannot return an empty result with a nil error.
+func (l *Live) AgentIDsIfServing() ([]string, error) {
+	if l == nil {
+		return nil, ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.serving {
+		return nil, ErrNotLiveOwner
+	}
+	return l.agentIDsLocked(), nil
+}
+
+func (l *Live) agentIDsLocked() []string {
 	ids := make([]string, 0, len(l.durable.Agents))
 	for id := range l.durable.Agents {
 		ids = append(ids, id)
@@ -218,17 +239,26 @@ func (l *Live) Agents() []AgentRecord {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := make([]AgentRecord, 0, len(l.durable.Agents))
-	ids := make([]string, 0, len(l.durable.Agents))
-	for id := range l.durable.Agents {
-		ids = append(ids, id)
+	return l.agentsLocked()
+}
+
+// AgentsIfServing performs the live-role check and the read under a single
+// lock so a concurrent resign cannot return an empty result with a nil error.
+func (l *Live) AgentsIfServing() ([]AgentRecord, error) {
+	if l == nil {
+		return nil, ErrNotLiveOwner
 	}
-	slices.SortFunc(ids, func(a, b string) int {
-		if n := l.durable.Agents[a].CreatedAt.Compare(l.durable.Agents[b].CreatedAt); n != 0 {
-			return n
-		}
-		return strings.Compare(a, b)
-	})
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.serving {
+		return nil, ErrNotLiveOwner
+	}
+	return l.agentsLocked(), nil
+}
+
+func (l *Live) agentsLocked() []AgentRecord {
+	out := make([]AgentRecord, 0, len(l.durable.Agents))
+	ids := l.agentIDsLocked()
 	for _, id := range ids {
 		out = append(out, l.overlayAgentLocked(agentRecordFromDurable(l.durable.Agents[id], l.durable.Administration[id])))
 	}
@@ -241,6 +271,28 @@ func (l *Live) Agent(agentID string) (AgentRecord, bool) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.agentLocked(agentID)
+}
+
+// AgentIfServing performs the live-role check and the read under a single lock
+// so a concurrent resign cannot report a missing agent with a nil error.
+func (l *Live) AgentIfServing(agentID string) (AgentRecord, error) {
+	if l == nil {
+		return AgentRecord{}, ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.serving {
+		return AgentRecord{}, ErrNotLiveOwner
+	}
+	rec, ok := l.agentLocked(agentID)
+	if !ok {
+		return AgentRecord{}, sql.ErrNoRows
+	}
+	return rec, nil
+}
+
+func (l *Live) agentLocked(agentID string) (AgentRecord, bool) {
 	reg, ok := l.durable.Agents[agentID]
 	if !ok {
 		return AgentRecord{}, false
@@ -271,6 +323,25 @@ func (l *Live) AllocationsByService(serviceID string) []AllocationRecord {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.allocationsByServiceLocked(serviceID)
+}
+
+// AllocationsByServiceIfServing performs the live-role check and the read under
+// a single lock so a concurrent resign cannot return an empty slice with a nil
+// error.
+func (l *Live) AllocationsByServiceIfServing(serviceID string) ([]AllocationRecord, error) {
+	if l == nil {
+		return nil, ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.serving {
+		return nil, ErrNotLiveOwner
+	}
+	return l.allocationsByServiceLocked(serviceID), nil
+}
+
+func (l *Live) allocationsByServiceLocked(serviceID string) []AllocationRecord {
 	ids := l.indexes.assignmentsByService[serviceID]
 	out := make([]AllocationRecord, 0, len(ids))
 	for _, id := range ids {
@@ -317,6 +388,10 @@ func (l *Live) AssignedIDs(agentID string) []string {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.assignedIDsLocked(agentID)
+}
+
+func (l *Live) assignedIDsLocked(agentID string) []string {
 	var ids []string
 	for _, id := range l.indexes.assignmentsByAgent[agentID] {
 		assignment := l.durable.Assignments[id]
@@ -478,6 +553,7 @@ func agentRecordFromDurable(reg journal.AgentRegistration, admin journal.AgentAd
 		WorkloadIPv6Subnet:      reg.WorkloadIPv6Subnet,
 		WireGuardPublicKey:      reg.WireguardPublicKey,
 		WireGuardListenPort:     int(reg.WireguardListenPort),
+		WireGuardEndpoint:       reg.WireguardEndpoint,
 		WireGuardIPv6:           reg.WireguardIPv6,
 		CPUMillisCapacity:       reg.CPUMillisCapacity,
 		MemoryMebibytesCapcity:  reg.MemoryMebibytesCapacity,

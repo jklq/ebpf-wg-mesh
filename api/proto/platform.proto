@@ -427,6 +427,7 @@ message Agent {
   int32 allocation_count = 23;
   string maintenance_message = 24;
   google.protobuf.Timestamp credential_revoked_at = 25;
+  string wireguard_endpoint = 26;
 }
 
 message AllocationStatus {

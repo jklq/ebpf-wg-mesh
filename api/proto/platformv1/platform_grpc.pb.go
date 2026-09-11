@@ -14,6 +14,9 @@ import (
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the grpc package it is being compiled against.
+// Requires gRPC-Go v1.64.0 or later.
 const _ = grpc.SupportPackageIsVersion9
 
 const (
@@ -52,6 +55,9 @@ const (
 	PlatformService_ListAgents_FullMethodName             = "/platform.v1.PlatformService/ListAgents"
 )
 
+// PlatformServiceClient is the client API for PlatformService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PlatformServiceClient interface {
 	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	ListProjects(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListProjectsResponse, error)
@@ -426,6 +432,9 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empt
 	return out, nil
 }
 
+// PlatformServiceServer is the server API for PlatformService service.
+// All implementations must embed UnimplementedPlatformServiceServer
+// for forward compatibility.
 type PlatformServiceServer interface {
 	CreateProject(context.Context, *CreateProjectRequest) (*Project, error)
 	ListProjects(context.Context, *emptypb.Empty) (*ListProjectsResponse, error)
@@ -463,6 +472,11 @@ type PlatformServiceServer interface {
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
+// UnimplementedPlatformServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
 type UnimplementedPlatformServiceServer struct{}
 
 func (UnimplementedPlatformServiceServer) CreateProject(context.Context, *CreateProjectRequest) (*Project, error) {
@@ -567,11 +581,18 @@ func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.E
 func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
 func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
 
+// UnsafePlatformServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to PlatformServiceServer will
+// result in compilation errors.
 type UnsafePlatformServiceServer interface {
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
 func RegisterPlatformServiceServer(s grpc.ServiceRegistrar, srv PlatformServiceServer) {
+	// If the following call panics, it indicates UnimplementedPlatformServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
@@ -1172,6 +1193,9 @@ func _PlatformService_ListAgents_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+// PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
 var PlatformService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "platform.v1.PlatformService",
 	HandlerType: (*PlatformServiceServer)(nil),
@@ -1321,6 +1345,9 @@ const (
 	BuilderService_CompleteBuild_FullMethodName          = "/platform.v1.BuilderService/CompleteBuild"
 )
 
+// BuilderServiceClient is the client API for BuilderService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuilderServiceClient interface {
 	ClaimBuild(ctx context.Context, in *ClaimBuildRequest, opts ...grpc.CallOption) (*BuildJob, error)
 	DownloadSourceSnapshot(ctx context.Context, in *DownloadSourceSnapshotRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SourceSnapshotChunk], error)
@@ -1363,6 +1390,7 @@ func (c *builderServiceClient) DownloadSourceSnapshot(ctx context.Context, in *D
 	return x, nil
 }
 
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type BuilderService_DownloadSourceSnapshotClient = grpc.ServerStreamingClient[SourceSnapshotChunk]
 
 func (c *builderServiceClient) ReportBuildHeartbeat(ctx context.Context, in *BuilderHeartbeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -1395,6 +1423,9 @@ func (c *builderServiceClient) CompleteBuild(ctx context.Context, in *CompleteBu
 	return out, nil
 }
 
+// BuilderServiceServer is the server API for BuilderService service.
+// All implementations must embed UnimplementedBuilderServiceServer
+// for forward compatibility.
 type BuilderServiceServer interface {
 	ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error)
 	DownloadSourceSnapshot(*DownloadSourceSnapshotRequest, grpc.ServerStreamingServer[SourceSnapshotChunk]) error
@@ -1404,6 +1435,11 @@ type BuilderServiceServer interface {
 	mustEmbedUnimplementedBuilderServiceServer()
 }
 
+// UnimplementedBuilderServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
 type UnimplementedBuilderServiceServer struct{}
 
 func (UnimplementedBuilderServiceServer) ClaimBuild(context.Context, *ClaimBuildRequest) (*BuildJob, error) {
@@ -1424,11 +1460,18 @@ func (UnimplementedBuilderServiceServer) CompleteBuild(context.Context, *Complet
 func (UnimplementedBuilderServiceServer) mustEmbedUnimplementedBuilderServiceServer() {}
 func (UnimplementedBuilderServiceServer) testEmbeddedByValue()                        {}
 
+// UnsafeBuilderServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to BuilderServiceServer will
+// result in compilation errors.
 type UnsafeBuilderServiceServer interface {
 	mustEmbedUnimplementedBuilderServiceServer()
 }
 
 func RegisterBuilderServiceServer(s grpc.ServiceRegistrar, srv BuilderServiceServer) {
+	// If the following call panics, it indicates UnimplementedBuilderServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
@@ -1461,6 +1504,7 @@ func _BuilderService_DownloadSourceSnapshot_Handler(srv interface{}, stream grpc
 	return srv.(BuilderServiceServer).DownloadSourceSnapshot(m, &grpc.GenericServerStream[DownloadSourceSnapshotRequest, SourceSnapshotChunk]{ServerStream: stream})
 }
 
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type BuilderService_DownloadSourceSnapshotServer = grpc.ServerStreamingServer[SourceSnapshotChunk]
 
 func _BuilderService_ReportBuildHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1517,6 +1561,9 @@ func _BuilderService_CompleteBuild_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+// BuilderService_ServiceDesc is the grpc.ServiceDesc for BuilderService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
 var BuilderService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "platform.v1.BuilderService",
 	HandlerType: (*BuilderServiceServer)(nil),
@@ -1556,6 +1603,9 @@ const (
 	OpsService_SetAgentLifecycle_FullMethodName   = "/platform.v1.OpsService/SetAgentLifecycle"
 )
 
+// OpsServiceClient is the client API for OpsService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OpsServiceClient interface {
 	IngestGitHubWebhook(ctx context.Context, in *IngestGitHubWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ListFleet(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Fleet, error)
@@ -1622,6 +1672,9 @@ func (c *opsServiceClient) SetAgentLifecycle(ctx context.Context, in *SetAgentLi
 	return out, nil
 }
 
+// OpsServiceServer is the server API for OpsService service.
+// All implementations must embed UnimplementedOpsServiceServer
+// for forward compatibility.
 type OpsServiceServer interface {
 	IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error)
 	ListFleet(context.Context, *emptypb.Empty) (*Fleet, error)
@@ -1631,6 +1684,11 @@ type OpsServiceServer interface {
 	mustEmbedUnimplementedOpsServiceServer()
 }
 
+// UnimplementedOpsServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
 type UnimplementedOpsServiceServer struct{}
 
 func (UnimplementedOpsServiceServer) IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error) {
@@ -1651,11 +1709,18 @@ func (UnimplementedOpsServiceServer) SetAgentLifecycle(context.Context, *SetAgen
 func (UnimplementedOpsServiceServer) mustEmbedUnimplementedOpsServiceServer() {}
 func (UnimplementedOpsServiceServer) testEmbeddedByValue()                    {}
 
+// UnsafeOpsServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to OpsServiceServer will
+// result in compilation errors.
 type UnsafeOpsServiceServer interface {
 	mustEmbedUnimplementedOpsServiceServer()
 }
 
 func RegisterOpsServiceServer(s grpc.ServiceRegistrar, srv OpsServiceServer) {
+	// If the following call panics, it indicates UnimplementedOpsServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
@@ -1752,6 +1817,9 @@ func _OpsService_SetAgentLifecycle_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+// OpsService_ServiceDesc is the grpc.ServiceDesc for OpsService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
 var OpsService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "platform.v1.OpsService",
 	HandlerType: (*OpsServiceServer)(nil),

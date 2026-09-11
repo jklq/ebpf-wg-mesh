@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
-	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -159,13 +158,6 @@ func binaryBigPutUint16(dst []byte, value uint16) {
 	}
 	dst[0] = byte(value >> 8)
 	dst[1] = byte(value)
-}
-
-func endpointForAgent(advertiseAddr string, port int) (string, error) {
-	if ip := net.ParseIP(advertiseAddr); ip == nil || ip.To16() == nil || ip.To4() != nil {
-		return "", fmt.Errorf("advertise address must be IPv6: %q", advertiseAddr)
-	}
-	return fmt.Sprintf("[%s]:%d", advertiseAddr, port), nil
 }
 
 func preferredOrdinal(agentID string, max int) int {

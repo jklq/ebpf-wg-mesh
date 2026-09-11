@@ -11,10 +11,12 @@ import (
 	"sync"
 	"time"
 
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+
 	"github.com/google/uuid"
 )
 
-var errLeaseLost = errors.New("control-plane lease lost")
+var errLeaseLost = deliverycore.ErrLeaseLost
 
 type leaseClaim struct {
 	name   string

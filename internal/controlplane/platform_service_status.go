@@ -20,13 +20,16 @@ import (
 )
 
 func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.GetServiceStatusRequest) (*platformv1.ServiceStatus, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	service, allocations, err := s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
+		return nil, s.serviceStatusError(ctx, err)
 	}
 	index, changed, err := s.events.Wait(ctx, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
 	if err != nil {
@@ -37,13 +40,33 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	}
 	service, allocations, err = s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "service status: %v", err)
+		return nil, s.serviceStatusError(ctx, err)
 	}
 	service, err = s.decorateServiceRecordWithAllocations(ctx, service, allocations)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "decorate service status: %v", err)
 	}
 	return s.protoServiceStatus(service, allocations, index), nil
+}
+
+func (s *PlatformService) serviceStatusError(ctx context.Context, err error) error {
+	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+		return mapped
+	}
+	return status.Errorf(codes.NotFound, "service status: %v", err)
+}
+
+func (s *PlatformService) liveOwnerError(ctx context.Context, err error) error {
+	if !errors.Is(err, deliverycore.ErrNotLiveOwner) && !errors.Is(err, deliverycore.ErrLeaseLost) {
+		return nil
+	}
+	if ownerErr := s.requireLiveOwner(ctx); ownerErr != nil {
+		return ownerErr
+	}
+	return status.Error(codes.Unavailable, "live owner has not started serving")
 }
 
 func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (*platformv1.ListServiceLogsResponse, error) {
@@ -102,11 +125,17 @@ func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platf
 }
 
 func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListAgentsResponse, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	items, err := s.store.ListAgents(ctx)
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "list agents: %v", err)
 	}
 	resp := &platformv1.ListAgentsResponse{Agents: make([]*platformv1.Agent, 0, len(items))}

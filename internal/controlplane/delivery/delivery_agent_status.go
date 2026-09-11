@@ -24,14 +24,24 @@ func (d *Delivery) ObserveAgentStatus(ctx context.Context, authenticatedAgentID 
 }
 
 func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID string, report *agentv1.StatusReport) (bool, []string, error) {
+	if !d.live.Serving() {
+		return false, nil, ErrNotLiveOwner
+	}
 	if report == nil || strings.TrimSpace(report.GetAgentId()) == "" || report.GetAgentId() != authenticatedAgentID {
 		return false, nil, fmt.Errorf("%w: report agent_id does not match authenticated agent", ErrAllocationOwnership)
 	}
-	if err := d.live.AcceptReport(authenticatedAgentID, report.GetSessionId(), report.GetObservationSequence(), !report.GetRecoveryMode()); err != nil {
-		return false, nil, err
+	inventory := make([]string, 0, len(report.GetServices()))
+	for _, cond := range report.GetServices() {
+		inventory = append(inventory, cond.GetAllocationId())
 	}
 
 	durable := d.live.Durable()
+	if err := validateStatusInventory(durable, authenticatedAgentID, report); err != nil {
+		return false, nil, err
+	}
+	if err := d.live.AcceptReport(authenticatedAgentID, report.GetSessionId(), report.GetObservationSequence(), inventory, !report.GetRecoveryMode()); err != nil {
+		return false, nil, err
+	}
 
 	now := d.live.currentTime()
 	ingressChanged := false
@@ -39,29 +49,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 	rolloutServiceIDs := make(map[string]struct{})
 	deploymentAllocationIDs := make(map[string]struct{})
 	for _, cond := range report.GetServices() {
-		if cond.GetAllocationId() == "" || cond.GetServiceId() == "" {
-			return false, nil, fmt.Errorf("%w: allocation_id and service_id are required", ErrAllocationOwnership)
-		}
-		assignment, ok := durable.Assignments[cond.GetAllocationId()]
-		if !ok || assignment.AgentID != authenticatedAgentID {
-			return false, nil, fmt.Errorf("%w: allocation %q", ErrAllocationOwnership, cond.GetAllocationId())
-		}
-		if cond.GetServiceId() != assignment.ServiceID {
-			return false, nil, fmt.Errorf("%w: allocation %q belongs to service %q", ErrAllocationOwnership, cond.GetAllocationId(), assignment.ServiceID)
-		}
+		assignment := durable.Assignments[cond.GetAllocationId()]
 		generation := cond.GetDesiredRolloutGeneration()
-		if generation <= 0 || generation > assignment.DesiredRolloutGeneration {
-			return false, nil, fmt.Errorf("%w: allocation %q generation %d is not assigned (current %d)", ErrAllocationOwnership, cond.GetAllocationId(), generation, assignment.DesiredRolloutGeneration)
-		}
-		if cond.GetAppliedRolloutGeneration() > generation {
-			return false, nil, fmt.Errorf("%w: applied generation %d exceeds observed generation %d", ErrAllocationOwnership, cond.GetAppliedRolloutGeneration(), generation)
-		}
-		if generation == assignment.DesiredRolloutGeneration && (cond.GetDesiredSpecRevision() != assignment.DesiredSpecRevision || cond.GetAppliedSpecRevision() > assignment.DesiredSpecRevision) {
-			return false, nil, fmt.Errorf("%w: allocation %q spec revision %d/%d does not match assignment %d", ErrAllocationOwnership, cond.GetAllocationId(), cond.GetDesiredSpecRevision(), cond.GetAppliedSpecRevision(), assignment.DesiredSpecRevision)
-		}
-		if strings.TrimSpace(cond.GetAllocationIpv4()) != assignment.AllocationIPv4 || strings.TrimSpace(cond.GetAllocationIpv6()) != assignment.AllocationIPv6 {
-			return false, nil, fmt.Errorf("%w: allocation %s reported addresses %q/%q, assigned %q/%q", ErrAllocationOwnership, cond.GetAllocationId(), cond.GetAllocationIpv4(), cond.GetAllocationIpv6(), assignment.AllocationIPv4, assignment.AllocationIPv6)
-		}
 
 		phase, healthy := cond.GetPhase(), cond.GetHealthy()
 		if cond.GetRestart().GetCrashLoop() || phase == restartpolicy.PhaseCrashLoop {
@@ -113,6 +102,35 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		environmentIDs = append(environmentIDs, environmentID)
 	}
 	return ingressChanged, environmentIDs, nil
+}
+
+func validateStatusInventory(durable journal.DurableState, authenticatedAgentID string, report *agentv1.StatusReport) error {
+	for _, cond := range report.GetServices() {
+		if cond.GetAllocationId() == "" || cond.GetServiceId() == "" {
+			return fmt.Errorf("%w: allocation_id and service_id are required", ErrAllocationOwnership)
+		}
+		assignment, ok := durable.Assignments[cond.GetAllocationId()]
+		if !ok || assignment.AgentID != authenticatedAgentID {
+			return fmt.Errorf("%w: allocation %q", ErrAllocationOwnership, cond.GetAllocationId())
+		}
+		if cond.GetServiceId() != assignment.ServiceID {
+			return fmt.Errorf("%w: allocation %q belongs to service %q", ErrAllocationOwnership, cond.GetAllocationId(), assignment.ServiceID)
+		}
+		generation := cond.GetDesiredRolloutGeneration()
+		if generation <= 0 || generation > assignment.DesiredRolloutGeneration {
+			return fmt.Errorf("%w: allocation %q generation %d is not assigned (current %d)", ErrAllocationOwnership, cond.GetAllocationId(), generation, assignment.DesiredRolloutGeneration)
+		}
+		if cond.GetAppliedRolloutGeneration() > generation {
+			return fmt.Errorf("%w: applied generation %d exceeds observed generation %d", ErrAllocationOwnership, cond.GetAppliedRolloutGeneration(), generation)
+		}
+		if generation == assignment.DesiredRolloutGeneration && (cond.GetDesiredSpecRevision() != assignment.DesiredSpecRevision || cond.GetAppliedSpecRevision() > assignment.DesiredSpecRevision) {
+			return fmt.Errorf("%w: allocation %q spec revision %d/%d does not match assignment %d", ErrAllocationOwnership, cond.GetAllocationId(), cond.GetDesiredSpecRevision(), cond.GetAppliedSpecRevision(), assignment.DesiredSpecRevision)
+		}
+		if strings.TrimSpace(cond.GetAllocationIpv4()) != assignment.AllocationIPv4 || strings.TrimSpace(cond.GetAllocationIpv6()) != assignment.AllocationIPv6 {
+			return fmt.Errorf("%w: allocation %s reported addresses %q/%q, assigned %q/%q", ErrAllocationOwnership, cond.GetAllocationId(), cond.GetAllocationIpv4(), cond.GetAllocationIpv6(), assignment.AllocationIPv4, assignment.AllocationIPv6)
+		}
+	}
+	return nil
 }
 
 func domainForService(durable journal.DurableState, serviceID string) (journal.Domain, bool) {

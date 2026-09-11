@@ -30,12 +30,12 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		}
 	})
 
-	t.Run("peer field change fans out", func(t *testing.T) {
+	t.Run("legacy advertise address does not fan out", func(t *testing.T) {
 		after := peerAgent("node-1")
 		after.AdvertiseAddr = "fd00:30::99"
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if !agentDeltaRequiresClusterFanout(base, batch) {
-			t.Fatal("advertise_addr change did not fan out")
+		if agentDeltaRequiresClusterFanout(base, batch) {
+			t.Fatal("unused advertise_addr change fanned out")
 		}
 	})
 
@@ -86,6 +86,50 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 			t.Fatalf("self bump %v", ids)
 		}
 	})
+
+	t.Run("wireguard listen port only bumps self", func(t *testing.T) {
+		after := peerAgent("node-1")
+		after.WireguardListenPort = 51821
+		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
+		if agentDeltaRequiresClusterFanout(base, batch) {
+			t.Fatal("local WireGuard listen port fanned out")
+		}
+		if ids := selfAgentIDs(base, batch); len(ids) != 1 || ids[0] != "node-1" {
+			t.Fatalf("self bump %v", ids)
+		}
+	})
+
+	t.Run("wireguard endpoint fans out", func(t *testing.T) {
+		after := peerAgent("node-1")
+		after.WireguardEndpoint = "192.0.2.10:51820"
+		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
+		if !agentDeltaRequiresClusterFanout(base, batch) {
+			t.Fatal("WireGuard endpoint change did not fan out")
+		}
+	})
+
+	t.Run("wireguard endpoint cleared fans out", func(t *testing.T) {
+		after := peerAgent("node-1")
+		after.WireguardEndpoint = ""
+		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
+		if !agentDeltaRequiresClusterFanout(base, batch) {
+			t.Fatal("WireGuard endpoint removal did not fan out")
+		}
+	})
+
+	t.Run("wireguard endpoint set from empty fans out", func(t *testing.T) {
+		emptyEndpoint := peerAgent("node-1")
+		emptyEndpoint.WireguardEndpoint = ""
+		emptyBase := journal.DurableState{
+			Agents:         map[string]journal.AgentRegistration{"node-1": emptyEndpoint},
+			Administration: map[string]journal.AgentAdministration{"node-1": {AgentID: "node-1", LifecycleState: "active"}},
+		}
+		after := peerAgent("node-1")
+		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
+		if !agentDeltaRequiresClusterFanout(emptyBase, batch) {
+			t.Fatal("WireGuard endpoint set from empty did not fan out")
+		}
+	})
 }
 
 func TestServiceAndVolumeEnvironmentIDs(t *testing.T) {
@@ -119,6 +163,7 @@ func peerAgent(id string) journal.AgentRegistration {
 		WorkloadIPv6Subnet:  "fd00:200:1::/64",
 		WireguardPublicKey:  "test-public-key",
 		WireguardListenPort: 51820,
+		WireguardEndpoint:   "[fd00:30::10]:51820",
 		WireguardIPv6:       "fd00:44::10",
 	}
 }

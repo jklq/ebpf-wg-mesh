@@ -284,6 +284,109 @@ func TestConcurrentServiceFailoverMovesOnlyOnce(t *testing.T) {
 	_ = requireNodeLossReplacement(t, store, service.ID, originalID, "old-node", "new-node")
 }
 
+// A node loss must not copy the running deployment over an acknowledged but
+// unreleased spec change. Before this was fixed the failover copied the old
+// deployment, silently rolling the service back and discarding the update.
+func TestServiceFailoverPreservesStagedUpdate(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	projectID := bootstrapFailoverProject(t, store)
+	for _, id := range []string{"old-node", "new-node"} {
+		hello := agentHello(id)
+		hello.CpuMillisCapacity = 1_000
+		hello.MemoryMebibytesCapacity = 1_024
+		if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := &platformv1.ServiceRuntime{CpuMillis: 100, MemoryMebibytes: 128, Ports: runtimePortsFromInts([]int32{8080})}
+	service, err := createService(ctx, store, "user-1", projectID, "web", directImageServiceSpec("example.test/web:1", runtime), "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := mustAllocationOnAgent(t, store, service.ID, "old-node")
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, original.AllocationIPv6, 8080); err != nil {
+		t.Fatal(err)
+	}
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deploymentsBefore := countServiceDeployments(t, store, service.ID)
+
+	stagedSpec := directImageServiceSpec("example.test/web:2", runtime)
+	staged, _, err := updateService(ctx, store, "user-1", service.ID, "", stagedSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !staged.PendingChanges || staged.SpecRevision != service.SpecRevision+1 {
+		t.Fatalf("update was not staged: %+v", staged)
+	}
+
+	now := time.Now().UTC()
+	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
+	delivery := newTestDelivery(store, nil, &countingFailoverIngress{}, nil)
+	delivery.failoverNow = func() time.Time { return now }
+	reconciler := NewServiceFailoverReconciler(delivery, time.Second, 30*time.Second)
+	result, err := reconciler.Reconcile(ctx)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(result.MovedServiceIDs) != 0 || len(result.BlockedServiceIDs) != 0 {
+		t.Fatalf("failover touched a service with a staged update: %+v", result)
+	}
+	if got := serviceSpecRevision(t, store, service.ID); got != staged.SpecRevision {
+		t.Fatalf("failover rolled the staged revision back: got %d want %d", got, staged.SpecRevision)
+	}
+	if got := countServiceDeployments(t, store, service.ID); got != deploymentsBefore {
+		t.Fatalf("failover copied a deployment over the staged update: got %d want %d", got, deploymentsBefore)
+	}
+	var agentID, rolloutState string
+	if err := store.db.QueryRowContext(ctx, `SELECT agent_id, rollout_state FROM allocation_assignments WHERE id = $1`, original.ID).Scan(&agentID, &rolloutState); err != nil {
+		t.Fatal(err)
+	}
+	if agentID != "old-node" || rolloutState == deliverycore.AllocationRolloutLost {
+		t.Fatalf("staged-update allocation was rewritten: agent=%s state=%s", agentID, rolloutState)
+	}
+
+	// The release path now applies the preserved revision on the healthy node.
+	released, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.PendingChanges || released.SpecRevision != staged.SpecRevision {
+		t.Fatalf("release did not apply the staged revision: %+v", released)
+	}
+	target := allocationForGeneration(t, store, service.ID, released.RolloutGeneration)
+	if len(target) != 1 || target[0].AgentID != "new-node" || target[0].DesiredSpecRevision != staged.SpecRevision {
+		t.Fatalf("release did not place the staged revision on the live node: %+v", target)
+	}
+	markRolloutAllocationReady(t, store, target[0])
+	probe := &rolloutIngressProbe{store: store}
+	if err := NewRolloutReconciler(newTestDelivery(store, nil, probe, nil), time.Second).Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile rollout: %v", err)
+	}
+	assertServingCount(t, store, service.ID, 1)
+}
+
+func countServiceDeployments(t *testing.T, store *persistence, serviceID string) int {
+	t.Helper()
+	var count int
+	if err := store.db.QueryRowContext(context.Background(), `SELECT count(*) FROM deployments WHERE service_id = $1`, serviceID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func serviceSpecRevision(t *testing.T, store *persistence, serviceID string) int64 {
+	t.Helper()
+	var revision int64
+	if err := store.db.QueryRowContext(context.Background(), `SELECT current_spec_revision FROM services WHERE id = $1`, serviceID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	return revision
+}
+
 func bootstrapFailoverProject(t *testing.T, store *persistence) string {
 	t.Helper()
 	ctx := context.Background()

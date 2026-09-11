@@ -270,18 +270,14 @@ func assignedNodeConfigForAgent(durable journal.DurableState, mesh config.Contro
 	}
 	for _, peer := range agents {
 		administration := durable.Administration[peer.ID]
-		if peer.ID == agentID || administration.LifecycleState == string(AgentStateRetired) || administration.CredentialRevokedAt != nil || peer.WireguardPublicKey == "" || peer.WireguardListenPort <= 0 || peer.WorkloadIPv4Subnet == "" || peer.WorkloadIPv6Subnet == "" {
+		if peer.ID == agentID || administration.LifecycleState == string(AgentStateRetired) || administration.CredentialRevokedAt != nil || peer.WireguardPublicKey == "" || peer.WireguardEndpoint == "" || peer.WorkloadIPv4Subnet == "" || peer.WorkloadIPv6Subnet == "" {
 			continue
-		}
-		endpoint, err := endpointForAgent(peer.AdvertiseAddr, int(peer.WireguardListenPort))
-		if err != nil {
-			return nil, err
 		}
 		assigned.Peers = append(assigned.Peers, &agentv1.WireGuardPeer{
 			AgentId:                    peer.ID,
 			Name:                       peer.Name,
 			PublicKey:                  peer.WireguardPublicKey,
-			Endpoint:                   endpoint,
+			Endpoint:                   peer.WireguardEndpoint,
 			AllowedIps:                 []string{peer.WorkloadIPv4Subnet, peer.WorkloadIPv6Subnet},
 			PersistentKeepaliveSeconds: int32(mesh.PersistentKeepaliveSeconds),
 		})

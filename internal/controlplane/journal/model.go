@@ -108,6 +108,7 @@ type AgentRegistration struct {
 	WorkloadIPv6Subnet      string          `json:"workload_ipv6_subnet"`
 	WireguardPublicKey      string          `json:"wireguard_public_key"`
 	WireguardListenPort     int64           `json:"wireguard_listen_port"`
+	WireguardEndpoint       string          `json:"wireguard_endpoint"`
 	WireguardIPv6           string          `json:"wireguard_ipv6"`
 	CPUMillisCapacity       int64           `json:"cpu_millis_capacity"`
 	MemoryMebibytesCapacity int64           `json:"memory_mebibytes_capacity"`
