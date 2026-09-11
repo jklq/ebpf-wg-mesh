@@ -13,17 +13,14 @@ import (
 func (s *persistence) listAgents(ctx context.Context) ([]AgentRecord, error) {
 	_ = ctx
 	if s != nil && s.live != nil {
-		return s.live.Agents(), nil
+		return s.live.AgentsIfServing()
 	}
 	return s.listAgentsQuerier(ctx, s.db)
 }
 
 func (s *persistence) agentByID(ctx context.Context, agentID string) (AgentRecord, error) {
 	if s != nil && s.live != nil {
-		if rec, ok := s.live.Agent(agentID); ok {
-			return rec, nil
-		}
-		return AgentRecord{}, sql.ErrNoRows
+		return s.live.AgentIfServing(agentID)
 	}
 	rec, err := agentByIDQuerier(ctx, s.db, agentID, false)
 	if err != nil {
@@ -34,7 +31,7 @@ func (s *persistence) agentByID(ctx context.Context, agentID string) (AgentRecor
 
 func (s *persistence) agentIDs(ctx context.Context) ([]string, error) {
 	if s != nil && s.live != nil {
-		return s.live.AgentIDs(), nil
+		return s.live.AgentIDsIfServing()
 	}
 	return s.agentIDsQuerier(ctx, s.db)
 }

@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 17
+const currentSchemaVersion = 18
 
 var currentSchema = []string{
 	`CREATE TABLE cluster_journal_heads (
@@ -124,6 +124,7 @@ var currentSchema = []string{
 			workload_ipv6_subnet STRING NOT NULL DEFAULT '',
 			wireguard_public_key STRING NOT NULL DEFAULT '',
 			wireguard_listen_port INT8 NOT NULL DEFAULT 0,
+			wireguard_endpoint STRING NOT NULL DEFAULT '',
 			wireguard_ipv6 STRING NOT NULL DEFAULT '',
 			cpu_millis_capacity INT8 NOT NULL DEFAULT 0,
 			memory_mebibytes_capacity INT8 NOT NULL DEFAULT 0,
@@ -147,7 +148,7 @@ var currentSchema = []string{
 			ad.lifecycle_state AS state_before_unavailable,
 			r.region, r.zone, r.failure_domain, r.reserved_cpu_millis, r.reserved_memory_mebibytes,
 			r.advertise_addr, r.workload_ipv4_subnet, r.workload_ipv6_subnet, r.wireguard_public_key,
-			r.wireguard_listen_port, r.wireguard_ipv6, r.cpu_millis_capacity, r.memory_mebibytes_capacity,
+			r.wireguard_listen_port, r.wireguard_endpoint, r.wireguard_ipv6, r.cpu_millis_capacity, r.memory_mebibytes_capacity,
 			r.runtime_capabilities, r.software_version, ad.maintenance_message, ad.credential_revoked_at,
 			r.created_at AS last_seen_at, r.created_at, GREATEST(r.updated_at, ad.updated_at) AS updated_at,
 			r.desired_revision
@@ -171,8 +172,8 @@ var currentSchema = []string{
 	`CREATE TABLE volumes (
 			id STRING PRIMARY KEY,
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-			name STRING NOT NULL,
-			size_bytes INT8 NOT NULL,
+			name STRING NOT NULL CHECK (btrim(name) <> ''),
+			size_bytes INT8 NOT NULL CHECK (size_bytes > 0),
 			created_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (environment_id, name)
 		)`,

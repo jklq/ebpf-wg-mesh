@@ -1,8 +1,8 @@
 version: v1
 plugins:
-  - plugin: go
+  - plugin: buf.build/protocolbuffers/go:v1.36.12
     out: .
-  - plugin: go-grpc
+  - plugin: buf.build/grpc/go:v1.6.2
     out: .
-  - plugin: connect-go
+  - plugin: buf.build/connectrpc/go:v1.20.0
     out: .

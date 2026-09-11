@@ -1,8 +1,10 @@
 package config
 
 import (
+	"net"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"ebof-wg-mesh/internal/meshlabels"
@@ -236,6 +238,10 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	}
 	if cfg.Mesh.WireGuard.ListenPort <= 0 {
 		cfg.Mesh.WireGuard.ListenPort = 51820
+	}
+	cfg.Mesh.WireGuard.AdvertiseEndpoint = strings.TrimSpace(cfg.Mesh.WireGuard.AdvertiseEndpoint)
+	if cfg.Mesh.WireGuard.AdvertiseEndpoint == "" && cfg.Node.AdvertiseAddr != "" {
+		cfg.Mesh.WireGuard.AdvertiseEndpoint = net.JoinHostPort(cfg.Node.AdvertiseAddr, strconv.Itoa(cfg.Mesh.WireGuard.ListenPort))
 	}
 	if cfg.Mesh.Firewall.ConntrackInnerEntries <= 0 {
 		cfg.Mesh.Firewall.ConntrackInnerEntries = 10000

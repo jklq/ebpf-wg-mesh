@@ -151,6 +151,26 @@ func TestLocalStateFencesStaleAuthorityAndCursor(t *testing.T) {
 	}
 }
 
+func TestLocalStateRejectsSameCursorSnapshotMutationFromNewSession(t *testing.T) {
+	t.Parallel()
+
+	store := openTestLocalState(t)
+	if err := store.prepareStartup("cluster-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	initial := testDesiredState(3, 10, "alloc-1")
+	initial.SessionId = "session-1"
+	if _, err := store.acceptDesired("cluster-a", "session-1", initial); err != nil {
+		t.Fatal(err)
+	}
+
+	refined := testDesiredState(3, 10, "alloc-2")
+	refined.SessionId = "session-2"
+	if _, err := store.acceptDesired("cluster-a", "session-2", refined); err == nil || !strings.Contains(err.Error(), "without advancing") {
+		t.Fatalf("new-session same-cursor mutation error = %v", err)
+	}
+}
+
 func TestLocalStateRecoveryRequiresOwnershipOfEveryDiscoveredResource(t *testing.T) {
 	t.Parallel()
 

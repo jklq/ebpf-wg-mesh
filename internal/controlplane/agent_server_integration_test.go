@@ -156,6 +156,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		AdvertiseAddr:           "fd00:30::10",
 		WireguardPublicKey:      "e2e-public-key",
 		WireguardListenPort:     51820,
+		WireguardEndpoint:       "[fd00:30::10]:51820",
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},

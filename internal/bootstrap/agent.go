@@ -51,6 +51,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &cfg.Containerd.IPv4Label, "containerd-ipv4-label", "AGENT_CONTAINERD_IPV4_LABEL", meshlabels.DefaultIPv4Key, "")
 	stringFlag(fs, &cfg.Mesh.WireGuard.InterfaceName, "mesh-interface-name", "AGENT_MESH_INTERFACE_NAME", "wg0", "")
 	intFlag(fs, &cfg.Mesh.WireGuard.ListenPort, "mesh-listen-port", "AGENT_MESH_LISTEN_PORT", 51820, "")
+	stringFlag(fs, &cfg.Mesh.WireGuard.AdvertiseEndpoint, "mesh-advertise-endpoint", "AGENT_MESH_ADVERTISE_ENDPOINT", "", "externally reachable WireGuard endpoint as IP:port; defaults to advertise-addr and mesh-listen-port")
 	intFlag(fs, &cfg.Mesh.Firewall.ConntrackInnerEntries, "firewall-conntrack-inner-entries", "AGENT_FIREWALL_CONNTRACK_INNER_ENTRIES", 10000, "")
 	intFlag(fs, &cfg.Mesh.Firewall.MaxContainers, "firewall-max-containers", "AGENT_FIREWALL_MAX_CONTAINERS", 1024, "")
 	intFlag(fs, &cfg.Mesh.Firewall.ClusterIdentityEntries, "firewall-cluster-identity-entries", "AGENT_FIREWALL_CLUSTER_IDENTITY_ENTRIES", 65536, "")
