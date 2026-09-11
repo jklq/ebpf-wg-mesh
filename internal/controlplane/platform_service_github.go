@@ -14,6 +14,9 @@ import (
 )
 
 func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platformv1.LinkGitHubRepositoryRequest) (*platformv1.InspectSourceResponse, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -26,6 +29,9 @@ func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platfor
 	}
 	resp, err := s.inspector.LinkAndInspect(ctx, req.GetProjectId(), identity.UserID, req.GetRepositorySelector(), req.GetGithubUserAccessToken())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		if authErr := gitHubUserAuthorizationStatus(err); authErr != nil {
 			return nil, authErr
 		}

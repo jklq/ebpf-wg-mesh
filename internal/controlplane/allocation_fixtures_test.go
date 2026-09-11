@@ -89,10 +89,14 @@ func observeAllocationHealthyForTest(ctx context.Context, store *persistence, al
 	} else {
 		ipv6Ports = healthyPorts
 	}
-	if err := fixtureLive(store).AcceptReport(alloc.AgentID, session.SessionID, session.Sequence+1, true); err != nil {
+	inventory, err := agentAllocationIDsForTest(ctx, store, alloc.AgentID)
+	if err != nil {
 		return err
 	}
-	_, err := fixtureLive(store).RecordObservation(deliverycore.AllocationObservation{
+	if err := fixtureLive(store).AcceptReport(alloc.AgentID, session.SessionID, session.Sequence+1, inventory, true); err != nil {
+		return err
+	}
+	_, err = fixtureLive(store).RecordObservation(deliverycore.AllocationObservation{
 		AllocationID: alloc.ID, RolloutGeneration: alloc.DesiredRolloutGeneration,
 		AppliedSpecRevision: alloc.DesiredSpecRevision, AppliedGeneration: alloc.DesiredRolloutGeneration,
 		Phase: "Healthy", Healthy: true, HealthyIPv4Ports: ipv4Ports, HealthyIPv6Ports: ipv6Ports,
@@ -105,6 +109,27 @@ func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColum
 		return "allocation_ipv4", "healthy_ipv4_ports"
 	}
 	return "allocation_ipv6", "healthy_ipv6_ports"
+}
+
+// agentAllocationIDsForTest returns the allocation IDs the control plane
+// currently assigns to an agent, mirroring what the agent would report as its
+// inventory so admission is re-evaluated correctly in fixtures.
+func agentAllocationIDsForTest(ctx context.Context, store *persistence, agentID string) ([]string, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT id FROM allocation_assignments
+		WHERE agent_id = $1 AND rollout_state <> 'lost' ORDER BY id`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_transitions(id,deployment_id,from_state,to_state,cause_kind,cause_id,reason_code,detail,spec_revision,image_digest,rollout_generation,occurred_at)

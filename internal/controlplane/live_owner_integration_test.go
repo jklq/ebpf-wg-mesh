@@ -6,11 +6,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestLiveOwnerTakeoverStartsUnknown(t *testing.T) {
@@ -71,6 +75,65 @@ func TestLiveOwnerTakeoverStartsUnknown(t *testing.T) {
 	}
 	if !fixtureLive(store).Admitted(hello.GetAgentId()) {
 		t.Fatal("reconciled agent not admitted after takeover")
+	}
+}
+
+func TestNonOwnerRedirectsAgentThenOwnerAdmitsAndSchedules(t *testing.T) {
+	ctx := context.Background()
+	owner := openTestStore(t)
+	nonOwner, err := openPersistence(config.DatabaseConfig{
+		URL: sharedTestDatabase(t), MaxOpenConns: 2, MaxIdleConns: 2,
+	}, testMeshConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nonOwner.Close() })
+	if nonOwner.fleet.sessions.Serving() {
+		t.Fatal("second replica unexpectedly became the live owner")
+	}
+
+	// A non-owner agent endpoint refuses the session and points at the owner.
+	const ownerAddr = "owner.example:9443"
+	nonOwnerAgent := NewAgentService(nonOwner.fleet, testDelivery(nonOwner), nil, nil, nil, nil, false, "", "",
+		WithLiveOwner(staticLiveOwner{held: false, addr: ownerAddr}),
+	)
+	err = nonOwnerAgent.requireLiveOwner(ctx)
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), ownerAddr) {
+		t.Fatalf("non-owner agent handshake error = %v, want redirect to %q", err, ownerAddr)
+	}
+
+	// The owner admits the agent and schedules a released service on it.
+	hello := agentHello("node-1")
+	hello.AdvertiseAddr = "fd00:30::1"
+	if _, err := upsertTestAgent(t, owner, ctx, hello); err != nil {
+		t.Fatal(err)
+	}
+	if !fixtureLive(owner).Admitted(hello.GetAgentId()) {
+		t.Fatal("owner did not admit the redirected agent")
+	}
+	if err := owner.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := owner.catalog.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	environmentID := productionEnvironmentID(t, owner, projects[0].ID)
+	service, err := createScheduledService(ctx, owner, "user-1", environmentID, "web", directImageServiceSpec("example.test/web:1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, owner, "user-1", environmentID, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	allocations, err := owner.reads.ListAllocationsByServiceID(ctx, service.ID)
+	if err != nil || len(allocations) == 0 {
+		t.Fatalf("allocations: %+v %v", allocations, err)
+	}
+	if allocations[0].AgentID != hello.GetAgentId() {
+		t.Fatalf("allocation agent = %q, want %q", allocations[0].AgentID, hello.GetAgentId())
 	}
 }
 

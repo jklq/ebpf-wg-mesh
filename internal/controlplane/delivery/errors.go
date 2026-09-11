@@ -5,6 +5,9 @@ import "errors"
 var (
 	ErrVolumeInUse              = errors.New("volume still referenced by service")
 	ErrVolumeNotFound           = errors.New("volume not found")
+	ErrVolumeAlreadyExists      = errors.New("volume already exists")
+	ErrInvalidVolume            = errors.New("volume name and positive size are required")
+	ErrLeaseLost                = errors.New("control-plane lease lost")
 	ErrVolumeAgentMismatch      = errors.New("volume bound to different agent")
 	ErrConcurrentUpdate         = errors.New("concurrent service update")
 	ErrDomainAlreadyExists      = errors.New("domain binding already exists")

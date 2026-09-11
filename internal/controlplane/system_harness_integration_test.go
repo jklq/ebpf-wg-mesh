@@ -103,7 +103,9 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		}
 	})
 	waitForListener(t, server.InternalAddr())
-	waitForSingletonLease(t, server)
+	if !opts.standby {
+		waitForSingletonLease(t, server)
+	}
 
 	if opts.withDashboard {
 		identity, err := server.EnsureDashboardClientIdentity(systemTestDashboardID)
@@ -160,6 +162,7 @@ type systemControlPlaneOptions struct {
 	bootstrapTokens []config.AgentBootstrapToken
 	registry        config.RegistryConfig
 	withDashboard   bool
+	standby         bool
 }
 
 func requireDocker(t *testing.T) {

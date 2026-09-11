@@ -6,6 +6,7 @@ import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -291,6 +292,7 @@ func restartAgentHello(id, addr string) *agentv1.AgentHello {
 		AdvertiseAddr:           addr,
 		WireguardPublicKey:      id + "-pubkey",
 		WireguardListenPort:     51820,
+		WireguardEndpoint:       net.JoinHostPort(addr, "51820"),
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},

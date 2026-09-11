@@ -20,21 +20,28 @@ import (
 )
 
 type App struct {
-	cfg              config.AgentConfig
-	runtime          Runtime
-	mesh             MeshHandle
-	meshFactory      MeshFactory
-	meshAssignment   mesh.Assignment
-	stateStore       *localStateStore
-	supervisor       *workloadSupervisor
-	healthStop       func(context.Context) error
-	controlPlaneAddr string
-	deadOwners       map[string]time.Time
+	cfg                  config.AgentConfig
+	runtime              Runtime
+	mesh                 MeshHandle
+	meshFactory          MeshFactory
+	meshAssignment       mesh.Assignment
+	stateStore           *localStateStore
+	supervisor           *workloadSupervisor
+	healthStop           func(context.Context) error
+	controlPlaneAddr     string
+	deadOwners           map[string]time.Time
+	sessionEstablishedAt time.Time
 }
 
 const (
-	initialReconnectDelay   = time.Second
-	maxReconnectDelay       = 30 * time.Second
+	initialReconnectDelay = time.Second
+	maxReconnectDelay     = 30 * time.Second
+	// stableSessionDuration is how long a session must stay connected for a
+	// subsequent disconnect to reset the reconnect backoff. Without it a single
+	// transient outage leaves the agent waiting the accumulated maximum long
+	// after the control plane recovered, because a long-lived session never
+	// resets the delay.
+	stableSessionDuration   = time.Minute
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 )
@@ -114,6 +121,7 @@ func (a *App) runConnections(ctx context.Context) error {
 	delay := initialReconnectDelay
 	for {
 		err := a.runSession(ctx)
+		stable := !a.sessionEstablishedAt.IsZero() && time.Since(a.sessionEstablishedAt) >= stableSessionDuration
 		switch {
 		case err == nil:
 			return nil
@@ -128,6 +136,9 @@ func (a *App) runConnections(ctx context.Context) error {
 		case ctx.Err() != nil:
 			return nil
 		default:
+			if stable {
+				delay = initialReconnectDelay
+			}
 			slog.Warn("agent session ended; reconnecting", "agent_id", a.cfg.Node.ID, "error", err, "retry_in", delay)
 		}
 
@@ -139,13 +150,21 @@ func (a *App) runConnections(ctx context.Context) error {
 		case <-timer.C:
 		}
 
-		if delay < maxReconnectDelay {
-			delay *= 2
-			if delay > maxReconnectDelay {
-				delay = maxReconnectDelay
-			}
-		}
+		delay = nextReconnectDelay(delay)
 	}
+}
+
+// nextReconnectDelay advances the reconnect backoff after a failed session.
+// A session that stayed connected for at least stableSessionDuration is
+// treated as a healthy connection and resets the backoff; otherwise the delay
+// doubles up to maxReconnectDelay so a persistently unavailable control plane
+// is not hammered.
+func nextReconnectDelay(current time.Duration) time.Duration {
+	next := current * 2
+	if next > maxReconnectDelay {
+		return maxReconnectDelay
+	}
+	return next
 }
 
 func (a *App) readyReport(context.Context) health.Report {
@@ -156,6 +175,7 @@ func (a *App) readyReport(context.Context) health.Report {
 }
 
 func (a *App) runSession(ctx context.Context) error {
+	a.sessionEstablishedAt = time.Time{}
 	slog.Info("starting agent session", "agent_id", a.cfg.Node.ID)
 	creds, certNotAfter, clusterID, err := a.clientCredentials(ctx)
 	if err != nil {
@@ -258,6 +278,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			MemoryMebibytesCapacity: a.cfg.Node.Resources.AdvertisedMemoryMebibytes(),
 			WireguardPublicKey:      publicKey,
 			WireguardListenPort:     int32(a.cfg.Mesh.WireGuard.ListenPort),
+			WireguardEndpoint:       a.cfg.Mesh.WireGuard.AdvertiseEndpoint,
 			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
 			SoftwareVersion:         Version,
 			SessionId:               sessionID,
@@ -380,8 +401,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if err := a.stateStore.setReplicaAddresses(state.GetReplicaAddresses()); err != nil {
 				return fmt.Errorf("persist control-plane replica addresses: %w", err)
 			}
-			changed, err := a.supervisor.AcceptDesired(clusterID, sessionID, state)
-			if err != nil {
+			if _, err := a.supervisor.AcceptDesired(clusterID, sessionID, state); err != nil {
 				return fmt.Errorf("accept desired state: %w", err)
 			}
 			if err := send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
@@ -395,12 +415,17 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				return err
 			}
 			a.supervisor.ReconcileAcceptedDesired()
+			if !authorityConfirmed {
+				a.sessionEstablishedAt = time.Now()
+			}
 			authorityConfirmed = true
 			slog.Info("accepted desired state", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-			if !changed {
-				if err := sendCurrentReport(); err != nil {
-					return err
-				}
+			// Always publish the current observation after (re)connecting, even when
+			// the accepted desired configuration is unchanged. The control plane ages
+			// observations, so a reconnect that skips this leaves allocations stale
+			// until a runtime change happens to produce a fresh report.
+			if err := sendCurrentReport(); err != nil {
+				return err
 			}
 		}
 	}

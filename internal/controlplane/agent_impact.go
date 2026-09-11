@@ -216,23 +216,22 @@ func peerVisible(agent journal.AgentRegistration, admin journal.AgentAdministrat
 	if hasAdmin && (admin.LifecycleState == "retired" || admin.CredentialRevokedAt != nil) {
 		return false
 	}
-	return agent.WireguardPublicKey != "" && agent.WireguardListenPort > 0 && agent.WorkloadIPv4Subnet != "" && agent.WorkloadIPv6Subnet != ""
+	return agent.WireguardPublicKey != "" && agent.WireguardEndpoint != "" && agent.WorkloadIPv4Subnet != "" && agent.WorkloadIPv6Subnet != ""
 }
 
 func peerFieldsChanged(before, after journal.AgentRegistration) bool {
 	return before.Name != after.Name ||
-		before.AdvertiseAddr != after.AdvertiseAddr ||
 		before.WorkloadIPv4Subnet != after.WorkloadIPv4Subnet ||
 		before.WorkloadIPv6Subnet != after.WorkloadIPv6Subnet ||
 		before.WireguardPublicKey != after.WireguardPublicKey ||
-		before.WireguardListenPort != after.WireguardListenPort
+		before.WireguardEndpoint != after.WireguardEndpoint
 }
 
 func selfNodeConfigChanged(before journal.AgentRegistration, hasBefore bool, after journal.AgentRegistration) bool {
 	if !hasBefore {
-		return after.WireguardIPv6 != ""
+		return after.WireguardIPv6 != "" || after.WireguardListenPort > 0
 	}
-	return before.WireguardIPv6 != after.WireguardIPv6
+	return before.WireguardIPv6 != after.WireguardIPv6 || before.WireguardListenPort != after.WireguardListenPort
 }
 
 func changedDomainsWithoutServiceHint(batch journal.Batch, domainServices map[string][]string) []string {

@@ -18,6 +18,19 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
+func TestRegisterAgentRejectsMissingWireGuardEndpoint(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	hello := agentHello("missing-endpoint")
+	if err := enrollTestAgent(ctx, store, hello); err != nil {
+		t.Fatal(err)
+	}
+	hello.WireguardEndpoint = ""
+	if _, err := testDelivery(store).RegisterAgent(ctx, hello); err == nil || !strings.Contains(err.Error(), "wireguard_endpoint") {
+		t.Fatalf("missing endpoint error = %v", err)
+	}
+}
+
 func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -205,6 +218,10 @@ func TestAssignedNodeConfigSupportsClusterSizes(t *testing.T) {
 					if peer.GetEndpoint() == "" {
 						t.Fatalf("agent %s has peer %s with empty endpoint", agentID, peer.GetAgentId())
 					}
+					endpoint, err := netip.ParseAddrPort(peer.GetEndpoint())
+					if err != nil || !endpoint.Addr().Is4() {
+						t.Fatalf("agent %s peer %s endpoint is not IPv4: %q", agentID, peer.GetAgentId(), peer.GetEndpoint())
+					}
 					if got, want := len(peer.GetAllowedIps()), 2; got != want {
 						t.Fatalf("agent %s peer %s expected %d allowed IP, got %d", agentID, peer.GetAgentId(), want, got)
 					}
@@ -344,6 +361,7 @@ func testAgentHello(n int) *agentv1.AgentHello {
 		AdvertiseAddr:           fmt.Sprintf("fd00:30::%x", 0x10+n),
 		WireguardPublicKey:      fmt.Sprintf("test-public-key-%d", n),
 		WireguardListenPort:     51820 + int32(n),
+		WireguardEndpoint:       fmt.Sprintf("192.0.2.%d:%d", 10+n, 51820+n),
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},

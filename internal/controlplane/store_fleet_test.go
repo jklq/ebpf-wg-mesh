@@ -294,7 +294,7 @@ func TestFleetRetirementRevokesCredentialsAndMeshIdentity(t *testing.T) {
 	if retired.GetLifecycleState() != platformv1.AgentLifecycleState_AGENT_LIFECYCLE_STATE_RETIRED {
 		t.Fatalf("OpsService returned lifecycle %s", retired.GetLifecycleState())
 	}
-	if rec.WireGuardPublicKey != "" || rec.WorkloadIPv6Subnet != "" {
+	if rec.WireGuardPublicKey != "" || rec.WireGuardEndpoint != "" || rec.WorkloadIPv6Subnet != "" {
 		t.Fatalf("expected mesh identity to be cleared, got %+v", rec)
 	}
 	if err := store.fleet.AuthorizeAgentCredential(ctx, "node-retire"); !errors.Is(err, deliverycore.ErrAgentCredentialRevoked) {
@@ -353,6 +353,9 @@ func TestFleetViewReportsHeadroomAndVersionSkew(t *testing.T) {
 	}
 	if reserved == nil || reserved.GetSchedulableCpuMillis() != 1500 {
 		t.Fatalf("expected reserved CPU to reduce schedulable capacity, got %+v", reserved)
+	}
+	if reserved.GetWireguardEndpoint() != left.GetWireguardEndpoint() {
+		t.Fatalf("fleet WireGuard endpoint = %q, want %q", reserved.GetWireguardEndpoint(), left.GetWireguardEndpoint())
 	}
 }
 

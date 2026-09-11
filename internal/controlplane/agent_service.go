@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -34,10 +37,10 @@ type AgentService struct {
 	dashboardCallerID       string
 	registry                *RegistryPolicy
 	replicaAddresses        []string
-	liveOwner               liveOwner
+	liveOwner               LiveOwner
 }
 
-type liveOwner interface {
+type LiveOwner interface {
 	Lookup(context.Context) (held bool, advertiseAddr string, err error)
 }
 
@@ -76,7 +79,7 @@ func WithReplicaAddresses(addresses []string) AgentServiceOption {
 	}
 }
 
-func WithLiveOwner(owner liveOwner) AgentServiceOption {
+func WithLiveOwner(owner LiveOwner) AgentServiceOption {
 	return func(service *AgentService) {
 		service.liveOwner = owner
 	}
@@ -210,6 +213,12 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 	if err := s.store.AuthorizeAgentCredential(ctx, hello.GetAgentId()); err != nil {
 		return status.Error(codes.PermissionDenied, "agent is not enrolled or its credentials are revoked")
+	}
+	if hello.GetWireguardListenPort() < 1 || hello.GetWireguardListenPort() > 65535 {
+		return status.Error(codes.InvalidArgument, "wireguard_listen_port must be between 1 and 65535")
+	}
+	if err := validateAgentEndpointAgainstPeer(ctx, hello); err != nil {
+		return err
 	}
 	changed, err := s.delivery.RegisterAgent(ctx, hello)
 	if errors.Is(err, deliverycore.ErrStaleAgentSession) {
@@ -395,6 +404,42 @@ func (s *AgentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agent
 	}
 	resp.ReplicaAddresses = append([]string(nil), s.replicaAddresses...)
 	return resp
+}
+
+// validateAgentEndpointAgainstPeer validates the endpoint syntax and requires
+// same-family endpoints to match the authenticated connection's observed
+// source. A dual-stack host may dial over one family while advertising the
+// other; the agent's separately self-reported advertise address is not trusted
+// as proof for a conflicting address in the same family.
+func validateAgentEndpointAgainstPeer(ctx context.Context, hello *agentv1.AgentHello) error {
+	endpoint, err := deliverycore.CanonicalAgentWireGuardEndpoint(hello.GetWireguardEndpoint())
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	advertise, err := deliverycore.CanonicalAgentAdvertiseAddr(hello.GetAdvertiseAddr())
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	hello.WireguardEndpoint = endpoint
+	hello.AdvertiseAddr = advertise
+	endpointAddr := netip.MustParseAddrPort(endpoint).Addr().Unmap()
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return status.Error(codes.FailedPrecondition, "wireguard endpoint ownership cannot be verified without the peer address")
+	}
+	peerHost, _, err := net.SplitHostPort(p.Addr.String())
+	if err != nil {
+		return status.Errorf(codes.FailedPrecondition, "parse observed peer address: %v", err)
+	}
+	peerAddr, err := netip.ParseAddr(peerHost)
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, "wireguard endpoint ownership could not be verified")
+	}
+	peerAddr = peerAddr.Unmap()
+	if peerAddr.IsLoopback() || peerAddr.IsUnspecified() || endpointAddr == peerAddr || endpointAddr.Is4() != peerAddr.Is4() {
+		return nil
+	}
+	return status.Errorf(codes.FailedPrecondition, "wireguard endpoint address %q does not match the observed peer %q", endpointAddr, peerAddr)
 }
 
 func normalizeReplicaAddresses(addresses []string) []string {

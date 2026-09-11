@@ -133,6 +133,7 @@ func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {
 		Id:                         rec.ID,
 		Name:                       rec.Name,
 		AdvertiseAddr:              rec.AdvertiseAddr,
+		WireguardEndpoint:          rec.WireGuardEndpoint,
 		Healthy:                    rec.Healthy(time.Now().UTC()),
 		CpuMillisCapacity:          rec.CPUMillisCapacity,
 		MemoryMebibytesCapacity:    rec.MemoryMebibytesCapcity,

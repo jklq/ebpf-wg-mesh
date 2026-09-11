@@ -279,6 +279,10 @@ func (e *containerdEngine) setupNetwork(ctx context.Context, containerID, netnsP
 			return nil, fmt.Errorf("cni did not assign requested ip %s", requestedIP)
 		}
 	}
+	if err := routeWorkloadNamespaceThroughGateway(netnsPath); err != nil {
+		_ = e.cni.Remove(ctx, containerID, netnsPath, opts...)
+		return nil, fmt.Errorf("route workload namespace %s: %w", containerID, err)
+	}
 	return result, nil
 }
 

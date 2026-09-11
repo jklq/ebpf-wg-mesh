@@ -85,6 +85,7 @@ type Live struct {
 	deadlines    map[string]time.Time
 
 	durable        journal.DurableState
+	durableIndexes map[string]int64
 	liveIndex      uint64
 	authorityEpoch uint64
 	indexes        liveIndexes
@@ -95,15 +96,16 @@ type Live struct {
 
 func NewLive() *Live {
 	return &Live{
-		now:          func() time.Time { return time.Now().UTC() },
-		ttl:          AgentHealthyTTL,
-		sessions:     make(map[string]*AgentSession),
-		observations: make(map[liveObsKey]AllocationObservation),
-		admitted:     make(map[string]struct{}),
-		timers:       make(map[string]*time.Timer),
-		deadlines:    make(map[string]time.Time),
-		indexes:      newLiveIndexes(),
-		evals:        make(chan liveEval, 128),
+		now:            func() time.Time { return time.Now().UTC() },
+		ttl:            AgentHealthyTTL,
+		sessions:       make(map[string]*AgentSession),
+		observations:   make(map[liveObsKey]AllocationObservation),
+		admitted:       make(map[string]struct{}),
+		timers:         make(map[string]*time.Timer),
+		deadlines:      make(map[string]time.Time),
+		durableIndexes: make(map[string]int64),
+		indexes:        newLiveIndexes(),
+		evals:          make(chan liveEval, 128),
 	}
 }
 
@@ -201,7 +203,6 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 func (l *Live) become(ctx context.Context, readState func(context.Context, func(*sql.Tx, journal.DurableState) error) error, readEpoch func(context.Context) (uint64, error)) error {
 	l.mu.Lock()
 	l.resetLocked()
-	l.serving = true
 	l.publishing = false
 	l.accepting = false
 	l.mu.Unlock()
@@ -230,7 +231,9 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.applyDurableLocked(durable, true)
+	l.applyDurableLocked(durable)
+	durable = l.durable.Clone()
+	l.serving = true
 	l.authorityEpoch = epoch
 	for id, assignment := range durable.Assignments {
 		if assignment.DrainDeadline != nil && !assignment.DrainDeadline.IsZero() {
@@ -261,6 +264,9 @@ func (l *Live) resetLocked() {
 	l.timers = make(map[string]*time.Timer)
 	l.deadlines = make(map[string]time.Time)
 	l.authorityEpoch = 0
+	l.durable = journal.DurableState{}
+	l.durableIndexes = make(map[string]int64)
+	l.indexes = newLiveIndexes()
 	for {
 		select {
 		case <-l.evals:
@@ -483,7 +489,7 @@ func (l *Live) EndSession(agentID, sessionID string) error {
 	return nil
 }
 
-func (l *Live) AcceptReport(agentID, sessionID string, sequence uint64, ready bool) error {
+func (l *Live) AcceptReport(agentID, sessionID string, sequence uint64, inventory []string, ready bool) error {
 	if l == nil {
 		return ErrNotLiveOwner
 	}
@@ -506,6 +512,14 @@ func (l *Live) AcceptReport(agentID, sessionID string, sequence uint64, ready bo
 	session.LastContact = l.now().UTC()
 	session.Ready = ready
 	session.Reachable = true
+	// A session can begin before the agent has started every assigned
+	// allocation (for example immediately after a partition heals). The agent's
+	// latest status report is the authoritative inventory, so admission is
+	// promoted as soon as the inventory catches up instead of being frozen
+	// unreconciled until the next reconnect. It is never demoted here: an
+	// already-admitted agent keeps receiving work, exactly as before this
+	// report-driven check existed.
+	session.Reconciled = session.Reconciled || inventoryReconciled(l.assignedIDsLocked(session.AgentID), inventory)
 	if session.Reconciled {
 		l.admitted[session.AgentID] = struct{}{}
 	}

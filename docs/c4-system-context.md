@@ -32,7 +32,7 @@ flowchart LR
     envoy -->|"routes public HTTP(S) traffic for console and deployed service domains"| platform
     platform -->|"mints exact-scope tokens; pushes and pulls built images"| registry
     platform -->|"invokes remote/local image builds"| buildkit
-    platform -->|"agents maintain mTLS control stream and environment-scoped WireGuard/eBPF overlay over IPv6 underlay"| underlay
+    platform -->|"agents maintain mTLS control stream and environment-scoped WireGuard/eBPF overlay over IPv4 or IPv6 underlay"| underlay
     platform -->|"pulls images, reconciles runtime state, exposes services"| workloads
     envoy -->|"forwards external traffic to healthy platform-managed service backends"| workloads
 ```

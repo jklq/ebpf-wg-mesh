@@ -110,6 +110,7 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 		"-node-id", "node-1",
 		"-node-name", "node-1",
 		"-advertise-addr", "fd00:30::10",
+		"-mesh-advertise-endpoint", "192.0.2.10:51820",
 		"-controlplane-addresses", "replica-a:9443, replica-b:9443",
 		"-ca-file", "ca.crt",
 		"-bootstrap-token", "test-token",
@@ -132,6 +133,9 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 	}
 	if cfg.Mesh.Host.IPv6 != "fd00:30::10" {
 		t.Fatalf("unexpected host IPv6 %q", cfg.Mesh.Host.IPv6)
+	}
+	if cfg.Mesh.WireGuard.AdvertiseEndpoint != "192.0.2.10:51820" {
+		t.Fatalf("unexpected WireGuard endpoint %q", cfg.Mesh.WireGuard.AdvertiseEndpoint)
 	}
 	if cfg.Mesh.WireGuard.PrivateKey == "" {
 		t.Fatal("expected bootstrap to load wireguard private key")

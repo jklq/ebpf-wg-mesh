@@ -306,11 +306,12 @@ type ContainerAssignment struct {
 }
 
 type WireGuard struct {
-	InterfaceName string
-	PrivateKey    string
-	ListenPort    int
-	Addresses     []string
-	Peers         []PeerConfig
+	InterfaceName     string
+	PrivateKey        string
+	ListenPort        int
+	AdvertiseEndpoint string
+	Addresses         []string
+	Peers             []PeerConfig
 }
 
 type PeerConfig struct {
