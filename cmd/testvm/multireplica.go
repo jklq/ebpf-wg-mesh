@@ -28,6 +28,20 @@ type crossReplicaFixture struct {
 	Hostname      string
 }
 
+// crossReplicaClients pairs the two control-plane handles in the cross-replica
+// scenario. Delivery live state (agent sessions, allocations, health) is
+// owner-local, so it must be read through the owner; the second replica only
+// serves durable reads, which is what the blocking ListServices probe exercises.
+type crossReplicaClients struct {
+	owner   platformv1.PlatformServiceClient
+	replica platformv1.PlatformServiceClient
+}
+
+// liveReader returns the client that serves owner-local delivery live state.
+func (c crossReplicaClients) liveReader() platformv1.PlatformServiceClient {
+	return c.owner
+}
+
 func dialPlatform(ctx context.Context, address string, identity clientIdentity) (*grpc.ClientConn, error) {
 	caPEM, certPEM, keyPEM, err := identityMaterial(identity)
 	if err != nil {
@@ -57,37 +71,41 @@ func dialPlatform(ctx context.Context, address string, identity clientIdentity) 
 
 func runCrossReplicaNotificationScenario(
 	ctx context.Context,
-	writeAddress string,
-	readAddress string,
+	ownerAddress string,
+	replicaAddress string,
 	identity clientIdentity,
 	sshKeyPath string,
 	controlplane hostInfo,
 	hosts map[string]hostInfo,
 ) (crossReplicaFixture, error) {
-	writeConn, err := dialPlatform(ctx, writeAddress, identity)
+	ownerConn, err := dialPlatform(ctx, ownerAddress, identity)
 	if err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("dial write replica: %w", err)
+		return crossReplicaFixture{}, fmt.Errorf("dial live owner: %w", err)
 	}
-	defer writeConn.Close()
-	readConn, err := dialPlatform(ctx, readAddress, identity)
+	defer ownerConn.Close()
+	replicaConn, err := dialPlatform(ctx, replicaAddress, identity)
 	if err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("dial read replica: %w", err)
+		return crossReplicaFixture{}, fmt.Errorf("dial second replica: %w", err)
 	}
-	defer readConn.Close()
+	defer replicaConn.Close()
 
-	writer := platformv1.NewPlatformServiceClient(writeConn)
-	reader := platformv1.NewPlatformServiceClient(readConn)
-	if _, err := waitForAgents(ctx, ctx, reader, 2, sshKeyPath, hosts); err != nil {
+	clients := crossReplicaClients{
+		owner:   platformv1.NewPlatformServiceClient(ownerConn),
+		replica: platformv1.NewPlatformServiceClient(replicaConn),
+	}
+	owner := clients.owner
+	replica := clients.replica
+	if _, err := waitForAgents(ctx, ctx, clients.liveReader(), 2, sshKeyPath, hosts); err != nil {
 		return crossReplicaFixture{}, err
 	}
 
-	project, err := writer.CreateProject(ctx, &platformv1.CreateProjectRequest{
+	project, err := owner.CreateProject(ctx, &platformv1.CreateProjectRequest{
 		Name: "vm-multireplica-" + time.Now().UTC().Format("150405"),
 	})
 	if err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("create multi-replica project through write replica: %w", err)
+		return crossReplicaFixture{}, fmt.Errorf("create multi-replica project through live owner: %w", err)
 	}
-	environments, err := writer.ListEnvironments(ctx, &platformv1.ListEnvironmentsRequest{ProjectId: project.GetId()})
+	environments, err := owner.ListEnvironments(ctx, &platformv1.ListEnvironmentsRequest{ProjectId: project.GetId()})
 	if err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("load multi-replica environment: %w", err)
 	}
@@ -95,7 +113,7 @@ func runCrossReplicaNotificationScenario(
 		return crossReplicaFixture{}, fmt.Errorf("load multi-replica environment: got %d environments, want 1", len(environments.GetEnvironments()))
 	}
 	environmentID := environments.GetEnvironments()[0].GetId()
-	baseline, err := reader.ListServices(ctx, &platformv1.ListServicesRequest{EnvironmentId: environmentID})
+	baseline, err := replica.ListServices(ctx, &platformv1.ListServicesRequest{EnvironmentId: environmentID})
 	if err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("read service index from second replica: %w", err)
 	}
@@ -107,7 +125,7 @@ func runCrossReplicaNotificationScenario(
 	waitResult := make(chan error, 1)
 	go func() {
 		close(waitStarted)
-		waitResult <- waitForServiceNameFromIndex(waitCtx, reader, environmentID, serviceName, baseline.GetIndex())
+		waitResult <- waitForServiceNameFromIndex(waitCtx, replica, environmentID, serviceName, baseline.GetIndex())
 	}()
 	<-waitStarted
 	select {
@@ -117,7 +135,7 @@ func runCrossReplicaNotificationScenario(
 	}
 
 	marker := fmt.Sprintf("vm-e2e-multireplica-%08x", uint32(time.Now().UnixNano()))
-	service, err := writer.CreateService(ctx, &platformv1.CreateServiceRequest{
+	service, err := owner.CreateService(ctx, &platformv1.CreateServiceRequest{
 		EnvironmentId: environmentID,
 		Service: &platformv1.ServiceInput{
 			Name: serviceName,
@@ -125,19 +143,19 @@ func runCrossReplicaNotificationScenario(
 		},
 	})
 	if err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("create service through write replica: %w", err)
+		return crossReplicaFixture{}, fmt.Errorf("create service through live owner: %w", err)
 	}
 	if err := <-waitResult; err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("blocked ListServices on second replica: %w", err)
 	}
-	infof("scenario: blocked ListServices on the second replica observed the write")
+	infof("scenario: blocking ListServices on the second replica observed the owner's write")
 
-	if _, err := writer.ReleaseEnvironment(ctx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("deploy through write replica: %w", err)
+	if _, err := owner.ReleaseEnvironment(ctx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: environmentID}); err != nil {
+		return crossReplicaFixture{}, fmt.Errorf("deploy through live owner: %w", err)
 	}
-	status, err := waitForServiceHealthy(ctx, ctx, reader, service.GetId(), service.GetSpecRevision(), 1)
+	status, err := waitForServiceHealthy(ctx, ctx, clients.liveReader(), service.GetId(), service.GetSpecRevision(), 1)
 	if err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("wait for service delivered through second-replica agent streams: %w", err)
+		return crossReplicaFixture{}, fmt.Errorf("wait for the live owner to deliver the deployment: %w", err)
 	}
 	allocatedHost, ok := hosts[status.GetAllocation().GetAgentId()]
 	if !ok {
@@ -146,16 +164,16 @@ func runCrossReplicaNotificationScenario(
 	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, status.GetAllocation().GetAllocationId(), allocationEndpoint(status.GetAllocation()), "/", marker); err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("verify cross-replica workload: %w", err)
 	}
-	infof("scenario: agents connected to the second replica applied a deployment written through the primary")
+	infof("scenario: the live owner scheduled and delivered a deployment written after a replica blocking read")
 
-	binding, err := writer.GenerateDomainBinding(ctx, &platformv1.GenerateDomainBindingRequest{
+	binding, err := owner.GenerateDomainBinding(ctx, &platformv1.GenerateDomainBindingRequest{
 		ServiceId:  service.GetId(),
 		TargetPort: 8080,
 	})
 	if err != nil {
-		return crossReplicaFixture{}, fmt.Errorf("generate ingress binding through write replica: %w", err)
+		return crossReplicaFixture{}, fmt.Errorf("generate ingress binding through live owner: %w", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, fmt.Sprintf("grep -Fq %q /var/lib/ebpf-wg-mesh/ingress-probe/latest.json && grep -Fq %q /var/lib/ebpf-wg-mesh/ingress-probe/latest.json", binding.GetHostname(), allocationEndpoint(status.GetAllocation()))); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, fmt.Sprintf("grep -Fq %s /var/lib/ebpf-wg-mesh/ingress-probe/latest.json && grep -Fq %s /var/lib/ebpf-wg-mesh/ingress-probe/latest.json", shellQuote(binding.GetHostname()), shellQuote(allocationEndpoint(status.GetAllocation())))); err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("wait for primary ingress publication: %w", err)
 	}
 
@@ -253,9 +271,9 @@ func ingressRequestCount(ctx context.Context, keyPath, host string) (int64, erro
 
 func waitForIngressTakeover(ctx context.Context, keyPath, host string, previousCount int64, hostname string) error {
 	command := fmt.Sprintf(
-		"test $(wc -l < /var/lib/ebpf-wg-mesh/ingress-probe/requests.log) -gt %d && grep -Fq %q /var/lib/ebpf-wg-mesh/ingress-probe/latest.json",
+		"test $(wc -l < /var/lib/ebpf-wg-mesh/ingress-probe/requests.log) -gt %d && grep -Fq %s /var/lib/ebpf-wg-mesh/ingress-probe/latest.json",
 		previousCount,
-		hostname,
+		shellQuote(hostname),
 	)
 	return waitForRemoteCommand(ctx, keyPath, host, command)
 }

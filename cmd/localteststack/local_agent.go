@@ -43,7 +43,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 		Node: config.NodeConfig{
 			ID:            localAgentID,
 			Name:          "Local Teststack Agent",
-			AdvertiseAddr: "::1",
+			AdvertiseAddr: "fd00:77::1",
 			Resources: config.NodeResourcesConfig{
 				CPUMillis:       8000,
 				MemoryMebibytes: 16384,
@@ -64,11 +64,12 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 			DisableCgroups: true,
 		},
 		Mesh: config.MeshConfig{
-			Host: config.HostConfig{IPv6: "::1"},
+			Host: config.HostConfig{IPv6: "fd00:77::1"},
 			WireGuard: config.WireGuard{
-				InterfaceName: "wg0",
-				PrivateKey:    privateKey,
-				ListenPort:    51820,
+				InterfaceName:     "wg0",
+				PrivateKey:        privateKey,
+				ListenPort:        51820,
+				AdvertiseEndpoint: "[fd00:77::1]:51820",
 			},
 		},
 	}

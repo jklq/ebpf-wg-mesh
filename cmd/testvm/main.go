@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"ebof-wg-mesh/api/proto/platformv1"
@@ -31,6 +35,16 @@ const (
 	replicaControlPlaneService = "ebpf-wg-mesh-controlplane-replica"
 	primaryControlPlanePort    = "9443"
 	replicaControlPlanePort    = "9444"
+	testVMWireGuardPort        = "51820"
+
+	// prepareHostCommand makes a disposable test host deterministic. Scheduled
+	// package maintenance (apt-daily) and needrestart can restart the mesh
+	// services minutes after boot, which would look like a product fault
+	// mid-campaign.
+	prepareHostCommand = "mkdir -p /opt/ebpf-wg-mesh; " +
+		"systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true; " +
+		"systemctl mask apt-daily.service apt-daily-upgrade.service unattended-upgrades.service >/dev/null 2>&1 || true; " +
+		"mkdir -p /etc/needrestart/conf.d && printf '%s\\n' '$nrconf{restart} = \"l\";' > /etc/needrestart/conf.d/99-ebpf-wg-mesh-testvm.conf"
 )
 
 var vmAgentBootstrapTokens = map[string]string{
@@ -97,9 +111,46 @@ func main() {
 		cpType    = flag.String("controlplane-type", "", "Hetzner controlplane server type (default: cheapest orderable shared x86 type in the selected location)")
 		agentType = flag.String("agent-type", "", "Hetzner agent server type (default: cheapest orderable shared x86 type in the selected location)")
 	)
+	provider := flag.String("provider", "hetzner", "VM provider: hetzner, ovh, or local")
+	timeout := flag.Duration("timeout", 45*time.Minute, "maximum run duration, excluding bounded cleanup")
+	ovhOpts := registerOVHFlags()
+	stressOpts := registerStressFlags()
+	localOpts := registerLocalFlags()
+	stressPlanOnly := flag.Bool("stress-plan-only", false, "print seeded stress schedule without credentials or cloud resources")
 	flag.Parse()
+	if *provider != "hetzner" && *provider != "ovh" && *provider != "local" {
+		failf("unknown provider %q", *provider)
+	}
+	if *scenario != "service-rollout" && *scenario != "stress" {
+		failf("unknown scenario %q", *scenario)
+	}
+	if err := stressOpts.validate(); err != nil {
+		failf("stress options: %v", err)
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	if *stressPlanOnly {
+		agents := ovhOpts.agents
+		if *provider == "local" {
+			agents = localOpts.agents
+		} else if *provider == "hetzner" {
+			agents = 2
+		}
+		maxAgents := 32
+		if *provider == "local" {
+			maxAgents = 16
+		}
+		if agents < 2 || agents > maxAgents {
+			failf("agents must be between 2 and %d", maxAgents)
+		}
+		agentNames := stressPlanAgentNames(*provider, agents)
+		if err := json.NewEncoder(os.Stdout).Encode(stressSchedule(*stressOpts, agentNames)); err != nil {
+			failf("stress plan: %v", err)
+		}
+		return
+	}
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(signalCtx, *timeout)
 	defer cancel()
 	startedAt := time.Now().UTC()
 
@@ -110,26 +161,78 @@ func main() {
 	if n, err := localteststack.LoadDotEnvFile(filepath.Join(repoRoot, ".env")); err != nil {
 		failf("load .env: %v", err)
 	} else if n > 0 {
-		infof("loaded %d variable(s) from .env", n)
+		fmt.Fprintf(os.Stderr, "[testvm] loaded %d variable(s) from .env\n", n)
 	}
 
-	token := strings.TrimSpace(os.Getenv("HCLOUD_TOKEN"))
-	if token == "" {
-		failf("missing HCLOUD_TOKEN (export it or set it in repo-root .env)")
-	}
-	client := hcloud.NewClient(hcloud.WithToken(token))
-	if strings.TrimSpace(*cpType) == "" || strings.TrimSpace(*agentType) == "" {
-		selectedType, err := selectCheapestServerType(ctx, client, *location)
+	var ovhClient ovhAPI
+	var plan ovhPlan
+	var token string
+	var client *hcloud.Client
+	if *provider == "local" {
+		if localOpts.action == "destroy" {
+			if err := destroyLocal(ctx, localOpts.manifest, localOpts.keepDisks); err != nil {
+				failf("local cleanup: %v", err)
+			}
+			return
+		}
+		vmAgentBootstrapTokens = make(map[string]string)
+		for i := 0; i < localOpts.agents; i++ {
+			name := fmt.Sprintf("agent-%02d", i+1)
+			vmAgentBootstrapTokens[name] = fmt.Sprintf("vm-bootstrap-%016x-%016x", rand.Uint64(), rand.Uint64())
+		}
+	} else if *provider == "ovh" {
+		ovhEnvPath := filepath.Join(repoRoot, ".env.ovh")
+		if info, statErr := os.Stat(ovhEnvPath); statErr == nil && info.Mode().Perm()&0o077 != 0 {
+			failf("%s must not be readable by group or others; run chmod 600 %s", ovhEnvPath, ovhEnvPath)
+		} else if statErr != nil && !os.IsNotExist(statErr) {
+			failf("inspect .env.ovh: %v", statErr)
+		}
+		if _, err := localteststack.LoadDotEnvFile(ovhEnvPath); err != nil {
+			failf("load .env.ovh: %v", err)
+		}
+		ovhClient, plan, err = prepareOVH(ctx, ovhOpts, *runID, *timeout)
 		if err != nil {
-			failf("select server type for %s: %v", *location, err)
+			failf("OVH preflight: %v", err)
 		}
-		if strings.TrimSpace(*cpType) == "" {
-			*cpType = selectedType
+		switch ovhOpts.action {
+		case "catalog":
+			return
+		case "plan":
+			if err := json.NewEncoder(os.Stdout).Encode(plan); err != nil {
+				failf("write plan: %v", err)
+			}
+			return
+		case "destroy":
+			if err := destroyOVH(ctx, ovhClient, ovhOpts.manifest); err != nil {
+				failf("OVH cleanup: %v", err)
+			}
+			return
 		}
-		if strings.TrimSpace(*agentType) == "" {
-			*agentType = selectedType
+		vmAgentBootstrapTokens = make(map[string]string)
+		for i := 0; i < ovhOpts.agents; i++ {
+			name := fmt.Sprintf("agent-%02d", i+1)
+			vmAgentBootstrapTokens[name] = fmt.Sprintf("vm-bootstrap-%016x-%016x", rand.Uint64(), rand.Uint64())
 		}
-		infof("selected server type for %s: %s", *location, selectedType)
+	} else {
+		token = strings.TrimSpace(os.Getenv("HCLOUD_TOKEN"))
+		if token == "" {
+			failf("missing HCLOUD_TOKEN (export it or set it in repo-root .env)")
+		}
+		client = hcloud.NewClient(hcloud.WithToken(token))
+		if strings.TrimSpace(*cpType) == "" || strings.TrimSpace(*agentType) == "" {
+			selectedType, err := selectCheapestServerType(ctx, client, *location)
+			if err != nil {
+				failf("select server type for %s: %v", *location, err)
+			}
+			if strings.TrimSpace(*cpType) == "" {
+				*cpType = selectedType
+			}
+			if strings.TrimSpace(*agentType) == "" {
+				*agentType = selectedType
+			}
+			infof("selected server type for %s: %s", *location, selectedType)
+		}
+
 	}
 
 	artifactRoot := *artifacts
@@ -167,52 +270,97 @@ func main() {
 		failf("build binaries: %v", err)
 	}
 
-	tfDataDir := filepath.Join(artifactRoot, "tofu-data")
-	if err := os.MkdirAll(tfDataDir, 0o755); err != nil {
-		failf("mkdir tofu data dir: %v", err)
-	}
-	varsPath := filepath.Join(artifactRoot, "tofu.auto.tfvars.json")
-	if err := writeJSON(varsPath, map[string]any{
-		"run_id":                   *runID,
-		"ssh_public_key_path":      sshKeyPath + ".pub",
-		"location":                 *location,
-		"image":                    *image,
-		"controlplane_server_type": *cpType,
-		"agent_server_type":        *agentType,
-	}); err != nil {
-		failf("write tofu vars: %v", err)
-	}
-
-	tofuEnv := append(os.Environ(), "TF_DATA_DIR="+tfDataDir, "TF_VAR_hcloud_token="+token)
-	infof("running tofu init")
-	if err := runCommand(ctx, repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "init", "-input=false"); err != nil {
-		failf("tofu init: %v", err)
-	}
+	var hosts map[string]hostInfo
+	var destroy func() error
 	destroyed := false
+	defer func() {
+		if destroy != nil && !destroyed {
+			infof("destroying VM environment")
+			if err := destroy(); err != nil {
+				if p := recover(); p != nil {
+					infof("VM cleanup failed during existing failure: %v", err)
+					panic(p)
+				}
+				failf("VM cleanup failed: %v", err)
+			}
+		}
+	}()
 	defer func() {
 		if destroyed {
 			return
 		}
-		infof("destroying vm environment")
-		_ = runCommand(context.Background(), repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "destroy", "-auto-approve", "-input=false", "-var-file="+varsPath)
+		diagnosticCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := collectArtifacts(diagnosticCtx, repoRoot, artifactRoot, sshKeyPath, hosts); err != nil {
+			infof("collect diagnostics: %v", err)
+		}
 	}()
-	infof("applying vm environment in %s", *location)
-	if err := runCommand(ctx, repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "apply", "-auto-approve", "-input=false", "-var-file="+varsPath); err != nil {
-		failf("tofu apply: %v", err)
-	}
+	if *provider == "local" {
+		localPlan, err := prepareLocal(ctx, *localOpts, *runID, *timeout)
+		if err != nil {
+			failf("local prepare: %v", err)
+		}
+		if err := writeJSON(filepath.Join(artifactRoot, "local-plan.json"), localPlan); err != nil {
+			failf("write local plan: %v", err)
+		}
+		hosts, destroy, err = provisionLocal(ctx, *localOpts, localPlan, artifactRoot, sshKeyPath)
+		if err != nil {
+			failf("provision local: %v", err)
+		}
+	} else if *provider == "ovh" {
+		if err := writeJSON(filepath.Join(artifactRoot, "ovh-plan.json"), plan); err != nil {
+			failf("write OVH plan: %v", err)
+		}
+		hosts, destroy, err = provisionOVH(ctx, ovhClient, plan, repoRoot, artifactRoot, sshKeyPath)
+		if err != nil {
+			failf("provision OVH: %v", err)
+		}
+	} else {
+		tfDataDir := filepath.Join(artifactRoot, "tofu-data")
+		if err := os.MkdirAll(tfDataDir, 0o755); err != nil {
+			failf("mkdir tofu data dir: %v", err)
+		}
+		varsPath := filepath.Join(artifactRoot, "tofu.auto.tfvars.json")
+		if err := writeJSON(varsPath, map[string]any{
+			"run_id":                   *runID,
+			"ssh_public_key_path":      sshKeyPath + ".pub",
+			"location":                 *location,
+			"image":                    *image,
+			"controlplane_server_type": *cpType,
+			"agent_server_type":        *agentType,
+		}); err != nil {
+			failf("write tofu vars: %v", err)
+		}
 
-	infof("reading provisioned host outputs")
-	hosts, err := readHostsOutput(ctx, repoRoot, tofuEnv, *tofuBin, *tofuDir)
-	if err != nil {
-		failf("read tofu outputs: %v", err)
+		tofuEnv := append(os.Environ(), "TF_DATA_DIR="+tfDataDir, "TF_VAR_hcloud_token="+token)
+		infof("running tofu init")
+		if err := runCommand(ctx, repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "init", "-input=false"); err != nil {
+			failf("tofu init: %v", err)
+		}
+
+		destroy = func() error {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			return runCommand(cleanupCtx, repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "destroy", "-auto-approve", "-input=false", "-var-file="+varsPath)
+		}
+		infof("applying vm environment in %s", *location)
+		if err := runCommand(ctx, repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "apply", "-auto-approve", "-input=false", "-var-file="+varsPath); err != nil {
+			failf("tofu apply: %v", err)
+		}
+
+		infof("reading provisioned host outputs")
+		hosts, err = readHostsOutput(ctx, repoRoot, tofuEnv, *tofuBin, *tofuDir)
+		if err != nil {
+			failf("read tofu outputs: %v", err)
+		}
+		infof("waiting for Hetzner to report %d running servers", len(hosts))
+		if err := waitForServers(ctx, client, *runID, len(hosts)); err != nil {
+			failf("wait for Hetzner servers: %v", err)
+		}
+
 	}
 	if err := validateAgentBindings(hosts, vmAgentBootstrapTokens); err != nil {
 		failf("validate agent bindings: %v", err)
-	}
-
-	infof("waiting for Hetzner to report %d running servers", len(hosts))
-	if err := waitForServers(ctx, client, *runID, len(hosts)); err != nil {
-		failf("wait for Hetzner servers: %v", err)
 	}
 
 	for _, host := range hosts {
@@ -225,7 +373,7 @@ func main() {
 			failf("wait for cloud-init on %s: %v", host.Name, err)
 		}
 		infof("preparing host %s", host.Name)
-		if _, err := runRemoteCommand(ctx, sshKeyPath, host.PublicIPv4, "mkdir -p /opt/ebpf-wg-mesh"); err != nil {
+		if _, err := runRemoteCommand(ctx, sshKeyPath, host.PublicIPv4, prepareHostCommand); err != nil {
 			failf("prepare host %s: %v", host.Name, err)
 		}
 	}
@@ -323,11 +471,12 @@ func main() {
 		}
 		infof("installing agent on %s (node-id=%s)", host.Name, key)
 		if err := runRemoteScript(ctx, sshKeyPath, host.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-agent.sh"), map[string]string{
-			"NODE_ID":                key,
-			"NODE_NAME":              host.Name,
-			"ADVERTISE_ADDR":         trimCIDR(host.PublicIPv6),
-			"CONTROLPLANE_ADDRESSES": controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
-			"BOOTSTRAP_TOKEN":        bootstrapToken,
+			"NODE_ID":                 key,
+			"NODE_NAME":               host.Name,
+			"ADVERTISE_ADDR":          hostAdvertiseAddress(host),
+			"MESH_ADVERTISE_ENDPOINT": hostWireGuardEndpoint(host, *provider),
+			"CONTROLPLANE_ADDRESSES":  controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
+			"BOOTSTRAP_TOKEN":         bootstrapToken,
 		}); err != nil {
 			failf("install agent on %s: %v", host.Name, err)
 		}
@@ -341,53 +490,60 @@ func main() {
 	if err != nil {
 		failf("fetch dashboard client identity: %v", err)
 	}
-	infof("running cross-replica notification scenario (writes on primary, reads and agent streams on replica)")
-	fixture, err := runCrossReplicaNotificationScenario(
-		ctx,
-		controlplane.PublicIPv4+":"+primaryControlPlanePort,
-		controlplane.PublicIPv4+":"+replicaControlPlanePort,
-		identity,
-		sshKeyPath,
-		controlplane,
-		hosts,
-	)
-	if err != nil {
-		infof("cross-replica scenario failed; collecting diagnostics into %s", artifactRoot)
-		_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
-		failf("run cross-replica notification scenario: %v", err)
-	}
-	ingressRequestsBeforeTakeover, err := ingressRequestCount(ctx, sshKeyPath, controlplane.PublicIPv4)
-	if err != nil {
-		failf("read ingress request count before takeover: %v", err)
-	}
+	if *scenario == "stress" {
+		if err := runStressScenario(ctx, *stressOpts, artifactRoot, identity, sshKeyPath, hosts, repoRoot); err != nil {
+			failf("stress scenario: %v", err)
+		}
+	} else {
+		infof("running cross-replica scenario (owner-local delivery, durable reads and blocking watch on the second replica)")
+		fixture, err := runCrossReplicaNotificationScenario(
+			ctx,
+			controlplane.PublicIPv4+":"+primaryControlPlanePort,
+			controlplane.PublicIPv4+":"+replicaControlPlanePort,
+			identity,
+			sshKeyPath,
+			controlplane,
+			hosts,
+		)
+		if err != nil {
+			infof("cross-replica scenario failed; collecting diagnostics into %s", artifactRoot)
+			_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
+			failf("run cross-replica notification scenario: %v", err)
+		}
+		ingressRequestsBeforeTakeover, err := ingressRequestCount(ctx, sshKeyPath, controlplane.PublicIPv4)
+		if err != nil {
+			failf("read ingress request count before takeover: %v", err)
+		}
 
-	infof("stopping primary controlplane to force singleton takeover")
-	if _, err := runRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl stop "+primaryControlPlaneService); err != nil {
-		failf("stop primary controlplane: %v", err)
-	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+replicaControlPlaneService+" && ! systemctl is-active --quiet "+primaryControlPlaneService); err != nil {
-		failf("wait for primary controlplane shutdown: %v", err)
-	}
-	replicaLease, err := waitForSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4, primaryLease.Holder)
-	if err != nil {
-		failf("wait for second replica singleton takeover: %v", err)
-	}
-	if replicaLease.Token <= primaryLease.Token {
-		failf("singleton fencing token did not advance on takeover: before=%d after=%d", primaryLease.Token, replicaLease.Token)
-	}
-	if err := waitForIngressTakeover(ctx, sshKeyPath, controlplane.PublicIPv4, ingressRequestsBeforeTakeover, fixture.Hostname); err != nil {
-		failf("wait for ingress convergence after takeover: %v", err)
-	}
-	infof("second controlplane took singleton lease holder=%s token=%d and republished ingress", replicaLease.Holder, replicaLease.Token)
+		infof("stopping primary controlplane to force singleton takeover")
+		if _, err := runRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl stop "+primaryControlPlaneService); err != nil {
+			failf("stop primary controlplane: %v", err)
+		}
+		if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+replicaControlPlaneService+" && ! systemctl is-active --quiet "+primaryControlPlaneService); err != nil {
+			failf("wait for primary controlplane shutdown: %v", err)
+		}
+		replicaLease, err := waitForSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4, primaryLease.Holder)
+		if err != nil {
+			failf("wait for second replica singleton takeover: %v", err)
+		}
+		if replicaLease.Token <= primaryLease.Token {
+			failf("singleton fencing token did not advance on takeover: before=%d after=%d", primaryLease.Token, replicaLease.Token)
+		}
+		if err := waitForIngressTakeover(ctx, sshKeyPath, controlplane.PublicIPv4, ingressRequestsBeforeTakeover, fixture.Hostname); err != nil {
+			failf("wait for ingress convergence after takeover: %v", err)
+		}
+		infof("second controlplane took singleton lease holder=%s token=%d and republished ingress", replicaLease.Holder, replicaLease.Token)
 
-	if err := cleanupCrossReplicaFixture(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, fixture); err != nil {
-		failf("clean up cross-replica fixture: %v", err)
-	}
-	infof("running service rollout scenario against %s", controlplane.Name)
-	if err := runServiceRolloutScenario(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, sshKeyPath, hosts); err != nil {
-		infof("scenario failed; collecting diagnostics into %s", artifactRoot)
-		_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
-		failf("run service rollout scenario: %v", err)
+		if err := cleanupCrossReplicaFixture(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, fixture); err != nil {
+			failf("clean up cross-replica fixture: %v", err)
+		}
+		infof("running service rollout scenario against %s", controlplane.Name)
+		if err := runServiceRolloutScenario(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, sshKeyPath, hosts); err != nil {
+			infof("scenario failed; collecting diagnostics into %s", artifactRoot)
+			_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
+			failf("run service rollout scenario: %v", err)
+		}
+
 	}
 
 	infof("collecting artifacts into %s", artifactRoot)
@@ -407,11 +563,22 @@ func main() {
 	}
 
 	infof("destroying vm environment")
-	if err := runCommand(ctx, repoRoot, tofuEnv, *tofuBin, "-chdir="+*tofuDir, "destroy", "-auto-approve", "-input=false", "-var-file="+varsPath); err != nil {
-		failf("tofu destroy: %v", err)
+	if err := destroy(); err != nil {
+		failf("VM cleanup: %v", err)
 	}
 	destroyed = true
 	infof("vm test run completed successfully")
+}
+
+func stressPlanAgentNames(provider string, agents int) []string {
+	if provider == "hetzner" {
+		return []string{"agent-a", "agent-b"}
+	}
+	names := make([]string, agents)
+	for i := range names {
+		names[i] = fmt.Sprintf("agent-%02d", i+1)
+	}
+	return names
 }
 func runServiceRolloutScenario(ctx context.Context, address string, identity clientIdentity, sshKeyPath string, hosts map[string]hostInfo) error {
 	scenarioStarted := time.Now()
@@ -441,8 +608,11 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	}
 	infof("scenario: project created with id %s", project.GetId())
 	environments, err := client.ListEnvironments(userCtx, &platformv1.ListEnvironmentsRequest{ProjectId: project.GetId()})
-	if err != nil || len(environments.GetEnvironments()) != 1 {
-		return fmt.Errorf("load production environment: environments=%d err=%w", len(environments.GetEnvironments()), err)
+	if err != nil {
+		return fmt.Errorf("load production environment: %w", err)
+	}
+	if len(environments.GetEnvironments()) != 1 {
+		return fmt.Errorf("load production environment: got %d environments, want 1", len(environments.GetEnvironments()))
 	}
 	environmentID := environments.GetEnvironments()[0].GetId()
 
@@ -556,8 +726,11 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 		return err
 	}
 	isolationEnvironments, err := client.ListEnvironments(userCtx, &platformv1.ListEnvironmentsRequest{ProjectId: isolationProject.GetId()})
-	if err != nil || len(isolationEnvironments.GetEnvironments()) != 1 {
+	if err != nil {
 		return fmt.Errorf("load isolation environment: %w", err)
+	}
+	if len(isolationEnvironments.GetEnvironments()) != 1 {
+		return fmt.Errorf("load isolation environment: got %d environments, want 1", len(isolationEnvironments.GetEnvironments()))
 	}
 	isolationEnvironmentID := isolationEnvironments.GetEnvironments()[0].GetId()
 	isolationMarker := fmt.Sprintf("vm-e2e-isolated-%08x", rand.Uint32())
@@ -749,3 +922,18 @@ func (c vmUserAssertionCredentials) GetRequestMetadata(context.Context, ...strin
 	return map[string]string{"x-platform-user-assertion": token}, nil
 }
 func (vmUserAssertionCredentials) RequireTransportSecurity() bool { return true }
+
+func hostAdvertiseAddress(host hostInfo) string {
+	if host.PublicIPv6 != "" {
+		return trimCIDR(host.PublicIPv6)
+	}
+	return host.PublicIPv4
+}
+
+func hostWireGuardEndpoint(host hostInfo, provider string) string {
+	address := hostAdvertiseAddress(host)
+	if provider == "ovh" || provider == "local" {
+		address = host.PublicIPv4
+	}
+	return net.JoinHostPort(address, testVMWireGuardPort)
+}

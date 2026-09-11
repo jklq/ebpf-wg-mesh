@@ -27,7 +27,7 @@ The stream contract, durable acknowledgements, removal scope and authority-expir
 - Policy is fail-closed and identity-based: a workload-pool deny plus exact allows. Those allows are currently the whole-cluster catalog. The target is exact allows only for environments the node currently hosts, including remote allocations in those environments.
 - WireGuard is overlay transport and eBPF is identity policy. Peering is currently a full mesh of enrolled agents; each peer's AllowedIPs are that peer's overlay IPv4 and IPv6 prefixes. The target is peers only between nodes that share an environment and between those nodes and the Envoy instances that publish their services.
 - Public ingress is currently one Caddy instance. The control plane replaces Caddy config through the admin API. The target is an Envoy fleet: the control plane serves a versioned xDS snapshot and ACK/NACK is the apply protocol. Do not extend Caddy as the production data plane.
-- Overlay dual-stack is live: every allocation gets IPv4 and IPv6, both are routed in AllowedIPs, and both are enforced by the same `network_identity`. That does not change the underlay; `advertise_addr` stays IPv6 until an explicit underlay prompt exists.
+- Overlay dual-stack is live: every allocation gets IPv4 and IPv6, both are routed in AllowedIPs, and both are enforced by the same `network_identity`. The agent's `advertise_addr` remains its IPv6 host identity; the independently advertised WireGuard `IP:port` endpoint may use IPv4 or IPv6 underlay.
 - The console is the current product-facing caller of `platform.v1.PlatformService`. A public API, when it exists, must use the same application services.
 - Agent-facing and console-facing internal gRPC are protected by mTLS with distinct caller identities.
 - The console owns OAuth, canonical user profiles, and browser sessions. For each product RPC it signs a 30-second user assertion with a control-plane audience; the control plane verifies the signature, issuer, audience, lifetime, and subject before applying project membership and role authorization.
@@ -248,9 +248,55 @@ The Cockroach-backed integration suite includes regressions for cluster-wide cro
 
 - Infrastructure lives under `infra/test-vm/`.
 - `cmd/testvm` builds Linux binaries, provisions the Hetzner topology through OpenTofu, waits for server readiness with `hcloud-go`, deploys two independent control-plane processes and two agents over SSH, runs the gRPC scenarios, collects host artifacts, and tears everything down.
-- The multi-replica scenario pins agent streams and blocking reads to one replica while writing through the other, rejects replica-local control-plane storage, stops the original singleton owner, and verifies fenced lease takeover plus ingress re-publication before continuing the rollout and agent-failover checks.
+- The multi-replica scenario drives writes and owner-local delivery through the singleton owner while a blocking `ListServices` on the second replica observes the same write, rejects replica-local control-plane storage, stops the original singleton owner, and verifies fenced lease takeover plus ingress re-publication before continuing the rollout and agent-failover checks.
 - Cockroach and the two control-plane processes are colocated on the control-plane VM; the processes use the same database and state directory while retaining independent in-memory state and lifecycles.
 - Artifacts are written under `artifacts/e2e-vm/<run-id>/`.
+
+### Local QEMU/KVM fleet
+
+`-provider local` runs the same stress and smoke scenarios against real QEMU/KVM
+guests on the current host, with no cloud credentials and no per-run cost. The
+Ubuntu cloud image is cached under `~/.cache/ebpf-wg-mesh/`. Default runs still
+fetch the upstream `SHA256SUMS` to confirm the cached file, and download the
+image when it is missing or stale. A prepared image is then baked with
+`virt-customize --network` (guest is never booted; `apt-get` still needs
+network) and reused from a content-addressed cache keyed on the base digest,
+package recipe, apt mirror, and a manual builder version. That key does not
+include qemu/virt-customize or apt package versions — bump
+`localImageBuilderVersion` when those must invalidate the cache. Later runs
+skip the guest package install but still `curl` CockroachDB onto the
+control-plane VM. Pass `-local-base-image` to use a local file as-is without
+contacting Ubuntu. The control-plane VM hosts CockroachDB and both
+control-plane replicas; every agent is its own VM on a private bridge with NAT
+to the host uplink. Per-run bridge, taps, and iptables NAT/FORWARD rules are
+created and removed by a narrow passwordless helper.
+
+One-time host preparation (requires root, and AMD-V/VT-x enabled in BIOS).
+If `/dev/kvm` is missing until you re-login after adding your user to the
+`kvm` group, log out and back in after `make localvm-setup`:
+
+```bash
+make localvm-setup
+```
+
+Then run without cloud credentials:
+
+```bash
+make test-stress-local ARGS='-seed 42 -local-agents 2 -stress-stages 2'
+make test-smoke-local ARGS='-local-agents 2'
+make plan-stress-local ARGS='-local-agents 4 -stress-stages 12'
+```
+
+Useful flags: `-local-agents`, `-local-cp-vcpus`, `-local-cp-mem-mb`,
+`-local-agent-vcpus`, `-local-agent-mem-mb`, `-local-disk-gb`,
+`-local-subnet` (defaults to a run-derived private subnet), `-local-bridge`
+(defaults to a run-derived helper-owned name), `-local-apt-mirror` (defaults to the host's apt mirror),
+and `-local-keep-disks`. If a run is killed with
+SIGKILL, use the persisted manifest:
+
+```bash
+make cleanup-local MANIFEST=artifacts/e2e-vm/<run-id>/local-resources.json
+```
 
 ## Internal mTLS
 
@@ -289,3 +335,8 @@ Configure the same assertion secret on the control-plane host with `CONTROLPLANE
 When the managed dashboard is assigned, the trusted agent creates `controlplane-key.pem` locally and submits only a CSR over its authenticated agent connection. The control plane issues a short-lived certificate with the configured dashboard caller identity only to `CONTROLPLANE_DASHBOARD_TRUSTED_AGENT_ID`. The agent writes `controlplane-cert.pem` and `controlplane-ca.pem`, renews the certificate before expiry, and restarts the dashboard allocation after rotation. The private key never leaves the trusted node.
 
 The agent bind-mounts the directory read-only at `/run/secrets/dashboard` only for the managed dashboard workload. The control plane sends file paths, not secret values, in desired state. The dashboard sends a fresh signed user assertion over its authenticated mTLS connection; the raw `x-platform-user-id` header is rejected. Project membership and role authorization remain in the control plane.
+
+OVH stress and fault testing: see [the stress fixture guide](docs/ovh-stress.md).
+Use `make plan-stress-ovh ARGS='-seed 42'` to inspect a reproducible workload
+schedule offline, and `make test-stress-ovh` to provision and exercise real VMs
+with explicit price and budget settings.
