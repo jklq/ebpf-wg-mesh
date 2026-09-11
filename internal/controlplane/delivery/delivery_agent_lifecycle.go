@@ -50,7 +50,7 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET advertise_addr = '',
 				workload_ipv4_subnet = '', workload_ipv6_subnet = '', wireguard_public_key = '',
-				wireguard_listen_port = 0, wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
+				wireguard_listen_port = 0, wireguard_endpoint = '', wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
 				return err
 			}
 			journal.RecordAgent(ctx, agentID)

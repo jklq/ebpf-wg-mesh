@@ -83,6 +83,9 @@ func (s *Domains) CreateDomainBinding(ctx context.Context, req *platformv1.Creat
 
 	binding, changed, err := s.store.CreateDomainBindingRecord(ctx, identity.UserID, hostname, req.GetBinding().GetServiceId(), targetPort)
 	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPlatformDomainInUse) || errors.Is(err, ErrPlatformDomainReassignment) || errors.Is(err, ErrPlatformDomainNotGenerated) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
@@ -115,6 +118,9 @@ func (s *Domains) GenerateDomainBinding(ctx context.Context, req *platformv1.Gen
 	}
 	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
 	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
 		return nil, status.Errorf(codes.NotFound, "service: %v", err)
 	}
 	hostname, err := generatedPlatformHostname(service.ProjectID, req.GetServiceId(), s.platformDomainSuffix)
@@ -123,6 +129,9 @@ func (s *Domains) GenerateDomainBinding(ctx context.Context, req *platformv1.Gen
 	}
 	binding, changed, err := s.store.CreatePlatformDomainBindingRecord(ctx, identity.UserID, hostname, req.GetServiceId(), targetPort)
 	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPlatformDomainInUse) || errors.Is(err, ErrPlatformDomainReassignment) || errors.Is(err, ErrPlatformDomainNotGenerated) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
@@ -154,11 +163,16 @@ func (s *Domains) UpdateDomainBinding(ctx context.Context, req *platformv1.Updat
 		return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
 	}
 	var previousServiceID string
-	if previous, err := s.store.DomainBindingByHostname(ctx, identity.UserID, req.GetHostname()); err == nil {
+	if previous, err := s.store.DomainBindingByHostname(ctx, identity.UserID, req.GetHostname()); ownershipError(err) {
+		return nil, err
+	} else if err == nil {
 		previousServiceID = previous.ServiceID
 	}
 	binding, changed, err := s.store.UpdateDomainBindingRecord(ctx, identity.UserID, req.GetHostname(), req.GetBinding().GetServiceId(), targetPort)
 	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPlatformDomainInUse) || errors.Is(err, ErrPlatformDomainReassignment) || errors.Is(err, ErrPlatformDomainNotGenerated) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
@@ -184,6 +198,9 @@ func (s *Domains) DeleteDomainBinding(ctx context.Context, req *platformv1.Delet
 	}
 	binding, err := s.store.DomainBindingByHostname(ctx, identity.UserID, req.GetHostname())
 	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPlatformDomainInUse) || errors.Is(err, ErrPlatformDomainReassignment) || errors.Is(err, ErrPlatformDomainNotGenerated) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
@@ -195,6 +212,9 @@ func (s *Domains) DeleteDomainBinding(ctx context.Context, req *platformv1.Delet
 
 	changed, err := s.store.DeleteDomainBindingRecord(ctx, identity.UserID, req.GetHostname())
 	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
 		if errors.Is(err, ErrPlatformDomainInUse) || errors.Is(err, ErrPlatformDomainReassignment) || errors.Is(err, ErrPlatformDomainNotGenerated) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
@@ -209,6 +229,10 @@ func (s *Domains) DeleteDomainBinding(ctx context.Context, req *platformv1.Delet
 		s.ingress.RequestSync()
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func ownershipError(err error) bool {
+	return errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost)
 }
 
 func (s *Domains) notifyServices(ctx context.Context, userID string, serviceIDs ...string) {

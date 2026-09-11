@@ -25,6 +25,8 @@ func TestFailoverDecision(t *testing.T) {
 		{"volume", func(s *failoverSnapshot) { s.VolumeName = "data" }, failoverBlocked},
 		{"no capacity", func(s *failoverSnapshot) { s.PlacementFailure = "no capacity" }, failoverBlocked},
 		{"no image", func(s *failoverSnapshot) { s.ReusableImage = false }, failoverBlocked},
+		{"pending change", func(s *failoverSnapshot) { s.PendingChanges = true }, failoverIgnore},
+		{"pending managed change", func(s *failoverSnapshot) { s.PendingChanges = true; s.ProjectKind = ProjectKindManaged }, failoverIgnore},
 		{"active target", func(s *failoverSnapshot) { s.RolloutState = rolloutStateInProgress }, failoverAdvance},
 		{"active predecessor", func(s *failoverSnapshot) {
 			s.RolloutState = rolloutStateInProgress

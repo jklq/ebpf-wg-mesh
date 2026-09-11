@@ -4,8 +4,11 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -456,12 +459,15 @@ func ingressRouteCount(t *testing.T, body []byte) int {
 }
 
 func agentHello(id string) *agentv1.AgentHello {
+	sum := sha256.Sum256([]byte(id))
+	host := fmt.Sprintf("fd00:30::%x", 0x10+int(sum[0]))
 	return &agentv1.AgentHello{
 		AgentId:                 id,
 		Name:                    id,
-		AdvertiseAddr:           "fd00:30::10",
-		WireguardPublicKey:      "test-public-key",
+		AdvertiseAddr:           host,
+		WireguardPublicKey:      "test-public-key-" + id,
 		WireguardListenPort:     51820,
+		WireguardEndpoint:       net.JoinHostPort(host, "51820"),
 		CpuMillisCapacity:       2000,
 		MemoryMebibytesCapacity: 4096,
 		RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},

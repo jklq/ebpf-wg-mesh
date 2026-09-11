@@ -392,6 +392,34 @@ func (s *persistence) loadServiceUnappliedChangesQuerier(ctx context.Context, q 
 	return diffServiceUnappliedChanges(current, deployed), deployed, nil
 }
 
+// serviceHasUnappliedChangesQuerier reports whether the service's current spec
+// revision carries an acknowledged change that the active rollout generation
+// has not deployed yet. Failover must preserve such a change rather than copy
+// the older running deployment over it.
+func (s *persistence) serviceHasUnappliedChangesQuerier(ctx context.Context, q ServiceQueryer, service ServiceRecord) (bool, error) {
+	if service.RolloutGeneration == 0 {
+		return true, nil
+	}
+	var rawSpec []byte
+	if err := q.QueryRowContext(ctx, `SELECT rev.spec_json
+		FROM services svc
+		LEFT JOIN service_rollouts ro
+		  ON ro.service_id = svc.id AND ro.rollout_generation = svc.current_rollout_generation
+		LEFT JOIN service_revisions rev
+		  ON rev.service_id = ro.service_id AND rev.spec_revision = ro.spec_revision
+		WHERE svc.id = $1`, service.ID).Scan(&rawSpec); err != nil {
+		return false, err
+	}
+	if len(rawSpec) == 0 {
+		return true, nil
+	}
+	deployed, err := LoadServiceSpec(rawSpec)
+	if err != nil {
+		return false, err
+	}
+	return len(diffServiceUnappliedChanges(service.Spec, deployed)) > 0, nil
+}
+
 func (s *persistence) loadDeployedServiceSpecQuerier(ctx context.Context, q ServiceQueryer, serviceID string, rolloutGeneration int64) (*platformv1.ServiceSpec, error) {
 	if rolloutGeneration == 0 {
 		return CanonicalServiceSpec(nil), nil

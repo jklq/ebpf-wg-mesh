@@ -30,6 +30,7 @@ type PlatformService struct {
 	dnsResolver          routing.Resolver
 	platformDomainSuffix string
 	events               *PlatformEvents
+	liveOwner            LiveOwner
 }
 
 type platformStore interface {
@@ -123,6 +124,32 @@ func WithPlatformEvents(events *PlatformEvents) PlatformServiceOption {
 	}
 }
 
+// WithPlatformLiveOwner gates stateful platform RPCs behind singleton ownership.
+// A non-owner answers with a redirect to the live owner instead of serving
+// owner-local live state as if it were authoritative.
+func WithPlatformLiveOwner(owner LiveOwner) PlatformServiceOption {
+	return func(service *PlatformService) {
+		service.liveOwner = owner
+	}
+}
+
+func (s *PlatformService) requireLiveOwner(ctx context.Context) error {
+	if s == nil || s.liveOwner == nil {
+		return nil
+	}
+	held, ownerAddr, err := s.liveOwner.Lookup(ctx)
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "lookup live owner: %v", err)
+	}
+	if held {
+		return nil
+	}
+	if strings.TrimSpace(ownerAddr) != "" {
+		return status.Error(codes.FailedPrecondition, deliverycore.LiveOwnerRedirectMessage(ownerAddr))
+	}
+	return status.Error(codes.Unavailable, "live owner is not ready")
+}
+
 func NewPlatformService(store platformStore, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, delivery platformDelivery, opts ...PlatformServiceOption) *PlatformService {
 	service := &PlatformService{store: store, delivery: delivery, notifier: notifier, ingress: ingress, dnsResolver: routing.NewPublicDNSResolver()}
 	for _, opt := range opts {
@@ -136,12 +163,18 @@ func NewPlatformService(store platformStore, notifier deliverycore.PlatformNotif
 }
 
 func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.CreateProjectRequest) (*platformv1.Project, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	project, err := s.store.createProject(ctx, identity.UserID, req.GetName())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "create project: %v", err)
 	}
 	return toProtoProject(project), nil
@@ -204,51 +237,82 @@ func (s *PlatformService) GetEnvironment(ctx context.Context, req *platformv1.Ge
 }
 
 func (s *PlatformService) CreateEnvironment(ctx context.Context, req *platformv1.CreateEnvironmentRequest) (*platformv1.Environment, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rec, err := s.store.createEnvironment(ctx, identity.UserID, req.GetProjectId(), req.GetName())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "create environment: %v", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
 
 func (s *PlatformService) DuplicateEnvironment(ctx context.Context, req *platformv1.DuplicateEnvironmentRequest) (*platformv1.Environment, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rec, err := s.delivery.DuplicateEnvironment(ctx, identity.UserID, req.GetSourceEnvironmentId(), req.GetName(), req.GetCopyVariables())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "duplicate environment: %v", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
 
 func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1.RenameEnvironmentRequest) (*platformv1.Environment, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	identity, err := identity.DelegatedUserFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rec, err := s.store.renameEnvironment(ctx, identity.UserID, req.GetEnvironmentId(), req.GetName())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		return nil, status.Errorf(codes.Internal, "rename environment: %v", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
 
 func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
-	return s.environments.DeleteEnvironment(ctx, req)
+	result, err := s.environments.DeleteEnvironment(ctx, req)
+	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+		return nil, mapped
+	}
+	return result, err
 }
 
 func (s *PlatformService) ReleaseEnvironment(ctx context.Context, req *platformv1.ReleaseEnvironmentRequest) (*platformv1.ReleaseEnvironmentResponse, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
 	services, err := s.delivery.ReleaseEnvironment(ctx, req.GetEnvironmentId())
 	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
 		if status.Code(err) != codes.Unknown {
 			return nil, err
 		}

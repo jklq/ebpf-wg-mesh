@@ -57,6 +57,12 @@ func upsertTestAgent(t *testing.T, store *persistence, ctx context.Context, hell
 	if strings.TrimSpace(hello.SessionId) == "" {
 		hello.SessionId = "test-session-" + hello.GetAgentId()
 	}
+	if strings.TrimSpace(hello.WireguardEndpoint) == "" {
+		hello.WireguardEndpoint = "192.0.2.10:51820"
+	}
+	if strings.TrimSpace(hello.AdvertiseAddr) == "" {
+		hello.AdvertiseAddr = "fd00:30::"
+	}
 	if err := enrollTestAgent(ctx, store, hello); err != nil {
 		return false, err
 	}

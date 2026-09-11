@@ -3,10 +3,13 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
@@ -113,6 +116,10 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID 
 }
 
 func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || sizeBytes <= 0 {
+		return deliverycore.VolumeRecord{}, deliverycore.ErrInvalidVolume
+	}
 	environment, err := s.environmentByIDQuerier(ctx, tx, userID, environmentID)
 	if err != nil {
 		return deliverycore.VolumeRecord{}, err
@@ -128,6 +135,10 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, use
 		`INSERT INTO volumes(id, environment_id, name, size_bytes, created_at) VALUES ($1, $2, $3, $4, $5)`,
 		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
 	); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "volumes_environment_id_name_key" {
+			return deliverycore.VolumeRecord{}, deliverycore.ErrVolumeAlreadyExists
+		}
 		return deliverycore.VolumeRecord{}, err
 	}
 	journal.RecordVolume(ctx, rec.ID)

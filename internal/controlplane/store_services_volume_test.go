@@ -64,6 +64,23 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	}
 }
 
+func TestCreateScheduledVolumeRejectsDuplicateName(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, "user-1", "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, project.ID)
+	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", environmentID, "data", 64<<20); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", environmentID, "data", 64<<20); !errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
+		t.Fatalf("duplicate create = %v, want ErrVolumeAlreadyExists", err)
+	}
+}
+
 func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	t.Parallel()
 

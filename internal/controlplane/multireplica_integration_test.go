@@ -12,6 +12,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
 func TestLiveWatchFiresAfterDurableApply(t *testing.T) {
@@ -311,6 +312,62 @@ func TestSharedStorageBindingRejectsReplicaLocalDirectory(t *testing.T) {
 	}
 	if err := verifySharedControlPlaneDirectory(ctx, store, "state-test", t.TempDir()); err == nil {
 		t.Fatal("replica-local directory was accepted for registered shared storage")
+	}
+}
+
+func TestNonOwnerReplicaDoesNotServeOwnerLocalAllocations(t *testing.T) {
+	ctx := context.Background()
+	owner := openTestStore(t)
+
+	// The second replica is opened before the owner writes anything, so its live
+	// view stays empty and cannot accidentally satisfy the read from a snapshot.
+	nonOwner, err := openPersistence(config.DatabaseConfig{
+		URL: sharedTestDatabase(t), MaxOpenConns: 2, MaxIdleConns: 2,
+	}, testMeshConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nonOwner.Close() })
+	newDelivery(nonOwner, nil, nil, nil, nil)
+	if nonOwner.fleet.sessions.Serving() {
+		t.Fatal("second replica unexpectedly became the live owner")
+	}
+
+	hello := agentHello("node-1")
+	if _, err := upsertTestAgent(t, owner, ctx, hello); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := owner.catalog.listProjects(ctx, "user-1")
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	environmentID := productionEnvironmentID(t, owner, projects[0].ID)
+	service, err := createScheduledService(ctx, owner, "user-1", environmentID, "web", directImageServiceSpec("example.test/web:1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, owner, "user-1", environmentID, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	ownerAllocations, err := owner.reads.ListAllocationsByServiceID(ctx, service.ID)
+	if err != nil || len(ownerAllocations) == 0 {
+		t.Fatalf("owner allocations: %+v %v", ownerAllocations, err)
+	}
+	if err := reportActiveForTest(ctx, owner, service.ID); err != nil {
+		t.Fatalf("record owner observation: %v", err)
+	}
+
+	_, allocations, err := nonOwner.reads.ServiceStatus(ctx, "user-1", service.ID)
+	if err == nil && len(allocations) == 0 {
+		t.Fatal("non-owner replica silently returned zero allocations for a released service")
+	}
+	if err != nil && !errors.Is(err, deliverycore.ErrNotLiveOwner) {
+		t.Fatalf("non-owner replica service status error = %v, want ErrNotLiveOwner or durable allocations", err)
 	}
 }
 
