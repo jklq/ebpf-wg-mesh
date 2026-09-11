@@ -177,6 +177,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithGitHubSourceInspection(githubCatalog, githubClient),
 		WithPlatformDomainSuffix(cfg.Ingress.PublicAddr),
 		WithPlatformEvents(platformEvents),
+		WithPlatformLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
 	)
 	authz := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.Revocations())
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
@@ -193,6 +194,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
 		WithAgentRegistry(registry),
 		WithReplicaAddresses(cfg.ReplicaAddresses),
+		WithLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
@@ -485,19 +487,30 @@ func (s *Server) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if s.internalLn != nil {
-		_ = s.internalLn.Close()
-	}
 	if s.internalGRPC != nil {
-		s.internalGRPC.GracefulStop()
+		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP.
+		// Stop the gRPC server first so active Sync streams are torn down;
+		// otherwise HTTP Shutdown waits the full deadline for them to go idle.
+		s.internalGRPC.Stop()
 	}
 	if s.internalHTTP != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		err := s.internalHTTP.Shutdown(shutdownCtx)
 		cancel()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errs = append(errs, err)
+			if errors.Is(err, context.DeadlineExceeded) {
+				closeErr := s.internalHTTP.Close()
+				if errors.Is(closeErr, http.ErrServerClosed) {
+					closeErr = nil
+				}
+				errs = append(errs, errors.Join(err, closeErr))
+			} else {
+				errs = append(errs, err)
+			}
 		}
+	}
+	if s.internalLn != nil {
+		_ = s.internalLn.Close()
 	}
 	if s.registryHTTP != nil {
 		err := s.registryHTTP.Close()
