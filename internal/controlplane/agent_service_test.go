@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 
@@ -9,8 +10,80 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
+
+func peerCtx(ip string) context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 54321},
+	})
+}
+
+type stringPeerAddr string
+
+func (a stringPeerAddr) Network() string { return "tcp" }
+func (a stringPeerAddr) String() string  { return string(a) }
+
+func TestValidateAgentEndpointAgainstPeer(t *testing.T) {
+	hello := func(endpoint string) *agentv1.AgentHello {
+		return &agentv1.AgentHello{WireguardEndpoint: endpoint, AdvertiseAddr: "2001:db8::10"}
+	}
+
+	t.Run("same-family match allowed", func(t *testing.T) {
+		if err := validateAgentEndpointAgainstPeer(peerCtx("203.0.113.10"), hello("203.0.113.10:51820")); err != nil {
+			t.Fatalf("direct path: %v", err)
+		}
+	})
+
+	t.Run("ServeHTTP string peer address allowed", func(t *testing.T) {
+		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: stringPeerAddr("203.0.113.10:54321")})
+		if err := validateAgentEndpointAgainstPeer(ctx, hello("203.0.113.10:51820")); err != nil {
+			t.Fatalf("string peer: %v", err)
+		}
+	})
+
+	t.Run("self-reported advertise address does not bypass peer check", func(t *testing.T) {
+		h := hello("[2001:db8::10]:51820")
+		if err := validateAgentEndpointAgainstPeer(peerCtx("2001:db8::20"), h); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("unverified endpoint: %v", err)
+		}
+	})
+
+	t.Run("unrelated endpoint rejected", func(t *testing.T) {
+		err := validateAgentEndpointAgainstPeer(peerCtx("203.0.113.10"), hello("198.51.100.1:51820"))
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("unrelated endpoint: %v", err)
+		}
+	})
+
+	t.Run("loopback skips anti-spoof", func(t *testing.T) {
+		if err := validateAgentEndpointAgainstPeer(peerCtx("127.0.0.1"), hello("198.51.100.1:51820")); err != nil {
+			t.Fatalf("loopback: %v", err)
+		}
+	})
+
+	t.Run("family-mismatch dual-stack allowed when both usable", func(t *testing.T) {
+		if err := validateAgentEndpointAgainstPeer(peerCtx("192.0.2.10"), hello("[2001:db8::10]:51820")); err != nil {
+			t.Fatalf("dual-stack: %v", err)
+		}
+	})
+
+	t.Run("family-mismatch rejected when endpoint is not usable unicast", func(t *testing.T) {
+		err := validateAgentEndpointAgainstPeer(peerCtx("2001:db8::10"), hello("[fe80::1]:51820"))
+		if status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("link-local endpoint: %v", err)
+		}
+	})
+
+	t.Run("invalid port rejected", func(t *testing.T) {
+		for _, endpoint := range []string{"192.0.2.10:0", "192.0.2.10:70000"} {
+			if err := validateAgentEndpointAgainstPeer(peerCtx("203.0.113.10"), hello(endpoint)); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("endpoint %q: %v", endpoint, err)
+			}
+		}
+	})
+}
 
 type stubLiveOwner struct {
 	held bool
@@ -24,31 +97,27 @@ func (s stubLiveOwner) Lookup(context.Context) (bool, string, error) {
 
 func TestAgentServiceRedirectsNonOwnerRPCs(t *testing.T) {
 	t.Parallel()
-
 	service := NewAgentService(nil, nil, nil, nil, nil, nil, true, "agent-trusted", "dashboard-1",
-		WithLiveOwner(stubLiveOwner{held: false, addr: "owner:9443"}))
+		WithLiveOwner(stubLiveOwner{addr: "owner:9443"}))
 	_, err := service.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-1"})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("Enroll status = %v", err)
 	}
-	if got, ok := parseLiveOwner(err); !ok || got != "owner:9443" {
+	if got, ok := parseAgentLiveOwner(err); !ok || got != "owner:9443" {
 		t.Fatalf("Enroll redirect = %q, %v", got, err)
 	}
-
 	_, err = service.IssueManagedDashboardCertificate(context.Background(), &agentv1.ManagedDashboardCertificateRequest{AgentId: "agent-trusted"})
-	if got, ok := parseLiveOwner(err); !ok || got != "owner:9443" {
+	if got, ok := parseAgentLiveOwner(err); !ok || got != "owner:9443" {
 		t.Fatalf("dashboard redirect = %q, %v", got, err)
 	}
-
-	unavailable := NewAgentService(nil, nil, nil, nil, nil, nil, false, "", "",
-		WithLiveOwner(stubLiveOwner{held: false, addr: ""}))
+	unavailable := NewAgentService(nil, nil, nil, nil, nil, nil, false, "", "", WithLiveOwner(stubLiveOwner{}))
 	_, err = unavailable.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-1"})
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("missing owner status = %v", err)
 	}
 }
 
-func parseLiveOwner(err error) (string, bool) {
+func parseAgentLiveOwner(err error) (string, bool) {
 	st, ok := status.FromError(err)
 	if !ok || !strings.HasPrefix(st.Message(), agentv1.LiveOwnerRedirectPrefix) {
 		return "", false
@@ -58,28 +127,14 @@ func parseLiveOwner(err error) (string, bool) {
 
 func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 	t.Parallel()
-
 	states := []*agentv1.DesiredNodeState{
 		{ReconciliationCursor: 2},
-		{
-			ReconciliationCursor: 3,
-			Services: []*agentv1.DesiredService{{
-				AllocationId:             "alloc-1",
-				ServiceId:                "svc-1",
-				DesiredSpecRevision:      1,
-				DesiredRolloutGeneration: 2,
-			}},
-		},
+		{ReconciliationCursor: 3, Services: []*agentv1.DesiredService{{AllocationId: "alloc-1", ServiceId: "svc-1", DesiredSpecRevision: 1, DesiredRolloutGeneration: 2}}},
 		{ReconciliationCursor: 3},
 	}
 	var loads int
 	var sent []int64
-
-	lastRevision, lastReplicas, err := sendLatestDesiredState(
-		context.Background(),
-		"agent-1",
-		1,
-		nil,
+	lastRevision, lastReplicas, err := sendLatestDesiredState(context.Background(), "agent-1", 1, nil,
 		func() (*agentv1.DesiredNodeState, error) {
 			if loads >= len(states) {
 				return states[len(states)-1], nil
@@ -91,67 +146,36 @@ func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
 		func(state *agentv1.DesiredNodeState) error {
 			sent = append(sent, state.GetReconciliationCursor())
 			return nil
-		},
-	)
+		})
 	if err != nil {
 		t.Fatalf("sendLatestDesiredState: %v", err)
 	}
-	if lastRevision != 3 {
-		t.Fatalf("expected last revision 3, got %d", lastRevision)
-	}
-	if lastReplicas != nil {
-		t.Fatalf("expected no replica metadata, got %v", lastReplicas)
-	}
-	if len(sent) != 2 || sent[0] != 2 || sent[1] != 3 {
-		t.Fatalf("expected revisions [2 3], got %v", sent)
+	if lastRevision != 3 || lastReplicas != nil || len(sent) != 2 || sent[0] != 2 || sent[1] != 3 {
+		t.Fatalf("last revision=%d replicas=%v sent=%v", lastRevision, lastReplicas, sent)
 	}
 }
 
 func TestSendLatestDesiredStateResendsWhenReplicaAddressesChange(t *testing.T) {
 	t.Parallel()
-
-	states := []*agentv1.DesiredNodeState{
-		{ReconciliationCursor: 3, ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"}},
-		{ReconciliationCursor: 3, ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"}},
-	}
-	var loads int
+	state := &agentv1.DesiredNodeState{ReconciliationCursor: 3, ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"}}
 	var sent [][]string
-
-	lastRevision, lastReplicas, err := sendLatestDesiredState(
-		context.Background(),
-		"agent-1",
-		3,
-		[]string{"replica-a:9443"},
-		func() (*agentv1.DesiredNodeState, error) {
-			if loads >= len(states) {
-				return states[len(states)-1], nil
-			}
-			state := states[loads]
-			loads++
-			return state, nil
-		},
+	lastRevision, lastReplicas, err := sendLatestDesiredState(context.Background(), "agent-1", 3, []string{"replica-a:9443"},
+		func() (*agentv1.DesiredNodeState, error) { return state, nil },
 		func(state *agentv1.DesiredNodeState) error {
 			sent = append(sent, append([]string(nil), state.GetReplicaAddresses()...))
 			return nil
-		},
-	)
+		})
 	if err != nil {
 		t.Fatalf("sendLatestDesiredState: %v", err)
 	}
-	if lastRevision != 3 {
-		t.Fatalf("expected last revision 3, got %d", lastRevision)
-	}
-	if got, want := strings.Join(lastReplicas, ","), "replica-a:9443,replica-b:9443"; got != want {
-		t.Fatalf("last replicas = %q, want %q", got, want)
-	}
-	if len(sent) != 1 || strings.Join(sent[0], ",") != "replica-a:9443,replica-b:9443" {
-		t.Fatalf("expected one replica-metadata resend, got %v", sent)
+	want := "replica-a:9443,replica-b:9443"
+	if lastRevision != 3 || strings.Join(lastReplicas, ",") != want || len(sent) != 1 || strings.Join(sent[0], ",") != want {
+		t.Fatalf("last revision=%d replicas=%v sent=%v", lastRevision, lastReplicas, sent)
 	}
 }
 
 func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.T) {
 	t.Parallel()
-
 	cfg := testRegistryConfig()
 	auth, err := NewRegistryAuth(cfg, t.TempDir())
 	if err != nil {
@@ -159,20 +183,8 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 	}
 	service := &AgentService{registry: NewRegistryPolicy(cfg, auth)}
 	state := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{
-		{
-			AllocationId:  "allocation-1",
-			ServiceId:     "service-1",
-			EnvironmentId: "environment-1",
-			Spec: &platformv1.ResolvedServiceSpec{
-				Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64),
-			},
-		},
-		{
-			AllocationId:  "allocation-2",
-			ServiceId:     "service-2",
-			EnvironmentId: "environment-2",
-			Spec:          &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"},
-		},
+		{AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)}},
+		{AllocationId: "allocation-2", ServiceId: "service-2", EnvironmentId: "environment-2", Spec: &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"}},
 	}}
 	if err := service.attachRegistryPullCredentials("agent-1", state); err != nil {
 		t.Fatal(err)
@@ -191,14 +203,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 	if external := state.Services[1]; external.GetRegistryUsername() != "" || external.GetRegistryPassword() != "" {
 		t.Fatal("external direct image received platform registry credentials")
 	}
-	foreign := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{
-		AllocationId:  "allocation-3",
-		EnvironmentId: "environment-2",
-		ServiceId:     "service-2",
-		Spec: &platformv1.ResolvedServiceSpec{
-			Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("b", 64),
-		},
-	}}}
+	foreign := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{AllocationId: "allocation-3", EnvironmentId: "environment-2", ServiceId: "service-2", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("b", 64)}}}}
 	if err := service.attachRegistryPullCredentials("agent-1", foreign); err == nil {
 		t.Fatal("expected a sibling platform repository to be rejected")
 	}

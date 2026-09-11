@@ -29,6 +29,7 @@ message AgentHello {
   string initialization_state = 17;
   repeated ServiceCondition allocations = 18;
   uint64 session_incarnation = 19;
+  string wireguard_endpoint = 20;
 }
 
 message RuntimeResource {

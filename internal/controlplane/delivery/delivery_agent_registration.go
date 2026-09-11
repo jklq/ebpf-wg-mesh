@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/netip"
 	"slices"
 	"strings"
 
@@ -16,9 +17,55 @@ import (
 	"ebof-wg-mesh/internal/reconciliation"
 )
 
+func CanonicalAgentWireGuardEndpoint(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	endpoint, err := netip.ParseAddrPort(raw)
+	if err != nil {
+		return "", fmt.Errorf("wireguard_endpoint must be an IP:port endpoint: %q", raw)
+	}
+	if endpoint.Port() == 0 {
+		return "", fmt.Errorf("wireguard_endpoint must include a non-zero port: %q", raw)
+	}
+	addr := endpoint.Addr().Unmap()
+	if !isUsableUnderlayAddress(addr) {
+		return "", fmt.Errorf("wireguard_endpoint must be a routable unicast address: %q", raw)
+	}
+	return netip.AddrPortFrom(addr, endpoint.Port()).String(), nil
+}
+
+func CanonicalAgentAdvertiseAddr(raw string) (string, error) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("advertise_addr must be an IPv6 address: %q", raw)
+	}
+	addr = addr.Unmap()
+	if !addr.Is6() {
+		return "", fmt.Errorf("advertise_addr must be an IPv6 address: %q", raw)
+	}
+	if !isUsableUnderlayAddress(addr) {
+		return "", fmt.Errorf("advertise_addr must be a routable unicast address: %q", raw)
+	}
+	return addr.String(), nil
+}
+
+// isUsableUnderlayAddress rejects unspecified, loopback, link-local and
+// multicast addresses so an agent cannot redirect peer handshakes at martian
+// or local-only destinations.
+func isUsableUnderlayAddress(addr netip.Addr) bool {
+	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() {
+		return false
+	}
+	return true
+}
+
 func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello) (bool, error) {
+	if hello.GetWireguardListenPort() < 1 || hello.GetWireguardListenPort() > math.MaxUint16 {
+		return false, fmt.Errorf("wireguard listen port must be between 1 and 65535")
+	}
 	s := d.store
 	var changed bool
+	var wireGuardEndpoint string
 	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
@@ -41,6 +88,15 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if existing.LifecycleState == AgentStateRetired || existing.CredentialRevokedAt.Valid {
 			return ErrAgentCredentialRevoked
 		}
+		wireGuardEndpoint, err = CanonicalAgentWireGuardEndpoint(hello.GetWireguardEndpoint())
+		if err != nil {
+			return err
+		}
+		advertiseAddr, err := CanonicalAgentAdvertiseAddr(hello.GetAdvertiseAddr())
+		if err != nil {
+			return err
+		}
+		hello.AdvertiseAddr = advertiseAddr
 
 		if hello.GetLocalStoreId() == "" {
 			return fmt.Errorf("local_store_id is required")
@@ -96,6 +152,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		changed = existing.AdvertiseAddr != hello.AdvertiseAddr ||
 			existing.WireGuardPublicKey != hello.GetWireguardPublicKey() ||
 			existing.WireGuardListenPort != int(hello.GetWireguardListenPort()) ||
+			existing.WireGuardEndpoint != wireGuardEndpoint ||
 			existing.CPUMillisCapacity != hello.CpuMillisCapacity ||
 			existing.MemoryMebibytesCapcity != hello.MemoryMebibytesCapacity ||
 			!slices.Equal(existing.RuntimeCapabilities, capabilities) ||
@@ -113,15 +170,16 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		_, err = tx.ExecContext(ctx,
 			`UPDATE agent_registrations SET
 				advertise_addr = $1, workload_ipv4_subnet = $2, workload_ipv6_subnet = $3, wireguard_public_key = $4,
-				wireguard_listen_port = $5, wireguard_ipv6 = $6, cpu_millis_capacity = $7,
-				memory_mebibytes_capacity = $8, runtime_capabilities = $9,
-				software_version = $10, updated_at = $11
-			 WHERE id = $12`,
+				wireguard_listen_port = $5, wireguard_endpoint = $6, wireguard_ipv6 = $7, cpu_millis_capacity = $8,
+				memory_mebibytes_capacity = $9, runtime_capabilities = $10,
+				software_version = $11, updated_at = $12
+			 WHERE id = $13`,
 			hello.AdvertiseAddr,
 			workloadIPv4Subnet,
 			workloadSubnet,
 			hello.GetWireguardPublicKey(),
 			hello.GetWireguardListenPort(),
+			wireGuardEndpoint,
 			wireGuardIPv6,
 			hello.CpuMillisCapacity,
 			hello.MemoryMebibytesCapacity,

@@ -183,6 +183,9 @@ func validateAgent(cfg AgentConfig) error {
 	if ip := net.ParseIP(cfg.Node.AdvertiseAddr); ip == nil || !isIPv6(ip) {
 		return fmt.Errorf("agent.node.advertiseAddr must be IPv6: %q", cfg.Node.AdvertiseAddr)
 	}
+	if err := validateRoutableUnicast("agent.node.advertiseAddr", cfg.Node.AdvertiseAddr); err != nil {
+		return err
+	}
 	if cfg.Node.Resources.CPUMillis <= 0 {
 		return errors.New("agent.node.resources.cpuMillis must be greater than 0")
 	}
@@ -217,6 +220,20 @@ func validateAgent(cfg AgentConfig) error {
 	if !isIPv6(ip) {
 		return fmt.Errorf("agent.mesh.host.ipv6 must be IPv6: %q", cfg.Mesh.Host.IPv6)
 	}
+	if err := validateRoutableUnicast("agent.mesh.host.ipv6", cfg.Mesh.Host.IPv6); err != nil {
+		return err
+	}
+	hostAddr, err := netip.ParseAddr(strings.TrimSpace(cfg.Mesh.Host.IPv6))
+	if err != nil {
+		return fmt.Errorf("agent.mesh.host.ipv6 must be IPv6: %q", strings.TrimSpace(cfg.Mesh.Host.IPv6))
+	}
+	advertiseAddr, err := netip.ParseAddr(strings.TrimSpace(cfg.Node.AdvertiseAddr))
+	if err != nil {
+		return fmt.Errorf("agent.node.advertiseAddr must be IPv6: %q", strings.TrimSpace(cfg.Node.AdvertiseAddr))
+	}
+	if hostAddr.Unmap() != advertiseAddr.Unmap() {
+		return errors.New("agent.mesh.host.ipv6 must match agent.node.advertiseAddr")
+	}
 	for _, seed := range cfg.Containerd.IdentitySeeds {
 		if ip := net.ParseIP(seed.IPv4); ip == nil || ip.To4() == nil {
 			return fmt.Errorf("agent.containerd.identitySeeds ipv4 must be IPv4: %q", seed.IPv4)
@@ -239,6 +256,9 @@ func validateAgent(cfg AgentConfig) error {
 	if cfg.Mesh.WireGuard.ListenPort <= 0 || cfg.Mesh.WireGuard.ListenPort > 65535 {
 		return errors.New("agent.mesh.wireguard.listenPort must be 1-65535")
 	}
+	if err := validateWireGuardEndpoint(cfg.Mesh.WireGuard.AdvertiseEndpoint); err != nil {
+		return fmt.Errorf("agent.mesh.wireguard.advertiseEndpoint is invalid: %w", err)
+	}
 	for _, cidr := range cfg.Mesh.WireGuard.Addresses {
 		if ip, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("invalid agent.mesh.wireguard address %q: %w", cidr, err)
@@ -253,7 +273,7 @@ func validateAgent(cfg AgentConfig) error {
 		if strings.TrimSpace(peer.Endpoint) == "" {
 			return fmt.Errorf("agent.mesh.wireguard peer %q missing endpoint", peer.Name)
 		}
-		if err := validateIPv6Endpoint(peer.Endpoint); err != nil {
+		if err := validateWireGuardEndpoint(peer.Endpoint); err != nil {
 			return fmt.Errorf("agent.mesh.wireguard peer %q invalid endpoint: %w", peer.Name, err)
 		}
 		for _, cidr := range peer.AllowedIPs {
@@ -347,17 +367,35 @@ func isIPv6(ip net.IP) bool {
 	return ip != nil && ip.To4() == nil && ip.To16() != nil
 }
 
-func validateIPv6Endpoint(raw string) error {
-	host, _, err := net.SplitHostPort(raw)
+func validateWireGuardEndpoint(raw string) error {
+	raw = strings.TrimSpace(raw)
+	endpoint, err := netip.ParseAddrPort(raw)
 	if err != nil {
-		return err
+		if _, port, splitErr := net.SplitHostPort(raw); splitErr == nil && (port == "" || strings.Trim(port, "0123456789") != "") {
+			return fmt.Errorf("port must be 1-65535: %q", raw)
+		}
+		return fmt.Errorf("host must be an IP:port endpoint: %q", raw)
 	}
-	addr, err := netip.ParseAddr(host)
+	if endpoint.Port() == 0 {
+		return fmt.Errorf("port must be 1-65535: %q", raw)
+	}
+	return validateRoutableAddr("host", endpoint.Addr().Unmap())
+}
+
+func validateRoutableUnicast(field, raw string) error {
+	raw = strings.TrimSpace(raw)
+	addr, err := netip.ParseAddr(raw)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s must be a routable unicast address: %q", field, raw)
 	}
-	if !addr.Is6() {
-		return fmt.Errorf("host must be IPv6: %q", host)
+	return validateRoutableAddr(field, addr.Unmap())
+}
+
+func validateRoutableAddr(field string, addr netip.Addr) error {
+	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() ||
+		addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+		return fmt.Errorf("%s must be a routable unicast address: %q", field, addr)
 	}
 	return nil
 }

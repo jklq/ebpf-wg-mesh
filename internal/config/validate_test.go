@@ -264,7 +264,7 @@ func TestFinalizeAgentRejectsInvalidWireGuardPeerEndpoint(t *testing.T) {
 				Peers: []PeerConfig{{
 					Name:       "node-2",
 					PublicKey:  "pubkey",
-					Endpoint:   "127.0.0.1:51820",
+					Endpoint:   "node-2.example:51820",
 					AllowedIPs: []string{"fd00:44::/128"},
 				}},
 			},
@@ -275,9 +275,84 @@ func TestFinalizeAgentRejectsInvalidWireGuardPeerEndpoint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	if got := err.Error(); got != `agent.mesh.wireguard peer "node-2" invalid endpoint: address 127.0.0.1: no such host` &&
-		got != `agent.mesh.wireguard peer "node-2" invalid endpoint: host must be IPv6: "127.0.0.1"` {
+	if got := err.Error(); got != `agent.mesh.wireguard peer "node-2" invalid endpoint: host must be an IP:port endpoint: "node-2.example:51820"` {
 		t.Fatalf("unexpected error %q", got)
+	}
+}
+
+func TestFinalizeAgentRejectsLoopbackAdvertiseAddr(t *testing.T) {
+	t.Parallel()
+	cfg := validMinimalProductionAgent()
+	cfg.Node.AdvertiseAddr = "::1"
+	cfg.Mesh.WireGuard.AdvertiseEndpoint = ""
+	err := FinalizeAgent(&cfg)
+	if err == nil {
+		t.Fatal("expected loopback advertiseAddr to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "advertiseAddr") {
+		t.Fatalf("error should name advertiseAddr, got %q", got)
+	}
+}
+
+func TestFinalizeAgentRejectsInvalidOrMismatchedMeshHostIPv6(t *testing.T) {
+	t.Parallel()
+	for name, host := range map[string]string{"loopback": "::1", "mismatch": "fd00:30::11"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validMinimalProductionAgent()
+			cfg.Mesh.Host.IPv6 = host
+			if err := FinalizeAgent(&cfg); err == nil {
+				t.Fatalf("mesh host %q unexpectedly accepted", host)
+			}
+		})
+	}
+}
+
+func TestFinalizeAgentAcceptsEquivalentMeshHostIPv6Spelling(t *testing.T) {
+	t.Parallel()
+	cfg := validMinimalProductionAgent()
+	cfg.Mesh.Host.IPv6 = strings.ToUpper(cfg.Node.AdvertiseAddr)
+	if err := FinalizeAgent(&cfg); err != nil {
+		t.Fatalf("equivalent IPv6 spelling rejected: %v", err)
+	}
+}
+
+func TestFinalizeAgentAcceptsIPv4WireGuardEndpoint(t *testing.T) {
+	t.Parallel()
+
+	cfg := validMinimalProductionAgent()
+	cfg.Mesh.WireGuard.AdvertiseEndpoint = "192.0.2.10:51820"
+	if err := FinalizeAgent(&cfg); err != nil {
+		t.Fatalf("FinalizeAgent: %v", err)
+	}
+}
+
+func TestFinalizeAgentTrimsWireGuardEndpoint(t *testing.T) {
+	t.Parallel()
+	cfg := validMinimalProductionAgent()
+	cfg.Mesh.WireGuard.AdvertiseEndpoint = " 192.0.2.10:51820\t"
+	if err := FinalizeAgent(&cfg); err != nil {
+		t.Fatalf("FinalizeAgent: %v", err)
+	}
+	if got := cfg.Mesh.WireGuard.AdvertiseEndpoint; got != "192.0.2.10:51820" {
+		t.Fatalf("advertise endpoint = %q", got)
+	}
+}
+
+func TestFinalizeAgentRejectsSignedWireGuardPort(t *testing.T) {
+	t.Parallel()
+	cfg := validMinimalProductionAgent()
+	cfg.Mesh.WireGuard.AdvertiseEndpoint = "[2001:db8::10]:+51820"
+	if err := FinalizeAgent(&cfg); err == nil {
+		t.Fatal("signed WireGuard port was accepted")
+	}
+}
+
+func TestFinalizeAgentRejectsIPv4LimitedBroadcastEndpoint(t *testing.T) {
+	t.Parallel()
+	cfg := validMinimalProductionAgent()
+	cfg.Mesh.WireGuard.AdvertiseEndpoint = "255.255.255.255:51820"
+	if err := FinalizeAgent(&cfg); err == nil {
+		t.Fatal("limited broadcast WireGuard endpoint was accepted")
 	}
 }
 

@@ -103,6 +103,18 @@ func TestApplyNodeConfigKeepsPreviousAssignmentWhenUpdateFails(t *testing.T) {
 	}
 }
 
+func TestNextReconnectDelayBoundsReconnectStorms(t *testing.T) {
+	t.Parallel()
+
+	// A short-lived session grows the backoff to bound reconnect storms.
+	if got := nextReconnectDelay(initialReconnectDelay); got != 2*time.Second {
+		t.Fatalf("first unstable delay = %s, want 2s", got)
+	}
+	if got := nextReconnectDelay(maxReconnectDelay); got != maxReconnectDelay {
+		t.Fatalf("unstable delay at maximum = %s, want %s", got, maxReconnectDelay)
+	}
+}
+
 func TestRuntimeEventReconcileLoop(t *testing.T) {
 	t.Parallel()
 
