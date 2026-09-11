@@ -35,7 +35,7 @@ Files are slices of that queue, not sequential gates. Category is a tag, not a m
 - Control-plane replicas have no node-local authority: no shared filesystem of keys or source archives as the production contract.
 - In-process PKI signs agent mTLS and registry tokens. That is not a certificate-authority product. Sign and unwrap through a key provider; do not invent customer-facing CA ceremony.
 - Production integrations (object storage, KMS, billing, durable block storage, email) use narrow provider interfaces. Do not implement a new distributed database, workflow engine, storage engine, or global edge network here.
-- Overlay dual-stack (1.1) does not change the underlay. Agent `advertise_addr` stays IPv6 until an explicit underlay prompt exists; IPv4-only hosts cannot join the mesh.
+- Overlay dual-stack (1.1) is independent of the WireGuard underlay. Agent `advertise_addr` remains the IPv6 host identity, while the separately advertised WireGuard endpoint may use IPv4 or IPv6. Hosts still require IPv6 for the current host-identity model.
 
 ## Product gates
 

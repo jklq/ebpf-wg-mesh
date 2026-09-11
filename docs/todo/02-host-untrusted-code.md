@@ -210,7 +210,7 @@ Full mesh does not scale and is not required for fail-closed policy.
 Prompt:
 
 ```text
-Stop forming a WireGuard peer between every pair of agents. Create and maintain tunnels only (1) between agents that currently share at least one environment and (2) between those agents and the Envoy instances that publish their allocations. AllowedIPs on each peer are only that peer’s overlay prefixes, not the whole cluster. When the last shared environment leaves a pair of nodes, tear the peer down. Control-plane mTLS stays off the mesh. Underlay advertise_addr remains IPv6. Test: disjoint environments produce no agent-agent peer; adding a shared environment creates a peer; removing it destroys the peer; east-west same-environment still works; cross-environment stays denied without a tunnel; Envoy can still reach ready backends.
+Stop forming a WireGuard peer between every pair of agents. Create and maintain tunnels only (1) between agents that currently share at least one environment and (2) between those agents and the Envoy instances that publish their allocations. AllowedIPs on each peer are only that peer’s overlay prefixes, not the whole cluster. When the last shared environment leaves a pair of nodes, tear the peer down. Control-plane mTLS stays off the mesh. The IPv6 host identity remains separate from the address-family-neutral WireGuard endpoint. Test: disjoint environments produce no agent-agent peer; adding a shared environment creates a peer; removing it destroys the peer; east-west same-environment still works; cross-environment stays denied without a tunnel; Envoy can still reach ready backends.
 ```
 
 ## 2.13 Production-like topology harness

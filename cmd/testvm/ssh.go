@@ -42,7 +42,7 @@ func runRemoteScript(ctx context.Context, keyPath, host, scriptPath string, env 
 	}
 	cmdLine := ""
 	for key, value := range env {
-		cmdLine += fmt.Sprintf("%s=%q ", key, value)
+		cmdLine += key + "=" + shellQuote(value) + " "
 	}
 	cmdLine += "bash -s"
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs(keyPath, host, cmdLine)...)
@@ -50,6 +50,10 @@ func runRemoteScript(ctx context.Context, keyPath, host, scriptPath string, env 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func runRemoteCommand(ctx context.Context, keyPath, host, remoteCmd string) ([]byte, error) {
@@ -83,6 +87,7 @@ func sshBaseArgs(keyPath string) []string {
 	return []string{
 		"-i", keyPath,
 		"-o", "BatchMode=yes",
+		"-o", "LogLevel=ERROR",
 		"-o", "IdentitiesOnly=yes",
 		"-o", "ConnectTimeout=10",
 		"-o", "ConnectionAttempts=1",

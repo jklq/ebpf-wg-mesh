@@ -192,5 +192,5 @@ func failf(format string, args ...any) {
 }
 
 func infof(format string, args ...any) {
-	fmt.Printf("[testvm] "+format+"\n", args...)
+	fmt.Fprintf(os.Stderr, "[testvm] "+format+"\n", args...)
 }

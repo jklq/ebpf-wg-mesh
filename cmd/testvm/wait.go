@@ -102,8 +102,16 @@ func waitForCloudInit(ctx context.Context, keyPath, host string) error {
 		cmd := exec.CommandContext(attemptCtx, "ssh", sshArgs(keyPath, host, "if command -v cloud-init >/dev/null 2>&1; then cloud-init status --wait; else true; fi")...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
+			message := strings.TrimSpace(string(output))
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+				infof("cloud-init completed with recoverable errors on %s: %s", host, message)
+				return true, nil
+			}
+			if strings.Contains(message, "status: error") {
+				return false, fmt.Errorf("cloud-init reported error on %s: %s", host, message)
+			}
 			if attempt == 1 || attempt%6 == 0 {
-				message := strings.TrimSpace(string(output))
 				if message == "" {
 					message = err.Error()
 				}
@@ -316,8 +324,8 @@ func assertHTTPResponseInAllocationNetNS(ctx context.Context, sshKeyPath, host, 
 	}
 	url := "http://" + endpointAddr + path
 	cmd := fmt.Sprintf(
-		`ns=$(cat /var/lib/ebpf-wg-mesh/agent/netns/%s.path); body=$(nsenter --net="$ns" wget -q -T 10 -O - %q); test "$body" = %q`,
-		allocationID, url, expected,
+		`ns=$(cat %s); body=$(nsenter --net="$ns" wget -q -T 10 -O - %s); test "$body" = %s`,
+		shellQuote("/var/lib/ebpf-wg-mesh/agent/netns/"+allocationID+".path"), shellQuote(url), shellQuote(expected),
 	)
 	return waitForRemoteCommand(ctx, sshKeyPath, host, cmd)
 }
@@ -325,14 +333,14 @@ func assertHTTPResponseInAllocationNetNS(ctx context.Context, sshKeyPath, host, 
 func assertHTTPResponseFromContainer(ctx context.Context, sshKeyPath, host, containerName, endpointAddr, path, expected string) error {
 	url := "http://" + endpointAddr + path
 	execID := fmt.Sprintf("mesh-allow-%d", time.Now().UnixNano())
-	cmd := fmt.Sprintf("body=$(ctr --namespace default task exec --exec-id %q %q wget -q -T 10 -O - %q); test \"$body\" = %q", execID, containerName, url, expected)
+	cmd := fmt.Sprintf("body=$(ctr --namespace default task exec --exec-id %s %s wget -q -T 10 -O - %s); test \"$body\" = %s", shellQuote(execID), shellQuote(containerName), shellQuote(url), shellQuote(expected))
 	return waitForRemoteCommand(ctx, sshKeyPath, host, cmd)
 }
 
 func assertHTTPDeniedFromContainer(ctx context.Context, sshKeyPath, host, containerName, endpointAddr, path string) error {
 	url := "http://" + endpointAddr + path
 	execID := fmt.Sprintf("mesh-deny-%d", time.Now().UnixNano())
-	cmd := fmt.Sprintf("! ctr --namespace default task exec --exec-id %q %q wget -q -T 5 -O /dev/null %q", execID, containerName, url)
+	cmd := fmt.Sprintf("! ctr --namespace default task exec --exec-id %s %s wget -q -T 5 -O /dev/null %s", shellQuote(execID), shellQuote(containerName), shellQuote(url))
 	return waitForRemoteCommand(ctx, sshKeyPath, host, cmd)
 }
 
