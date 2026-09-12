@@ -2,7 +2,7 @@
 
 These prompts are done. They stay here so the work queue in [README.md](README.md) only lists open product-priority work. Old IDs are in parentheses.
 
-Current code still uses a full-cluster identity catalog, a full WireGuard mesh, a full desired-state snapshot on every agent, and a single Caddy. Those are not the architecture to preserve; [2.7a](02-host-untrusted-code.md#27a-xds-control-plane-and-caddy-cutover)–[2.12](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) replace them.
+Current code still uses an environment-scoped identity catalog, environment-scoped WireGuard peering, a full desired-state snapshot on every agent, and a single Caddy. The catalog, per-node sync, and ingress shapes are not the architecture to preserve; [2.7a](02-host-untrusted-code.md#27a-xds-control-plane-and-caddy-cutover), [2.10](02-host-untrusted-code.md#210-incremental-per-node-allocation-sync), and [2.11](02-host-untrusted-code.md#211-scoped-identity-policy)–[2.12](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) finish replacing them.
 
 ## Production configuration profile (0.4)
 

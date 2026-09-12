@@ -108,7 +108,7 @@ func applyDeploymentActionForTest(ctx context.Context, store *persistence, userI
 		return deliverycore.ServiceRecord{}, deliverycore.DeploymentActionRecord{}, err
 	}
 	var record deliverycore.DeploymentActionRecord
-	err = store.db.QueryRowContext(ctx, `SELECT id,service_id,target_deployment_id,result_deployment_id,action,allocation_id,idempotency_key,requested_by_user_id,created_at FROM deployment_actions WHERE service_id=$1 AND idempotency_key=$2`, serviceID, idempotencyKey).Scan(&record.ID, &record.ServiceID, &record.TargetDeploymentID, &record.ResultDeploymentID, &record.Action, &record.AllocationID, &record.IdempotencyKey, &record.RequestedByUserID, &record.CreatedAt)
+	err = store.db.QueryRowContext(ctx, `SELECT id,service_id,target_deployment_id,COALESCE(result_deployment_id,''),action,allocation_id,idempotency_key,requested_by_user_id,created_at FROM deployment_actions WHERE service_id=$1 AND idempotency_key=$2`, serviceID, idempotencyKey).Scan(&record.ID, &record.ServiceID, &record.TargetDeploymentID, &record.ResultDeploymentID, &record.Action, &record.AllocationID, &record.IdempotencyKey, &record.RequestedByUserID, &record.CreatedAt)
 	return result.Service, record, err
 }
 

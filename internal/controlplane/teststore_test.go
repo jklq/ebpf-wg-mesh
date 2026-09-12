@@ -60,6 +60,9 @@ func upsertTestAgent(t *testing.T, store *persistence, ctx context.Context, hell
 	if strings.TrimSpace(hello.WireguardEndpoint) == "" {
 		hello.WireguardEndpoint = "192.0.2.10:51820"
 	}
+	if hello.WireguardListenPort == 0 {
+		hello.WireguardListenPort = 51820
+	}
 	if strings.TrimSpace(hello.AdvertiseAddr) == "" {
 		hello.AdvertiseAddr = "fd00:30::"
 	}
@@ -177,6 +180,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"allocation_assignments",
 		"deployments",
 		"service_rollouts",
+		"service_delivery_status",
 		"domain_bindings",
 		"service_revisions",
 		"services",

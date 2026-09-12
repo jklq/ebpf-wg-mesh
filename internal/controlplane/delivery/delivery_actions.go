@@ -142,7 +142,7 @@ func (d *Delivery) applyDeploymentAction(
 			`INSERT INTO deployment_actions(
 				id, service_id, target_deployment_id, result_deployment_id, action,
 				allocation_id, idempotency_key, requested_by_user_id, created_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			) VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9)`,
 			actionRecord.ID, actionRecord.ServiceID, actionRecord.TargetDeploymentID,
 			actionRecord.ResultDeploymentID, actionRecord.Action, actionRecord.AllocationID,
 			actionRecord.IdempotencyKey, actionRecord.RequestedByUserID, actionRecord.CreatedAt,
@@ -266,15 +266,14 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	}
 	nextRollout := service.RolloutGeneration + 1
 	result, err := tx.ExecContext(ctx,
-		`UPDATE services
-		    SET current_spec_revision = $1,
-		        current_rollout_generation = $2,
-		        current_resolved_image = $3,
-		        desired_replica_count = $4,
-		        latest_build_id = $5,
-		        updated_at = $6
-		  WHERE id = $7 AND current_spec_revision = $8 AND current_rollout_generation = $9`,
-		nextSpecRevision, nextRollout, target.ImageDigest, desiredReplicas, target.BuildID, now,
+		`UPDATE service_delivery_status AS ds
+		    SET current_rollout_generation = $1,
+		        current_resolved_image = NULLIF($2, ''),
+		        latest_build_id = NULLIF($3, ''),
+		        updated_at = $4
+		  WHERE service_id = $5 AND COALESCE(current_rollout_generation, 0) = $7
+		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $6)`,
+		nextRollout, target.ImageDigest, target.BuildID, now,
 		service.ID, service.SpecRevision, service.RolloutGeneration,
 	)
 	if err != nil {
@@ -286,6 +285,9 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	}
 	if affected != 1 {
 		return "", ErrConcurrentUpdate
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, nextSpecRevision, desiredReplicas, now, service.ID); err != nil {
+		return "", err
 	}
 	journal.RecordService(ctx, service.ID)
 	if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, nextSpecRevision, strings.ToLower(reasonCode), target.BuildID, userID, now); err != nil {
@@ -417,7 +419,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, nil, now); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_resolved_image = '', updated_at = $1 WHERE id = $2`, now, service.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status SET current_resolved_image = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
 		return "", err
 	}
 	journal.RecordService(ctx, service.ID)
@@ -493,7 +495,7 @@ func (s *persistence) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.T
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE services SET current_resolved_image = '', placement_message = '', updated_at = $1 WHERE id = $2`,
+		`UPDATE service_delivery_status SET current_resolved_image = NULL, placement_message = NULL, updated_at = $1 WHERE service_id = $2`,
 		now, serviceID,
 	); err != nil {
 		return err
@@ -592,16 +594,14 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	}
 	nextRollout := service.RolloutGeneration + 1
 	result, err := tx.ExecContext(ctx,
-		`UPDATE services
-		    SET current_spec_revision = $1,
-		        current_rollout_generation = $2,
-		        current_resolved_image = '',
-		        desired_replica_count = $3,
-		        latest_build_id = '',
-		        updated_at = $4
-		  WHERE id = $5 AND current_spec_revision = $6 AND current_rollout_generation = $7`,
-		nextSpecRevision, nextRollout, desiredReplicas, now,
-		service.ID, service.SpecRevision, service.RolloutGeneration,
+		`UPDATE service_delivery_status AS ds
+		    SET current_rollout_generation = $1,
+		        current_resolved_image = NULL,
+		        latest_build_id = NULL,
+		        updated_at = $2
+		  WHERE service_id = $3 AND COALESCE(current_rollout_generation, 0) = $5
+		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $4)`,
+		nextRollout, now, service.ID, service.SpecRevision, service.RolloutGeneration,
 	)
 	if err != nil {
 		return "", err
@@ -612,6 +612,9 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	}
 	if affected != 1 {
 		return "", ErrConcurrentUpdate
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, nextSpecRevision, desiredReplicas, now, service.ID); err != nil {
+		return "", err
 	}
 	journal.RecordService(ctx, service.ID)
 	if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, nextSpecRevision, "retry", "", userID, now); err != nil {
@@ -646,7 +649,7 @@ func (s *persistence) latestSuccessfulDeploymentTx(ctx context.Context, tx *sql.
 func (s *persistence) deploymentActionByKeyTx(ctx context.Context, tx *sql.Tx, serviceID, userID, key string) (DeploymentActionRecord, bool, error) {
 	var rec DeploymentActionRecord
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, service_id, target_deployment_id, result_deployment_id, action,
+		`SELECT id, service_id, target_deployment_id, COALESCE(result_deployment_id, ''), action,
 		        allocation_id, idempotency_key, requested_by_user_id, created_at
 		   FROM deployment_actions
 		  WHERE service_id = $1 AND requested_by_user_id = $2 AND idempotency_key = $3
@@ -661,7 +664,7 @@ func (s *persistence) deploymentActionByKeyTx(ctx context.Context, tx *sql.Tx, s
 
 func (s *persistence) loadDeploymentActions(ctx context.Context, q ServiceQueryer, deploymentID string) ([]DeploymentActionRecord, error) {
 	rows, err := q.QueryContext(ctx,
-		`SELECT id, service_id, target_deployment_id, result_deployment_id, action,
+		`SELECT id, service_id, target_deployment_id, COALESCE(result_deployment_id, ''), action,
 		        allocation_id, idempotency_key, requested_by_user_id, created_at
 		   FROM deployment_actions WHERE target_deployment_id = $1 ORDER BY created_at ASC, id ASC`, deploymentID)
 	if err != nil {

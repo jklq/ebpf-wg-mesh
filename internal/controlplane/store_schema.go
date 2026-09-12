@@ -1,7 +1,11 @@
 package controlplane
 
-const currentSchemaVersion = 18
+const currentSchemaVersion = 19
 
+// currentSchema contains both owned relational references and retained external
+// identifiers. User IDs, GitHub repository links, and certificate enrollment
+// records intentionally have no foreign key: their owning system or lifecycle
+// is outside the referenced control-plane row.
 var currentSchema = []string{
 	`CREATE TABLE cluster_journal_heads (
 		cluster_id STRING PRIMARY KEY,
@@ -96,7 +100,7 @@ var currentSchema = []string{
 			kind STRING NOT NULL,
 			is_production BOOL NOT NULL DEFAULT FALSE,
 			network_identity INT8 NOT NULL UNIQUE,
-			copied_from_environment_id STRING NULL,
+			copied_from_environment_id STRING NULL REFERENCES environments(id) ON DELETE SET NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (project_id, name)
@@ -183,12 +187,7 @@ var currentSchema = []string{
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
 			name STRING NOT NULL,
 			current_spec_revision INT8 NOT NULL,
-			current_rollout_generation INT8 NOT NULL DEFAULT 0,
-			current_resolved_image STRING NOT NULL DEFAULT '',
-			last_successful_commit_sha STRING NOT NULL DEFAULT '',
-			latest_build_id STRING NOT NULL DEFAULT '',
 			desired_replica_count INT8 NOT NULL DEFAULT 1,
-			placement_message STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (environment_id, name)
@@ -201,6 +200,15 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, spec_revision)
 	)`,
+	`CREATE TABLE service_delivery_status (
+			service_id STRING PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+			current_rollout_generation INT8 NULL,
+			current_resolved_image STRING NULL,
+			last_successful_commit_sha STRING NULL,
+			latest_build_id STRING NULL,
+			placement_message STRING NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
 	`CREATE TABLE domain_bindings (
 			hostname STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -258,17 +266,20 @@ var currentSchema = []string{
 			rollout_generation INT8 NOT NULL,
 			spec_revision INT8 NOT NULL,
 			reason STRING NOT NULL,
-			build_id STRING NOT NULL DEFAULT '',
+			build_id STRING NULL,
 			requested_by_user_id STRING NOT NULL DEFAULT '',
 			state STRING NOT NULL,
 			strategy_json JSONB NOT NULL,
 			desired_replica_count INT8 NOT NULL,
 			image_digest STRING NOT NULL DEFAULT '',
 			failure_reason STRING NOT NULL DEFAULT '',
+			target_allocation_id STRING NULL,
 			completed_at TIMESTAMPTZ NULL,
 			progress_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			PRIMARY KEY (service_id, rollout_generation)
+			PRIMARY KEY (service_id, rollout_generation),
+			FOREIGN KEY (service_id, spec_revision)
+				REFERENCES service_revisions(service_id, spec_revision)
 		)`,
 	`CREATE INDEX idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
 	`CREATE TABLE deployments (
@@ -288,7 +299,10 @@ var currentSchema = []string{
 			is_current BOOL NOT NULL DEFAULT FALSE,
 			requested_by_user_id STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
+			updated_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (id, service_id),
+			FOREIGN KEY (service_id, spec_revision)
+				REFERENCES service_revisions(service_id, spec_revision)
 		)`,
 	`CREATE UNIQUE INDEX idx_deployments_service_current
 			ON deployments(service_id) WHERE is_current = TRUE`,
@@ -299,7 +313,7 @@ var currentSchema = []string{
 	`CREATE INDEX idx_deployments_service_updated
 			ON deployments(service_id, updated_at DESC, id)`,
 	`ALTER TABLE allocation_assignments ADD CONSTRAINT fk_allocation_assignment_deployment
-			FOREIGN KEY (deployment_id) REFERENCES deployments(id)`,
+			FOREIGN KEY (deployment_id, service_id) REFERENCES deployments(id, service_id)`,
 	`CREATE TABLE deployment_transitions (
 			id STRING PRIMARY KEY,
 			deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
@@ -319,14 +333,18 @@ var currentSchema = []string{
 	`CREATE TABLE deployment_actions (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-			target_deployment_id STRING NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
-			result_deployment_id STRING NOT NULL DEFAULT '',
+			target_deployment_id STRING NOT NULL,
+			result_deployment_id STRING NULL,
 			action STRING NOT NULL,
 			allocation_id STRING NOT NULL DEFAULT '',
 			idempotency_key STRING NOT NULL,
 			requested_by_user_id STRING NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			UNIQUE (service_id, requested_by_user_id, idempotency_key)
+			UNIQUE (service_id, requested_by_user_id, idempotency_key),
+			FOREIGN KEY (target_deployment_id, service_id)
+				REFERENCES deployments(id, service_id) ON DELETE CASCADE,
+			FOREIGN KEY (result_deployment_id, service_id)
+				REFERENCES deployments(id, service_id)
 		)`,
 	`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
 	`CREATE TABLE builder_workers (
@@ -344,11 +362,11 @@ var currentSchema = []string{
 			commit_message STRING NOT NULL DEFAULT '',
 			commit_author STRING NOT NULL DEFAULT '',
 			state STRING NOT NULL,
-			builder_id STRING NOT NULL DEFAULT '',
+			builder_id STRING NULL REFERENCES builder_workers(id) ON DELETE SET NULL,
 			image_digest STRING NOT NULL DEFAULT '',
 			failure_reason STRING NOT NULL DEFAULT '',
-			source_revision_id STRING NOT NULL DEFAULT '',
-			source_snapshot_id STRING NOT NULL DEFAULT '',
+			source_revision_id STRING NULL,
+			source_snapshot_id STRING NULL,
 			source_snapshot_digest STRING NOT NULL DEFAULT '',
 			build_recipe_json JSONB NOT NULL DEFAULT '{}',
 			target_rollout_generation INT8 NOT NULL DEFAULT 0,
@@ -453,7 +471,8 @@ var currentSchema = []string{
 			resolved_at TIMESTAMPTZ NOT NULL,
 			fresh_until TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
+			updated_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (id, service_id)
 		)`,
 	`CREATE INDEX idx_source_bindings_provider_repo_ref
 			ON source_bindings(provider, provider_repository_external_id, tracked_ref, service_id)`,
@@ -461,7 +480,7 @@ var currentSchema = []string{
 			ON source_bindings(provider, provider_scope_external_id, service_id)`,
 	`CREATE TABLE source_revisions (
 			id STRING PRIMARY KEY,
-			source_binding_id STRING NOT NULL REFERENCES source_bindings(id) ON DELETE CASCADE,
+			source_binding_id STRING NOT NULL,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			provider STRING NOT NULL,
 			provider_repository_external_id STRING NOT NULL DEFAULT '',
@@ -471,14 +490,16 @@ var currentSchema = []string{
 			commit_author STRING NOT NULL DEFAULT '',
 			observed_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			UNIQUE (source_binding_id, commit_sha)
+			UNIQUE (source_binding_id, commit_sha),
+			FOREIGN KEY (source_binding_id, service_id)
+				REFERENCES source_bindings(id, service_id) ON DELETE CASCADE
 		)`,
 	`CREATE INDEX idx_source_revisions_service_observed ON source_revisions(service_id, observed_at DESC, id)`,
 	`CREATE INDEX idx_source_revisions_provider_repo_commit
 			ON source_revisions(provider, provider_repository_external_id, commit_sha, id)`,
 	`CREATE TABLE source_snapshots (
 			id STRING PRIMARY KEY,
-			source_revision_id STRING NOT NULL DEFAULT '' UNIQUE,
+			source_revision_id STRING NULL UNIQUE REFERENCES source_revisions(id) ON DELETE SET NULL,
 			provider STRING NOT NULL,
 			provider_repository_external_id STRING NOT NULL DEFAULT '',
 			commit_sha STRING NOT NULL,
@@ -514,4 +535,14 @@ var currentSchema = []string{
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE INDEX idx_source_work_items_state ON source_work_items(state, available_at ASC, created_at ASC, id)`,
+	`ALTER TABLE service_delivery_status ADD CONSTRAINT fk_service_delivery_status_latest_build
+			FOREIGN KEY (latest_build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
+	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_source_revision
+			FOREIGN KEY (source_revision_id) REFERENCES source_revisions(id) ON DELETE SET NULL`,
+	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_source_snapshot
+			FOREIGN KEY (source_snapshot_id) REFERENCES source_snapshots(id) ON DELETE SET NULL`,
+	`ALTER TABLE service_rollouts ADD CONSTRAINT fk_service_rollouts_build
+			FOREIGN KEY (build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
+	`ALTER TABLE service_rollouts ADD CONSTRAINT fk_service_rollouts_target_allocation
+			FOREIGN KEY (target_allocation_id) REFERENCES allocation_assignments(id) ON DELETE SET NULL`,
 }

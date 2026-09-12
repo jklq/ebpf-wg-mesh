@@ -96,10 +96,11 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT s.id
 			FROM services s
+			JOIN service_delivery_status ds ON ds.service_id = s.id
 			LEFT JOIN service_rollouts r
-			  ON r.service_id = s.id AND r.rollout_generation = s.current_rollout_generation
+			  ON r.service_id = s.id AND r.rollout_generation = ds.current_rollout_generation
 			WHERE s.environment_id = $1
-			  AND (s.current_rollout_generation = 0 OR r.spec_revision IS DISTINCT FROM s.current_spec_revision)
+			  AND (ds.current_rollout_generation IS NULL OR r.spec_revision IS DISTINCT FROM s.current_spec_revision)
 			ORDER BY s.id FOR UPDATE OF s`, environment.ID)
 		if err != nil {
 			return err
@@ -265,15 +266,14 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 		resolvedImage = directImage
 	}
 	result, err := tx.ExecContext(ctx,
-		`UPDATE services
+		`UPDATE service_delivery_status AS ds
 		    SET current_rollout_generation = $1,
-		        current_resolved_image = $2,
-		        desired_replica_count = $3,
-		        updated_at = $4
-		  WHERE id = $5
-		    AND current_spec_revision = $6
-		    AND current_rollout_generation = $7`,
-		nextRolloutGeneration, resolvedImage, current.DesiredReplicaCount, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		        current_resolved_image = NULLIF($2, ''),
+		        updated_at = $3
+		  WHERE service_id = $4
+		    AND COALESCE(current_rollout_generation, 0) = $6
+		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $5)`,
+		nextRolloutGeneration, resolvedImage, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 	)
 	if err != nil {
 		return ServiceRecord{}, err
@@ -284,6 +284,9 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 	}
 	if affected == 0 {
 		return ServiceRecord{}, ErrConcurrentUpdate
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET desired_replica_count = $1, updated_at = $2 WHERE id = $3`, current.DesiredReplicaCount, now, serviceID); err != nil {
+		return ServiceRecord{}, err
 	}
 	journal.RecordService(ctx, serviceID)
 	if err := d.store.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "environment_release", "", userID, now); err != nil {

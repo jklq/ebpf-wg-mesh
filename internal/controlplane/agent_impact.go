@@ -28,16 +28,43 @@ func (s *database) bumpAffectedAgents(ctx context.Context, tx *sql.Tx, base jour
 }
 
 func affectedAgentIDs(ctx context.Context, tx *sql.Tx, base journal.DurableState, batch journal.Batch, domainServices map[string][]string) ([]string, error) {
-	if len(batch.Assignments) > 0 || agentDeltaRequiresClusterFanout(base, batch) {
-		return allAgentIDs(ctx, tx)
-	}
-
 	environments := make([]string, 0, len(batch.Environments)+len(batch.Volumes)+len(batch.Services))
 	for _, change := range batch.Environments {
 		environments = append(environments, change.Key)
 	}
 	environments = append(environments, volumeEnvironmentIDs(base, batch)...)
 	environments = append(environments, serviceEnvironmentIDs(base, batch, serviceIDsFromEnvScoped(batch))...)
+	changedPeers := peerChangedAgentIDs(base, batch)
+	assignmentServices := make([]string, 0, len(batch.Assignments)*2)
+	var assignmentAgents []string
+	for _, change := range batch.Assignments {
+		if before, ok := base.Assignments[change.Key]; ok {
+			assignmentServices = append(assignmentServices, before.ServiceID)
+			assignmentAgents = append(assignmentAgents, before.AgentID)
+		}
+		if change.Value != nil {
+			assignmentServices = append(assignmentServices, change.Value.ServiceID)
+			assignmentAgents = append(assignmentAgents, change.Value.AgentID)
+		}
+	}
+	if len(changedPeers) > 0 {
+		peerSet := make(map[string]bool, len(changedPeers))
+		for _, id := range changedPeers {
+			peerSet[id] = true
+		}
+		for _, assignment := range base.Assignments {
+			if peerSet[assignment.AgentID] && assignment.RolloutState != "lost" {
+				assignmentServices = append(assignmentServices, assignment.ServiceID)
+			}
+		}
+		predicate, args := stringIn("a.agent_id", changedPeers)
+		found, err := queryStrings(ctx, tx, `SELECT DISTINCT s.environment_id FROM allocation_assignments a JOIN services s ON s.id = a.service_id WHERE a.rollout_state <> 'lost' AND `+predicate, args...)
+		if err != nil {
+			return nil, err
+		}
+		environments = append(environments, found...)
+	}
+	environments = uniqueStrings(append(environments, serviceEnvironmentIDs(base, batch, assignmentServices)...))
 
 	serviceScoped := map[string]struct{}{}
 	for _, change := range batch.Rollouts {
@@ -68,6 +95,19 @@ func affectedAgentIDs(ctx context.Context, tx *sql.Tx, base journal.DurableState
 
 	var out []string
 	out = append(out, selfAgentIDs(base, batch)...)
+	out = append(out, assignmentAgents...)
+	// The SQL view is already updated; retain former members for removals.
+	environmentSet := make(map[string]bool, len(environments))
+	for _, id := range environments {
+		environmentSet[id] = true
+	}
+	if len(environmentSet) > 0 {
+		for _, assignment := range base.Assignments {
+			if environmentSet[base.Services[assignment.ServiceID].EnvironmentID] && assignment.RolloutState != "lost" {
+				out = append(out, assignment.AgentID)
+			}
+		}
+	}
 	if ids := uniqueStrings(environments); len(ids) > 0 {
 		found, err := agentIDsForEnvironments(ctx, tx, ids)
 		if err != nil {
@@ -131,7 +171,6 @@ func serviceEnvironmentIDs(base journal.DurableState, batch journal.Batch, servi
 	for _, id := range serviceIDs {
 		if envID, ok := fromBatch[id]; ok {
 			out = append(out, envID)
-			continue
 		}
 		if service, ok := base.Services[id]; ok {
 			out = append(out, service.EnvironmentID)
@@ -140,7 +179,8 @@ func serviceEnvironmentIDs(base journal.DurableState, batch journal.Batch, servi
 	return out
 }
 
-func agentDeltaRequiresClusterFanout(base journal.DurableState, batch journal.Batch) bool {
+func peerChangedAgentIDs(base journal.DurableState, batch journal.Batch) []string {
+	var out []string
 	for _, id := range changedAgentIDs(batch) {
 		beforeAgent, hasBeforeAgent := base.Agents[id]
 		beforeAdmin, hasBeforeAdmin := base.Administration[id]
@@ -148,14 +188,11 @@ func agentDeltaRequiresClusterFanout(base journal.DurableState, batch journal.Ba
 		afterAdmin, hasAfterAdmin := adminAfter(base, batch, id)
 		beforePeer := hasBeforeAgent && peerVisible(beforeAgent, beforeAdmin, hasBeforeAdmin)
 		afterPeer := hasAfterAgent && peerVisible(afterAgent, afterAdmin, hasAfterAdmin)
-		if beforePeer != afterPeer {
-			return true
-		}
-		if afterPeer && hasBeforeAgent && peerFieldsChanged(beforeAgent, afterAgent) {
-			return true
+		if beforePeer != afterPeer || afterPeer && hasBeforeAgent && peerFieldsChanged(beforeAgent, afterAgent) {
+			out = append(out, id)
 		}
 	}
-	return false
+	return out
 }
 
 func selfAgentIDs(base journal.DurableState, batch journal.Batch) []string {
@@ -244,10 +281,6 @@ func changedDomainsWithoutServiceHint(batch journal.Batch, domainServices map[st
 	return out
 }
 
-func allAgentIDs(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	return queryStrings(ctx, tx, `SELECT id::STRING FROM agent_registrations`)
-}
-
 func agentIDsForServices(ctx context.Context, tx *sql.Tx, serviceIDs []string) ([]string, error) {
 	predicate, args := stringIn("service_id", serviceIDs)
 	return queryStrings(ctx, tx, `SELECT DISTINCT agent_id FROM allocation_assignments WHERE `+predicate, args...)
@@ -259,7 +292,7 @@ func agentIDsForEnvironments(ctx context.Context, tx *sql.Tx, environmentIDs []s
 		SELECT DISTINCT a.agent_id
 		  FROM allocation_assignments a
 		  JOIN services s ON s.id = a.service_id
-		 WHERE `+predicate, args...)
+		 WHERE a.rollout_state <> 'lost' AND `+predicate, args...)
 }
 
 func agentIDsForProjects(ctx context.Context, tx *sql.Tx, projectIDs []string) ([]string, error) {
