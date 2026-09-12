@@ -154,6 +154,26 @@ describe("DashboardPage canvas", () => {
 		);
 	});
 
+	it("centers the undeployed banner inside the visible canvas", async () => {
+		const dirtyService = serviceRecord({
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+		});
+		const { container } = render(
+			<DashboardPage state={dashboardState(dirtyService)} />,
+		);
+		const prompt = container.querySelector(
+			"[data-workspace-prompt]",
+		) as HTMLElement;
+		expect(prompt.style.right).toBe("0px");
+
+		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
+
+		await waitFor(() =>
+			expect(prompt.style.right).toBe("var(--spacing-side-panel)"),
+		);
+	});
+
 	it("reveals and centers the canvas when it receives a size", async () => {
 		let width = 0;
 		let height = 0;
@@ -315,7 +335,7 @@ describe("DashboardPage canvas", () => {
 		).toBeTruthy();
 	});
 
-	it("renders a loading service on the canvas immediately while creation is in flight", async () => {
+	it("renders a selectable loading service on the canvas immediately", async () => {
 		const creation = deferred<{
 			project: { id: string; name: string; kind: string };
 			environment: {
@@ -343,9 +363,25 @@ describe("DashboardPage canvas", () => {
 		);
 
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-		const pendingNodes = container.querySelectorAll("[data-service-node]");
-		expect(pendingNodes).toHaveLength(1);
-		expect(pendingNodes[0].textContent).toMatch(/hello/i);
+		const pendingNode = container.querySelector(
+			"[data-service-node]",
+		) as HTMLButtonElement;
+		expect(pendingNode).toBeTruthy();
+		expect(pendingNode.textContent).toMatch(/creating service/i);
+		expect(screen.getByText("Creating service")).toBeTruthy();
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /close service panel/i }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("button", { name: /close service panel/i }),
+			).toBeNull(),
+		);
+		fireEvent.click(pendingNode);
+		expect(
+			screen.getByRole("button", { name: /close service panel/i }),
+		).toBeTruthy();
 
 		const created = serviceRecord();
 		creation.resolve({
@@ -365,7 +401,10 @@ describe("DashboardPage canvas", () => {
 		expect(
 			await screen.findByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();
-		expect(container.querySelectorAll("[data-service-node]")).toHaveLength(1);
+		const createdNode = container.querySelector("[data-service-node]");
+		expect(createdNode).toBeTruthy();
+		expect(createdNode?.textContent).toMatch(/hello/i);
+		expect(createdNode?.textContent).not.toMatch(/creating service/i);
 	});
 
 	it("reopens the repository picker with the error when creation fails", async () => {

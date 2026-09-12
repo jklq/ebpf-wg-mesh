@@ -72,6 +72,128 @@ describe("ServicePanel rename", () => {
 });
 
 describe("ServicePanel deployment badge", () => {
+	it("shows progress ticks for a partial building snapshot", () => {
+		const current = {
+			...service(),
+			latestDeployment: {
+				deploymentId: "deployment-1",
+				state: "DEPLOYMENT_STATE_BUILDING" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_BUILDER" as const,
+				causeId: "builder-1",
+				reasonCode: "BUILD_STARTED",
+				detail: "Building image",
+				specRevision: 1,
+				imageDigest: "",
+				rolloutGeneration: 1,
+			},
+		};
+		render(
+			<ServicePanel
+				service={current}
+				status={null}
+				project={undefined}
+				state={state()}
+				activeTab="deployments"
+				onTabChange={() => {}}
+				onClose={() => {}}
+				onRefresh={() => {}}
+				onServiceUpdated={() => {}}
+				onServiceDeleted={() => {}}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Service status").textContent).toContain(
+			"Building",
+		);
+		expect(screen.getByRole("img", { name: "Deploy progress" })).toBeTruthy();
+	});
+
+	it("starts the first progress tick while a build is queued", () => {
+		const current = {
+			...service(),
+			latestDeployment: {
+				deploymentId: "deployment-1",
+				state: "DEPLOYMENT_STATE_QUEUED_BUILD" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK" as const,
+				causeId: "github",
+				reasonCode: "BUILD_QUEUED",
+				detail: "Build queued from webhook",
+				specRevision: 1,
+				imageDigest: "",
+				rolloutGeneration: 1,
+			},
+		};
+		render(
+			<ServicePanel
+				service={current}
+				status={null}
+				project={undefined}
+				state={state()}
+				activeTab="deployments"
+				onTabChange={() => {}}
+				onClose={() => {}}
+				onRefresh={() => {}}
+				onServiceUpdated={() => {}}
+				onServiceDeleted={() => {}}
+			/>,
+		);
+
+		const progress = screen.getByRole("img", { name: "Deploy progress" });
+		expect(progress.children).toHaveLength(4);
+		expect(progress.firstElementChild?.className).toContain("bg-building");
+	});
+
+	it("does not retain deployment ticks while offline", () => {
+		const current = {
+			...service(),
+			latestBuild: {
+				buildId: "build-1",
+				state: "BUILD_STATE_SUCCEEDED" as const,
+				commitSha: "abc1234",
+				imageDigest: "image@sha256:abc",
+				failureReason: "",
+				stages: [
+					{
+						key: "build",
+						label: "Build",
+						detail: "Image ready",
+						state: "DEPLOYMENT_STAGE_STATE_SUCCEEDED" as const,
+					},
+				],
+			},
+			latestDeployment: {
+				deploymentId: "deployment-1",
+				state: "DEPLOYMENT_STATE_REMOVED" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
+				causeId: "user-1",
+				reasonCode: "SERVICE_REMOVED",
+				detail: "Service removed",
+				specRevision: 1,
+				imageDigest: "",
+				rolloutGeneration: 1,
+			},
+		};
+		render(
+			<ServicePanel
+				service={current}
+				status={null}
+				project={undefined}
+				state={state()}
+				activeTab="deployments"
+				onTabChange={() => {}}
+				onClose={() => {}}
+				onRefresh={() => {}}
+				onServiceUpdated={() => {}}
+				onServiceDeleted={() => {}}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Service status").textContent).toContain(
+			"Offline",
+		);
+		expect(screen.queryByRole("img", { name: "Deploy progress" })).toBeNull();
+	});
+
 	it("does not pulse Building while the service has undeployed changes", () => {
 		render(
 			<ServicePanel

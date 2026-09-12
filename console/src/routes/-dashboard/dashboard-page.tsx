@@ -1,4 +1,5 @@
 import { useRouter } from "@tanstack/react-router";
+import { Loader2, X } from "lucide-react";
 import {
 	lazy,
 	Suspense,
@@ -11,13 +12,16 @@ import {
 } from "react";
 import { cn } from "#/lib/cn";
 import {
-	type CreateServiceFastResult,
-	type DashboardHomeState,
-	type DashboardServiceRecord,
-	type DashboardServiceStatus,
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+} from "#/lib/dashboard/core/defaults";
+import type {
+	CreateServiceFastResult,
+	DashboardHomeState,
+	DashboardServiceRecord,
+	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { panelIconBtn } from "#/lib/ui-classes";
 
 import { useCreatedServiceCache } from "./created-service-cache";
 import {
@@ -53,8 +57,9 @@ import {
 } from "./dashboard-unapplied";
 import { EnvironmentDialog } from "./environment-dialog";
 import { nextNodePositionNear, nodePosition } from "./layout";
-import { NewServiceModalFallback } from "./new-service-modal-fallback";
+import { NewServiceModal } from "./new-service-modal";
 import {
+	doDeleteService,
 	doDiscardServiceChanges,
 	doReleaseEnvironment,
 	doSaveServicePosition,
@@ -100,26 +105,55 @@ function pendingServiceRecord(
 		},
 		createdAt: now,
 		updatedAt: now,
-		latestBuild: {
-			buildId: id,
-			state: "BUILD_STATE_QUEUED",
-			commitSha: "",
-			imageDigest: "",
-			failureReason: "",
-		},
 	};
 }
 
-const loadNewServiceModal = () =>
-	import("./new-service-modal").then((module) => ({
-		default: module.NewServiceModal,
-	}));
-const NewServiceModal = lazy(loadNewServiceModal);
 const ServicePanel = lazy(() =>
 	import("./service-panel").then((module) => ({
 		default: module.ServicePanel,
 	})),
 );
+
+function PendingServicePanel({
+	service,
+	onClose,
+}: {
+	service: DashboardServiceRecord;
+	onClose: () => void;
+}) {
+	return (
+		<>
+			<div className="flex h-header shrink-0 items-center gap-1.5 border-b border-line px-4 py-2">
+				<strong className="overflow-hidden font-display text-[22px] font-medium tracking-[-0.03em] text-ellipsis whitespace-nowrap text-ink">
+					{service.name}
+				</strong>
+				<span className="flex-1" />
+				<button
+					type="button"
+					className={panelIconBtn}
+					onClick={onClose}
+					title="Close service panel"
+				>
+					<X size={14} />
+				</button>
+			</div>
+			<div className="flex min-h-0 flex-1 items-center justify-center p-8">
+				<div className="flex max-w-72 flex-col items-center text-center">
+					<Loader2 size={22} className="animate-spin text-building" />
+					<div className="mt-4 font-display text-lg font-medium text-ink">
+						Creating service
+					</div>
+					<div className="mt-1 font-mono text-xs text-muted">
+						{service.spec?.source?.repositorySelector}
+					</div>
+					<div className="mt-3 text-xs leading-relaxed text-dim">
+						Preparing the service and its first undeployed configuration.
+					</div>
+				</div>
+			</div>
+		</>
+	);
+}
 
 export function DashboardPage({
 	state,
@@ -151,7 +185,9 @@ export function DashboardPage({
 	const [pendingCreations, setPendingCreations] = useState<
 		Array<PendingServiceCreation>
 	>([]);
+	const [selectedCreationId, setSelectedCreationId] = useState<string>();
 	const [createError, setCreateError] = useState<string>();
+	const services = useMemo(() => selectServicesArray(view), [view]);
 	const pendingRecords = useMemo(
 		() =>
 			pendingCreations.map((entry) =>
@@ -159,9 +195,13 @@ export function DashboardPage({
 			),
 		[pendingCreations, environmentId],
 	);
-	const services = useMemo(
-		() => [...selectServicesArray(view), ...pendingRecords],
-		[view, pendingRecords],
+	const canvasServices = useMemo(
+		() => [...services, ...pendingRecords],
+		[services, pendingRecords],
+	);
+	const pendingServiceIds = useMemo(
+		() => new Set(pendingRecords.map((service) => service.id)),
+		[pendingRecords],
 	);
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
 	const [showNewService, setShowNewService] = useState(false);
@@ -196,11 +236,15 @@ export function DashboardPage({
 	const previousEnvironmentIdRef = useRef<string | null>(environmentId);
 	const githubCatalogPromiseRef = useRef<Promise<void> | null>(null);
 	const selected = selectedId ? view.servicesById[selectedId] : undefined;
+	const selectedPending = selectedCreationId
+		? pendingRecords.find((service) => service.id === selectedCreationId)
+		: undefined;
+	const canvasSelectedId = selectedPending?.id ?? selectedId;
 	const canvas = useDashboardCanvas({
-		services,
+		services: canvasServices,
 		environmentId,
-		selectedId,
-		selected,
+		selectedId: canvasSelectedId,
+		selected: selected ?? selectedPending,
 		onDeselect: () => {
 			clearSelection();
 		},
@@ -270,6 +314,14 @@ export function DashboardPage({
 
 	const selectService = useCallback(
 		(serviceId: string) => {
+			if (serviceId.startsWith("pending-")) {
+				setSelectedCreationId(serviceId);
+				setView((current) => ({ ...current, selectedServiceId: null }));
+				setActiveTab("deployments");
+				navigateSelection(null);
+				return;
+			}
+			setSelectedCreationId(undefined);
 			setView((current) =>
 				current.selectedServiceId === serviceId
 					? current
@@ -282,6 +334,7 @@ export function DashboardPage({
 	);
 
 	const clearSelection = useCallback(() => {
+		setSelectedCreationId(undefined);
 		setView((current) =>
 			current.selectedServiceId === null
 				? current
@@ -502,7 +555,6 @@ export function DashboardPage({
 	};
 
 	const preloadNewService = () => {
-		void loadNewServiceModal();
 		void ensureGitHubCatalog();
 	};
 
@@ -510,13 +562,6 @@ export function DashboardPage({
 		setShowNewService(false);
 		setCreateError(undefined);
 	};
-
-	useEffect(() => {
-		const id = window.setTimeout(() => {
-			void loadNewServiceModal();
-		}, 0);
-		return () => window.clearTimeout(id);
-	}, []);
 
 	const handleTabChange = (tab: DashboardTab) => {
 		setActiveTab(tab);
@@ -536,7 +581,7 @@ export function DashboardPage({
 		const clientId = `${Date.now().toString(36)}-${creationCounterRef.current}`;
 		const shortName = trimmed.split("/").pop()?.trim() || "New service";
 		const spawnPosition = nextNodePositionNear(
-			servicesRef.current.map(
+			canvasServices.map(
 				(service, index) =>
 					canvas.servicePositions[service.id] ??
 					service.layoutPosition ??
@@ -556,17 +601,26 @@ export function DashboardPage({
 			...current,
 			{ clientId, selector: trimmed, name: shortName, position: spawnPosition },
 		]);
+		setSelectedCreationId(provisionalId);
 		setCreateError(undefined);
 		setShowNewService(false);
 	};
 
 	const handleCreateFailed = (selector: string, message: string) => {
 		const normalized = selector.trim().toLowerCase();
+		const failed = pendingCreationsRef.current.find(
+			(entry) => entry.selector.trim().toLowerCase() === normalized,
+		);
 		setPendingCreations((current) =>
 			current.filter(
 				(entry) => entry.selector.trim().toLowerCase() !== normalized,
 			),
 		);
+		if (failed) {
+			setSelectedCreationId((current) =>
+				current === `pending-${failed.clientId}` ? undefined : current,
+			);
+		}
 		setCreateError(message);
 		setShowNewService(true);
 	};
@@ -653,6 +707,7 @@ export function DashboardPage({
 				selectedServiceId: result.service.id,
 			};
 		});
+		setSelectedCreationId(undefined);
 		canvas.hasUserPanned.current = false;
 		setActiveTab("deployments");
 		setShowNewService(false);
@@ -738,10 +793,29 @@ export function DashboardPage({
 		setDiscardingChangeId(`service:${serviceId}`);
 		const basisRevision = revisionRef.current;
 		try {
+			const currentService = servicesRef.current.find(
+				(service) => service.id === serviceId,
+			);
+			const hasOtherUndeployedServices = servicesRef.current.some(
+				(service) => service.id !== serviceId && hasUnappliedChanges(service),
+			);
+			const rolloutGeneration =
+				currentService?.rolloutGeneration ??
+				currentService?.latestDeployment?.rolloutGeneration ??
+				0;
+			if (currentService && rolloutGeneration === 0) {
+				await doDeleteService({ data: { serviceId } });
+				handleServiceDeleted(serviceId);
+				if (!hasOtherUndeployedServices) setShowChangeDetails(false);
+				return;
+			}
 			const service = await doDiscardServiceChanges({
 				data: { serviceId, discardAll: true },
 			});
 			mergeServiceRecord(service, basisRevision);
+			if (!hasOtherUndeployedServices && !hasUnappliedChanges(service)) {
+				setShowChangeDetails(false);
+			}
 		} catch (error) {
 			setDeployError(`Discard failed: ${formatError(error)}`);
 		} finally {
@@ -807,9 +881,10 @@ export function DashboardPage({
 					clearSelection();
 				}}
 				panCursor={Boolean(canvas.panStart.current)}
-				promptLeft={canvas.promptLeft}
-				services={services}
-				selectedId={selectedId}
+				panelOpen={Boolean(selected || selectedPending)}
+				services={canvasServices}
+				pendingServiceIds={pendingServiceIds}
+				selectedId={canvasSelectedId}
 				localState={homeState}
 				showNewService={showNewService}
 				onAddService={openNewService}
@@ -829,11 +904,16 @@ export function DashboardPage({
 			<div
 				className={cn(
 					"fixed top-0 right-0 z-50 flex h-screen w-side-panel max-w-full translate-x-full flex-col overflow-hidden border-l border-line bg-[radial-gradient(920px_420px_at_100%_-40px,rgba(226,138,36,0.08),transparent_58%),linear-gradient(180deg,#1d1a16_0%,#141210_72%)] transition-transform duration-200 ease-out max-[900px]:w-screen",
-					selected && "translate-x-0",
+					(selected || selectedPending) && "translate-x-0",
 				)}
 			>
 				<div className="panel-grain" />
-				{selected && (
+				{selectedPending ? (
+					<PendingServicePanel
+						service={selectedPending}
+						onClose={clearSelection}
+					/>
+				) : selected ? (
 					<Suspense
 						fallback={
 							<ServicePanelFallback
@@ -859,23 +939,19 @@ export function DashboardPage({
 							onSpecSaveStateChange={setSelectedServiceWriteState}
 						/>
 					</Suspense>
-				)}
+				) : null}
 			</div>
 
 			{showNewService && (
-				<Suspense
-					fallback={<NewServiceModalFallback onClose={closeNewService} />}
-				>
-					<NewServiceModal
-						state={homeState}
-						catalogLoading={githubCatalogLoading}
-						initialError={createError}
-						onClose={closeNewService}
-						onCreated={handleCreated}
-						onCreating={handleCreating}
-						onCreateFailed={handleCreateFailed}
-					/>
-				</Suspense>
+				<NewServiceModal
+					state={homeState}
+					catalogLoading={githubCatalogLoading}
+					initialError={createError}
+					onClose={closeNewService}
+					onCreated={handleCreated}
+					onCreating={handleCreating}
+					onCreateFailed={handleCreateFailed}
+				/>
 			)}
 
 			{showChangeDetails && (

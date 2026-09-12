@@ -24,6 +24,7 @@ import {
 	buildStepHint,
 	deploymentBadgeLabel,
 	deploymentProgressCopy,
+	deploymentStagesForDisplay,
 	extractMissingEnvKeys,
 	focusDeploymentStage,
 	selectInlineLogSnippet,
@@ -74,7 +75,13 @@ export function DeploymentCard({
 	const build = record.build;
 	const allocation = record.allocation;
 	const status = record.status;
-	const reportedStages = build?.stages ?? record.stages ?? [];
+	const reportedStages = deploymentStagesForDisplay(
+		status,
+		build,
+		(build?.stages?.length ?? 0) > 0
+			? (build?.stages ?? [])
+			: (record.stages ?? []),
+	);
 	const stages = withSourceStage(service, build, reportedStages);
 	const active = hasActiveDeployment(status, build);
 	const timestamp =
@@ -90,7 +97,7 @@ export function DeploymentCard({
 		isCurrent: record.isCurrent,
 		status,
 	});
-	const meta = deploymentMeta(build, status, timestamp, nowMs);
+	const meta = deploymentMeta(build, timestamp, nowMs);
 	const failedStage = stages.find(
 		(stage) => stage.state === "DEPLOYMENT_STAGE_STATE_FAILED",
 	);

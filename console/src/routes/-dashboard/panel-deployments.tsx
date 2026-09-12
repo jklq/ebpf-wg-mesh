@@ -26,6 +26,7 @@ import {
 	hasActiveDeployment,
 	hydrateDeploymentRecord,
 	newIdempotencyKey,
+	reconcileCurrentDeployment,
 	shouldRenderDeploymentHistoryEntry,
 } from "./panel-deployments-helpers";
 import { doApplyDeploymentAction, fetchServiceDeployments } from "./server-fns";
@@ -67,15 +68,23 @@ export function PanelDeployments({
 		Array<DashboardDeploymentRecord>
 	>([]);
 	const [deploymentsError, setDeploymentsError] = useState<string>();
+	const [deploymentsLoading, setDeploymentsLoading] = useState(true);
 	const [logTarget, setLogTarget] = useState<DeploymentLogTarget | null>(null);
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const actionKeys = useRef(new Map<string, string>());
+	const deploymentActivityKey = [
+		currentService.latestBuild?.buildId,
+		currentService.latestBuild?.state,
+		currentService.latestDeployment?.state,
+		currentService.latestDeployment?.transitionedAt?.getTime(),
+	].join(":");
 
 	const loadDeployments = useCallback(async () => {
 		if (!project) {
 			setDeployments([]);
 			setDeploymentsError(undefined);
+			setDeploymentsLoading(false);
 			return;
 		}
 		try {
@@ -96,12 +105,16 @@ export function PanelDeployments({
 		} catch (cause) {
 			setDeployments([]);
 			setDeploymentsError(formatError(cause, "Unable to load deployments."));
+		} finally {
+			setDeploymentsLoading(false);
 		}
 	}, [project, service.id]);
 
 	useEffect(() => {
+		// A status event is the invalidation signal for this service's history.
+		void deploymentActivityKey;
 		void loadDeployments();
-	}, [loadDeployments]);
+	}, [deploymentActivityKey, loadDeployments]);
 
 	const applyAction = useCallback(
 		async (
@@ -136,9 +149,13 @@ export function PanelDeployments({
 		return () => window.clearInterval(id);
 	}, []);
 
+	const visibleDeployments = useMemo(
+		() => reconcileCurrentDeployment(deployments, currentService),
+		[deployments, currentService],
+	);
 	const { live: liveDeployments, history: previousDeployments } =
 		useMemo(() => {
-			const partitioned = partitionDeployments(deployments);
+			const partitioned = partitionDeployments(visibleDeployments);
 			return {
 				live: partitioned.live.filter((entry) =>
 					shouldRenderDeploymentHistoryEntry(entry, currentService),
@@ -147,7 +164,7 @@ export function PanelDeployments({
 					shouldRenderDeploymentHistoryEntry(entry, currentService),
 				),
 			};
-		}, [deployments, currentService]);
+		}, [visibleDeployments, currentService]);
 
 	const shouldPollDeployments = liveDeployments.some(
 		(entry) =>
@@ -177,6 +194,10 @@ export function PanelDeployments({
 		return () =>
 			document.removeEventListener("keydown", onKeyDown, { capture: true });
 	}, [logTarget]);
+
+	useEffect(() => {
+		if (!project && logTarget) setLogTarget(null);
+	}, [project, logTarget]);
 
 	return (
 		<div className="relative h-full overflow-hidden">
@@ -286,48 +307,75 @@ export function PanelDeployments({
 						{deploymentsError}
 					</div>
 				)}
-			</div>
 
-			<div
-				aria-hidden={logTarget ? undefined : true}
-				className={cn(
-					"absolute inset-0 z-[2] flex flex-col border-l border-line bg-surface transition-transform duration-200 ease-out",
-					logTarget ? "translate-x-0" : "translate-x-[102%]",
-				)}
-			>
-				<div className="flex shrink-0 items-start gap-3 border-b border-line p-4 max-[900px]:flex-col max-[900px]:items-stretch">
-					<button
-						type="button"
-						className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 border border-line bg-transparent px-2.5 font-condensed text-[11px] font-bold uppercase tracking-[0.09em] text-ink hover:bg-surface-hover"
-						onClick={() => setLogTarget(null)}
-					>
-						<ArrowLeft size={14} />
-						Back
-					</button>
-					<div className="min-w-0 flex-1">
-						<div className="font-condensed text-sm font-bold uppercase tracking-[0.08em] text-ink">
-							Deployment logs
-						</div>
-						{logTarget?.title && (
-							<div className="mt-1 text-xs leading-[1.4] text-muted">
-								{logTarget.title}
-								{logTarget.subtitle ? ` • ${logTarget.subtitle}` : ""}
+				{!deploymentsLoading &&
+					!deploymentsError &&
+					liveDeployments.length === 0 &&
+					previousDeployments.length === 0 && (
+						<div
+							className="flex min-h-48 flex-1 items-center justify-center border border-line px-6 text-center"
+							style={{
+								backgroundImage:
+									"radial-gradient(circle, rgba(126,119,110,0.32) 1px, transparent 1px)",
+								backgroundSize: "14px 14px",
+							}}
+						>
+							<div className="bg-surface px-4 py-3">
+								<div className="font-display text-base font-medium text-ink">
+									Nothing deployed yet
+								</div>
+								<div className="mt-1 text-xs text-muted">
+									{currentService.pendingChanges
+										? "Deploy your changes to create the first deployment."
+										: "Deployment activity will appear here."}
+								</div>
 							</div>
-						)}
-					</div>
-				</div>
-
-				{logTarget && project && (
-					<DeploymentLogsView
-						service={currentService}
-						project={project}
-						build={logTarget.build}
-						allocation={logTarget.allocation}
-						rolloutGeneration={logTarget.rolloutGeneration}
-						active={logTarget.active}
-					/>
-				)}
+						</div>
+					)}
 			</div>
+
+			{project && (
+				<div
+					aria-hidden={logTarget ? undefined : true}
+					className={cn(
+						"absolute inset-0 z-[2] flex flex-col border-l border-line bg-surface transition-transform duration-200 ease-out",
+						logTarget ? "translate-x-0" : "translate-x-[102%]",
+					)}
+				>
+					<div className="flex shrink-0 items-start gap-3 border-b border-line p-4 max-[900px]:flex-col max-[900px]:items-stretch">
+						<button
+							type="button"
+							className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 border border-line bg-transparent px-2.5 font-condensed text-[11px] font-bold uppercase tracking-[0.09em] text-ink hover:bg-surface-hover"
+							onClick={() => setLogTarget(null)}
+						>
+							<ArrowLeft size={14} />
+							Back
+						</button>
+						<div className="min-w-0 flex-1">
+							<div className="font-condensed text-sm font-bold uppercase tracking-[0.08em] text-ink">
+								Deployment logs
+							</div>
+							{logTarget?.title && (
+								<div className="mt-1 text-xs leading-[1.4] text-muted">
+									{logTarget.title}
+									{logTarget.subtitle ? ` • ${logTarget.subtitle}` : ""}
+								</div>
+							)}
+						</div>
+					</div>
+
+					{logTarget && (
+						<DeploymentLogsView
+							service={currentService}
+							project={project}
+							build={logTarget.build}
+							allocation={logTarget.allocation}
+							rolloutGeneration={logTarget.rolloutGeneration}
+							active={logTarget.active}
+						/>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

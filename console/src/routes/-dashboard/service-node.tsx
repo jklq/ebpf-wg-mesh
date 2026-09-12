@@ -1,4 +1,4 @@
-import { Server, Terminal } from "lucide-react";
+import { Loader2, Server, Terminal } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { cn } from "#/lib/cn";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
@@ -12,12 +12,14 @@ export function ServiceNode({
 	service,
 	pos,
 	selected,
+	pending = false,
 	onMouseDown,
 	onSelect,
 }: {
 	service: DashboardServiceRecord;
 	pos: { x: number; y: number };
 	selected: boolean;
+	pending?: boolean;
 	onMouseDown: (event: ReactMouseEvent<HTMLElement>) => void;
 	onSelect: () => void;
 }) {
@@ -62,6 +64,12 @@ export function ServiceNode({
 			</div>
 
 			<div className="flex flex-col gap-[5px] px-3.5 pt-2 pb-2.5">
+				{pending && (
+					<div className="flex items-center gap-[5px] font-mono text-[11px] text-building">
+						<Loader2 size={10} className="shrink-0 animate-spin" />
+						Creating service…
+					</div>
+				)}
 				{repoShort && (
 					<div className="flex items-center gap-[5px] overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
 						<Server size={10} className="shrink-0" />

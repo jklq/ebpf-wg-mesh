@@ -228,25 +228,6 @@ export function deploymentBadgeLabel(
 	}
 }
 
-export function deploymentCauseLabel(
-	causeKind: DashboardDeploymentStatus["causeKind"] | undefined,
-): string | undefined {
-	switch (causeKind) {
-		case "DEPLOYMENT_CAUSE_KIND_WEBHOOK":
-			return "via GitHub";
-		case "DEPLOYMENT_CAUSE_KIND_USER":
-			return "via dashboard";
-		case "DEPLOYMENT_CAUSE_KIND_BUILDER":
-			return "via builder";
-		case "DEPLOYMENT_CAUSE_KIND_AGENT":
-			return "via agent";
-		case "DEPLOYMENT_CAUSE_KIND_SYSTEM":
-			return "via system";
-		default:
-			return undefined;
-	}
-}
-
 export function focusDeploymentStage(
 	stages: Array<DashboardDeploymentStage>,
 ): DashboardDeploymentStage | undefined {
@@ -255,6 +236,99 @@ export function focusDeploymentStage(
 		stages.find((stage) => stage.state === "DEPLOYMENT_STAGE_STATE_RUNNING") ??
 		stages.find((stage) => stage.state === "DEPLOYMENT_STAGE_STATE_PENDING")
 	);
+}
+
+export function deploymentStagesForDisplay(
+	status: DashboardDeploymentStatus | undefined,
+	build: DashboardBuildStatus | undefined,
+	reported: Array<DashboardDeploymentStage>,
+): Array<DashboardDeploymentStage> {
+	if (reported.length > 0) return reported;
+	const state = status?.state;
+	if (!state && !build) return [];
+
+	const buildRunning =
+		state === "DEPLOYMENT_STATE_BUILDING" ||
+		build?.state === "BUILD_STATE_RUNNING";
+	const buildFailed =
+		build?.state === "BUILD_STATE_FAILED" ||
+		state === "DEPLOYMENT_STATE_FAILED";
+	const buildComplete = Boolean(
+		build?.state === "BUILD_STATE_SUCCEEDED" ||
+			state === "DEPLOYMENT_STATE_SCHEDULING" ||
+			state === "DEPLOYMENT_STATE_IMAGE_PULL" ||
+			state === "DEPLOYMENT_STATE_STARTING" ||
+			state === "DEPLOYMENT_STATE_READINESS" ||
+			state === "DEPLOYMENT_STATE_ACTIVE" ||
+			state === "DEPLOYMENT_STATE_DRAINING" ||
+			state === "DEPLOYMENT_STATE_COMPLETED",
+	);
+	const deployRunning = Boolean(
+		state === "DEPLOYMENT_STATE_SCHEDULING" ||
+			state === "DEPLOYMENT_STATE_IMAGE_PULL" ||
+			state === "DEPLOYMENT_STATE_STARTING",
+	);
+	const deployComplete = Boolean(
+		state === "DEPLOYMENT_STATE_READINESS" ||
+			state === "DEPLOYMENT_STATE_ACTIVE" ||
+			state === "DEPLOYMENT_STATE_DRAINING" ||
+			state === "DEPLOYMENT_STATE_COMPLETED",
+	);
+	const postDeployRunning = state === "DEPLOYMENT_STATE_READINESS";
+	const postDeployComplete = Boolean(
+		state === "DEPLOYMENT_STATE_ACTIVE" ||
+			state === "DEPLOYMENT_STATE_DRAINING" ||
+			state === "DEPLOYMENT_STATE_COMPLETED",
+	);
+
+	return [
+		{
+			key: "build",
+			label: "Build",
+			detail: buildFailed
+				? build?.failureReason || status?.detail || "Build failed"
+				: buildRunning
+					? status?.detail || "Building image"
+					: buildComplete
+						? "Image ready"
+						: "Waiting for build",
+			state: buildFailed
+				? "DEPLOYMENT_STAGE_STATE_FAILED"
+				: buildRunning
+					? "DEPLOYMENT_STAGE_STATE_RUNNING"
+					: buildComplete
+						? "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
+						: "DEPLOYMENT_STAGE_STATE_PENDING",
+		},
+		{
+			key: "deploy",
+			label: "Deploy",
+			detail: deployRunning
+				? status?.detail || "Deploying service"
+				: deployComplete
+					? "Service running"
+					: "Waiting for build to finish",
+			state: deployRunning
+				? "DEPLOYMENT_STAGE_STATE_RUNNING"
+				: deployComplete
+					? "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
+					: "DEPLOYMENT_STAGE_STATE_PENDING",
+		},
+		{
+			key: "post-deploy",
+			label: "Post-deploy",
+			detail: postDeployRunning
+				? status?.detail || "Waiting for readiness"
+				: postDeployComplete
+					? "Deployment ready"
+					: "Waiting for rollout",
+			state: postDeployRunning
+				? "DEPLOYMENT_STAGE_STATE_RUNNING"
+				: postDeployComplete
+					? "DEPLOYMENT_STAGE_STATE_SUCCEEDED"
+					: "DEPLOYMENT_STAGE_STATE_PENDING",
+		},
+	];
 }
 
 export function deploymentProgressCopy(options: {

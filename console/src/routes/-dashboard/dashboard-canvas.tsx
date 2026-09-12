@@ -248,8 +248,9 @@ export function DashboardCanvasStage({
 	onResetView,
 	onEscape,
 	panCursor,
-	promptLeft,
+	panelOpen,
 	services,
+	pendingServiceIds,
 	selectedId,
 	localState,
 	showNewService,
@@ -283,8 +284,9 @@ export function DashboardCanvasStage({
 	onResetView: () => void;
 	onEscape: () => void;
 	panCursor: boolean;
-	promptLeft: number | undefined;
+	panelOpen: boolean;
 	services: Array<DashboardServiceRecord>;
+	pendingServiceIds: ReadonlySet<string>;
 	selectedId: string | null;
 	localState: DashboardHomeState;
 	showNewService: boolean;
@@ -333,7 +335,14 @@ export function DashboardCanvasStage({
 						service={service}
 						pos={servicePositions[service.id] ?? nodePosition(index)}
 						selected={service.id === selectedId}
-						onMouseDown={(event) => onServiceMouseDown(service.id, event)}
+						pending={pendingServiceIds.has(service.id)}
+						onMouseDown={(event) => {
+							if (pendingServiceIds.has(service.id)) {
+								event.stopPropagation();
+								return;
+							}
+							onServiceMouseDown(service.id, event);
+						}}
 						onSelect={() => onSelectService(service.id)}
 					/>
 				))}
@@ -349,68 +358,71 @@ export function DashboardCanvasStage({
 
 			{showPrompt && (
 				<div
-					key={changeSignature || "deploy-prompt"}
 					data-workspace-prompt=""
 					className={cn(
-						"absolute top-[18px] z-[35] flex min-w-[min(520px,calc(100vw-48px))] max-w-[calc(100vw-48px)] -translate-x-1/2 items-center gap-3.5 border border-line-bright bg-surface bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_40%)] py-[11px] pr-3 pl-4 shadow-[inset_3px_0_0_var(--color-accent),0_16px_40px_rgba(0,0,0,0.4)] max-sm:top-3 max-sm:flex-col max-sm:items-stretch",
-						deployError &&
-							"border-failed/50 shadow-[inset_3px_0_0_var(--color-failed),0_16px_40px_rgba(0,0,0,0.4)]",
-						!deployError &&
-							applyingChangeCount > 0 &&
-							"border-building/50 shadow-[inset_3px_0_0_var(--color-building),0_16px_40px_rgba(0,0,0,0.4)]",
-						changeSignature && "animate-dirty-banner-nudge",
+						"pointer-events-none absolute top-[18px] right-0 left-0 z-[35] flex justify-center px-6 max-sm:top-3",
+						panelOpen && "max-[900px]:hidden",
 					)}
-					style={
-						promptLeft === undefined
-							? { display: "none" }
-							: { left: promptLeft }
-					}
+					style={{ right: panelOpen ? "var(--spacing-side-panel)" : 0 }}
 				>
-					<div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden max-sm:flex-wrap">
-						<span className="shrink-0 font-display text-[18px] font-medium tracking-[-0.02em] text-ink">
-							{dirtyPromptTitle({
-								applying: applyingChangeCount,
-								deployError,
-								deploying: deployingChanges,
-							})}
-						</span>
-						<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
-							{dirtyPromptDetail({
-								applying: applyingChangeCount,
-								deployable: deployableUnappliedChanges,
-								saving: hasPendingSpecWrites,
-								total: totalUnappliedChanges,
-							})}
-						</span>
-						{deployError && (
-							<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-failed">
-								{deployError}
+					<div
+						key={changeSignature || "deploy-prompt"}
+						className={cn(
+							"pointer-events-auto flex w-fit min-w-[min(520px,100%)] max-w-full items-center gap-3.5 overflow-hidden border border-line-bright bg-surface bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_40%)] py-[11px] pr-3 pl-4 shadow-[inset_3px_0_0_var(--color-accent),0_16px_40px_rgba(0,0,0,0.4)] max-sm:flex-col max-sm:items-stretch",
+							deployError &&
+								"border-failed/50 shadow-[inset_3px_0_0_var(--color-failed),0_16px_40px_rgba(0,0,0,0.4)]",
+							!deployError &&
+								applyingChangeCount > 0 &&
+								"border-building/50 shadow-[inset_3px_0_0_var(--color-building),0_16px_40px_rgba(0,0,0,0.4)]",
+							changeSignature && "animate-dirty-banner-nudge",
+						)}
+					>
+						<div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden max-sm:flex-wrap">
+							<span className="shrink-0 font-display text-[18px] font-medium tracking-[-0.02em] text-ink">
+								{dirtyPromptTitle({
+									applying: applyingChangeCount,
+									deployError,
+									deploying: deployingChanges,
+								})}
 							</span>
-						)}
+							<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-muted">
+								{dirtyPromptDetail({
+									applying: applyingChangeCount,
+									deployable: deployableUnappliedChanges,
+									saving: hasPendingSpecWrites,
+									total: totalUnappliedChanges,
+								})}
+							</span>
+							{deployError && (
+								<span className="min-w-0 overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap text-failed">
+									{deployError}
+								</span>
+							)}
+						</div>
+						<button
+							type="button"
+							className={btnSecondary}
+							onClick={onShowDetails}
+						>
+							Details
+						</button>
+						<button
+							type="button"
+							className={btnPrimary}
+							onClick={onDeploy}
+							disabled={
+								deployingChanges ||
+								(!hasPendingSpecWrites && deployableUnappliedChanges === 0)
+							}
+						>
+							{deployingChanges ? (
+								<Loader2 size={13} className="animate-spin" />
+							) : (
+								<UploadCloud size={13} />
+							)}
+							{deployActionLabel({ deploying: deployingChanges })}
+						</button>
 					</div>
-					<button
-						type="button"
-						className={btnSecondary}
-						onClick={onShowDetails}
-					>
-						Details
-					</button>
-					<button
-						type="button"
-						className={btnPrimary}
-						onClick={onDeploy}
-						disabled={
-							deployingChanges ||
-							(!hasPendingSpecWrites && deployableUnappliedChanges === 0)
-						}
-					>
-						{deployingChanges ? (
-							<Loader2 size={13} className="animate-spin" />
-						) : (
-							<UploadCloud size={13} />
-						)}
-						{deployActionLabel({ deploying: deployingChanges })}
-					</button>
 				</div>
 			)}
 

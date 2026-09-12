@@ -9,6 +9,12 @@ import type { ServiceHealth } from "./types";
 export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
 	const deployment = service.latestDeployment;
 	if (deployment) {
+		if (
+			deployment.state === "DEPLOYMENT_STATE_STAGED" &&
+			deployment.rolloutGeneration === 0
+		) {
+			return "offline";
+		}
 		switch (deployment.state) {
 			case "DEPLOYMENT_STATE_ACTIVE":
 			case "DEPLOYMENT_STATE_DRAINING":

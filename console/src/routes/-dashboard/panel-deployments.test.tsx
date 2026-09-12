@@ -174,7 +174,7 @@ describe("deployments panel inline failure", () => {
 	});
 
 	it("still opens the full log from the failed stage", async () => {
-		render(
+		const { rerender } = render(
 			<PanelDeployments
 				service={failedService()}
 				status={null}
@@ -184,6 +184,15 @@ describe("deployments panel inline failure", () => {
 
 		fireEvent.click(await screen.findByRole("button", { name: "Full log" }));
 		expect(screen.getByText("Deployment logs")).toBeTruthy();
+
+		rerender(
+			<PanelDeployments
+				service={failedService()}
+				status={null}
+				project={undefined}
+			/>,
+		);
+		expect(screen.queryByText("Deployment logs")).toBeNull();
 	});
 });
 
@@ -220,6 +229,7 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getAllByRole("button", { name: "View logs" }).length).toBe(2);
 		expect(screen.queryByText("Source")).toBeNull();
 		expect(screen.queryByText("Post-deploy")).toBeNull();
+		expect(screen.queryByText(/via (GitHub|dashboard|system)/)).toBeNull();
 
 		const historyToggle = screen.getByRole("button", { name: /History/ });
 		expect(historyToggle.textContent).toContain("1");
@@ -234,6 +244,103 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getByRole("menuitem", { name: "Cancel" })).toBeTruthy();
 		expect(screen.getByRole("menuitem", { name: "Rollback" })).toBeTruthy();
 		expect(screen.queryByRole("menuitem", { name: "Redeploy" })).toBeNull();
+	});
+
+	it("shows an intentional empty state before the first deployment", async () => {
+		serverFns.fetchServiceDeployments.mockResolvedValue([]);
+		const service = rollingService({
+			latestBuild: undefined,
+			latestDeployment: undefined,
+			pendingChanges: true,
+		});
+
+		render(
+			<PanelDeployments service={service} status={null} project={project()} />,
+		);
+
+		expect(await screen.findByText("Nothing deployed yet")).toBeTruthy();
+		expect(
+			screen.getByText("Deploy your changes to create the first deployment."),
+		).toBeTruthy();
+	});
+
+	it("keeps generation-zero staged configuration out of deployment history", async () => {
+		const stagedStatus = {
+			deploymentId: "deploy-staged",
+			state: "DEPLOYMENT_STATE_STAGED" as const,
+			causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
+			causeId: "user-1",
+			reasonCode: "SERVICE_STAGED",
+			detail: "Configuration staged",
+			specRevision: 1,
+			imageDigest: "",
+			rolloutGeneration: 0,
+		};
+		serverFns.fetchServiceDeployments.mockResolvedValue([
+			{
+				id: stagedStatus.deploymentId,
+				rolloutGeneration: 0,
+				isCurrent: true,
+				status: stagedStatus,
+			},
+		]);
+		const service = rollingService({
+			rolloutGeneration: 0,
+			latestBuild: undefined,
+			latestDeployment: stagedStatus,
+			pendingChanges: true,
+		});
+
+		render(
+			<PanelDeployments service={service} status={null} project={project()} />,
+		);
+
+		expect(await screen.findByText("Nothing deployed yet")).toBeTruthy();
+		expect(screen.queryByText(/Configuration staged/)).toBeNull();
+	});
+
+	it("refreshes empty history when live status announces a deployment", async () => {
+		serverFns.fetchServiceDeployments
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([buildingDeployment()]);
+		const initialService = rollingService({
+			latestBuild: undefined,
+			latestDeployment: undefined,
+		});
+		const { rerender } = render(
+			<PanelDeployments
+				service={initialService}
+				status={null}
+				project={project()}
+			/>,
+		);
+		await screen.findByText("Nothing deployed yet");
+
+		rerender(
+			<PanelDeployments
+				service={initialService}
+				status={rollingStatus()}
+				project={project()}
+			/>,
+		);
+
+		expect(await screen.findByText("Building")).toBeTruthy();
+		expect(serverFns.fetchServiceDeployments).toHaveBeenCalledTimes(2);
+	});
+
+	it("shows the live building deployment before history catches up", () => {
+		serverFns.fetchServiceDeployments.mockReturnValue(new Promise(() => {}));
+		const service = rollingService({ latestBuild: undefined });
+
+		render(
+			<PanelDeployments service={service} status={null} project={project()} />,
+		);
+
+		expect(screen.getByText("Building")).toBeTruthy();
+		expect(screen.getByRole("img", { name: "Deploy steps" })).toBeTruthy();
+		expect(
+			screen.getByText("Deployment in progress: Publishing image"),
+		).toBeTruthy();
 	});
 
 	it("puts active deployment actions in a menu with remove last", async () => {
