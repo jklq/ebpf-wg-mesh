@@ -1,4 +1,4 @@
-package controlplane
+package registry
 
 import (
 	"context"
@@ -15,17 +15,17 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func TestRegistryPolicyMintsExactBuildScopedCapability(t *testing.T) {
+func TestPolicyMintsExactBuildScopedCapability(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC().Truncate(time.Second)
 	cfg := testRegistryConfig()
-	auth, err := NewRegistryAuth(cfg, t.TempDir())
+	auth, err := NewAuth(cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	auth.now = func() time.Time { return now }
-	policy := NewRegistryPolicy(cfg, auth)
+	policy := NewPolicy(cfg, auth)
 	policy.now = auth.now
 	pushRef := policy.PushRef("project-1", "environment-1", "build-7", "service-2", "deadbeef")
 	if want := "registry.example.test:5000/mesh/project-1/environment-1/build-7/service-2:git-deadbeef"; pushRef != want {
@@ -48,11 +48,11 @@ func TestRegistryPolicyMintsExactBuildScopedCapability(t *testing.T) {
 	}
 }
 
-func TestRegistryAuthIntersectsRequestedScope(t *testing.T) {
+func TestAuthIntersectsRequestedScope(t *testing.T) {
 	t.Parallel()
 
 	cfg := testRegistryConfig()
-	auth, err := NewRegistryAuth(cfg, t.TempDir())
+	auth, err := NewAuth(cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestRegistryAuthIntersectsRequestedScope(t *testing.T) {
 	requestToken := func(scope string) registryTokenClaims {
 		t.Helper()
 		query := url.Values{"service": {cfg.TokenService}, "scope": {scope}}
-		req := httptest.NewRequest(http.MethodGet, RegistryTokenPath+"?"+query.Encode(), nil)
+		req := httptest.NewRequest(http.MethodGet, TokenPath+"?"+query.Encode(), nil)
 		req.SetBasicAuth(username, password)
 		resp := httptest.NewRecorder()
 		auth.ServeHTTP(resp, req)
@@ -96,12 +96,12 @@ func TestRegistryAuthIntersectsRequestedScope(t *testing.T) {
 	}
 }
 
-func TestRegistryAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
+func TestAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC().Truncate(time.Second)
 	cfg := testRegistryConfig()
-	auth, err := NewRegistryAuth(cfg, t.TempDir())
+	auth, err := NewAuth(cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestRegistryAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
 			originalNow, originalPassword := auth.now, password
 			defer func() { auth.now, password = originalNow, originalPassword }()
 			mutate()
-			req := httptest.NewRequest(http.MethodGet, RegistryTokenPath+"?service="+url.QueryEscape(cfg.TokenService), nil)
+			req := httptest.NewRequest(http.MethodGet, TokenPath+"?service="+url.QueryEscape(cfg.TokenService), nil)
 			req.SetBasicAuth(username, password)
 			resp := httptest.NewRecorder()
 			auth.ServeHTTP(resp, req)
@@ -130,12 +130,12 @@ func TestRegistryAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
 	}
 }
 
-func TestRegistryAuthPersistsSigningIdentity(t *testing.T) {
+func TestAuthPersistsSigningIdentity(t *testing.T) {
 	t.Parallel()
 
 	cfg := testRegistryConfig()
 	stateDir := t.TempDir()
-	first, err := NewRegistryAuth(cfg, stateDir)
+	first, err := NewAuth(cfg, stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestRegistryAuthPersistsSigningIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewRegistryAuth(cfg, stateDir)
+	second, err := NewAuth(cfg, stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,15 +155,15 @@ func TestRegistryAuthPersistsSigningIdentity(t *testing.T) {
 	}
 }
 
-func TestRegistryPolicyRejectsForeignAssignedRepository(t *testing.T) {
+func TestPolicyRejectsForeignAssignedRepository(t *testing.T) {
 	t.Parallel()
 
 	cfg := testRegistryConfig()
-	auth, err := NewRegistryAuth(cfg, t.TempDir())
+	auth, err := NewAuth(cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := NewRegistryPolicy(cfg, auth)
+	policy := NewPolicy(cfg, auth)
 	_, _, err = policy.CredentialsForBuild(context.Background(), "project-1", "build-7", "registry.example.test:5000/mesh/project-2/environment-1/build-7/service:tag")
 	if err == nil || !strings.Contains(err.Error(), "does not match project") {
 		t.Fatalf("unexpected error %v", err)

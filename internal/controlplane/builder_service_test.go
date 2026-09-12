@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -67,13 +68,13 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	registry := NewRegistryPolicy(config.RegistryConfig{
+	policy := registry.NewPolicy(config.RegistryConfig{
 		Host:                 "registry.example.test",
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
 	}, nil)
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), registry, registry, 0))
-	imageRef := registry.RuntimeDigestRef(registry.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, policy, 0))
+	imageRef := policy.RuntimeDigestRef(policy.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -104,7 +105,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -165,7 +166,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -257,7 +258,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

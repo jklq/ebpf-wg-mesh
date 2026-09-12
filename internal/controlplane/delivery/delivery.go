@@ -9,22 +9,22 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
 type Delivery struct {
-	schedulerMu     sync.Mutex
-	store           *persistence
-	live            *Live
-	notifier        PlatformNotifier
-	ingress         PlatformIngress
-	events          Events
-	logEmitter      *logs.LogEmitter
-	userFromContext func(context.Context) (UserIdentity, error)
-	rolloutNow      func() time.Time
-	failoverNow     func() time.Time
+	schedulerMu sync.Mutex
+	store       *persistence
+	live        *Live
+	notifier    PlatformNotifier
+	ingress     PlatformIngress
+	events      Events
+	logEmitter  *logs.LogEmitter
+	rolloutNow  func() time.Time
+	failoverNow func() time.Time
 }
 
 type ReleasedService struct {
@@ -38,14 +38,14 @@ type DeploymentActionResult struct {
 	EventIndex  int64
 }
 
-func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (DeploymentActionResult, error) {
+func (d *Delivery) ApplyDeploymentAction(ctx context.Context, user authz.User, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (DeploymentActionResult, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
-	identity, err := d.userFromContext(ctx)
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return DeploymentActionResult{}, err
 	}
-	service, _, agentIDs, err := d.applyDeploymentAction(ctx, identity.UserID, serviceID, deploymentID, action, idempotencyKey, allocationID)
+	service, _, agentIDs, err := d.applyDeploymentAction(ctx, scope, deploymentID, action, idempotencyKey, allocationID)
 	if err != nil {
 		return DeploymentActionResult{}, err
 	}
@@ -57,7 +57,7 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploym
 	if d.ingress != nil {
 		d.ingress.RequestSync()
 	}
-	service, allocations, err := d.store.serviceStatus(ctx, identity.UserID, serviceID)
+	service, allocations, err := d.store.serviceStatus(ctx, scope)
 	if err != nil {
 		return DeploymentActionResult{}, err
 	}
@@ -71,14 +71,13 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, serviceID, deploym
 	return DeploymentActionResult{Service: service, Allocations: allocations, EventIndex: eventIndex}, nil
 }
 
-func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string) ([]ReleasedService, error) {
+func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, environmentID string) ([]ReleasedService, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
-	identity, err := d.userFromContext(ctx)
+	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
 		return nil, err
 	}
-	userID := identity.UserID
 	var services []ReleasedService
 	var (
 		serviceIDs             []string
@@ -90,7 +89,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 		serviceIDs = nil
 		agentIDs = nil
 		identityCatalogChanged = false
-		environment, err := d.store.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		environment, err := d.store.environmentByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -121,7 +120,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			return err
 		}
 		for _, serviceID := range serviceIDs {
-			service, err := d.store.serviceByIDQuerier(ctx, tx, userID, serviceID)
+			service, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, scope, serviceID)
 			if err != nil {
 				return err
 			}
@@ -150,7 +149,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			if err != nil {
 				return err
 			}
-			released, err := d.releaseServiceRevisionTx(ctx, tx, userID, serviceID)
+			released, err := d.releaseServiceRevisionTx(ctx, tx, scope, serviceID)
 			if err != nil {
 				return err
 			}
@@ -186,7 +185,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 			}
 		}
 		for _, id := range serviceIDs {
-			service, err := d.store.serviceByIDQuerier(ctx, tx, userID, id)
+			service, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, scope, id)
 			if err != nil {
 				return err
 			}
@@ -231,12 +230,9 @@ func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, se
 	return !sameDesiredSourceSpec(deployedSpec, service.Spec), nil
 }
 
-func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, userID, serviceID string) (ServiceRecord, error) {
-	current, err := d.store.serviceByIDQuerier(ctx, tx, userID, serviceID)
+func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env authz.Environment, serviceID string) (ServiceRecord, error) {
+	current, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, env, serviceID)
 	if err != nil {
-		return ServiceRecord{}, err
-	}
-	if _, err := d.store.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
 		return ServiceRecord{}, err
 	}
 	if current.DesiredReplicaCount <= 0 {
@@ -289,7 +285,7 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 		return ServiceRecord{}, err
 	}
 	journal.RecordService(ctx, serviceID)
-	if err := d.store.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "environment_release", "", userID, now); err != nil {
+	if err := d.store.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "environment_release", "", env.UserID(), now); err != nil {
 		return ServiceRecord{}, err
 	}
 	releaseState := DeploymentStateScheduling
@@ -298,7 +294,7 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 		releaseState = DeploymentStateStaged
 		releaseDetail = "Environment release waiting for source build"
 	}
-	dep, err := d.store.insertDeploymentTx(ctx, tx, serviceID, releaseState, deploymentActor{Kind: DeploymentCauseUser, ID: userID}, reasonEnvironmentRelease, releaseDetail, current.SpecRevision, nextRolloutGeneration, "", resolvedImage, userID, now)
+	dep, err := d.store.insertDeploymentTx(ctx, tx, serviceID, releaseState, deploymentActor{Kind: DeploymentCauseUser, ID: env.UserID()}, reasonEnvironmentRelease, releaseDetail, current.SpecRevision, nextRolloutGeneration, "", resolvedImage, env.UserID(), now)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
@@ -313,6 +309,10 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, use
 	return current, nil
 }
 
-func (r *Delivery) DuplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (EnvironmentRecord, error) {
-	return r.store.duplicateEnvironment(ctx, userID, sourceEnvironmentID, name, copyVariables)
+func (d *Delivery) DuplicateEnvironment(ctx context.Context, user authz.User, sourceEnvironmentID, name string, copyVariables bool) (EnvironmentRecord, error) {
+	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, sourceEnvironmentID, authz.Write)
+	if err != nil {
+		return EnvironmentRecord{}, err
+	}
+	return d.store.duplicateEnvironment(ctx, scope, name, copyVariables)
 }

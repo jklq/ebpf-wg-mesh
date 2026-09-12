@@ -21,7 +21,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestFailoverServicesFromAgentTargetsExpiredNode(t *testing.T) {
 	if len(environmentsChanged) != 1 || environmentsChanged[0] != environmentID {
 		t.Fatalf("changed environments = %v, want %s", environmentsChanged, environmentID)
 	}
-	got, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
+	got, err := store.reads.ServiceByID(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,10 @@ func TestFailoverReconcilerFindsPersistedStaleAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agents, err := store.reads.ListAgents(ctx)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO platform_operators(user_id, created_at) VALUES ('user-1', statement_timestamp())`); err != nil {
+		t.Fatal(err)
+	}
+	agents, err := store.reads.ListAgents(ctx, testUser("user-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +128,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v", err)
 	}

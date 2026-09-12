@@ -195,7 +195,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	_ = recvDesiredState(t, liveStream)
 
 	store := first.server.store
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "restart.example.com", ingressSvc.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "restart.example.com", ingressSvc.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, ingressSvc.ID, "fd00:200:1::10", 8080); err != nil {

@@ -15,6 +15,7 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/restartpolicy"
 
@@ -35,7 +36,7 @@ type AgentService struct {
 	dashboardEnabled        bool
 	dashboardTrustedAgentID string
 	dashboardCallerID       string
-	registry                *RegistryPolicy
+	registry                *registry.Policy
 	replicaAddresses        []string
 	liveOwner               LiveOwner
 }
@@ -86,9 +87,9 @@ type agentDelivery interface {
 	RegisterAgent(context.Context, *agentv1.AgentHello) (bool, error)
 }
 
-func WithAgentRegistry(registry *RegistryPolicy) AgentServiceOption {
+func WithAgentRegistry(policy *registry.Policy) AgentServiceOption {
 	return func(service *AgentService) {
-		service.registry = registry
+		service.registry = policy
 	}
 }
 

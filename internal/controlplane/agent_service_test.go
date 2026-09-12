@@ -2,14 +2,22 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/registry"
 
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -200,12 +208,18 @@ func TestSendLatestDesiredStateResendsWhenReplicaAddressesChange(t *testing.T) {
 
 func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.T) {
 	t.Parallel()
-	cfg := testRegistryConfig()
-	auth, err := NewRegistryAuth(cfg, t.TempDir())
+	cfg := config.RegistryConfig{
+		Host:                 "registry.example.test:5000",
+		NamespacePrefix:      "mesh",
+		TokenIssuer:          "registry-test",
+		TokenService:         "registry.example.test:5000",
+		CredentialTTLSeconds: 300,
+	}
+	auth, err := registry.NewAuth(cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &AgentService{registry: NewRegistryPolicy(cfg, auth)}
+	service := &AgentService{registry: registry.NewPolicy(cfg, auth)}
 	state := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{
 		{AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)}},
 		{AllocationId: "allocation-2", ServiceId: "service-2", EnvironmentId: "environment-2", Spec: &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"}},
@@ -217,12 +231,12 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 	if managed.GetRegistryUsername() == "" || managed.GetRegistryPassword() == "" {
 		t.Fatal("platform image did not receive pull credentials")
 	}
-	claims, err := auth.parseCapability(managed.GetRegistryUsername(), managed.GetRegistryPassword())
-	if err != nil {
-		t.Fatal(err)
+	granted := tokenAccessForCredential(t, auth, cfg.TokenService, managed.GetRegistryUsername(), managed.GetRegistryPassword(), "repository:mesh/project-1/environment-1/build-1/service-1:pull")
+	if len(granted) != 1 || granted[0].Name != "mesh/project-1/environment-1/build-1/service-1" || !slices.Equal(granted[0].Actions, []string{"pull"}) {
+		t.Fatalf("unexpected pull scope %+v", granted)
 	}
-	if got := claims.Access[0]; got.Name != "mesh/project-1/environment-1/build-1/service-1" || !sameStrings(got.Actions, []string{"pull"}) {
-		t.Fatalf("unexpected pull scope %+v", got)
+	if denied := tokenAccessForCredential(t, auth, cfg.TokenService, managed.GetRegistryUsername(), managed.GetRegistryPassword(), "repository:mesh/project-1/environment-1/build-1/service-1:push"); len(denied) != 0 {
+		t.Fatalf("pull credential granted push: %+v", denied)
 	}
 	if external := state.Services[1]; external.GetRegistryUsername() != "" || external.GetRegistryPassword() != "" {
 		t.Fatal("external direct image received platform registry credentials")
@@ -231,4 +245,41 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 	if err := service.attachRegistryPullCredentials("agent-1", foreign); err == nil {
 		t.Fatal("expected a sibling platform repository to be rejected")
 	}
+}
+
+type registryTokenAccess struct {
+	Type    string   `json:"type"`
+	Name    string   `json:"name"`
+	Actions []string `json:"actions"`
+}
+
+func tokenAccessForCredential(t *testing.T, auth *registry.Auth, tokenService, username, password, scope string) []registryTokenAccess {
+	t.Helper()
+	query := url.Values{"service": {tokenService}, "scope": {scope}}
+	req := httptest.NewRequest(http.MethodGet, registry.TokenPath+"?"+query.Encode(), nil)
+	req.SetBasicAuth(username, password)
+	resp := httptest.NewRecorder()
+	auth.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("token response = %d: %s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(body.Token, claims); err != nil {
+		t.Fatalf("parse registry token: %v", err)
+	}
+	raw, err := json.Marshal(claims["access"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var access []registryTokenAccess
+	if err := json.Unmarshal(raw, &access); err != nil {
+		t.Fatal(err)
+	}
+	return access
 }

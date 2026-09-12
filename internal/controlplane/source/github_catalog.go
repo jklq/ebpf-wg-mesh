@@ -24,6 +24,24 @@ func (c *GitHubCatalog) Enabled() bool {
 	return c != nil && c.store != nil && c.client != nil && c.client.Enabled()
 }
 
+// LinkProjectRepository records the link between a project and an authorized
+// repository view.
+func (c *GitHubCatalog) LinkProjectRepository(ctx context.Context, projectID, userID string, view GitHubRepositoryView) error {
+	if !c.Enabled() {
+		return errors.New("github integration disabled")
+	}
+	return c.store.LinkProjectGitHubRepository(ctx, projectID, userID, view)
+}
+
+// linkedRepositoryInstallation returns the installation ID for a repository
+// linked to the project.
+func (c *GitHubCatalog) linkedRepositoryInstallation(ctx context.Context, projectID, owner, repo string) (int64, error) {
+	if !c.Enabled() {
+		return 0, errors.New("github integration disabled")
+	}
+	return c.store.ProjectGitHubRepositoryInstallation(ctx, projectID, owner, repo)
+}
+
 func (c *GitHubCatalog) RepositoryView(ctx context.Context, owner, repo string, installationID int64) (GitHubRepositoryView, error) {
 	if !c.Enabled() {
 		return GitHubRepositoryView{}, errors.New("github integration disabled")

@@ -2,12 +2,16 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"strings"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/controlplane/source"
-	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -36,41 +40,70 @@ type PlatformService struct {
 type platformStore interface {
 	environmentStore
 	routing.Store
-	createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error)
-	listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error)
-	projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error)
-	authorizeProjectWrite(ctx context.Context, userID, projectID string) error
-	ServiceByID(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, error)
-	ListServices(ctx context.Context, userID, environmentID string) ([]deliverycore.ServiceRecord, error)
-	createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
-	listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error)
-	deleteVolume(ctx context.Context, userID, volumeID string) error
-	ServiceStatus(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
-	ListServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
+	createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
+	listProjects(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error)
+	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
+	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
+	ListServices(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ServiceRecord, error)
+	createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
+	listVolumes(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.VolumeRecord, error)
+	deleteVolume(ctx context.Context, user authz.User, volumeID string) error
+	ServiceStatus(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
+	ListServiceDeployments(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
 	ListAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error)
-	ListAgents(ctx context.Context) ([]deliverycore.AgentRecord, error)
+	ListAgents(ctx context.Context, user authz.User) ([]deliverycore.AgentRecord, error)
 }
 
 type platformDelivery interface {
-	DuplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
+	DuplicateEnvironment(ctx context.Context, user authz.User, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
 
-	ReleaseEnvironment(ctx context.Context, environmentID string) ([]deliverycore.ReleasedService, error)
-	ApplyDeploymentAction(ctx context.Context, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.DeploymentActionResult, error)
-	CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error)
-	UpdateService(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
-	DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
-	DeleteService(ctx context.Context, serviceID string) error
-	ScaleService(ctx context.Context, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
+	ReleaseEnvironment(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ReleasedService, error)
+	ApplyDeploymentAction(ctx context.Context, user authz.User, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.DeploymentActionResult, error)
+	CreateScheduledService(ctx context.Context, user authz.User, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error)
+	UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
+	DiscardServiceChanges(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
+	DeleteService(ctx context.Context, user authz.User, serviceID string) error
+	ScaleService(ctx context.Context, user authz.User, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
 	LiveAllocationsByEnvironment(environmentID string) (map[string][]deliverycore.AllocationRecord, error)
 	livePositionReader
 }
 
 type environmentStore interface {
-	listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error)
-	EnvironmentByID(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error)
-	createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error)
-	renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error)
-	deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error)
+	listEnvironments(ctx context.Context, user authz.User, projectID string) ([]deliverycore.EnvironmentRecord, error)
+	EnvironmentByID(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
+	createEnvironment(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error)
+	renameEnvironment(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error)
+	deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error)
+}
+
+// authorizedUser resolves the delegated dashboard user into the authorization
+// identity every store and delivery entry requires.
+func authorizedUser(ctx context.Context) (authz.User, error) {
+	return identity.UserFromContext(ctx)
+}
+
+// writeAccessError maps a write or list failure to its RPC code. Denials are
+// PermissionDenied, genuinely missing rows are NotFound, and anything else is
+// Internal. ErrDenied wraps sql.ErrNoRows by design, so it must be checked
+// first.
+func writeAccessError(op string, err error) error {
+	switch {
+	case errors.Is(err, authz.ErrDenied):
+		return status.Errorf(codes.PermissionDenied, "%s: %v", op, err)
+	case errors.Is(err, sql.ErrNoRows):
+		return status.Errorf(codes.NotFound, "%s: %v", op, err)
+	default:
+		return status.Errorf(codes.Internal, "%s: %v", op, err)
+	}
+}
+
+// readAccessError maps a single-resource read failure to its RPC code. Reads
+// stay indistinguishable: denials and missing rows are both NotFound.
+func readAccessError(op string, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return status.Errorf(codes.NotFound, "%s: %v", op, err)
+	}
+	return status.Errorf(codes.Internal, "%s: %v", op, err)
 }
 
 func (s *PlatformService) protoServiceStatus(rec deliverycore.ServiceRecord, allocations []deliverycore.AllocationRecord, index int64) *platformv1.ServiceStatus {
@@ -79,8 +112,8 @@ func (s *PlatformService) protoServiceStatus(rec deliverycore.ServiceRecord, all
 	return out
 }
 
-func (s *PlatformService) environmentForUser(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return s.store.EnvironmentByID(ctx, userID, environmentID)
+func (s *PlatformService) environmentForUser(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	return s.store.EnvironmentByID(ctx, user, environmentID)
 }
 
 type serviceLogStore interface {
@@ -113,9 +146,9 @@ func WithServiceLogEmitter(emitter *logs.LogEmitter) PlatformServiceOption {
 	}
 }
 
-func WithGitHubSourceInspection(catalog *source.GitHubCatalog, client *source.GitHubClient) PlatformServiceOption {
+func WithGitHubSourceInspection(catalog *source.GitHubCatalog, client *source.GitHubClient, authorizer *authz.Authorizer) PlatformServiceOption {
 	return func(service *PlatformService) {
-		service.inspector = source.NewInspector(catalog, client)
+		service.inspector = source.NewInspector(catalog, client, authorizer)
 	}
 }
 
@@ -167,26 +200,26 @@ func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.Cre
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	project, err := s.store.createProject(ctx, identity.UserID, req.GetName())
+	project, err := s.store.createProject(ctx, user, req.GetName())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.Internal, "create project: %v", err)
+		return nil, writeAccessError("create project", err)
 	}
 	return toProtoProject(project), nil
 }
 
 func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListProjectsResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listProjects(ctx, identity.UserID)
+	items, err := s.store.listProjects(ctx, user)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list projects: %v", err)
 	}
@@ -198,25 +231,25 @@ func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*
 }
 
 func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetProjectRequest) (*platformv1.Project, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	project, err := s.store.projectByID(ctx, identity.UserID, req.GetProjectId())
+	project, err := s.store.projectByID(ctx, user, req.GetProjectId())
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "project: %v", err)
+		return nil, readAccessError("project", err)
 	}
 	return toProtoProject(project), nil
 }
 
 func (s *PlatformService) ListEnvironments(ctx context.Context, req *platformv1.ListEnvironmentsRequest) (*platformv1.ListEnvironmentsResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listEnvironments(ctx, identity.UserID, req.GetProjectId())
+	items, err := s.store.listEnvironments(ctx, user, req.GetProjectId())
 	if err != nil {
-		return nil, status.Errorf(codes.PermissionDenied, "list environments: %v", err)
+		return nil, writeAccessError("list environments", err)
 	}
 	resp := &platformv1.ListEnvironmentsResponse{Environments: make([]*platformv1.Environment, 0, len(items))}
 	for _, item := range items {
@@ -226,13 +259,13 @@ func (s *PlatformService) ListEnvironments(ctx context.Context, req *platformv1.
 }
 
 func (s *PlatformService) GetEnvironment(ctx context.Context, req *platformv1.GetEnvironmentRequest) (*platformv1.Environment, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.store.EnvironmentByID(ctx, identity.UserID, req.GetEnvironmentId())
+	rec, err := s.store.EnvironmentByID(ctx, user, req.GetEnvironmentId())
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "environment: %v", err)
+		return nil, readAccessError("environment", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
@@ -241,16 +274,16 @@ func (s *PlatformService) CreateEnvironment(ctx context.Context, req *platformv1
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.store.createEnvironment(ctx, identity.UserID, req.GetProjectId(), req.GetName())
+	rec, err := s.store.createEnvironment(ctx, user, req.GetProjectId(), req.GetName())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.Internal, "create environment: %v", err)
+		return nil, writeAccessError("create environment", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
@@ -259,16 +292,16 @@ func (s *PlatformService) DuplicateEnvironment(ctx context.Context, req *platfor
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.delivery.DuplicateEnvironment(ctx, identity.UserID, req.GetSourceEnvironmentId(), req.GetName(), req.GetCopyVariables())
+	rec, err := s.delivery.DuplicateEnvironment(ctx, user, req.GetSourceEnvironmentId(), req.GetName(), req.GetCopyVariables())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.Internal, "duplicate environment: %v", err)
+		return nil, writeAccessError("duplicate environment", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
@@ -277,25 +310,22 @@ func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.store.renameEnvironment(ctx, identity.UserID, req.GetEnvironmentId(), req.GetName())
+	rec, err := s.store.renameEnvironment(ctx, user, req.GetEnvironmentId(), req.GetName())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.Internal, "rename environment: %v", err)
+		return nil, writeAccessError("rename environment", err)
 	}
 	return toProtoEnvironment(rec), nil
 }
 
 func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
 	if err := s.requireLiveOwner(ctx); err != nil {
-		return nil, err
-	}
-	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
 		return nil, err
 	}
 	result, err := s.environments.DeleteEnvironment(ctx, req)
@@ -309,13 +339,23 @@ func (s *PlatformService) ReleaseEnvironment(ctx context.Context, req *platformv
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	services, err := s.delivery.ReleaseEnvironment(ctx, req.GetEnvironmentId())
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	services, err := s.delivery.ReleaseEnvironment(ctx, user, req.GetEnvironmentId())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
 		if status.Code(err) != codes.Unknown {
 			return nil, err
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "release environment: %v", err)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "release environment: %v", err)
 		}
 		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}

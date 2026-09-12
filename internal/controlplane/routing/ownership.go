@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/base32"
 	"errors"
@@ -70,13 +71,13 @@ func isPlatformHostname(hostname, suffix string) bool {
 	return hostname == suffix || strings.HasSuffix(hostname, "."+suffix)
 }
 
-func (s *Domains) AnnotateDomainBinding(ctx context.Context, userID string, rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
+func (s *Domains) AnnotateDomainBinding(ctx context.Context, user authz.User, rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
 	binding := toProtoDomainBinding(rec)
 	if rec.PlatformGenerated {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED
 		return binding
 	}
-	state, err := s.inspectDomainOwnership(ctx, userID, rec.ServiceID, rec.Hostname, rec.PlatformGenerated)
+	state, err := s.inspectDomainOwnership(ctx, user, rec.ServiceID, rec.Hostname, rec.PlatformGenerated)
 	if err != nil {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED
 		binding.OwnershipMessage = err.Error()
@@ -86,11 +87,11 @@ func (s *Domains) AnnotateDomainBinding(ctx context.Context, userID string, rec 
 	return binding
 }
 
-func (s *Domains) inspectDomainOwnership(ctx context.Context, userID, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
+func (s *Domains) inspectDomainOwnership(ctx context.Context, user authz.User, serviceID, hostname string, platformGenerated bool) (platformv1.DomainOwnershipState, error) {
 	if platformGenerated {
 		return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED, nil
 	}
-	platformBinding, err := s.store.PlatformDomainBindingForService(ctx, userID, serviceID)
+	platformBinding, err := s.store.PlatformDomainBindingForService(ctx, user, serviceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_UNVERIFIED, ErrPlatformDomainNotGenerated
