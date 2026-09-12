@@ -9,6 +9,13 @@ node_modules/
 *.swo
 *~
 
+# External AI tooling (local worktrees, settings, caches)
+.claude/
+.opencode/
+.cursor/
+.codex/
+.aider/
+
 # Go build/test artifacts
 bin/
 dist/
