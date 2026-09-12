@@ -177,7 +177,20 @@ func compositeKey(left string, right int64) string {
 }
 
 const projectJSON = `jsonb_build_object('id', id, 'name', name, 'kind', kind, 'system_key', system_key, 'owner_user_id', owner_user_id, 'created_at', created_at)`
-const serviceJSON = `jsonb_build_object('id', id, 'environment_id', environment_id, 'name', name, 'current_spec_revision', current_spec_revision, 'current_rollout_generation', current_rollout_generation, 'current_resolved_image', current_resolved_image, 'last_successful_commit_sha', last_successful_commit_sha, 'latest_build_id', latest_build_id, 'desired_replica_count', desired_replica_count, 'placement_message', placement_message, 'created_at', created_at, 'updated_at', updated_at)`
+const serviceJSON = `jsonb_build_object(
+	'id', id,
+	'environment_id', environment_id,
+	'name', name,
+	'current_spec_revision', current_spec_revision,
+	'current_rollout_generation', COALESCE((SELECT current_rollout_generation FROM service_delivery_status WHERE service_id = services.id), 0),
+	'current_resolved_image', COALESCE((SELECT current_resolved_image FROM service_delivery_status WHERE service_id = services.id), ''),
+	'last_successful_commit_sha', COALESCE((SELECT last_successful_commit_sha FROM service_delivery_status WHERE service_id = services.id), ''),
+	'latest_build_id', COALESCE((SELECT latest_build_id FROM service_delivery_status WHERE service_id = services.id), ''),
+	'desired_replica_count', desired_replica_count,
+	'placement_message', COALESCE((SELECT placement_message FROM service_delivery_status WHERE service_id = services.id), ''),
+	'created_at', created_at,
+	'updated_at', GREATEST(updated_at, (SELECT updated_at FROM service_delivery_status WHERE service_id = services.id))
+)`
 const revisionJSON = `jsonb_build_object('service_id', service_id, 'spec_revision', spec_revision, 'spec_json', spec_json, 'created_at', created_at)`
 const assignmentJSON = `jsonb_build_object('id', id, 'service_id', service_id, 'deployment_id', deployment_id, 'agent_id', agent_id, 'desired_spec_revision', desired_spec_revision, 'desired_rollout_generation', desired_rollout_generation, 'allocation_ipv4', allocation_ipv4, 'allocation_ipv6', allocation_ipv6, 'operator_restart_nonce', operator_restart_nonce, 'rollout_state', rollout_state, 'intent', intent, 'intent_message', intent_message, 'drain_started_at', drain_started_at, 'drain_deadline', drain_deadline, 'created_at', created_at, 'updated_at', updated_at)`
 const rolloutJSON = `jsonb_build_object('service_id', service_id, 'rollout_generation', rollout_generation, 'spec_revision', spec_revision, 'reason', reason, 'build_id', build_id, 'requested_by_user_id', requested_by_user_id, 'state', state, 'strategy_json', strategy_json, 'desired_replica_count', desired_replica_count, 'image_digest', image_digest, 'failure_reason', failure_reason, 'target_allocation_id', target_allocation_id, 'completed_at', completed_at, 'progress_at', progress_at, 'created_at', created_at)`

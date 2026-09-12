@@ -8,7 +8,7 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
-	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 
@@ -171,78 +171,101 @@ func assertIPv4AllocatorUnchanged(t *testing.T, store *persistence, unassignedAg
 	}
 }
 
-func TestAssignedNodeConfigSupportsClusterSizes(t *testing.T) {
+func TestAssignedNodeConfigSharedEnvironments(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name        string
-		clusterSize int
-	}{
-		{name: "single agent", clusterSize: 1},
-		{name: "two agents", clusterSize: 2},
-		{name: "four agents", clusterSize: 4},
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, "owner", "mesh")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			store := openTestStore(t)
-			ctx := context.Background()
-
-			for i := 1; i <= tt.clusterSize; i++ {
-				if _, err := upsertTestAgent(t, store, ctx, testAgentHello(i)); err != nil {
-					t.Fatalf("upsertAgent(node-%d): %v", i, err)
-				}
+	envA := productionEnvironmentID(t, store, project.ID)
+	environmentB, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		if _, err := upsertTestAgent(t, store, ctx, testAgentHello(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add := func(env, name, agent string) deliverycore.ServiceRecord {
+		t.Helper()
+		service, err := createService(ctx, store, "owner", env, name, serviceSpec(), agent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+	add(envA, "a", "node-1")
+	add(environmentB.ID, "b", "node-2")
+	add(environmentB.ID, "c", "node-3")
+	check := func(agentID string, peers []string, identities int) {
+		t.Helper()
+		cfg, err := testDelivery(store).assignedNodeConfigForAgent(ctx, agentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, peer := range cfg.GetPeers() {
+			got = append(got, peer.GetAgentId())
+			host, err := store.reads.AgentByID(ctx, peer.GetAgentId())
+			if err != nil {
+				t.Fatal(err)
 			}
-
-			for i := 1; i <= tt.clusterSize; i++ {
-				agentID := fmt.Sprintf("node-%d", i)
-				cfg, err := testDelivery(store).assignedNodeConfigForAgent(ctx, agentID)
-				if err != nil {
-					t.Fatalf("assignedNodeConfigForAgent(%s): %v", agentID, err)
-				}
-				if got, want := len(cfg.GetPeers()), tt.clusterSize-1; got != want {
-					t.Fatalf("agent %s expected %d peers, got %d", agentID, want, got)
-				}
-				if got, want := len(cfg.GetWireguardAddresses()), 1; got != want {
-					t.Fatalf("agent %s expected %d wireguard address, got %d", agentID, want, got)
-				}
-
-				seen := make(map[string]struct{}, len(cfg.GetPeers()))
-				for _, peer := range cfg.GetPeers() {
-					if peer.GetAgentId() == agentID {
-						t.Fatalf("agent %s unexpectedly included itself as a peer", agentID)
-					}
-					if peer.GetEndpoint() == "" {
-						t.Fatalf("agent %s has peer %s with empty endpoint", agentID, peer.GetAgentId())
-					}
-					endpoint, err := netip.ParseAddrPort(peer.GetEndpoint())
-					if err != nil || !endpoint.Addr().Is4() {
-						t.Fatalf("agent %s peer %s endpoint is not IPv4: %q", agentID, peer.GetAgentId(), peer.GetEndpoint())
-					}
-					if got, want := len(peer.GetAllowedIps()), 2; got != want {
-						t.Fatalf("agent %s peer %s expected %d allowed IP, got %d", agentID, peer.GetAgentId(), want, got)
-					}
-					families := map[bool]bool{}
-					for _, raw := range peer.GetAllowedIps() {
-						prefix, err := netip.ParsePrefix(raw)
-						if err != nil {
-							t.Fatalf("agent %s peer %s invalid AllowedIP %q: %v", agentID, peer.GetAgentId(), raw, err)
-						}
-						families[prefix.Addr().Is4()] = true
-					}
-					if !families[true] || !families[false] {
-						t.Fatalf("agent %s peer %s AllowedIPs are not dual-stack: %v", agentID, peer.GetAgentId(), peer.GetAllowedIps())
-					}
-					seen[peer.GetAgentId()] = struct{}{}
-				}
-				if got, want := len(seen), tt.clusterSize-1; got != want {
-					t.Fatalf("agent %s expected %d unique peers, got %d", agentID, want, got)
-				}
+			if !slices.Equal(peer.GetAllowedIps(), []string{host.WorkloadIPv4Subnet, host.WorkloadIPv6Subnet}) {
+				t.Fatalf("peer prefixes = %v", peer.GetAllowedIps())
 			}
-		})
+		}
+		if !slices.Equal(got, peers) || len(cfg.GetWorkloadIdentities()) != identities {
+			t.Fatalf("%s peers=%v identities=%d, want %v/%d", agentID, got, len(cfg.GetWorkloadIdentities()), peers, identities)
+		}
+		if cfg.GetWorkloadIpv4Pool() == "" || cfg.GetWorkloadIpv6Pool() == "" {
+			t.Fatal("missing fail-closed workload pools")
+		}
+	}
+	check("node-1", nil, 1)
+	check("node-2", []string{"node-3"}, 2)
+	beforeA := mustDesiredRevision(t, store, ctx, "node-1")
+	add(environmentB.ID, "b-growth", "node-3")
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != beforeA {
+		t.Fatalf("disjoint environment growth bumped node-1: %d -> %d", beforeA, got)
+	}
+	check("node-1", nil, 1)
+	shared := add(envA, "shared", "node-2")
+	check("node-1", []string{"node-2"}, 2)
+	check("node-2", []string{"node-1", "node-3"}, 5)
+	check("node-3", []string{"node-2"}, 3)
+
+	before := make(map[string]int64)
+	for _, id := range []string{"node-1", "node-2", "node-3"} {
+		before[id] = mustDesiredRevision(t, store, ctx, id)
+	}
+	hello := testAgentHello(1)
+	hello.WireguardEndpoint = "192.0.2.99:51820"
+	if _, err := registerAgent(ctx, store, hello); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != before["node-2"]+1 {
+		t.Fatal("endpoint change did not update shared peer")
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-3"); got != before["node-3"] {
+		t.Fatal("endpoint change updated disjoint peer")
+	}
+	before["node-1"] = mustDesiredRevision(t, store, ctx, "node-1")
+	before["node-2"] = mustDesiredRevision(t, store, ctx, "node-2")
+	if err := deleteService(ctx, store, "owner", shared.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("node-1", nil, 1)
+	check("node-2", []string{"node-3"}, 3)
+	for _, id := range []string{"node-1", "node-2"} {
+		if got := mustDesiredRevision(t, store, ctx, id); got != before[id]+1 {
+			t.Fatalf("last shared allocation removal did not update %s", id)
+		}
+	}
+	if got := mustDesiredRevision(t, store, ctx, "node-3"); got != before["node-3"] {
+		t.Fatal("environment A removal updated environment B")
 	}
 }
 
@@ -294,7 +317,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 		}
 		identities := state.GetNodeConfig().GetWorkloadIdentities()
 		if len(identities) != 2 {
-			t.Fatalf("agent %s expected 2 cluster identities, got %d", agentID, len(identities))
+			t.Fatalf("agent %s expected 2 same-environment identities, got %d", agentID, len(identities))
 		}
 		seenHosts := map[string]string{}
 		for _, identity := range identities {
@@ -325,7 +348,11 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := len(state.GetNodeConfig().GetWorkloadIdentities()); got != 1 {
+		want := 1
+		if item.id == "node-1" {
+			want = 0
+		}
+		if got := len(state.GetNodeConfig().GetWorkloadIdentities()); got != want {
 			t.Fatalf("agent %s retained deleted workload identity, got %d", item.id, got)
 		}
 	}

@@ -158,7 +158,7 @@ func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 	defer d.schedulerMu.Unlock()
 	s := d.store
 	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM services WHERE placement_message <> '' ORDER BY id FOR UPDATE`)
+		rows, err := tx.QueryContext(ctx, `SELECT service_id FROM service_delivery_status WHERE placement_message IS NOT NULL ORDER BY service_id FOR UPDATE`)
 		if err != nil {
 			return err
 		}

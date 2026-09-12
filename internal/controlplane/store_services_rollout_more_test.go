@@ -153,7 +153,7 @@ func TestDomainBindingChangesBumpDesiredRevisions(t *testing.T) {
 	}
 }
 
-func TestAgentTopologyChangesBumpEveryAgentRevision(t *testing.T) {
+func TestUnusedAgentAdvertiseAddressDoesNotBumpDesiredRevisions(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -178,11 +178,11 @@ func TestAgentTopologyChangesBumpEveryAgentRevision(t *testing.T) {
 		t.Fatal("expected agent topology change to be detected")
 	}
 
-	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
-		t.Fatalf("expected node-1 revision %d, got %d", node1Before+1, got)
+	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before {
+		t.Fatalf("unused advertise address bumped node-1 revision from %d to %d", node1Before, got)
 	}
-	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
-		t.Fatalf("expected node-2 revision %d, got %d", node2Before+1, got)
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before {
+		t.Fatalf("unused advertise address bumped node-2 revision from %d to %d", node2Before, got)
 	}
 }
 

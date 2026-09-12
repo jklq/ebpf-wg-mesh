@@ -55,6 +55,8 @@ type liveWatcher struct {
 }
 
 type liveIndexes struct {
+	environmentsByAgent   map[string][]string
+	agentsByEnvironment   map[string][]string
 	assignmentsByAgent    map[string][]string
 	assignmentsByService  map[string][]string
 	domainsByService      map[string][]string

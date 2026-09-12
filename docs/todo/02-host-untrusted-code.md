@@ -189,10 +189,14 @@ Replace complete per-node snapshot delivery with a checkpoint-plus-diff protocol
 
 ## 2.11 Scoped identity policy
 
-Status: open
+Status: partial
 Depends on: 2.10 so policy is not piggy-backed on a cluster snapshot. 1.1 if both overlay families are present.
 
 The fail-closed pool deny stays. The cluster-wide identity catalog on every node does not.
+
+Implemented: agent identity catalogs now include only hosted environments, including remote same-environment allocations. Assignment fanout uses environment membership before and after the change, so removing the last allocation clears the former host's identities without updating unrelated environments. Focused unit and integration tests cover scoped catalogs, unrelated-environment growth, and removal.
+
+Remaining: independent identity/policy delivery under 2.10 and the Envoy backend-scoping portion. Packet-level same-environment allow and cross-environment/unknown deny verification for this change still needs a privileged Linux host.
 
 Prompt:
 
@@ -202,10 +206,14 @@ Give each agent a pool deny plus exact allow entries only for network identities
 
 ## 2.12 Environment-scoped WireGuard peering
 
-Status: open
+Status: partial
 Depends on: 2.11 so peers follow who is allowed to talk. 2.7b so ingress instances are the north-south peers.
 
 Full mesh does not scale and is not required for fail-closed policy.
+
+Implemented: shared-environment indexes derived from non-lost assignments scope agent-agent peers. Self, retired, and revoked peers are excluded; AllowedIPs remain each peer's dual overlay prefixes. Last-shared-allocation removal drops the peer, and peer changes fan out only to shared-environment members. Focused unit and integration tests cover disjoint environments, shared-environment addition/removal, duplicate memberships, lost allocations, and scoped endpoint updates.
+
+Remaining: agent-to-Envoy peering under 2.7b and independent peer delivery under 2.10. Packet-level cross-node connectivity, denial without a tunnel, and Envoy backend reachability still need Linux topology verification.
 
 Prompt:
 

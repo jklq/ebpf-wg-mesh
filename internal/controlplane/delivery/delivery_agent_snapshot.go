@@ -53,11 +53,16 @@ func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.Desir
 	return out, nil
 }
 
-func workloadIdentities(live journal.DurableState) ([]*agentv1.WorkloadIdentity, error) {
+func workloadIdentities(live journal.DurableState, indexes liveIndexes, agentID string) ([]*agentv1.WorkloadIdentity, error) {
 	var assignments []journal.Assignment
-	for _, a := range live.Assignments {
-		if a.RolloutState != AllocationRolloutLost {
-			assignments = append(assignments, a)
+	for _, environmentID := range indexes.environmentsByAgent[agentID] {
+		for _, serviceID := range indexes.servicesByEnvironment[environmentID] {
+			for _, assignmentID := range indexes.assignmentsByService[serviceID] {
+				a := live.Assignments[assignmentID]
+				if a.RolloutState != AllocationRolloutLost {
+					assignments = append(assignments, a)
+				}
+			}
 		}
 	}
 	slices.SortFunc(assignments, func(a, b journal.Assignment) int {

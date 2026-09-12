@@ -189,13 +189,13 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 		t.Fatalf("release staging: %#v: %v", deployed, err)
 	}
 	if !slices.Equal(notifiedAgentIDs, []string{"node-1", "node-2"}) {
-		t.Fatalf("new allocation notified agents %v, want both cluster nodes", notifiedAgentIDs)
+		t.Fatalf("new allocation notification result = %v", notifiedAgentIDs)
 	}
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
 		t.Fatalf("node-1 revision after release = %d, want %d", got, node1Before+1)
 	}
-	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
-		t.Fatalf("node-2 revision after release = %d, want %d", got, node2Before+1)
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before {
+		t.Fatalf("unrelated node-2 revision after release = %d, want %d", got, node2Before)
 	}
 	productionService, err = store.reads.ServiceByID(ctx, "owner", productionService.ID)
 	if err != nil {
@@ -227,8 +227,8 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
 		t.Fatalf("node-1 revision after environment delete = %d, want %d", got, node1Before+1)
 	}
-	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
-		t.Fatalf("node-2 revision after environment delete = %d, want %d", got, node2Before+1)
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before {
+		t.Fatalf("unrelated node-2 revision after environment delete = %d, want %d", got, node2Before)
 	}
 	state, err = desiredStateForAgent(ctx, store, "node-1")
 	if err != nil || len(state.GetServices()) != 0 {

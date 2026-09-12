@@ -24,8 +24,8 @@ var errSourceStateNotReady = errors.New("source state is not ready")
 
 var ErrBuildNotOwned = errors.New("build is not assigned to builder")
 
-const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, builder_id, image_digest, failure_reason,
-	        source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
+const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, COALESCE(builder_id, ''), image_digest, failure_reason,
+	        COALESCE(source_revision_id, ''), COALESCE(source_snapshot_id, ''), source_snapshot_digest, target_rollout_generation, build_recipe_json,
 	        queued_at, started_at, finished_at`
 
 func (s *persistence) latestBuildForServiceQuerier(ctx context.Context, q ServiceQueryer, buildID string) (*platformv1.BuildStatus, error) {

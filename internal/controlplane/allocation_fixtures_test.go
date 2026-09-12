@@ -28,7 +28,7 @@ func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceI
 			`UPDATE service_rollouts
 			    SET state = $1, failure_reason = '', completed_at = $2, progress_at = $2
 			  WHERE service_id = $3
-			    AND rollout_generation = (SELECT current_rollout_generation FROM services WHERE id = $3)`,
+			    AND rollout_generation = (SELECT current_rollout_generation FROM service_delivery_status WHERE service_id = $3)`,
 			"succeeded", time.Now().UTC(), serviceID,
 		); err != nil {
 			return err
@@ -168,7 +168,7 @@ func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, service
 		return err
 	}
 	var generation int64
-	if err := tx.QueryRowContext(ctx, `SELECT current_rollout_generation FROM services WHERE id = $1`, serviceID).Scan(&generation); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT current_rollout_generation FROM service_delivery_status WHERE service_id = $1`, serviceID).Scan(&generation); err != nil {
 		return err
 	}
 	journal.RecordRollout(ctx, serviceID, generation)

@@ -221,13 +221,13 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			nextRolloutGeneration++
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE services
-			    SET current_resolved_image = $1,
-			        last_successful_commit_sha = $2,
+			`UPDATE service_delivery_status
+			    SET current_resolved_image = NULLIF($1, ''),
+			        last_successful_commit_sha = NULLIF($2, ''),
 			        current_rollout_generation = $3,
 			        latest_build_id = $4,
 			        updated_at = $5
-			  WHERE id = $6`,
+			  WHERE service_id = $6`,
 			imageDigest, commitSHA, nextRolloutGeneration, buildID, now, build.ServiceID,
 		); err != nil {
 			return err
@@ -389,17 +389,17 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 			id, service_id, commit_sha, commit_message, commit_author, state,
 			source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
 			builder_id, queued_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '', $12)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, NULL, $12)`,
 		rec.ID, rec.ServiceID, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.State,
 		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, rec.TargetRolloutGeneration, recipeJSON, rec.QueuedAt,
 	); err != nil {
 		return BuildRunRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE services
+		`UPDATE service_delivery_status
 		    SET latest_build_id = $1,
 		        updated_at = $2
-		  WHERE id = $3`,
+		  WHERE service_id = $3`,
 		rec.ID, now, service.ID,
 	); err != nil {
 		return BuildRunRecord{}, err
@@ -615,7 +615,7 @@ func (d *Delivery) recoverExpiredBuildsTx(ctx context.Context, tx *sql.Tx, cutof
 			    SET state = $1,
 			        started_at = $2,
 			        finished_at = CASE WHEN $1 = $3 THEN $4 ELSE NULL END,
-			        builder_id = '',
+			        builder_id = NULL,
 			        failure_reason = $5
 			  WHERE id = $6`,
 			nextState, startedAt, BuildStateSuperseded, now, failureReason, rec.ID,

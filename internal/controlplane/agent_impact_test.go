@@ -7,7 +7,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
-func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
+func TestPeerChangedAgentIDs(t *testing.T) {
 	base := journal.DurableState{
 		Agents: map[string]journal.AgentRegistration{
 			"node-1": peerAgent("node-1"),
@@ -22,7 +22,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		after.SessionIncarnation = 2
 		after.UpdatedAt = time.Now().UTC()
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) > 0 {
 			t.Fatal("reconnect hello fanned out")
 		}
 		if ids := selfAgentIDs(base, batch); len(ids) != 0 {
@@ -34,7 +34,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		after := peerAgent("node-1")
 		after.AdvertiseAddr = "fd00:30::99"
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) > 0 {
 			t.Fatal("unused advertise_addr change fanned out")
 		}
 	})
@@ -42,7 +42,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 	t.Run("retire fans out", func(t *testing.T) {
 		admin := journal.AgentAdministration{AgentID: "node-1", LifecycleState: "retired"}
 		batch := journal.Batch{Administration: []journal.Change[journal.AgentAdministration]{{Key: "node-1", Value: &admin}}}
-		if !agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) == 0 {
 			t.Fatal("retire did not fan out")
 		}
 	})
@@ -50,7 +50,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 	t.Run("empty enroll does not fan out", func(t *testing.T) {
 		empty := journal.AgentRegistration{ID: "node-2", Name: "node-2"}
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-2", Value: &empty}}}
-		if agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) > 0 {
 			t.Fatal("empty enroll fanned out")
 		}
 	})
@@ -70,7 +70,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 			Agents:         []journal.Change[journal.AgentRegistration]{{Key: "node-2", Value: &after}},
 			Administration: []journal.Change[journal.AgentAdministration]{{Key: "node-2", Value: &active}},
 		}
-		if !agentDeltaRequiresClusterFanout(emptyBase, batch) {
+		if len(peerChangedAgentIDs(emptyBase, batch)) == 0 {
 			t.Fatal("first hello did not fan out")
 		}
 	})
@@ -79,7 +79,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		after := peerAgent("node-1")
 		after.WireguardIPv6 = "fd00:44::ff"
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) > 0 {
 			t.Fatal("own wireguard address fanned out")
 		}
 		if ids := selfAgentIDs(base, batch); len(ids) != 1 || ids[0] != "node-1" {
@@ -91,7 +91,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		after := peerAgent("node-1")
 		after.WireguardListenPort = 51821
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) > 0 {
 			t.Fatal("local WireGuard listen port fanned out")
 		}
 		if ids := selfAgentIDs(base, batch); len(ids) != 1 || ids[0] != "node-1" {
@@ -103,7 +103,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		after := peerAgent("node-1")
 		after.WireguardEndpoint = "192.0.2.10:51820"
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if !agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) == 0 {
 			t.Fatal("WireGuard endpoint change did not fan out")
 		}
 	})
@@ -112,7 +112,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		after := peerAgent("node-1")
 		after.WireguardEndpoint = ""
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if !agentDeltaRequiresClusterFanout(base, batch) {
+		if len(peerChangedAgentIDs(base, batch)) == 0 {
 			t.Fatal("WireGuard endpoint removal did not fan out")
 		}
 	})
@@ -126,7 +126,7 @@ func TestAgentDeltaRequiresClusterFanout(t *testing.T) {
 		}
 		after := peerAgent("node-1")
 		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if !agentDeltaRequiresClusterFanout(emptyBase, batch) {
+		if len(peerChangedAgentIDs(emptyBase, batch)) == 0 {
 			t.Fatal("WireGuard endpoint set from empty did not fan out")
 		}
 	})

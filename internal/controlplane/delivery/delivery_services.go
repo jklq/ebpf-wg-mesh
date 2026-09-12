@@ -107,8 +107,8 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	now := rec.CreatedAt
 	rec.RolloutGeneration = 1
 	rec.ResolvedImage = directImageRef(spec)
-	if _, err := tx.ExecContext(ctx, `UPDATE services
-		SET current_rollout_generation = 1, current_resolved_image = $1 WHERE id = $2`, rec.ResolvedImage, rec.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
+		SET current_rollout_generation = 1, current_resolved_image = NULLIF($1, '') WHERE service_id = $2`, rec.ResolvedImage, rec.ID); err != nil {
 		return ServiceRecord{}, err
 	}
 	journal.RecordService(ctx, rec.ID)
@@ -211,7 +211,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 			        updated_at = $2
 			  WHERE id = $3
 			    AND current_spec_revision = $4
-			    AND current_rollout_generation = $5`,
+			    AND EXISTS (SELECT 1 FROM service_delivery_status ds WHERE ds.service_id = services.id AND COALESCE(ds.current_rollout_generation, 0) = $5)`,
 			nextName, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 		)
 		if err != nil {
@@ -244,7 +244,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 		        updated_at = $3
 		  WHERE id = $4
 		    AND current_spec_revision = $5
-		    AND current_rollout_generation = $6`,
+		    AND EXISTS (SELECT 1 FROM service_delivery_status ds WHERE ds.service_id = services.id AND COALESCE(ds.current_rollout_generation, 0) = $6)`,
 		nextName, nextSpecRevision, now, serviceID, current.SpecRevision, current.RolloutGeneration,
 	)
 	if err != nil {
@@ -391,7 +391,7 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID 
 			        updated_at = $2
 			  WHERE id = $3
 			    AND current_spec_revision = $4
-			    AND current_rollout_generation = $5`,
+			    AND EXISTS (SELECT 1 FROM service_delivery_status ds WHERE ds.service_id = services.id AND COALESCE(ds.current_rollout_generation, 0) = $5)`,
 			nextRevision, now, current.ID, current.SpecRevision, current.RolloutGeneration,
 		)
 		if err != nil {

@@ -109,19 +109,20 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 func TestLeaseManagerRecordsAdvertiseAddrForRedirect(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
+	const leaseName = "advertise-addr-test"
 	owner := NewLeaseManager(store.database, time.Minute, time.Millisecond)
 	owner.SetAdvertise("owner:9443")
 	standby := NewLeaseManager(store.database, time.Minute, time.Millisecond)
 	standby.SetAdvertise("standby:9443")
 
-	if _, acquired, err := owner.acquire(ctx, SingletonLeaseName); err != nil || !acquired {
+	if _, acquired, err := owner.acquire(ctx, leaseName); err != nil || !acquired {
 		t.Fatalf("owner acquire = (%v, %v)", acquired, err)
 	}
-	held, addr, err := owner.Lookup(ctx, SingletonLeaseName)
+	held, addr, err := owner.Lookup(ctx, leaseName)
 	if err != nil || !held || addr != "owner:9443" {
 		t.Fatalf("owner lookup = held=%t addr=%q err=%v", held, addr, err)
 	}
-	held, addr, err = standby.Lookup(ctx, SingletonLeaseName)
+	held, addr, err = standby.Lookup(ctx, leaseName)
 	if err != nil || held || addr != "owner:9443" {
 		t.Fatalf("standby lookup = held=%t addr=%q err=%v", held, addr, err)
 	}

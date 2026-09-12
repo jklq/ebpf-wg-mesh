@@ -258,7 +258,7 @@ func (s *SQLStore) UpsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec S
 		`INSERT INTO source_snapshots(
 			id, source_revision_id, provider, provider_repository_external_id, commit_sha,
 			digest, object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT(source_revision_id) DO NOTHING`,
 		rec.ID, rec.SourceRevisionID, rec.Provider, rec.ProviderRepositoryExternalID, rec.CommitSHA,
 		rec.Digest, rec.ObjectKey, rec.ArchiveSizeBytes, rec.Ready, nullableTime(rec.FetchedAt), rec.CreatedAt, rec.UpdatedAt,

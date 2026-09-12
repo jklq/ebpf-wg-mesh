@@ -13,6 +13,8 @@ import (
 
 func newLiveIndexes() liveIndexes {
 	return liveIndexes{
+		environmentsByAgent:   make(map[string][]string),
+		agentsByEnvironment:   make(map[string][]string),
 		assignmentsByAgent:    make(map[string][]string),
 		assignmentsByService:  make(map[string][]string),
 		domainsByService:      make(map[string][]string),
@@ -53,6 +55,10 @@ func (l *Live) rebuildIndexesLocked() {
 	for id, assignment := range l.durable.Assignments {
 		idx.assignmentsByAgent[assignment.AgentID] = append(idx.assignmentsByAgent[assignment.AgentID], id)
 		idx.assignmentsByService[assignment.ServiceID] = append(idx.assignmentsByService[assignment.ServiceID], id)
+		if service, ok := l.durable.Services[assignment.ServiceID]; ok && assignment.RolloutState != AllocationRolloutLost {
+			idx.environmentsByAgent[assignment.AgentID] = append(idx.environmentsByAgent[assignment.AgentID], service.EnvironmentID)
+			idx.agentsByEnvironment[service.EnvironmentID] = append(idx.agentsByEnvironment[service.EnvironmentID], assignment.AgentID)
+		}
 	}
 	for hostname, domain := range l.durable.Domains {
 		idx.domainsByService[domain.ServiceID] = append(idx.domainsByService[domain.ServiceID], hostname)
@@ -71,6 +77,14 @@ func (l *Live) rebuildIndexesLocked() {
 	}
 	for environmentID := range idx.servicesByEnvironment {
 		slices.Sort(idx.servicesByEnvironment[environmentID])
+	}
+	for agentID, ids := range idx.environmentsByAgent {
+		slices.Sort(ids)
+		idx.environmentsByAgent[agentID] = slices.Compact(ids)
+	}
+	for environmentID, ids := range idx.agentsByEnvironment {
+		slices.Sort(ids)
+		idx.agentsByEnvironment[environmentID] = slices.Compact(ids)
 	}
 	l.indexes = idx
 }
