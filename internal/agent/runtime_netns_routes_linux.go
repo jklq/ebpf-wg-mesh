@@ -105,7 +105,9 @@ func routeFamilyThroughGateway(family int) error {
 		}
 		for _, address := range addresses {
 			if address.IPNet != nil && !isHostRoute(address.IPNet) && !address.IPNet.IP.IsLinkLocalUnicast() && !address.IPNet.IP.IsLinkLocalMulticast() {
-				pool = &netlink.Route{LinkIndex: gatewayLinkIndex, Dst: address.IPNet}
+				// The assigned address carries host bits (for example 10.200.0.3/16);
+				// kernel routes require the canonical network prefix.
+				pool = &netlink.Route{LinkIndex: gatewayLinkIndex, Dst: canonicalPrefix(address.IPNet)}
 				break
 			}
 		}
