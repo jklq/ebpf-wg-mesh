@@ -25,7 +25,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.catalog.createScheduledVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20)
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20)
 	if err != nil {
 		t.Fatalf("createScheduledVolume: %v", err)
 	}
@@ -68,15 +68,15 @@ func TestCreateScheduledVolumeRejectsDuplicateName(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "user-1", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("user-1"), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
 	environmentID := productionEnvironmentID(t, store, project.ID)
-	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", environmentID, "data", 64<<20); err != nil {
+	if _, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), environmentID, "data", 64<<20); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", environmentID, "data", 64<<20); !errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
+	if _, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), environmentID, "data", 64<<20); !errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
 		t.Fatalf("duplicate create = %v, want ErrVolumeAlreadyExists", err)
 	}
 }
@@ -92,7 +92,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	volume, err := store.catalog.createScheduledVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20)
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID), "data", 64<<20)
 	if err != nil {
 		t.Fatalf("createScheduledVolume: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
-	err = store.catalog.deleteVolume(ctx, "user-1", volume.ID)
+	err = store.catalog.deleteVolume(ctx, testUser("user-1"), volume.ID)
 	if !errors.Is(err, deliverycore.ErrVolumeInUse) {
 		t.Fatalf("expected errVolumeInUse, got %v", err)
 	}
@@ -127,7 +127,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		volumeName := fmt.Sprintf("data-%d", i)
 		serviceName := fmt.Sprintf("svc-%d", i)
-		volume, err := store.catalog.createScheduledVolume(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20)
+		volume, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID), volumeName, 64<<20)
 		if err != nil {
 			t.Fatalf("createScheduledVolume(%d): %v", i, err)
 		}
@@ -159,7 +159,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			deleteErrCh <- store.catalog.deleteVolume(ctx, "user-1", volume.ID)
+			deleteErrCh <- store.catalog.deleteVolume(ctx, testUser("user-1"), volume.ID)
 		}()
 
 		close(start)
@@ -171,7 +171,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 			}
 		}
 
-		services, err := store.reads.ListServices(ctx, "user-1", productionEnvironmentID(t, store, projects[0].ID))
+		services, err := store.reads.ListServices(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID))
 		if err != nil {
 			t.Fatalf("ListServices(%d): %v", i, err)
 		}

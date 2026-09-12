@@ -2,12 +2,11 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
 	"errors"
 	"log/slog"
 	"strings"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -20,7 +19,7 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +34,7 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 	if environmentID == "" {
 		return nil, status.Error(codes.InvalidArgument, "environment_id is required")
 	}
-	volume, err := s.store.createScheduledVolume(ctx, identity.UserID, environmentID, name, req.GetSizeBytes())
+	volume, err := s.store.createScheduledVolume(ctx, user, environmentID, name, req.GetSizeBytes())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
@@ -43,16 +42,13 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create volume: %v", err)
 		}
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Errorf(codes.NotFound, "environment: %v", err)
-		}
 		if errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create volume: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrInvalidVolume) {
 			return nil, status.Errorf(codes.InvalidArgument, "create volume: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "create volume: %v", err)
+		return nil, writeAccessError("create volume", err)
 	}
 	slog.Info("volume created", "volume_id", volume.ID, "environment_id", volume.EnvironmentID)
 	return toProtoVolume(volume), nil
@@ -62,37 +58,34 @@ func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.Dele
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.GetVolumeId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
 	}
-	if err := s.store.deleteVolume(ctx, identity.UserID, req.GetVolumeId()); err != nil {
+	if err := s.store.deleteVolume(ctx, user, req.GetVolumeId()); err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
 		if errors.Is(err, deliverycore.ErrVolumeInUse) {
 			return nil, status.Errorf(codes.FailedPrecondition, "delete volume: %v", err)
 		}
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Errorf(codes.NotFound, "volume: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "delete volume: %v", err)
+		return nil, writeAccessError("delete volume", err)
 	}
 	s.notifyAllAgents(ctx)
 	return &emptypb.Empty{}, nil
 }
 
 func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListVolumesRequest) (*platformv1.ListVolumesResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listVolumes(ctx, identity.UserID, req.GetEnvironmentId())
+	items, err := s.store.listVolumes(ctx, user, req.GetEnvironmentId())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list volumes: %v", err)
+		return nil, writeAccessError("list volumes", err)
 	}
 	resp := &platformv1.ListVolumesResponse{Volumes: make([]*platformv1.Volume, 0, len(items))}
 	for _, item := range items {
@@ -105,10 +98,11 @@ func (s *PlatformService) CreateDomainBinding(ctx context.Context, req *platform
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
+	user, err := authorizedUser(ctx)
+	if err != nil {
 		return nil, err
 	}
-	result, err := s.domains.CreateDomainBinding(ctx, req)
+	result, err := s.domains.CreateDomainBinding(ctx, user, req)
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return nil, mapped
 	}
@@ -119,10 +113,11 @@ func (s *PlatformService) GenerateDomainBinding(ctx context.Context, req *platfo
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
+	user, err := authorizedUser(ctx)
+	if err != nil {
 		return nil, err
 	}
-	result, err := s.domains.GenerateDomainBinding(ctx, req)
+	result, err := s.domains.GenerateDomainBinding(ctx, user, req)
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return nil, mapped
 	}
@@ -130,28 +125,25 @@ func (s *PlatformService) GenerateDomainBinding(ctx context.Context, req *platfo
 }
 
 func (s *PlatformService) GetDomainBinding(ctx context.Context, req *platformv1.GetDomainBindingRequest) (*platformv1.DomainBinding, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	binding, err := s.domains.GetDomainBinding(ctx, identity.UserID, req.GetHostname())
+	binding, err := s.domains.GetDomainBinding(ctx, user, req.GetHostname())
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "get domain binding: %v", err)
+		return nil, readAccessError("domain binding", err)
 	}
 	return binding, nil
 }
 
 func (s *PlatformService) ListDomainBindings(ctx context.Context, req *platformv1.ListDomainBindingsRequest) (*platformv1.ListDomainBindingsResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.domains.ListDomainBindings(ctx, identity.UserID, req.GetServiceId())
+	items, err := s.domains.ListDomainBindings(ctx, user, req.GetServiceId())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list domain bindings: %v", err)
+		return nil, writeAccessError("list domain bindings", err)
 	}
 	resp := &platformv1.ListDomainBindingsResponse{Bindings: make([]*platformv1.DomainBinding, 0, len(items))}
 	resp.Bindings = append(resp.Bindings, items...)
@@ -162,10 +154,11 @@ func (s *PlatformService) UpdateDomainBinding(ctx context.Context, req *platform
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
+	user, err := authorizedUser(ctx)
+	if err != nil {
 		return nil, err
 	}
-	result, err := s.domains.UpdateDomainBinding(ctx, req)
+	result, err := s.domains.UpdateDomainBinding(ctx, user, req)
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return nil, mapped
 	}
@@ -176,10 +169,11 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
+	user, err := authorizedUser(ctx)
+	if err != nil {
 		return nil, err
 	}
-	result, err := s.domains.DeleteDomainBinding(ctx, req)
+	result, err := s.domains.DeleteDomainBinding(ctx, user, req)
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return nil, mapped
 	}

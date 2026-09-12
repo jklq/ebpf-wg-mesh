@@ -3,15 +3,16 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/journal"
-
-	"github.com/google/uuid"
-
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
+
+	"github.com/google/uuid"
 )
 
 var errProductionEnvironment = errors.New("production environment cannot be deleted")
@@ -28,26 +29,28 @@ func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Cont
 	return s.createEnvironmentQuerier(ctx, q, projectID, "Production", true, "")
 }
 
-func (s *catalogPersistence) createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) createEnvironment(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
 	var rec deliverycore.EnvironmentRecord
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := s.authorizeProjectWriteQuerier(ctx, tx, userID, projectID); err != nil {
-			return err
-		}
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		rec, err = s.createEnvironmentQuerier(ctx, tx, projectID, name, false, "")
+		rec, err = s.createEnvironmentQuerier(ctx, tx, scope.ID(), name, false, "")
 		return err
 	})
 	return rec, err
 }
 
-func (s *catalogPersistence) listEnvironments(ctx context.Context, userID, projectID string) ([]deliverycore.EnvironmentRecord, error) {
-	if _, err := s.projectByID(ctx, userID, projectID); err != nil {
+func (s *catalogPersistence) listEnvironments(ctx context.Context, user authz.User, projectID string) ([]deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Read)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, environmentSelect+`
 		 WHERE e.project_id = $1
-		 ORDER BY e.is_production DESC, e.created_at ASC, e.id ASC`, projectID)
+		 ORDER BY e.is_production DESC, e.created_at ASC, e.id ASC`, scope.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -68,35 +71,26 @@ func (s *catalogPersistence) productionEnvironmentByProjectInternal(ctx context.
 		 WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 }
 
-func (s *catalogPersistence) authorizeEnvironmentWrite(ctx context.Context, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	return s.authorizeEnvironmentWriteQuerier(ctx, s.db, userID, environmentID)
-}
-
-func (s *catalogPersistence) authorizeProjectWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
-	var allowed bool
-	return q.QueryRowContext(ctx, `SELECT TRUE FROM projects p
-		JOIN project_memberships m ON m.project_id = p.id
-		WHERE p.id = $1 AND m.user_id = $2
-		  AND m.role IN ('owner', 'editor') AND p.kind = $3`,
-		projectID, userID, string(deliverycore.ProjectKindUser)).Scan(&allowed)
-}
-
-func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
 	}
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
 	var rec deliverycore.EnvironmentRecord
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		current, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.environmentByScopeQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
 		now := time.Now().UTC()
-		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, environmentID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
 			return err
 		}
-		journal.RecordEnvironment(ctx, environmentID)
+		journal.RecordEnvironment(ctx, current.ID)
 		current.Name = name
 		current.UpdatedAt = now
 		rec = current
@@ -105,11 +99,15 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 	return rec, err
 }
 
-func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error) {
+func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return nil, err
+	}
 	var agentIDs []string
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		agentIDs = nil
-		rec, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		rec, err := s.environmentByScopeQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -117,7 +115,7 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, envi
 			return errProductionEnvironment
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.agent_id FROM allocations a
-			JOIN services s ON s.id = a.service_id WHERE s.environment_id = $1`, environmentID)
+			JOIN services s ON s.id = a.service_id WHERE s.environment_id = $1`, rec.ID)
 		if err != nil {
 			return err
 		}
@@ -132,10 +130,10 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, envi
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		if err := journal.RecordEnvironmentRemoval(ctx, tx, environmentID); err != nil {
+		if err := journal.RecordEnvironmentRemoval(ctx, tx, rec.ID); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM environments WHERE id = $1`, environmentID)
+		result, err := tx.ExecContext(ctx, `DELETE FROM environments WHERE id = $1`, rec.ID)
 		if err != nil {
 			return err
 		}
@@ -213,23 +211,10 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
-func (s *catalogPersistence) environmentByIDQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
+func (s *catalogPersistence) environmentByScopeQuerier(ctx context.Context, q deliverycore.ServiceQueryer, scope authz.Environment) (deliverycore.EnvironmentRecord, error) {
 	row := q.QueryRowContext(ctx, environmentSelect+`
-		 JOIN project_memberships m ON m.project_id = e.project_id
-		 JOIN projects p ON p.id = e.project_id
-		 WHERE e.id = $1 AND m.user_id = $2
-		   AND m.role IN ('owner', 'editor', 'viewer') AND p.kind = $3`,
-		environmentID, userID, string(deliverycore.ProjectKindUser))
-	return deliverycore.ScanEnvironmentRow(row)
-}
-
-func (s *catalogPersistence) authorizeEnvironmentWriteQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, environmentID string) (deliverycore.EnvironmentRecord, error) {
-	row := q.QueryRowContext(ctx, environmentSelect+`
-		 JOIN project_memberships m ON m.project_id = e.project_id
-		 JOIN projects p ON p.id = e.project_id
-		 WHERE e.id = $1 AND m.user_id = $2
-		   AND m.role IN ('owner', 'editor') AND p.kind = $3`,
-		environmentID, userID, string(deliverycore.ProjectKindUser))
+		 WHERE e.id = $1 AND e.project_id = $2`,
+		scope.ID(), scope.ProjectID())
 	return deliverycore.ScanEnvironmentRow(row)
 }
 

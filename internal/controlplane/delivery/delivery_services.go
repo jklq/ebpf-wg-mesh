@@ -10,29 +10,30 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
-func (d *Delivery) CreateScheduledService(ctx context.Context, environmentID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, error) {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) CreateScheduledService(ctx context.Context, user authz.User, environmentID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, error) {
+	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return d.createScheduledService(ctx, identity.UserID, environmentID, name, spec)
+	return d.createScheduledService(ctx, scope, name, spec)
 }
 
-func (d *Delivery) createScheduledService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, error) {
+func (d *Delivery) createScheduledService(ctx context.Context, scope authz.Environment, name string, spec *platformv1.ServiceSpec) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		environment, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+		environment, err := s.environmentByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
-		rec, err = s.createStagedServiceTx(ctx, tx, environment, name, spec, userID)
+		rec, err = s.createStagedServiceTx(ctx, tx, environment, name, spec, scope.UserID())
 		return err
 	})
 	if err != nil {
@@ -41,14 +42,18 @@ func (d *Delivery) createScheduledService(ctx context.Context, userID, environme
 	return rec, nil
 }
 
-func (d *Delivery) CreateService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
+func (d *Delivery) CreateService(ctx context.Context, user authz.User, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
+	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return ServiceRecord{}, err
+	}
 	s := d.store
 	var rec ServiceRecord
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		rec, err = d.createServiceTx(ctx, tx, userID, environmentID, name, spec, agentID)
+		rec, err = d.createServiceTx(ctx, tx, scope, name, spec, agentID)
 		return err
 	})
 	if err != nil {
@@ -57,12 +62,12 @@ func (d *Delivery) CreateService(ctx context.Context, userID, environmentID, nam
 	return rec, nil
 }
 
-func (d *Delivery) createServiceTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
-	environment, err := d.store.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
+func (d *Delivery) createServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Environment, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
+	environment, err := d.store.environmentByIDQuerier(ctx, tx, scope)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return d.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, userID)
+	return d.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, scope.UserID())
 }
 
 func (d *Delivery) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
@@ -140,40 +145,37 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	return rec, nil
 }
 
-func (d *Delivery) UpdateService(ctx context.Context, serviceID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, error) {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, error) {
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return ServiceRecord{}, false, err
 	}
-	return d.updateService(ctx, identity.UserID, serviceID, name, spec)
+	return d.updateService(ctx, scope, name, spec)
 }
 
-func (d *Delivery) updateService(ctx context.Context, userID, serviceID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, error) {
+func (d *Delivery) updateService(ctx context.Context, scope authz.Service, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, error) {
 	s := d.store
 	var current ServiceRecord
 	var changed bool
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		current, changed, _, err = d.updateServiceTx(ctx, tx, userID, serviceID, name, spec)
+		current, changed, _, err = d.updateServiceTx(ctx, tx, scope, name, spec)
 		return err
 	})
 	if err != nil {
 		return ServiceRecord{}, false, err
 	}
-	current, err = s.serviceByID(ctx, userID, serviceID)
+	current, err = s.serviceByID(ctx, scope)
 	if err != nil {
 		return ServiceRecord{}, false, err
 	}
 	return current, changed, nil
 }
 
-func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serviceID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, bool, error) {
+func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Service, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, bool, error) {
 	s := d.store
-	current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
+	current, err := s.serviceByIDQuerier(ctx, tx, scope)
 	if err != nil {
-		return ServiceRecord{}, false, false, err
-	}
-	if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
 	nextName := strings.TrimSpace(name)
@@ -212,7 +214,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 			  WHERE id = $3
 			    AND current_spec_revision = $4
 			    AND EXISTS (SELECT 1 FROM service_delivery_status ds WHERE ds.service_id = services.id AND COALESCE(ds.current_rollout_generation, 0) = $5)`,
-			nextName, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+			nextName, now, current.ID, current.SpecRevision, current.RolloutGeneration,
 		)
 		if err != nil {
 			return ServiceRecord{}, false, false, err
@@ -224,7 +226,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 		if affected == 0 {
 			return ServiceRecord{}, false, false, ErrConcurrentUpdate
 		}
-		journal.RecordService(ctx, serviceID)
+		journal.RecordService(ctx, current.ID)
 		current.Name = nextName
 		current.UpdatedAt = now
 		return current, false, false, nil
@@ -245,7 +247,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 		  WHERE id = $4
 		    AND current_spec_revision = $5
 		    AND EXISTS (SELECT 1 FROM service_delivery_status ds WHERE ds.service_id = services.id AND COALESCE(ds.current_rollout_generation, 0) = $6)`,
-		nextName, nextSpecRevision, now, serviceID, current.SpecRevision, current.RolloutGeneration,
+		nextName, nextSpecRevision, now, current.ID, current.SpecRevision, current.RolloutGeneration,
 	)
 	if err != nil {
 		return ServiceRecord{}, false, false, err
@@ -257,14 +259,14 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 	if affected == 0 {
 		return ServiceRecord{}, false, false, ErrConcurrentUpdate
 	}
-	journal.RecordService(ctx, serviceID)
+	journal.RecordService(ctx, current.ID)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-		serviceID, nextSpecRevision, specJSON, now,
+		current.ID, nextSpecRevision, specJSON, now,
 	); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
-	journal.RecordRevision(ctx, serviceID, nextSpecRevision)
+	journal.RecordRevision(ctx, current.ID, nextSpecRevision)
 	nextRecord := current
 	nextRecord.Name = nextName
 	nextRecord.Spec = spec
@@ -279,37 +281,34 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, userID, serv
 	return nextRecord, true, sourceChanged, nil
 }
 
-func (d *Delivery) DeleteService(ctx context.Context, serviceID string) error {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) DeleteService(ctx context.Context, user authz.User, serviceID string) error {
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return err
 	}
-	return d.deleteService(ctx, identity.UserID, serviceID)
+	return d.deleteService(ctx, scope)
 }
 
-func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) error {
+func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error {
 	s := d.store
 	var hasBindings bool
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
+		service, err := s.serviceByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
-			return err
-		}
-		bindings, err := s.listDomainBindings(ctx, userID, serviceID)
+		bindings, err := s.listDomainBindings(ctx, scope)
 		if err != nil {
 			return err
 		}
 		hasBindings = len(bindings) > 0
-		if err := s.markCurrentDeploymentRemovedTx(ctx, tx, serviceID, deploymentActor{Kind: DeploymentCauseUser, ID: userID}); err != nil {
+		if err := s.markCurrentDeploymentRemovedTx(ctx, tx, service.ID, deploymentActor{Kind: DeploymentCauseUser, ID: scope.UserID()}); err != nil {
 			return err
 		}
-		if err := journal.RecordServiceRemoval(ctx, tx, serviceID); err != nil {
+		if err := journal.RecordServiceRemoval(ctx, tx, service.ID); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM services WHERE id = $1`, serviceID)
+		result, err := tx.ExecContext(ctx, `DELETE FROM services WHERE id = $1`, service.ID)
 		if err != nil {
 			return err
 		}
@@ -340,19 +339,19 @@ func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) 
 	return nil
 }
 
-func (d *Delivery) DiscardServiceChanges(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (ServiceRecord, error) {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) DiscardServiceChanges(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (ServiceRecord, error) {
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return d.discardServiceChanges(ctx, identity.UserID, serviceID, changeIDs, discardAll)
+	return d.discardServiceChanges(ctx, scope, changeIDs, discardAll)
 }
 
-func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (ServiceRecord, error) {
+func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Service, changeIDs []string, discardAll bool) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
+		current, err := s.serviceByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -427,19 +426,19 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID 
 	if err != nil {
 		return ServiceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}
-	rec, err = s.serviceByID(ctx, userID, serviceID)
+	rec, err = s.serviceByID(ctx, scope)
 	if err != nil {
 		return ServiceRecord{}, fmt.Errorf("discard service changes: %w", err)
 	}
 	return rec, nil
 }
 
-func (d *Delivery) ScaleService(ctx context.Context, serviceID string, desired int32) (ServiceRecord, []AllocationRecord, int64, error) {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) ScaleService(ctx context.Context, user authz.User, serviceID string, desired int32) (ServiceRecord, []AllocationRecord, int64, error) {
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return ServiceRecord{}, nil, 0, err
 	}
-	service, allocations, err := d.scaleService(ctx, identity.UserID, serviceID, desired)
+	service, allocations, err := d.scaleService(ctx, scope, desired)
 	if err != nil {
 		return ServiceRecord{}, nil, 0, err
 	}
@@ -453,7 +452,7 @@ func (d *Delivery) ScaleService(ctx context.Context, serviceID string, desired i
 	return service, allocations, eventIndex, nil
 }
 
-func (d *Delivery) scaleService(ctx context.Context, userID, serviceID string, desired int32) (ServiceRecord, []AllocationRecord, error) {
+func (d *Delivery) scaleService(ctx context.Context, scope authz.Service, desired int32) (ServiceRecord, []AllocationRecord, error) {
 	s := d.store
 	var (
 		current     ServiceRecord
@@ -461,35 +460,33 @@ func (d *Delivery) scaleService(ctx context.Context, userID, serviceID string, d
 	)
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		current, allocations, err = d.scaleServiceTx(ctx, tx, userID, serviceID, desired)
+		current, allocations, err = d.scaleServiceTx(ctx, tx, scope, desired)
 		return err
 	})
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
-	current, err = s.serviceByID(ctx, userID, serviceID)
+	current, err = s.serviceByID(ctx, scope)
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
-	allocations, err = s.listAllocationsByServiceID(ctx, serviceID)
+	allocations, err = s.listAllocationsByServiceID(ctx, scope.ID())
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
 	return current, allocations, nil
 }
 
-func (d *Delivery) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, serviceID string, desired int32) (ServiceRecord, []AllocationRecord, error) {
+func (d *Delivery) scaleServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Service, desired int32) (ServiceRecord, []AllocationRecord, error) {
 	s := d.store
 	if err := validateDesiredReplicaCount(desired); err != nil {
 		return ServiceRecord{}, nil, err
 	}
-	current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
+	current, err := s.serviceByIDQuerier(ctx, tx, scope)
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
-	if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, current.EnvironmentID); err != nil {
-		return ServiceRecord{}, nil, err
-	}
+	serviceID := scope.ID()
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE id = $1 FOR UPDATE`, serviceID).Scan(&serviceID); err != nil {
 		return ServiceRecord{}, nil, err
 	}
@@ -504,7 +501,7 @@ func (d *Delivery) scaleServiceTx(ctx context.Context, tx *sql.Tx, userID, servi
 		nextSpec = proto.Clone(nextSpec).(*platformv1.ServiceSpec)
 	}
 	nextSpec.DesiredReplicaCount = replicaCountPtr(desired)
-	updated, _, _, err := d.updateServiceTx(ctx, tx, userID, serviceID, current.Name, nextSpec)
+	updated, _, _, err := d.updateServiceTx(ctx, tx, scope, current.Name, nextSpec)
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}

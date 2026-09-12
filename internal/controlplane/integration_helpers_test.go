@@ -5,9 +5,9 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"strings"
@@ -18,6 +18,14 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
+
+func testUser(id string) authz.User {
+	user, err := authz.AuthenticatedUser(id)
+	if err != nil {
+		panic(err)
+	}
+	return user
+}
 
 func testDelivery(store *persistence) *testDeliveryHarness {
 	return newTestDelivery(store, nil, nil, nil)
@@ -36,28 +44,28 @@ func bumpDesiredRevisionsForTest(t *testing.T, store *persistence, ctx context.C
 }
 
 func createService(ctx context.Context, store *persistence, userID, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (deliverycore.ServiceRecord, error) {
-	return testDelivery(store).CreateService(ctx, userID, environmentID, name, spec, agentID)
+	return testDelivery(store).CreateService(ctx, testUser(userID), environmentID, name, spec, agentID)
 }
 
 func createScheduledService(ctx context.Context, store *persistence, userID, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error) {
-	return testDelivery(store).CreateScheduledService(identity.WithDelegatedUser(ctx, userID), environmentID, name, spec)
+	return testDelivery(store).CreateScheduledService(ctx, testUser(userID), environmentID, name, spec)
 }
 
 func updateService(ctx context.Context, store *persistence, userID, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
-	return testDelivery(store).UpdateService(identity.WithDelegatedUser(ctx, userID), serviceID, name, spec)
+	return testDelivery(store).UpdateService(ctx, testUser(userID), serviceID, name, spec)
 }
 
 func deleteService(ctx context.Context, store *persistence, userID, serviceID string) error {
-	return testDelivery(store).DeleteService(identity.WithDelegatedUser(ctx, userID), serviceID)
+	return testDelivery(store).DeleteService(ctx, testUser(userID), serviceID)
 }
 
 func scaleService(ctx context.Context, store *persistence, userID, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
-	service, allocs, _, err := testDelivery(store).ScaleService(identity.WithDelegatedUser(ctx, userID), serviceID, desired)
+	service, allocs, _, err := testDelivery(store).ScaleService(ctx, testUser(userID), serviceID, desired)
 	return service, allocs, err
 }
 
 func discardServiceChanges(ctx context.Context, store *persistence, userID, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error) {
-	return testDelivery(store).DiscardServiceChanges(identity.WithDelegatedUser(ctx, userID), serviceID, changeIDs, discardAll)
+	return testDelivery(store).DiscardServiceChanges(ctx, testUser(userID), serviceID, changeIDs, discardAll)
 }
 
 func desiredStateForAgent(ctx context.Context, store *persistence, agentID string) (*agentv1.DesiredNodeState, error) {
@@ -103,7 +111,7 @@ func completeBuildForTest(ctx context.Context, store *persistence, builderID, bu
 }
 
 func applyDeploymentActionForTest(ctx context.Context, store *persistence, userID, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.ServiceRecord, deliverycore.DeploymentActionRecord, error) {
-	result, err := testDelivery(store).ApplyDeploymentAction(identity.WithDelegatedUser(ctx, userID), serviceID, deploymentID, action, idempotencyKey, allocationID)
+	result, err := testDelivery(store).ApplyDeploymentAction(ctx, testUser(userID), serviceID, deploymentID, action, idempotencyKey, allocationID)
 	if err != nil {
 		return deliverycore.ServiceRecord{}, deliverycore.DeploymentActionRecord{}, err
 	}
@@ -139,7 +147,7 @@ func releaseEnvironmentServiceForTest(ctx context.Context, store *persistence, u
 
 func releaseEnvironmentForTest(ctx context.Context, store *persistence, userID, environmentID string) ([]deliverycore.ServiceRecord, []string, error) {
 	notifier := &releaseTestNotifier{}
-	released, err := newTestDelivery(store, notifier, nil, nil).ReleaseEnvironment(identity.WithDelegatedUser(ctx, userID), environmentID)
+	released, err := newTestDelivery(store, notifier, nil, nil).ReleaseEnvironment(ctx, testUser(userID), environmentID)
 	services := make([]deliverycore.ServiceRecord, 0, len(released))
 	for _, result := range released {
 		services = append(services, result.Service)

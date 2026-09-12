@@ -5,17 +5,15 @@ import (
 	"database/sql"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 )
 
-func (s *persistence) listServices(ctx context.Context, userID, environmentID string) ([]ServiceRecord, error) {
-	if _, err := s.environmentByID(ctx, userID, environmentID); err != nil {
-		return nil, err
-	}
+func (s *persistence) listServices(ctx context.Context, scope authz.Environment) ([]ServiceRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		serviceSelectSQL+`
 		  WHERE s.environment_id = $1
 		  ORDER BY s.created_at ASC`,
-		environmentID,
+		scope.ID(),
 	)
 	if err != nil {
 		return nil, err
@@ -62,17 +60,30 @@ func (s *persistence) listServices(ctx context.Context, userID, environmentID st
 	return out, nil
 }
 
-func (s *persistence) serviceByID(ctx context.Context, userID, serviceID string) (ServiceRecord, error) {
-	return s.serviceByIDQuerier(ctx, s.db, userID, serviceID)
+func (s *persistence) serviceByID(ctx context.Context, scope authz.Service) (ServiceRecord, error) {
+	return s.serviceByIDQuerier(ctx, s.db, scope)
 }
 
-func (s *persistence) serviceByIDQuerier(ctx context.Context, q ServiceQueryer, userID, serviceID string) (ServiceRecord, error) {
-	row := q.QueryRowContext(ctx,
+func (s *persistence) serviceByIDQuerier(ctx context.Context, q ServiceQueryer, scope authz.Service) (ServiceRecord, error) {
+	return s.serviceByRowQuerier(ctx, q, q.QueryRowContext(ctx,
 		serviceSelectSQL+`
-		   JOIN project_memberships m ON m.project_id = e.project_id
-		  WHERE s.id = $1 AND m.user_id = $2 AND m.role IN ('owner', 'editor', 'viewer')`,
-		serviceID, userID,
-	)
+		  WHERE s.id = $1 AND e.project_id = $2`,
+		scope.ID(), scope.ProjectID(),
+	))
+}
+
+// serviceByIDInEnvironmentQuerier loads a service confined to an authorized
+// environment. It serves operations that enumerate services under an
+// environment scope, where minting one scope per service would be wasteful.
+func (s *persistence) serviceByIDInEnvironmentQuerier(ctx context.Context, q ServiceQueryer, env authz.Environment, serviceID string) (ServiceRecord, error) {
+	return s.serviceByRowQuerier(ctx, q, q.QueryRowContext(ctx,
+		serviceSelectSQL+`
+		  WHERE s.id = $1 AND s.environment_id = $2 AND e.project_id = $3`,
+		serviceID, env.ID(), env.ProjectID(),
+	))
+}
+
+func (s *persistence) serviceByRowQuerier(ctx context.Context, q ServiceQueryer, row *sql.Row) (ServiceRecord, error) {
 	rec, err := scanServiceRow(row)
 	if err != nil {
 		return ServiceRecord{}, err

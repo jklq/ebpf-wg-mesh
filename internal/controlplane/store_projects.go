@@ -3,10 +3,12 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"time"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"github.com/google/uuid"
 )
@@ -115,17 +117,17 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 	return project, nil
 }
 
-func (s *catalogPersistence) createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, userID, name)
+		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, user.ID(), name)
 		if err != nil {
 			return err
 		}
-		if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, userID, id); err != nil {
+		if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, user.ID(), id); err != nil {
 			return err
 		}
-		project, err = s.projectByIDQuerier(ctx, tx, userID, id)
+		project, err = s.projectByIDInternalQuerier(ctx, tx, id)
 		return err
 	})
 	if err != nil {
@@ -134,7 +136,7 @@ func (s *catalogPersistence) createProject(ctx context.Context, userID, name str
 	return project, nil
 }
 
-func (s *catalogPersistence) listProjects(ctx context.Context, userID string) ([]deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) listProjects(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
@@ -144,7 +146,7 @@ func (s *catalogPersistence) listProjects(ctx context.Context, userID string) ([
 		    AND m.role IN ('owner', 'editor', 'viewer')
 		    AND p.kind = $2
 		  ORDER BY p.created_at ASC`,
-		userID,
+		user.ID(),
 		string(deliverycore.ProjectKindUser),
 	)
 	if err != nil {
@@ -163,39 +165,21 @@ func (s *catalogPersistence) listProjects(ctx context.Context, userID string) ([
 	return out, rows.Err()
 }
 
-func (s *catalogPersistence) projectByID(ctx context.Context, userID, projectID string) (deliverycore.ProjectRecord, error) {
-	return s.projectByIDQuerier(ctx, s.db, userID, projectID)
+func (s *catalogPersistence) projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error) {
+	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Read)
+	if err != nil {
+		return deliverycore.ProjectRecord{}, err
+	}
+	return s.projectByScopeQuerier(ctx, s.db, scope)
 }
 
-func (s *catalogPersistence) authorizeProjectWrite(ctx context.Context, userID, projectID string) error {
-	var allowed bool
-	return s.db.QueryRowContext(
-		ctx,
-		`SELECT TRUE
-		   FROM projects p
-		   JOIN project_memberships m ON m.project_id = p.id
-		  WHERE p.id = $1
-		    AND m.user_id = $2
-		    AND m.role IN ('owner', 'editor')
-		    AND p.kind = $3`,
-		projectID,
-		userID,
-		string(deliverycore.ProjectKindUser),
-	).Scan(&allowed)
-}
-
-func (s *catalogPersistence) projectByIDQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) (deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) projectByScopeQuerier(ctx context.Context, q deliverycore.ServiceQueryer, scope authz.Project) (deliverycore.ProjectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
 		   FROM projects p
-		   JOIN project_memberships m ON m.project_id = p.id
-		  WHERE p.id = $1
-		    AND m.user_id = $2
-		    AND m.role IN ('owner', 'editor', 'viewer')
-		    AND p.kind = $3`,
-		projectID,
-		userID,
+		  WHERE p.id = $1 AND p.kind = $2`,
+		scope.ID(),
 		string(deliverycore.ProjectKindUser),
 	)
 	return deliverycore.ScanProjectRow(row)

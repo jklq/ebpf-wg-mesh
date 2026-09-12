@@ -23,7 +23,7 @@ import (
 func TestJournalReleaseBatchAndReplay(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "journal")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "journal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestJournalReleaseBatchAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	released, err := testDelivery(store).ReleaseEnvironment(contextWithDelegatedUser("owner", ""), environmentID)
+	released, err := testDelivery(store).ReleaseEnvironment(contextWithDelegatedUser("owner", ""), testUser("owner"), environmentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	store.journal.SetVerifyRecordings(true)
 	t.Cleanup(func() { store.journal.SetVerifyRecordings(false) })
 
-	project, err := store.catalog.createProject(ctx, "owner", "recording")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "recording")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,17 +319,17 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	if _, _, err := scaleService(ctx, store, "owner", serviceID, 2); err != nil {
 		t.Fatal(err)
 	}
-	volume, err := store.catalog.createScheduledVolume(ctx, "owner", environmentID, "data", 64<<20)
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), environmentID, "data", 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.catalog.deleteVolume(ctx, "owner", volume.ID); err != nil {
+	if err := store.catalog.deleteVolume(ctx, testUser("owner"), volume.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "owner", "first.example.test", serviceID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("owner"), "first.example.test", serviceID, 8080); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.routing.DeleteDomainBindingRecord(ctx, "owner", "first.example.test"); err != nil {
+	if _, err := store.routing.DeleteDomainBindingRecord(ctx, testUser("owner"), "first.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	if len(released) < 2 {
@@ -350,10 +350,10 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-2", deliverycore.AgentStateCordoned); err != nil {
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, testUser("ops"), "node-2", deliverycore.AgentStateCordoned); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, "ops", "node-2", deliverycore.AgentStateActive); err != nil {
+	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, testUser("ops"), "node-2", deliverycore.AgentStateActive); err != nil {
 		t.Fatal(err)
 	}
 	fixtureLive(store).SetLastContactForTest("node-1", time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL))
@@ -372,14 +372,14 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	if err := deleteService(ctx, store, "owner", serviceID); err != nil {
 		t.Fatal(err)
 	}
-	staging, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "staging")
+	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "staging")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := createScheduledService(ctx, store, "owner", staging.ID, "staged", directImageServiceSpec("example.test/web:1", nil)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.deleteEnvironment(ctx, "owner", staging.ID); err != nil {
+	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), staging.ID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -387,7 +387,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "payload")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "payload")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 	if len(before.Services) < seeded {
 		t.Fatalf("seeded %d services, durable state has %d", seeded, len(before.Services))
 	}
-	if _, err := store.catalog.renameEnvironment(ctx, "owner", environmentID, "payload-renamed"); err != nil {
+	if _, err := store.catalog.renameEnvironment(ctx, testUser("owner"), environmentID, "payload-renamed"); err != nil {
 		t.Fatal(err)
 	}
 	var payload []byte
@@ -512,7 +512,7 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 func TestJournalCompactionBootsFromNormalizedProductState(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "compact")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "compact")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +532,7 @@ func TestJournalCompactionBootsFromNormalizedProductState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.renameEnvironment(ctx, "owner", environmentID, "compacted"); err != nil {
+	if _, err := store.catalog.renameEnvironment(ctx, testUser("owner"), environmentID, "compacted"); err != nil {
 		t.Fatal(err)
 	}
 	current, err := store.journal.Snapshot(ctx)
@@ -630,7 +630,7 @@ func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "behind")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "behind")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,13 +646,13 @@ func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 	if _, err := replica.Snapshot(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.renameEnvironment(ctx, "owner", environmentID, "advanced"); err != nil {
+	if _, err := store.catalog.renameEnvironment(ctx, testUser("owner"), environmentID, "advanced"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.compactJournal(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.renameEnvironment(ctx, "owner", environmentID, "advanced-again"); err != nil {
+	if _, err := store.catalog.renameEnvironment(ctx, testUser("owner"), environmentID, "advanced-again"); err != nil {
 		t.Fatal(err)
 	}
 	current, err := store.journal.Snapshot(ctx)
@@ -671,7 +671,7 @@ func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "fanout")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "fanout")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +701,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	drainWatch(node2)
 	drainWatch(node3)
 
-	if _, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "empty"); err != nil {
+	if _, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "empty"); err != nil {
 		t.Fatal(err)
 	}
 	assertNoWatch(t, "empty environment creation", node1, node2, node3)
@@ -713,7 +713,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	assertWatch(t, "service rename on sibling host", node2)
 	assertNoWatch(t, "service rename on idle agent", node3)
 
-	if _, err := store.catalog.createScheduledVolume(ctx, "owner", environmentID, "data", 64<<20); err != nil {
+	if _, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), environmentID, "data", 64<<20); err != nil {
 		t.Fatal(err)
 	}
 	assertWatch(t, "volume create on environment host", node1)

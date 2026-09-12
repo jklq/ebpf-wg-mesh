@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
 	"errors"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -24,11 +23,11 @@ func NewEnvironmentOperations(store environmentStore, notifier deliverycore.Plat
 }
 
 func (s *EnvironmentOperations) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	agentIDs, err := s.store.deleteEnvironment(ctx, identity.UserID, req.GetEnvironmentId())
+	agentIDs, err := s.store.deleteEnvironment(ctx, user, req.GetEnvironmentId())
 	if err != nil {
 		if errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost) {
 			return nil, err
@@ -36,7 +35,7 @@ func (s *EnvironmentOperations) DeleteEnvironment(ctx context.Context, req *plat
 		if errors.Is(err, errProductionEnvironment) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, "delete environment: %v", err)
+		return nil, writeAccessError("delete environment", err)
 	}
 	for _, agentID := range agentIDs {
 		s.notifier.Notify(agentID)

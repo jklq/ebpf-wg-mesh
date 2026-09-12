@@ -5,12 +5,13 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 )
 
 type ProjectKind string
 
 const (
-	ProjectKindUser    ProjectKind = "user"
+	ProjectKindUser    ProjectKind = authz.UserProjectKind
 	ProjectKindManaged ProjectKind = "managed"
 )
 

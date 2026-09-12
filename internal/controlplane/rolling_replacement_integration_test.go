@@ -37,7 +37,7 @@ func (*rolloutIngressProbe) RequestSync() {}
 func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "web.example.com", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	old := allocationForGeneration(t, store, service.ID, 1)[0]
@@ -276,7 +276,7 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 	envID := productionEnvironmentID(t, store, projects[0].ID)
-	if _, err := store.catalog.createScheduledVolume(ctx, "user-1", envID, "data", 64<<20); err != nil {
+	if _, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data", 64<<20); err != nil {
 		t.Fatalf("createVolume: %v", err)
 	}
 	spec := rollingTestSpec("example.test/disk:a", 1, 1)
@@ -362,7 +362,7 @@ func createHealthyRollingService(t *testing.T, replicas, _ int32) (*persistence,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

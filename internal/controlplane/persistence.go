@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
@@ -25,6 +26,7 @@ type buildsPersistence struct {
 }
 type catalogPersistence struct {
 	*database
+	authz *authz.Authorizer
 	reads *readsPersistence
 }
 type eventsPersistence struct {
@@ -32,6 +34,7 @@ type eventsPersistence struct {
 }
 type fleetPersistence struct {
 	*database
+	authz    *authz.Authorizer
 	sessions agentSessions
 	live     fleetLiveReader
 	reads    *readsPersistence
@@ -42,7 +45,8 @@ type readsPersistence struct {
 }
 type routingPersistence struct {
 	*database
-	live ingressLiveReader
+	authz *authz.Authorizer
+	live  ingressLiveReader
 }
 
 func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error) error {
@@ -54,12 +58,13 @@ func newPersistence(db *database) *persistence {
 	db.initJournal()
 	db.journal.SetOnApplied(live.ApplyDurable)
 	p := &persistence{database: db, liveImplementation: live, notifications: live, publication: live}
+	authorizer := authz.NewAuthorizer(db.db)
 	p.builds = &buildsPersistence{database: db}
-	p.catalog = &catalogPersistence{database: db}
+	p.catalog = &catalogPersistence{database: db, authz: authorizer}
 	p.events = &eventsPersistence{database: db}
-	p.fleet = &fleetPersistence{database: db, sessions: live, live: live}
+	p.fleet = &fleetPersistence{database: db, authz: authorizer, sessions: live, live: live}
 	p.reads = &readsPersistence{database: db}
-	p.routing = &routingPersistence{database: db, live: live}
+	p.routing = &routingPersistence{database: db, authz: authorizer, live: live}
 	p.source = source.NewSQLStore(db.db, db.withCoordinationTx, func(ctx context.Context, serviceID string) (source.Service, error) {
 		rec, err := p.reads.ServiceSnapshot(ctx, serviceID)
 		if err != nil {
@@ -71,6 +76,10 @@ func newPersistence(db *database) *persistence {
 	p.fleet.reads = p.reads
 	return p
 }
+
+// authorizer returns the persistence-wide Authorizer. All scopes mint from this
+// single instance; nothing constructs a second one per handle.
+func (p *persistence) authorizer() *authz.Authorizer { return p.catalog.authz }
 
 type platformPersistence struct {
 	*catalogPersistence

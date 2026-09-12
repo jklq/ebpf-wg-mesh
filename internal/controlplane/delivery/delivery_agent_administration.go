@@ -3,28 +3,25 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
-func (d *Delivery) CreateFleetAgent(ctx context.Context, req *platformv1.CreateAgentRequest) (AgentRecord, string, error) {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) CreateFleetAgent(ctx context.Context, user authz.User, req *platformv1.CreateAgentRequest) (AgentRecord, string, error) {
+	scope, err := d.store.authz.AuthorizeOperator(ctx, user)
 	if err != nil {
 		return AgentRecord{}, "", err
 	}
-	return d.createFleetAgent(ctx, identity.UserID, req)
+	return d.createFleetAgent(ctx, scope, req)
 }
 
-func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *platformv1.CreateAgentRequest) (AgentRecord, string, error) {
+func (d *Delivery) createFleetAgent(ctx context.Context, _ authz.Operator, req *platformv1.CreateAgentRequest) (AgentRecord, string, error) {
 	s := d.store
-	if err := s.authorizeOperator(ctx, userID); err != nil {
-		return AgentRecord{}, "", err
-	}
 	if err := ValidateFleetAgentInput(req.GetAgentId(), req.GetName(), req.GetRegion(), req.GetZone(), req.GetFailureDomain(), req.GetReservedCpuMillis(), req.GetReservedMemoryMebibytes()); err != nil {
 		return AgentRecord{}, "", err
 	}
@@ -60,19 +57,16 @@ func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *pla
 	return rec, token, err
 }
 
-func (d *Delivery) UpdateFleetAgent(ctx context.Context, req *platformv1.UpdateAgentRequest) (AgentRecord, error) {
-	identity, err := d.userFromContext(ctx)
+func (d *Delivery) UpdateFleetAgent(ctx context.Context, user authz.User, req *platformv1.UpdateAgentRequest) (AgentRecord, error) {
+	scope, err := d.store.authz.AuthorizeOperator(ctx, user)
 	if err != nil {
 		return AgentRecord{}, err
 	}
-	return d.updateFleetAgent(ctx, identity.UserID, req)
+	return d.updateFleetAgent(ctx, scope, req)
 }
 
-func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *platformv1.UpdateAgentRequest) (AgentRecord, error) {
+func (d *Delivery) updateFleetAgent(ctx context.Context, _ authz.Operator, req *platformv1.UpdateAgentRequest) (AgentRecord, error) {
 	s := d.store
-	if err := s.authorizeOperator(ctx, userID); err != nil {
-		return AgentRecord{}, err
-	}
 	if err := ValidateFleetAgentInput(req.GetAgentId(), req.GetName(), req.GetRegion(), req.GetZone(), req.GetFailureDomain(), req.GetReservedCpuMillis(), req.GetReservedMemoryMebibytes()); err != nil {
 		return AgentRecord{}, err
 	}
@@ -90,10 +84,10 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *pla
 			return fmt.Errorf("%w: retired agents are immutable", ErrInvalidAgentTransition)
 		}
 		if req.GetReservedCpuMillis() > current.CPUMillisCapacity && current.CPUMillisCapacity > 0 {
-			return errors.New("reserved CPU exceeds observed node capacity")
+			return fmt.Errorf("%w: reserved CPU exceeds observed node capacity", ErrInvalidFleetAgentInput)
 		}
 		if req.GetReservedMemoryMebibytes() > current.MemoryMebibytesCapcity && current.MemoryMebibytesCapcity > 0 {
-			return errors.New("reserved memory exceeds observed node capacity")
+			return fmt.Errorf("%w: reserved memory exceeds observed node capacity", ErrInvalidFleetAgentInput)
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE agent_registrations SET name = $1, region = $2, zone = $3,
 			failure_domain = $4, reserved_cpu_millis = $5, reserved_memory_mebibytes = $6,

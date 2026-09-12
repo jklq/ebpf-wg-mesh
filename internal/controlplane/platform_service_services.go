@@ -3,12 +3,13 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
-	"ebof-wg-mesh/internal/controlplane/logs"
 	"errors"
 	"log/slog"
 	"strings"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/logs"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -21,7 +22,7 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -44,14 +45,14 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
 	}
-	environment, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId())
+	environment, err := s.environmentForUser(ctx, user, req.GetEnvironmentId())
 	if err != nil {
-		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
+		return nil, readAccessError("environment access", err)
 	}
 	if err := s.authorizeServiceSource(ctx, environment.ProjectID, spec); err != nil {
 		return nil, err
 	}
-	service, err := s.delivery.CreateScheduledService(ctx, req.GetEnvironmentId(), req.GetService().GetName(), spec)
+	service, err := s.delivery.CreateScheduledService(ctx, user, req.GetEnvironmentId(), req.GetService().GetName(), spec)
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
@@ -59,10 +60,10 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "create service: %v", err)
+		return nil, writeAccessError("create service", err)
 	}
 	slog.Info("service created", "service_id", service.ID, "environment_id", service.EnvironmentID, "spec_revision", service.SpecRevision, "rollout_generation", service.RolloutGeneration)
-	service, err = s.store.ServiceByID(ctx, identity.UserID, service.ID)
+	service, err = s.store.ServiceByID(ctx, user, service.ID)
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
@@ -95,7 +96,7 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -118,20 +119,20 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
 	}
-	current, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
+	current, err := s.store.ServiceByID(ctx, user, req.GetServiceId())
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "service: %v", err)
-	}
-	if err := s.requireProjectWriteAccess(ctx, identity.UserID, current.ProjectID); err != nil {
-		return nil, err
+		return nil, readAccessError("service", err)
 	}
 	if err := s.authorizeServiceSource(ctx, current.ProjectID, spec); err != nil {
 		return nil, err
 	}
-	service, _, err := s.delivery.UpdateService(ctx, req.GetServiceId(), req.GetService().GetName(), spec)
+	service, _, err := s.delivery.UpdateService(ctx, user, req.GetServiceId(), req.GetService().GetName(), spec)
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "project write access: %v", err)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -162,13 +163,17 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 		strings.TrimSpace(req.GetIdempotencyKey()) == "" || deliverycore.DeploymentActionName(req.GetAction()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id, deployment_id, action, and idempotency_key are required")
 	}
-	result, err := s.delivery.ApplyDeploymentAction(ctx, req.GetServiceId(), req.GetDeploymentId(), req.GetAction(), req.GetIdempotencyKey(), req.GetAllocationId())
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.delivery.ApplyDeploymentAction(ctx, user, req.GetServiceId(), req.GetDeploymentId(), req.GetAction(), req.GetIdempotencyKey(), req.GetAllocationId())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
 		switch {
-		case errors.Is(err, deliverycore.ErrDeploymentActionDenied):
+		case errors.Is(err, authz.ErrDenied):
 			return nil, status.Errorf(codes.PermissionDenied, "deployment action: %v", err)
 		case errors.Is(err, sql.ErrNoRows):
 			return nil, status.Errorf(codes.NotFound, "deployment action target: %v", err)
@@ -196,27 +201,20 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
-	current, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, status.Errorf(codes.NotFound, "service: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "load service: %v", err)
-	}
-	if err := s.requireProjectWriteAccess(ctx, identity.UserID, current.ProjectID); err != nil {
-		return nil, err
-	}
-	service, allocations, index, err := s.delivery.ScaleService(ctx, req.GetServiceId(), req.GetDesiredReplicaCount())
+	service, allocations, index, err := s.delivery.ScaleService(ctx, user, req.GetServiceId(), req.GetDesiredReplicaCount())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "project write access: %v", err)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -243,21 +241,17 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	current, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "service: %v", err)
-	}
-	if err := s.requireProjectWriteAccess(ctx, identity.UserID, current.ProjectID); err != nil {
-		return nil, err
-	}
-	service, err := s.delivery.DiscardServiceChanges(ctx, req.GetServiceId(), req.GetChangeIds(), req.GetDiscardAll())
+	service, err := s.delivery.DiscardServiceChanges(ctx, user, req.GetServiceId(), req.GetChangeIds(), req.GetDiscardAll())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "project write access: %v", err)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
@@ -281,28 +275,18 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
-	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
-	if err != nil {
+	if err := s.delivery.DeleteService(ctx, user, req.GetServiceId()); err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.NotFound, "service: %v", err)
-	}
-	if err := s.requireProjectWriteAccess(ctx, identity.UserID, service.ProjectID); err != nil {
-		return nil, err
-	}
-	if err := s.delivery.DeleteService(ctx, req.GetServiceId()); err != nil {
-		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
-			return nil, mapped
-		}
-		return nil, status.Errorf(codes.Internal, "delete service: %v", err)
+		return nil, writeAccessError("delete service", err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -311,16 +295,16 @@ func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetSer
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId())
+	service, err := s.store.ServiceByID(ctx, user, req.GetServiceId())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.NotFound, "service: %v", err)
+		return nil, readAccessError("service", err)
 	}
 	service, err = s.decorateServiceRecord(ctx, service)
 	if err != nil {
@@ -336,12 +320,13 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.environmentForUser(ctx, identity.UserID, req.GetEnvironmentId()); err != nil {
-		return nil, status.Errorf(codes.PermissionDenied, "environment access: %v", err)
+	// Authorize before waiting so denied callers never hold waiter slots.
+	if _, err := s.store.EnvironmentByID(ctx, user, req.GetEnvironmentId()); err != nil {
+		return nil, writeAccessError("environment access", err)
 	}
 	index, changed, err := s.events.Wait(ctx, req.GetWaitIndex(), platformWaitDuration(req.GetWaitTimeoutSeconds()))
 	if err != nil {
@@ -350,12 +335,12 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	if !changed {
 		return &platformv1.ListServicesResponse{Index: index, NotModified: true}, nil
 	}
-	items, err := s.store.ListServices(ctx, identity.UserID, req.GetEnvironmentId())
+	items, err := s.store.ListServices(ctx, user, req.GetEnvironmentId())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		return nil, status.Errorf(codes.Internal, "list services: %v", err)
+		return nil, writeAccessError("list services", err)
 	}
 	allocations, err := s.delivery.LiveAllocationsByEnvironment(req.GetEnvironmentId())
 	if err != nil {

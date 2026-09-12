@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -14,27 +15,14 @@ const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_produ
 	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
 	FROM environments e`
 
-func (s *persistence) environmentByID(ctx context.Context, userID, environmentID string) (EnvironmentRecord, error) {
-	return s.environmentByIDQuerier(ctx, s.db, userID, environmentID)
+func (s *persistence) environmentByID(ctx context.Context, scope authz.Environment) (EnvironmentRecord, error) {
+	return s.environmentByIDQuerier(ctx, s.db, scope)
 }
 
-func (s *persistence) environmentByIDQuerier(ctx context.Context, q ServiceQueryer, userID, environmentID string) (EnvironmentRecord, error) {
+func (s *persistence) environmentByIDQuerier(ctx context.Context, q ServiceQueryer, scope authz.Environment) (EnvironmentRecord, error) {
 	row := q.QueryRowContext(ctx, environmentSelect+`
-		 JOIN project_memberships m ON m.project_id = e.project_id
-		 JOIN projects p ON p.id = e.project_id
-		 WHERE e.id = $1 AND m.user_id = $2
-		   AND m.role IN ('owner', 'editor', 'viewer') AND p.kind = $3`,
-		environmentID, userID, string(ProjectKindUser))
-	return scanEnvironmentRow(row)
-}
-
-func (s *persistence) authorizeEnvironmentWriteQuerier(ctx context.Context, q ServiceQueryer, userID, environmentID string) (EnvironmentRecord, error) {
-	row := q.QueryRowContext(ctx, environmentSelect+`
-		 JOIN project_memberships m ON m.project_id = e.project_id
-		 JOIN projects p ON p.id = e.project_id
-		 WHERE e.id = $1 AND m.user_id = $2
-		   AND m.role IN ('owner', 'editor') AND p.kind = $3`,
-		environmentID, userID, string(ProjectKindUser))
+		 WHERE e.id = $1 AND e.project_id = $2`,
+		scope.ID(), scope.ProjectID())
 	return scanEnvironmentRow(row)
 }
 
@@ -54,10 +42,10 @@ func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRec
 	return rec, nil
 }
 
-func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEnvironmentID, name string, copyVariables bool) (EnvironmentRecord, error) {
+func (s *persistence) duplicateEnvironment(ctx context.Context, scope authz.Environment, name string, copyVariables bool) (EnvironmentRecord, error) {
 	var duplicate EnvironmentRecord
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		source, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, sourceEnvironmentID)
+		source, err := s.environmentByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
@@ -84,11 +72,15 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEn
 			}
 			volumes = append(volumes, volume)
 		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
 		if err := rows.Close(); err != nil {
 			return err
 		}
 		for _, volume := range volumes {
-			if _, err := s.createVolumeTx(ctx, tx, userID, duplicate.ID, volume.name, volume.size); err != nil {
+			if _, err := s.createVolumeTx(ctx, tx, scope.Project(), duplicate.ID, volume.name, volume.size); err != nil {
 				return err
 			}
 		}
@@ -113,6 +105,10 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEn
 			}
 			services = append(services, service)
 		}
+		if err := serviceRows.Err(); err != nil {
+			serviceRows.Close()
+			return err
+		}
 		if err := serviceRows.Close(); err != nil {
 			return err
 		}
@@ -124,7 +120,7 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, userID, sourceEn
 			if !copyVariables && spec.GetRuntime() != nil {
 				spec.Runtime.Env = nil
 			}
-			if _, err := s.createStagedServiceTx(ctx, tx, duplicate, service.name, spec, userID); err != nil {
+			if _, err := s.createStagedServiceTx(ctx, tx, duplicate, service.name, spec, scope.UserID()); err != nil {
 				return err
 			}
 		}

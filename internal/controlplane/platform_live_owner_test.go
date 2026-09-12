@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	"google.golang.org/grpc/codes"
@@ -138,7 +139,7 @@ func TestNonOwnerPlatformRPCsRedirectToLiveOwner(t *testing.T) {
 
 func TestListAgentsMapsErrNotLiveOwner(t *testing.T) {
 	ctx := contextWithDelegatedUser("user-1", "user@example.com")
-	store := &fakePlatformStore{listAgentsFn: func(context.Context) ([]deliverycore.AgentRecord, error) {
+	store := &fakePlatformStore{listAgentsFn: func(context.Context, authz.User) ([]deliverycore.AgentRecord, error) {
 		return nil, deliverycore.ErrNotLiveOwner
 	}}
 	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, WithPlatformLiveOwner(staticLiveOwner{held: true}))
@@ -152,7 +153,7 @@ func TestServiceReadsMapErrNotLiveOwnerAfterInitialOwnerCheck(t *testing.T) {
 	ctx := contextWithDelegatedUser("user-1", "user@example.com")
 
 	t.Run("create reload", func(t *testing.T) {
-		store := &fakePlatformStore{serviceByIDFn: func(context.Context, string, string) (deliverycore.ServiceRecord, error) {
+		store := &fakePlatformStore{serviceByIDFn: func(context.Context, authz.User, string) (deliverycore.ServiceRecord, error) {
 			return deliverycore.ServiceRecord{}, deliverycore.ErrNotLiveOwner
 		}}
 		service := NewPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, WithPlatformLiveOwner(staticLiveOwner{held: true}))
@@ -168,11 +169,11 @@ func TestServiceReadsMapErrNotLiveOwnerAfterInitialOwnerCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("delete lookup", func(t *testing.T) {
-		store := &fakePlatformStore{serviceByIDFn: func(context.Context, string, string) (deliverycore.ServiceRecord, error) {
-			return deliverycore.ServiceRecord{}, deliverycore.ErrNotLiveOwner
+	t.Run("delete delivery", func(t *testing.T) {
+		delivery := &fakePlatformDelivery{deleteServiceFn: func(context.Context, authz.User, string) error {
+			return deliverycore.ErrNotLiveOwner
 		}}
-		service := NewPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, WithPlatformLiveOwner(staticLiveOwner{held: true}))
+		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery, WithPlatformLiveOwner(staticLiveOwner{held: true}))
 		_, err := service.DeleteService(ctx, &platformv1.DeleteServiceRequest{ServiceId: "service-1"})
 		if status.Code(err) != codes.Unavailable {
 			t.Fatalf("DeleteService = %v, want Unavailable", err)
@@ -188,19 +189,19 @@ func TestCreateVolumeMapsValidationErrors(t *testing.T) {
 	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{Name: "data", SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("empty environment: %v", err)
 	}
-	store.createScheduledVolumeFn = func(context.Context, string, string, string, int64) (deliverycore.VolumeRecord, error) {
+	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 		return deliverycore.VolumeRecord{}, sql.ErrNoRows
 	}
 	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "missing", Name: "data", SizeBytes: 1}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown environment: %v", err)
 	}
-	store.createScheduledVolumeFn = func(context.Context, string, string, string, int64) (deliverycore.VolumeRecord, error) {
+	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrVolumeAlreadyExists
 	}
 	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1}); status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("duplicate name: %v", err)
 	}
-	store.createScheduledVolumeFn = func(context.Context, string, string, string, int64) (deliverycore.VolumeRecord, error) {
+	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrInvalidVolume
 	}
 	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {

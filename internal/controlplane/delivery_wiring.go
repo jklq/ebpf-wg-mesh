@@ -1,9 +1,7 @@
 package controlplane
 
 import (
-	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
 )
 
@@ -20,9 +18,6 @@ func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNoti
 		ReadState:        store.readLiveState,
 		ReservedAgentIDs: store.reservedAgentIDs,
 		Notifier:         notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
-		UserFromContext: func(ctx context.Context) (deliverycore.UserIdentity, error) {
-			user, err := identity.DelegatedUserFromContext(ctx)
-			return deliverycore.UserIdentity{UserID: user.UserID}, err
-		},
+		Authorizer: store.authorizer(),
 	}
 }

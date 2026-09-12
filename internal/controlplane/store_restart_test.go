@@ -24,7 +24,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "user-1", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "web.example.test", service.ID, 8080); err != nil {
 		t.Fatalf("createDomainBinding: %v", err)
 	}
 	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
@@ -52,7 +52,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if len(backends) != 1 {
 		t.Fatalf("expected healthy backend, got %#v", backends)
 	}
-	_, allocs, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
+	_, allocs, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, allocs, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
+	_, allocs, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

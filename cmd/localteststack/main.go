@@ -18,6 +18,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/testdb"
 	"ebof-wg-mesh/internal/testutil"
@@ -421,9 +422,9 @@ func main() {
 			log.Printf("stop registry auth proxy: %v", err)
 		}
 	}()
-	tokenRealm := registryAuthProxy.TokenRealmBaseURL() + controlplane.RegistryTokenPath
+	tokenRealm := registryAuthProxy.TokenRealmBaseURL() + registry.TokenPath
 	log.Printf("registry token realm: %s (proxy -> host.docker.internal:%d)", tokenRealm, registryAuthUpstreamPort)
-	registry, err := localteststack.StartManagedRegistry(ctx, localteststack.LocalRegistryConfig{
+	managedRegistry, err := localteststack.StartManagedRegistry(ctx, localteststack.LocalRegistryConfig{
 		StateDir:       filepath.Join(stateDir, "local-registry"),
 		ContainerName:  "localteststack-registry",
 		HostPort:       registryPort,
@@ -436,11 +437,11 @@ func main() {
 		log.Fatalf("start managed local registry: %v", err)
 	}
 	defer func() {
-		if err := registry.Close(); err != nil {
+		if err := managedRegistry.Close(); err != nil {
 			log.Printf("stop managed local registry: %v", err)
 		}
 	}()
-	log.Printf("local registry ready: %s", registry.Host())
+	log.Printf("local registry ready: %s", managedRegistry.Host())
 
 	identity, err := server.EnsureDashboardClientIdentity("dashboard-local")
 	if err != nil {
@@ -512,7 +513,7 @@ func main() {
 		DashboardURL:      ingressURL,
 		DatabaseURL:       dbURL,
 		ClickHouseURL:     clickHouseURL,
-		RegistryURL:       "http://" + registry.Host(),
+		RegistryURL:       "http://" + managedRegistry.Host(),
 		ArtifactsDir:      artifactsDir,
 		PublicBaseURL:     firstNonEmpty(overlay.PublicBaseURL, ingressURL[:len(ingressURL)-1]),
 		GitHubEnabled:     overlay.GitHubEnabled,

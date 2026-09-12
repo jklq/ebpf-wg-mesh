@@ -10,7 +10,6 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
 
 	"github.com/google/uuid"
 )
@@ -116,7 +115,7 @@ func prepareTestStatusReport(ctx context.Context, store *persistence, agentID st
 	}
 }
 func (d *testDeliveryHarness) UpdateFleetAgent(ctx context.Context, userID string, req *platformv1.UpdateAgentRequest) (deliverycore.AgentRecord, error) {
-	return d.Delivery.UpdateFleetAgent(identity.WithDelegatedUser(ctx, userID), req)
+	return d.Delivery.UpdateFleetAgent(ctx, testUser(userID), req)
 }
 func (d *testDeliveryHarness) reconcileDrainingAgent(ctx context.Context, id string) ([]string, error) {
 	err := d.ReconcileRollouts(ctx)

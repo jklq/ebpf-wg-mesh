@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -19,15 +20,13 @@ type ServiceQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-type UserIdentity struct{ UserID string }
-
 type Events interface {
 	Current(context.Context) (int64, error)
 }
 
 type Dependencies struct {
 	CreateEnvironment func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
-	CreateVolume      func(context.Context, *sql.Tx, string, string, string, int64) (VolumeRecord, error)
+	CreateVolume      func(context.Context, *sql.Tx, authz.Project, string, string, int64) (VolumeRecord, error)
 	EnqueueSourceWork func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
 	// SourceStore supplies source-table reads/writes scoped to delivery's
 	// transactions. Delivery never touches source tables directly.
@@ -38,7 +37,7 @@ type Dependencies struct {
 	Live               *Live
 	ProductTransaction Transaction
 	ReadState          func(context.Context, func(*sql.Tx, journal.DurableState) error) error
-	UserFromContext    func(context.Context) (UserIdentity, error)
+	Authorizer         *authz.Authorizer
 	Notifier           PlatformNotifier
 	Ingress            PlatformIngress
 	Events             Events
@@ -57,9 +56,10 @@ type SourceStore interface {
 
 type persistence struct {
 	createEnvironmentQuerier func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
-	createVolumeTx           func(context.Context, *sql.Tx, string, string, string, int64) (VolumeRecord, error)
+	createVolumeTx           func(context.Context, *sql.Tx, authz.Project, string, string, int64) (VolumeRecord, error)
 	enqueueSourceWorkItemTx  func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
 	sourceStore              SourceStore
+	authz                    *authz.Authorizer
 
 	db               *sql.DB
 	mesh             config.ControlPlaneMeshConfig
@@ -86,13 +86,13 @@ func New(deps Dependencies) *Delivery {
 			createVolumeTx:           deps.CreateVolume,
 			enqueueSourceWorkItemTx:  deps.EnqueueSourceWork,
 			sourceStore:              deps.SourceStore,
+			authz:                    deps.Authorizer,
 		},
-		live:            live,
-		notifier:        deps.Notifier,
-		ingress:         deps.Ingress,
-		events:          deps.Events,
-		logEmitter:      deps.LogEmitter,
-		userFromContext: deps.UserFromContext,
+		live:       live,
+		notifier:   deps.Notifier,
+		ingress:    deps.Ingress,
+		events:     deps.Events,
+		logEmitter: deps.LogEmitter,
 	}
 }
 
@@ -111,17 +111,22 @@ func (d *Delivery) LiveAllocationsByEnvironment(environmentID string) (map[strin
 }
 
 type ReadModel interface {
-	ListAgents(context.Context) ([]AgentRecord, error)
+	// ListAgents requires platform-operator membership.
+	ListAgents(context.Context, authz.User) ([]AgentRecord, error)
+	ListServiceDeployments(context.Context, authz.User, string, int32) ([]DeploymentRecord, error)
+	ListDomainBindings(context.Context, authz.User, string) ([]DomainBindingRecord, error)
+	ServiceStatus(context.Context, authz.User, string) (ServiceRecord, []AllocationRecord, error)
+	EnvironmentByID(context.Context, authz.User, string) (EnvironmentRecord, error)
+	ListServices(context.Context, authz.User, string) ([]ServiceRecord, error)
+	ServiceByID(context.Context, authz.User, string) (ServiceRecord, error)
+	// AgentByID, AgentIDs, BuildByID, ServiceSnapshot, and
+	// ListAllocationsByServiceID are system reads without user
+	// authorization. They serve internal reconciliation, notification
+	// fan-out, and builder paths; user requests must go through the
+	// authorized methods above.
 	AgentByID(context.Context, string) (AgentRecord, error)
 	AgentIDs(context.Context) ([]string, error)
-	ListServiceDeployments(context.Context, string, string, int32) ([]DeploymentRecord, error)
-	ListDomainBindings(context.Context, string, string) ([]DomainBindingRecord, error)
-	ServiceStatus(context.Context, string, string) (ServiceRecord, []AllocationRecord, error)
-	EnvironmentByID(context.Context, string, string) (EnvironmentRecord, error)
-	AuthorizeOperator(context.Context, string) error
 	ListAllocationsByServiceID(context.Context, string) ([]AllocationRecord, error)
-	ListServices(context.Context, string, string) ([]ServiceRecord, error)
-	ServiceByID(context.Context, string, string) (ServiceRecord, error)
 	BuildByID(context.Context, string) (BuildRunRecord, error)
 	ServiceSnapshot(context.Context, string) (ServiceRecord, error)
 }

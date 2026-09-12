@@ -11,15 +11,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
-func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+func (s *catalogPersistence) createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
 	var rec deliverycore.VolumeRecord
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		rec, err = s.createVolumeTx(ctx, tx, userID, environmentID, name, sizeBytes)
+		rec, err = s.createVolumeTx(ctx, tx, scope.Project(), scope.ID(), name, sizeBytes)
 		return err
 	})
 	if err != nil {
@@ -28,8 +33,9 @@ func (s *catalogPersistence) createScheduledVolume(ctx context.Context, userID, 
 	return rec, nil
 }
 
-func (s *catalogPersistence) listVolumes(ctx context.Context, userID, environmentID string) ([]deliverycore.VolumeRecord, error) {
-	if _, err := s.reads.EnvironmentByID(ctx, userID, environmentID); err != nil {
+func (s *catalogPersistence) listVolumes(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.VolumeRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Read)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -37,7 +43,7 @@ func (s *catalogPersistence) listVolumes(ctx context.Context, userID, environmen
 		   FROM volumes
 		  WHERE environment_id = $1
 		  ORDER BY created_at ASC`,
-		environmentID,
+		scope.ID(),
 	)
 	if err != nil {
 		return nil, err
@@ -55,17 +61,18 @@ func (s *catalogPersistence) listVolumes(ctx context.Context, userID, environmen
 	return out, rows.Err()
 }
 
-func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID string) error {
+func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, volumeID string) error {
+	scope, err := s.authz.AuthorizeVolume(ctx, user, volumeID, authz.Write)
+	if err != nil {
+		return err
+	}
 	return s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var (
 			volumeName    string
 			environmentID string
 		)
-		err := tx.QueryRowContext(ctx, `SELECT name, environment_id FROM volumes WHERE id = $1`, volumeID).Scan(&volumeName, &environmentID)
+		err := tx.QueryRowContext(ctx, `SELECT name, environment_id FROM volumes WHERE id = $1 AND environment_id = $2`, scope.ID(), scope.EnvironmentID()).Scan(&volumeName, &environmentID)
 		if err != nil {
-			return err
-		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID); err != nil {
 			return err
 		}
 
@@ -92,14 +99,14 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID 
 				return err
 			}
 			if deliverycore.ServiceVolumeName(spec) == volumeName {
-				return fmt.Errorf("%w: service %s references volume %s", deliverycore.ErrVolumeInUse, serviceID, volumeID)
+				return fmt.Errorf("%w: service %s references volume %s", deliverycore.ErrVolumeInUse, serviceID, scope.ID())
 			}
 		}
 		if err := rows.Err(); err != nil {
 			return err
 		}
 
-		result, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volumeID)
+		result, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, scope.ID())
 		if err != nil {
 			return err
 		}
@@ -110,23 +117,23 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, userID, volumeID 
 		if affected == 0 {
 			return sql.ErrNoRows
 		}
-		journal.RecordVolume(ctx, volumeID)
+		journal.RecordVolume(ctx, scope.ID())
 		return nil
 	})
 }
 
-func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, userID, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, project authz.Project, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || sizeBytes <= 0 {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrInvalidVolume
 	}
-	environment, err := s.environmentByIDQuerier(ctx, tx, userID, environmentID)
-	if err != nil {
+	var resolvedID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM environments WHERE id = $1 AND project_id = $2`, environmentID, project.ID()).Scan(&resolvedID); err != nil {
 		return deliverycore.VolumeRecord{}, err
 	}
 	rec := deliverycore.VolumeRecord{
 		ID:            uuid.NewString(),
-		EnvironmentID: environment.ID,
+		EnvironmentID: resolvedID,
 		Name:          name,
 		SizeBytes:     sizeBytes,
 		CreatedAt:     time.Now().UTC(),

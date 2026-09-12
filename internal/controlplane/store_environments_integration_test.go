@@ -18,7 +18,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	project, err := store.catalog.createProject(ctx, "owner", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,14 +26,14 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.deleteEnvironment(ctx, "owner", production.ID); !errors.Is(err, errProductionEnvironment) {
+	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), production.ID); !errors.Is(err, errProductionEnvironment) {
 		t.Fatalf("delete production: %v", err)
 	}
-	staging, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "Staging")
+	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
 	if err != nil {
 		t.Fatal(err)
 	}
-	renamed, err := store.catalog.renameEnvironment(ctx, "owner", staging.ID, "QA")
+	renamed, err := store.catalog.renameEnvironment(ctx, testUser("owner"), staging.ID, "QA")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,27 +44,27 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 		VALUES ('editor', $1, 'editor'), ('viewer', $1, 'viewer')`, project.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.createEnvironment(ctx, "editor", project.ID, "Editor Sandbox"); err != nil {
+	if _, err := store.catalog.createEnvironment(ctx, testUser("editor"), project.ID, "Editor Sandbox"); err != nil {
 		t.Fatalf("editor could not create environment: %v", err)
 	}
-	if _, err := store.catalog.createEnvironment(ctx, "viewer", project.ID, "Viewer Sandbox"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.catalog.createEnvironment(ctx, testUser("viewer"), project.ID, "Viewer Sandbox"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("viewer mutated project environments: %v", err)
 	}
-	if environments, err := store.catalog.listEnvironments(ctx, "viewer", project.ID); err != nil || len(environments) != 3 {
+	if environments, err := store.catalog.listEnvironments(ctx, testUser("viewer"), project.ID); err != nil || len(environments) != 3 {
 		t.Fatalf("viewer could not read project environments: %#v: %v", environments, err)
 	}
 
-	_, err = store.catalog.createProject(ctx, "other", "other")
+	_, err = store.catalog.createProject(ctx, testUser("other"), "other")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.reads.EnvironmentByID(ctx, "other", staging.ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.reads.EnvironmentByID(ctx, testUser("other"), staging.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("cross-project environment access: %v", err)
 	}
 	if _, err := store.createStagedServiceForTest(ctx, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", nil)); err != nil {
 		t.Fatal(err)
 	}
-	services, err := store.reads.ListServices(ctx, "owner", staging.ID)
+	services, err := store.reads.ListServices(ctx, testUser("owner"), staging.ID)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("list staging services: %#v: %v", services, err)
 	}
@@ -73,7 +73,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatalf("editor could not mutate environment service: %#v: %v", updated, err)
 	}
 	services[0] = updated
-	if _, err := store.reads.ServiceByID(ctx, "other", services[0].ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := store.reads.ServiceByID(ctx, testUser("other"), services[0].ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("service ID bypassed ancestry authorization: %v", err)
 	}
 	if _, _, err := updateService(ctx, store, "viewer", services[0].ID, "web-viewer", services[0].Spec); !errors.Is(err, sql.ErrNoRows) {
@@ -85,7 +85,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	volume, err := store.catalog.createScheduledVolume(ctx, "owner", source.ID, "data", 64<<20)
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), source.ID, "data", 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,19 +106,19 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, "owner", "web.example.test", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("owner"), "web.example.test", service.ID, 8080); err != nil {
 		t.Fatal(err)
 	}
 
-	duplicate, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, "owner", source.ID, "Staging", false)
+	duplicate, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, testUser("owner"), source.ID, "Staging", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	volumes, err := store.catalog.listVolumes(ctx, "owner", duplicate.ID)
+	volumes, err := store.catalog.listVolumes(ctx, testUser("owner"), duplicate.ID)
 	if err != nil || len(volumes) != 1 || volumes[0].ID == volume.ID {
 		t.Fatalf("duplicated volumes: %#v: %v", volumes, err)
 	}
-	services, err := store.reads.ListServices(ctx, "owner", duplicate.ID)
+	services, err := store.reads.ListServices(ctx, testUser("owner"), duplicate.ID)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("duplicated services: %#v: %v", services, err)
 	}
@@ -143,11 +143,11 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 		t.Fatalf("duplicate copied runtime records: allocations=%d domains=%d builds=%d", allocations, domains, builds)
 	}
 
-	withVariables, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, "owner", source.ID, "Credentials Review", true)
+	withVariables, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, testUser("owner"), source.ID, "Credentials Review", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	variableCopies, err := store.reads.ListServices(ctx, "owner", withVariables.ID)
+	variableCopies, err := store.reads.ListServices(ctx, testUser("owner"), withVariables.ID)
 	if err != nil || len(variableCopies) != 1 || variableCopies[0].Spec.GetRuntime().GetEnv()["SECRET"] != "production" {
 		t.Fatalf("explicit variable copy failed: %#v: %v", variableCopies, err)
 	}
@@ -157,7 +157,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "Staging")
+	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before {
 		t.Fatalf("unrelated node-2 revision after release = %d, want %d", got, node2Before)
 	}
-	productionService, err = store.reads.ServiceByID(ctx, "owner", productionService.ID)
+	productionService, err = store.reads.ServiceByID(ctx, testUser("owner"), productionService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	if err != nil || len(state.GetServices()) != 0 {
 		t.Fatalf("deleted environment retained desired workloads: %#v: %v", state.GetServices(), err)
 	}
-	if _, err := store.reads.EnvironmentByID(ctx, "owner", production.ID); err != nil {
+	if _, err := store.reads.EnvironmentByID(ctx, testUser("owner"), production.ID); err != nil {
 		t.Fatalf("staging delete affected production: %v", err)
 	}
 }

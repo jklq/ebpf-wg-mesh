@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"net/http"
@@ -117,7 +118,7 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client),
+		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
@@ -160,7 +161,7 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(NewGitHubCatalog(store.source, client), client),
+		WithGitHubSourceInspection(NewGitHubCatalog(store.source, client), client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 	ctx := contextWithDelegatedUser("user-1", "user@example.com")
@@ -250,7 +251,7 @@ func TestPlatformServiceInspectSourceReturnsInstallationRequiredForPrivateRepoWi
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client),
+		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
@@ -288,7 +289,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client),
+		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
@@ -343,7 +344,7 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterForbiddenRepo
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client),
+		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 

@@ -3,13 +3,6 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
-	"ebof-wg-mesh/internal/controlplane/journal"
-	"ebof-wg-mesh/internal/controlplane/logs"
-	"ebof-wg-mesh/internal/controlplane/routing"
-	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,6 +11,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ebof-wg-mesh/internal/controlplane/dbtx"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"connectrpc.com/connect"
 
@@ -49,8 +51,8 @@ type Server struct {
 	internalHTTP    *http.Server
 	ingress         *routing.IngressSyncer
 	dashboard       *ManagedDashboardReconciler
-	registry        *RegistryPolicy
-	registryAuth    *RegistryAuth
+	registry        *registry.Policy
+	registryAuth    *registry.Auth
 	registryHTTP    *http.Server
 	github          *source.GitHubCatalog
 	webhooks        *source.GitHubWebhookProcessor
@@ -107,14 +109,14 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	var authority *identity.TLSAuthority
-	var registryAuth *RegistryAuth
+	var registryAuth *registry.Auth
 	if err := store.withLeaseGuard(initializationCtx, func() error {
 		var err error
 		authority, err = identity.NewTLSAuthority(cfg)
 		if err != nil {
 			return err
 		}
-		registryAuth, err = NewRegistryAuth(cfg.Registry, cfg.StateDir)
+		registryAuth, err = registry.NewAuth(cfg.Registry, cfg.StateDir)
 		if err != nil {
 			return fmt.Errorf("initialize embedded registry auth: %w", err)
 		}
@@ -147,7 +149,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		ingressOpts = append(ingressOpts, routing.WithIngressStaticRoutes(staticRoutes))
 	}
 	ingress := routing.NewIngressSyncer(cfg.Ingress.AdminURL, store.routing, ingressOpts...)
-	registry := NewRegistryPolicy(cfg.Registry, registryAuth)
+	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	delivery := newDelivery(store, notifier, ingress, platformEvents, logEmitter)
 	var githubClient *source.GitHubClient
 	var githubCatalog *source.GitHubCatalog
@@ -174,30 +176,30 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		delivery,
 		WithServiceLogs(logStore),
 		WithServiceLogEmitter(logEmitter),
-		WithGitHubSourceInspection(githubCatalog, githubClient),
+		WithGitHubSourceInspection(githubCatalog, githubClient, store.authorizer()),
 		WithPlatformDomainSuffix(cfg.Ingress.PublicAddr),
 		WithPlatformEvents(platformEvents),
 		WithPlatformLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
 	)
-	authz := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.Revocations())
+	internalAuth := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.Revocations())
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
 	rollouts := NewRolloutReconciler(delivery, 2*time.Second)
 	failover := NewServiceFailoverReconciler(delivery,
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
 	internal := grpc.NewServer(
-		grpc.UnaryInterceptor(authz.UnaryServerInterceptor()),
-		grpc.StreamInterceptor(authz.StreamServerInterceptor()),
+		grpc.UnaryInterceptor(internalAuth.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(internalAuth.StreamServerInterceptor()),
 	)
 	agentv1.RegisterAgentControlServer(internal, NewAgentService(
 		store.fleet, delivery, logStore, notifier, authority, dashboard,
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
-		WithAgentRegistry(registry),
+		WithAgentRegistry(policy),
 		WithReplicaAddresses(cfg.ReplicaAddresses),
 		WithLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, registry, registry, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
+	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, policy, policy, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(buildOperations))
 	opsService := NewOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
 	platformv1.RegisterOpsServiceServer(internal, opsService)
@@ -206,7 +208,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, fmt.Errorf("listen internal grpc: %w", err)
 	}
 	internalHTTP := &http.Server{
-		Handler:   dualProtocolHandler(internal, newConnectHandler(authz, connectPlatformService{platformService}, connectOpsService{opsService})),
+		Handler:   dualProtocolHandler(internal, newConnectHandler(internalAuth, connectPlatformService{platformService}, connectOpsService{opsService})),
 		TLSConfig: authority.HTTPConfig(),
 	}
 	var registryLn net.Listener
@@ -235,7 +237,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		internalGRPC:    internal,
 		ingress:         ingress,
 		dashboard:       dashboard,
-		registry:        registry,
+		registry:        policy,
 		registryAuth:    registryAuth,
 		registryHTTP:    registryHTTP,
 		github:          githubCatalog,
@@ -590,9 +592,9 @@ func serveInternalHTTP(server *http.Server, ln net.Listener) error {
 	return nil
 }
 
-func newConnectHandler(authz *identity.InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
+func newConnectHandler(internalAuth *identity.InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
 	options := []connect.HandlerOption{
-		connect.WithInterceptors(authz.ConnectInterceptor()),
+		connect.WithInterceptors(internalAuth.ConnectInterceptor()),
 	}
 	mux := http.NewServeMux()
 	mux.Handle(platformv1connect.NewPlatformServiceHandler(platformService, options...))

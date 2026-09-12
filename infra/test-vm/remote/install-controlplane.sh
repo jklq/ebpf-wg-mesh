@@ -9,7 +9,8 @@ AGENT_BOOTSTRAP_TOKENS=${AGENT_BOOTSTRAP_TOKENS:?AGENT_BOOTSTRAP_TOKENS must con
 USER_ASSERTION_SECRET=${USER_ASSERTION_SECRET:?USER_ASSERTION_SECRET must be at least 32 bytes}
 INTERNAL_LISTEN=${INTERNAL_LISTEN:-0.0.0.0:9443}
 PUBLIC_ADDR=${PUBLIC_ADDR:-platform.local}
-BOOTSTRAP_USER=${BOOTSTRAP_USER:-vm-user:vm@example.com}
+# vm-user is an operator: e2e probes call operator-only RPCs such as ListAgents.
+BOOTSTRAP_USER=${BOOTSTRAP_USER:-vm-user:vm@example.com+operator}
 SERVICE_NAME=${SERVICE_NAME:-ebpf-wg-mesh-controlplane}
 INGRESS_ADMIN_URL=${INGRESS_ADMIN_URL:-http://127.0.0.1:2019/load}
 REPLICA_ADDRESSES=${REPLICA_ADDRESSES:-}

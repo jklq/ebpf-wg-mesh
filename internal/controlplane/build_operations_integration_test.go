@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	logscore "ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"errors"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,11 +51,11 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry := NewRegistryPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform", CredentialTTLSeconds: 300}, nil)
+	policy := registry.NewPolicy(config.RegistryConfig{Host: "registry.example.test", NamespacePrefix: "platform", CredentialTTLSeconds: 300}, nil)
 	credentials := &retryBuildCredentials{}
 	notifier := &recordingNotifier{}
 	logWriter := &recordingLogWriter{enabled: true}
-	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), registry, credentials, 0, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter)))
+	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, credentials, 0, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter)))
 	builder := contextWithClientIdentity(serviceCallerBuilder, "builder-1")
 	claim := &platformv1.ClaimBuildRequest{BuilderId: "builder-1"}
 	if _, err := operations.ClaimBuild(builder, claim); err == nil {
@@ -64,7 +65,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	if err != nil || job.GetBuildId() != build.ID || job.GetRegistryPassword() != "password" {
 		t.Fatalf("retry lost prepared job: %v, %v", job, err)
 	}
-	image := registry.RuntimeDigestRef(job.RegistryPushReference, "sha256:"+strings.Repeat("a", 64))
+	image := policy.RuntimeDigestRef(job.RegistryPushReference, "sha256:"+strings.Repeat("a", 64))
 	completion := &platformv1.CompleteBuildRequest{BuilderId: "builder-1", BuildId: build.ID, State: platformv1.BuildState_BUILD_STATE_SUCCEEDED, CommitSha: "wrong-commit", ImageDigest: image}
 	if _, err := operations.CompleteBuild(builder, completion); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("mismatched commit accepted: %v", err)

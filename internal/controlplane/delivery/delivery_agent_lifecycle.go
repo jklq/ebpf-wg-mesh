@@ -3,14 +3,15 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"time"
 )
 
-func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string, target AgentLifecycleState) (AgentRecord, []string, error) {
+func (d *Delivery) SetAgentLifecycle(ctx context.Context, user authz.User, agentID string, target AgentLifecycleState) (AgentRecord, []string, error) {
 	s := d.store
-	if err := s.authorizeOperator(ctx, userID); err != nil {
+	if _, err := s.authz.AuthorizeOperator(ctx, user); err != nil {
 		return AgentRecord{}, nil, err
 	}
 	if target != AgentStateActive && target != AgentStateCordoned && target != AgentStateDraining && target != AgentStateRetired {

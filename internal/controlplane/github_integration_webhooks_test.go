@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"fmt"
@@ -29,7 +30,7 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client))
+	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)))
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -85,7 +86,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client))
+	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)))
 	ctx := context.Background()
 
 	projectID, serviceID := createRepoBackedTestService(t, store, ctx, "public/hello", 0, "main")
@@ -182,7 +183,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 			break
 		}
 	}
-	status, _, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
+	status, _, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatalf("serviceStatus: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		},
 	)
 	productionID := productionEnvironmentID(t, store, projectID)
-	staging, err := store.catalog.createEnvironment(ctx, "user-1", projectID, "Staging")
+	staging, err := store.catalog.createEnvironment(ctx, testUser("user-1"), projectID, "Staging")
 	if err != nil {
 		t.Fatalf("create staging environment: %v", err)
 	}
@@ -278,7 +279,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		commit  string
 	}{{first, "commit-public-main"}, {second, "commit-public-release"}} {
 		service := item.service
-		status, _, err := store.reads.ServiceStatus(ctx, "user-1", service.ID)
+		status, _, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
 		if err != nil {
 			t.Fatalf("ServiceStatus(%s): %v", service.Name, err)
 		}

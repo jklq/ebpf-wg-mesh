@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"errors"
 	"testing"
 )
 
@@ -34,7 +36,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 		t.Fatalf("expected managed project kind, got %s", managed.Kind)
 	}
 
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -66,11 +68,11 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	firstProjects, err := store.catalog.listProjects(ctx, "user-1")
+	firstProjects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}
-	secondProjects, err := store.catalog.listProjects(ctx, "user-2")
+	secondProjects, err := store.catalog.listProjects(ctx, testUser("user-2"))
 	if err != nil {
 		t.Fatalf("listProjects(user-2): %v", err)
 	}
@@ -85,7 +87,7 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 	}
 	assertProjectOwnerInvariant(t, store, firstProjects[0].ID, "user-1")
 	assertProjectOwnerInvariant(t, store, secondProjects[0].ID, "user-2")
-	if _, err := store.catalog.projectByID(ctx, "user-1", secondProjects[0].ID); err == nil {
+	if _, err := store.catalog.projectByID(ctx, testUser("user-1"), secondProjects[0].ID); err == nil {
 		t.Fatalf("expected user-1 to be denied access to user-2 project %q", secondProjects[0].ID)
 	}
 }
@@ -106,7 +108,7 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}
@@ -124,11 +126,11 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 	); err != nil {
 		t.Fatalf("downgrade owner membership: %v", err)
 	}
-	if err := store.catalog.authorizeProjectWrite(ctx, "user-1", projectID); err != sql.ErrNoRows {
+	if _, err := store.catalog.authz.AuthorizeProject(ctx, testUser("user-1"), projectID, authz.Write); !errors.Is(err, authz.ErrDenied) || !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("expected viewer write denial, got %v", err)
 	}
 
-	project, err := store.catalog.createProject(ctx, "user-1", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("user-1"), "demo")
 	if err != nil {
 		t.Fatalf("createProject: %v", err)
 	}

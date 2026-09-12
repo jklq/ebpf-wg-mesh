@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/grpc/codes"
@@ -17,7 +17,7 @@ func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platfor
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -27,10 +27,13 @@ func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platfor
 	if s.inspector == nil {
 		return nil, status.Error(codes.FailedPrecondition, "github source inspection is not configured")
 	}
-	resp, err := s.inspector.LinkAndInspect(ctx, req.GetProjectId(), identity.UserID, req.GetRepositorySelector(), req.GetGithubUserAccessToken())
+	resp, err := s.inspector.LinkAndInspect(ctx, user, req.GetProjectId(), req.GetRepositorySelector(), req.GetGithubUserAccessToken())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "project access: %v", err)
 		}
 		if authErr := gitHubUserAuthorizationStatus(err); authErr != nil {
 			return nil, authErr
@@ -41,7 +44,7 @@ func (s *PlatformService) LinkGitHubRepository(ctx context.Context, req *platfor
 }
 
 func (s *PlatformService) InspectSource(ctx context.Context, req *platformv1.InspectSourceRequest) (*platformv1.InspectSourceResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -51,14 +54,14 @@ func (s *PlatformService) InspectSource(ctx context.Context, req *platformv1.Ins
 	if strings.TrimSpace(req.GetProjectId()) == "" || strings.TrimSpace(req.GetRepositorySelector()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "project and repository selector are required")
 	}
-	if _, err := s.store.projectByID(ctx, identity.UserID, req.GetProjectId()); err != nil {
-		return nil, status.Errorf(codes.PermissionDenied, "project access: %v", err)
-	}
 	if s.inspector == nil {
 		return nil, status.Error(codes.FailedPrecondition, "github source inspection is not configured")
 	}
-	resp, err := s.inspector.Inspect(ctx, req.GetProjectId(), req.GetRepositorySelector(), req.GetGithubUserAccessToken())
+	resp, err := s.inspector.Inspect(ctx, user, req.GetProjectId(), req.GetRepositorySelector(), req.GetGithubUserAccessToken())
 	if err != nil {
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "project access: %v", err)
+		}
 		if authErr := gitHubUserAuthorizationStatus(err); authErr != nil {
 			return nil, authErr
 		}

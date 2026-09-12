@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"fmt"
 	"io"
@@ -118,11 +119,11 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		harness.dashboard = platformv1.NewPlatformServiceClient(conn)
 	}
 	if opts.registry.Host != "" {
-		registry, err := localteststack.StartManagedRegistry(ctx, localteststack.LocalRegistryConfig{
+		managedRegistry, err := localteststack.StartManagedRegistry(ctx, localteststack.LocalRegistryConfig{
 			StateDir:       filepath.Join(t.TempDir(), "registry"),
 			ContainerName:  fmt.Sprintf("sys-registry-%d", time.Now().UnixNano()),
 			HostPort:       registryHostPort(t, opts.registry.Host),
-			TokenRealm:     "http://" + server.RegistryAuthAddr() + RegistryTokenPath,
+			TokenRealm:     "http://" + server.RegistryAuthAddr() + registry.TokenPath,
 			TokenService:   cfg.Registry.TokenService,
 			TokenIssuer:    cfg.Registry.TokenIssuer,
 			RootCertBundle: server.RegistryAuthCertificatePath(),
@@ -131,11 +132,11 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 			t.Fatalf("StartManagedRegistry: %v", err)
 		}
 		t.Cleanup(func() {
-			if err := registry.Close(); err != nil {
+			if err := managedRegistry.Close(); err != nil {
 				t.Errorf("close registry: %v", err)
 			}
 		})
-		harness.registry = registry
+		harness.registry = managedRegistry
 	}
 	return harness
 }

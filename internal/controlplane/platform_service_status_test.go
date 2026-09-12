@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"sync/atomic"
 	"testing"
@@ -16,7 +17,7 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 	now := time.Now().UTC()
 	var reads atomic.Int32
 	service := NewPlatformService(&fakePlatformStore{
-		serviceStatusFn: func(ctx context.Context, userID, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
+		serviceStatusFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
 			applied := int64(1)
 			healthy := false
 			if reads.Add(1) > 1 {
@@ -63,7 +64,7 @@ func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
 
 	var allocationReads atomic.Int32
 	store := &fakePlatformStore{
-		listServicesFn: func(context.Context, string, string) ([]deliverycore.ServiceRecord, error) {
+		listServicesFn: func(context.Context, authz.User, string) ([]deliverycore.ServiceRecord, error) {
 			return []deliverycore.ServiceRecord{
 				{ID: "service-a", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
 				{ID: "service-b", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"errors"
 	"fmt"
@@ -89,11 +90,9 @@ func (s *fleetPersistence) listAgentCertificateSerials(ctx context.Context, agen
 	return serials, rows.Err()
 }
 
-func (s *fleetPersistence) fleetView(ctx context.Context, userID string) (*platformv1.Fleet, error) {
-	if err := s.reads.AuthorizeOperator(ctx, userID); err != nil {
-		return nil, err
-	}
-	agents, err := s.reads.ListAgents(ctx)
+func (s *fleetPersistence) fleetView(ctx context.Context, user authz.User) (*platformv1.Fleet, error) {
+	// ListAgents already requires operator membership; no second check here.
+	agents, err := s.reads.ListAgents(ctx, user)
 	if err != nil {
 		return nil, err
 	}
