@@ -63,6 +63,12 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 	if hello.GetWireguardListenPort() < 1 || hello.GetWireguardListenPort() > math.MaxUint16 {
 		return false, fmt.Errorf("wireguard listen port must be between 1 and 65535")
 	}
+	// Persisted agent metadata remains active across a control-plane restart, but
+	// the missing live session still makes the agent unavailable to placement.
+	becameReachable := true
+	if agent, ok := d.live.Agent(hello.GetAgentId()); ok {
+		becameReachable = agent.LifecycleState == AgentStateUnavailable
+	}
 	s := d.store
 	var changed bool
 	var wireGuardEndpoint string
@@ -219,7 +225,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 	if err := d.live.BeginSession(hello.GetAgentId(), hello.GetSessionId(), inventory, assigned, !hello.GetRecoveryMode()); err != nil {
 		return false, err
 	}
-	return changed, nil
+	return changed || becameReachable, nil
 }
 
 func assignedAllocationIDs(d *Delivery, ctx context.Context, agentID string) []string {

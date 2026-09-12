@@ -234,9 +234,6 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	defer reconnectedCancel()
 	_ = recvDesiredState(t, reconnectedStream)
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
-		if _, err := second.server.failover.Reconcile(ctx); err != nil {
-			return false, err
-		}
 		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
 			return false, err
