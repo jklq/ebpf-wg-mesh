@@ -89,7 +89,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if rolled.ID == first.ID {
 		t.Fatal("rollback reused the historical deployment row")
 	}
-	history, err := store.reads.ListServiceDeployments(ctx, userID, service.ID, 20)
+	history, err := store.reads.ListServiceDeployments(ctx, testUser(userID), service.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestDeploymentActionsRestartExactRedeployRollbackRemove(t *testing.T) {
 	if err != nil || len(allocs) != 0 {
 		t.Fatalf("expected drained allocations to be withdrawn, got %#v err=%v", allocs, err)
 	}
-	history, err = store.reads.ListServiceDeployments(ctx, userID, service.ID, 20)
+	history, err = store.reads.ListServiceDeployments(ctx, testUser(userID), service.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +473,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	if retried.ID == failed.ID {
 		t.Fatal("retry did not create a new deployment")
 	}
-	history, err := store.reads.ListServiceDeployments(ctx, userID, service.ID, 10)
+	history, err := store.reads.ListServiceDeployments(ctx, testUser(userID), service.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 
 func deploymentByIDForTest(t *testing.T, store *persistence, ctx context.Context, userID, projectID, serviceID, deploymentID string) deliverycore.DeploymentRecord {
 	t.Helper()
-	history, err := store.reads.ListServiceDeployments(ctx, userID, serviceID, 50)
+	history, err := store.reads.ListServiceDeployments(ctx, testUser(userID), serviceID, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func setupPinnedImageServiceForDeployment(t *testing.T, image string) (*persiste
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

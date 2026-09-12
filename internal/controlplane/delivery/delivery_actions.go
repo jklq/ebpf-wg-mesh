@@ -13,6 +13,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -30,7 +31,6 @@ const (
 var (
 	ErrDeploymentActionConflict = errors.New("idempotency key was already used for a different deployment action")
 	ErrDeploymentActionInvalid  = errors.New("deployment action is not valid for the selected deployment")
-	ErrDeploymentActionDenied   = errors.New("deployment action is not authorized")
 	ErrDeploymentStale          = errors.New("selected deployment is no longer current")
 )
 
@@ -74,7 +74,8 @@ func ToProtoDeploymentAction(action string) platformv1.DeploymentAction {
 
 func (d *Delivery) applyDeploymentAction(
 	ctx context.Context,
-	userID, serviceID, deploymentID string,
+	scope authz.Service,
+	deploymentID string,
 	action platformv1.DeploymentAction,
 	idempotencyKey, allocationID string,
 ) (ServiceRecord, DeploymentActionRecord, []string, error) {
@@ -92,18 +93,15 @@ func (d *Delivery) applyDeploymentAction(
 	var actionRecord DeploymentActionRecord
 	var agentIDs []string
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
+		service, err := s.serviceByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
-		if _, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, service.EnvironmentID); err != nil {
-			return fmt.Errorf("%w: %v", ErrDeploymentActionDenied, err)
-		}
-		if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
+		if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 			return err
 		}
 
-		existing, ok, err := s.deploymentActionByKeyTx(ctx, tx, serviceID, userID, idempotencyKey)
+		existing, ok, err := s.deploymentActionByKeyTx(ctx, tx, service.ID, scope.UserID(), idempotencyKey)
 		if err != nil {
 			return err
 		}
@@ -119,23 +117,23 @@ func (d *Delivery) applyDeploymentAction(
 		if err != nil {
 			return err
 		}
-		if target.ServiceID != serviceID {
+		if target.ServiceID != service.ID {
 			return sql.ErrNoRows
 		}
 
-		resultDeploymentID, err := d.applyDeploymentActionTx(ctx, tx, service, target, actionName, allocationID, userID)
+		resultDeploymentID, err := d.applyDeploymentActionTx(ctx, tx, service, target, actionName, allocationID, scope.UserID())
 		if err != nil {
 			return err
 		}
 		actionRecord = DeploymentActionRecord{
 			ID:                 uuid.NewString(),
-			ServiceID:          serviceID,
+			ServiceID:          service.ID,
 			TargetDeploymentID: deploymentID,
 			ResultDeploymentID: resultDeploymentID,
 			Action:             actionName,
 			AllocationID:       allocationID,
 			IdempotencyKey:     idempotencyKey,
-			RequestedByUserID:  userID,
+			RequestedByUserID:  scope.UserID(),
 			CreatedAt:          time.Now().UTC(),
 		}
 		_, err = tx.ExecContext(ctx,
@@ -150,7 +148,7 @@ func (d *Delivery) applyDeploymentAction(
 		if err == nil {
 			return nil
 		}
-		existing, ok, lookupErr := s.deploymentActionByKeyTx(ctx, tx, serviceID, userID, idempotencyKey)
+		existing, ok, lookupErr := s.deploymentActionByKeyTx(ctx, tx, service.ID, scope.UserID(), idempotencyKey)
 		if lookupErr != nil {
 			return err
 		}
@@ -163,7 +161,7 @@ func (d *Delivery) applyDeploymentAction(
 	if err != nil {
 		return ServiceRecord{}, DeploymentActionRecord{}, nil, err
 	}
-	service, err := s.serviceByID(ctx, userID, serviceID)
+	service, err := s.serviceByID(ctx, scope)
 	if err != nil {
 		return ServiceRecord{}, DeploymentActionRecord{}, nil, err
 	}

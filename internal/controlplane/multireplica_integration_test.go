@@ -344,7 +344,7 @@ func TestNonOwnerReplicaDoesNotServeOwnerLocalAllocations(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := owner.catalog.listProjects(ctx, "user-1")
+	projects, err := owner.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestNonOwnerReplicaDoesNotServeOwnerLocalAllocations(t *testing.T) {
 		t.Fatalf("record owner observation: %v", err)
 	}
 
-	_, allocations, err := nonOwner.reads.ServiceStatus(ctx, "user-1", service.ID)
+	_, allocations, err := nonOwner.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
 	if err == nil && len(allocations) == 0 {
 		t.Fatal("non-owner replica silently returned zero allocations for a released service")
 	}
@@ -379,7 +379,7 @@ func TestReplicaRecoversAfterJournalCompaction(t *testing.T) {
 	if _, err := upsertTestAgent(t, storeA, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
 		t.Fatal(err)
 	}
-	project, err := storeA.catalog.createProject(ctx, "owner", "replica-compact")
+	project, err := storeA.catalog.createProject(ctx, testUser("owner"), "replica-compact")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,13 +399,13 @@ func TestReplicaRecoversAfterJournalCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := storeA.catalog.renameEnvironment(ctx, "owner", environmentID, "compacted"); err != nil {
+	if _, err := storeA.catalog.renameEnvironment(ctx, testUser("owner"), environmentID, "compacted"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := storeA.compactJournal(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storeA.catalog.renameEnvironment(ctx, "owner", environmentID, "compacted-again"); err != nil {
+	if _, err := storeA.catalog.renameEnvironment(ctx, testUser("owner"), environmentID, "compacted-again"); err != nil {
 		t.Fatal(err)
 	}
 

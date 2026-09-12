@@ -3,16 +3,17 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/identity"
-	"ebof-wg-mesh/internal/controlplane/logs"
 	"errors"
 	"log/slog"
 	"net/url"
 	"strings"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/restartpolicy"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -23,11 +24,11 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	service, allocations, err := s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
+	service, allocations, err := s.store.ServiceStatus(ctx, user, req.GetServiceId())
 	if err != nil {
 		return nil, s.serviceStatusError(ctx, err)
 	}
@@ -38,7 +39,7 @@ func (s *PlatformService) GetServiceStatus(ctx context.Context, req *platformv1.
 	if !changed {
 		return &platformv1.ServiceStatus{Index: index, NotModified: true}, nil
 	}
-	service, allocations, err = s.store.ServiceStatus(ctx, identity.UserID, req.GetServiceId())
+	service, allocations, err = s.store.ServiceStatus(ctx, user, req.GetServiceId())
 	if err != nil {
 		return nil, s.serviceStatusError(ctx, err)
 	}
@@ -56,7 +57,7 @@ func (s *PlatformService) serviceStatusError(ctx context.Context, err error) err
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return mapped
 	}
-	return status.Errorf(codes.NotFound, "service status: %v", err)
+	return readAccessError("service status", err)
 }
 
 func (s *PlatformService) liveOwnerError(ctx context.Context, err error) error {
@@ -70,7 +71,7 @@ func (s *PlatformService) liveOwnerError(ctx context.Context, err error) error {
 }
 
 func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (*platformv1.ListServiceLogsResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 	if s.logStore == nil {
 		return nil, status.Error(codes.FailedPrecondition, logs.ErrDisabled.Error())
 	}
-	if _, err := s.store.ServiceByID(ctx, identity.UserID, req.GetServiceId()); err != nil {
+	if _, err := s.store.ServiceByID(ctx, user, req.GetServiceId()); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service: %v", err)
 		}
@@ -101,14 +102,14 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 }
 
 func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platformv1.ListServiceDeploymentsRequest) (*platformv1.ListServiceDeploymentsResponse, error) {
-	identity, err := identity.DelegatedUserFromContext(ctx)
+	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
 	}
-	items, err := s.store.ListServiceDeployments(ctx, identity.UserID, req.GetServiceId(), req.GetLimit())
+	items, err := s.store.ListServiceDeployments(ctx, user, req.GetServiceId(), req.GetLimit())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "service deployments: %v", err)
@@ -124,17 +125,24 @@ func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platf
 	return resp, nil
 }
 
+// ListAgents is operator-only: non-operator callers get PermissionDenied. This
+// is a deliberate contract (fleet membership is operator surface); operator
+// gating also applies to OpsService fleet RPCs.
 func (s *PlatformService) ListAgents(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListAgentsResponse, error) {
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := identity.DelegatedUserFromContext(ctx); err != nil {
+	user, err := authorizedUser(ctx)
+	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.ListAgents(ctx)
+	items, err := s.store.ListAgents(ctx, user)
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "list agents: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "list agents: %v", err)
 	}
@@ -174,32 +182,6 @@ func (s *PlatformService) decorateServiceRecordWithAllocations(ctx context.Conte
 		service.LatestBuild.Stages = stages
 	}
 	return service, nil
-}
-
-func (s *PlatformService) notifyServiceAgents(ctx context.Context, serviceID string, identityCatalogChanged bool) {
-	if identityCatalogChanged || s.notifier == nil {
-		s.notifyAllAgents(ctx)
-		return
-	}
-	ids, err := s.store.ListAllocationsByServiceID(ctx, serviceID)
-	if err != nil {
-		s.notifyAllAgents(ctx)
-		return
-	}
-	seen := map[string]struct{}{}
-	for _, alloc := range ids {
-		if alloc.AgentID == "" {
-			continue
-		}
-		if _, ok := seen[alloc.AgentID]; ok {
-			continue
-		}
-		seen[alloc.AgentID] = struct{}{}
-		s.notifier.Notify(alloc.AgentID)
-	}
-	if len(seen) == 0 {
-		s.notifyAllAgents(ctx)
-	}
 }
 
 func buildRunRecordFromProto(status *platformv1.BuildStatus) deliverycore.BuildRunRecord {
@@ -313,19 +295,12 @@ func validHealthCheckPath(path string) bool {
 }
 
 func (s *PlatformService) notifyAllAgents(ctx context.Context) {
-	agents, err := s.store.ListAgents(ctx)
+	ids, err := s.store.AgentIDs(ctx)
 	if err != nil {
 		slog.Warn("failed to list agents for cluster identity notification", "error", err)
 		return
 	}
-	for _, agent := range agents {
-		s.notifier.Notify(agent.ID)
+	for _, id := range ids {
+		s.notifier.Notify(id)
 	}
-}
-
-func (s *PlatformService) requireProjectWriteAccess(ctx context.Context, userID, projectID string) error {
-	if err := s.store.authorizeProjectWrite(ctx, userID, projectID); err != nil {
-		return status.Errorf(codes.PermissionDenied, "project write access: %v", err)
-	}
-	return nil
 }

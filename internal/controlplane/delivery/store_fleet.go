@@ -18,6 +18,7 @@ var (
 	ErrAgentCredentialRevoked = errors.New("agent credential is revoked")
 	ErrAgentHasAllocations    = errors.New("agent still has allocations or attachments")
 	ErrInvalidAgentTransition = errors.New("invalid agent lifecycle transition")
+	ErrInvalidFleetAgentInput = errors.New("invalid fleet agent input")
 	ErrStaleAgentSession      = errors.New("stale agent session")
 	ErrStaleObservation       = errors.New("stale allocation observation")
 	ErrAllocationOwnership    = errors.New("allocation is not assigned to authenticated agent")
@@ -94,10 +95,10 @@ func ValidateFleetAgentInput(id, name, region, zone, failureDomain string, reser
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	if id == "" || len(id) > 128 {
-		return errors.New("agent_id is required and must not exceed 128 characters")
+		return fmt.Errorf("%w: agent_id is required and must not exceed 128 characters", ErrInvalidFleetAgentInput)
 	}
 	if name == "" || len(name) > 128 {
-		return errors.New("agent name is required and must not exceed 128 characters")
+		return fmt.Errorf("%w: agent name is required and must not exceed 128 characters", ErrInvalidFleetAgentInput)
 	}
 	for field, value := range map[string]string{
 		"region": region, "zone": zone, "failure_domain": failureDomain,
@@ -107,18 +108,13 @@ func ValidateFleetAgentInput(id, name, region, zone, failureDomain string, reser
 			continue
 		}
 		if !FleetLabelPattern.MatchString(value) {
-			return fmt.Errorf("%s must be a lowercase operator label", field)
+			return fmt.Errorf("%w: %s must be a lowercase operator label", ErrInvalidFleetAgentInput, field)
 		}
 	}
 	if reservedCPU < 0 || reservedMemory < 0 {
-		return errors.New("resource reservations must not be negative")
+		return fmt.Errorf("%w: resource reservations must not be negative", ErrInvalidFleetAgentInput)
 	}
 	return nil
-}
-
-func (s *persistence) authorizeOperator(ctx context.Context, userID string) error {
-	var one int
-	return s.db.QueryRowContext(ctx, `SELECT 1 FROM platform_operators WHERE user_id = $1`, strings.TrimSpace(userID)).Scan(&one)
 }
 
 func validateAgentTransition(current, target AgentLifecycleState) error {

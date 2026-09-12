@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"ebof-wg-mesh/internal/controlplane/authz"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"connectrpc.com/connect"
@@ -244,6 +246,21 @@ func DelegatedUserFromContext(ctx context.Context) (DelegatedUser, error) {
 
 func WithDelegatedUser(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID})
+}
+
+// UserFromContext resolves the delegated dashboard user into the authorization
+// identity every store and delivery entry requires. It is the single RPC
+// entry helper; failures are Unauthenticated statuses, never plain errors.
+func UserFromContext(ctx context.Context) (authz.User, error) {
+	delegated, err := DelegatedUserFromContext(ctx)
+	if err != nil {
+		return authz.User{}, err
+	}
+	user, err := authz.AuthenticatedUser(delegated.UserID)
+	if err != nil {
+		return authz.User{}, status.Errorf(codes.Unauthenticated, "delegated user: %v", err)
+	}
+	return user, nil
 }
 
 func AuthenticatedServiceCallerFromContext(ctx context.Context) (ServiceCaller, bool, error) {

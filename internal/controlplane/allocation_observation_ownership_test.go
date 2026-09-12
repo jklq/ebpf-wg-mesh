@@ -22,7 +22,7 @@ func TestAllocationObservationRejectsStaleSessionSequenceAndForeignOwner(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("list projects: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestOlderGenerationObservationCannotSatisfyCurrentAssignment(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, _ := store.catalog.listProjects(ctx, "user-1")
+	projects, _ := store.catalog.listProjects(ctx, testUser("user-1"))
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}

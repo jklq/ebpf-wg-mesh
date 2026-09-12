@@ -106,7 +106,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 				}); err != nil {
 					t.Fatal(err)
 				}
-				projects, err := store.catalog.listProjects(ctx, "user-1")
+				projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 				if err != nil || len(projects) != 1 {
 					t.Fatalf("listProjects: projects=%d err=%v", len(projects), err)
 				}
@@ -175,12 +175,12 @@ func TestAssignedNodeConfigSharedEnvironments(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "mesh")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "mesh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	envA := productionEnvironmentID(t, store, project.ID)
-	environmentB, err := store.catalog.createEnvironment(ctx, "owner", project.ID, "other")
+	environmentB, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

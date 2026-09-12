@@ -25,25 +25,25 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("EnsureBootstrap: %v", err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
 	if len(projects) != 2 {
 		t.Fatalf("expected two projects, got %d", len(projects))
 	}
-	environmentsOne, err := store.catalog.listEnvironments(ctx, "user-1", projects[0].ID)
+	environmentsOne, err := store.catalog.listEnvironments(ctx, testUser("user-1"), projects[0].ID)
 	if err != nil || len(environmentsOne) != 1 {
 		t.Fatalf("list first project environments: %#v: %v", environmentsOne, err)
 	}
-	environmentsTwo, err := store.catalog.listEnvironments(ctx, "user-1", projects[1].ID)
+	environmentsTwo, err := store.catalog.listEnvironments(ctx, testUser("user-1"), projects[1].ID)
 	if err != nil || len(environmentsTwo) != 1 {
 		t.Fatalf("list second project environments: %#v: %v", environmentsTwo, err)
 	}
 	if environmentsOne[0].NetworkIdentity == 0 || environmentsTwo[0].NetworkIdentity == 0 || environmentsOne[0].NetworkIdentity == environmentsTwo[0].NetworkIdentity {
 		t.Fatalf("expected distinct non-zero network identities: %#v %#v", environmentsOne, environmentsTwo)
 	}
-	staging, err := store.catalog.createEnvironment(ctx, "user-1", projects[0].ID, "Staging")
+	staging, err := store.catalog.createEnvironment(ctx, testUser("user-1"), projects[0].ID, "Staging")
 	if err != nil {
 		t.Fatalf("create staging environment: %v", err)
 	}
@@ -214,11 +214,11 @@ func TestProjectCreationCreatesExactlyOneProductionEnvironment(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "user-1", "demo")
+	project, err := store.catalog.createProject(ctx, testUser("user-1"), "demo")
 	if err != nil {
 		t.Fatalf("createProject: %v", err)
 	}
-	environments, err := store.catalog.listEnvironments(ctx, "user-1", project.ID)
+	environments, err := store.catalog.listEnvironments(ctx, testUser("user-1"), project.ID)
 	if err != nil {
 		t.Fatalf("listEnvironments: %v", err)
 	}

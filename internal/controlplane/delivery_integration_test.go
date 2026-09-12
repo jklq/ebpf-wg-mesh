@@ -5,19 +5,18 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, "owner", "delivery")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "delivery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +35,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if first.ID > second.ID {
 		first, second = second, first
 	}
-	volume, err := store.catalog.createScheduledVolume(ctx, "owner", environmentID, "missing", 64<<20)
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), environmentID, "missing", 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,24 +64,24 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	}
 	deploymentCounts := make(map[string]int)
 	for _, id := range []string{first.ID, second.ID} {
-		deployments, err := store.reads.ListServiceDeployments(ctx, "owner", id, 10)
+		deployments, err := store.reads.ListServiceDeployments(ctx, testUser("owner"), id, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
 		deploymentCounts[id] = len(deployments)
 	}
-	if _, err := delivery.ReleaseEnvironment(contextWithDelegatedUser("owner", ""), environmentID); err == nil {
+	if _, err := delivery.ReleaseEnvironment(contextWithDelegatedUser("owner", ""), testUser("owner"), environmentID); err == nil {
 		t.Fatal("release with missing volume unexpectedly succeeded")
 	}
 	for _, id := range []string{first.ID, second.ID} {
-		service, err := store.reads.ServiceByID(ctx, "owner", id)
+		service, err := store.reads.ServiceByID(ctx, testUser("owner"), id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if service.RolloutGeneration != 0 || service.AllocatedAgentID != "" {
 			t.Fatalf("failed release mutated service: %#v", service)
 		}
-		deployments, err := store.reads.ListServiceDeployments(ctx, "owner", id, 10)
+		deployments, err := store.reads.ListServiceDeployments(ctx, testUser("owner"), id, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,18 +102,14 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Check authorization with valid drafts, so validation cannot mask a bypass.
-	for _, user := range []string{"", "viewer", "outsider"} {
-		releaseCtx := ctx
-		if user != "" {
-			releaseCtx = contextWithDelegatedUser(user, "")
-		}
-		if _, err := delivery.ReleaseEnvironment(releaseCtx, environmentID); err == nil {
-			t.Fatalf("release by %q unexpectedly succeeded", user)
-		} else if user == "" && status.Code(err) != codes.Unauthenticated {
-			t.Fatalf("unauthenticated release: %v", err)
+	// (Missing identities are rejected at the RPC boundary; delivery takes an
+	// authenticated user, which cannot represent "no user".)
+	for _, user := range []string{"viewer", "outsider"} {
+		if _, err := delivery.ReleaseEnvironment(ctx, testUser(user), environmentID); !errors.Is(err, authz.ErrDenied) {
+			t.Fatalf("release by %q = %v, want ErrDenied", user, err)
 		}
 	}
-	released, err := delivery.ReleaseEnvironment(contextWithDelegatedUser("owner", ""), environmentID)
+	released, err := delivery.ReleaseEnvironment(contextWithDelegatedUser("owner", ""), testUser("owner"), environmentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +122,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		}
 	}
 	notifier.agentIDs = nil
-	released, err = delivery.ReleaseEnvironment(contextWithDelegatedUser("owner", ""), environmentID)
+	released, err = delivery.ReleaseEnvironment(contextWithDelegatedUser("owner", ""), testUser("owner"), environmentID)
 	if err != nil || len(released) != 0 || len(notifier.agentIDs) != 0 {
 		t.Fatalf("unchanged release: %v, %v, %v", released, notifier.agentIDs, err)
 	}

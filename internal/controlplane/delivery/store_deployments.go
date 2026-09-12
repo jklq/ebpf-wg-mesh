@@ -2,14 +2,11 @@ package delivery
 
 import (
 	"context"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
 )
 
-func (s *persistence) listServiceDeployments(ctx context.Context, userID, serviceID string, limit int32) ([]DeploymentRecord, error) {
-	service, err := s.serviceByIDQuerier(ctx, s.db, userID, serviceID)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *persistence) listServiceDeployments(ctx context.Context, scope authz.Service, limit int32) ([]DeploymentRecord, error) {
 	queryLimit := int(limit)
 	if queryLimit <= 0 {
 		queryLimit = 50
@@ -21,7 +18,7 @@ func (s *persistence) listServiceDeployments(ctx context.Context, userID, servic
 		  WHERE service_id = $1
 		  ORDER BY created_at DESC, rollout_generation DESC, id DESC
 		  LIMIT $2`,
-		service.ID, queryLimit,
+		scope.ID(), queryLimit,
 	)
 	if err != nil {
 		return nil, err

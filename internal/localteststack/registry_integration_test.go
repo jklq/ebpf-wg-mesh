@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/registry"
 )
 
 func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
@@ -32,18 +32,19 @@ func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
 		TokenService:         host,
 		CredentialTTLSeconds: 300,
 	}
-	auth, err := controlplane.NewRegistryAuth(cfg, t.TempDir())
+	auth, err := registry.NewAuth(cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	authServer := httptest.NewServer(auth)
 	defer authServer.Close()
 
+	tokenPath := registry.TokenPath
 	registry, err := StartManagedRegistry(context.Background(), LocalRegistryConfig{
 		StateDir:       t.TempDir(),
 		ContainerName:  fmt.Sprintf("registry-auth-test-%d", time.Now().UnixNano()),
 		HostPort:       port,
-		TokenRealm:     authServer.URL + controlplane.RegistryTokenPath,
+		TokenRealm:     authServer.URL + tokenPath,
 		TokenService:   cfg.TokenService,
 		TokenIssuer:    cfg.TokenIssuer,
 		RootCertBundle: auth.CertificatePath(),
@@ -60,7 +61,7 @@ func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
 	requestRegistryToken := func(scope string) string {
 		t.Helper()
 		query := url.Values{"service": {cfg.TokenService}, "scope": {scope}}
-		req, err := http.NewRequest(http.MethodGet, authServer.URL+controlplane.RegistryTokenPath+"?"+query.Encode(), nil)
+		req, err := http.NewRequest(http.MethodGet, authServer.URL+tokenPath+"?"+query.Encode(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

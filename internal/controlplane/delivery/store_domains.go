@@ -2,15 +2,13 @@ package delivery
 
 import (
 	"context"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
 )
 
-func (s *persistence) listDomainBindings(ctx context.Context, userID, serviceID string) ([]DomainBindingRecord, error) {
-	service, err := s.serviceByID(ctx, userID, serviceID)
-	if err != nil {
-		return nil, err
-	}
+func (s *persistence) listDomainBindings(ctx context.Context, scope authz.Service) ([]DomainBindingRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT hostname, service_id, target_port, platform_generated, created_at, updated_at
-		FROM domain_bindings WHERE service_id = $1 ORDER BY hostname ASC`, serviceID)
+		FROM domain_bindings WHERE service_id = $1 ORDER BY hostname ASC`, scope.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -19,8 +17,8 @@ func (s *persistence) listDomainBindings(ctx context.Context, userID, serviceID 
 	var out []DomainBindingRecord
 	for rows.Next() {
 		var binding DomainBindingRecord
-		binding.ProjectID = service.ProjectID
-		binding.EnvironmentID = service.EnvironmentID
+		binding.ProjectID = scope.ProjectID()
+		binding.EnvironmentID = scope.EnvironmentID()
 		if err := rows.Scan(&binding.Hostname, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -57,12 +55,12 @@ func domainTargetPortsForServiceQuerier(ctx context.Context, q ServiceQueryer, s
 	return ports, rows.Err()
 }
 
-func (s *persistence) serviceStatus(ctx context.Context, userID, serviceID string) (ServiceRecord, []AllocationRecord, error) {
-	service, err := s.serviceByID(ctx, userID, serviceID)
+func (s *persistence) serviceStatus(ctx context.Context, scope authz.Service) (ServiceRecord, []AllocationRecord, error) {
+	service, err := s.serviceByID(ctx, scope)
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
-	allocs, err := s.listAllocationsByServiceID(ctx, serviceID)
+	allocs, err := s.listAllocationsByServiceID(ctx, scope.ID())
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}

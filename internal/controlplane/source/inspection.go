@@ -15,11 +15,13 @@ import (
 	"strings"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/authz"
 )
 
 type Inspector struct {
 	catalog *GitHubCatalog
 	client  *GitHubClient
+	authz   *authz.Authorizer
 }
 
 var (
@@ -39,16 +41,23 @@ func (e *GitHubUserRepositoryAuthorizationError) Unwrap() error {
 	return e.Cause
 }
 
-func NewInspector(catalog *GitHubCatalog, client *GitHubClient) *Inspector {
-	if catalog == nil || client == nil || !client.Enabled() {
-		return nil
-	}
-	return &Inspector{catalog: catalog, client: client}
+func NewInspector(catalog *GitHubCatalog, client *GitHubClient, authorizer *authz.Authorizer) *Inspector {
+	return &Inspector{catalog: catalog, client: client, authz: authorizer}
 }
 
-func (i *Inspector) LinkAndInspect(ctx context.Context, projectID, userID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
-	if i == nil || i.catalog == nil || i.client == nil {
+// configured reports whether inspection can run. The constructor is total;
+// misconfiguration surfaces here instead of a nil Inspector.
+func (i *Inspector) configured() bool {
+	return i != nil && i.catalog != nil && i.client != nil && i.client.Enabled() && i.authz != nil
+}
+
+func (i *Inspector) LinkAndInspect(ctx context.Context, user authz.User, projectID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
+	if !i.configured() {
 		return nil, fmt.Errorf("github source inspection is not configured")
+	}
+	scope, err := i.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
+	if err != nil {
+		return nil, err
 	}
 	owner, repo, err := SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
@@ -65,18 +74,25 @@ func (i *Inspector) LinkAndInspect(ctx context.Context, projectID, userID, repos
 	if view.AccessState != SourceAccessStateAvailable {
 		return inspectionResponseForView(view), nil
 	}
-	if err := i.catalog.store.LinkProjectGitHubRepository(ctx, projectID, userID, view); err != nil {
+	if err := i.catalog.LinkProjectRepository(ctx, scope.ID(), scope.UserID(), view); err != nil {
 		return nil, err
 	}
 	return i.inspectView(ctx, view)
 }
 
-func (i *Inspector) Inspect(ctx context.Context, projectID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
-	view, err := i.authorizedRepositoryView(ctx, projectID, repositorySelector)
+func (i *Inspector) Inspect(ctx context.Context, user authz.User, projectID, repositorySelector, userAccessToken string) (*platformv1.InspectSourceResponse, error) {
+	if !i.configured() {
+		return nil, fmt.Errorf("github source inspection is not configured")
+	}
+	scope, err := i.authz.AuthorizeProject(ctx, user, projectID, authz.Read)
 	if err != nil {
 		return nil, err
 	}
 	owner, repo, err := SplitGitHubRepositorySelector(repositorySelector)
+	if err != nil {
+		return nil, err
+	}
+	view, err := i.linkedRepositoryView(ctx, scope.ID(), owner, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +135,18 @@ func (i *Inspector) Authorize(ctx context.Context, projectID string, source *pla
 }
 
 func (i *Inspector) authorizedRepositoryView(ctx context.Context, projectID, repositorySelector string) (GitHubRepositoryView, error) {
-	if i == nil || i.catalog == nil || i.client == nil {
+	if !i.configured() {
 		return GitHubRepositoryView{}, fmt.Errorf("github source inspection is not configured")
 	}
 	owner, repo, err := SplitGitHubRepositorySelector(repositorySelector)
 	if err != nil {
 		return GitHubRepositoryView{}, err
 	}
-	installationID, err := i.catalog.store.ProjectGitHubRepositoryInstallation(ctx, projectID, owner, repo)
+	return i.linkedRepositoryView(ctx, projectID, owner, repo)
+}
+
+func (i *Inspector) linkedRepositoryView(ctx context.Context, projectID, owner, repo string) (GitHubRepositoryView, error) {
+	installationID, err := i.catalog.linkedRepositoryInstallation(ctx, projectID, owner, repo)
 	if err != nil {
 		return GitHubRepositoryView{}, fmt.Errorf("repository is not linked to project: %w", err)
 	}

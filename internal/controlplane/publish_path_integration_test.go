@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,7 +38,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListServiceDeployments: %v", err)
 	}
-	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, "user-1")
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 	if got := after.GetServices()[0].GetSpec().GetImage(); got != winner {
 		t.Fatalf("late complete stole desired image: got %q want %q", got, winner)
 	}
-	current, err := store.reads.ServiceByID(ctx, "user-1", service.ID)
+	current, err := store.reads.ServiceByID(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,10 +230,8 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 		t.Fatalf("resolved image after late complete = %q, want %q", current.ResolvedImage, winner)
 	}
 
-	build2Repo, err := cp.server.registry.repositoryForReference(winner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Scope the cross-build token check below to build 2's repository.
+	build2Repo, _ := splitImageDigest(t, cp.cfg.Registry.Host, winner)
 	if status := registryTagsStatus(t, cp.server.RegistryAuthAddr(), cp.cfg.Registry, job1.GetRegistryUsername(), job1.GetRegistryPassword(), build2Repo); status != http.StatusUnauthorized {
 		t.Fatalf("build 1 credential accessed build 2 repo: status %d", status)
 	}
@@ -301,7 +300,7 @@ func registryTagsStatus(t *testing.T, authAddr string, cfg config.RegistryConfig
 func requestRegistryToken(t *testing.T, authAddr string, cfg config.RegistryConfig, username, password, scope string) string {
 	t.Helper()
 	query := url.Values{"service": {cfg.TokenService}, "scope": {scope}}
-	req, err := http.NewRequest(http.MethodGet, "http://"+authAddr+RegistryTokenPath+"?"+query.Encode(), nil)
+	req, err := http.NewRequest(http.MethodGet, "http://"+authAddr+registry.TokenPath+"?"+query.Encode(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
