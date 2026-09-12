@@ -76,7 +76,6 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if len(deployed.GetServices()) != 1 || deployed.GetServices()[0].GetServiceId() != service.GetId() {
 		t.Fatalf("deployed desired state: %+v", deployed)
 	}
-	beforeRev := deployed.GetReconciliationCursor()
 	streamCancel()
 	first.stop()
 
@@ -103,6 +102,14 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	if initialSurge := recvDesiredState(t, surgeStream); len(initialSurge.GetServices()) != 0 {
 		t.Fatalf("surge agent unexpectedly had allocations before deployment action: %+v", initialSurge)
 	}
+	beforeRedeploy := make(map[string]int64, 2)
+	for _, candidateID := range []string{agentID, surgeID} {
+		candidate, err := desiredStateForAgent(ctx, second.server.store, candidateID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeRedeploy[candidateID] = candidate.GetReconciliationCursor()
+	}
 	released, err := second.dashboard.GetService(userCtx, &platformv1.GetServiceRequest{ServiceId: service.GetId()})
 	if err != nil {
 		t.Fatalf("GetService after restart: %v", err)
@@ -117,6 +124,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 		t.Fatalf("ApplyDeploymentAction(EXACT_REDEPLOY): %v", err)
 	}
 	var mutated *agentv1.DesiredNodeState
+	var mutatedAgentID string
 	for _, candidateID := range []string{agentID, surgeID} {
 		candidate, err := desiredStateForAgent(ctx, second.server.store, candidateID)
 		if err != nil {
@@ -124,14 +132,15 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 		}
 		if len(candidate.GetServices()) > 0 && candidate.GetServices()[0].GetDesiredRolloutGeneration() > deployed.GetServices()[0].GetDesiredRolloutGeneration() {
 			mutated = candidate
+			mutatedAgentID = candidateID
 			break
 		}
 	}
 	if mutated == nil {
 		t.Fatal("exact redeploy did not persist a newer desired rollout on either eligible agent")
 	}
-	if mutated.GetReconciliationCursor() <= beforeRev {
-		t.Fatalf("expected a newer revision after redeploy, before=%d after=%d", beforeRev, mutated.GetReconciliationCursor())
+	if mutated.GetReconciliationCursor() <= beforeRedeploy[mutatedAgentID] {
+		t.Fatalf("expected a newer revision after redeploy, before=%d after=%d", beforeRedeploy[mutatedAgentID], mutated.GetReconciliationCursor())
 	}
 	if mutated.GetServices()[0].GetDesiredRolloutGeneration() <= deployed.GetServices()[0].GetDesiredRolloutGeneration() {
 		t.Fatalf("redeploy did not advance rollout: before=%d after=%d",

@@ -232,8 +232,8 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+1 {
 		t.Fatalf("expected node-1 revision %d after create, got %d", node1Before+1, got)
 	}
-	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+1 {
-		t.Fatalf("service create did not refresh node-2 identity catalog: got %d want %d", got, node2Before+1)
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before {
+		t.Fatalf("service create refreshed idle node-2: got %d want %d", got, node2Before)
 	}
 	node2State, err := desiredStateForAgent(ctx, store, "node-2")
 	if err != nil {
@@ -242,9 +242,8 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 	if len(node2State.GetServices()) != 0 {
 		t.Fatalf("unaffected node-2 received service-local desired state: %#v", node2State.GetServices())
 	}
-	identities := node2State.GetNodeConfig().GetWorkloadIdentities()
-	if len(identities) != 1 || identities[0].GetHostAgentId() != "node-1" {
-		t.Fatalf("node-2 did not receive the new cross-node identity: %#v", identities)
+	if identities := node2State.GetNodeConfig().GetWorkloadIdentities(); len(identities) != 0 {
+		t.Fatalf("idle node-2 received an unrelated environment identity: %#v", identities)
 	}
 
 	if err := deleteService(ctx, store, "user-1", service.ID); err != nil {
@@ -253,8 +252,8 @@ func TestServiceCreateAndDeleteUpdateWorkloadAndNetworkState(t *testing.T) {
 	if got := mustDesiredRevision(t, store, ctx, "node-1"); got != node1Before+2 {
 		t.Fatalf("expected node-1 revision %d after delete, got %d", node1Before+2, got)
 	}
-	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before+2 {
-		t.Fatalf("service delete did not refresh node-2 network state: got %d want %d", got, node2Before+2)
+	if got := mustDesiredRevision(t, store, ctx, "node-2"); got != node2Before {
+		t.Fatalf("service delete refreshed idle node-2: got %d want %d", got, node2Before)
 	}
 }
 

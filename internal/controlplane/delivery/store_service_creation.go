@@ -66,10 +66,9 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO services(
-			id, environment_id, name, current_spec_revision, current_rollout_generation,
-			current_resolved_image, last_successful_commit_sha, latest_build_id,
-			desired_replica_count, placement_message, created_at, updated_at
-		) VALUES ($1, $2, $3, 1, 0, '', '', '', $4, '', $5, $5)`,
+			id, environment_id, name, current_spec_revision,
+			desired_replica_count, created_at, updated_at
+		) VALUES ($1, $2, $3, 1, $4, $5, $5)`,
 		rec.ID, rec.EnvironmentID, rec.Name, rec.DesiredReplicaCount, now,
 	); err != nil {
 		return ServiceRecord{}, err
@@ -82,5 +81,11 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		return ServiceRecord{}, err
 	}
 	journal.RecordRevision(ctx, rec.ID, rec.SpecRevision)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO service_delivery_status(service_id, updated_at) VALUES ($1, $2)`,
+		rec.ID, now,
+	); err != nil {
+		return ServiceRecord{}, err
+	}
 	return rec, nil
 }

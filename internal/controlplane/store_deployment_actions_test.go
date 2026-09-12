@@ -550,10 +550,10 @@ func completeActionRollout(t *testing.T, store *persistence, serviceID string) {
 		var generation int64
 		var state string
 		if err := store.db.QueryRowContext(ctx,
-			`SELECT s.current_rollout_generation, sr.state
-			   FROM services s
-			   JOIN service_rollouts sr ON sr.service_id = s.id AND sr.rollout_generation = s.current_rollout_generation
-			  WHERE s.id = $1`, serviceID,
+			`SELECT ds.current_rollout_generation, sr.state
+			   FROM service_delivery_status ds
+			   JOIN service_rollouts sr ON sr.service_id = ds.service_id AND sr.rollout_generation = ds.current_rollout_generation
+			  WHERE ds.service_id = $1`, serviceID,
 		).Scan(&generation, &state); err != nil {
 			t.Fatal(err)
 		}

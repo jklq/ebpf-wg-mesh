@@ -38,6 +38,12 @@ func (l *Live) DesiredStateForAgent(agentID string, mesh config.ControlPlaneMesh
 
 func cloneLiveIndexes(idx liveIndexes) liveIndexes {
 	out := newLiveIndexes()
+	for k, v := range idx.environmentsByAgent {
+		out.environmentsByAgent[k] = append([]string(nil), v...)
+	}
+	for k, v := range idx.agentsByEnvironment {
+		out.agentsByEnvironment[k] = append([]string(nil), v...)
+	}
 	for k, v := range idx.assignmentsByAgent {
 		out.assignmentsByAgent[k] = append([]string(nil), v...)
 	}
@@ -71,7 +77,7 @@ func buildDesiredState(agentID string, durable journal.DurableState, sessions ma
 	if err != nil {
 		return nil, err
 	}
-	candidate.NodeConfig, err = assignedNodeConfigForAgent(durable, mesh, agentID)
+	candidate.NodeConfig, err = assignedNodeConfigForAgent(durable, indexes, mesh, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,14 +250,22 @@ func internalHostsForEnvironment(durable journal.DurableState, sessions map[stri
 	return hosts, nil
 }
 
-func assignedNodeConfigForAgent(durable journal.DurableState, mesh config.ControlPlaneMeshConfig, agentID string) (*agentv1.AssignedNodeConfig, error) {
+func assignedNodeConfigForAgent(durable journal.DurableState, indexes liveIndexes, mesh config.ControlPlaneMeshConfig, agentID string) (*agentv1.AssignedNodeConfig, error) {
 	agent, ok := durable.Agents[agentID]
 	if !ok {
 		return nil, sql.ErrNoRows
 	}
 	var agents []journal.AgentRegistration
-	for _, peer := range durable.Agents {
-		agents = append(agents, peer)
+	seen := make(map[string]bool)
+	for _, environmentID := range indexes.environmentsByAgent[agentID] {
+		for _, peerID := range indexes.agentsByEnvironment[environmentID] {
+			if !seen[peerID] {
+				if peer, ok := durable.Agents[peerID]; ok {
+					agents = append(agents, peer)
+				}
+				seen[peerID] = true
+			}
+		}
 	}
 	slices.SortFunc(agents, func(a, b journal.AgentRegistration) int { return strings.Compare(a.ID, b.ID) })
 	assigned := &agentv1.AssignedNodeConfig{
@@ -263,7 +277,7 @@ func assignedNodeConfigForAgent(durable journal.DurableState, mesh config.Contro
 		WireguardAddresses:     []string{agent.WireguardIPv6},
 		WireguardListenPort:    int32(agent.WireguardListenPort),
 	}
-	identities, err := workloadIdentities(durable)
+	identities, err := workloadIdentities(durable, indexes, agentID)
 	assigned.WorkloadIdentities = identities
 	if err != nil {
 		return nil, err

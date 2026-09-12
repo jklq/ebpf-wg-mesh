@@ -275,7 +275,7 @@ func loadCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord
 	var strategyRaw []byte
 	err := tx.QueryRowContext(ctx,
 		`SELECT service_id, rollout_generation, spec_revision, state, strategy_json,
-		        desired_replica_count, image_digest, failure_reason, target_allocation_id, created_at, progress_at
+		        desired_replica_count, image_digest, failure_reason, COALESCE(target_allocation_id, ''), created_at, progress_at
 		   FROM service_rollouts
 		  WHERE service_id = $1 AND rollout_generation = $2
 		  FOR UPDATE`, service.ID, service.RolloutGeneration,

@@ -113,18 +113,19 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 			ctx,
 			`UPDATE services
 				    SET current_spec_revision = $1,
-				        current_rollout_generation = $2,
-				        current_resolved_image = $3,
-				        desired_replica_count = $4,
-				        updated_at = $5
-				  WHERE id = $6`,
+				        desired_replica_count = $2,
+				        updated_at = $3
+				  WHERE id = $4`,
 			nextSpecRevision,
-			nextRolloutGeneration,
-			directImageRef(spec),
 			desiredReplicas,
 			now,
 			current.ID,
 		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
+			SET current_rollout_generation = $1, current_resolved_image = NULLIF($2, ''), updated_at = $3
+			WHERE service_id = $4`, nextRolloutGeneration, directImageRef(spec), now, current.ID); err != nil {
 			return err
 		}
 		journal.RecordService(ctx, current.ID)

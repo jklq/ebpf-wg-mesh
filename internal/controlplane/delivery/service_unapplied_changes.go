@@ -403,8 +403,9 @@ func (s *persistence) serviceHasUnappliedChangesQuerier(ctx context.Context, q S
 	var rawSpec []byte
 	if err := q.QueryRowContext(ctx, `SELECT rev.spec_json
 		FROM services svc
+		JOIN service_delivery_status ds ON ds.service_id = svc.id
 		LEFT JOIN service_rollouts ro
-		  ON ro.service_id = svc.id AND ro.rollout_generation = svc.current_rollout_generation
+		  ON ro.service_id = svc.id AND ro.rollout_generation = ds.current_rollout_generation
 		LEFT JOIN service_revisions rev
 		  ON rev.service_id = ro.service_id AND rev.spec_revision = ro.spec_revision
 		WHERE svc.id = $1`, service.ID).Scan(&rawSpec); err != nil {

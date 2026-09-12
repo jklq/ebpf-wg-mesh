@@ -321,10 +321,12 @@ func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 		for i := 0; i < seeded; i++ {
 			id := uuid.NewString()
 			if _, err := tx.ExecContext(ctx, `INSERT INTO services(
-				id, environment_id, name, current_spec_revision, current_rollout_generation,
-				current_resolved_image, last_successful_commit_sha, latest_build_id,
-				desired_replica_count, placement_message, created_at, updated_at
-			) VALUES ($1, $2, $3, 1, 0, '', '', '', 1, '', $4, $4)`, id, environmentID, fmt.Sprintf("seeded-%d", i), now); err != nil {
+				id, environment_id, name, current_spec_revision,
+				desired_replica_count, created_at, updated_at
+			) VALUES ($1, $2, $3, 1, 1, $4, $4)`, id, environmentID, fmt.Sprintf("seeded-%d", i), now); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO service_delivery_status(service_id, updated_at) VALUES ($1, $2)`, id, now); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, 1, '{}', $2)`, id, now); err != nil {
@@ -725,7 +727,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	}
 	assertWatch(t, "assignment change on hosting agent", node1)
 	assertWatch(t, "assignment change on sibling host", node2)
-	assertWatch(t, "assignment change on idle peer", node3)
+	assertNoWatch(t, "assignment change on idle agent", node3)
 }
 
 func drainWatch(ch <-chan struct{}) {

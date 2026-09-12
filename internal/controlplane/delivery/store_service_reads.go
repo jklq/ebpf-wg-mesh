@@ -127,11 +127,12 @@ func (s *persistence) serviceByNameQuerier(ctx context.Context, q ServiceQueryer
 }
 
 const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
-		        s.current_rollout_generation,
+		        COALESCE(ds.current_rollout_generation, 0),
 		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id AND a.rollout_state <> 'lost' ORDER BY CASE a.rollout_state WHEN 'serving' THEN 0 WHEN 'starting' THEN 1 ELSE 2 END, a.id LIMIT 1), ''),
-		        s.current_resolved_image, s.last_successful_commit_sha, s.latest_build_id,
-		        s.desired_replica_count, s.placement_message, s.created_at, s.updated_at
+		        COALESCE(ds.current_resolved_image, ''), COALESCE(ds.last_successful_commit_sha, ''), COALESCE(ds.latest_build_id, ''),
+		        s.desired_replica_count, COALESCE(ds.placement_message, ''), s.created_at, GREATEST(s.updated_at, ds.updated_at)
 		   FROM services s
+		   JOIN service_delivery_status ds ON ds.service_id = s.id
 		   JOIN environments e ON e.id = s.environment_id`
 
 func scanServiceRow(scanner interface{ Scan(...any) error }) (ServiceRecord, error) {

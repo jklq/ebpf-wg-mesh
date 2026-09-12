@@ -57,7 +57,7 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 
 func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE services SET placement_message = $1, updated_at = $2 WHERE id = $3`,
+		`UPDATE service_delivery_status SET placement_message = NULLIF($1, ''), updated_at = $2 WHERE service_id = $3`,
 		message, now, serviceID,
 	); err != nil {
 		return err
