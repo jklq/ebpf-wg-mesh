@@ -1,4 +1,4 @@
-package controlplane
+package registry
 
 import (
 	"context"
@@ -11,20 +11,20 @@ import (
 
 var registryPushActions = []string{"pull", "push"}
 
-type registryCredentialMinter interface {
+type credentialMinter interface {
 	MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error)
 }
 
-type RegistryPolicy struct {
+type Policy struct {
 	host            string
 	namespacePrefix string
 	credentialTTL   time.Duration
-	minter          registryCredentialMinter
+	minter          credentialMinter
 	now             func() time.Time
 }
 
-func NewRegistryPolicy(cfg config.RegistryConfig, minter registryCredentialMinter) *RegistryPolicy {
-	return &RegistryPolicy{
+func NewPolicy(cfg config.RegistryConfig, minter credentialMinter) *Policy {
+	return &Policy{
 		host:            strings.TrimSpace(cfg.Host),
 		namespacePrefix: trimRegistryPath(cfg.NamespacePrefix),
 		credentialTTL:   time.Duration(cfg.CredentialTTLSeconds) * time.Second,
@@ -33,11 +33,11 @@ func NewRegistryPolicy(cfg config.RegistryConfig, minter registryCredentialMinte
 	}
 }
 
-func (p *RegistryPolicy) Enabled() bool {
+func (p *Policy) Enabled() bool {
 	return p != nil && p.host != "" && p.credentialTTL > 0
 }
 
-func (p *RegistryPolicy) PushRef(projectID, environmentID, buildID, serviceID, commitSHA string) string {
+func (p *Policy) PushRef(projectID, environmentID, buildID, serviceID, commitSHA string) string {
 	if !p.Enabled() {
 		return ""
 	}
@@ -49,7 +49,7 @@ func (p *RegistryPolicy) PushRef(projectID, environmentID, buildID, serviceID, c
 	return strings.Join(segments, "/") + ":git-" + sanitizeTag(commitSHA)
 }
 
-func (p *RegistryPolicy) RuntimeDigestRef(pushRef, digest string) string {
+func (p *Policy) RuntimeDigestRef(pushRef, digest string) string {
 	if pushRef == "" || digest == "" {
 		return ""
 	}
@@ -60,7 +60,7 @@ func (p *RegistryPolicy) RuntimeDigestRef(pushRef, digest string) string {
 	return base + "@" + digest
 }
 
-func (p *RegistryPolicy) CredentialsForBuild(_ context.Context, projectID, buildID, pushRef string) (string, string, error) {
+func (p *Policy) CredentialsForBuild(_ context.Context, projectID, buildID, pushRef string) (string, string, error) {
 	if !p.Enabled() || p.minter == nil {
 		return "", "", fmt.Errorf("embedded registry auth is not configured")
 	}
@@ -82,7 +82,7 @@ func (p *RegistryPolicy) CredentialsForBuild(_ context.Context, projectID, build
 	return p.minter.MintCredential("build-"+buildID, repository, registryPushActions, &expiresAt)
 }
 
-func (p *RegistryPolicy) CredentialsForPull(subject, environmentID, serviceID, imageRef string) (string, string, error) {
+func (p *Policy) CredentialsForPull(subject, environmentID, serviceID, imageRef string) (string, string, error) {
 	if !p.Enabled() || p.minter == nil {
 		return "", "", nil
 	}
@@ -107,7 +107,7 @@ func (p *RegistryPolicy) CredentialsForPull(subject, environmentID, serviceID, i
 	return p.minter.MintCredential("pull-"+subject, repository, []string{"pull"}, nil)
 }
 
-func (p *RegistryPolicy) repositoryForReference(ref string) (string, error) {
+func (p *Policy) repositoryForReference(ref string) (string, error) {
 	prefix := p.host + "/"
 	if !strings.HasPrefix(ref, prefix) {
 		return "", fmt.Errorf("image reference is outside registry %q", p.host)
