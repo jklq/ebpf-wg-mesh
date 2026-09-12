@@ -9,9 +9,20 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
+
+	"google.golang.org/protobuf/proto"
 )
+
+func platformv1RestartClone(in *platformv1.RestartObservation) *platformv1.RestartObservation {
+	if in == nil {
+		return nil
+	}
+	out, _ := proto.Clone(in).(*platformv1.RestartObservation)
+	return out
+}
 
 func startLive(t *testing.T) *Live {
 	t.Helper()
@@ -282,6 +293,88 @@ func TestLiveUnchangedObservationDoesNotTriggerWork(t *testing.T) {
 	changed, err = l.RecordObservation(obs)
 	if err != nil || changed {
 		t.Fatalf("unchanged: %v %v", changed, err)
+	}
+}
+
+func TestLiveObservationIgnoresMessageAndPhaseDetail(t *testing.T) {
+	l := startLive(t)
+	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.AcceptReport("agent", "s1", 1, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	base := AllocationObservation{AllocationID: "alloc", RolloutGeneration: 1, Phase: "Healthy", Message: "ok", Healthy: true, AgentID: "agent", SessionID: "s1", Sequence: 1}
+	if changed, err := l.RecordObservation(base); err != nil || !changed {
+		t.Fatalf("first: %v %v", changed, err)
+	}
+	seq := uint64(2)
+	record := func(mut func(*AllocationObservation)) bool {
+		if err := l.AcceptReport("agent", "s1", seq, nil, true); err != nil {
+			t.Fatal(err)
+		}
+		next := base
+		next.Sequence = seq
+		seq++
+		if next.Restart != nil {
+			next.Restart = platformv1RestartClone(next.Restart)
+		}
+		if mut != nil {
+			mut(&next)
+		}
+		changed, err := l.RecordObservation(next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed {
+			base = next
+		}
+		return changed
+	}
+	if record(func(o *AllocationObservation) { o.Message = "still ok but reworded" }) {
+		t.Fatal("message-only change triggered work")
+	}
+	if record(func(o *AllocationObservation) { o.Phase = "Starting" }) {
+		t.Fatal("Healthy->Starting (same class) triggered work")
+	}
+	if !record(func(o *AllocationObservation) { o.Phase = "Error" }) {
+		t.Fatal("Healthy->Error (class change) did not trigger work")
+	}
+	if record(func(o *AllocationObservation) { o.Phase = "Failed"; o.Message = "different text" }) {
+		t.Fatal("Error->Failed (same error class) triggered work")
+	}
+	base.Restart = &platformv1.RestartObservation{RestartCount: 1, Message: "flapping"}
+	if record(nil) {
+		t.Fatal("restart observation without crashloop triggered work")
+	}
+	if record(func(o *AllocationObservation) { o.Restart.RestartCount = 5; o.Restart.Message = "still flapping" }) {
+		t.Fatal("restart count/message change triggered work")
+	}
+	if !record(func(o *AllocationObservation) { o.Restart.CrashLoop = true }) {
+		t.Fatal("crashloop flag did not trigger work")
+	}
+}
+
+func TestAdvanceRolloutSkipsTxWhenIdle(t *testing.T) {
+	l := startLive(t)
+	now := time.Now().UTC()
+	l.ApplyDurable(journal.DurableState{
+		ClusterID: "test",
+		LogIndex:  1,
+		Services: map[string]journal.ServiceIntent{
+			"svc": {ID: "svc", EnvironmentID: "env", CurrentRolloutGeneration: 1},
+		},
+		Rollouts: map[string]journal.Rollout{
+			"svc/1": {ServiceID: "svc", RolloutGeneration: 1, State: rolloutStateSucceeded},
+		},
+	})
+	d := &Delivery{live: l}
+	result, err := d.advanceRollout(context.Background(), "svc", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Changed || result.EnvironmentID != "env" {
+		t.Fatalf("idle advance: %+v", result)
 	}
 }
 

@@ -8,7 +8,10 @@ import (
 	"strings"
 	"time"
 
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
+
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func newLiveIndexes() liveIndexes {
@@ -651,4 +654,59 @@ func domainTargetPortsFromDurable(durable journal.DurableState, hostnames []stri
 		ports = append(ports, int32(domain.TargetPort))
 	}
 	return ports
+}
+
+func (l *Live) rolloutSnapshot(serviceID string) (rolloutSnapshot, string, bool) {
+	if l == nil {
+		return rolloutSnapshot{}, "", false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.serving {
+		return rolloutSnapshot{}, "", false
+	}
+	service, ok := l.durable.Services[serviceID]
+	if !ok {
+		return rolloutSnapshot{}, "", false
+	}
+	var rec rolloutRecord
+	if rollout, ok := l.durable.Rollouts[fmt.Sprintf("%s/%d", serviceID, service.CurrentRolloutGeneration)]; ok {
+		rec = rolloutRecord{
+			ServiceID:           rollout.ServiceID,
+			Generation:          rollout.RolloutGeneration,
+			SpecRevision:        rollout.SpecRevision,
+			State:               rollout.State,
+			DesiredReplicaCount: int32(rollout.DesiredReplicaCount),
+			ImageDigest:         rollout.ImageDigest,
+			FailureReason:       rollout.FailureReason,
+			TargetAllocationID:  rollout.TargetAllocationID,
+			CreatedAt:           rollout.CreatedAt,
+			ProgressAt:          rollout.ProgressAt,
+			Strategy:            &platformv1.RollingStrategy{},
+		}
+		raw := strings.TrimSpace(string(rollout.StrategyJSON))
+		if raw != "" && raw != "{}" && raw != "null" {
+			if err := protojson.Unmarshal(rollout.StrategyJSON, rec.Strategy); err != nil {
+				return rolloutSnapshot{}, "", false
+			}
+		}
+		rec.Strategy = canonicalRollingStrategy(rec.Strategy)
+	}
+	removing := false
+	for _, dep := range l.durable.Deployments {
+		if dep.ServiceID == serviceID && dep.IsCurrent && dep.State == DeploymentStateDraining && dep.ReasonCode == reasonUserRemove {
+			removing = true
+			break
+		}
+	}
+	return rolloutSnapshot{
+		Rollout:     rec,
+		Allocations: l.allocationsByServiceLocked(serviceID),
+		Removing:    removing,
+	}, service.EnvironmentID, true
+}
+
+func rolloutPlanNeedsTx(plan rolloutPlan) bool {
+	return len(plan.Remove) > 0 || len(plan.Promote) > 0 || len(plan.Withdraw) > 0 ||
+		plan.Failure != "" || plan.Complete || plan.CompleteRemoval || plan.PlacementSlots > 0
 }
