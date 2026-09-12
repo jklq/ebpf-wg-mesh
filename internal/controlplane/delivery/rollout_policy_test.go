@@ -115,6 +115,44 @@ func TestRolloutPlacementDecision(t *testing.T) {
 	}
 }
 
+func TestRolloutPlanNeedsTx(t *testing.T) {
+	if rolloutPlanNeedsTx(rolloutPlan{}) {
+		t.Fatal("empty plan needs tx")
+	}
+	cases := []rolloutPlan{
+		{Remove: []AllocationRecord{{}}},
+		{Promote: []AllocationRecord{{}}},
+		{Withdraw: []rolloutWithdrawal{{}}},
+		{Failure: "boom"},
+		{Complete: true},
+		{CompleteRemoval: true},
+		{PlacementSlots: 1},
+	}
+	for i, plan := range cases {
+		if !rolloutPlanNeedsTx(plan) {
+			t.Fatalf("case %d does not need tx: %+v", i, plan)
+		}
+	}
+	if rolloutPlanNeedsTx(rolloutPlan{Continue: true}) {
+		t.Fatal("continue alone needs tx")
+	}
+}
+
+func TestRolloutProgressDetailCountsOverlaidReady(t *testing.T) {
+	now := time.Now().UTC()
+	rollout := rolloutRecord{Generation: 2, DesiredReplicaCount: 2}
+	ready := policyAllocation("ready", AllocationRolloutServing, 2, now)
+	unready := policyAllocation("unready", AllocationRolloutServing, 2, now)
+	unready.Healthy = false
+	starting := policyAllocation("starting", AllocationRolloutStarting, 2, now)
+	draining := policyAllocation("draining", AllocationRolloutDraining, 1, now)
+	oldServing := policyAllocation("old", AllocationRolloutServing, 1, now)
+	allocs := []AllocationRecord{ready, unready, starting, draining, oldServing}
+	if got, want := rolloutProgressDetail(rollout, allocs, 1), "Rolling replacement: 1/2 ready, 2 starting, 1 draining"; got != want {
+		t.Fatalf("detail = %q, want %q", got, want)
+	}
+}
+
 func TestRolloutFailurePreservesServingReplacements(t *testing.T) {
 	now := time.Now().UTC()
 	serving := policyAllocation("serving", AllocationRolloutServing, 2, now)

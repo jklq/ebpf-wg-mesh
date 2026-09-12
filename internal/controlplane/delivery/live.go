@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/restartpolicy"
 )
@@ -532,23 +531,24 @@ func (l *Live) AcceptReport(agentID, sessionID string, sequence uint64, inventor
 func observationUnchanged(previous AllocationObservation, next AllocationObservation) bool {
 	return previous.AppliedSpecRevision == next.AppliedSpecRevision &&
 		previous.AppliedGeneration == next.AppliedGeneration &&
-		previous.Phase == next.Phase &&
-		previous.Message == next.Message &&
 		previous.Healthy == next.Healthy &&
+		observationPhaseClass(previous.Phase) == observationPhaseClass(next.Phase) &&
+		previous.Restart.GetCrashLoop() == next.Restart.GetCrashLoop() &&
 		slices.Equal(previous.HealthyIPv4Ports, next.HealthyIPv4Ports) &&
-		slices.Equal(previous.HealthyIPv6Ports, next.HealthyIPv6Ports) &&
-		restartObservationEqual(previous.Restart, next.Restart)
+		slices.Equal(previous.HealthyIPv6Ports, next.HealthyIPv6Ports)
 }
 
-func restartObservationEqual(a, b *platformv1.RestartObservation) bool {
-	if a == nil && b == nil {
-		return true
+func observationPhaseClass(phase string) int {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "drained":
+		return 0
+	case "crashloop":
+		return 1
+	case "error", "failed", "unhealthy", "stopped":
+		return 2
+	default:
+		return 3
 	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.GetCrashLoop() == b.GetCrashLoop() && a.GetMessage() == b.GetMessage() &&
-		a.GetRestartCount() == b.GetRestartCount() && a.GetLastCause() == b.GetLastCause()
 }
 
 func (l *Live) RecordObservation(obs AllocationObservation) (changed bool, err error) {
