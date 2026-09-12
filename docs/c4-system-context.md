@@ -51,8 +51,8 @@ flowchart LR
 - BuildKit and the container registry are separate external runtime dependencies used by the builder path.
 - Registry token minting and ACL decisions are embedded in the control plane. The external registry verifies signed access locally from the persisted control-plane trust certificate; no separate credential-broker service is required.
 - The node underlay network is shown as an external system because the retained WireGuard/eBPF mesh rides on top of host/network infrastructure rather than replacing it.
-- Each agent is sent only the allocations assigned to that node. Identity policy is a pool deny plus exact allows for environments the node hosts (including remote allocations in those environments). Unknown destinations and cross-environment traffic fail closed. Current code still floods a cluster-wide catalog to every agent.
-- WireGuard peers exist only between nodes that share an environment and between those nodes and Envoy instances that publish their services. There is no full mesh.
+- Each agent is sent only the allocations assigned to that node. Identity policy is a pool deny plus exact allows for environments the node hosts (including remote allocations in those environments). Unknown destinations and cross-environment traffic fail closed. The catalog is environment-scoped; independent policy delivery is still pending.
+- WireGuard peers are scoped to nodes that share an environment, excluding self, retired, and revoked peers. There is no full mesh. Agent-to-Envoy peering arrives with the Envoy fleet.
 - Workload health comes from HTTP probe results rather than container existence. Production probe sockets originate inside the workload network namespace, only ready ports become ingress backends, and probe failures remain visible as allocation phase and failure detail.
 
 ## Repo Mapping
