@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,62 +18,54 @@ type nodeLossReplacementResult struct {
 }
 
 func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string, cutoff time.Time) ([]string, []string, error) {
-	s := d.store
-	var notifyAgentIDs []string
-	var changedEnvironmentIDs []string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		notifyAgentIDs = nil
-		changedEnvironmentIDs = nil
+	result, err := d.failoverAgent(ctx, agentID, cutoff, d.live.currentTime())
+	return result.NotifyAgentIDs, result.EnvironmentIDs, err
+}
+
+func (d *Delivery) failoverAgent(ctx context.Context, agentID string, cutoff, now time.Time) (ServiceFailoverResult, error) {
+	var result ServiceFailoverResult
+	changedEnvironments := make(map[string]struct{})
+	err := d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if d.live == nil || !d.live.Serving() {
 			return ErrNotLiveOwner
 		}
-		session, ok := d.live.Session(agentID)
-		if ok && session.LastContact.After(cutoff) {
+		agent, ok := d.live.Agent(agentID)
+		if !ok || agent.LifecycleState != AgentStateUnavailable || agent.StateBeforeUnavailable != AgentStateActive || agent.LastSeenAt.After(cutoff) {
 			return nil
 		}
-		allocations, err := listAllocationsForFailover(ctx, s, tx, agentID)
+		allocations, err := listAllocationsForFailover(ctx, d.store, tx, agentID)
 		if err != nil {
 			return err
 		}
-
-		now := time.Now().UTC()
-		needBump := false
-		changedEnvironments := make(map[string]struct{})
 		for _, allocation := range allocations {
-			result, err := d.replaceLostNodeAllocationTx(ctx, tx, agentID, allocation, now)
+			replacement, err := d.replaceLostNodeAllocationTx(ctx, tx, agentID, allocation, now)
 			if err != nil {
 				return err
 			}
-			if !result.Changed {
+			if !replacement.Changed {
 				continue
 			}
-			needBump = true
+			if replacement.Blocked {
+				result.BlockedServiceIDs = append(result.BlockedServiceIDs, allocation.ServiceID)
+			} else if replacement.Replaced {
+				result.MovedServiceIDs = append(result.MovedServiceIDs, allocation.ServiceID)
+			}
+			result.IngressChanged = true
 			changedEnvironments[allocation.EnvironmentID] = struct{}{}
-		}
-
-		if needBump {
-			agentRows, err := tx.QueryContext(ctx, `SELECT id FROM agents ORDER BY id`)
-			if err != nil {
-				return err
-			}
-			for agentRows.Next() {
-				var id string
-				if err := agentRows.Scan(&id); err != nil {
-					agentRows.Close()
-					return err
-				}
-				notifyAgentIDs = append(notifyAgentIDs, id)
-			}
-			if err := agentRows.Close(); err != nil {
-				return err
-			}
-		}
-		for environmentID := range changedEnvironments {
-			changedEnvironmentIDs = append(changedEnvironmentIDs, environmentID)
 		}
 		return nil
 	})
-	return notifyAgentIDs, changedEnvironmentIDs, err
+	if err != nil {
+		return ServiceFailoverResult{}, err
+	}
+	if result.IngressChanged {
+		result.NotifyAgentIDs = d.live.AgentIDs()
+		for environmentID := range changedEnvironments {
+			result.EnvironmentIDs = append(result.EnvironmentIDs, environmentID)
+		}
+		sort.Strings(result.EnvironmentIDs)
+	}
+	return result, nil
 }
 
 func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, deadAgentID string, allocation AllocationRecord, now time.Time) (nodeLossReplacementResult, error) {

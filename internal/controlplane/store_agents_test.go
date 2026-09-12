@@ -74,7 +74,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 				if err := enrollTestAgent(ctx, store, testAgentHello(2)); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+				if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 					if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET workload_ipv4_subnet = '10.42.0.1/30' WHERE id = 'node-2'`); err != nil {
 						return err
 					}

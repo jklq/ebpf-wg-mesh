@@ -15,14 +15,24 @@ type Querier interface {
 var ErrLeaseLost = errors.New("source lease lost")
 
 type SQLStore struct {
-	db       *sql.DB
-	withTx   func(context.Context, func(context.Context, *sql.Tx) error) error
-	services func(context.Context, string) (Service, error)
-	archives ArchiveStore
+	db                 *sql.DB
+	withCoordinationTx func(context.Context, func(context.Context, *sql.Tx) error) error
+	services           func(context.Context, string) (Service, error)
+	archives           ArchiveStore
+	workReady          chan struct{}
 }
 
-func NewSQLStore(db *sql.DB, withTx func(context.Context, func(context.Context, *sql.Tx) error) error, services func(context.Context, string) (Service, error)) *SQLStore {
-	return &SQLStore{db: db, withTx: withTx, services: services}
+func NewSQLStore(db *sql.DB, withCoordinationTx func(context.Context, func(context.Context, *sql.Tx) error) error, services func(context.Context, string) (Service, error)) *SQLStore {
+	return &SQLStore{db: db, withCoordinationTx: withCoordinationTx, services: services, workReady: make(chan struct{}, 1)}
+}
+
+func (s *SQLStore) SourceWorkReady() <-chan struct{} { return s.workReady }
+
+func (s *SQLStore) signalSourceWork() {
+	select {
+	case s.workReady <- struct{}{}:
+	default:
+	}
 }
 
 var _ Store = (*SQLStore)(nil)

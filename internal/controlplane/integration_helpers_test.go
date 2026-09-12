@@ -28,7 +28,7 @@ func bumpDesiredRevisionsForTest(t *testing.T, store *persistence, ctx context.C
 	if len(agentIDs) == 0 {
 		return
 	}
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return dbtx.BumpDesiredRevisions(ctx, tx, agentIDs)
 	}); err != nil {
 		t.Fatalf("bumpDesiredRevisions: %v", err)
@@ -93,8 +93,8 @@ func registerAgent(ctx context.Context, store *persistence, hello *agentv1.Agent
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 
-func claimNextSourceWorkItem(ctx context.Context, store *persistence, processorID string, staleAfter time.Duration) (source.SourceWorkItemRecord, error) {
-	return store.source.ClaimNextSourceWorkItem(ctx, processorID, staleAfter)
+func claimNextSourceWorkItem(ctx context.Context, store *persistence, processorID string) (source.SourceWorkItemRecord, error) {
+	return store.source.ClaimNextSourceWorkItem(ctx, processorID)
 }
 
 func completeBuildForTest(ctx context.Context, store *persistence, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) error {

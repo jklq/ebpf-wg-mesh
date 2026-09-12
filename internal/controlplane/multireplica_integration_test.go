@@ -13,6 +13,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func TestLiveWatchFiresAfterDurableApply(t *testing.T) {
@@ -65,7 +66,7 @@ func TestReplicaSnapshotAppliesDurableIntoLive(t *testing.T) {
 	}
 }
 
-func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
+func TestCoordinationTransactionDoesNotAdvancePlatformRevision(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	events := NewPlatformEvents(store.events, time.Millisecond)
@@ -74,7 +75,7 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO platform_operators(user_id, created_at) VALUES ('operator-a', statement_timestamp())`)
 		return err
 	}); err != nil {
@@ -84,12 +85,12 @@ func TestPlatformRevisionCommitsAtomicallyWithStoreTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after != before+1 {
-		t.Fatalf("committed revision = %d, want %d", after, before+1)
+	if after != before {
+		t.Fatalf("coordination transaction advanced revision from %d to %d", before, after)
 	}
 
 	rollbackErr := errors.New("rollback")
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO platform_operators(user_id, created_at) VALUES ('operator-b', statement_timestamp())`); err != nil {
 			return err
 		}
@@ -153,12 +154,12 @@ func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 	}
 
 	staleCtx := context.WithValue(ctx, leaseContextKey{}, firstClaim)
-	err = store.withTx(staleCtx, func(context.Context, *sql.Tx) error { return nil })
+	err = store.withProductTx(staleCtx, func(context.Context, *sql.Tx) error { return nil })
 	if !errors.Is(err, errLeaseLost) {
 		t.Fatalf("stale owner transaction error = %v, want lease lost", err)
 	}
 	freshCtx := context.WithValue(ctx, leaseContextKey{}, secondClaim)
-	if err := store.withTx(freshCtx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+	if err := store.withProductTx(freshCtx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
 		t.Fatalf("new owner transaction: %v", err)
 	}
 }
@@ -417,7 +418,7 @@ func TestReplicaRecoversAfterJournalCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(current, recovered) {
-		t.Fatalf("standby replica diverged after compaction: replica=%d owner=%d", recovered.LogIndex, current.LogIndex)
+		t.Fatalf("standby replica diverged after compaction: replica=%d owner=%d diff=%+v", recovered.LogIndex, current.LogIndex, journal.Diff(recovered, current))
 	}
 	if recovered.Environments[environmentID].Name != "compacted-again" {
 		t.Fatalf("standby did not observe post-compaction change: %+v", recovered.Environments[environmentID])

@@ -13,7 +13,7 @@ import (
 func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) ([]string, error) {
 	s := d.store
 	var notify []string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		notify = nil
 		var locked string
 		if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM agent_administration WHERE agent_id = $1 FOR UPDATE`, agentID).Scan(&locked); err != nil {
@@ -157,7 +157,7 @@ func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
 	s := d.store
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT service_id FROM service_delivery_status WHERE placement_message IS NOT NULL ORDER BY service_id FOR UPDATE`)
 		if err != nil {
 			return err

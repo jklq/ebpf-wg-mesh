@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 19
+const currentSchemaVersion = 20
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -9,9 +9,10 @@ const currentSchemaVersion = 19
 var currentSchema = []string{
 	`CREATE TABLE cluster_journal_heads (
 		cluster_id STRING PRIMARY KEY,
-		log_index INT8 NOT NULL CHECK (log_index >= 0)
+		log_index INT8 NOT NULL CHECK (log_index >= 0),
+		compacted_index INT8 NOT NULL DEFAULT 0 CHECK (compacted_index >= 0 AND compacted_index <= log_index)
 	)`,
-	`INSERT INTO cluster_journal_heads VALUES ('default', 0)`,
+	`INSERT INTO cluster_journal_heads(cluster_id, log_index, compacted_index) VALUES ('default', 0, 0)`,
 	`CREATE TABLE cluster_journal (
 		cluster_id STRING NOT NULL REFERENCES cluster_journal_heads(cluster_id),
 		log_index INT8 NOT NULL CHECK (log_index > 0),
@@ -27,20 +28,16 @@ var currentSchema = []string{
 	`CREATE TABLE cluster_journal_receipts (
 		cluster_id STRING NOT NULL REFERENCES cluster_journal_heads(cluster_id),
 		command_id STRING NOT NULL,
-		log_index INT8 NOT NULL CHECK (log_index > 0),
+		log_index INT8 NOT NULL CHECK (log_index >= 0),
 		command_version INT8 NOT NULL,
 		command_type STRING NOT NULL,
 		payload JSONB NOT NULL,
 		authorizing_epoch INT8 NULL CHECK (authorizing_epoch > 0),
 		created_at TIMESTAMPTZ NOT NULL,
+		expires_at TIMESTAMPTZ NOT NULL,
 		PRIMARY KEY (cluster_id, command_id)
 	)`,
-	`CREATE TABLE cluster_journal_snapshots (
-		cluster_id STRING PRIMARY KEY REFERENCES cluster_journal_heads(cluster_id),
-		log_index INT8 NOT NULL CHECK (log_index >= 0),
-		state JSONB NOT NULL,
-		created_at TIMESTAMPTZ NOT NULL
-	)`,
+	`CREATE INDEX idx_cluster_journal_receipts_expiry ON cluster_journal_receipts(cluster_id, expires_at)`,
 	`CREATE TABLE control_plane_leases (
 			name STRING PRIMARY KEY,
 			holder_id STRING NOT NULL,
@@ -441,6 +438,8 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_github_webhook_deliveries_state
 			ON github_webhook_deliveries(state, received_at ASC, id)`,
+	`CREATE INDEX idx_github_webhook_deliveries_recovery
+			ON github_webhook_deliveries(state, updated_at ASC, id)`,
 	`CREATE TABLE github_work_items (
 			id STRING PRIMARY KEY,
 			kind STRING NOT NULL,
@@ -535,6 +534,7 @@ var currentSchema = []string{
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE INDEX idx_source_work_items_state ON source_work_items(state, available_at ASC, created_at ASC, id)`,
+	`CREATE INDEX idx_source_work_items_recovery ON source_work_items(state, updated_at ASC, id)`,
 	`ALTER TABLE service_delivery_status ADD CONSTRAINT fk_service_delivery_status_latest_build
 			FOREIGN KEY (latest_build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
 	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_source_revision

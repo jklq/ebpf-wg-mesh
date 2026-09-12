@@ -33,19 +33,17 @@ type Dependencies struct {
 	// transactions. Delivery never touches source tables directly.
 	SourceStore SourceStore
 
-	DB                     *sql.DB
-	Mesh                   config.ControlPlaneMeshConfig
-	Live                   *Live
-	Transaction            Transaction
-	UnfencedTransaction    Transaction
-	ObservationTransaction Transaction
-	ReadState              func(context.Context, func(*sql.Tx, journal.DurableState) error) error
-	UserFromContext        func(context.Context) (UserIdentity, error)
-	Notifier               PlatformNotifier
-	Ingress                PlatformIngress
-	Events                 Events
-	LogEmitter             *logs.LogEmitter
-	ReservedAgentIDs       []string
+	DB                 *sql.DB
+	Mesh               config.ControlPlaneMeshConfig
+	Live               *Live
+	ProductTransaction Transaction
+	ReadState          func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	UserFromContext    func(context.Context) (UserIdentity, error)
+	Notifier           PlatformNotifier
+	Ingress            PlatformIngress
+	Events             Events
+	LogEmitter         *logs.LogEmitter
+	ReservedAgentIDs   []string
 }
 
 type SourceStore interface {
@@ -63,14 +61,12 @@ type persistence struct {
 	enqueueSourceWorkItemTx  func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
 	sourceStore              SourceStore
 
-	db                *sql.DB
-	mesh              config.ControlPlaneMeshConfig
-	live              *Live
-	reservedAgentIDs  []string
-	withTx            Transaction
-	withTxUnfenced    Transaction
-	withObservationTx Transaction
-	readState         func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	db               *sql.DB
+	mesh             config.ControlPlaneMeshConfig
+	live             *Live
+	reservedAgentIDs []string
+	withProductTx    Transaction
+	readState        func(context.Context, func(*sql.Tx, journal.DurableState) error) error
 }
 
 func New(deps Dependencies) *Delivery {
@@ -84,9 +80,7 @@ func New(deps Dependencies) *Delivery {
 			mesh:                     deps.Mesh,
 			live:                     live,
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
-			withTx:                   deps.Transaction,
-			withTxUnfenced:           deps.UnfencedTransaction,
-			withObservationTx:        deps.ObservationTransaction,
+			withProductTx:            deps.ProductTransaction,
 			readState:                deps.ReadState,
 			createEnvironmentQuerier: deps.CreateEnvironment,
 			createVolumeTx:           deps.CreateVolume,
@@ -107,6 +101,13 @@ func (d *Delivery) LivePosition() LivePosition {
 		return LivePosition{}
 	}
 	return d.live.Position()
+}
+
+func (d *Delivery) LiveAllocationsByEnvironment(environmentID string) (map[string][]AllocationRecord, error) {
+	if d == nil || d.live == nil {
+		return nil, ErrNotLiveOwner
+	}
+	return d.live.AllocationsByEnvironmentIfServing(environmentID)
 }
 
 type ReadModel interface {

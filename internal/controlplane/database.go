@@ -87,7 +87,7 @@ func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 }
 
 func (s *database) migrate(ctx context.Context) error {
-	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 			return fmt.Errorf("create schema_migrations: %w", err)
 		}
@@ -143,39 +143,47 @@ func (s *database) initJournal() {
 	})
 }
 
-func (s *database) withTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+func (s *database) withProductTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 	s.initJournal()
 	_, err := s.journal.ExecuteWithMutation(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := assertLeaseTx(ctx, tx); err != nil {
 			return err
 		}
-		var epoch int64
-		if err := tx.QueryRowContext(ctx, `SELECT epoch FROM agent_authority WHERE id = 1 FOR UPDATE`).Scan(&epoch); err != nil {
-			return err
-		}
 		if err := fn(ctx, tx); err != nil {
 			return err
 		}
+		return nil
+	}, func(ctx context.Context, tx *sql.Tx, base journal.DurableState, batch journal.Batch) error {
+		if batch.Empty() {
+			return nil
+		}
+		if err := s.bumpAffectedAgents(ctx, tx, base, batch); err != nil {
+			return err
+		}
 		return bumpGlobalEnvironmentEventTx(ctx, tx)
-	}, s.bumpAffectedAgents)
+	})
 	return err
 }
 
 func (s *database) compactJournal(ctx context.Context, retain int64) (int64, error) {
 	s.initJournal()
-	return s.journal.CompactSnapshot(ctx, retain, func(ctx context.Context, tx *sql.Tx) error {
+	return s.journal.Compact(ctx, retain, func(ctx context.Context, tx *sql.Tx) error {
 		return assertLeaseTx(ctx, tx)
 	})
 }
 
-func (s *database) withTxUnfenced(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+func (s *database) withCoordinationTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 	return crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error { return fn(ctx, tx) })
 }
 
-func (s *database) withObservationTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
-	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := fn(ctx, tx); err != nil {
+func (s *database) withObservationTx(ctx context.Context, fn func(context.Context, *sql.Tx) (bool, error)) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		changed, err := fn(ctx, tx)
+		if err != nil {
 			return err
+		}
+		if !changed {
+			return nil
 		}
 		return bumpGlobalEnvironmentEventTx(ctx, tx)
 	})
@@ -192,7 +200,7 @@ func (s *database) readLiveState(ctx context.Context, fn func(*sql.Tx, journal.D
 }
 
 func (s *catalogPersistence) EnsureBootstrap(ctx context.Context, bootstrap config.BootstrapConfig) error {
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		for _, user := range bootstrap.Users {
 			if user.ID == "" {
 				continue

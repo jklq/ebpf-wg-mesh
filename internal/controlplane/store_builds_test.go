@@ -828,7 +828,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 		return err
 	}
 
-	return store.withTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+	return store.withProductTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
 		binding, err := store.source.UpsertSourceBindingTx(context.Background(), tx, source.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,

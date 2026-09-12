@@ -27,8 +27,8 @@ func TestRolloutAdvancementRollbackAndConcurrency(t *testing.T) {
 	revision := mustDesiredRevision(t, store, ctx, target.AgentID)
 	aborted := errors.New("abort after rollout writes")
 	deps := deliveryDependencies(store, nil, nil, nil, nil)
-	deps.Transaction = func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
-		return store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	deps.ProductTransaction = func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+		return store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			if err := fn(ctx, tx); err != nil {
 				return err
 			}

@@ -66,7 +66,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 	s := d.store
 	var changed bool
 	var wireGuardEndpoint string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err

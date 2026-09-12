@@ -230,6 +230,22 @@ func (b Batch) requiresAuthority() bool {
 	return false
 }
 
+// Empty reports whether a command made no durable product-state change.
+// BaseIndex is a precondition, not a change.
+func (b Batch) Empty() bool {
+	return len(b.Projects) == 0 &&
+		len(b.Services) == 0 &&
+		len(b.Revisions) == 0 &&
+		len(b.Assignments) == 0 &&
+		len(b.Rollouts) == 0 &&
+		len(b.Deployments) == 0 &&
+		len(b.Agents) == 0 &&
+		len(b.Administration) == 0 &&
+		len(b.Environments) == 0 &&
+		len(b.Volumes) == 0 &&
+		len(b.Domains) == 0
+}
+
 func Diff(before, after DurableState) Batch {
 	return Batch{BaseIndex: before.LogIndex,
 		Projects:       changes(before.Projects, after.Projects),

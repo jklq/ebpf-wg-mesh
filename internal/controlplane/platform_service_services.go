@@ -357,9 +357,20 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 		}
 		return nil, status.Errorf(codes.Internal, "list services: %v", err)
 	}
+	allocations, err := s.delivery.LiveAllocationsByEnvironment(req.GetEnvironmentId())
+	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
+		return nil, status.Errorf(codes.Internal, "list live service allocations: %v", err)
+	}
 	resp := &platformv1.ListServicesResponse{Services: make([]*platformv1.Service, 0, len(items)), Index: index}
 	for _, item := range items {
-		item, err = s.decorateServiceRecord(ctx, item)
+		serviceAllocations, ok := allocations[item.ID]
+		if !ok {
+			serviceAllocations = []deliverycore.AllocationRecord{}
+		}
+		item, err = s.decorateServiceRecordWithAllocations(ctx, item, serviceAllocations)
 		if err != nil {
 			if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 				return nil, mapped

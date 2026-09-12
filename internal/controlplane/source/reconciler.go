@@ -62,6 +62,7 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 	}
 	const maxRetryDelay = 30 * time.Second
 	retryDelay := 250 * time.Millisecond
+	idleDelay := time.Second
 	for {
 		processed, err := r.ProcessNext(ctx)
 		if err != nil {
@@ -80,16 +81,21 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 		}
 		retryDelay = 250 * time.Millisecond
 		if processed {
+			idleDelay = time.Second
 			continue
 		}
-		if !waitContext(ctx, jitter(time.Second)) {
+		if !r.coordinator.waitForWork(ctx, jitter(idleDelay)) {
 			return nil
+		}
+		idleDelay *= 2
+		if idleDelay > maxRetryDelay {
+			idleDelay = maxRetryDelay
 		}
 	}
 }
 
 func (r *GitHubReconciler) ProcessNext(ctx context.Context) (bool, error) {
-	rec, err := r.coordinator.ClaimNextWorkItem(ctx, r.workerID, r.workStaleAfter)
+	rec, err := r.coordinator.ClaimNextWorkItem(ctx, r.workerID)
 	if err != nil {
 		return false, err
 	}
