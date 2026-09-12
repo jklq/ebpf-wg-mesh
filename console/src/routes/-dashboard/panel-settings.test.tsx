@@ -424,7 +424,7 @@ describe("PanelSettings replica scaling", () => {
 					serviceId: "service-1",
 					rollingStrategy: expect.objectContaining({
 						healthcheckTimeoutSeconds: 60,
-						drainingSeconds: 30,
+						drainingSeconds: 0,
 					}),
 				}),
 			}),

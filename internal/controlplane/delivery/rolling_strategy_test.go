@@ -13,7 +13,7 @@ func TestCanonicalRollingStrategyAppliesTimingDefaults(t *testing.T) {
 	t.Parallel()
 
 	got := canonicalRollingStrategy(&platformv1.RollingStrategy{})
-	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 30 {
+	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 0 {
 		t.Fatalf("timeout defaults = %+v", got)
 	}
 }

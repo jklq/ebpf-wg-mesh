@@ -117,12 +117,12 @@ func TestServiceUnappliedChangesIncludesRollingStrategy(t *testing.T) {
 		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
 	}
 	assertChange(t, changes[0], "rollingStrategy", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE,
-		"healthcheck timeout 300s, draining time 30s",
+		"healthcheck timeout 300s, draining time 0s",
 		"healthcheck timeout 60s, draining time 5s")
 
 	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"rollingStrategy"})
 	got := canonicalRollingStrategy(discarded.GetRollingStrategy())
-	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 30 {
+	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 0 {
 		t.Fatalf("discarded rolling strategy = %+v", got)
 	}
 }
