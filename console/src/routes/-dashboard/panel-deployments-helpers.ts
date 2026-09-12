@@ -9,10 +9,7 @@ import type {
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
 
-import {
-	deploymentCauseLabel,
-	isInProgressDeploymentState,
-} from "./deployment-inline";
+import { isInProgressDeploymentState } from "./deployment-inline";
 import { shortId, shortSha } from "./service-utils";
 
 export type LogTypeFilter = "all" | "deploy" | "build" | "runtime";
@@ -259,6 +256,66 @@ export function compareDeploymentsNewestFirst(
 	return deploymentTime(b) - deploymentTime(a);
 }
 
+export function reconcileCurrentDeployment(
+	records: Array<DashboardDeploymentRecord>,
+	service: DashboardServiceRecord,
+): Array<DashboardDeploymentRecord> {
+	const status = service.latestDeployment;
+	const build = service.latestBuild;
+	if (!status && !build) return records;
+
+	const rolloutGeneration =
+		status?.rolloutGeneration ?? service.rolloutGeneration ?? 0;
+	if (rolloutGeneration === 0 && status?.state === "DEPLOYMENT_STATE_STAGED") {
+		return records;
+	}
+	const deploymentId = status?.deploymentId;
+	const matchIndex = records.findIndex(
+		(record) =>
+			(Boolean(deploymentId) && record.id === deploymentId) ||
+			(Boolean(build?.buildId) && record.build?.buildId === build?.buildId) ||
+			(record.rolloutGeneration === rolloutGeneration && rolloutGeneration > 0),
+	);
+	const current = matchIndex >= 0 ? records[matchIndex] : undefined;
+	const mergedBuild = build
+		? {
+				...current?.build,
+				...build,
+				stages:
+					(build.stages?.length ?? 0) > 0
+						? build.stages
+						: current?.build?.stages,
+			}
+		: current?.build;
+	const next: DashboardDeploymentRecord = {
+		...current,
+		id:
+			deploymentId ||
+			current?.id ||
+			build?.buildId ||
+			`${service.id}:${rolloutGeneration}`,
+		rolloutGeneration,
+		specRevision: status?.specRevision ?? service.specRevision,
+		createdAt:
+			current?.createdAt ??
+			status?.transitionedAt ??
+			build?.queuedAt ??
+			build?.startedAt ??
+			service.updatedAt,
+		repositorySelector: service.spec?.source?.repositorySelector,
+		trackedRef: service.spec?.source?.trackedRef,
+		build: mergedBuild,
+		isCurrent: true,
+		status: status ?? current?.status,
+		stages: (build?.stages?.length ?? 0) > 0 ? build?.stages : current?.stages,
+		imageDigest:
+			build?.imageDigest || status?.imageDigest || current?.imageDigest,
+	};
+
+	if (matchIndex < 0) return [next, ...records];
+	return records.map((record, index) => (index === matchIndex ? next : record));
+}
+
 export function deploymentTime(entry: DashboardDeploymentRecord): number {
 	return (
 		entry.createdAt?.getTime() ??
@@ -274,6 +331,15 @@ export function shouldRenderDeploymentHistoryEntry(
 	entry: DashboardDeploymentRecord,
 	service: DashboardServiceRecord,
 ): boolean {
+	if (
+		entry.rolloutGeneration === 0 &&
+		entry.status?.state === "DEPLOYMENT_STATE_STAGED"
+	) {
+		return false;
+	}
+	if (entry.isCurrent || isInProgressDeploymentState(entry.status?.state)) {
+		return true;
+	}
 	if (!usesRepositorySource(service)) {
 		return true;
 	}
@@ -349,7 +415,6 @@ export function formatDuration(ms: number): string {
 
 export function deploymentMeta(
 	build: DashboardBuildStatus | undefined,
-	status: DashboardDeploymentStatus | undefined,
 	timestamp: Date | undefined,
 	nowMs: number,
 ): string[] {
@@ -357,8 +422,6 @@ export function deploymentMeta(
 	if (build?.commitSha) parts.push(shortSha(build.commitSha));
 	if (build?.commitAuthor) parts.push(build.commitAuthor);
 	if (timestamp) parts.push(formatRelativeAge(timestamp, nowMs));
-	const cause = deploymentCauseLabel(status?.causeKind);
-	if (cause) parts.push(cause);
 	return parts;
 }
 

@@ -23,7 +23,9 @@ import type {
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
 import { panelIconBtn } from "#/lib/ui-classes";
+import { deploymentStagesForDisplay } from "./deployment-inline";
 import { PanelDeployments } from "./panel-deployments";
+import { withSourceStage } from "./panel-deployments-helpers";
 import { doUpdateService } from "./server-fns";
 import { formatError, healthLabel, serviceHealth } from "./service-utils";
 import type { DashboardTab } from "./types";
@@ -98,7 +100,15 @@ export function ServicePanel({
 	const hasUndeployedChanges =
 		(currentService.unappliedChangeCount ??
 			(currentService.pendingChanges ? 1 : 0)) > 0;
-	const stages = build?.stages ?? [];
+	const stages = withSourceStage(
+		currentService,
+		build,
+		deploymentStagesForDisplay(
+			currentService.latestDeployment,
+			build,
+			build?.stages ?? [],
+		),
+	);
 	const prevHealthRef = useRef(health);
 	const [heroVisible, setHeroVisible] = useState(health !== "healthy");
 	const [heroExiting, setHeroExiting] = useState(false);
@@ -204,7 +214,7 @@ export function ServicePanel({
 						>
 							{healthLabel(health)}
 						</span>
-						{stages.length > 0 && (
+						{health === "building" && stages.length > 0 && (
 							<div
 								className="grid h-[3px] w-[54px] shrink-0 auto-cols-fr grid-flow-col gap-0.5"
 								role="img"

@@ -220,7 +220,7 @@ func (s *SQLStore) SourceSnapshotByRevisionID(ctx context.Context, sourceRevisio
 func (s *SQLStore) SourceSnapshotByID(ctx context.Context, snapshotID string) (SourceSnapshotRecord, error) {
 	var rec SourceSnapshotRecord
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
+		`SELECT id, COALESCE(source_revision_id, ''), provider, provider_repository_external_id, commit_sha, digest,
 		        object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE id = $1`,
@@ -347,7 +347,7 @@ func (s *SQLStore) SourceRevisionByBindingAndCommitTx(ctx context.Context, q Que
 func (s *SQLStore) SourceSnapshotByRevisionIDTx(ctx context.Context, q Querier, sourceRevisionID string) (SourceSnapshotRecord, error) {
 	var rec SourceSnapshotRecord
 	err := q.QueryRowContext(ctx,
-		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
+		`SELECT id, COALESCE(source_revision_id, ''), provider, provider_repository_external_id, commit_sha, digest,
 		        object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE source_revision_id = $1`,
@@ -441,7 +441,7 @@ func (s *SQLStore) LatestSourceRevisionByBindingIDTx(ctx context.Context, q Quer
 func (s *SQLStore) sourceSnapshotByProviderRepoAndCommitTx(ctx context.Context, q Querier, provider, repositoryExternalID, commitSHA string) (SourceSnapshotRecord, error) {
 	var rec SourceSnapshotRecord
 	err := q.QueryRowContext(ctx,
-		`SELECT id, source_revision_id, provider, provider_repository_external_id, commit_sha, digest,
+		`SELECT id, COALESCE(source_revision_id, ''), provider, provider_repository_external_id, commit_sha, digest,
 		        object_key, archive_size_bytes, ready, fetched_at, created_at, updated_at
 		   FROM source_snapshots
 		  WHERE provider = $1

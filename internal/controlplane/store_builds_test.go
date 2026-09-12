@@ -620,6 +620,12 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE source_snapshots SET source_revision_id = NULL WHERE commit_sha = $1`,
+		"commit-1",
+	); err != nil {
+		t.Fatalf("detach source snapshot revision: %v", err)
+	}
 
 	repoDeployments, err := store.reads.ListServiceDeployments(ctx, "user-1", repoService.ID, 10)
 	if err != nil {
