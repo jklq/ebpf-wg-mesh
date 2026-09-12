@@ -74,12 +74,20 @@ auth:
 	args := []string{
 		"run", "--detach", "--rm",
 		"--name", cfg.ContainerName,
-		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.HostPort, localRegistryPort),
-		"--volume", configPath + ":/etc/docker/registry/config.yml:ro",
-		"--volume", filepath.Join(cfg.StateDir, "data") + ":/var/lib/registry",
-		"--volume", cfg.RootCertBundle + ":/auth/signing-cert.pem:ro",
-		cfg.Image,
 	}
+	// Run as the invoking user so blobs written to the bind-mounted data dir stay
+	// owned by the test process. Otherwise the registry runs as root and its
+	// root-owned files break TempDir cleanup for non-root users on Linux.
+	if uid, gid := os.Getuid(), os.Getgid(); uid >= 0 && gid >= 0 {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", uid, gid))
+	}
+	args = append(args,
+		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.HostPort, localRegistryPort),
+		"--volume", configPath+":/etc/docker/registry/config.yml:ro",
+		"--volume", filepath.Join(cfg.StateDir, "data")+":/var/lib/registry",
+		"--volume", cfg.RootCertBundle+":/auth/signing-cert.pem:ro",
+		cfg.Image,
+	)
 	if _, err := runner.Run(ctx, args...); err != nil {
 		return nil, err
 	}
