@@ -1,4 +1,4 @@
-package controlplane
+package registry
 
 import (
 	"crypto/ecdsa"
@@ -25,7 +25,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const RegistryTokenPath = "/v1/registry/token"
+const TokenPath = "/v1/registry/token"
 
 type registryAccess struct {
 	Type    string   `json:"type"`
@@ -63,7 +63,7 @@ func (c registryTokenClaims) GetAudience() (jwt.ClaimStrings, error) {
 	return jwt.ClaimStrings{c.Audience}, nil
 }
 
-type RegistryAuth struct {
+type Auth struct {
 	issuer          string
 	service         string
 	credentialTTL   time.Duration
@@ -74,7 +74,7 @@ type RegistryAuth struct {
 	now             func() time.Time
 }
 
-func NewRegistryAuth(cfg config.RegistryConfig, stateDir string) (*RegistryAuth, error) {
+func NewAuth(cfg config.RegistryConfig, stateDir string) (*Auth, error) {
 	if strings.TrimSpace(cfg.Host) == "" {
 		return nil, nil
 	}
@@ -92,7 +92,7 @@ func NewRegistryAuth(cfg config.RegistryConfig, stateDir string) (*RegistryAuth,
 	if err != nil {
 		return nil, err
 	}
-	return &RegistryAuth{
+	return &Auth{
 		issuer:          cfg.TokenIssuer,
 		service:         cfg.TokenService,
 		credentialTTL:   time.Duration(cfg.CredentialTTLSeconds) * time.Second,
@@ -104,14 +104,14 @@ func NewRegistryAuth(cfg config.RegistryConfig, stateDir string) (*RegistryAuth,
 	}, nil
 }
 
-func (a *RegistryAuth) CertificatePath() string {
+func (a *Auth) CertificatePath() string {
 	if a == nil {
 		return ""
 	}
 	return a.certificatePath
 }
 
-func (a *RegistryAuth) MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error) {
+func (a *Auth) MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error) {
 	if a == nil || a.key == nil {
 		return "", "", errors.New("registry auth is not configured")
 	}
@@ -147,8 +147,8 @@ func (a *RegistryAuth) MintCredential(subject, repository string, actions []stri
 	return username, password, nil
 }
 
-func (a *RegistryAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != RegistryTokenPath {
+func (a *Auth) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != TokenPath {
 		http.NotFound(w, r)
 		return
 	}
@@ -160,7 +160,7 @@ func (a *RegistryAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.serveToken(w, r)
 }
 
-func (a *RegistryAuth) serveToken(w http.ResponseWriter, r *http.Request) {
+func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 	username, password, ok := r.BasicAuth()
 	if !ok || username == "" || password == "" {
 		a.unauthorized(w)
@@ -208,7 +208,7 @@ func (a *RegistryAuth) serveToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *RegistryAuth) parseCapability(username, raw string) (*registryCapabilityClaims, error) {
+func (a *Auth) parseCapability(username, raw string) (*registryCapabilityClaims, error) {
 	claims := &registryCapabilityClaims{}
 	token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodES256 {
@@ -226,7 +226,7 @@ func (a *RegistryAuth) parseCapability(username, raw string) (*registryCapabilit
 	return claims, nil
 }
 
-func (a *RegistryAuth) unauthorized(w http.ResponseWriter) {
+func (a *Auth) unauthorized(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Basic realm="registry-token"`)
 	http.Error(w, "invalid registry credential", http.StatusUnauthorized)
 }
