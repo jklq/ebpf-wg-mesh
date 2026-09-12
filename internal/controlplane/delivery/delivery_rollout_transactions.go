@@ -36,13 +36,34 @@ type rolloutAdvanceResult struct {
 }
 
 func (d *Delivery) advanceRollout(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
+	nowUTC := now.UTC()
+	if d.live != nil {
+		if snapshot, envID, ok := d.live.rolloutSnapshot(serviceID); ok {
+			plan := decideRollout(snapshot, nowUTC)
+			if !rolloutPlanNeedsTx(plan) {
+				if !plan.Continue {
+					result := plan.Result
+					result.EnvironmentID = envID
+					return result, nil
+				}
+				finish := decideRolloutPlacement(rolloutSnapshot{Rollout: snapshot.Rollout, Allocations: plan.Allocations}, 0, plan.Result.NeedsIngressConvergence, nowUTC)
+				if len(finish.Withdraw) == 0 && finish.Failure == "" {
+					result := plan.Result
+					result.NeedsIngressConvergence = finish.Result.NeedsIngressConvergence
+					result.IngressChanged = result.IngressChanged || finish.Result.IngressChanged
+					result.EnvironmentID = envID
+					return result, nil
+				}
+			}
+		}
+	}
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
 	s := d.store
 	var result rolloutAdvanceResult
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		result, err = d.advanceRolloutTx(ctx, tx, serviceID, now.UTC())
+		result, err = d.advanceRolloutTx(ctx, tx, serviceID, nowUTC)
 		if err != nil {
 			return err
 		}
@@ -132,6 +153,13 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 	if err := d.persistRolloutWithdrawalsTx(ctx, tx, finish.Withdraw, now); err != nil {
 		return result, err
 	}
+	for _, withdrawal := range finish.Withdraw {
+		for i := range plan.Allocations {
+			if plan.Allocations[i].ID == withdrawal.AllocationID {
+				plan.Allocations[i].RolloutState = AllocationRolloutWithdrawing
+			}
+		}
+	}
 	result.Changed = result.Changed || finish.Result.Changed
 	result.IngressChanged = result.IngressChanged || finish.Result.IngressChanged
 	result.NeedsIngressConvergence = finish.Result.NeedsIngressConvergence
@@ -153,7 +181,7 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		}
 		journal.RecordRollout(ctx, serviceID, rollout.Generation)
 	}
-	if err := d.updateRolloutProgressDetailTx(ctx, tx, serviceID, rollout, now); err != nil {
+	if err := d.updateRolloutProgressDetailTx(ctx, tx, serviceID, rollout, plan.Allocations, created, now); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -393,18 +421,30 @@ func (d *Delivery) markPredecessorDeploymentsDrainingTx(ctx context.Context, tx 
 	return nil
 }
 
-func (d *Delivery) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx, serviceID string, rollout rolloutRecord, now time.Time) error {
-	var ready, starting, draining int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT
-		   count(*) FILTER (WHERE desired_rollout_generation = $2 AND rollout_state = 'serving' AND healthy),
-		   count(*) FILTER (WHERE desired_rollout_generation = $2 AND rollout_state = 'starting'),
-		   count(*) FILTER (WHERE rollout_state = 'draining')
-		 FROM allocations WHERE service_id = $1`, serviceID, rollout.Generation,
-	).Scan(&ready, &starting, &draining); err != nil {
-		return err
+func rolloutProgressDetail(rollout rolloutRecord, allocs []AllocationRecord, created int) string {
+	ready, starting, draining := 0, 0, 0
+	for _, alloc := range allocs {
+		if alloc.RolloutState == AllocationRolloutDraining {
+			draining++
+		}
+		if alloc.DesiredRolloutGeneration != rollout.Generation {
+			continue
+		}
+		switch alloc.RolloutState {
+		case AllocationRolloutServing:
+			if AllocationReady(alloc) {
+				ready++
+			}
+		case AllocationRolloutStarting:
+			starting++
+		}
 	}
-	detail := fmt.Sprintf("Rolling replacement: %d/%d ready, %d starting, %d draining", ready, rolloutTargetReplicaCount(rollout), starting, draining)
+	starting += created
+	return fmt.Sprintf("Rolling replacement: %d/%d ready, %d starting, %d draining", ready, rolloutTargetReplicaCount(rollout), starting, draining)
+}
+
+func (d *Delivery) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx, serviceID string, rollout rolloutRecord, allocs []AllocationRecord, created int, now time.Time) error {
+	detail := rolloutProgressDetail(rollout, allocs, created)
 	rows, err := tx.QueryContext(ctx,
 		`UPDATE deployments SET detail = $1, updated_at = $2
 		  WHERE service_id = $3 AND rollout_generation = $4 AND is_current = TRUE AND state NOT IN ('failed','active')
