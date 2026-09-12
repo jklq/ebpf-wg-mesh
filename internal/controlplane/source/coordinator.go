@@ -22,6 +22,10 @@ type GitHubCoordinator struct {
 	retryAfter time.Duration
 }
 
+type sourceWorkWakeup interface {
+	SourceWorkReady() <-chan struct{}
+}
+
 func NewGitHubCoordinator(store Store, delivery Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration) *GitHubCoordinator {
 	if store == nil || delivery == nil || catalog == nil || client == nil || !client.Enabled() {
 		return nil
@@ -39,12 +43,28 @@ func NewGitHubCoordinator(store Store, delivery Delivery, catalog *GitHubCatalog
 	}
 }
 
+func (c *GitHubCoordinator) waitForWork(ctx context.Context, delay time.Duration) bool {
+	if wakeup, ok := c.store.(sourceWorkWakeup); ok {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		case <-wakeup.SourceWorkReady():
+			return true
+		}
+	}
+	return waitContext(ctx, delay)
+}
+
 func (c *GitHubCoordinator) Enabled() bool {
 	return c != nil && c.store != nil && c.catalog != nil && c.client != nil
 }
 
-func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID string, staleAfter time.Duration) (SourceWorkItemRecord, error) {
-	return c.store.ClaimNextSourceWorkItem(ctx, processorID, staleAfter)
+func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID string) (SourceWorkItemRecord, error) {
+	return c.store.ClaimNextSourceWorkItem(ctx, processorID)
 }
 
 func (c *GitHubCoordinator) CompleteWorkItem(ctx context.Context, id, processorID string) error {

@@ -355,6 +355,26 @@ func (l *Live) AllocationsByServiceIfServing(serviceID string) ([]AllocationReco
 	return l.allocationsByServiceLocked(serviceID), nil
 }
 
+// AllocationsByEnvironmentIfServing returns one consistent allocation view for
+// every service in an environment. Including services with no allocations lets
+// callers distinguish an empty live result from a missing lookup.
+func (l *Live) AllocationsByEnvironmentIfServing(environmentID string) (map[string][]AllocationRecord, error) {
+	if l == nil {
+		return nil, ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.serving {
+		return nil, ErrNotLiveOwner
+	}
+	serviceIDs := l.indexes.servicesByEnvironment[environmentID]
+	out := make(map[string][]AllocationRecord, len(serviceIDs))
+	for _, serviceID := range serviceIDs {
+		out[serviceID] = l.allocationsByServiceLocked(serviceID)
+	}
+	return out, nil
+}
+
 func (l *Live) allocationsByServiceLocked(serviceID string) []AllocationRecord {
 	ids := l.indexes.assignmentsByService[serviceID]
 	out := make([]AllocationRecord, 0, len(ids))

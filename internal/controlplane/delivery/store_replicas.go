@@ -56,11 +56,22 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 }
 
 func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE service_delivery_status SET placement_message = NULLIF($1, ''), updated_at = $2 WHERE service_id = $3`,
+	result, err := tx.ExecContext(ctx,
+		`UPDATE service_delivery_status
+		 SET placement_message = NULLIF($1, ''), updated_at = $2
+		 WHERE service_id = $3
+		   AND placement_message IS DISTINCT FROM NULLIF($1, '')`,
 		message, now, serviceID,
-	); err != nil {
+	)
+	if err != nil {
 		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return nil
 	}
 	journal.RecordService(ctx, serviceID)
 	return nil

@@ -102,7 +102,7 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 		journal.RecordAssignment(ctx, allocation.ID)
 		return nil
 	}
-	if err := store.withTx(commandCtx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(commandCtx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := write(ctx, tx); err != nil {
 			return err
 		}
@@ -117,7 +117,7 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 	if !reflect.DeepEqual(before, rolledBack) {
 		t.Fatal("aborted transaction changed durable state")
 	}
-	if err := store.withTx(commandCtx, write); err != nil {
+	if err := store.withProductTx(commandCtx, write); err != nil {
 		t.Fatal(err)
 	}
 	committed, err := store.journal.Snapshot(ctx)
@@ -151,6 +151,84 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 	}
 }
 
+func TestProductNoOpDoesNotAdvanceJournalOrEvents(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	before, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeEvent, err := store.events.currentGlobalRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeJournal, beforeReceipts int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal`).Scan(&beforeJournal); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal_receipts`).Scan(&beforeReceipts); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.withProductTx(ctx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterEvent, err := store.events.currentGlobalRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var afterJournal, afterReceipts int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal`).Scan(&afterJournal); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal_receipts`).Scan(&afterReceipts); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) || beforeEvent != afterEvent || beforeJournal != afterJournal || beforeReceipts != afterReceipts {
+		t.Fatalf("no-op changed durable state: head %d->%d event %d->%d journal %d->%d receipts %d->%d",
+			before.LogIndex, after.LogIndex, beforeEvent, afterEvent, beforeJournal, afterJournal, beforeReceipts, afterReceipts)
+	}
+}
+
+func TestCallerProvidedNoOpReceiptIsIdempotentWithoutJournalEntry(t *testing.T) {
+	store := openTestStore(t)
+	ctx := journal.WithCommandID(context.Background(), "no-op-command")
+	before, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := store.journal.Execute(ctx, func(context.Context, *sql.Tx) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.LogIndex != before.LogIndex {
+		t.Fatalf("no-op receipt index = %d, want unchanged head %d", receipt.LogIndex, before.LogIndex)
+	}
+	retried, err := store.journal.Execute(ctx, func(context.Context, *sql.Tx) error {
+		t.Fatal("idempotent no-op executed twice")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.CommandID != receipt.CommandID || retried.LogIndex != receipt.LogIndex {
+		t.Fatalf("retry receipt = %+v, want %+v", retried, receipt)
+	}
+	var journalRows, receiptRows int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal WHERE command_id = $1`, receipt.CommandID).Scan(&journalRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM cluster_journal_receipts WHERE command_id = $1`, receipt.CommandID).Scan(&receiptRows); err != nil {
+		t.Fatal(err)
+	}
+	if journalRows != 0 || receiptRows != 1 {
+		t.Fatalf("no-op rows: journal=%d receipts=%d", journalRows, receiptRows)
+	}
+}
+
 func TestJournalLeaseLossRollsBackDecision(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
@@ -167,7 +245,7 @@ func TestJournalLeaseLossRollsBackDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := context.WithValue(ctx, leaseContextKey{}, claim)
-	err = store.withTx(stale, func(ctx context.Context, tx *sql.Tx) error {
+	err = store.withProductTx(stale, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET intent_message = 'stale decision' WHERE service_id = $1`, service.ID)
 		return err
 	})
@@ -282,7 +360,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	if _, _, err := newTestDelivery(store, nil, nil, nil).failoverServicesFromAgent(ctx, "node-1", time.Now().UTC().Add(-deliverycore.AgentHealthyTTL)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return seedActiveDeploymentTx(ctx, tx, serviceID)
 	}); err != nil {
 		t.Fatal(err)
@@ -316,7 +394,7 @@ func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 	environmentID := productionEnvironmentID(t, store, project.ID)
 
 	const seeded = 500
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		for i := 0; i < seeded; i++ {
 			id := uuid.NewString()
@@ -431,7 +509,7 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 	}
 }
 
-func TestJournalCompactionBootsFromSnapshot(t *testing.T) {
+func TestJournalCompactionBootsFromNormalizedProductState(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	project, err := store.catalog.createProject(ctx, "owner", "compact")
@@ -697,7 +775,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	drainWatch(node3)
 
 	// A deployment-only change never appears in a desired snapshot.
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var deploymentID string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments WHERE service_id = $1 AND is_current LIMIT 1`, service.ID).Scan(&deploymentID); err != nil {
 			return err
@@ -716,7 +794,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	if err != nil || len(allocs) == 0 {
 		t.Fatalf("list allocations: %v", err)
 	}
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET operator_restart_nonce = operator_restart_nonce + 1 WHERE id = $1`, allocs[0].ID); err != nil {
 			return err
 		}

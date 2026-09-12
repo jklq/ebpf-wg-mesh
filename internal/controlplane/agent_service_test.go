@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -123,6 +124,29 @@ func parseAgentLiveOwner(err error) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(strings.TrimPrefix(st.Message(), agentv1.LiveOwnerRedirectPrefix)), true
+}
+
+func TestLeaseOwnerWatchCoalescesTransitionsAndCloses(t *testing.T) {
+	t.Parallel()
+	m := NewLeaseManager(nil, time.Second, time.Millisecond)
+	changed, stop := m.Watch(SingletonLeaseName)
+	m.notifyChanged(SingletonLeaseName)
+	m.notifyChanged(SingletonLeaseName)
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("lease transition was not delivered")
+	}
+	select {
+	case <-changed:
+		t.Fatal("lease transitions were not coalesced")
+	default:
+	}
+	stop()
+	if _, ok := <-changed; ok {
+		t.Fatal("lease watch remained open after stop")
+	}
 }
 
 func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {

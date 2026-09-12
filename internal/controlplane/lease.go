@@ -36,6 +36,12 @@ type LeaseManager struct {
 	advertise     string
 	onUnfenced    func()
 	onFenced      func()
+	watchMu       sync.Mutex
+	watchers      map[string]map[*leaseWatcher]struct{}
+}
+
+type leaseWatcher struct {
+	ch chan struct{}
 }
 
 func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseManager {
@@ -45,7 +51,56 @@ func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseMa
 	if retryInterval <= 0 {
 		retryInterval = time.Second
 	}
-	return &LeaseManager{store: store, holderID: uuid.NewString(), ttl: ttl, retryInterval: retryInterval}
+	return &LeaseManager{
+		store: store, holderID: uuid.NewString(), ttl: ttl, retryInterval: retryInterval,
+		watchers: make(map[string]map[*leaseWatcher]struct{}),
+	}
+}
+
+// Watch reports local lease transitions. The database remains authoritative;
+// this signal only avoids every connected agent polling it independently.
+func (m *LeaseManager) Watch(name string) (<-chan struct{}, func()) {
+	if m == nil || strings.TrimSpace(name) == "" {
+		ch := make(chan struct{})
+		return ch, func() { close(ch) }
+	}
+	name = strings.TrimSpace(name)
+	w := &leaseWatcher{ch: make(chan struct{}, 1)}
+	m.watchMu.Lock()
+	if m.watchers == nil {
+		m.watchers = make(map[string]map[*leaseWatcher]struct{})
+	}
+	if m.watchers[name] == nil {
+		m.watchers[name] = make(map[*leaseWatcher]struct{})
+	}
+	m.watchers[name][w] = struct{}{}
+	m.watchMu.Unlock()
+	var once sync.Once
+	return w.ch, func() {
+		once.Do(func() {
+			m.watchMu.Lock()
+			delete(m.watchers[name], w)
+			if len(m.watchers[name]) == 0 {
+				delete(m.watchers, name)
+			}
+			close(w.ch)
+			m.watchMu.Unlock()
+		})
+	}
+}
+
+func (m *LeaseManager) notifyChanged(name string) {
+	if m == nil {
+		return
+	}
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	for w := range m.watchers[name] {
+		select {
+		case w.ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (m *LeaseManager) SetAdvertise(addr string) {
@@ -104,6 +159,7 @@ func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Co
 			}
 			continue
 		}
+		m.notifyChanged(name)
 
 		leaseCtx, cancel := context.WithCancel(context.WithValue(ctx, leaseContextKey{}, claim))
 		jobDone := make(chan error, 1)
@@ -120,12 +176,14 @@ func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Co
 				cancel()
 				renew.Stop()
 				_ = m.release(context.Background(), claim)
+				m.notifyChanged(name)
 				<-jobDone
 				return nil
 			case err := <-jobDone:
 				cancel()
 				renew.Stop()
 				_ = m.release(context.Background(), claim)
+				m.notifyChanged(name)
 				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLeaseLost) {
 					return err
 				}
@@ -137,9 +195,11 @@ func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Co
 					if m.onUnfenced != nil {
 						m.onUnfenced()
 					}
+					m.notifyChanged(name)
 					continue
 				}
 				if !ok {
+					m.notifyChanged(name)
 					cancel()
 					renew.Stop()
 					<-jobDone
@@ -174,6 +234,7 @@ func (m *LeaseManager) hold(ctx context.Context, name string) (context.Context, 
 	if err != nil {
 		return nil, nil, err
 	}
+	m.notifyChanged(name)
 	leaseCtx, cancel := context.WithCancel(context.WithValue(ctx, leaseContextKey{}, claim))
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -198,9 +259,11 @@ func (m *LeaseManager) hold(ctx context.Context, name string) (context.Context, 
 					if m.onUnfenced != nil {
 						m.onUnfenced()
 					}
+					m.notifyChanged(name)
 					continue
 				}
 				if !ok {
+					m.notifyChanged(name)
 					cancel()
 					return
 				}
@@ -217,6 +280,7 @@ func (m *LeaseManager) hold(ctx context.Context, name string) (context.Context, 
 			cancel()
 			<-done
 			_ = m.release(context.Background(), claim)
+			m.notifyChanged(name)
 		})
 	}
 	return leaseCtx, release, nil
@@ -235,7 +299,7 @@ func jitter(base time.Duration) time.Duration {
 
 func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bool, error) {
 	claim := leaseClaim{name: name, holder: m.holderID}
-	err := m.store.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := m.store.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO control_plane_leases(name, holder_id, fencing_token, advertise_addr, expires_at, updated_at)
 			VALUES ($1, $2, 1, $4, statement_timestamp() + $3::INT8 * INTERVAL '1 microsecond', statement_timestamp())

@@ -44,6 +44,10 @@ type LiveOwner interface {
 	Lookup(context.Context) (held bool, advertiseAddr string, err error)
 }
 
+type liveOwnerWatcher interface {
+	Watch() (<-chan struct{}, func())
+}
+
 type leaseLiveOwner struct {
 	leases *LeaseManager
 	name   string
@@ -54,6 +58,21 @@ func (o leaseLiveOwner) Lookup(ctx context.Context) (bool, string, error) {
 		return false, "", nil
 	}
 	return o.leases.Lookup(ctx, o.name)
+}
+
+func (o leaseLiveOwner) Watch() (<-chan struct{}, func()) {
+	if o.leases == nil {
+		ch := make(chan struct{})
+		return ch, func() { close(ch) }
+	}
+	return o.leases.Watch(o.name)
+}
+
+func watchLiveOwner(owner LiveOwner) (<-chan struct{}, func()) {
+	if watcher, ok := owner.(liveOwnerWatcher); ok {
+		return watcher.Watch()
+	}
+	return nil, func() {}
 }
 
 type AgentServiceOption func(*AgentService)
@@ -169,6 +188,8 @@ func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req
 
 func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	ctx := stream.Context()
+	ownerChanged, stopOwnerWatch := watchLiveOwner(s.liveOwner)
+	defer stopOwnerWatch()
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return err
 	}
@@ -248,7 +269,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 
 	sendErr := make(chan error, 1)
 	go func() {
-		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), epoch, notifyCh)
+		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), epoch, notifyCh, ownerChanged)
 	}()
 	s.notifier.Notify(hello.AgentId)
 
@@ -344,15 +365,10 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID string, epoch uint64, notifyCh <-chan struct{}) error {
+func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID string, epoch uint64, notifyCh, ownerChanged <-chan struct{}) error {
 	var lastCursor int64 = -1
 	var lastReplicas []string
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
 	for {
-		if err := s.requireLiveOwner(ctx); err != nil {
-			return err
-		}
 		slog.Info("checking desired state", "agent_id", agentID)
 		nextCursor, nextReplicas, err := sendLatestDesiredState(ctx, agentID, lastCursor, lastReplicas, func() (*agentv1.DesiredNodeState, error) {
 			state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
@@ -393,7 +409,14 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			if !ok {
 				return nil
 			}
-		case <-ticker.C:
+		case _, ok := <-ownerChanged:
+			if !ok {
+				return nil
+			}
+			if err := s.requireLiveOwner(ctx); err != nil {
+				return err
+			}
+			return status.Error(codes.Unavailable, "live owner changed; reconnect required")
 		}
 	}
 }

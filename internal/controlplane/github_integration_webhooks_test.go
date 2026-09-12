@@ -5,6 +5,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"fmt"
@@ -449,7 +450,7 @@ func TestGitHubReconcilerBootstrapRequeuesStaleWork(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("EnqueueSourceWorkItem: %v", err)
 	}
-	claimed, err := claimNextSourceWorkItem(ctx, store, "processor-1", 0)
+	claimed, err := claimNextSourceWorkItem(ctx, store, "processor-1")
 	if err != nil {
 		t.Fatalf("claimNextSourceWorkItem: %v", err)
 	}
@@ -466,12 +467,86 @@ func TestGitHubReconcilerBootstrapRequeuesStaleWork(t *testing.T) {
 	if err := reconciler.Bootstrap(ctx); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	requeued, err := claimNextSourceWorkItem(ctx, store, "processor-2", 0)
+	requeued, err := claimNextSourceWorkItem(ctx, store, "processor-2")
 	if err != nil {
 		t.Fatalf("claimNextSourceWorkItem(requeued): %v", err)
 	}
 	if requeued.ID == "" {
 		t.Fatal("expected stale in-flight work to be requeued")
+	}
+}
+
+func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
+	store, err := openPersistence(config.DatabaseConfig{
+		URL: createTestDatabase(t), MaxOpenConns: 4, MaxIdleConns: 4,
+	}, testMeshConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	before, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeEvent, err := store.events.currentGlobalRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty, err := store.source.ClaimNextSourceWorkItem(ctx, "empty-worker"); err != nil || empty.ID != "" {
+		t.Fatalf("empty claim = (%+v, %v)", empty, err)
+	}
+	inserted, err := store.source.EnqueueSourceWorkItem(ctx, source.SourceWorkItemRecord{
+		Kind: source.SourceWorkKindProviderAccessChanged, IdempotencyKey: "atomic-claim", Provider: "github",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("source work item was not inserted")
+	}
+	start := make(chan struct{})
+	type claimResult struct {
+		record source.SourceWorkItemRecord
+		err    error
+	}
+	results := make(chan claimResult, 2)
+	for _, worker := range []string{"worker-a", "worker-b"} {
+		go func() {
+			<-start
+			rec, err := store.source.ClaimNextSourceWorkItem(ctx, worker)
+			results <- claimResult{record: rec, err: err}
+		}()
+	}
+	close(start)
+	claimed := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.record.ID != "" {
+			claimed++
+		}
+	}
+	if claimed != 1 {
+		var state, processorID string
+		var availableAt, databaseNow time.Time
+		if err := store.db.QueryRowContext(ctx, `SELECT state, processor_id, available_at, statement_timestamp() FROM source_work_items WHERE idempotency_key = 'atomic-claim'`).Scan(&state, &processorID, &availableAt, &databaseNow); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("claimed work %d times, want once; row state=%s processor=%s available_at=%s database_now=%s", claimed, state, processorID, availableAt, databaseNow)
+	}
+	after, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterEvent, err := store.events.currentGlobalRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.LogIndex != after.LogIndex || beforeEvent != afterEvent {
+		t.Fatalf("coordination changed product signals: head %d->%d event %d->%d", before.LogIndex, after.LogIndex, beforeEvent, afterEvent)
 	}
 }
 

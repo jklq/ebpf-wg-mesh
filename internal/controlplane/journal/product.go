@@ -21,7 +21,22 @@ type productTable struct {
 }
 
 func readProductState(ctx context.Context, tx *sql.Tx) (DurableState, error) {
-	state := DurableState{}
+	// Keep empty tables canonical across replay and normalized-table rebuilds.
+	// Applying deletions leaves non-nil empty maps, so a rebuild must do the
+	// same or replicas can disagree despite containing identical rows.
+	state := DurableState{
+		Projects:       make(map[string]Project),
+		Services:       make(map[string]ServiceIntent),
+		Revisions:      make(map[string]ServiceRevision),
+		Assignments:    make(map[string]Assignment),
+		Rollouts:       make(map[string]Rollout),
+		Deployments:    make(map[string]Deployment),
+		Agents:         make(map[string]AgentRegistration),
+		Administration: make(map[string]AgentAdministration),
+		Environments:   make(map[string]Environment),
+		Volumes:        make(map[string]Volume),
+		Domains:        make(map[string]Domain),
+	}
 	for _, table := range productTables {
 		rows, err := tx.QueryContext(ctx, `SELECT `+table.keySQL+`, `+table.jsonSQL+` FROM `+table.name)
 		if err != nil {

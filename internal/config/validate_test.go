@@ -48,7 +48,7 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	if got, want := cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile, filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt"); got != want {
 		t.Fatalf("unexpected default client certificate revocation file %q, want %q", got, want)
 	}
-	if cfg.Failover.ReconcileIntervalSeconds != 5 || cfg.Failover.UnhealthyThresholdSeconds != 30 {
+	if cfg.Failover.ReconcileIntervalSeconds != 60 || cfg.Failover.UnhealthyThresholdSeconds != 30 {
 		t.Fatalf("unexpected failover defaults: %+v", cfg.Failover)
 	}
 }

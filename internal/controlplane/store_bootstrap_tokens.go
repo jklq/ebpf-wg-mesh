@@ -16,7 +16,7 @@ import (
 var errInvalidBootstrapToken = errors.New("invalid, consumed, or incorrectly bound bootstrap token")
 
 func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, tokens []config.AgentBootstrapToken) error {
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		configured := make(map[string]struct{}, len(tokens))
 		for _, bootstrap := range tokens {

@@ -60,7 +60,7 @@ func newPersistence(db *database) *persistence {
 	p.fleet = &fleetPersistence{database: db, sessions: live, live: live}
 	p.reads = &readsPersistence{database: db}
 	p.routing = &routingPersistence{database: db, live: live}
-	p.source = source.NewSQLStore(db.db, db.withTx, func(ctx context.Context, serviceID string) (source.Service, error) {
+	p.source = source.NewSQLStore(db.db, db.withCoordinationTx, func(ctx context.Context, serviceID string) (source.Service, error) {
 		rec, err := p.reads.ServiceSnapshot(ctx, serviceID)
 		if err != nil {
 			return source.Service{}, err

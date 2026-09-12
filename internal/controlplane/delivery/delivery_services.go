@@ -27,7 +27,7 @@ func (d *Delivery) CreateScheduledService(ctx context.Context, environmentID, na
 func (d *Delivery) createScheduledService(ctx context.Context, userID, environmentID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		environment, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
@@ -46,7 +46,7 @@ func (d *Delivery) CreateService(ctx context.Context, userID, environmentID, nam
 	defer d.schedulerMu.Unlock()
 	s := d.store
 	var rec ServiceRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		rec, err = d.createServiceTx(ctx, tx, userID, environmentID, name, spec, agentID)
 		return err
@@ -152,7 +152,7 @@ func (d *Delivery) updateService(ctx context.Context, userID, serviceID, name st
 	s := d.store
 	var current ServiceRecord
 	var changed bool
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		current, changed, _, err = d.updateServiceTx(ctx, tx, userID, serviceID, name, spec)
 		return err
@@ -290,7 +290,7 @@ func (d *Delivery) DeleteService(ctx context.Context, serviceID string) error {
 func (d *Delivery) deleteService(ctx context.Context, userID, serviceID string) error {
 	s := d.store
 	var hasBindings bool
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
@@ -351,7 +351,7 @@ func (d *Delivery) DiscardServiceChanges(ctx context.Context, serviceID string, 
 func (d *Delivery) discardServiceChanges(ctx context.Context, userID, serviceID string, changeIDs []string, discardAll bool) (ServiceRecord, error) {
 	s := d.store
 	var rec ServiceRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err
@@ -459,7 +459,7 @@ func (d *Delivery) scaleService(ctx context.Context, userID, serviceID string, d
 		current     ServiceRecord
 		allocations []AllocationRecord
 	)
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		current, allocations, err = d.scaleServiceTx(ctx, tx, userID, serviceID, desired)
 		return err

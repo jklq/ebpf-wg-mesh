@@ -26,7 +26,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 	var serviceID string
 	var changed, rolloutScheduled bool
 	var completed BuildRunRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed, rolloutScheduled = false, false
 		completed = BuildRunRecord{}
 		build, err := s.buildRunByIDQuerier(ctx, tx, buildID)
@@ -423,7 +423,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName string, staleAfter time.Duration) (BuildRunRecord, error) {
 	s := d.store
 	var rec BuildRunRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rec = BuildRunRecord{}
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
@@ -545,7 +545,7 @@ func (d *Delivery) RecoverExpiredBuilds(ctx context.Context, staleAfter time.Dur
 	if staleAfter <= 0 {
 		return nil
 	}
-	return d.store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err

@@ -85,7 +85,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, environmentID string)
 		agentIDs               []string
 		identityCatalogChanged bool
 	)
-	err = d.store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		services = nil
 		serviceIDs = nil
 		agentIDs = nil

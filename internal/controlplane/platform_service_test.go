@@ -77,6 +77,14 @@ type fakePlatformDelivery struct {
 	discardServiceChangesFn  func(ctx context.Context, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	deleteServiceFn          func(ctx context.Context, serviceID string) error
 	scaleServiceFn           func(ctx context.Context, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
+	liveAllocationsFn        func(environmentID string) (map[string][]deliverycore.AllocationRecord, error)
+}
+
+func (f *fakePlatformDelivery) LiveAllocationsByEnvironment(environmentID string) (map[string][]deliverycore.AllocationRecord, error) {
+	if f.liveAllocationsFn != nil {
+		return f.liveAllocationsFn(environmentID)
+	}
+	return map[string][]deliverycore.AllocationRecord{}, nil
 }
 
 func (f *fakePlatformDelivery) ReleaseEnvironment(ctx context.Context, environmentID string) ([]deliverycore.ReleasedService, error) {

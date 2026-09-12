@@ -139,7 +139,7 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.Builder.HeartbeatTimeoutSeconds = 120
 	}
 	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
-		cfg.Failover.ReconcileIntervalSeconds = 5
+		cfg.Failover.ReconcileIntervalSeconds = 60
 	}
 	if cfg.Failover.UnhealthyThresholdSeconds <= 0 {
 		cfg.Failover.UnhealthyThresholdSeconds = 30

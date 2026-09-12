@@ -28,106 +28,35 @@ type allocationFailoverState struct {
 }
 
 func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time, unhealthyThreshold time.Duration) (ServiceFailoverResult, error) {
-	s := d.store
 	var result ServiceFailoverResult
 	if unhealthyThreshold <= 0 {
 		return result, fmt.Errorf("unhealthy threshold must be greater than zero")
 	}
-
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM services ORDER BY id FOR UPDATE`)
+	cutoff := now.UTC().Add(-unhealthyThreshold)
+	changedEnvironments := make(map[string]struct{})
+	for _, agent := range d.live.Agents() {
+		if agent.LifecycleState != AgentStateUnavailable || agent.StateBeforeUnavailable != AgentStateActive || agent.LastSeenAt.After(cutoff) {
+			continue
+		}
+		agentResult, err := d.failoverAgent(ctx, agent.ID, cutoff, now.UTC())
 		if err != nil {
-			return err
+			return ServiceFailoverResult{}, err
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return err
-			}
+		result.MovedServiceIDs = append(result.MovedServiceIDs, agentResult.MovedServiceIDs...)
+		result.BlockedServiceIDs = append(result.BlockedServiceIDs, agentResult.BlockedServiceIDs...)
+		result.IngressChanged = result.IngressChanged || agentResult.IngressChanged
+		for _, environmentID := range agentResult.EnvironmentIDs {
+			changedEnvironments[environmentID] = struct{}{}
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
+	}
+	if result.IngressChanged {
+		result.NotifyAgentIDs = d.live.AgentIDs()
+		for environmentID := range changedEnvironments {
+			result.EnvironmentIDs = append(result.EnvironmentIDs, environmentID)
 		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-
-		cutoff := now.UTC().Add(-unhealthyThreshold)
-		agents, services, err := s.schedulerSnapshotTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if len(services) == 0 {
-			return nil
-		}
-
-		allocations, err := allocationStatesForFailover(ctx, s, tx)
-		if err != nil {
-			return err
-		}
-
-		healthyAgents := make(map[string]AgentRecord, len(agents))
-		for _, agent := range agents {
-			if agent.LastSeenAt.After(cutoff) && agent.StateBeforeUnavailable == AgentStateActive {
-				healthyAgents[agent.ID] = agent
-			}
-		}
-		servicesByID := make(map[string]*ServiceRecord, len(services))
-		for i := range services {
-			servicesByID[services[i].ID] = &services[i]
-		}
-
-		moved := false
-		changedEnvironments := make(map[string]struct{})
-		for i := range allocations {
-			allocation := allocations[i]
-			service := servicesByID[allocation.ServiceID]
-			if service == nil {
-				return fmt.Errorf("allocation %s has no service", allocation.ID)
-			}
-			if _, healthy := healthyAgents[allocation.AgentID]; healthy {
-				continue
-			}
-			replacement, err := d.replaceLostNodeAllocationTx(ctx, tx, allocation.AgentID, allocation, now.UTC())
-			if err != nil {
-				return err
-			}
-			if !replacement.Changed {
-				continue
-			}
-			result.IngressChanged = true
-			changedEnvironments[service.EnvironmentID] = struct{}{}
-			moved = true
-			if replacement.Blocked {
-				result.BlockedServiceIDs = append(result.BlockedServiceIDs, service.ID)
-				continue
-			}
-			if replacement.Replaced {
-				result.MovedServiceIDs = append(result.MovedServiceIDs, service.ID)
-			}
-		}
-
-		if moved {
-			for _, agent := range agents {
-				result.NotifyAgentIDs = append(result.NotifyAgentIDs, agent.ID)
-			}
-			for environmentID := range changedEnvironments {
-				result.EnvironmentIDs = append(result.EnvironmentIDs, environmentID)
-			}
-			sort.Strings(result.EnvironmentIDs)
-		}
-		return nil
-	})
-	if err != nil {
-		return ServiceFailoverResult{}, err
+		sort.Strings(result.EnvironmentIDs)
 	}
 	return result, nil
-}
-
-func allocationStatesForFailover(ctx context.Context, s *persistence, q ServiceQueryer) ([]AllocationRecord, error) {
-	return listAllocationsForFailover(ctx, s, q, "")
 }
 
 func listAllocationsForFailover(ctx context.Context, s *persistence, q ServiceQueryer, agentID string) ([]AllocationRecord, error) {

@@ -12,7 +12,7 @@ import (
 
 func (s *SQLStore) UpsertSourceBinding(ctx context.Context, rec SourceBindingRecord) (SourceBindingRecord, error) {
 	var out SourceBindingRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		out, err = s.UpsertSourceBindingTx(ctx, tx, rec)
 		return err
@@ -22,7 +22,7 @@ func (s *SQLStore) UpsertSourceBinding(ctx context.Context, rec SourceBindingRec
 
 func (s *SQLStore) UpsertSourceRevision(ctx context.Context, rec SourceRevisionRecord) (SourceRevisionRecord, error) {
 	var out SourceRevisionRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		out, err = s.UpsertSourceRevisionTx(ctx, tx, rec)
 		return err

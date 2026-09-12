@@ -233,44 +233,6 @@ func (s *persistence) allocateWireGuardIPv6Tx(ctx context.Context, tx *sql.Tx, a
 	return nextAddressFromPool(s.mesh.NetworkCIDR, used, 0x10, agentID)
 }
 
-func (s *persistence) schedulerSnapshotTx(ctx context.Context, q ServiceQueryer) ([]AgentRecord, []ServiceRecord, error) {
-	agents, err := s.listAgentsQuerier(ctx, q)
-	if err != nil {
-		return nil, nil, err
-	}
-	rows, err := q.QueryContext(ctx,
-		serviceSelectSQL+`
-		  ORDER BY s.created_at ASC`,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-
-	var services []ServiceRecord
-	for rows.Next() {
-		rec, err := scanServiceRow(rows)
-		if err != nil {
-			return nil, nil, err
-		}
-		services = append(services, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, nil, err
-	}
-	for i := range services {
-		spec, err := s.loadServiceDetailsQuerier(ctx, q, services[i].ID, services[i].SpecRevision)
-		if err != nil && err != sql.ErrNoRows {
-			return nil, nil, err
-		}
-		services[i].Spec = spec
-	}
-	return agents, services, nil
-}
-
 func (s *persistence) listAgentsQuerier(ctx context.Context, q ServiceQueryer) ([]AgentRecord, error) {
 	rows, err := q.QueryContext(ctx,
 		agentSelectSQL+`

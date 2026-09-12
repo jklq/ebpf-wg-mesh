@@ -534,3 +534,34 @@ func assertLiveAllocationIDs(t *testing.T, l *Live, serviceID string, want []str
 		}
 	}
 }
+
+func TestAllocationsByEnvironmentUsesOneConsistentLiveView(t *testing.T) {
+	l := startLive(t)
+	l.ApplyDurable(journal.DurableState{
+		ClusterID: "test",
+		LogIndex:  1,
+		Services: map[string]journal.ServiceIntent{
+			"service-a": {ID: "service-a", EnvironmentID: "environment-1"},
+			"service-b": {ID: "service-b", EnvironmentID: "environment-1"},
+			"service-c": {ID: "service-c", EnvironmentID: "environment-2"},
+		},
+		Assignments: map[string]journal.Assignment{
+			"allocation-a": {ID: "allocation-a", ServiceID: "service-a", AgentID: "agent-1"},
+			"allocation-c": {ID: "allocation-c", ServiceID: "service-c", AgentID: "agent-2"},
+		},
+	})
+
+	got, err := l.AllocationsByEnvironmentIfServing("environment-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(got["service-a"]) != 1 || got["service-a"][0].ID != "allocation-a" {
+		t.Fatalf("environment allocation view = %#v", got)
+	}
+	if allocations, ok := got["service-b"]; !ok || len(allocations) != 0 {
+		t.Fatalf("service without allocations missing from view: %#v", got)
+	}
+	if _, ok := got["service-c"]; ok {
+		t.Fatalf("allocation from another environment leaked into view: %#v", got)
+	}
+}

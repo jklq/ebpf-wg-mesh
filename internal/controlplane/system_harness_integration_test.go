@@ -325,7 +325,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}
-	if err := store.withTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
 		binding, err := store.source.UpsertSourceBindingTx(context.Background(), tx, source.SourceBindingRecord{
 			ServiceID:                    service.ID,
 			ProjectID:                    service.ProjectID,

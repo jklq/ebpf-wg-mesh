@@ -21,7 +21,7 @@ const (
 )
 
 func (s *SQLStore) UpsertGitHubInstallation(ctx context.Context, rec GitHubInstallationRecord) error {
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return s.upsertGitHubInstallationTx(ctx, tx, rec)
 	})
 }
@@ -48,7 +48,7 @@ func (s *SQLStore) upsertGitHubInstallationTx(ctx context.Context, tx *sql.Tx, r
 }
 
 func (s *SQLStore) DeactivateGitHubInstallation(ctx context.Context, installationID int64) error {
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE github_installations
@@ -69,7 +69,7 @@ func (s *SQLStore) DeactivateGitHubInstallation(ctx context.Context, installatio
 }
 
 func (s *SQLStore) ReplaceGitHubInstallationRepositories(ctx context.Context, installation GitHubInstallationRecord, repos []GitHubRepositoryRecord) error {
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := s.upsertGitHubInstallationTx(ctx, tx, installation); err != nil {
 			return err
 		}
@@ -220,33 +220,30 @@ func (s *SQLStore) EnqueueGitHubWebhookDelivery(ctx context.Context, deliveryID,
 	return rows > 0, nil
 }
 
-func (s *SQLStore) ClaimNextGitHubWebhookDelivery(ctx context.Context, processorID string, staleAfter time.Duration) (GitHubWebhookDeliveryRecord, error) {
+func (s *SQLStore) ClaimNextGitHubWebhookDelivery(ctx context.Context, processorID string) (GitHubWebhookDeliveryRecord, error) {
 	var rec GitHubWebhookDeliveryRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rec = GitHubWebhookDeliveryRecord{}
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
 		}
-		if staleAfter > 0 {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE github_webhook_deliveries
-				    SET state = $1,
-				        processor_id = '',
-				        updated_at = $2
-				  WHERE state = $3
-				    AND updated_at < $4`,
-				githubWebhookStatePending, now, githubWebhookStateProcessing, now.Add(-staleAfter),
-			); err != nil {
-				return err
-			}
-		}
+		// CockroachDB does not support SKIP LOCKED. The row lock plus the
+		// guarded UPDATE preserves a single winner under serializable retries.
 		row := tx.QueryRowContext(ctx,
-			`SELECT id, delivery_id, event_type, state, processor_id, payload, last_error, received_at, updated_at, processed_at
-			   FROM github_webhook_deliveries
-			  WHERE state = $1
-			  ORDER BY received_at ASC, id ASC
-			  LIMIT 1`,
-			githubWebhookStatePending,
+			`UPDATE github_webhook_deliveries AS delivery
+			SET state = $2, processor_id = $3, updated_at = $4
+			WHERE delivery.id = (
+				SELECT id FROM github_webhook_deliveries
+				WHERE state = $1
+				ORDER BY received_at ASC, id ASC
+				LIMIT 1 FOR UPDATE
+			)
+			AND delivery.state = $1
+			RETURNING delivery.id, delivery.delivery_id, delivery.event_type, delivery.state,
+				delivery.processor_id, delivery.payload, delivery.last_error, delivery.received_at,
+				delivery.updated_at, delivery.processed_at`,
+			githubWebhookStatePending, githubWebhookStateProcessing, processorID, now,
 		)
 		if err := row.Scan(&rec.ID, &rec.DeliveryID, &rec.EventType, &rec.State, &rec.ProcessorID, &rec.Payload, &rec.LastError, &rec.ReceivedAt, &rec.UpdatedAt, &rec.ProcessedAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -254,18 +251,7 @@ func (s *SQLStore) ClaimNextGitHubWebhookDelivery(ctx context.Context, processor
 			}
 			return err
 		}
-		rec.State = githubWebhookStateProcessing
-		rec.ProcessorID = processorID
-		rec.UpdatedAt = now
-		_, err = tx.ExecContext(ctx,
-			`UPDATE github_webhook_deliveries
-			    SET state = $1,
-			        processor_id = $2,
-			        updated_at = $3
-			  WHERE id = $4`,
-			rec.State, rec.ProcessorID, rec.UpdatedAt, rec.ID,
-		)
-		return err
+		return nil
 	})
 	if err != nil {
 		return GitHubWebhookDeliveryRecord{}, err
@@ -303,7 +289,7 @@ func (s *SQLStore) CompleteGitHubWebhookDelivery(ctx context.Context, deliveryID
 }
 
 func (s *SQLStore) UpsertGitHubRepositorySnapshot(ctx context.Context, rec GitHubRepositorySnapshotRecord) error {
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return s.upsertGitHubRepositorySnapshotTx(ctx, tx, rec)
 	})
 }
@@ -391,7 +377,7 @@ func (s *SQLStore) RecoverGitHubWebhookDeliveries(ctx context.Context, staleAfte
 	if staleAfter <= 0 {
 		return nil
 	}
-	return s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`UPDATE github_webhook_deliveries
 		    SET state = $1,

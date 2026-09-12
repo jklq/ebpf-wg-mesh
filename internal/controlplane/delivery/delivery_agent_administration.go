@@ -33,7 +33,7 @@ func (d *Delivery) createFleetAgent(ctx context.Context, userID string, req *pla
 		return AgentRecord{}, "", err
 	}
 	var rec AgentRecord
-	err = s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		_, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
 			id, name, region, zone, failure_domain,
@@ -77,7 +77,7 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, userID string, req *pla
 		return AgentRecord{}, err
 	}
 	var rec AgentRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var locked string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_registrations WHERE id = $1 FOR UPDATE`, req.GetAgentId()).Scan(&locked); err != nil {
 			return err

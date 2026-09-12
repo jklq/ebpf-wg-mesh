@@ -40,7 +40,7 @@ func (d *Delivery) advanceRollout(ctx context.Context, serviceID string, now tim
 	defer d.schedulerMu.Unlock()
 	s := d.store
 	var result rolloutAdvanceResult
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		result, err = d.advanceRolloutTx(ctx, tx, serviceID, now.UTC())
 		if err != nil {
@@ -174,7 +174,7 @@ func (d *Delivery) persistRolloutWithdrawalsTx(ctx context.Context, tx *sql.Tx, 
 func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID string, now time.Time) (rolloutAdvanceResult, error) {
 	s := d.store
 	result := rolloutAdvanceResult{}
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		result = rolloutAdvanceResult{}
 		if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
 			return err
@@ -408,6 +408,7 @@ func (d *Delivery) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx
 	rows, err := tx.QueryContext(ctx,
 		`UPDATE deployments SET detail = $1, updated_at = $2
 		  WHERE service_id = $3 AND rollout_generation = $4 AND is_current = TRUE AND state NOT IN ('failed','active')
+		    AND detail IS DISTINCT FROM $1
 		  RETURNING id`,
 		detail, now, serviceID, rollout.Generation)
 	if err != nil {

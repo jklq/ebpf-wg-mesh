@@ -91,7 +91,7 @@ func (d *Delivery) applyDeploymentAction(
 
 	var actionRecord DeploymentActionRecord
 	var agentIDs []string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		service, err := s.serviceByIDQuerier(ctx, tx, userID, serviceID)
 		if err != nil {
 			return err

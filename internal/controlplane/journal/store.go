@@ -33,13 +33,14 @@ func (headMovedError) Error() string    { return "journal head advanced during c
 func (headMovedError) SQLState() string { return "40001" }
 
 type Store struct {
-	mu        sync.Mutex
-	db        *sql.DB
-	clusterID string
-	state     DurableState
-	fence     Fence
-	onApplied func(DurableState)
-	verify    bool
+	mu          sync.Mutex
+	db          *sql.DB
+	clusterID   string
+	state       DurableState
+	initialized bool
+	fence       Fence
+	onApplied   func(DurableState)
+	verify      bool
 }
 
 func (s *Store) SetVerifyRecordings(enabled bool) {
@@ -111,11 +112,25 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		}
 	}()
 	id, _ := ctx.Value(commandIDKey{}).(string)
+	callerProvidedID := id != ""
 	if id == "" {
 		id = uuid.NewString()
 	}
+	receiptLifetime := InternalReceiptLifetime
+	if callerProvidedID {
+		receiptLifetime = CallerProvidedReceiptLifetime
+	}
 	var receipt Entry
+	appended := false
+	recordedNoOp := false
+	resolvedReceipt := false
+	resolvedNoOp := false
 	err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+		appended = false
+		recordedNoOp = false
+		resolvedReceipt = false
+		resolvedNoOp = false
+		receipt = Entry{}
 		var head int64
 		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&head); err != nil {
 			return err
@@ -123,18 +138,15 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		var err error
 		receipt, err = lookup(ctx, tx, s.clusterID, id)
 		if err == nil {
+			resolvedReceipt = true
+			var batch Batch
+			resolvedNoOp = json.Unmarshal(receipt.Payload, &batch) == nil && batch.Empty()
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		base, err := func() (DurableState, error) {
-			start, err := s.resumeState(ctx, tx)
-			if err != nil {
-				return DurableState{}, err
-			}
-			return replay(ctx, tx, start, head)
-		}()
+		base, err := s.stateAtHead(ctx, tx, head)
 		if err != nil {
 			return err
 		}
@@ -160,6 +172,24 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 			if err := verifyRecordings(ctx, tx, base, batch); err != nil {
 				return err
 			}
+		}
+		if batch.Empty() {
+			if !callerProvidedID {
+				return nil
+			}
+			receipt = Entry{ClusterID: s.clusterID, LogIndex: head, CommandID: id, CommandVersion: CommandVersion, CommandType: CommandType}
+			receipt.Payload, err = json.Marshal(batch)
+			if err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(ctx, `INSERT INTO cluster_journal_receipts
+				(cluster_id, command_id, log_index, command_version, command_type, payload, authorizing_epoch, created_at, expires_at)
+				VALUES ($1, $2, $3, $4, $5, $6, NULL, statement_timestamp(), statement_timestamp() + $7::INT8 * INTERVAL '1 microsecond') RETURNING created_at`,
+				receipt.ClusterID, receipt.CommandID, receipt.LogIndex, receipt.CommandVersion, receipt.CommandType, receipt.Payload, receiptLifetime.Microseconds()).Scan(&receipt.CreatedAt); err != nil {
+				return err
+			}
+			recordedNoOp = true
+			return nil
 		}
 		receipt = Entry{ClusterID: s.clusterID, LogIndex: head + 1, CommandID: id, CommandVersion: CommandVersion, CommandType: CommandType}
 		epoch, err := s.authorizeScheduling(ctx, tx, batch)
@@ -188,14 +218,23 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO cluster_journal_receipts
-   (cluster_id, command_id, log_index, command_version, command_type, payload, authorizing_epoch, created_at)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			receipt.ClusterID, receipt.CommandID, receipt.LogIndex, receipt.CommandVersion, receipt.CommandType, receipt.Payload, receipt.AuthorizingEpoch, receipt.CreatedAt); err != nil {
+			(cluster_id, command_id, log_index, command_version, command_type, payload, authorizing_epoch, created_at, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8 + $9::INT8 * INTERVAL '1 microsecond')`,
+			receipt.ClusterID, receipt.CommandID, receipt.LogIndex, receipt.CommandVersion, receipt.CommandType, receipt.Payload, receipt.AuthorizingEpoch, receipt.CreatedAt, receiptLifetime.Microseconds()); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE cluster_journal_heads SET log_index = $2 WHERE cluster_id = $1`, s.clusterID, receipt.LogIndex)
+		appended = err == nil
 		return err
 	})
+	if err == nil && !appended {
+		if recordedNoOp || resolvedNoOp {
+			return receipt, nil
+		}
+		if !resolvedReceipt {
+			return Entry{}, nil
+		}
+	}
 	// Even an apparently failed COMMIT may have succeeded. Resolve against the
 	// same command ID using a fresh context; absence/error never permits publish.
 	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -273,11 +312,7 @@ func (s *Store) read(ctx context.Context, fn func(*sql.Tx, DurableState) error) 
 			return err
 		}
 		var err error
-		start, err := s.resumeState(ctx, tx)
-		if err != nil {
-			return err
-		}
-		next, err = replay(ctx, tx, start, head)
+		next, err = s.stateAtHead(ctx, tx, head)
 		if err != nil {
 			return err
 		}
@@ -288,8 +323,26 @@ func (s *Store) read(ctx context.Context, fn func(*sql.Tx, DurableState) error) 
 	})
 	if err == nil {
 		s.state = next
+		s.initialized = true
 	}
 	return err
+}
+
+func (s *Store) stateAtHead(ctx context.Context, tx *sql.Tx, head int64) (DurableState, error) {
+	var compacted int64
+	if err := tx.QueryRowContext(ctx, `SELECT compacted_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&compacted); err != nil {
+		return DurableState{}, err
+	}
+	if !s.initialized || s.state.LogIndex < compacted {
+		state, err := readProductState(ctx, tx)
+		if err != nil {
+			return DurableState{}, err
+		}
+		state.ClusterID = s.clusterID
+		state.LogIndex = head
+		return state, nil
+	}
+	return replay(ctx, tx, s.state, head)
 }
 
 type queryer interface {

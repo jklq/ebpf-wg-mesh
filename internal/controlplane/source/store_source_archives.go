@@ -118,7 +118,7 @@ func (s *SQLStore) PruneSourceArchives(ctx context.Context, cutoff time.Time) (i
 		return 0, errors.New("source archive store is not configured")
 	}
 	var deletedKeys []string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		deletedKeys = nil
 		rows, err := tx.QueryContext(ctx,
 			`SELECT ss.id, ss.object_key

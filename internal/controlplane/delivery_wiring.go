@@ -16,11 +16,10 @@ func newDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ing
 func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents, logEmitter *logs.LogEmitter) deliverycore.Dependencies {
 	return deliverycore.Dependencies{
 		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.EnqueueSourceWorkItemTx, SourceStore: store.source,
-		DB: store.db, Mesh: store.mesh, Live: store.liveImplementation, Transaction: store.withTx, UnfencedTransaction: store.withTxUnfenced,
-		ReadState:              store.readLiveState,
-		ObservationTransaction: store.withObservationTx,
-		ReservedAgentIDs:       store.reservedAgentIDs,
-		Notifier:               notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
+		DB: store.db, Mesh: store.mesh, Live: store.liveImplementation, ProductTransaction: store.withProductTx,
+		ReadState:        store.readLiveState,
+		ReservedAgentIDs: store.reservedAgentIDs,
+		Notifier:         notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
 		UserFromContext: func(ctx context.Context) (deliverycore.UserIdentity, error) {
 			user, err := identity.DelegatedUserFromContext(ctx)
 			return deliverycore.UserIdentity{UserID: user.UserID}, err

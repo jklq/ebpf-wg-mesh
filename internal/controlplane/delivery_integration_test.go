@@ -43,7 +43,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", &platformv1.ServiceRuntime{VolumeName: "missing"})); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volume.ID); err != nil {
 			return err
 		}

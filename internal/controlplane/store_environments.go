@@ -30,7 +30,7 @@ func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Cont
 
 func (s *catalogPersistence) createEnvironment(ctx context.Context, userID, projectID, name string) (deliverycore.EnvironmentRecord, error) {
 	var rec deliverycore.EnvironmentRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := s.authorizeProjectWriteQuerier(ctx, tx, userID, projectID); err != nil {
 			return err
 		}
@@ -87,7 +87,7 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
 	}
 	var rec deliverycore.EnvironmentRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {
 			return err
@@ -107,7 +107,7 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, userID, envi
 
 func (s *catalogPersistence) deleteEnvironment(ctx context.Context, userID, environmentID string) ([]string, error) {
 	var agentIDs []string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		agentIDs = nil
 		rec, err := s.authorizeEnvironmentWriteQuerier(ctx, tx, userID, environmentID)
 		if err != nil {

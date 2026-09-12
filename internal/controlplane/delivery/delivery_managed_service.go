@@ -21,7 +21,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 	s := d.store
 	var rec ServiceRecord
 	var affectedAgentIDs []string
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		trustedAgentID = strings.TrimSpace(trustedAgentID)
 		if trustedAgentID == "" {
 			return errors.New("trusted agent id required for managed service")
