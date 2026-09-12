@@ -149,7 +149,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 }
 
 func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	const (
@@ -233,20 +233,11 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	reconnectedStream, reconnectedCancel := openAgentSync(t, second.server, liveCert, reconnectedHello)
 	defer reconnectedCancel()
 	_ = recvDesiredState(t, reconnectedStream)
-	var lastReconcileErr error
-	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second, Interval: 50 * time.Millisecond}, func(pollCtx context.Context) (bool, error) {
-		// Bound each attempt so one hung database round-trip cannot consume
-		// the whole budget, and retry: the control plane itself reconciles
-		// failover on a loop, so a transient error is not a verdict.
-		attemptCtx, cancel := context.WithTimeout(pollCtx, 10*time.Second)
-		defer cancel()
-		if _, err := second.server.failover.Reconcile(attemptCtx); err != nil {
-			lastReconcileErr = err
-			t.Logf("failover reconcile attempt failed, retrying: %v", err)
-			return false, nil
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+		if _, err := second.server.failover.Reconcile(ctx); err != nil {
+			return false, err
 		}
-		lastReconcileErr = nil
-		state, err := desiredStateForAgent(pollCtx, second.server.store, liveID)
+		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
 			return false, err
 		}
@@ -257,9 +248,6 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		}
 		return false, nil
 	}); err != nil {
-		if lastReconcileErr != nil {
-			t.Fatalf("failover did not move the stateless service onto the surviving agent: %v (last reconcile error: %v)", err, lastReconcileErr)
-		}
 		t.Fatalf("failover did not move the stateless service onto the surviving agent: %v", err)
 	}
 	deadState, err := desiredStateForAgent(ctx, second.server.store, deadID)
