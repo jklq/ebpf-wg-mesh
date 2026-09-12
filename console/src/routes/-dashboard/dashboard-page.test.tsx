@@ -30,6 +30,8 @@ import {
 import { resetServicePersistQueueForTests } from "./use-auto-queued-persist";
 
 const {
+	doDeleteServiceMock,
+	doDiscardServiceChangesMock,
 	doReleaseEnvironmentMock,
 	doCreateServiceFastMock,
 	doSaveServicePositionMock,
@@ -38,6 +40,8 @@ const {
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
+	doDeleteServiceMock: vi.fn(),
+	doDiscardServiceChangesMock: vi.fn(),
 	doReleaseEnvironmentMock: vi.fn(),
 	doSaveServicePositionMock: vi.fn(),
 	doUpdateServiceMock: vi.fn(),
@@ -52,8 +56,9 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 vi.mock("./server-fns", () => ({
 	doCreateServiceFast: doCreateServiceFastMock,
+	doDeleteService: doDeleteServiceMock,
 	doReleaseEnvironment: doReleaseEnvironmentMock,
-	doDiscardServiceChanges: vi.fn(),
+	doDiscardServiceChanges: doDiscardServiceChangesMock,
 	doSaveServicePosition: doSaveServicePositionMock,
 	doUpdateService: doUpdateServiceMock,
 	fetchGitHubCatalog: fetchGitHubCatalogMock,
@@ -72,6 +77,8 @@ beforeAll(async () => {
 beforeEach(() => {
 	MockEventSource.instances = [];
 	doReleaseEnvironmentMock.mockReset();
+	doDeleteServiceMock.mockReset();
+	doDiscardServiceChangesMock.mockReset();
 	doCreateServiceFastMock.mockReset();
 	doSaveServicePositionMock.mockReset();
 	doUpdateServiceMock.mockReset();
@@ -109,6 +116,125 @@ afterEach(() => {
 });
 
 describe("DashboardPage", () => {
+	it("closes undeployed changes after discarding an existing service's changes", async () => {
+		const dirty = serviceRecord({
+			rolloutGeneration: 1,
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
+			],
+		});
+		doDiscardServiceChangesMock.mockResolvedValue({
+			...dirty,
+			pendingChanges: false,
+			unappliedChangeCount: 0,
+			unappliedChanges: [],
+		});
+		render(<DashboardPage state={dashboardState(dirty)} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Details" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Discard service changes" }),
+		);
+
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(doDiscardServiceChangesMock).toHaveBeenCalledWith({
+			data: { serviceId: "service-1", discardAll: true },
+		});
+		expect(screen.getByRole("button", { name: /hello/i })).toBeTruthy();
+	});
+
+	it("keeps undeployed changes open until the last service is discarded", async () => {
+		const first = serviceRecord({
+			rolloutGeneration: 1,
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "one"),
+			],
+		});
+		const second = serviceRecord({
+			id: "service-2",
+			name: "worker",
+			rolloutGeneration: 1,
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.BAR", "Variables", "BAR", "", "two"),
+			],
+		});
+		doDiscardServiceChangesMock.mockImplementation(
+			({ data }: { data: { serviceId: string } }) => {
+				const service = data.serviceId === first.id ? first : second;
+				return Promise.resolve({
+					...service,
+					pendingChanges: false,
+					unappliedChangeCount: 0,
+					unappliedChanges: [],
+				});
+			},
+		);
+		render(
+			<DashboardPage
+				state={dashboardState(first, { services: [first, second] })}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Details" }));
+		fireEvent.click(
+			screen.getAllByRole("button", { name: "Discard service changes" })[0],
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.getAllByRole("button", { name: "Discard service changes" }),
+			).toHaveLength(1),
+		);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Discard service changes" }),
+		);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	});
+
+	it("removes a never-deployed service when all of its changes are discarded", async () => {
+		const staged = serviceRecord({
+			rolloutGeneration: 0,
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("service", "Service", "Service", "", "hello"),
+			],
+			latestDeployment: {
+				deploymentId: "deployment-1",
+				state: "DEPLOYMENT_STATE_STAGED",
+				causeKind: "DEPLOYMENT_CAUSE_KIND_USER",
+				causeId: "user-1",
+				reasonCode: "SERVICE_STAGED",
+				detail: "Configuration staged",
+				specRevision: 1,
+				imageDigest: "",
+				rolloutGeneration: 0,
+			},
+		});
+		doDeleteServiceMock.mockResolvedValue(undefined);
+		render(<DashboardPage state={dashboardState(staged)} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Details" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Discard service changes" }),
+		);
+
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(doDeleteServiceMock).toHaveBeenCalledWith({
+			data: { serviceId: "service-1" },
+		});
+		expect(doDiscardServiceChangesMock).not.toHaveBeenCalled();
+		expect(screen.queryByRole("button", { name: /hello/i })).toBeNull();
+	});
+
 	it("keeps Deploy active during a variable write and waits behind it", {
 		timeout: 15_000,
 	}, async () => {

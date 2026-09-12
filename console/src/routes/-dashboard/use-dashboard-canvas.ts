@@ -50,7 +50,6 @@ export function useDashboardCanvas({
 	const [nodePositions, setNodePositions] = useState<Record<string, Point>>(
 		() => serviceLayoutPositions(services),
 	);
-	const [promptLeft, setPromptLeft] = useState<number>();
 	const panOffsetRef = useRef(panOffset);
 	const nodePositionsRef = useRef(nodePositions);
 	const panStart = useRef<{
@@ -222,29 +221,6 @@ export function useDashboardCanvas({
 			y: (canvas.clientHeight - NODE_H) / 2 - pos.y,
 		});
 	}, [selectedId, servicePositions, selected, setTargetPanOffset]);
-
-	useLayoutEffect(() => {
-		const updatePromptLeft = () => {
-			const canvas = canvasRef.current;
-			if (!canvas) return;
-			const mobilePanelOpen =
-				selected &&
-				typeof window.matchMedia === "function" &&
-				window.matchMedia("(max-width: 900px)").matches;
-			if (mobilePanelOpen) {
-				setPromptLeft(undefined);
-				return;
-			}
-			const sidePanelWidth = selected
-				? window.innerWidth * SIDE_PANEL_VIEWPORT_RATIO
-				: 0;
-			const visibleWidth = Math.max(0, canvas.clientWidth - sidePanelWidth);
-			setPromptLeft(visibleWidth / 2);
-		};
-		updatePromptLeft();
-		window.addEventListener("resize", updatePromptLeft);
-		return () => window.removeEventListener("resize", updatePromptLeft);
-	}, [selected]);
 
 	useEffect(() => {
 		return () => {
@@ -467,7 +443,6 @@ export function useDashboardCanvas({
 		setNodePositions,
 		nodePositionsRef,
 		hasUserPanned,
-		promptLeft,
 		panStart,
 	};
 }

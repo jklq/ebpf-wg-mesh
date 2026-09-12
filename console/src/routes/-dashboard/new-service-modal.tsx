@@ -91,12 +91,9 @@ export function NewServiceModal({
 			onCreated(result);
 		} catch (e) {
 			const message = formatError(e);
-			if (onCreateFailed) {
-				onCreateFailed(selector, message);
-				return;
-			}
 			setError(message);
 			setLoading(false);
+			onCreateFailed?.(selector, message);
 		}
 	};
 
