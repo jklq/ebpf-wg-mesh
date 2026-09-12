@@ -15,7 +15,7 @@ const (
 	defaultRolloutMaxSurge       = 1
 	defaultRolloutSchedulingWait = 5 * time.Minute
 	defaultHealthcheckTimeout    = 5 * time.Minute
-	defaultDrainingTime          = 30 * time.Second
+	defaultDrainingTime          = time.Duration(0)
 	maxRolloutDeadline           = 24 * time.Hour
 )
 
@@ -47,8 +47,8 @@ func ValidateRollingStrategy(spec *platformv1.ServiceSpec) error {
 		return fmt.Errorf("healthcheck timeout must be between 1 second and %s", maxRolloutDeadline)
 	}
 	drainingTime := time.Duration(strategy.GetDrainingSeconds()) * time.Second
-	if drainingTime < time.Second || drainingTime > maxRolloutDeadline {
-		return fmt.Errorf("draining time must be between 1 second and %s", maxRolloutDeadline)
+	if drainingTime < 0 || drainingTime > maxRolloutDeadline {
+		return fmt.Errorf("draining time must be between 0 seconds and %s", maxRolloutDeadline)
 	}
 	return nil
 }

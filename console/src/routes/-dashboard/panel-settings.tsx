@@ -538,7 +538,7 @@ function settingsDraftFromService(
 			service.spec?.rollingStrategy?.healthcheckTimeoutSeconds ?? 300,
 		),
 		drainingSeconds: String(
-			service.spec?.rollingStrategy?.drainingSeconds ?? 30,
+			service.spec?.rollingStrategy?.drainingSeconds ?? 0,
 		),
 	};
 }

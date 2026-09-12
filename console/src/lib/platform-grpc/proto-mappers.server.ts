@@ -462,7 +462,7 @@ function toRollingStrategy(
 	}
 	return {
 		healthcheckTimeoutSeconds: rolling.healthcheckTimeoutSeconds ?? 300,
-		drainingSeconds: rolling.drainingSeconds ?? 30,
+		drainingSeconds: rolling.drainingSeconds ?? 0,
 	};
 }
 
