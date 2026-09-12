@@ -86,7 +86,7 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 	}
 	failureDomain := strings.ToLower(id)
 	now := time.Now().UTC()
-	return store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
 			id, name, region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
 		) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
@@ -196,7 +196,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"platform_operators",
 		"environment_network_identity_counter",
 	}
-	if err := store.withTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(context.Background(), `UPDATE agent_authority SET epoch = 1, outstanding_not_after = '1970-01-01' WHERE id = 1`); err != nil {
 			return err
 		}

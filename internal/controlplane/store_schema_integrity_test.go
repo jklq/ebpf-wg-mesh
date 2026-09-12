@@ -14,7 +14,7 @@ func TestSchemaRejectsCrossServiceReferences(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		statements := []string{
 			`INSERT INTO projects(id, name, kind, owner_user_id, created_at) VALUES ('integrity-project', 'integrity', 'user', 'owner', $1)`,
 			`INSERT INTO environments(id, project_id, name, kind, network_identity, created_at, updated_at) VALUES ('integrity-environment', 'integrity-project', 'production', 'production', 9001, $1, $1)`,

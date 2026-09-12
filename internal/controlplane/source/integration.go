@@ -22,12 +22,12 @@ type Store interface {
 	DeactivateGitHubInstallation(context.Context, int64) error
 	MarkGitHubRepositorySnapshotDeleted(context.Context, string, string) error
 	EnqueueGitHubWebhookDelivery(context.Context, string, string, []byte) (bool, error)
-	ClaimNextGitHubWebhookDelivery(context.Context, string, time.Duration) (GitHubWebhookDeliveryRecord, error)
+	ClaimNextGitHubWebhookDelivery(context.Context, string) (GitHubWebhookDeliveryRecord, error)
 	CompleteGitHubWebhookDelivery(context.Context, string, string, error) error
 	RecoverGitHubWebhookDeliveries(context.Context, time.Duration) error
 	ListActiveGitHubInstallationIDs(context.Context) ([]int64, error)
 
-	ClaimNextSourceWorkItem(context.Context, string, time.Duration) (SourceWorkItemRecord, error)
+	ClaimNextSourceWorkItem(context.Context, string) (SourceWorkItemRecord, error)
 	CompleteSourceWorkItem(context.Context, string, string) error
 	ReleaseSourceWorkItem(context.Context, string, string, error, time.Duration) error
 	RecoverSourceWorkItems(context.Context, time.Duration) error

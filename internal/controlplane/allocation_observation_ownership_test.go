@@ -102,7 +102,7 @@ func TestOlderGenerationObservationCannotSatisfyCurrentAssignment(t *testing.T) 
 	}
 	allocations, _ := store.reads.ListAllocationsByServiceID(ctx, service.ID)
 	allocation := allocations[0]
-	if err := store.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET desired_rollout_generation = $1 WHERE id = $2`, allocation.DesiredRolloutGeneration+1, allocation.ID); err != nil {
 			return err
 		}

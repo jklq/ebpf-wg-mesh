@@ -17,7 +17,7 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, userID, agentID string
 		return AgentRecord{}, nil, fmt.Errorf("%w: operators may set active, cordoned, draining, or retired", ErrInvalidAgentTransition)
 	}
 	var rec AgentRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := agentByIDQuerier(ctx, tx, agentID, false)
 		if err != nil {
 			return err

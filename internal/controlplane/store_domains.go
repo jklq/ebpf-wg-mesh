@@ -29,7 +29,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, userID, hostn
 	}
 	var binding deliverycore.DomainBindingRecord
 	var changed bool
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed = false
 		binding = deliverycore.DomainBindingRecord{}
 		attemptHostname, attemptCreateOnly := hostname, createOnly
@@ -189,7 +189,7 @@ func (s *routingPersistence) platformDomainBindingForServiceQuerier(ctx context.
 
 func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, userID, hostname string) (bool, error) {
 	var changed bool
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed = false
 		binding, err := s.domainBindingByHostnameQuerier(ctx, tx, userID, hostname)
 		if err != nil {

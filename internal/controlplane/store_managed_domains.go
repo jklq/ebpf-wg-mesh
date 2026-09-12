@@ -14,7 +14,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		return deliverycore.DomainBindingRecord{}, err
 	}
 	var binding deliverycore.DomainBindingRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 			return err
 		}

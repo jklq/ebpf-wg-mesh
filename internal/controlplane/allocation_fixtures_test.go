@@ -17,7 +17,7 @@ import (
 
 func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceID, allocationIP string, healthyPorts ...int32) error {
 	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
-	if err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, rollout_state = $4, updated_at = $2 WHERE service_id = $3`, addressColumn),
 			allocationIP, time.Now().UTC(), serviceID, deliverycore.AllocationRolloutServing,
@@ -53,7 +53,7 @@ func (s *persistence) markAllocationHealthyForTest(ctx context.Context, serviceI
 }
 func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, allocationID, allocationIP string, healthyPorts ...int32) error {
 	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
-	if err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	if err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if strings.TrimSpace(allocationIP) == "" {
 			return nil

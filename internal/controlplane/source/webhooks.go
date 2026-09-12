@@ -198,19 +198,21 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
-	processPending := func() error {
+	processPending := func() (bool, error) {
+		processed := false
 		for {
-			rec, err := p.store.ClaimNextGitHubWebhookDelivery(ctx, p.id, 5*time.Minute)
+			rec, err := p.store.ClaimNextGitHubWebhookDelivery(ctx, p.id)
 			if err != nil {
-				return err
+				return processed, err
 			}
 			if rec.ID == "" {
-				return nil
+				return processed, nil
 			}
+			processed = true
 			slog.InfoContext(ctx, "github webhook delivery claimed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "processor_id", rec.ProcessorID)
 			err = p.processDelivery(ctx, rec)
 			if completeErr := p.store.CompleteGitHubWebhookDelivery(ctx, rec.ID, p.id, err); completeErr != nil {
-				return completeErr
+				return processed, completeErr
 			}
 			if err != nil {
 				slog.Warn("github webhook processing failed", "delivery_id", rec.DeliveryID, "event_type", rec.EventType, "error", err)
@@ -219,22 +221,39 @@ func (p *GitHubWebhookProcessor) Run(ctx context.Context) error {
 			}
 		}
 	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	idleDelay := time.Second
 	for {
+		timer := time.NewTimer(jitter(idleDelay))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return nil
 		case <-p.requestCh:
-		case <-ticker.C:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
 		}
-		if err := processPending(); err != nil {
+		processed, err := processPending()
+		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
 			slog.Warn("github webhook processor pass failed", "error", err)
 			if !waitContext(ctx, jitter(time.Second)) {
 				return nil
+			}
+			continue
+		}
+		if processed {
+			idleDelay = time.Second
+		} else {
+			idleDelay *= 2
+			if idleDelay > 30*time.Second {
+				idleDelay = 30 * time.Second
 			}
 		}
 	}

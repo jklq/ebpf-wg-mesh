@@ -32,7 +32,7 @@ func verifySharedControlPlaneDirectory(ctx context.Context, store *persistence, 
 	}
 
 	var registered string
-	err = store.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = store.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_storage(name, storage_id, created_at)
 			VALUES ($1, $2, statement_timestamp()) ON CONFLICT(name) DO NOTHING`, name, storageID); err != nil {
 			return err

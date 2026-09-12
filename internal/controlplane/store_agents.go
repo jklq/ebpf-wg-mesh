@@ -53,7 +53,7 @@ func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID st
 }
 
 func (s *fleetPersistence) validateWorkloadIPv4Pool(ctx context.Context) error {
-	return s.withTxUnfenced(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		pool := s.mesh.WorkloadIPv4PoolCIDR
 		prefixBits := s.mesh.WorkloadIPv4NodePrefixBits
 		if strings.TrimSpace(pool) == "" || prefixBits == 0 {

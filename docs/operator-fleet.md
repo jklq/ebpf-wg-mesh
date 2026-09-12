@@ -53,7 +53,7 @@ Retirement consumes remaining bootstrap tokens, sets `credential_revoked_at`, ap
 
 ## Control-plane journal
 
-The live owner periodically snapshots product state and truncates `cluster_journal` down to the latest 1024 commands. Restarts replay that snapshot plus the retained tail, not the cluster's entire history. Retried commands are looked up in `cluster_journal_receipts`, which compaction does not delete, so an idempotent retry still returns the original receipt after the log row is gone.
+The live owner truncates `cluster_journal` in batches while retaining at least the latest 1024 commands. Restarts rebuild from the authoritative normalized product tables in one consistent database transaction; there is no whole-state JSON checkpoint. Retried commands are looked up in `cluster_journal_receipts` after their log row is gone. Internally generated receipts expire after one hour, while caller-provided idempotency receipts expire after seven days.
 
 ## Local stack
 

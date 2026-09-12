@@ -58,7 +58,7 @@ func (s *catalogPersistence) ensureProjectOwnerMembershipQuerier(ctx context.Con
 
 func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, systemKey string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, found, err := s.projectBySystemKeyQuerier(ctx, tx, systemKey)
 		if err != nil {
 			return err
@@ -117,7 +117,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 
 func (s *catalogPersistence) createProject(ctx context.Context, userID, name string) (deliverycore.ProjectRecord, error) {
 	var project deliverycore.ProjectRecord
-	err := s.withTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, userID, name)
 		if err != nil {
 			return err
