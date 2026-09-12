@@ -8,17 +8,21 @@ cd "${0:A:h}/.."
 typeset -A package_patterns
 typeset -a integration_files test_names
 
-integration_files=("${(@f)$(rg -l '^//go:build integration$' --glob '*_test.go')}")
+# Discover integration suites from tracked files only. `git grep` is
+# deterministic in a checkout and ignores local ignore rules that can silently
+# hide files from a bare recursive search.
+integration_files=("${(@f)$(git grep -l -e '^//go:build integration$' -- '*_test.go' || true)}")
+integration_files=(${integration_files:#})
 
 if (( ${#integration_files} == 0 )); then
-	print "no integration-tagged Go test files found"
-	exit 0
+	print -u2 "no integration-tagged Go test files found"
+	exit 1
 fi
 
 for file in $integration_files; do
 	# Helper files (harnesses, fixtures) are integration-tagged but have no Test*.
-	# rg exits 1 on no match; keep going instead of aborting the suite.
-	test_names=("${(@f)$(rg -o 'func (Test[^ (]+)\(' -r '$1' -- "$file" || true)}")
+	# grep exits 1 on no match; keep going instead of aborting the suite.
+	test_names=("${(@f)$(grep -oE 'func Test[^ (]+\(' -- "$file" | sed -E 's/^func (Test[^ (]+)\($/\1/' || true)}")
 	test_names=(${test_names:#})
 	if (( ${#test_names} == 0 )); then
 		continue
@@ -32,6 +36,11 @@ for file in $integration_files; do
 		fi
 	done
 done
+
+if (( ${#package_patterns} == 0 )); then
+	print -u2 "no integration test functions found"
+	exit 1
+fi
 
 for package_dir in ${(ok)package_patterns}; do
 	print "==> go test -count=1 -v -tags=integration ./$package_dir"

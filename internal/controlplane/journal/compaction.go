@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	DefaultRetainEntries             = 1024
-	InternalReceiptLifetime          = time.Hour
-	CallerProvidedReceiptLifetime    = 7 * 24 * time.Hour
+	DefaultRetainEntries          = 1024
+	InternalReceiptLifetime       = time.Hour
+	CallerProvidedReceiptLifetime = 7 * 24 * time.Hour
 )
 
 type CompactionFence func(context.Context, *sql.Tx) error
