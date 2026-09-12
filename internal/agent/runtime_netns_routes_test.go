@@ -31,3 +31,24 @@ func TestDecideWorkloadPoolRouteFailClosed(t *testing.T) {
 		t.Fatalf("valid rewrite: %v", err)
 	}
 }
+
+func TestCanonicalPrefixMasksHostBits(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{in: "10.200.0.3/16", want: "10.200.0.0/16"},
+		{in: "fd00:200:0:9::10/48", want: "fd00:200::/48"},
+		{in: "10.200.0.3/32", want: "10.200.0.3/32"},
+	}
+	for _, tc := range cases {
+		ip, ipNet, err := net.ParseCIDR(tc.in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ipNet.IP = ip
+		if got := canonicalPrefix(ipNet); got == nil || got.String() != tc.want {
+			t.Fatalf("canonicalPrefix(%s) = %v, want %s", tc.in, got, tc.want)
+		}
+	}
+}

@@ -25,3 +25,12 @@ func decideWorkloadPoolRoute(gateway net.IP, pool *net.IPNet, gatewayLink, poolL
 	}
 	return nil
 }
+
+// canonicalPrefix returns the network prefix for an interface address, masking
+// off host bits so the result is a valid route destination.
+func canonicalPrefix(ipNet *net.IPNet) *net.IPNet {
+	if ipNet == nil {
+		return nil
+	}
+	return &net.IPNet{IP: ipNet.IP.Mask(ipNet.Mask), Mask: ipNet.Mask}
+}
