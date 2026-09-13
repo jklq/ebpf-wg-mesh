@@ -174,6 +174,7 @@ func reportActiveForTest(ctx context.Context, s *persistence, serviceID string) 
 }
 
 type liveFixture interface {
+	Serving() bool
 	Admitted(string) bool
 	Session(string) (deliverycore.AgentSession, bool)
 	Observation(string, int64) (deliverycore.AllocationObservation, bool)

@@ -176,7 +176,8 @@ func waitForSingletonLease(t *testing.T, server *Server) {
 		if err != nil {
 			return false, nil
 		}
-		return held, nil
+		// Lease acquisition precedes loading the live state used by readers.
+		return held && fixtureLive(server.store).Serving(), nil
 	}); err != nil {
 		t.Fatalf("wait for singleton lease: %v", err)
 	}
