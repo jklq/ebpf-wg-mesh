@@ -12,6 +12,7 @@ Minimal PaaS control plane and agent prototype with a WireGuard/eBPF private fab
 - `internal/agent`: desired-state loop, local reconcile runtime, containerd runtime, status reporting
 - `internal/mesh`: mesh bootstrap that wraps the WireGuard and eBPF implementation
 - `api/proto`: protobuf definitions and generated gRPC bindings
+- `docs/`: architecture, reconciliation, and operations notes
 
 ## Architecture
 
