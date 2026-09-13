@@ -172,7 +172,7 @@ func moreSpecific(a, b *net.IPNet) bool {
 	}
 	aOnes, _ := a.Mask.Size()
 	bOnes, _ := b.Mask.Size()
-	return aOnes > bOnes
+	return aOnes < bOnes
 }
 
 func fullAddressMask(ip net.IP) net.IPMask {
