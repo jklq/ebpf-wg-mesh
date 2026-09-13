@@ -77,6 +77,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		Ingress:   config.IngressConfig{PublicAddr: "platform.local", AdminURL: deliverycore.FirstNonEmpty(opts.ingressAdminURL, "http://127.0.0.1:9/load")},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: systemTestDashboardID},
 		Bootstrap: opts.bootstrap,
+		Failover:  opts.failover,
 		Registry:  opts.registry,
 		Mesh:      testMeshConfig(),
 	}
@@ -160,6 +161,7 @@ type systemControlPlaneOptions struct {
 	clickhouseURL   string
 	ingressAdminURL string
 	bootstrap       config.BootstrapConfig
+	failover        config.ControlPlaneFailoverConfig
 	bootstrapTokens []config.AgentBootstrapToken
 	registry        config.RegistryConfig
 	withDashboard   bool
