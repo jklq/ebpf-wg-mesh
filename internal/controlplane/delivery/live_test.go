@@ -72,6 +72,53 @@ func TestBecomeDoesNotServeUntilDurableApplied(t *testing.T) {
 	}
 }
 
+func TestBecomeKeepsLastKnownDurableWhileReacquiring(t *testing.T) {
+	l := NewLive()
+	boot := journal.DurableState{
+		ClusterID: "test",
+		LogIndex:  4,
+		Agents: map[string]journal.AgentRegistration{
+			"agent": {ID: "agent", Name: "agent", DesiredRevision: 9, CreatedAt: time.Now().UTC()},
+		},
+	}
+	// Mirrors openPersistence: the boot snapshot is applied before Run/BecomeLive.
+	l.ApplyDurable(boot)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	errc := make(chan error, 1)
+	go func() {
+		errc <- l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
+			close(started)
+			<-release
+			return fn(nil, boot)
+		}, nil)
+	}()
+	<-started
+	// Serving-gated readers still wait for the acquire to finish...
+	if _, err := l.AgentIDsIfServing(); !errors.Is(err, ErrNotLiveOwner) {
+		t.Fatalf("IfServing during reacquire = %v, want ErrNotLiveOwner", err)
+	}
+	// ...but last-known-good reads keep working instead of sql.ErrNoRows.
+	if _, err := l.DesiredStateForAgent("agent", config.ControlPlaneMeshConfig{WorkloadIPv4PoolCIDR: "10.200.0.0/16", WorkloadPoolCIDR: "fd00::/64"}); err != nil {
+		t.Fatalf("DesiredStateForAgent during reacquire: %v", err)
+	}
+	if ids := l.AgentIDs(); len(ids) != 1 || ids[0] != "agent" {
+		t.Fatalf("AgentIDs during reacquire = %v, want [agent]", ids)
+	}
+	close(release)
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	ids, err := l.AgentIDsIfServing()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != "agent" {
+		t.Fatalf("ids after reacquire = %v, want [agent]", ids)
+	}
+}
+
 func TestBecomeAfterResignReloadsSameDurableSnapshot(t *testing.T) {
 	l := NewLive()
 	state := journal.DurableState{
