@@ -177,6 +177,9 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		databaseURL:     dbURL,
 		stateDir:        stateDir,
 		ingressAdminURL: caddy.URL + "/load",
+		// The startup pass can run before the surviving agent reconnects.
+		// Retry within the poll deadline instead of the production 60s interval.
+		failover: config.ControlPlaneFailoverConfig{ReconcileIntervalSeconds: 1},
 		bootstrap: config.BootstrapConfig{Users: []config.BootstrapUser{
 			{ID: "user-1", Email: "user@example.com", Projects: []string{"ha"}},
 		}},
