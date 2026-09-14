@@ -190,15 +190,16 @@ func runProductE2EScenario(
 		DeploymentId:   deploymentHistory.GetDeployments()[0].GetId(),
 		Action:         platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART,
 		IdempotencyKey: uuid.NewString(),
-		AllocationId:   healthy.GetAllocation().GetAllocationId(),
+		AllocationId:   restartAllocation.GetAllocationId(),
 	}
-	if _, err := client.ApplyDeploymentAction(userCtx, restartRequest); err != nil {
+	restarted, err := client.ApplyDeploymentAction(userCtx, restartRequest)
+	if err != nil {
 		return productE2ESummary{}, fmt.Errorf("restart fixture allocation: %w", err)
 	}
 	if _, err := client.ApplyDeploymentAction(userCtx, restartRequest); err != nil {
 		return productE2ESummary{}, fmt.Errorf("replay fixture restart: %w", err)
 	}
-	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), released.GetService().GetRolloutGeneration()); err != nil {
+	if _, err := waitForProductService(ctx, client, assertionSecret, service.GetId(), updated.GetSpecRevision(), restarted.GetService().GetRolloutGeneration()); err != nil {
 		return productE2ESummary{}, fmt.Errorf("wait for fixture restart: %w", err)
 	}
 	if err := waitForProductRoute(ctx, routeURL, productE2EMarkerV2); err != nil {
@@ -488,10 +489,7 @@ func waitForProductService(ctx context.Context, client platformv1.PlatformServic
 			return false, nil
 		}
 		latest = status
-		allocation := status.GetAllocation()
-		return allocation.GetHealthy() &&
-			allocation.GetAppliedSpecRevision() >= specRevision &&
-			allocation.GetAppliedRolloutGeneration() >= rolloutGeneration, nil
+		return matchingProductAllocation(status, specRevision, rolloutGeneration) != nil, nil
 	})
 	if err != nil {
 		return latest, err

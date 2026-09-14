@@ -117,6 +117,8 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 		"-data-dir", dataDir,
 		"-cpu-millis", "4000",
 		"-memory-mebibytes", "8192",
+		"-reserved-cpu-millis", "750",
+		"-reserved-memory-mebibytes", "1024",
 	})
 	if err != nil {
 		t.Fatalf("Agent: %v", err)
@@ -147,7 +149,7 @@ func TestAgentBootstrapPersistsWireGuardKey(t *testing.T) {
 	if got := cfg.Node.Resources.AdvertisedCPUMillis(); got != 3250 {
 		t.Fatalf("unexpected advertised CPU capacity %d", got)
 	}
-	if cfg.Node.Resources.MemoryMebibytes != 8192 {
-		t.Fatalf("unexpected reported memory capacity %d", cfg.Node.Resources.MemoryMebibytes)
+	if got := cfg.Node.Resources.AdvertisedMemoryMebibytes(); got != 7168 {
+		t.Fatalf("unexpected advertised memory capacity %d", got)
 	}
 }
