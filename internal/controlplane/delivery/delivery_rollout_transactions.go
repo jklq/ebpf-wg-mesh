@@ -213,7 +213,7 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 		}
 		result.EnvironmentID = service.EnvironmentID
 		rollout, ok, err := loadCurrentRolloutTx(ctx, tx, service)
-		if err != nil || !ok || rollout.State != rolloutStateInProgress {
+		if err != nil {
 			return err
 		}
 		_, removing, err := currentRemovalDeploymentTx(ctx, tx, serviceID)
@@ -308,7 +308,7 @@ func loadCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord
 		  WHERE service_id = $1 AND rollout_generation = $2
 		  FOR UPDATE`, service.ID, service.RolloutGeneration,
 	).Scan(&rec.ServiceID, &rec.Generation, &rec.SpecRevision, &rec.State, &strategyRaw,
-		&rec.DesiredReplicaCount, &rec.ImageDigest, &rec.FailureReason, &rec.CreatedAt, &rec.ProgressAt)
+		&rec.DesiredReplicaCount, &rec.ImageDigest, &rec.FailureReason, &rec.TargetAllocationID, &rec.CreatedAt, &rec.ProgressAt)
 	if err == sql.ErrNoRows {
 		return rolloutRecord{}, false, nil
 	}
