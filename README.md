@@ -63,7 +63,7 @@ Until the Envoy fleet cutover, the rendered Caddy admin listener and the control
 
 The supported deployment actions are:
 
-- `RESTART` restarts one selected allocation, or every replica when `allocation_id` is empty, without building an image or creating a rollout.
+- `RESTART` rolls one selected allocation, or every replica when `allocation_id` is empty, through the same overlap, ingress-withdrawal, and graceful-drain path without building a new image.
 - `EXACT_REDEPLOY` creates a rollout from the selected deployment's persisted resolved spec and digest-pinned image. It does not inspect source or fetch a newer revision.
 - `ROLLBACK` creates a new rollout from a non-current successful deployment, including the environment-variable versions captured with that deployment. Existing deployment rows remain history.
 - `CANCEL` terminates current queued, building, or deploying work. Builders learn cancellation through their heartbeat, and late builder or agent reports cannot move the cancelled deployment out of its terminal state. The control plane restores the last successful digest-pinned deployment when one exists.
