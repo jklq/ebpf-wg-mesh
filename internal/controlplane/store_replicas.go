@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"strings"
 
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
@@ -34,29 +33,4 @@ func (s *readsPersistence) agentIDsForServiceQuerier(ctx context.Context, q deli
 		}
 	}
 	return ids, rows.Err()
-}
-
-func allocationRestartObserved(prevPhase string, prevApplied int64, nextPhase string, nextApplied int64) bool {
-	if prevApplied > 0 && nextApplied == 0 {
-		return true
-	}
-	return allocationWasServing(prevPhase) && allocationIsStarting(nextPhase)
-}
-
-func allocationWasServing(phase string) bool {
-	switch strings.TrimSpace(phase) {
-	case "Running", "Healthy":
-		return true
-	default:
-		return false
-	}
-}
-
-func allocationIsStarting(phase string) bool {
-	switch strings.TrimSpace(phase) {
-	case "Pending", "Starting":
-		return true
-	default:
-		return false
-	}
 }
