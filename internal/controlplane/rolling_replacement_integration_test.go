@@ -280,7 +280,7 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := store.upsertAgent(ctx, agentHello("node-1")); err != nil {
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
 		t.Fatal(err)
 	}
 	envID := productionEnvironmentID(t, store, projects[0].ID)
@@ -369,7 +369,7 @@ func createHealthyRollingService(t *testing.T, replicas, _ int32) (*persistence,
 	for index := 1; index <= 6; index++ {
 		hello := agentHello(fmt.Sprintf("node-%d", index))
 		hello.AdvertiseAddr = fmt.Sprintf("fd00:30::%d", index)
-		if _, err := store.upsertAgent(ctx, hello); err != nil {
+		if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 			t.Fatalf("upsertAgent: %v", err)
 		}
 	}

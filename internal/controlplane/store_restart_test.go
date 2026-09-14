@@ -56,6 +56,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	alloc := primaryAllocation(allocs)
 
 	report := &agentv1.StatusReport{
 		AgentId: "node-1",
@@ -203,7 +204,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	if len(afterRollout) != 1 {
 		t.Fatalf("new rollout allocation = %+v", afterRollout)
 	}
-	if afterRollout.Restart.GetCrashLoop() {
+	if afterRollout[0].Restart.GetCrashLoop() {
 		t.Fatal("new rollout left crash-loop observation in place")
 	}
 }
