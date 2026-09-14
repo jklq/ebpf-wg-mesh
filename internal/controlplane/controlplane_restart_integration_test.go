@@ -26,15 +26,17 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	defer cancel()
 
 	const (
-		agentID = "restart-agent"
-		token   = "restart-bootstrap"
+		agentID    = "restart-agent"
+		token      = "restart-bootstrap"
+		surgeID    = "restart-surge"
+		surgeToken = "restart-surge-bootstrap"
 	)
 	dbURL := createTestDatabase(t)
 	stateDir := t.TempDir()
 	opts := systemControlPlaneOptions{
 		databaseURL:     dbURL,
 		stateDir:        stateDir,
-		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}},
+		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}, {AgentID: surgeID, Token: surgeToken}},
 		withDashboard:   true,
 	}
 	first := startSystemControlPlane(t, opts)

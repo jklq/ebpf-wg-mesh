@@ -380,6 +380,30 @@ describe("PanelSettings replica scaling", () => {
 		).toBeGreaterThan(0);
 	});
 
+	it("queues placement region with the rest of the spec", async () => {
+		doUpdateServiceMock.mockResolvedValue(service());
+		render(
+			<PanelSettings
+				service={service()}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		fireEvent.change(screen.getByLabelText("Required region"), {
+			target: { value: "eu-west" },
+		});
+		await waitFor(() =>
+			expect(doUpdateServiceMock).toHaveBeenCalledWith({
+				data: expect.objectContaining({
+					serviceId: "service-1",
+					placementRegion: "eu-west",
+				}),
+			}),
+		);
+	});
+
 	it("queues rolling strategy changes with the rest of the spec", async () => {
 		doUpdateServiceMock.mockResolvedValue(service());
 		render(

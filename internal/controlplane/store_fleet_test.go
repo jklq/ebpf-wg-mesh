@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -39,9 +40,12 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 		t.Fatalf("createService: %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 1)
-	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 {
+	completeServingAllocations(t, store, service.ID)
+	original := mustListAllocations(t, store, ctx, service.ID)
+	if agents := allocationAgentIDs(original); agents["node-a"] != 1 || len(original) != 1 {
 		t.Fatalf("expected replica on node-a, got %v", agents)
 	}
+	originalID := original[0].ID
 
 	if _, _, err := newTestDelivery(store, nil, nil, nil).SetAgentLifecycle(ctx, testUser("ops"), "node-b", deliverycore.AgentStateCordoned); err != nil {
 		t.Fatalf("cordon node-b: %v", err)
@@ -53,7 +57,7 @@ func TestFleetDrainMovesStatelessReplicasAndBlocksWithoutCapacity(t *testing.T) 
 	if !strings.Contains(draining.MaintenanceMessage, "drain paused") {
 		t.Fatalf("expected drain interruption message, got %q", draining.MaintenanceMessage)
 	}
-	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 {
+	if agents := allocationAgentIDs(mustListAllocations(t, store, ctx, service.ID)); agents["node-a"] != 1 || agents["node-b"] != 0 {
 		t.Fatalf("drain without capacity moved the replica: %v", agents)
 	}
 
@@ -170,7 +174,6 @@ func TestFleetNodeReturnPlacesPendingReplicas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	mustQueueAndDeployReplicas(t, store, ctx, envID, service.ID, 2)
 	placed := mustListAllocations(t, store, ctx, service.ID)
 	if len(placed) != 1 {
 		t.Fatalf("expected one placed replica before node return, got %d", len(placed))

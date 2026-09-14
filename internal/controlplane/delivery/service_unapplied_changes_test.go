@@ -87,6 +87,23 @@ func TestServiceUnappliedChangesIncludesReplicaCount(t *testing.T) {
 	}
 }
 
+func TestServiceUnappliedChangesIncludesPlacementRegion(t *testing.T) {
+	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{})
+	current := proto.Clone(deployed).(*platformv1.ServiceSpec)
+	current.PlacementRegion = "eu-west"
+
+	changes := diffServiceUnappliedChanges(current, deployed)
+	if got, want := len(changes), 1; got != want {
+		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
+	}
+	assertChange(t, changes[0], "placementRegion", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_ADD, "", "eu-west")
+
+	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"placementRegion"})
+	if discarded.GetPlacementRegion() != "" {
+		t.Fatalf("discarded placement region = %q, want empty", discarded.GetPlacementRegion())
+	}
+}
+
 func TestServiceUnappliedChangesIncludesRollingStrategy(t *testing.T) {
 	deployed := directImageServiceSpec("repo/app:v1", &platformv1.ServiceRuntime{})
 	current := proto.Clone(deployed).(*platformv1.ServiceSpec)
