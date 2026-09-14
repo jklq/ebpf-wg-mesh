@@ -4,7 +4,6 @@ package controlplane
 
 import (
 	"context"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"io"
 	"net"
 	"net/http"
@@ -215,24 +214,36 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Start with completed deployments so this exercises replacement after node
+	// loss, rather than racing the initial rollout with the restart.
+	original := mustAllocationOnAgent(t, store, failing.ID, deadID)
+	if err := store.markAllocationHealthyForTest(ctx, failing.ID, original.AllocationIPv6, 8080); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := agentAllocationIDsForTest(ctx, store, liveID)
+	if err != nil {
+		t.Fatalf("snapshot surviving agent inventory: %v", err)
+	}
+
+	// Stop reconciliation before disconnecting the agents. Expiring a session
+	// on the first server lets it perform the failover we intend to test on
+	// the second. Live sessions are intentionally not restored from storage.
+	first.stop()
 	deadCancel()
 	liveCancel()
-	fixtureLive(store).SetLastContactForTest(deadID, time.Now().UTC().Add(-2*deliverycore.AgentHealthyTTL))
-	first.stop()
 
 	second := startSystemControlPlane(t, opts)
 	reconnectedHello := restartAgentHello(liveID, "fd00:30::32")
 	reconnectedHello.SessionId += "-reconnected"
-	if allocs, err := second.server.store.reads.ListAllocationsByServiceID(ctx, ingressSvc.ID); err == nil {
-		for _, alloc := range allocs {
-			if alloc.AgentID == liveID {
-				reconnectedHello.Allocations = append(reconnectedHello.Allocations, &agentv1.ServiceCondition{AllocationId: alloc.ID})
-			}
-		}
+	for _, allocationID := range inventory {
+		reconnectedHello.Allocations = append(reconnectedHello.Allocations, &agentv1.ServiceCondition{AllocationId: allocationID})
 	}
 	reconnectedStream, reconnectedCancel := openAgentSync(t, second.server, liveCert, reconnectedHello)
 	defer reconnectedCancel()
 	_ = recvDesiredState(t, reconnectedStream)
+	if session, ok := fixtureLive(second.server.store).Session(liveID); !ok || !session.Ready || !session.Reachable || !session.Reconciled {
+		t.Fatalf("surviving agent was not admitted after reconnect: %+v (present=%t)", session, ok)
+	}
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 50 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		state, err := desiredStateForAgent(ctx, second.server.store, liveID)
 		if err != nil {
@@ -245,8 +256,11 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		}
 		return false, nil
 	}); err != nil {
-		t.Fatalf("failover did not move the stateless service onto the surviving agent: %v", err)
+		allocations, readErr := second.server.store.reads.ListAllocationsByServiceID(ctx, failing.ID)
+		session, connected := fixtureLive(second.server.store).Session(liveID)
+		t.Fatalf("failover did not move the stateless service onto the surviving agent: %v; allocations=%+v (read error=%v); surviving session=%+v (present=%t)", err, allocations, readErr, session, connected)
 	}
+	_ = requireNodeLossReplacement(t, second.server.store, failing.ID, original.ID, deadID, liveID)
 	deadState, err := desiredStateForAgent(ctx, second.server.store, deadID)
 	if err != nil {
 		t.Fatal(err)
