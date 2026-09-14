@@ -152,7 +152,8 @@ export function DeploymentCard({
 		failed: Boolean(failedStage) || tone === "failed",
 		lastSuccessfulCommitSha: service.lastSuccessfulCommitSha,
 	});
-	const [pendingAction, setPendingAction] = useState<DashboardDeploymentAction>();
+	const [pendingAction, setPendingAction] =
+		useState<DashboardDeploymentAction>();
 	const [actionError, setActionError] = useState<string>();
 	const [restartAllocationId, setRestartAllocationId] = useState("");
 	const actions = availableDeploymentActions(record, deploymentInProgress);
@@ -170,7 +171,9 @@ export function DeploymentCard({
 		try {
 			await onAction(record, action, allocationId);
 		} catch (cause) {
-			setActionError(formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`));
+			setActionError(
+				formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`),
+			);
 		} finally {
 			setPendingAction(undefined);
 		}
@@ -435,7 +438,8 @@ export function DeploymentHistoryRow({
 		build?.queuedAt ??
 		build?.finishedAt ??
 		allocation?.updatedAt;
-	const [pendingAction, setPendingAction] = useState<DashboardDeploymentAction>();
+	const [pendingAction, setPendingAction] =
+		useState<DashboardDeploymentAction>();
 	const [actionError, setActionError] = useState<string>();
 	const actions = availableDeploymentActions(record, deploymentInProgress);
 
@@ -446,7 +450,9 @@ export function DeploymentHistoryRow({
 		try {
 			await onAction(record, action);
 		} catch (cause) {
-			setActionError(formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`));
+			setActionError(
+				formatError(cause, `Unable to ${actionLabel(action).toLowerCase()}.`),
+			);
 		} finally {
 			setPendingAction(undefined);
 		}
@@ -631,7 +637,7 @@ export function DeploymentActionHistory({
 					{action.allocationId ? ` ${shortId(action.allocationId)}` : ""}
 				</span>
 			))}
-		</div>
+		</section>
 	);
 }
 

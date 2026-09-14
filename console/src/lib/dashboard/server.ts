@@ -29,8 +29,8 @@ import {
 	type DashboardAgentLifecycleState,
 	type DashboardConfig,
 	DashboardConfigError,
-	type DashboardDeploymentRecord,
 	type DashboardDeploymentAction,
+	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
 	type DashboardFleet,
 	type DashboardFleetAgent,
@@ -47,12 +47,6 @@ import {
 	type GitHubUserRepository,
 	type UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
-import {
-	assertProductionDashboardConfig,
-	formatDashboardStartupContract,
-	parseRuntimeProfile,
-	usesSecureCookies,
-} from "#/lib/dashboard/core/profile.server";
 import {
 	parseDevUsers,
 	parseIdentifier,
@@ -131,7 +125,10 @@ export async function checkDashboardReadiness(): Promise<{
 		return { status: "not_ready", failed: ["database"] };
 	}
 	try {
-		await createPostgresDashboardStore(getConfig(), getPool()).ensureInitialized();
+		await createPostgresDashboardStore(
+			getConfig(),
+			getPool(),
+		).ensureInitialized();
 	} catch {
 		return { status: "not_ready", failed: ["migrations"] };
 	}
