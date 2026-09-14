@@ -30,6 +30,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ env.BUN_VERSION }}-${{ hashFiles('console/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ env.BUN_VERSION }}-
       - name: Generate BPF objects
         run: |
           sudo apt-get update
@@ -115,10 +122,43 @@ jobs:
           sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
             "$(command -v go)" test -count=1 -timeout 10m -v ./internal/firewall
 
-  integration:
-    name: CockroachDB integration tests
+  go-integration:
+    name: Go integration tests (shard ${{ matrix.label }}/4)
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 0
+            label: 1
+          - shard: 1
+            label: 2
+          - shard: 2
+            label: 3
+          - shard: 3
+            label: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install integration test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zsh libbpf-dev
+          go generate ./internal/firewall/
+      - name: Run Go integration test shard
+        env:
+          INTEGRATION_SHARD_COUNT: 4
+          INTEGRATION_SHARD_INDEX: ${{ matrix.shard }}
+        run: make test-integration-go
+
+  console-integration:
+    name: Console database integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -128,11 +168,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - name: Install test tools and console dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes zsh libbpf-dev
-          go generate ./internal/firewall/
-          bun --cwd=console install --frozen-lockfile
-      - name: Run real CockroachDB integration suites
-        run: make test-integration
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ env.BUN_VERSION }}-${{ hashFiles('console/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ env.BUN_VERSION }}-
+      - name: Install console dependencies
+        run: bun --cwd=console install --frozen-lockfile
+      - name: Run console database integration suite
+        run: make test-integration-console
