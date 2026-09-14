@@ -21,6 +21,7 @@ bin/
 dist/
 *.test
 *.out
+*.o
 *.prof
 coverage.out
 coverage.txt
@@ -44,6 +45,9 @@ console/.nitro/
 console/.output/
 console/artifacts/
 console/test-results/
+
+# Stray local dashboard output (untracked test-run artifacts, never committed)
+/dashboard/
 
 # Local environment files
 .env
