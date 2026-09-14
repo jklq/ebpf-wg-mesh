@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 

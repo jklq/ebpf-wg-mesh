@@ -159,7 +159,6 @@ func resetTestStore(t *testing.T, store *persistence) {
 	t.Helper()
 
 	tables := []string{
-		"sandbox_profile_audit_events",
 		"control_plane_leases",
 		"control_plane_storage",
 		"environment_events",
