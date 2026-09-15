@@ -259,6 +259,85 @@ func TestStatusReportPublishesInvalidationForEvidenceOnlyObservation(t *testing.
 	}
 }
 
+func TestStatusReportPublishesInvalidationWhenEvaluationChangesNothing(t *testing.T) {
+	l := startLive(t)
+	now := time.Now().UTC()
+	l.ApplyDurable(journal.DurableState{
+		ClusterID: "test",
+		LogIndex:  1,
+		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
+		Services:  map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
+		Assignments: map[string]journal.Assignment{
+			"alloc": {
+				ID: "alloc", ServiceID: "svc", AgentID: "agent",
+				DesiredRolloutGeneration: 1, DesiredSpecRevision: 1,
+				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2",
+			},
+		},
+	})
+	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.AcceptReport("agent", "s1", 1, []string{"alloc"}, true); err != nil {
+		t.Fatal(err)
+	}
+	seed := AllocationObservation{
+		AllocationID: "alloc", RolloutGeneration: 1,
+		AppliedSpecRevision: 1, AppliedGeneration: 1,
+		Phase: "Running", Message: "running", Healthy: true,
+		AgentID: "agent", SessionID: "s1", Sequence: 1, ObservedAt: now,
+	}
+	if outcome, err := l.RecordObservation(seed); err != nil || !outcome.Changed {
+		t.Fatalf("seed: %v %+v", err, outcome)
+	}
+	var evaluations, invalidations int
+	d := &Delivery{live: l, store: &persistence{
+		// The deployment evaluation ran but changed nothing, as happens
+		// when the deployment record is already terminal: no transition,
+		// no journal mutation, no revision bump.
+		withProductTx: func(context.Context, func(context.Context, *sql.Tx) error) error {
+			evaluations++
+			return nil
+		},
+		withObservationTx: func(ctx context.Context, fn func(context.Context, *sql.Tx) (bool, error)) error {
+			invalidations++
+			changed, err := fn(ctx, nil)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				t.Error("invalidation transaction reported no change")
+			}
+			return nil
+		},
+	}}
+	report := &agentv1.StatusReport{
+		AgentId: "agent", SessionId: "s1", ObservationSequence: 2,
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId: "alloc", ServiceId: "svc",
+			DesiredRolloutGeneration: 1, AppliedRolloutGeneration: 1,
+			DesiredSpecRevision: 1, AppliedSpecRevision: 1,
+			Phase: "CrashLoop", Message: "crash loop", Healthy: false,
+			AllocationIpv4: "10.0.0.2", AllocationIpv6: "fd00::2",
+			Restart: &platformv1.RestartObservation{
+				RestartCount: 1, CrashLoop: true,
+				LastCause:                platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+				LastExitCode:             137,
+				AppliedRolloutGeneration: 1,
+			},
+		}},
+	}
+	if _, _, err := d.recordStatusReport(context.Background(), "agent", report); err != nil {
+		t.Fatalf("changed report: %v", err)
+	}
+	if evaluations != 1 {
+		t.Fatalf("deployment evaluated %d times, want 1", evaluations)
+	}
+	if invalidations != 1 {
+		t.Fatalf("unchanged evaluation published %d invalidations, want 1", invalidations)
+	}
+}
+
 func TestStatusReportChecksLiveOwnershipBeforePayload(t *testing.T) {
 	l := startLive(t)
 	l.resign()

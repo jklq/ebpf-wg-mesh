@@ -46,7 +46,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 	now := d.live.currentTime()
 	ingressChanged := false
 	statusInvalidated := false
-	workTriggered := false
+	stateChanged := false
 	changedEnvironments := make(map[string]struct{})
 	rolloutServiceIDs := make(map[string]struct{})
 	deploymentAllocationIDs := make(map[string]struct{})
@@ -77,7 +77,6 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		if !outcome.Changed || generation != assignment.DesiredRolloutGeneration {
 			continue
 		}
-		workTriggered = true
 		service := durable.Services[assignment.ServiceID]
 		changedEnvironments[service.EnvironmentID] = struct{}{}
 		rollout := durable.Rollouts[fmt.Sprintf("%s/%d", assignment.ServiceID, generation)]
@@ -91,24 +90,29 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		}
 	}
 	for allocationID := range deploymentAllocationIDs {
-		if err := d.evaluateObservedDeployment(ctx, allocationID); err != nil {
+		changed, err := d.evaluateObservedDeployment(ctx, allocationID)
+		if err != nil {
 			return false, nil, fmt.Errorf("evaluate deployment after observation: %w", err)
 		}
+		stateChanged = stateChanged || changed
 	}
 	for serviceID := range rolloutServiceIDs {
 		advanced, advanceErr := d.advanceRollout(ctx, serviceID, now)
 		if advanceErr != nil {
 			return false, nil, fmt.Errorf("advance rollout after status: %w", advanceErr)
 		}
+		stateChanged = stateChanged || advanced.Changed
 		ingressChanged = ingressChanged || advanced.IngressChanged
 		if advanced.EnvironmentID != "" {
 			changedEnvironments[advanced.EnvironmentID] = struct{}{}
 		}
 	}
-	if statusInvalidated && !workTriggered {
-		// Evidence-only updates change the rendered status without touching
-		// rollout or deployment state, so publish an explicit invalidation;
-		// otherwise status subscribers keep showing older crash evidence.
+	if statusInvalidated && !stateChanged {
+		// The rendered status changed but no transaction touched durable
+		// state (evidence-only updates, or a deployment/rollout evaluation
+		// that produced no transition, such as a terminal deployment), so
+		// no revision was bumped; publish an explicit invalidation, otherwise
+		// status subscribers keep showing the older rendered status.
 		if err := d.publishStatusInvalidation(ctx); err != nil {
 			return false, nil, fmt.Errorf("publish status invalidation: %w", err)
 		}
@@ -121,8 +125,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 }
 
 // publishStatusInvalidation wakes service-status subscribers after observation
-// changes that carry no rollout work. The live observation already holds the
-// fresh evidence; the revision bump is the invalidation signal.
+// changes that produced no durable state change. The live observation already
+// holds the fresh evidence; the revision bump is the invalidation signal.
 func (d *Delivery) publishStatusInvalidation(ctx context.Context) error {
 	if d.store == nil || d.store.withObservationTx == nil {
 		return nil
@@ -170,10 +174,16 @@ func domainForService(durable journal.DurableState, serviceID string) (journal.D
 	return journal.Domain{}, false
 }
 
-func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID string) error {
+// evaluateObservedDeployment folds a live observation into the deployment
+// record and reports whether durable state changed. A terminal deployment
+// (or a stale observation) yields no transition, in which case the
+// transaction bumps no revision and the caller must invalidate status
+// subscribers explicitly.
+func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID string) (bool, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
-	return d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	var changed bool
+	err := d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var serviceID, agentID string
 		var desired int64
 		err := tx.QueryRowContext(ctx, `SELECT service_id, agent_id, desired_rollout_generation
@@ -192,6 +202,12 @@ func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID 
 		if !ok || session.SessionID != obs.SessionID || obs.AgentID != agentID {
 			return nil
 		}
-		return d.store.applyAgentDeploymentObservationTx(ctx, tx, serviceID, desired, obs.Phase, obs.Message, obs.Healthy, obs.AppliedGeneration, agentID)
+		transitioned, err := d.store.applyAgentDeploymentObservationTx(ctx, tx, serviceID, desired, obs.Phase, obs.Message, obs.Healthy, obs.AppliedGeneration, agentID)
+		if err != nil {
+			return err
+		}
+		changed = transitioned
+		return nil
 	})
+	return changed, err
 }

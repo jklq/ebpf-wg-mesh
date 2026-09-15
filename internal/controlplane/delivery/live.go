@@ -173,7 +173,8 @@ func (d *Delivery) ResignLive() {
 }
 
 func (d *Delivery) EvaluateObservedDeploymentForTest(ctx context.Context, allocationID string) error {
-	return d.evaluateObservedDeployment(ctx, allocationID)
+	_, err := d.evaluateObservedDeployment(ctx, allocationID)
+	return err
 }
 
 func (d *Delivery) ServeLive(ctx context.Context) error {
@@ -335,7 +336,7 @@ func (d *Delivery) handleLiveEval(ctx context.Context, eval liveEval) {
 		if eval.AllocationID == "" {
 			return
 		}
-		if err := d.evaluateObservedDeployment(ctx, eval.AllocationID); err != nil {
+		if _, err := d.evaluateObservedDeployment(ctx, eval.AllocationID); err != nil {
 			return
 		}
 		if d.ingress != nil && d.live.Publishing() {
