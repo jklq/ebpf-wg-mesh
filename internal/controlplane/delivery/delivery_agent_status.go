@@ -45,6 +45,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 
 	now := d.live.currentTime()
 	ingressChanged := false
+	statusInvalidated := false
+	workTriggered := false
 	changedEnvironments := make(map[string]struct{})
 	rolloutServiceIDs := make(map[string]struct{})
 	deploymentAllocationIDs := make(map[string]struct{})
@@ -63,13 +65,19 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 			HealthyIPv4Ports: cond.GetHealthyIpv4Ports(), HealthyIPv6Ports: cond.GetHealthyIpv6Ports(), Restart: cond.GetRestart(),
 			AgentID: authenticatedAgentID, SessionID: report.GetSessionId(), Sequence: report.GetObservationSequence(), ObservedAt: now,
 		}
-		changed, err := d.live.RecordObservation(observation)
+		outcome, err := d.live.RecordObservation(observation)
 		if err != nil {
 			return false, nil, err
 		}
-		if !changed || generation != assignment.DesiredRolloutGeneration {
+		// Only the desired generation renders into service status; stale
+		// generations never invalidate subscribers.
+		if outcome.StatusInvalidated && generation == assignment.DesiredRolloutGeneration {
+			statusInvalidated = true
+		}
+		if !outcome.Changed || generation != assignment.DesiredRolloutGeneration {
 			continue
 		}
+		workTriggered = true
 		service := durable.Services[assignment.ServiceID]
 		changedEnvironments[service.EnvironmentID] = struct{}{}
 		rollout := durable.Rollouts[fmt.Sprintf("%s/%d", assignment.ServiceID, generation)]
@@ -97,11 +105,31 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 			changedEnvironments[advanced.EnvironmentID] = struct{}{}
 		}
 	}
+	if statusInvalidated && !workTriggered {
+		// Evidence-only updates change the rendered status without touching
+		// rollout or deployment state, so publish an explicit invalidation;
+		// otherwise status subscribers keep showing older crash evidence.
+		if err := d.publishStatusInvalidation(ctx); err != nil {
+			return false, nil, fmt.Errorf("publish status invalidation: %w", err)
+		}
+	}
 	environmentIDs := make([]string, 0, len(changedEnvironments))
 	for environmentID := range changedEnvironments {
 		environmentIDs = append(environmentIDs, environmentID)
 	}
 	return ingressChanged, environmentIDs, nil
+}
+
+// publishStatusInvalidation wakes service-status subscribers after observation
+// changes that carry no rollout work. The live observation already holds the
+// fresh evidence; the revision bump is the invalidation signal.
+func (d *Delivery) publishStatusInvalidation(ctx context.Context) error {
+	if d.store == nil || d.store.withObservationTx == nil {
+		return nil
+	}
+	return d.store.withObservationTx(ctx, func(context.Context, *sql.Tx) (bool, error) {
+		return true, nil
+	})
 }
 
 func validateStatusInventory(durable journal.DurableState, authenticatedAgentID string, report *agentv1.StatusReport) error {

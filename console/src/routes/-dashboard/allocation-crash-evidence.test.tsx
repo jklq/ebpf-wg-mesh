@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardAllocationStatus } from "#/lib/dashboard/core/types.server";
 import { AllocationCrashEvidence } from "./allocation-crash-evidence";
@@ -82,6 +82,88 @@ describe("allocation crash evidence", () => {
 				logType: "SERVICE_LOG_TYPE_RUNTIME",
 			}),
 		});
+	});
+
+	function crashedAllocations() {
+		return [
+			allocation({
+				restart: {
+					restartCount: 5,
+					crashLoop: true,
+					lastCause: "RESTART_CAUSE_OOM_KILL",
+					message: "crash loop after OOM kill",
+					lastExitCode: 137,
+					lastSignal: 0,
+					awaitingRestart: false,
+				},
+			}),
+		];
+	}
+
+	function crashLogLine() {
+		return {
+			observedAt: new Date("2026-08-13T10:00:00Z"),
+			allocationId: "alloc-1",
+			agentId: "agent-1",
+			stream: "stderr",
+			rolloutGeneration: 1,
+			sequence: 1,
+			line: "panic: runtime error",
+			logType: "SERVICE_LOG_TYPE_RUNTIME",
+		};
+	}
+
+	it("retries an empty log tail until ingestion lands", async () => {
+		vi.useFakeTimers();
+		try {
+			serverFns.fetchServiceLogs
+				.mockReset()
+				.mockResolvedValueOnce([])
+				.mockResolvedValue([crashLogLine()]);
+			render(
+				<AllocationCrashEvidence
+					serviceId="svc-1"
+					allocations={crashedAllocations()}
+					logsEnabled
+				/>,
+			);
+			await act(async () => {});
+			expect(serverFns.fetchServiceLogs).toHaveBeenCalledTimes(1);
+			expect(screen.getByText("Loading crash logs…")).toBeTruthy();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1600);
+			});
+			expect(screen.getByText("panic: runtime error")).toBeTruthy();
+			expect(serverFns.fetchServiceLogs).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("stops retrying an empty log tail after bounded attempts", async () => {
+		vi.useFakeTimers();
+		try {
+			serverFns.fetchServiceLogs.mockReset().mockResolvedValue([]);
+			render(
+				<AllocationCrashEvidence
+					serviceId="svc-1"
+					allocations={crashedAllocations()}
+					logsEnabled
+				/>,
+			);
+			await act(async () => {});
+			for (let i = 0; i < 5; i++) {
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(1600);
+				});
+			}
+			expect(serverFns.fetchServiceLogs).toHaveBeenCalledTimes(5);
+			expect(
+				screen.getByText("No runtime logs retained for this allocation."),
+			).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("labels readiness failures as probe-not-ready, not a crash", async () => {

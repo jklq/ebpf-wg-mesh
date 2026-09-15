@@ -12,6 +12,8 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/restartpolicy"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestReconcileDoesNotRecreateWhenPolicyIsNever(t *testing.T) {
@@ -293,9 +295,13 @@ func TestReconcilePreservesCrashLoopAfterContainerRemoved(t *testing.T) {
 	engine.created["alloc-1"] = true
 	engine.stopped["alloc-1"] = false
 	engine.status["alloc-1"] = serviceStatus{AppliedSpecRevision: 1, AppliedRolloutGeneration: 1}
+	ensuredBefore := len(engine.ensured)
 	after, err := runtime.Reconcile(context.Background(), state)
 	if err != nil {
 		t.Fatalf("removed-container Reconcile: %v", err)
+	}
+	if len(engine.ensured) != ensuredBefore {
+		t.Fatalf("preserved crash-loop started a container: ensured=%v inspected=%v", engine.ensured, engine.inspected)
 	}
 	cond := after.GetServices()[0]
 	if cond.GetPhase() != restartpolicy.PhaseCrashLoop {
@@ -310,6 +316,93 @@ func TestReconcilePreservesCrashLoopAfterContainerRemoved(t *testing.T) {
 	}
 	if got.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO {
 		t.Fatalf("last cause = %s, want EXIT_NONZERO", got.GetLastCause())
+	}
+}
+
+func TestReconcilePreservedTerminalNeverStartsMissingContainer(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 13, 15, 0, 0, 0, time.UTC)
+	onFailure := &platformv1.ServiceRestart{Policy: platformv1.RestartPolicy_RESTART_POLICY_ON_FAILURE}
+	cases := []struct {
+		name        string
+		restart     *platformv1.ServiceRestart
+		observation *platformv1.RestartObservation
+		wantPhase   string
+	}{
+		{
+			name:    "crash loop",
+			restart: onFailure,
+			observation: &platformv1.RestartObservation{
+				RestartCount: 5, CrashLoop: true,
+				LastCause:                platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+				LastExitCode:             137,
+				AppliedRolloutGeneration: 1,
+			},
+			wantPhase: restartpolicy.PhaseCrashLoop,
+		},
+		{
+			name:    "backoff",
+			restart: onFailure,
+			observation: &platformv1.RestartObservation{
+				RestartCount: 1, AwaitingRestart: true,
+				NextRestartAt:            timestamppb.New(now.Add(30 * time.Second)),
+				LastCause:                platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO,
+				LastExitCode:             2,
+				AppliedRolloutGeneration: 1,
+			},
+			wantPhase: restartpolicy.PhaseBackoff,
+		},
+		{
+			name:    "terminal stop",
+			restart: &platformv1.ServiceRestart{Policy: platformv1.RestartPolicy_RESTART_POLICY_NEVER},
+			observation: &platformv1.RestartObservation{
+				LastCause:                platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO,
+				LastExitCode:             3,
+				AppliedRolloutGeneration: 1,
+			},
+			wantPhase: restartpolicy.PhaseStopped,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			engine := &fakeEngine{missing: map[string]bool{"alloc-1": true}}
+			runtime := newRestartTestRuntime(t, dir, engine, restartpolicy.NewManualClock(now))
+			state := restartState(tc.restart)
+			state.Services[0].RestartObservation = tc.observation
+			var cond *agentv1.ServiceCondition
+			// Repeated reconciles simulate safety resyncs: none may start the
+			// missing container.
+			for i := 0; i < 3; i++ {
+				report, err := runtime.Reconcile(context.Background(), state)
+				if err != nil {
+					t.Fatalf("reconcile %d: %v", i, err)
+				}
+				cond = report.GetServices()[0]
+				if cond.GetPhase() != tc.wantPhase {
+					t.Fatalf("reconcile %d: phase = %q, want %q", i, cond.GetPhase(), tc.wantPhase)
+				}
+				if cond.GetHealthy() {
+					t.Fatalf("reconcile %d: terminal allocation must not be healthy", i)
+				}
+			}
+			if len(engine.ensured) != 0 {
+				t.Fatalf("terminal allocation started a missing container: ensured=%v", engine.ensured)
+			}
+			if len(engine.inspected) != 3 {
+				t.Fatalf("saved state was not checked before deciding: inspected=%v", engine.inspected)
+			}
+			got := cond.GetRestart()
+			want := tc.observation
+			if got.GetRestartCount() != want.GetRestartCount() ||
+				got.GetLastExitCode() != want.GetLastExitCode() ||
+				got.GetLastCause() != want.GetLastCause() ||
+				got.GetCrashLoop() != want.GetCrashLoop() ||
+				got.GetAwaitingRestart() != want.GetAwaitingRestart() {
+				t.Fatalf("crash evidence not preserved: got=%+v want=%+v", got, want)
+			}
+		})
 	}
 }
 

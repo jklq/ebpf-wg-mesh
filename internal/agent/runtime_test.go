@@ -22,10 +22,12 @@ import (
 
 type fakeEngine struct {
 	ensured    []string
+	inspected  []string
 	removed    []string
 	drainCalls []string
 	status     map[string]serviceStatus
 	created    map[string]bool
+	missing    map[string]bool
 	stopped    map[string]bool
 	drained    map[string]bool
 	forced     map[string]bool
@@ -76,13 +78,35 @@ func TestPersistDesiredServiceDoesNotRewriteUnchangedState(t *testing.T) {
 
 func (f *fakeEngine) EnsureService(_ context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
 	f.ensured = append(f.ensured, svc.GetAllocationId())
+	created := f.created[svc.GetAllocationId()] || f.missing[svc.GetAllocationId()]
+	delete(f.missing, svc.GetAllocationId())
 	status := f.status[svc.GetAllocationId()]
 	if f.stopped[svc.GetAllocationId()] {
 		status.Running = false
 	} else {
 		status.Running = true
 	}
-	return status, f.created[svc.GetAllocationId()], nil
+	return status, created, nil
+}
+
+// InspectService mirrors the real engine: no container exists while created
+// (the next EnsureService call will create it) or missing is set, or when the
+// recorded status belongs to a stale rollout generation.
+func (f *fakeEngine) InspectService(_ context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
+	f.inspected = append(f.inspected, svc.GetAllocationId())
+	if f.missing[svc.GetAllocationId()] || f.created[svc.GetAllocationId()] {
+		return serviceStatus{}, false, nil
+	}
+	status := f.status[svc.GetAllocationId()]
+	if status.AppliedRolloutGeneration != svc.GetDesiredRolloutGeneration() {
+		return serviceStatus{}, false, nil
+	}
+	if f.stopped[svc.GetAllocationId()] {
+		status.Running = false
+	} else {
+		status.Running = true
+	}
+	return status, true, nil
 }
 
 func (f *fakeEngine) RemoveService(_ context.Context, allocationID string) error {

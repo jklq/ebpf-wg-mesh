@@ -16,6 +16,11 @@ import { fetchServiceLogs } from "./server-fns";
 import { shortId } from "./service-utils";
 
 const CRASH_LOG_TAIL_LIMIT = 30;
+// Crash status reaches the dashboard before the agent's buffered runtime batch
+// reaches ClickHouse, so an empty tail is retried a few times before
+// concluding that no logs were retained.
+const CRASH_LOG_EMPTY_RETRIES = 4;
+const CRASH_LOG_EMPTY_RETRY_DELAY_MS = 1500;
 
 export function AllocationCrashEvidence({
 	serviceId,
@@ -86,6 +91,7 @@ function AllocationCrashCard({
 				<CrashFacts allocation={allocation} />
 			</div>
 			<CrashLogTail
+				key={`${serviceId}:${allocation.allocationId}:${logsEnabled}`}
 				serviceId={serviceId}
 				allocationId={allocation.allocationId}
 				enabled={logsEnabled}
@@ -132,6 +138,7 @@ function CrashLogTail({
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string>();
 	const [open, setOpen] = useState(true);
+	const [emptyRetries, setEmptyRetries] = useState(0);
 
 	const load = useCallback(async () => {
 		if (!enabled) return;
@@ -173,7 +180,26 @@ function CrashLogTail({
 		void load();
 	}, [load]);
 
+	useEffect(() => {
+		if (
+			!enabled ||
+			loading ||
+			error ||
+			lines.length > 0 ||
+			emptyRetries >= CRASH_LOG_EMPTY_RETRIES
+		) {
+			return;
+		}
+		const timer = setTimeout(() => {
+			setEmptyRetries((count) => count + 1);
+			void load();
+		}, CRASH_LOG_EMPTY_RETRY_DELAY_MS);
+		return () => clearTimeout(timer);
+	}, [enabled, loading, error, lines.length, emptyRetries, load]);
+
 	if (!enabled) return null;
+	const awaitingLogs =
+		!error && lines.length === 0 && emptyRetries < CRASH_LOG_EMPTY_RETRIES;
 	return (
 		<div className="border-t border-[rgba(80,76,71,0.45)]">
 			<button
@@ -192,12 +218,12 @@ function CrashLogTail({
 							{error}
 						</div>
 					)}
-					{!error && loading && lines.length === 0 && (
+					{awaitingLogs && (
 						<div className="py-2 font-mono text-[11px] text-dim">
 							Loading crash logs…
 						</div>
 					)}
-					{!error && !loading && lines.length === 0 && (
+					{!error && !loading && lines.length === 0 && !awaitingLogs && (
 						<div className="py-2 font-mono text-[11px] text-dim">
 							No runtime logs retained for this allocation.
 						</div>
