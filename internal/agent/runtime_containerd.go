@@ -277,6 +277,11 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		cond.AllocationIpv4 = svc.GetPrivateIpv4()
 		cond.AllocationIpv6 = svc.GetPrivateIpv6()
 		cond.Healthy = false
+		// Preserve crash evidence across the drain: the control plane
+		// replaces the live observation with this condition, so a nil
+		// restart would drop the prior exit cause and count from the
+		// draining overlay.
+		cond.Restart = r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
 		if drained {
 			cond.Phase = "Drained"
 			if forced {

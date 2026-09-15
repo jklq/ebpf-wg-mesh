@@ -670,6 +670,61 @@ func TestContainerdRuntimeDrainDoesNotEnsureReplacement(t *testing.T) {
 	}
 }
 
+func TestContainerdRuntimeDrainPreservesRestartEvidence(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := &fakeEngine{
+		status: map[string]serviceStatus{"alloc-1": {
+			AllocationIPv4: "10.200.0.2", AllocationIPv6: "fd00::10",
+		}},
+		created: map[string]bool{"alloc-1": true},
+	}
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: engine,
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saved := &platformv1.RestartObservation{
+		RestartCount: 5, CrashLoop: true,
+		LastCause:                platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+		LastExitCode:             137,
+		AppliedRolloutGeneration: 1,
+		Message:                  "crash loop after OOM kill",
+	}
+	if err := runtime.saveObservation("alloc-1", saved); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			DesiredSpecRevision:      1,
+			DesiredRolloutGeneration: 1,
+			Intent:                   agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN,
+			DrainDeadline:            timestamppb.New(time.Now().Add(time.Minute)),
+			PrivateIpv4:              "10.200.0.2",
+			PrivateIpv6:              "fd00::10",
+			Spec:                     &platformv1.ResolvedServiceSpec{Image: "example.com/test:1"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	cond := report.Services[0]
+	if cond.GetPhase() != "Draining" {
+		t.Fatalf("expected draining report, got %+v", cond)
+	}
+	restart := cond.GetRestart()
+	if restart.GetRestartCount() != 5 || !restart.GetCrashLoop() ||
+		restart.GetLastExitCode() != 137 ||
+		restart.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
+		t.Fatalf("drain dropped restart evidence: %+v", restart)
+	}
+}
+
 func TestContainerdRuntimeForceKillAfterDrainDeadline(t *testing.T) {
 	t.Parallel()
 
