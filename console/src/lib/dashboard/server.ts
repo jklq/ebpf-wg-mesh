@@ -217,6 +217,16 @@ export function renameEnvironmentFromSession(input: {
 	return onboarding.renameEnvironmentFromSession(getDashboardRuntime(), input);
 }
 
+export function updateEnvironmentAutoDeployFromSession(input: {
+	environmentId: string;
+	autoDeploy: boolean;
+}) {
+	return onboarding.updateEnvironmentAutoDeployFromSession(
+		getDashboardRuntime(),
+		input,
+	);
+}
+
 export function deleteEnvironmentFromSession(environmentId: string) {
 	return onboarding.deleteEnvironmentFromSession(
 		getDashboardRuntime(),

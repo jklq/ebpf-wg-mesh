@@ -13,19 +13,26 @@ import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 
 import { EnvironmentSwitcher } from "./environment-switcher";
 
-const { doRenameEnvironmentMock, doDeleteEnvironmentMock } = vi.hoisted(() => ({
+const {
+	doRenameEnvironmentMock,
+	doDeleteEnvironmentMock,
+	doUpdateEnvironmentAutoDeployMock,
+} = vi.hoisted(() => ({
 	doRenameEnvironmentMock: vi.fn(),
 	doDeleteEnvironmentMock: vi.fn(),
+	doUpdateEnvironmentAutoDeployMock: vi.fn(),
 }));
 
 vi.mock("./server-fns", () => ({
 	doRenameEnvironment: doRenameEnvironmentMock,
 	doDeleteEnvironment: doDeleteEnvironmentMock,
+	doUpdateEnvironmentAutoDeploy: doUpdateEnvironmentAutoDeployMock,
 }));
 
 beforeEach(() => {
 	doRenameEnvironmentMock.mockReset().mockResolvedValue(undefined);
 	doDeleteEnvironmentMock.mockReset().mockResolvedValue(undefined);
+	doUpdateEnvironmentAutoDeployMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(cleanup);
@@ -145,6 +152,47 @@ describe("EnvironmentSwitcher", () => {
 				.disabled,
 		).toBe(true);
 	});
+
+	it("toggles auto-deploy from the row menu", async () => {
+		const onChanged = vi.fn();
+		render(
+			<EnvironmentSwitcher
+				state={state()}
+				onCreateEnvironment={() => {}}
+				onChanged={onChanged}
+				onNavigateEnvironment={() => {}}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Environment" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: /environment actions for staging/i }),
+		);
+		fireEvent.click(
+			screen.getByRole("menuitemcheckbox", { name: "Turn auto-deploy off" }),
+		);
+
+		await waitFor(() =>
+			expect(doUpdateEnvironmentAutoDeployMock).toHaveBeenCalledWith({
+				data: { environmentId: "environment-2", autoDeploy: false },
+			}),
+		);
+		expect(onChanged).toHaveBeenCalled();
+	});
+
+	it("marks environments with auto-deploy off as manual", () => {
+		render(
+			<EnvironmentSwitcher
+				state={state()}
+				onCreateEnvironment={() => {}}
+				onChanged={() => {}}
+				onNavigateEnvironment={() => {}}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Environment" }));
+		expect(screen.getAllByText("manual").length).toBeGreaterThan(0);
+	});
 });
 
 function state(): DashboardHomeState {
@@ -154,6 +202,7 @@ function state(): DashboardHomeState {
 		name: "production",
 		kind: "persistent" as const,
 		isProduction: true,
+		autoDeploy: false,
 	};
 	const staging = {
 		id: "environment-2",
@@ -161,6 +210,7 @@ function state(): DashboardHomeState {
 		name: "staging",
 		kind: "persistent" as const,
 		isProduction: false,
+		autoDeploy: true,
 	};
 	return {
 		user: { id: "user-1", email: "user@example.com" },

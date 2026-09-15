@@ -85,6 +85,7 @@ describe("dashboard-services revision contract", () => {
 					name: "Production",
 					kind: "persistent" as const,
 					isProduction: true,
+					autoDeploy: false,
 				},
 			},
 		};
@@ -250,6 +251,7 @@ function loader(
 			name: "Production",
 			kind: "persistent",
 			isProduction: true,
+			autoDeploy: false,
 		},
 		services,
 		servicesRevision,

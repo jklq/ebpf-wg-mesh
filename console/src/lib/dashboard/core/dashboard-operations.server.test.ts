@@ -113,6 +113,7 @@ describe("dashboard operations", () => {
 				name: "Production",
 				kind: "persistent",
 				isProduction: true,
+				autoDeploy: false,
 			},
 			{
 				id: "environment-2",
@@ -120,6 +121,7 @@ describe("dashboard operations", () => {
 				name: "Staging",
 				kind: "persistent",
 				isProduction: false,
+				autoDeploy: true,
 			},
 		];
 		harness.platform.services = [
@@ -522,6 +524,7 @@ describe("dashboard operations", () => {
 				name: "Production",
 				kind: "persistent",
 				isProduction: true,
+				autoDeploy: false,
 			},
 		];
 
@@ -597,6 +600,7 @@ describe("dashboard operations", () => {
 				name: "Production",
 				kind: "persistent",
 				isProduction: true,
+				autoDeploy: false,
 			},
 		];
 

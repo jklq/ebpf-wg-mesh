@@ -36,6 +36,7 @@ func toProtoEnvironment(rec deliverycore.EnvironmentRecord) *platformv1.Environm
 		Name:                    rec.Name,
 		Kind:                    platformv1.EnvironmentKind_ENVIRONMENT_KIND_PERSISTENT,
 		IsProduction:            rec.IsProduction,
+		AutoDeploy:              rec.AutoDeploy,
 		CopiedFromEnvironmentId: rec.CopiedFromEnvironmentID,
 		CreatedAt:               ts(rec.CreatedAt),
 		UpdatedAt:               ts(rec.UpdatedAt),

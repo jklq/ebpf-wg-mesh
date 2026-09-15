@@ -146,6 +146,10 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { environmentId: string; name: string },
 	): Promise<DashboardEnvironment>;
+	updateEnvironmentAutoDeploy(
+		user: DashboardUser,
+		input: { environmentId: string; autoDeploy: boolean },
+	): Promise<DashboardEnvironment>;
 	deleteEnvironment(user: DashboardUser, environmentId: string): Promise<void>;
 	releaseEnvironment(
 		user: DashboardUser,

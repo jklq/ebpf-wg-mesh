@@ -508,6 +508,7 @@ function state(): DashboardHomeState {
 		name: "production",
 		kind: "persistent" as const,
 		isProduction: true,
+		autoDeploy: false,
 	};
 	return {
 		user: { id: "user-1", email: "user@example.com" },

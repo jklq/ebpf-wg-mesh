@@ -134,6 +134,7 @@ type Environment struct {
 	Name                    string    `json:"name"`
 	Kind                    string    `json:"kind"`
 	IsProduction            bool      `json:"is_production"`
+	AutoDeploy              bool      `json:"auto_deploy"`
 	NetworkIdentity         int64     `json:"network_identity"`
 	CopiedFromEnvironmentID *string   `json:"copied_from_environment_id"`
 	CreatedAt               time.Time `json:"created_at"`

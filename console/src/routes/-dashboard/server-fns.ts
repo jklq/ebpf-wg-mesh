@@ -122,6 +122,18 @@ export const doRenameEnvironment = createServerFn({ method: "POST" })
 		(await import("#/lib/dashboard/server")).renameEnvironmentFromSession(data),
 	);
 
+export const doUpdateEnvironmentAutoDeploy = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({ environmentId: identifier, autoDeploy: z.boolean() })
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/server")
+		).updateEnvironmentAutoDeployFromSession(data),
+	);
+
 export const doDeleteEnvironment = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => environmentIdInput.parse(input))
 	.handler(async ({ data }) =>

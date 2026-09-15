@@ -41,6 +41,7 @@ import {
 	type DashboardServiceSourceSummary,
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
+	type DashboardSourceRevision,
 	type DashboardSourceSpec,
 	type DashboardUnappliedChange,
 	type DashboardUnappliedChangeAction,
@@ -121,9 +122,11 @@ import {
 	type SetAgentLifecycleRequest,
 	SetAgentLifecycleRequestSchema,
 	SourceAccessStateSchema,
+	type SourceRevision,
 	type SourceStateSummary,
 	UpdateAgentRequestSchema,
 	UpdateDomainBindingRequestSchema,
+	UpdateEnvironmentAutoDeployRequestSchema,
 	type UpdateServiceRequest,
 	UpdateServiceRequestSchema,
 } from "#/lib/platform-gen/platform_pb";
@@ -200,6 +203,7 @@ export function toEnvironment(environment: Environment): DashboardEnvironment {
 		name: requireString(environment.name, "environment.name"),
 		kind: "persistent",
 		isProduction: environment.isProduction,
+		autoDeploy: environment.autoDeploy,
 		copiedFromEnvironmentId: environment.copiedFromEnvironmentId || undefined,
 		createdAt: optionalDate(environment.createdAt),
 		updatedAt: optionalDate(environment.updatedAt),
@@ -476,6 +480,19 @@ function toServiceSourceSummary(
 	return {
 		desiredSpec: toSourceSpec(state.desiredSpec),
 		resolvedBinding: toResolvedSourceBinding(state.resolvedBinding),
+		latestRevision: toSourceRevision(state.latestRevision),
+	};
+}
+
+function toSourceRevision(
+	revision: SourceRevision | undefined,
+): DashboardSourceRevision | undefined {
+	if (!revision?.commitSha) {
+		return undefined;
+	}
+	return {
+		commitSha: revision.commitSha,
+		observedAt: optionalDate(revision.observedAt),
 	};
 }
 
@@ -833,6 +850,13 @@ export function toRenameEnvironmentRequest(input: {
 	name: string;
 }) {
 	return create(RenameEnvironmentRequestSchema, input);
+}
+
+export function toUpdateEnvironmentAutoDeployRequest(input: {
+	environmentId: string;
+	autoDeploy: boolean;
+}) {
+	return create(UpdateEnvironmentAutoDeployRequestSchema, input);
 }
 
 export function toDeleteEnvironmentRequest(environmentId: string) {

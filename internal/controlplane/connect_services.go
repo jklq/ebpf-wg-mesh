@@ -70,6 +70,11 @@ func (a connectPlatformService) RenameEnvironment(ctx context.Context, req *conn
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) UpdateEnvironmentAutoDeploy(ctx context.Context, req *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error) {
+	result, err := a.service.UpdateEnvironmentAutoDeploy(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) DeleteEnvironment(ctx context.Context, req *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error) {
 	result, err := a.service.DeleteEnvironment(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

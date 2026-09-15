@@ -310,6 +310,7 @@ export function ServicePanel({
 									status={status}
 									project={project}
 									domains={state.domainBindings}
+									autoDeploy={state.environment?.autoDeploy ?? true}
 									onOpenVariables={(key) => {
 										setSeedVariableKey(key);
 										onTabChange("variables");
