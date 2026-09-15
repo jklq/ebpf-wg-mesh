@@ -67,7 +67,9 @@ func CanonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 			if spec.BuildRecipe == nil {
 				spec.BuildRecipe = &platformv1.BuildRecipe{}
 			}
-			if spec.BuildRecipe.DockerfilePath == "" {
+			spec.BuildRecipe.DockerfilePath = strings.TrimSpace(spec.BuildRecipe.GetDockerfilePath())
+			spec.BuildRecipe.ContextDir = strings.TrimSpace(spec.BuildRecipe.GetContextDir())
+			if spec.BuildRecipe.Builder == platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE && spec.BuildRecipe.DockerfilePath == "" {
 				spec.BuildRecipe.DockerfilePath = "Dockerfile"
 			}
 			if spec.BuildRecipe.ContextDir == "" {
@@ -87,6 +89,18 @@ func ValidateServicePlacement(spec *platformv1.ServiceSpec) error {
 		return errors.New("placement region must be a lowercase operator region label")
 	}
 	return nil
+}
+
+func ValidateBuildRecipe(spec *platformv1.ServiceSpec) error {
+	if source.DesiredSourceSpec(spec) == nil {
+		return nil
+	}
+	switch source.DesiredSourceSpec(spec).GetBuildRecipe().GetBuilder() {
+	case platformv1.BuilderKind_BUILDER_KIND_RAILPACK, platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE:
+		return nil
+	default:
+		return errors.New("build recipe builder is required: railpack or dockerfile")
+	}
 }
 
 func serviceRuntime(spec *platformv1.ServiceSpec) *platformv1.ServiceRuntime {
@@ -157,6 +171,9 @@ func equalDesiredSourceSpec(a, b *platformv1.ServiceSourceSpec) bool {
 	}
 	if ar == nil {
 		return true
+	}
+	if ar.GetBuilder() != br.GetBuilder() {
+		return false
 	}
 	return sameWithDefault(ar.GetDockerfilePath(), br.GetDockerfilePath(), "Dockerfile") &&
 		sameWithDefault(ar.GetContextDir(), br.GetContextDir(), ".")

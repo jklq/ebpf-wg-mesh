@@ -17,6 +17,7 @@ export type ConfirmRepositoryFn = (input: {
 		repositorySelector: string;
 		serviceName?: string;
 		trackedRef?: string;
+		builder?: "BUILDER_KIND_RAILPACK" | "BUILDER_KIND_DOCKERFILE";
 		dockerfilePath?: string;
 		contextDir?: string;
 		cpuMillis?: number;

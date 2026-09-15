@@ -421,8 +421,23 @@ export function deploymentMeta(
 	const parts: string[] = [];
 	if (build?.commitSha) parts.push(shortSha(build.commitSha));
 	if (build?.commitAuthor) parts.push(build.commitAuthor);
+	const builder = builderLabel(build?.builder);
+	if (builder) parts.push(builder);
 	if (timestamp) parts.push(formatRelativeAge(timestamp, nowMs));
 	return parts;
+}
+
+export function builderLabel(
+	builder: DashboardBuildStatus["builder"],
+): string | undefined {
+	switch (builder) {
+		case "BUILDER_KIND_RAILPACK":
+			return "Railpack";
+		case "BUILDER_KIND_DOCKERFILE":
+			return "Dockerfile";
+		default:
+			return undefined;
+	}
 }
 
 export function toneToHealthClass(

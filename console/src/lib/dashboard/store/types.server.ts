@@ -28,6 +28,7 @@ export interface OnboardingRow {
 	service_id: string;
 	repository_selector: string;
 	tracked_ref: string;
+	builder: string;
 	dockerfile_path: string;
 	context_dir: string;
 	hostname: string;
@@ -66,6 +67,7 @@ export function onboardingDraftFromRow(
 		serviceId: row.service_id,
 		repositorySelector: row.repository_selector,
 		trackedRef: row.tracked_ref,
+		builder: row.builder,
 		dockerfilePath: row.dockerfile_path,
 		contextDir: row.context_dir,
 		hostname: row.hostname,

@@ -94,7 +94,11 @@ function pendingServiceRecord(
 				provider: "github",
 				repositorySelector: entry.selector,
 				trackedRef: "main",
-				buildRecipe: { dockerfilePath: "", contextDir: "." },
+				buildRecipe: {
+					builder: "BUILDER_KIND_RAILPACK",
+					dockerfilePath: "",
+					contextDir: ".",
+				},
 			},
 			runtime: {
 				env: {},

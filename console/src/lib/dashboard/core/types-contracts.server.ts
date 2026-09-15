@@ -1,6 +1,7 @@
 import type {
 	DashboardAgentEnrollment,
 	DashboardAgentLifecycleState,
+	DashboardBuilderKind,
 	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardDomainBinding,
@@ -345,6 +346,7 @@ export interface UpdateServiceInput {
 	memoryMebibytes?: number;
 	repositorySelector?: string;
 	trackedRef?: string;
+	builder?: DashboardBuilderKind;
 	dockerfilePath?: string;
 	contextDir?: string;
 	restart?: DashboardRestartSpec;
