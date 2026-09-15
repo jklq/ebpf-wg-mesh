@@ -19,7 +19,7 @@ import {
 	errorMsg,
 	statusDotClass,
 } from "#/lib/ui-classes";
-
+import { AllocationCrashEvidence } from "./allocation-crash-evidence";
 import {
 	buildStepHint,
 	deploymentBadgeLabel,
@@ -382,6 +382,12 @@ export function DeploymentCard({
 				</div>
 			)}
 
+			<AllocationCrashEvidence
+				serviceId={service.id}
+				allocations={allocationsForDeployment(record, allocation, allocations)}
+				logsEnabled={logsEnabled}
+			/>
+
 			{retention && (
 				<div className="border-t border-dashed border-[rgba(80,76,71,0.7)] px-7 py-3 text-xs leading-[1.45] text-muted max-[900px]:px-4">
 					{service.lastSuccessfulCommitSha ? (
@@ -399,6 +405,35 @@ export function DeploymentCard({
 			)}
 		</section>
 	);
+}
+
+function allocationsForDeployment(
+	record: DashboardDeploymentRecord,
+	allocation: DashboardAllocationStatus | undefined,
+	allocations: Array<DashboardAllocationStatus>,
+): Array<DashboardAllocationStatus> {
+	const seen = new Set<string>();
+	const out: Array<DashboardAllocationStatus> = [];
+	const push = (entry: DashboardAllocationStatus | undefined) => {
+		if (entry && !seen.has(entry.allocationId)) {
+			seen.add(entry.allocationId);
+			out.push(entry);
+		}
+	};
+	push(allocation);
+	if (record.rolloutGeneration > 0) {
+		for (const entry of allocations) {
+			if (
+				entry.desiredRolloutGeneration === record.rolloutGeneration ||
+				entry.appliedRolloutGeneration === record.rolloutGeneration
+			) {
+				push(entry);
+			}
+		}
+		if (out.length > 0) return out;
+	}
+	for (const entry of allocations) push(entry);
+	return out;
 }
 
 export function DeploymentHistoryRow({

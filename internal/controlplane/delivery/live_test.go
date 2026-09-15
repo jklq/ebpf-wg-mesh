@@ -355,6 +355,78 @@ func TestLiveObservationIgnoresMessageAndPhaseDetail(t *testing.T) {
 	}
 }
 
+func TestLiveObservationStoresCrashEvidenceWithoutTriggeringWork(t *testing.T) {
+	l := startLive(t)
+	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.AcceptReport("agent", "s1", 1, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	base := AllocationObservation{
+		AllocationID: "alloc", RolloutGeneration: 1, Phase: "Backoff", Healthy: false,
+		AgentID: "agent", SessionID: "s1", Sequence: 1,
+		Restart: &platformv1.RestartObservation{
+			RestartCount: 1, LastCause: platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO,
+			LastExitCode: 1, Message: "restarting",
+		},
+	}
+	if changed, err := l.RecordObservation(base); err != nil || !changed {
+		t.Fatalf("first: %v %v", changed, err)
+	}
+	if err := l.AcceptReport("agent", "s1", 2, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	next := base
+	next.Sequence = 2
+	next.Message = "reworded backoff"
+	next.Restart = platformv1RestartClone(base.Restart)
+	next.Restart.RestartCount = 3
+	next.Restart.LastExitCode = 137
+	next.Restart.LastCause = platformv1.RestartCause_RESTART_CAUSE_OOM_KILL
+	next.Restart.Message = "OOM kill"
+	if changed, err := l.RecordObservation(next); err != nil || changed {
+		t.Fatalf("crash evidence update triggered work: %v %v", changed, err)
+	}
+	stored, ok := l.Observation("alloc", 1)
+	if !ok {
+		t.Fatal("missing stored observation")
+	}
+	if stored.Restart.GetRestartCount() != 3 || stored.Restart.GetLastExitCode() != 137 {
+		t.Fatalf("stored crash evidence is stale: %+v", stored.Restart)
+	}
+	if stored.Restart.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
+		t.Fatalf("stored cause = %s, want OOM_KILL", stored.Restart.GetLastCause())
+	}
+	if stored.Message != "reworded backoff" {
+		t.Fatalf("stored message = %q, want reworded backoff", stored.Message)
+	}
+}
+
+func TestLiveOverlayPreservesCrashEvidenceWhenUnavailable(t *testing.T) {
+	now := time.Now().UTC()
+	rec := AllocationRecord{ID: "alloc", AgentID: "agent", RolloutState: AllocationRolloutServing}
+	obs := AllocationObservation{
+		AllocationID: "alloc", Phase: "CrashLoop", Message: "crash loop after OOM kill",
+		Restart: &platformv1.RestartObservation{
+			RestartCount: 5, CrashLoop: true,
+			LastCause:    platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+			LastExitCode: 137, Message: "crash loop after OOM kill",
+		},
+		ObservedAt: now,
+	}
+	got := overlayAllocation(rec, AgentSession{}, false, obs, true, now, AgentHealthyTTL)
+	if got.Phase != "Unavailable" {
+		t.Fatalf("phase = %q, want Unavailable", got.Phase)
+	}
+	if got.Restart.GetRestartCount() != 5 || !got.Restart.GetCrashLoop() {
+		t.Fatalf("crash evidence lost on unavailable overlay: %+v", got.Restart)
+	}
+	if got.Restart.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
+		t.Fatalf("cause = %s, want OOM_KILL", got.Restart.GetLastCause())
+	}
+}
+
 func TestAdvanceRolloutSkipsTxWhenIdle(t *testing.T) {
 	l := startLive(t)
 	now := time.Now().UTC()

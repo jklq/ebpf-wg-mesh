@@ -261,6 +261,58 @@ func newRestartTestRuntime(t *testing.T, dir string, engine *fakeEngine, clock r
 	}
 }
 
+func TestReconcilePreservesCrashLoopAfterContainerRemoved(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := &fakeEngine{
+		status:  map[string]serviceStatus{"alloc-1": {AppliedSpecRevision: 1, AppliedRolloutGeneration: 1, ExitCode: 137}},
+		created: map[string]bool{"alloc-1": false},
+		stopped: map[string]bool{"alloc-1": true},
+	}
+	clock := restartpolicy.NewManualClock(time.Date(2026, 8, 13, 15, 0, 0, 0, time.UTC))
+	runtime := newRestartTestRuntime(t, dir, engine, clock)
+	state := restartState(&platformv1.ServiceRestart{
+		Policy:            platformv1.RestartPolicy_RESTART_POLICY_ON_FAILURE,
+		MaxRestarts:       1,
+		InitialDelayMs:    0,
+		BackoffMultiplier: 1,
+		Jitter:            0,
+	})
+	if _, err := runtime.Reconcile(context.Background(), state); err != nil {
+		t.Fatalf("seed Reconcile: %v", err)
+	}
+	engine.stopped["alloc-1"] = true
+	looped, err := runtime.Reconcile(context.Background(), state)
+	if err != nil {
+		t.Fatalf("crash-loop Reconcile: %v", err)
+	}
+	before := looped.GetServices()[0].GetRestart()
+	if looped.GetServices()[0].GetPhase() != restartpolicy.PhaseCrashLoop {
+		t.Fatalf("phase = %q, want CrashLoop", looped.GetServices()[0].GetPhase())
+	}
+	engine.created["alloc-1"] = true
+	engine.stopped["alloc-1"] = false
+	engine.status["alloc-1"] = serviceStatus{AppliedSpecRevision: 1, AppliedRolloutGeneration: 1}
+	after, err := runtime.Reconcile(context.Background(), state)
+	if err != nil {
+		t.Fatalf("removed-container Reconcile: %v", err)
+	}
+	cond := after.GetServices()[0]
+	if cond.GetPhase() != restartpolicy.PhaseCrashLoop {
+		t.Fatalf("container removal cleared crash-loop: phase = %q", cond.GetPhase())
+	}
+	if cond.GetHealthy() {
+		t.Fatal("crash-loop allocation must not be healthy after container removal")
+	}
+	got := cond.GetRestart()
+	if got.GetRestartCount() != before.GetRestartCount() || got.GetLastExitCode() != 137 {
+		t.Fatalf("crash evidence lost after removal: before=%+v after=%+v", before, got)
+	}
+	if got.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO {
+		t.Fatalf("last cause = %s, want EXIT_NONZERO", got.GetLastCause())
+	}
+}
+
 func neverRestartState() *agentv1.DesiredNodeState {
 	return restartState(&platformv1.ServiceRestart{Policy: platformv1.RestartPolicy_RESTART_POLICY_NEVER})
 }

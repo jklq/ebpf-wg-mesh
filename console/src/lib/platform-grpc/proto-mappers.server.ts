@@ -668,6 +668,13 @@ function toRestartObservation(
 		crashLoop: observation.crashLoop,
 		lastCause: enumName(RestartCauseSchema, observation.lastCause),
 		message: observation.message,
+		lastExitCode: observation.lastExitCode,
+		lastSignal: observation.lastSignal,
+		awaitingRestart: observation.awaitingRestart,
+		windowStartedAt: optionalDate(observation.windowStartedAt),
+		lastRestartAt: optionalDate(observation.lastRestartAt),
+		nextRestartAt: optionalDate(observation.nextRestartAt),
+		startedAt: optionalDate(observation.startedAt),
 	};
 }
 

@@ -531,6 +531,17 @@ export function hydrateAllocationStatus(
 	return {
 		...allocation,
 		updatedAt: hydrateDate(allocation.updatedAt),
+		drainStartedAt: hydrateDate(allocation.drainStartedAt),
+		drainDeadline: hydrateDate(allocation.drainDeadline),
+		restart: allocation.restart
+			? {
+					...allocation.restart,
+					windowStartedAt: hydrateDate(allocation.restart.windowStartedAt),
+					lastRestartAt: hydrateDate(allocation.restart.lastRestartAt),
+					nextRestartAt: hydrateDate(allocation.restart.nextRestartAt),
+					startedAt: hydrateDate(allocation.restart.startedAt),
+				}
+			: undefined,
 	};
 }
 

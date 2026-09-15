@@ -567,6 +567,7 @@ func (l *Live) RecordObservation(obs AllocationObservation) (changed bool, err e
 	key := liveObsKey{AllocationID: obs.AllocationID, Generation: obs.RolloutGeneration}
 	previous, exists := l.observations[key]
 	if exists && observationUnchanged(previous, obs) {
+		l.observations[key] = obs
 		return false, nil
 	}
 	l.observations[key] = obs
@@ -711,8 +712,16 @@ func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bo
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
 		rec.HealthyIPv6Ports = nil
-		if rec.Message == "" && hasObs {
-			rec.Message = obs.Message
+		if hasObs {
+			if rec.Message == "" {
+				rec.Message = obs.Message
+			}
+			if obs.Restart != nil {
+				rec.Restart = obs.Restart
+			}
+			if obs.ObservedAt.After(rec.UpdatedAt) {
+				rec.UpdatedAt = obs.ObservedAt
+			}
 		}
 		return rec
 	}
@@ -721,6 +730,9 @@ func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bo
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
 		rec.HealthyIPv6Ports = nil
+		if hasObs && obs.Restart != nil {
+			rec.Restart = obs.Restart
+		}
 		return rec
 	}
 	if rec.RolloutState == AllocationRolloutDraining && (!hasObs || obs.Phase != "Drained") {
@@ -728,8 +740,13 @@ func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bo
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
 		rec.HealthyIPv6Ports = nil
-		if rec.Message == "" && hasObs {
-			rec.Message = obs.Message
+		if hasObs {
+			if rec.Message == "" {
+				rec.Message = obs.Message
+			}
+			if obs.Restart != nil {
+				rec.Restart = obs.Restart
+			}
 		}
 		return rec
 	}

@@ -19,10 +19,31 @@ export function hydrateServiceStatusSnapshot(
 	return {
 		...snapshot,
 		service: hydrateServiceSnapshot(snapshot.service),
-		allocation: snapshot.allocation
+		allocation: hydrateAllocation(snapshot.allocation),
+		allocations: Array.isArray(snapshot.allocations)
+			? snapshot.allocations
+					.map(hydrateAllocation)
+					.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+			: undefined,
+	};
+}
+
+function hydrateAllocation(
+	allocation: DashboardServiceStatus["allocation"],
+): DashboardServiceStatus["allocation"] {
+	if (!allocation) return undefined;
+	return {
+		...allocation,
+		updatedAt: hydrateDate(allocation.updatedAt),
+		drainStartedAt: hydrateDate(allocation.drainStartedAt),
+		drainDeadline: hydrateDate(allocation.drainDeadline),
+		restart: allocation.restart
 			? {
-					...snapshot.allocation,
-					updatedAt: hydrateDate(snapshot.allocation.updatedAt),
+					...allocation.restart,
+					windowStartedAt: hydrateDate(allocation.restart.windowStartedAt),
+					lastRestartAt: hydrateDate(allocation.restart.lastRestartAt),
+					nextRestartAt: hydrateDate(allocation.restart.nextRestartAt),
+					startedAt: hydrateDate(allocation.restart.startedAt),
 				}
 			: undefined,
 	};

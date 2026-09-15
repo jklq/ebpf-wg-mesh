@@ -285,6 +285,14 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		}
 		return cond
 	}
+	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
+	operatorNonce := svc.GetOperatorRestartNonce()
+	if r.forceStart[svc.GetAllocationId()] {
+		if obs.GetAppliedOperatorRestartNonce() >= operatorNonce {
+			operatorNonce = obs.GetAppliedOperatorRestartNonce() + 1
+		}
+		delete(r.forceStart, svc.GetAllocationId())
+	}
 	status, created, err := r.engine.EnsureService(ctx, svc)
 	if err != nil {
 		cond.Phase = "Error"
@@ -292,8 +300,21 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		return cond
 	}
 	if created {
-		status.Running = true
-		delete(r.ready, svc.GetAllocationId())
+		if shouldPreserveTerminalObservation(r.now(), svc.GetSpec().GetRuntime().GetRestart(), obs, svc.GetDesiredRolloutGeneration(), operatorNonce) {
+			if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+				cond.Phase = "Error"
+				cond.Message = err.Error()
+				return cond
+			}
+			status.Running = false
+			status.ExitCode = obs.GetLastExitCode()
+			status.Signal = obs.GetLastSignal()
+			status.OOMKilled = obs.GetLastCause() == platformv1.RestartCause_RESTART_CAUSE_OOM_KILL
+			created = false
+		} else {
+			status.Running = true
+			delete(r.ready, svc.GetAllocationId())
+		}
 	}
 	livenessFailed := false
 	if status.Running {
@@ -308,14 +329,6 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 			status.Running = false
 			_ = reason
 		}
-	}
-	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
-	operatorNonce := svc.GetOperatorRestartNonce()
-	if r.forceStart[svc.GetAllocationId()] {
-		if obs.GetAppliedOperatorRestartNonce() >= operatorNonce {
-			operatorNonce = obs.GetAppliedOperatorRestartNonce() + 1
-		}
-		delete(r.forceStart, svc.GetAllocationId())
 	}
 	r.rngMu.Lock()
 	decision := restartpolicy.Evaluate(r.now(), r.randSource(), svc.GetSpec().GetRuntime().GetRestart(), obs, restartpolicy.Input{
@@ -452,6 +465,30 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 	}
 	reason := fmt.Sprintf("IPv4: %s; IPv6: %s", ipv4Probe.failureReason, ipv6Probe.failureReason)
 	return reason, true
+}
+
+func shouldPreserveTerminalObservation(now time.Time, restart *platformv1.ServiceRestart, obs *platformv1.RestartObservation, desiredGeneration, operatorNonce int64) bool {
+	if obs == nil {
+		return false
+	}
+	if desiredGeneration > obs.GetAppliedRolloutGeneration() || operatorNonce > obs.GetAppliedOperatorRestartNonce() {
+		return false
+	}
+	if obs.GetCrashLoop() {
+		return true
+	}
+	if next := obs.GetNextRestartAt(); obs.GetAwaitingRestart() && next != nil && next.IsValid() {
+		if now.Before(next.AsTime()) {
+			return true
+		}
+	}
+	if obs.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_UNSPECIFIED {
+		policy := restartpolicy.CanonicalRestart(restart).GetPolicy()
+		if !restartpolicy.ShouldRestart(policy, obs.GetLastCause()) {
+			return true
+		}
+	}
+	return false
 }
 
 func healthyFamilyPorts(healthy bool, ports []int32) []int32 {
