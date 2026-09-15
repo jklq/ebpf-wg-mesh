@@ -2,7 +2,10 @@ import { type Timestamp, timestampDate } from "@bufbuild/protobuf/wkt";
 
 export const NOT_DEPLOYED_LABEL = "Not deployed";
 
-const GO_ZERO_SECONDS = -62135596800n;
+// google.protobuf.Timestamp range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999999Z.
+// Go's zero time serializes to the range minimum, so it stays absent.
+const MIN_TIMESTAMP_SECONDS = -62135596800n;
+const MAX_TIMESTAMP_SECONDS = 253402300799n;
 const MAX_NANOS = 999_999_999;
 
 export function protoTimestampToDate(
@@ -20,10 +23,13 @@ export function protoTimestampToDate(
 		if (seconds === 0n && nanos === 0) {
 			return undefined;
 		}
-		if (seconds === GO_ZERO_SECONDS && nanos === 0) {
+		if (seconds === MIN_TIMESTAMP_SECONDS && nanos === 0) {
 			return undefined;
 		}
-		if (!Number.isInteger(nanos) || nanos < -MAX_NANOS || nanos > MAX_NANOS) {
+		if (seconds < MIN_TIMESTAMP_SECONDS || seconds > MAX_TIMESTAMP_SECONDS) {
+			return undefined;
+		}
+		if (!Number.isInteger(nanos) || nanos < 0 || nanos > MAX_NANOS) {
 			return undefined;
 		}
 		const date = timestampDate(value);

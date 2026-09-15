@@ -41,6 +41,43 @@ describe("protoTimestampToDate", () => {
 		).toBeUndefined();
 	});
 
+	it("rejects timestamps outside the protobuf range", () => {
+		// Year 10000+: finite as a JS Date, invalid as a protobuf Timestamp.
+		expect(
+			protoTimestampToDate(
+				create(TimestampSchema, { seconds: 253402300800n, nanos: 0 }),
+			),
+		).toBeUndefined();
+		// Before year 1.
+		expect(
+			protoTimestampToDate(
+				create(TimestampSchema, { seconds: -62135596801n, nanos: 0 }),
+			),
+		).toBeUndefined();
+		// Negative nanos are malformed: nanos must count forward from 0.
+		expect(
+			protoTimestampToDate(
+				create(TimestampSchema, { seconds: 100n, nanos: -1 }),
+			),
+		).toBeUndefined();
+	});
+
+	it("accepts timestamps at the protobuf range edges", () => {
+		expect(
+			protoTimestampToDate(
+				create(TimestampSchema, {
+					seconds: 253402300799n,
+					nanos: 999_999_999,
+				}),
+			),
+		).toBeInstanceOf(Date);
+		expect(
+			protoTimestampToDate(
+				create(TimestampSchema, { seconds: -62135596800n, nanos: 1 }),
+			),
+		).toBeInstanceOf(Date);
+	});
+
 	it("passes future timestamps through for the formatter to defend", () => {
 		const future = new Date(Date.now() + 3_600_000);
 		expect(protoTimestampToDate(timestampFromDate(future))).toEqual(future);
