@@ -84,7 +84,7 @@ describe("allocation crash evidence", () => {
 		});
 	});
 
-	function crashedAllocations() {
+	function crashedAllocations(restartOverrides: Record<string, unknown> = {}) {
 		return [
 			allocation({
 				restart: {
@@ -95,6 +95,7 @@ describe("allocation crash evidence", () => {
 					lastExitCode: 137,
 					lastSignal: 0,
 					awaitingRestart: false,
+					...restartOverrides,
 				},
 			}),
 		];
@@ -164,6 +165,39 @@ describe("allocation crash evidence", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("refetches the log tail when the same allocation crashes again", async () => {
+		serverFns.fetchServiceLogs
+			.mockReset()
+			.mockResolvedValueOnce([{ ...crashLogLine(), line: "first crash tail" }])
+			.mockResolvedValue([{ ...crashLogLine(), line: "second crash tail" }]);
+		const first = render(
+			<AllocationCrashEvidence
+				serviceId="svc-1"
+				allocations={crashedAllocations({
+					restartCount: 5,
+					lastRestartAt: new Date("2026-08-13T10:00:00Z"),
+				})}
+				logsEnabled
+			/>,
+		);
+		expect(await screen.findByText("first crash tail")).toBeTruthy();
+		expect(serverFns.fetchServiceLogs).toHaveBeenCalledTimes(1);
+		first.rerender(
+			<AllocationCrashEvidence
+				serviceId="svc-1"
+				allocations={crashedAllocations({
+					restartCount: 6,
+					lastRestartAt: new Date("2026-08-13T10:05:00Z"),
+					lastExitCode: 1,
+				})}
+				logsEnabled
+			/>,
+		);
+		expect(await screen.findByText("second crash tail")).toBeTruthy();
+		expect(serverFns.fetchServiceLogs).toHaveBeenCalledTimes(2);
+		expect(screen.queryByText("first crash tail")).toBeNull();
 	});
 
 	it("labels readiness failures as probe-not-ready, not a crash", async () => {

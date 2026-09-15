@@ -91,13 +91,28 @@ function AllocationCrashCard({
 				<CrashFacts allocation={allocation} />
 			</div>
 			<CrashLogTail
-				key={`${serviceId}:${allocation.allocationId}:${logsEnabled}`}
+				key={`${serviceId}:${allocation.allocationId}:${logsEnabled}:${crashRevision(allocation)}`}
 				serviceId={serviceId}
 				allocationId={allocation.allocationId}
 				enabled={logsEnabled}
 			/>
 		</div>
 	);
+}
+
+// Revision of the crash evidence for one allocation. A second crash reuses
+// the same allocation ID, so the log tail keys off this revision to refetch
+// instead of showing the earlier crash tail.
+function crashRevision(allocation: DashboardAllocationStatus): string {
+	const restart = allocation.restart;
+	if (!restart) return "no-restart";
+	return [
+		restart.restartCount,
+		restart.lastRestartAt?.getTime() ?? 0,
+		restart.lastCause,
+		restart.lastExitCode,
+		restart.lastSignal,
+	].join(":");
 }
 
 function CrashFacts({ allocation }: { allocation: DashboardAllocationStatus }) {
