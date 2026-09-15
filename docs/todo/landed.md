@@ -57,3 +57,16 @@ Prompt:
 ```text
 Add IPv4 as a second overlay family next to the existing IPv6 mesh so every allocated workload gets both addresses, both are routed in WireGuard AllowedIPs, and both are enforced by the eBPF identity policy under the same network_identity. Allocate IPv4 from a real sequential pool and non-overlapping per-node prefixes—do not hash it the IPv6 way—and reject pool exhaustion or overlap transactionally. Keep the host-identity `advertise_addr` on IPv6; the WireGuard transport endpoint is independently advertised and may use IPv4 or IPv6. Extend desired state, allocation reports, container labels, CNI setup, internal host entries, service DNS, health probes, metrics labels, and ingress backends to understand both addresses and choose a reachable healthy family without weakening environment isolation. A process binding only 0.0.0.0 must become healthy and publicly reachable, and a process binding only :: must continue to work. Isolation tests must prove same-environment allow, cross-environment deny, unknown-destination deny, identity removal, and node failover on both families.
 ```
+
+## 1.7 Auto-deploy on/off per environment
+
+Status: done
+Depends on: none. Webhooks already queue work.
+
+Partners need production to stay manual.
+
+Prompt:
+
+```text
+Add an explicit auto-deploy setting on each environment. When on, a verified push to a service’s tracked ref queues a deploy. When off, the control plane records the new source revision and does not start a build or rollout until an authorized Deploy/Retry. Default on for non-production environments and off for production; the setting is overridable. Manual deploy always works. The console must show whether the latest commit is deployed, waiting, or ignored because auto-deploy is off. Test webhook delivery with the flag on and off, production default, and a later manual deploy of the recorded revision.
+```

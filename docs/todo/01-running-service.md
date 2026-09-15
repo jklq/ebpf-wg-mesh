@@ -59,19 +59,6 @@ Prompt:
 Make Railpack a first-class field on BuildRecipe and the default for every new inspect, create, and onboarding path, while Dockerfile remains an explicit selectable recipe with dockerfile_path and context_dir. Do it as a clean cutover: builder is required, omitted or unspecified values are rejected, and all newly created repository services choose Railpack unless the user selects Dockerfile. Thread the builder choice through protobufs, JSON recipe encoding, source inspection, staged-change descriptions, console create/update/settings, claimed BuildJob, and deployment details. Dispatch in internal/builder so both paths use the same immutable snapshot workspace, exact registry capability, log reporting, cancellation, resource limits, and final digest verification. Railpack analysis failure must produce actionable detected-language and missing-start-command details rather than silently falling back to Dockerfile. Add representative Node, Python, Go, static-site, monorepo, Dockerfile, and no-buildable-source tests.
 ```
 
-## 1.7 Auto-deploy on/off per environment
-
-Status: open
-Depends on: none. Webhooks already queue work.
-
-Partners need production to stay manual.
-
-Prompt:
-
-```text
-Add an explicit auto-deploy setting on each environment. When on, a verified push to a service’s tracked ref queues a deploy. When off, the control plane records the new source revision and does not start a build or rollout until an authorized Deploy/Retry. Default on for non-production environments and off for production; the setting is overridable. Manual deploy always works. The console must show whether the latest commit is deployed, waiting, or ignored because auto-deploy is off. Test webhook delivery with the flag on and off, production default, and a later manual deploy of the recorded revision.
-```
-
 ## 1.8 Safe deletion
 
 Was: 0.3
