@@ -267,5 +267,8 @@ type DeploymentTransitionRecord struct {
 }
 
 func (a AgentRecord) Healthy(now time.Time) bool {
-	return a.LifecycleState != AgentStateUnavailable && a.LifecycleState != AgentStateRetired && now.Sub(a.LastSeenAt) < AgentHealthyTTL
+	if a.LastSeenAt.IsZero() {
+		return false
+	}
+	return a.LifecycleState != AgentStateUnavailable && a.LifecycleState != AgentStateRetired && now.UTC().Sub(a.LastSeenAt.UTC()) < AgentHealthyTTL
 }
