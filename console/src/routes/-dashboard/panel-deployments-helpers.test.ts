@@ -12,60 +12,47 @@ import {
 	deploymentSubtitle,
 	getDeploymentCardTone,
 	hasActiveDeployment,
-	sourceRevisionState,
+	pendingManualDeployRevision,
 } from "./panel-deployments-helpers";
 
-describe("sourceRevisionState", () => {
-	it("reports deployed when the latest commit is live", () => {
-		const service = serviceRecord({
-			lastSuccessfulCommitSha: "abc123",
-			latestRevisionSha: "abc123",
-		});
-		expect(sourceRevisionState(service, true)).toEqual({
-			state: "deployed",
-			commitSha: "abc123",
-		});
-		expect(sourceRevisionState(service, false)).toEqual({
-			state: "deployed",
-			commitSha: "abc123",
-		});
-	});
-
-	it("reports waiting when auto-deploy will pick up the commit", () => {
-		const service = serviceRecord({
-			lastSuccessfulCommitSha: "abc123",
-			latestRevisionSha: "def456",
-		});
-		expect(sourceRevisionState(service, true)).toEqual({
-			state: "waiting",
-			commitSha: "def456",
-		});
-	});
-
-	it("reports waiting while a manual build of the commit is running", () => {
-		const service = serviceRecord({
-			lastSuccessfulCommitSha: "abc123",
-			latestRevisionSha: "def456",
-			buildSha: "def456",
-			buildState: "BUILD_STATE_RUNNING",
-		});
-		expect(sourceRevisionState(service, false)).toEqual({
-			state: "waiting",
-			commitSha: "def456",
-		});
-	});
-
-	it("reports ignored when auto-deploy is off and nothing is building", () => {
+describe("pendingManualDeployRevision", () => {
+	it("reports a pending revision when auto-deploy is off and nothing is building", () => {
 		const service = serviceRecord({
 			lastSuccessfulCommitSha: "abc123",
 			latestRevisionSha: "def456",
 			buildSha: "abc123",
 			buildState: "BUILD_STATE_SUCCEEDED",
 		});
-		expect(sourceRevisionState(service, false)).toEqual({
-			state: "ignored",
+		expect(pendingManualDeployRevision(service, false)).toEqual({
 			commitSha: "def456",
 		});
+	});
+
+	it("stays quiet when the latest commit is live", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "abc123",
+		});
+		expect(pendingManualDeployRevision(service, true)).toBeUndefined();
+		expect(pendingManualDeployRevision(service, false)).toBeUndefined();
+	});
+
+	it("stays quiet when auto-deploy will pick up the commit", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "def456",
+		});
+		expect(pendingManualDeployRevision(service, true)).toBeUndefined();
+	});
+
+	it("stays quiet while a manual build of the commit is running", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "def456",
+			buildSha: "def456",
+			buildState: "BUILD_STATE_RUNNING",
+		});
+		expect(pendingManualDeployRevision(service, false)).toBeUndefined();
 	});
 
 	it("stays quiet when the newest build already tells the failure story", () => {
@@ -74,11 +61,13 @@ describe("sourceRevisionState", () => {
 			buildSha: "def456",
 			buildState: "BUILD_STATE_FAILED",
 		});
-		expect(sourceRevisionState(service, true)).toBeUndefined();
+		expect(pendingManualDeployRevision(service, true)).toBeUndefined();
 	});
 
 	it("stays quiet without an observed revision", () => {
-		expect(sourceRevisionState(serviceRecord({}), true)).toBeUndefined();
+		expect(
+			pendingManualDeployRevision(serviceRecord({}), true),
+		).toBeUndefined();
 	});
 });
 
