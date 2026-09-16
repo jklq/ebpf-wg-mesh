@@ -325,6 +325,12 @@ func validateBuilder(cfg BuilderConfig) error {
 	if cfg.BuildkitAddress == "" {
 		return errors.New("builder.buildkitAddress is required")
 	}
+	if cfg.RailpackBinary == "" {
+		return errors.New("builder.railpackBinary is required")
+	}
+	if cfg.RailpackFrontendImage == "" {
+		return errors.New("builder.railpackFrontendImage is required")
+	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionBuilder(cfg)
 	}

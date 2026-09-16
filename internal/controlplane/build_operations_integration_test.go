@@ -39,7 +39,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := createScheduledService(ctx, store, "owner", productionEnvironmentID(t, store, project.ID), "web", repositoryServiceSpec(nil, &platformv1.ServiceSourceSpec{
-		Provider: "github", RepositorySelector: "octocat/hello", TrackedRef: "main", BuildRecipe: &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		Provider: "github", RepositorySelector: "octocat/hello", TrackedRef: "main", BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +64,9 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	job, err := operations.ClaimBuild(builder, claim)
 	if err != nil || job.GetBuildId() != build.ID || job.GetRegistryPassword() != "password" {
 		t.Fatalf("retry lost prepared job: %v, %v", job, err)
+	}
+	if job.GetSource().GetBuildRecipe().GetBuilder() != platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE {
+		t.Fatalf("claimed job lost builder choice: %+v", job.GetSource().GetBuildRecipe())
 	}
 	image := policy.RuntimeDigestRef(job.RegistryPushReference, "sha256:"+strings.Repeat("a", 64))
 	completion := &platformv1.CompleteBuildRequest{BuilderId: "builder-1", BuildId: build.ID, State: platformv1.BuildState_BUILD_STATE_SUCCEEDED, CommitSha: "wrong-commit", ImageDigest: image}

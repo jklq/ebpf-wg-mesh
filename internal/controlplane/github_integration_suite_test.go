@@ -142,8 +142,19 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 	if len(resp.GetDockerfileCandidates()) != 1 || resp.GetDockerfileCandidates()[0] != "Dockerfile" {
 		t.Fatalf("unexpected dockerfile candidates %+v", resp.GetDockerfileCandidates())
 	}
-	if resp.GetRecommendedBuildRecipe().GetDockerfilePath() != "Dockerfile" || resp.GetRecommendedBuildRecipe().GetContextDir() != "." {
-		t.Fatalf("unexpected recommended build recipe %+v", resp.GetRecommendedBuildRecipe())
+	if resp.GetAnalysisError() != "" {
+		t.Fatalf("unexpected analysis error %q", resp.GetAnalysisError())
+	}
+	if resp.GetDetectedLanguage() != "node" || resp.GetDetectedStartCommand() != "npm run start" {
+		t.Fatalf("unexpected detection %q %q", resp.GetDetectedLanguage(), resp.GetDetectedStartCommand())
+	}
+	recipe := resp.GetRecommendedBuildRecipe()
+	if recipe.GetBuilder() != platformv1.BuilderKind_BUILDER_KIND_RAILPACK || recipe.GetContextDir() != "." {
+		t.Fatalf("unexpected recommended build recipe %+v", recipe)
+	}
+	dockerfile := resp.GetRecommendedDockerfileRecipe()
+	if dockerfile.GetBuilder() != platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE || dockerfile.GetDockerfilePath() != "Dockerfile" || dockerfile.GetContextDir() != "." {
+		t.Fatalf("unexpected recommended dockerfile recipe %+v", dockerfile)
 	}
 }
 
@@ -222,7 +233,7 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 					Provider:           "github",
 					RepositorySelector: "private/secret",
 					TrackedRef:         "main",
-					BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+					BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 				},
 			),
 		},

@@ -484,6 +484,7 @@ function state(): DashboardHomeState {
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",

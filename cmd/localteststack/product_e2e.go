@@ -363,6 +363,7 @@ func seedProductE2EDashboardUser(ctx context.Context, databaseURL, schema, userI
 				service_id STRING NOT NULL DEFAULT '',
 				repository_selector STRING NOT NULL DEFAULT '',
 				tracked_ref STRING NOT NULL DEFAULT '',
+				builder STRING NOT NULL DEFAULT '',
 				dockerfile_path STRING NOT NULL DEFAULT '',
 				context_dir STRING NOT NULL DEFAULT '',
 				hostname STRING NOT NULL DEFAULT '',
@@ -380,7 +381,7 @@ func seedProductE2EDashboardUser(ctx context.Context, databaseURL, schema, userI
 				PRIMARY KEY (user_id, environment_id, service_id)
 			)`,
 			`CREATE INDEX ` + schema + `_service_positions_environment_idx ON ` + servicePositions + ` (user_id, environment_id)`,
-			`INSERT INTO ` + migrations + ` (version, applied_at) VALUES (1, NOW())`,
+			`INSERT INTO ` + migrations + ` (version, applied_at) VALUES (1, NOW()), (2, NOW())`,
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("apply dashboard migration: %w", err)

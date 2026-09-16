@@ -342,10 +342,19 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					defaultBranch: "main",
 					dockerfileCandidates: ["Dockerfile"],
 					recommendedBuildRecipe: {
+						builder: "BUILDER_KIND_RAILPACK",
+						dockerfilePath: "",
+						contextDir: ".",
+					},
+					recommendedDockerfileRecipe: {
+						builder: "BUILDER_KIND_DOCKERFILE",
 						dockerfilePath: "Dockerfile",
 						contextDir: ".",
 					},
 					recommendedPorts: [],
+					detectedLanguage: "node",
+					detectedStartCommand: "npm run start",
+					analysisError: "",
 				}
 			);
 		},
@@ -363,10 +372,19 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					defaultBranch: "main",
 					dockerfileCandidates: ["Dockerfile"],
 					recommendedBuildRecipe: {
+						builder: "BUILDER_KIND_RAILPACK",
+						dockerfilePath: "",
+						contextDir: ".",
+					},
+					recommendedDockerfileRecipe: {
+						builder: "BUILDER_KIND_DOCKERFILE",
 						dockerfilePath: "Dockerfile",
 						contextDir: ".",
 					},
 					recommendedPorts: [],
+					detectedLanguage: "node",
+					detectedStartCommand: "npm run start",
+					analysisError: "",
 				}
 			);
 		},

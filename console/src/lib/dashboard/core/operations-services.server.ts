@@ -132,6 +132,10 @@ export async function updateServiceFromSession(
 	const repositorySelector =
 		input.repositorySelector ?? currentSource?.repositorySelector ?? "";
 	const trackedRef = input.trackedRef ?? currentSource?.trackedRef ?? "";
+	const builder =
+		input.builder ??
+		currentSource?.buildRecipe?.builder ??
+		"BUILDER_KIND_RAILPACK";
 	const dockerfilePath =
 		input.dockerfilePath ?? currentSource?.buildRecipe?.dockerfilePath ?? "";
 	const contextDir =
@@ -143,7 +147,9 @@ export async function updateServiceFromSession(
 					repositorySelector: normalizeRepositorySelector(repositorySelector),
 					trackedRef: trackedRef.trim() || "main",
 					buildRecipe: {
-						dockerfilePath: dockerfilePath.trim(),
+						builder,
+						dockerfilePath:
+							builder === "BUILDER_KIND_RAILPACK" ? "" : dockerfilePath.trim(),
 						contextDir: contextDir.trim() || ".",
 					},
 				}

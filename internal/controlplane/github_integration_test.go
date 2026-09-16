@@ -136,7 +136,7 @@ func createRepoBackedTestService(t *testing.T, store *persistence, ctx context.C
 			Provider:           "github",
 			RepositorySelector: repositorySelector,
 			TrackedRef:         trackedRef,
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -263,8 +263,9 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 	mux.HandleFunc("/repos/public/hello/tarball/commit-public-main", func(w http.ResponseWriter, r *http.Request) {
 		server.recordHit(r.URL.Path)
 		_, _ = w.Write(makeGitHubArchive(t, "public-hello-commit-public-main", map[string]string{
-			"Dockerfile":  "FROM scratch\n",
-			"app/main.go": "package main\n",
+			"Dockerfile":   "FROM scratch\n",
+			"package.json": `{"scripts":{"start":"node server.js"}}`,
+			"server.js":    "console.log(1)\n",
 		}))
 	})
 	mux.HandleFunc("/repos/public/hello/tarball/commit-public-release", func(w http.ResponseWriter, r *http.Request) {

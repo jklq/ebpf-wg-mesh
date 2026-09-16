@@ -88,6 +88,7 @@ export function dashboardState(
 			serviceId: service.id,
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",

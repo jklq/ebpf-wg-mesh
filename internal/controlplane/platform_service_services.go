@@ -42,6 +42,9 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := deliverycore.ValidateServicePlacement(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service placement: %v", err)
 	}
+	if err := deliverycore.ValidateBuildRecipe(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service build recipe: %v", err)
+	}
 	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)
 	}
@@ -115,6 +118,9 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	}
 	if err := deliverycore.ValidateServicePlacement(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service placement: %v", err)
+	}
+	if err := deliverycore.ValidateBuildRecipe(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service build recipe: %v", err)
 	}
 	if err := deliverycore.ValidateRollingStrategy(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rolling strategy: %v", err)

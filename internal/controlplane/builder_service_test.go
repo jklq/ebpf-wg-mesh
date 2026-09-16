@@ -49,7 +49,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	))
 	if err != nil {
@@ -119,7 +119,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -179,7 +179,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -271,7 +271,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {

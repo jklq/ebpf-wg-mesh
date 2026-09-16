@@ -75,5 +75,11 @@ export function dashboardStoreMigrations(
 					ON ${tableName(runtime, "service_positions")} (user_id, environment_id)`,
 			],
 		},
+		{
+			version: 2,
+			statements: [
+				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN builder STRING NOT NULL DEFAULT ''`,
+			],
+		},
 	];
 }

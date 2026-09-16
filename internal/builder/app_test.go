@@ -574,6 +574,9 @@ func TestCommandRunnerHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString("hello\n")
 		_, _ = os.Stderr.WriteString("boom\n")
 		os.Exit(7)
+	case "exit75":
+		_, _ = os.Stderr.WriteString("temporary failure in name resolution\n")
+		os.Exit(75)
 	default:
 		os.Exit(2)
 	}

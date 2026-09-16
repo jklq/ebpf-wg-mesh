@@ -335,6 +335,7 @@ export function createPostgresDashboardStore(
 				        service_id,
 				        repository_selector,
 				        tracked_ref,
+				        builder,
 				        dockerfile_path,
 				        context_dir,
 				        hostname
@@ -358,9 +359,10 @@ export function createPostgresDashboardStore(
 				        service_id = $4,
 				        repository_selector = $5,
 				        tracked_ref = $6,
-				        dockerfile_path = $7,
-				        context_dir = $8,
-				        hostname = $9,
+				        builder = $7,
+				        dockerfile_path = $8,
+				        context_dir = $9,
+				        hostname = $10,
 				        updated_at = NOW()
 				  WHERE user_id = $1
 				RETURNING project_id,
@@ -368,6 +370,7 @@ export function createPostgresDashboardStore(
 				          service_id,
 				          repository_selector,
 				          tracked_ref,
+				          builder,
 				          dockerfile_path,
 				          context_dir,
 				          hostname`,
@@ -378,6 +381,7 @@ export function createPostgresDashboardStore(
 					draft.serviceId,
 					draft.repositorySelector,
 					draft.trackedRef,
+					draft.builder,
 					draft.dockerfilePath,
 					draft.contextDir,
 					draft.hostname,

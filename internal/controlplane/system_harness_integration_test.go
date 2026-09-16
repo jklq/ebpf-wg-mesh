@@ -335,7 +335,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 			TrackedRef:                   "main",
 			ProviderRepositoryExternalID: "repo-1",
 			AccessState:                  source.SourceAccessStateAvailable,
-			BuildRecipe:                  &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:                  &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 			ResolvedAt:                   time.Now().UTC(),
 			FreshUntil:                   time.Now().UTC().Add(time.Hour),
 		})

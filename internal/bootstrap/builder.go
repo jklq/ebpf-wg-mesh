@@ -26,6 +26,8 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	intFlag(fs, &cfg.HeartbeatIntervalSeconds, "heartbeat-interval-seconds", "BUILDER_HEARTBEAT_INTERVAL_SECONDS", 10, "")
 	stringFlag(fs, &cfg.BuildctlBinary, "buildctl-binary", "BUILDER_BUILDCTL_BINARY", "buildctl", "")
 	stringFlag(fs, &cfg.BuildkitAddress, "buildkit-address", "BUILDER_BUILDKIT_ADDRESS", "unix:///run/buildkit/buildkitd.sock", "")
+	stringFlag(fs, &cfg.RailpackBinary, "railpack-binary", "BUILDER_RAILPACK_BINARY", "railpack", "")
+	stringFlag(fs, &cfg.RailpackFrontendImage, "railpack-frontend-image", "BUILDER_RAILPACK_FRONTEND_IMAGE", "ghcr.io/railwayapp/railpack-frontend:latest", "")
 	boolFlag(fs, &cfg.CleanupWorkDir, "cleanup-work-dir", "BUILDER_CLEANUP_WORK_DIR", true, "")
 
 	if err := fs.Parse(args); err != nil {

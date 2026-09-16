@@ -74,6 +74,14 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 			next:    currentSource.GetTrackedRef(),
 		},
 		{
+			id:      "source.buildRecipe.builder",
+			section: "Build",
+			field:   "Builder",
+			path:    "source.buildRecipe.builder",
+			current: buildRecipeBuilderValue(deployedRecipe),
+			next:    buildRecipeBuilderValue(currentRecipe),
+		},
+		{
 			id:      "source.buildRecipe.dockerfilePath",
 			section: "Build",
 			field:   "Dockerfile path",
@@ -169,6 +177,17 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		next:    rollingStrategyValue(current),
 	})
 	return fields
+}
+
+func buildRecipeBuilderValue(recipe *platformv1.BuildRecipe) string {
+	switch recipe.GetBuilder() {
+	case platformv1.BuilderKind_BUILDER_KIND_RAILPACK:
+		return "Railpack"
+	case platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE:
+		return "Dockerfile"
+	default:
+		return ""
+	}
 }
 
 func replicaCountValue(spec *platformv1.ServiceSpec) string {
@@ -275,6 +294,8 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 		currentSourceSpec(current).RepositorySelector = source.DesiredSourceSpec(deployed).GetRepositorySelector()
 	case "source.trackedRef":
 		currentSourceSpec(current).TrackedRef = source.DesiredSourceSpec(deployed).GetTrackedRef()
+	case "source.buildRecipe.builder":
+		currentSourceSpec(current).BuildRecipe.Builder = source.DesiredSourceSpec(deployed).GetBuildRecipe().GetBuilder()
 	case "source.buildRecipe.dockerfilePath":
 		currentSourceSpec(current).BuildRecipe.DockerfilePath = source.DesiredSourceSpec(deployed).GetBuildRecipe().GetDockerfilePath()
 	case "source.buildRecipe.contextDir":

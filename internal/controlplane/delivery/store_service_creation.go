@@ -36,6 +36,9 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	if err := ValidateServicePlacement(spec); err != nil {
 		return ServiceRecord{}, err
 	}
+	if err := ValidateBuildRecipe(spec); err != nil {
+		return ServiceRecord{}, err
+	}
 	if !specHasDesiredReplicaCount(spec) {
 		spec.DesiredReplicaCount = replicaCountPtr(DefaultDesiredReplicaCount)
 	}

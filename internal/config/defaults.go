@@ -276,6 +276,12 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 	if cfg.BuildkitAddress == "" {
 		cfg.BuildkitAddress = "unix:///run/buildkit/buildkitd.sock"
 	}
+	if cfg.RailpackBinary == "" {
+		cfg.RailpackBinary = "railpack"
+	}
+	if cfg.RailpackFrontendImage == "" {
+		cfg.RailpackFrontendImage = "ghcr.io/railwayapp/railpack-frontend:latest"
+	}
 }
 
 func FinalizeControlPlane(cfg *ControlPlaneConfig) error {

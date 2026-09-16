@@ -7,6 +7,7 @@ export function defaultOnboardingDraft(): DashboardOnboardingDraft {
 		serviceId: "",
 		repositorySelector: "",
 		trackedRef: "",
+		builder: "",
 		dockerfilePath: "",
 		contextDir: "",
 		hostname: "",
