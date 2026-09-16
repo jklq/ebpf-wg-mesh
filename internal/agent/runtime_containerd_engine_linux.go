@@ -208,17 +208,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() &&
 			rec.networkIdentity == svc.GetNetworkIdentity() {
 			netnsPath, _ := e.netnsPath(svc.GetAllocationId())
-			return serviceStatus{
-				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
-				AppliedRolloutGeneration: rec.rolloutGeneration,
-				AllocationIPv4:           svc.GetPrivateIpv4(),
-				AllocationIPv6:           svc.GetPrivateIpv6(),
-				NetworkNamespacePath:     netnsPath,
-				Running:                  rec.running,
-				ExitCode:                 rec.exitCode,
-				Signal:                   rec.signal,
-				OOMKilled:                rec.oomKilled,
-			}, false, nil
+			return matchedServiceStatus(svc, rec, netnsPath), false, nil
 		}
 		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			return serviceStatus{}, false, err
@@ -284,6 +274,37 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		NetworkNamespacePath:     netnsPath,
 		Running:                  true,
 	}, true, nil
+}
+
+func (e *containerdEngine) InspectService(ctx context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
+	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
+		return serviceStatus{}, false, err
+	}
+	ctx = e.namespaced(ctx)
+	containerID := containerName(svc.GetAllocationId())
+	rec, exists, err := e.inspect(ctx, containerID)
+	if err != nil {
+		return serviceStatus{}, false, err
+	}
+	if !exists || rec.rolloutGeneration != svc.GetDesiredRolloutGeneration() || rec.networkIdentity != svc.GetNetworkIdentity() {
+		return serviceStatus{}, false, nil
+	}
+	netnsPath, _ := e.netnsPath(svc.GetAllocationId())
+	return matchedServiceStatus(svc, rec, netnsPath), true, nil
+}
+
+func matchedServiceStatus(svc *agentv1.DesiredService, rec inspectRecord, netnsPath string) serviceStatus {
+	return serviceStatus{
+		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
+		AppliedRolloutGeneration: rec.rolloutGeneration,
+		AllocationIPv4:           svc.GetPrivateIpv4(),
+		AllocationIPv6:           svc.GetPrivateIpv6(),
+		NetworkNamespacePath:     netnsPath,
+		Running:                  rec.running,
+		ExitCode:                 rec.exitCode,
+		Signal:                   rec.signal,
+		OOMKilled:                rec.oomKilled,
+	}
 }
 
 func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator {
