@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -25,12 +23,6 @@ import (
 const defaultVolumeMount = "/data"
 
 const defaultCPUCFSPeriod uint64 = 100_000
-
-var jsonEncoderPool = sync.Pool{
-	New: func() interface{} {
-		return &bytes.Buffer{}
-	},
-}
 
 type serviceEngine interface {
 	DiscoverServices(context.Context) ([]RuntimeResource, error)
@@ -641,22 +633,15 @@ func (r *ContainerdRuntime) persistDesiredService(svc *agentv1.DesiredService) e
 		return err
 	}
 	path += ".json"
-	buf := jsonEncoderPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer jsonEncoderPool.Put(buf)
-	enc := json.NewEncoder(buf)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(svc); err != nil {
-		return err
-	}
+	marker := fmt.Sprintf("{\"allocation_id\":%q}\n", svc.GetAllocationId())
 	current, err := os.ReadFile(path)
-	if err == nil && bytes.Equal(current, buf.Bytes()) {
+	if err == nil && string(current) == marker {
 		return os.Chmod(path, 0o600)
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read desired service %s: %w", svc.GetAllocationId(), err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(marker), 0o600); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)

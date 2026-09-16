@@ -76,9 +76,6 @@ type localAllocationState struct {
 	AppliedSpecRevision int64  `json:"applied_spec_revision"`
 	DesiredGeneration   int64  `json:"desired_generation"`
 	AppliedGeneration   int64  `json:"applied_generation"`
-	PendingOperation    string `json:"pending_operation,omitempty"`
-	DrainDeadline       string `json:"drain_deadline,omitempty"`
-	Terminal            bool   `json:"terminal"`
 	Phase               string `json:"phase,omitempty"`
 }
 
@@ -500,9 +497,6 @@ func (s *localStateStore) prepareStartup(clusterID string, inventory []RuntimeRe
 			}
 			current.AllocationID = resource.AllocationID
 			current.RuntimeID = resource.RuntimeID
-			if state == initializationRecovery && current.PendingOperation == "" {
-				current.PendingOperation = "establish-ownership"
-			}
 			if err := writeAllocation(allocations, current); err != nil {
 				return err
 			}
@@ -812,7 +806,15 @@ func (s *localStateStore) recordReport(report *agentv1.StatusReport) (*agentv1.S
 		if err := putInt64(observations, reportCursorKey, cursor); err != nil {
 			return err
 		}
-		if err := applyReportToAllocations(tx.Bucket(localAllocationsBucket), next); err != nil {
+		var accepted agentv1.DesiredNodeState
+		if err := proto.Unmarshal(tx.Bucket(localDesiredBucket).Get(desiredStateKey), &accepted); err != nil {
+			return fmt.Errorf("decode accepted desired state: %w", err)
+		}
+		desiredIDs := make(map[string]struct{}, len(accepted.GetServices()))
+		for _, service := range accepted.GetServices() {
+			desiredIDs[service.GetAllocationId()] = struct{}{}
+		}
+		if err := applyReportToAllocations(tx.Bucket(localAllocationsBucket), next, desiredIDs); err != nil {
 			return err
 		}
 		persisted = next
@@ -945,35 +947,6 @@ func replaceCredentials(bucket *bbolt.Bucket, credentials map[string]pullCredent
 }
 
 func updateDesiredAllocations(bucket *bbolt.Bucket, state *agentv1.DesiredNodeState) error {
-	desired := make(map[string]*agentv1.DesiredService, len(state.GetServices()))
-	for _, service := range state.GetServices() {
-		desired[service.GetAllocationId()] = service
-	}
-	var existing []string
-	if err := bucket.ForEach(func(key, _ []byte) error {
-		existing = append(existing, string(key))
-		return nil
-	}); err != nil {
-		return err
-	}
-	for _, allocationID := range existing {
-		if _, ok := desired[allocationID]; ok {
-			continue
-		}
-		allocation, err := readAllocation(bucket, allocationID)
-		if err != nil {
-			return err
-		}
-		if allocation.PendingOperation != "establish-ownership" {
-			if allocation.Terminal && allocation.RuntimeID == "" {
-				continue
-			}
-			allocation.PendingOperation = "stop"
-		}
-		if err := writeAllocation(bucket, allocation); err != nil {
-			return err
-		}
-	}
 	for _, service := range state.GetServices() {
 		allocation, err := readAllocation(bucket, service.GetAllocationId())
 		if err != nil {
@@ -982,19 +955,6 @@ func updateDesiredAllocations(bucket *bbolt.Bucket, state *agentv1.DesiredNodeSt
 		allocation.AllocationID = service.GetAllocationId()
 		allocation.DesiredSpecRevision = service.GetDesiredSpecRevision()
 		allocation.DesiredGeneration = service.GetDesiredRolloutGeneration()
-		allocation.Terminal = false
-		if service.GetIntent() == agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN {
-			allocation.PendingOperation = "drain"
-			if service.GetDrainDeadline() != nil {
-				allocation.DrainDeadline = service.GetDrainDeadline().AsTime().UTC().Format(time.RFC3339Nano)
-			}
-		} else if allocation.AppliedGeneration < allocation.DesiredGeneration || allocation.AppliedSpecRevision < allocation.DesiredSpecRevision {
-			allocation.PendingOperation = "start-or-update"
-			allocation.DrainDeadline = ""
-		} else {
-			allocation.PendingOperation = ""
-			allocation.DrainDeadline = ""
-		}
 		if err := writeAllocation(bucket, allocation); err != nil {
 			return err
 		}
@@ -1084,7 +1044,7 @@ func writeRuntimeInventory(bucket *bbolt.Bucket, inventory []RuntimeResource) er
 	return nil
 }
 
-func applyReportToAllocations(bucket *bbolt.Bucket, report *agentv1.StatusReport) error {
+func applyReportToAllocations(bucket *bbolt.Bucket, report *agentv1.StatusReport, desiredIDs map[string]struct{}) error {
 	seen := make(map[string]struct{}, len(report.GetServices()))
 	for _, condition := range report.GetServices() {
 		seen[condition.GetAllocationId()] = struct{}{}
@@ -1096,17 +1056,6 @@ func applyReportToAllocations(bucket *bbolt.Bucket, report *agentv1.StatusReport
 		allocation.AppliedSpecRevision = condition.GetAppliedSpecRevision()
 		allocation.AppliedGeneration = condition.GetAppliedRolloutGeneration()
 		allocation.Phase = condition.GetPhase()
-		allocation.Terminal = condition.GetPhase() == "Drained"
-		switch allocation.PendingOperation {
-		case "drain":
-			if allocation.Terminal {
-				allocation.PendingOperation = ""
-			}
-		case "start-or-update":
-			if condition.GetPhase() != "Error" && allocation.AppliedSpecRevision >= allocation.DesiredSpecRevision && allocation.AppliedGeneration >= allocation.DesiredGeneration {
-				allocation.PendingOperation = ""
-			}
-		}
 		if err := writeAllocation(bucket, allocation); err != nil {
 			return err
 		}
@@ -1116,17 +1065,16 @@ func applyReportToAllocations(bucket *bbolt.Bucket, report *agentv1.StatusReport
 		if _, ok := seen[string(key)]; ok {
 			return nil
 		}
+		if _, ok := desiredIDs[string(key)]; ok {
+			return nil
+		}
 		var allocation localAllocationState
 		if err := json.Unmarshal(value, &allocation); err != nil {
 			return err
 		}
-		if allocation.PendingOperation == "stop" {
-			allocation.PendingOperation = ""
-			allocation.RuntimeID = ""
-			allocation.Terminal = true
-			allocation.Phase = "Stopped"
-			completed = append(completed, allocation)
-		}
+		allocation.RuntimeID = ""
+		allocation.Phase = "Stopped"
+		completed = append(completed, allocation)
 		return nil
 	}); err != nil {
 		return err

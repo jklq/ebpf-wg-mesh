@@ -5,6 +5,8 @@ import {
 	deploymentBadgeLabel,
 	deploymentProgressCopy,
 	extractMissingEnvKeys,
+	isInProgressDeploymentState,
+	isLiveDeploymentState,
 	isPinnedDeployment,
 	partitionDeployments,
 	selectInlineLogSnippet,
@@ -157,6 +159,20 @@ describe("partitionDeployments", () => {
 		]);
 		expect(live.map((entry) => entry.id)).toEqual(["deploy-2", "deploy-1"]);
 		expect(history.map((entry) => entry.id)).toEqual(["deploy-0"]);
+	});
+});
+
+describe("deploymentStateSets", () => {
+	it("treats an unspecified state as live and in progress", () => {
+		expect(isLiveDeploymentState("DEPLOYMENT_STATE_UNSPECIFIED")).toBe(true);
+		expect(isInProgressDeploymentState("DEPLOYMENT_STATE_UNSPECIFIED")).toBe(
+			true,
+		);
+	});
+
+	it("treats a removed deployment as neither live nor in progress", () => {
+		expect(isLiveDeploymentState("DEPLOYMENT_STATE_REMOVED")).toBe(false);
+		expect(isInProgressDeploymentState("DEPLOYMENT_STATE_REMOVED")).toBe(false);
 	});
 });
 

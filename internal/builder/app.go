@@ -375,7 +375,7 @@ func (a *App) invokeDockerfileBuild(ctx context.Context, job *platformv1.BuildJo
 		reporter.Report(ctx, line)
 	})
 	if err != nil {
-		return "", classifyBuildctlFailure(formatBuildCommandError(req, err, output))
+		return "", classifyBuildctlFailure(req, err, output)
 	}
 	return buildDigestRefFromMetadata(job.GetRegistryPushReference(), workspace.metadataFile)
 }

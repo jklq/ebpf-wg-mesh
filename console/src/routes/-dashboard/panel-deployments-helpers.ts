@@ -88,12 +88,10 @@ export function getDeploymentCardTone({
 	if (status?.state === "DEPLOYMENT_STATE_ACTIVE") {
 		return "active";
 	}
-	if (status?.state === "DEPLOYMENT_STATE_REMOVED") {
-		return "active";
-	}
 	if (
 		status?.state === "DEPLOYMENT_STATE_DRAINING" ||
-		status?.state === "DEPLOYMENT_STATE_COMPLETED"
+		status?.state === "DEPLOYMENT_STATE_COMPLETED" ||
+		status?.state === "DEPLOYMENT_STATE_REMOVED"
 	) {
 		return "draining";
 	}
