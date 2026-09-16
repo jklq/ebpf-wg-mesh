@@ -1,10 +1,5 @@
 import { create, type DescEnum, type DescEnumValue } from "@bufbuild/protobuf";
-import {
-	EmptySchema,
-	type Timestamp,
-	timestampDate,
-	timestampFromDate,
-} from "@bufbuild/protobuf/wkt";
+import { EmptySchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
 	type DashboardAgentEnrollment,
 	type DashboardAgentLifecycleState,
@@ -127,6 +122,7 @@ import {
 	type UpdateServiceRequest,
 	UpdateServiceRequestSchema,
 } from "#/lib/platform-gen/platform_pb";
+import { protoTimestampToDate } from "#/lib/time";
 
 function enumValueByNumber(
 	desc: DescEnum,
@@ -164,8 +160,10 @@ function requireString(value: string, context: string): string {
 	return value;
 }
 
-function optionalDate(value: Timestamp | undefined): Date | undefined {
-	return value ? timestampDate(value) : undefined;
+function optionalDate(
+	value: Parameters<typeof protoTimestampToDate>[0],
+): Date | undefined {
+	return protoTimestampToDate(value);
 }
 
 export function toProject(project: Project): DashboardProject {

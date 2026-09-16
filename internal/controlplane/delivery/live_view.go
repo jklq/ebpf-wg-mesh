@@ -597,7 +597,7 @@ func agentRecordFromDurable(reg journal.AgentRegistration, admin journal.AgentAd
 		RuntimeCapabilities:     decodeRuntimeCapabilities(reg.RuntimeCapabilities),
 		SoftwareVersion:         reg.SoftwareVersion,
 		MaintenanceMessage:      admin.MaintenanceMessage,
-		LastSeenAt:              time.Unix(0, 0).UTC(),
+		LastSeenAt:              time.Time{},
 	}
 	if admin.CredentialRevokedAt != nil {
 		rec.CredentialRevokedAt = sql.NullTime{Time: *admin.CredentialRevokedAt, Valid: true}

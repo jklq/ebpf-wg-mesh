@@ -1,9 +1,11 @@
 import { create } from "@bufbuild/protobuf";
-import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { TimestampSchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { describe, expect, it } from "vitest";
 
 import {
 	AgentLifecycleState,
+	BuildStatusSchema,
+	DeploymentStatusSchema,
 	FleetSchema,
 	RestartCause,
 	ServiceLogLineSchema,
@@ -11,7 +13,9 @@ import {
 	ServiceStatusSchema,
 } from "#/lib/platform-gen/platform_pb";
 import {
+	toBuildStatus,
 	toCreateAgentRequest,
+	toDeploymentStatus,
 	toFleet,
 	toServiceLogLine,
 	toServiceStatus,
@@ -115,5 +119,73 @@ describe("platform protobuf mappers", () => {
 			awaitingRestart: false,
 			lastRestartAt,
 		});
+	});
+
+	it("keeps missing build and deployment timestamps absent", () => {
+		const build = toBuildStatus(
+			create(BuildStatusSchema, { buildId: "build-1" }),
+		);
+		expect(build?.queuedAt).toBeUndefined();
+		expect(build?.startedAt).toBeUndefined();
+		expect(build?.finishedAt).toBeUndefined();
+
+		const status = toDeploymentStatus(
+			create(DeploymentStatusSchema, { deploymentId: "deploy-1" }),
+		);
+		expect(status?.transitionedAt).toBeUndefined();
+	});
+
+	it("keeps zero and epoch timestamps absent", () => {
+		const epoch = create(TimestampSchema, { seconds: 0n, nanos: 0 });
+		const build = toBuildStatus(
+			create(BuildStatusSchema, {
+				buildId: "build-1",
+				queuedAt: epoch,
+				startedAt: epoch,
+				finishedAt: epoch,
+			}),
+		);
+		expect(build?.queuedAt).toBeUndefined();
+		expect(build?.startedAt).toBeUndefined();
+		expect(build?.finishedAt).toBeUndefined();
+
+		const status = toDeploymentStatus(
+			create(DeploymentStatusSchema, {
+				deploymentId: "deploy-1",
+				transitionedAt: epoch,
+			}),
+		);
+		expect(status?.transitionedAt).toBeUndefined();
+	});
+
+	it("keeps malformed timestamps absent", () => {
+		const build = toBuildStatus(
+			create(BuildStatusSchema, {
+				buildId: "build-1",
+				queuedAt: create(TimestampSchema, {
+					seconds: 100n,
+					nanos: 2_000_000_000,
+				}),
+			}),
+		);
+		expect(build?.queuedAt).toBeUndefined();
+	});
+
+	it("maps valid build and deployment timestamps", () => {
+		const queuedAt = new Date("2026-08-13T10:00:00Z");
+		const build = toBuildStatus(
+			create(BuildStatusSchema, {
+				buildId: "build-1",
+				queuedAt: timestampFromDate(queuedAt),
+			}),
+		);
+		expect(build?.queuedAt).toEqual(queuedAt);
+	});
+
+	it("keeps missing log timestamps absent", () => {
+		const line = toServiceLogLine(
+			create(ServiceLogLineSchema, { line: "booting", sequence: 1n }),
+		);
+		expect(line.observedAt).toBeUndefined();
 	});
 });

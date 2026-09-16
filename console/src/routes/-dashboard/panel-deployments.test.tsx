@@ -221,7 +221,7 @@ describe("deployments panel live rollouts", () => {
 		);
 
 		expect(await screen.findByText("Building")).toBeTruthy();
-		expect(screen.getByText("Active")).toBeTruthy();
+		expect(screen.getByText("Healthy")).toBeTruthy();
 		expect(
 			screen.getByText("Deployment in progress: Publishing image"),
 		).toBeTruthy();
@@ -262,6 +262,48 @@ describe("deployments panel live rollouts", () => {
 		expect(
 			screen.getByText("Deploy your changes to create the first deployment."),
 		).toBeTruthy();
+	});
+
+	it("labels history entries without times instead of measuring from 1970", async () => {
+		serverFns.fetchServiceDeployments.mockResolvedValue([
+			{
+				id: "deploy-0",
+				rolloutGeneration: 1,
+				isCurrent: false,
+				build: {
+					buildId: "build-0",
+					state: "BUILD_STATE_SUCCEEDED",
+					commitSha: "ee55ff66aa",
+					imageDigest: "sha256:older",
+					failureReason: "",
+					commitMessage: "older worker",
+				},
+				status: {
+					deploymentId: "deploy-0",
+					state: "DEPLOYMENT_STATE_COMPLETED",
+					causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
+					causeId: "github",
+					reasonCode: "DEPLOYMENT_COMPLETED",
+					detail: "Replaced",
+					specRevision: 1,
+					imageDigest: "sha256:older",
+					rolloutGeneration: 1,
+				},
+			},
+		]);
+		const service = rollingService({
+			latestBuild: undefined,
+			latestDeployment: undefined,
+		});
+
+		render(
+			<PanelDeployments service={service} status={null} project={project()} />,
+		);
+
+		fireEvent.click(await screen.findByRole("button", { name: /History/ }));
+		expect(await screen.findByText("older worker")).toBeTruthy();
+		expect(screen.getByText("Not deployed")).toBeTruthy();
+		expect(document.body.textContent).not.toContain("1970");
 	});
 
 	it("keeps generation-zero staged configuration out of deployment history", async () => {
