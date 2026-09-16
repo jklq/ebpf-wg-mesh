@@ -233,7 +233,7 @@ export async function createServiceFastFromSession(
 	}
 
 	const builder: DashboardBuilderKind =
-		input.builder ?? "BUILDER_KIND_RAILPACK";
+		input.builder ?? defaultBuilderForInspection(inspection);
 	const buildRecipe = buildRecipeForCreate(builder, input, inspection);
 	const dockerfilePath = buildRecipe.dockerfilePath;
 	const contextDir = buildRecipe.contextDir;
@@ -291,6 +291,15 @@ export async function createServiceFastFromSession(
 		serviceStatus,
 		onboarding,
 	};
+}
+
+function defaultBuilderForInspection(
+	inspection: DashboardRepositoryInspection,
+): DashboardBuilderKind {
+	if (!inspection.analysisError && inspection.recommendedBuildRecipe) {
+		return "BUILDER_KIND_RAILPACK";
+	}
+	return "BUILDER_KIND_DOCKERFILE";
 }
 
 function buildRecipeForCreate(

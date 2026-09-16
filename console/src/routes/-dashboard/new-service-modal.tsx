@@ -35,11 +35,6 @@ export function NewServiceModal({
 	const [repoSelector, setRepoSelector] = useState(
 		state.onboarding.repositorySelector,
 	);
-	const [builder, setBuilder] = useState<
-		"BUILDER_KIND_RAILPACK" | "BUILDER_KIND_DOCKERFILE"
-	>("BUILDER_KIND_RAILPACK");
-	const [dockerfilePath, setDockerfilePath] = useState("");
-	const [contextDir, setContextDir] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | undefined>(initialError);
 	const [repoSearch, setRepoSearch] = useState("");
@@ -91,17 +86,7 @@ export function NewServiceModal({
 		setLoading(true);
 		try {
 			const result = await confirmRepository({
-				data: {
-					repositorySelector: selector,
-					builder,
-					...(builder === "BUILDER_KIND_DOCKERFILE" &&
-					dockerfilePath.trim() !== ""
-						? { dockerfilePath: dockerfilePath.trim() }
-						: {}),
-					...(contextDir.trim() !== ""
-						? { contextDir: contextDir.trim() }
-						: {}),
-				},
+				data: { repositorySelector: selector },
 			});
 			onCreated(result);
 		} catch (e) {
@@ -164,67 +149,6 @@ export function NewServiceModal({
 						filteredRepositories.length === 0 && state.repositories.length > 0
 					}
 				/>
-				<div className="flex flex-col gap-2 border-t border-line px-3 py-2.5">
-					<div
-						className="flex items-center gap-4 text-xs text-muted"
-						role="radiogroup"
-						aria-label="Builder"
-					>
-						<span className="font-condensed text-[11px] font-bold uppercase tracking-[0.09em]">
-							Builder
-						</span>
-						<label className="inline-flex cursor-pointer items-center gap-1.5">
-							<input
-								type="radio"
-								name="new-service-builder"
-								checked={builder === "BUILDER_KIND_RAILPACK"}
-								onChange={() => setBuilder("BUILDER_KIND_RAILPACK")}
-							/>
-							Railpack
-						</label>
-						<label className="inline-flex cursor-pointer items-center gap-1.5">
-							<input
-								type="radio"
-								name="new-service-builder"
-								checked={builder === "BUILDER_KIND_DOCKERFILE"}
-								onChange={() => setBuilder("BUILDER_KIND_DOCKERFILE")}
-							/>
-							Dockerfile
-						</label>
-					</div>
-					{builder === "BUILDER_KIND_DOCKERFILE" ? (
-						<div className="grid grid-cols-2 gap-2 max-sm:grid-cols-1">
-							<input
-								autoComplete="off"
-								spellCheck={false}
-								placeholder="Dockerfile path"
-								aria-label="Dockerfile path"
-								value={dockerfilePath}
-								onChange={(event) => setDockerfilePath(event.target.value)}
-								className="border border-line bg-transparent px-2 py-1.5 font-mono text-xs text-ink outline-none placeholder:text-dim"
-							/>
-							<input
-								autoComplete="off"
-								spellCheck={false}
-								placeholder="Context dir (.)"
-								aria-label="Build context directory"
-								value={contextDir}
-								onChange={(event) => setContextDir(event.target.value)}
-								className="border border-line bg-transparent px-2 py-1.5 font-mono text-xs text-ink outline-none placeholder:text-dim"
-							/>
-						</div>
-					) : (
-						<input
-							autoComplete="off"
-							spellCheck={false}
-							placeholder="Application directory (.)"
-							aria-label="Application directory"
-							value={contextDir}
-							onChange={(event) => setContextDir(event.target.value)}
-							className="border border-line bg-transparent px-2 py-1.5 font-mono text-xs text-ink outline-none placeholder:text-dim"
-						/>
-					)}
-				</div>
 			</div>
 		</ModalOverlay>
 	);

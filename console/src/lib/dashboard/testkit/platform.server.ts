@@ -210,7 +210,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					name: "Production",
 					kind: "persistent",
 					isProduction: true,
-					autoDeploy: false,
+					autoDeploy: true,
 				},
 			];
 			return project;
@@ -230,7 +230,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					name: "Production",
 					kind: "persistent",
 					isProduction: true,
-					autoDeploy: false,
+					autoDeploy: true,
 				};
 				platform.environments.push(production);
 				environments = [production];
