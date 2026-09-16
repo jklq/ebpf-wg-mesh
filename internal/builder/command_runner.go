@@ -70,8 +70,8 @@ func (osCommandRunner) Run(ctx context.Context, req commandRequest, onLine func(
 		scanCommandStream(ctx, stderr, "stderr", &combined, onLine)
 	}()
 
-	waitErr := cmd.Wait()
 	wg.Wait()
+	waitErr := cmd.Wait()
 	return combined.Bytes(), waitErr
 }
 

@@ -73,6 +73,7 @@ type environmentStore interface {
 	EnvironmentByID(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
 	createEnvironment(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error)
 	renameEnvironment(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error)
+	updateEnvironmentAutoDeploy(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error)
 	deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error)
 }
 
@@ -320,6 +321,24 @@ func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1
 			return nil, mapped
 		}
 		return nil, writeAccessError("rename environment", err)
+	}
+	return toProtoEnvironment(rec), nil
+}
+
+func (s *PlatformService) UpdateEnvironmentAutoDeploy(ctx context.Context, req *platformv1.UpdateEnvironmentAutoDeployRequest) (*platformv1.Environment, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := s.store.updateEnvironmentAutoDeploy(ctx, user, req.GetEnvironmentId(), req.GetAutoDeploy())
+	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
+		return nil, writeAccessError("update environment auto-deploy", err)
 	}
 	return toProtoEnvironment(rec), nil
 }

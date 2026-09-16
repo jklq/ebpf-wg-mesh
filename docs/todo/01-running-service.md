@@ -20,19 +20,6 @@ Prompt:
 Replace the latched rollout readiness gate with continuous HTTP readiness, using the existing HTTP liveness and restart-policy path rather than creating a second probe system. Readiness controls whether an allocation receives ingress; liveness requests a restart for a wedged process. Support path, port, interval, timeout, and initial delay with bounded safe defaults. Probes must originate inside the persisted workload network namespace, target only the assigned workload address and declared port, refuse redirects and proxy environment variables, and work over both overlay families. Report recent readiness and liveness results, failure reasons, and transition times without writing CockroachDB on every successful tick. Remove the permanent readiness latch. Test recovery, intermittent failure, stale namespaces, undeclared ports, and post-readiness failure. Do not add startup probes, TCP probes, or Kubernetes-style success/failure thresholds.
 ```
 
-## 1.7 Auto-deploy on/off per environment
-
-Status: open
-Depends on: none. Webhooks already queue work.
-
-Partners need production to stay manual.
-
-Prompt:
-
-```text
-Add an explicit auto-deploy setting on each environment. When on, a verified push to a service’s tracked ref queues a deploy. When off, the control plane records the new source revision and does not start a build or rollout until an authorized Deploy/Retry. Default on for non-production environments and off for production; the setting is overridable. Manual deploy always works. The console must show whether the latest commit is deployed, waiting, or ignored because auto-deploy is off. Test webhook delivery with the flag on and off, production default, and a later manual deploy of the recorded revision.
-```
-
 ## 1.8 Safe deletion
 
 Was: 0.3

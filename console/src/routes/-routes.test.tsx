@@ -306,6 +306,7 @@ function fastCreateResult(repositorySelector: string): CreateServiceFastResult {
 			name: "Production",
 			kind: "persistent",
 			isProduction: true,
+			autoDeploy: false,
 		},
 		service: {
 			id: "service-1",

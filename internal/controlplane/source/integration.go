@@ -36,6 +36,7 @@ type Store interface {
 	SourceBindingsForProviderScope(context.Context, string, string) ([]SourceBindingRecord, error)
 	SourceBindingsForGitHubRepositoryAndRef(context.Context, string, string) ([]SourceBindingRecord, error)
 	ServiceSnapshot(context.Context, string) (Service, error)
+	EnvironmentAutoDeploy(context.Context, string) (bool, error)
 	UpsertSourceBinding(context.Context, SourceBindingRecord) (SourceBindingRecord, error)
 	UpsertSourceRevision(context.Context, SourceRevisionRecord) (SourceRevisionRecord, error)
 	SourceSnapshotByRevisionID(context.Context, string) (SourceSnapshotRecord, error)

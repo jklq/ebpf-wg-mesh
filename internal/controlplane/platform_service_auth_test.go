@@ -303,6 +303,20 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			},
 		},
 		{
+			name: "update environment auto-deploy denied", fail: denied, want: codes.PermissionDenied,
+			service: func(fail error) *PlatformService {
+				return NewPlatformService(&fakePlatformStore{
+					updateEnvironmentAutoDeployFn: func(context.Context, authz.User, string, bool) (deliverycore.EnvironmentRecord, error) {
+						return deliverycore.EnvironmentRecord{}, fail
+					},
+				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
+			},
+			call: func(s *PlatformService) error {
+				_, err := s.UpdateEnvironmentAutoDeploy(ctx, &platformv1.UpdateEnvironmentAutoDeployRequest{EnvironmentId: "env-1", AutoDeploy: true})
+				return err
+			},
+		},
+		{
 			name: "delete environment denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
