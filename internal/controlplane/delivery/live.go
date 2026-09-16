@@ -40,9 +40,8 @@ type AgentSession struct {
 }
 
 type liveEval struct {
-	Kind         string
-	AllocationID string
-	AgentID      string
+	Kind    string
+	AgentID string
 }
 
 type LivePosition struct {
@@ -67,10 +66,9 @@ type liveIndexes struct {
 }
 
 const (
-	liveEvalObservation = "observation"
-	liveEvalExpiry      = "expiry"
-	liveEvalDeadline    = "deadline"
-	liveEvalRollout     = "rollout"
+	liveEvalExpiry   = "expiry"
+	liveEvalDeadline = "deadline"
+	liveEvalRollout  = "rollout"
 )
 
 type Live struct {
@@ -332,16 +330,6 @@ func (l *Live) ScheduleDeadline(allocationID string, at time.Time) {
 
 func (d *Delivery) handleLiveEval(ctx context.Context, eval liveEval) {
 	switch eval.Kind {
-	case liveEvalObservation:
-		if eval.AllocationID == "" {
-			return
-		}
-		if _, err := d.evaluateObservedDeployment(ctx, eval.AllocationID); err != nil {
-			return
-		}
-		if d.ingress != nil && d.live.Publishing() {
-			d.ingress.RequestSync()
-		}
 	case liveEvalExpiry:
 		if _, _, err := d.failoverServicesFromAgent(ctx, eval.AgentID, d.live.currentTime().Add(-AgentHealthyTTL)); err != nil {
 			return

@@ -60,6 +60,13 @@ func TestPersistDesiredServiceDoesNotRewriteUnchangedState(t *testing.T) {
 		t.Fatalf("initial persistDesiredService: %v", err)
 	}
 	path := filepath.Join(dir, "desired", "alloc-1.json")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "{\"allocation_id\":\"alloc-1\"}\n"; string(content) != want {
+		t.Fatalf("desired file content = %q, want marker %q", content, want)
+	}
 	sentinel := time.Unix(1_700_000_000, 0)
 	if err := os.Chtimes(path, sentinel, sentinel); err != nil {
 		t.Fatalf("set sentinel mtime: %v", err)

@@ -230,7 +230,67 @@ func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, se
 	return !sameDesiredSourceSpec(deployedSpec, service.Spec), nil
 }
 
+type replacementRolloutBump struct {
+	SpecRevision  int64
+	Replicas      int32
+	ResolvedImage string
+	BuildID       *string
+	RolloutReason string
+	UserID        string
+}
+
+func (d *Delivery) beginReplacementRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, now time.Time) ([]AllocationRecord, error) {
+	existing, err := d.store.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.prepareReplacementRolloutTx(ctx, tx, service, existing, now); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+func (d *Delivery) bumpServiceRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, bump replacementRolloutBump, now time.Time) (int64, error) {
+	nextRollout := service.RolloutGeneration + 1
+	buildID := sql.NullString{}
+	buildIDValue := ""
+	if bump.BuildID != nil {
+		buildID = sql.NullString{String: *bump.BuildID, Valid: true}
+		buildIDValue = *bump.BuildID
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE service_delivery_status AS ds
+		    SET current_rollout_generation = $1,
+		        current_resolved_image = NULLIF($2, ''),
+		        latest_build_id = CASE WHEN $3 IS NULL THEN latest_build_id ELSE NULLIF($3, '') END,
+		        updated_at = $4
+		  WHERE service_id = $5 AND COALESCE(current_rollout_generation, 0) = $7
+		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $6)`,
+		nextRollout, bump.ResolvedImage, buildID, now,
+		service.ID, service.SpecRevision, service.RolloutGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected != 1 {
+		return 0, ErrConcurrentUpdate
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, bump.SpecRevision, bump.Replicas, now, service.ID); err != nil {
+		return 0, err
+	}
+	journal.RecordService(ctx, service.ID)
+	if err := d.store.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, bump.SpecRevision, bump.RolloutReason, buildIDValue, bump.UserID, now); err != nil {
+		return 0, err
+	}
+	return nextRollout, nil
+}
+
 func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env authz.Environment, serviceID string) (ServiceRecord, error) {
+
 	current, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, env, serviceID)
 	if err != nil {
 		return ServiceRecord{}, err
@@ -248,44 +308,19 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env
 		}
 		current.DesiredReplicaCount = desired
 	}
-	existing, err := d.store.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, true)
-	if err != nil {
-		return ServiceRecord{}, err
-	}
 	now := time.Now().UTC()
-	if _, err := d.prepareReplacementRolloutTx(ctx, tx, current, existing, now); err != nil {
+	if _, err := d.beginReplacementRolloutTx(ctx, tx, current, now); err != nil {
 		return ServiceRecord{}, err
 	}
-	nextRolloutGeneration := current.RolloutGeneration + 1
 	resolvedImage := current.ResolvedImage
 	if directImage := directImageRef(current.Spec); directImage != "" {
 		resolvedImage = directImage
 	}
-	result, err := tx.ExecContext(ctx,
-		`UPDATE service_delivery_status AS ds
-		    SET current_rollout_generation = $1,
-		        current_resolved_image = NULLIF($2, ''),
-		        updated_at = $3
-		  WHERE service_id = $4
-		    AND COALESCE(current_rollout_generation, 0) = $6
-		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $5)`,
-		nextRolloutGeneration, resolvedImage, now, serviceID, current.SpecRevision, current.RolloutGeneration,
-	)
+	nextRolloutGeneration, err := d.bumpServiceRolloutTx(ctx, tx, current, replacementRolloutBump{
+		SpecRevision: current.SpecRevision, Replicas: current.DesiredReplicaCount,
+		ResolvedImage: resolvedImage, RolloutReason: "environment_release", UserID: env.UserID(),
+	}, now)
 	if err != nil {
-		return ServiceRecord{}, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return ServiceRecord{}, err
-	}
-	if affected == 0 {
-		return ServiceRecord{}, ErrConcurrentUpdate
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET desired_replica_count = $1, updated_at = $2 WHERE id = $3`, current.DesiredReplicaCount, now, serviceID); err != nil {
-		return ServiceRecord{}, err
-	}
-	journal.RecordService(ctx, serviceID)
-	if err := d.store.insertServiceRolloutTx(ctx, tx, serviceID, nextRolloutGeneration, current.SpecRevision, "environment_release", "", env.UserID(), now); err != nil {
 		return ServiceRecord{}, err
 	}
 	releaseState := DeploymentStateScheduling

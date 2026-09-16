@@ -8,61 +8,6 @@ import (
 	"time"
 )
 
-type SchedulerCause string
-
-const (
-	SchedulerDesiredChange      SchedulerCause = "desired_change"
-	SchedulerAgentRegistration  SchedulerCause = "agent_registration"
-	SchedulerAllocationObserved SchedulerCause = "allocation_observed"
-	SchedulerAgentLost          SchedulerCause = "agent_lost"
-	SchedulerOperatorAction     SchedulerCause = "operator_action"
-	SchedulerCapacityChanged    SchedulerCause = "capacity_changed"
-	SchedulerDeadline           SchedulerCause = "deadline"
-)
-
-type SchedulerEvaluation struct {
-	Cause       SchedulerCause
-	DecidedAt   time.Time
-	Services    []ServiceRecord
-	Agents      []AgentRecord
-	Allocations []AllocationRecord
-	Requested   []SchedulingDecision
-}
-
-func EvaluateScheduler(input SchedulerEvaluation) SchedulingPlan {
-	plan := SchedulingPlan{
-		DecidedAt: input.DecidedAt.UTC(),
-		Decisions: append([]SchedulingDecision(nil), input.Requested...),
-	}
-	alreadyCompleted := make(map[string]struct{}, len(plan.Decisions))
-	var nextEvaluation time.Time
-	for _, decision := range plan.Decisions {
-		if decision.Kind == DecisionCompleteDrain {
-			alreadyCompleted[decision.AllocationID] = struct{}{}
-		}
-	}
-	for _, allocation := range input.Allocations {
-		if allocation.RolloutState != AllocationRolloutDraining || !allocation.DrainDeadline.Valid {
-			continue
-		}
-		if input.DecidedAt.Before(allocation.DrainDeadline.Time) {
-			if nextEvaluation.IsZero() || allocation.DrainDeadline.Time.Before(nextEvaluation) {
-				nextEvaluation = allocation.DrainDeadline.Time
-			}
-			continue
-		}
-		if _, exists := alreadyCompleted[allocation.ID]; exists {
-			continue
-		}
-		plan.Decisions = append(plan.Decisions, SchedulingDecision{Kind: DecisionCompleteDrain, AllocationID: allocation.ID})
-		alreadyCompleted[allocation.ID] = struct{}{}
-	}
-	if !nextEvaluation.IsZero() {
-		plan.Decisions = append(plan.Decisions, SchedulingDecision{Kind: DecisionEvaluateAt, EvaluateAt: nextEvaluation.UTC()})
-	}
-	return plan
-}
-
 type SchedulingDecisionKind string
 
 const (
@@ -74,9 +19,6 @@ const (
 	DecisionBeginDrain       SchedulingDecisionKind = "begin_drain"
 	DecisionCompleteDrain    SchedulingDecisionKind = "complete_drain"
 	DecisionMarkLost         SchedulingDecisionKind = "mark_allocation_lost"
-	DecisionAdvanceDeploy    SchedulingDecisionKind = "advance_deployment"
-	DecisionFailDeploy       SchedulingDecisionKind = "fail_deployment"
-	DecisionEvaluateAt       SchedulingDecisionKind = "evaluate_at"
 )
 
 type SchedulingDecision struct {
@@ -85,8 +27,6 @@ type SchedulingDecision struct {
 	AllocationID string
 	State        allocationAssignmentState
 	Message      string
-	DeploymentID string
-	EvaluateAt   time.Time
 }
 
 type SchedulingPlan struct {
@@ -119,14 +59,6 @@ func (p SchedulingPlan) validate() error {
 		case DecisionRetarget:
 			if decision.Allocation.ID == "" || decision.Allocation.DeploymentID == "" {
 				return fmt.Errorf("scheduler decision %d has an incomplete retarget", i)
-			}
-		case DecisionAdvanceDeploy, DecisionFailDeploy:
-			if decision.DeploymentID == "" {
-				return fmt.Errorf("scheduler decision %d has no deployment", i)
-			}
-		case DecisionEvaluateAt:
-			if decision.EvaluateAt.IsZero() {
-				return fmt.Errorf("scheduler decision %d has no evaluation deadline", i)
 			}
 		default:
 			return fmt.Errorf("scheduler decision %d has unknown kind %q", i, decision.Kind)
@@ -178,16 +110,13 @@ func (d *Delivery) applySchedulingPlanTx(ctx context.Context, tx *sql.Tx, plan S
 				return err
 			}
 			journal.RecordAssignment(ctx, decision.AllocationID)
-		case DecisionAdvanceDeploy, DecisionFailDeploy, DecisionEvaluateAt:
 		}
 	}
 	return nil
 }
 
 func allocationMutationPlan(now time.Time, decisions ...SchedulingDecision) SchedulingPlan {
-	return EvaluateScheduler(SchedulerEvaluation{
-		Cause: SchedulerDesiredChange, DecidedAt: now.UTC(), Requested: decisions,
-	})
+	return SchedulingPlan{DecidedAt: now.UTC(), Decisions: decisions}
 }
 
 func (d *Delivery) deleteStartingAllocationsTx(ctx context.Context, tx *sql.Tx, serviceID string, generation *int64, now time.Time) error {

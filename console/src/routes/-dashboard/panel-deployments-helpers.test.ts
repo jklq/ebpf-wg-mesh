@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import type { DashboardBuildStatus } from "#/lib/dashboard/core/types.server";
+import type {
+	DashboardBuildStatus,
+	DashboardDeploymentStatus,
+} from "#/lib/dashboard/core/types.server";
 
 import {
 	deploymentMeta,
 	deploymentSubtitle,
+	getDeploymentCardTone,
+	hasActiveDeployment,
 } from "./panel-deployments-helpers";
 
 const NOW_MS = new Date("2026-08-13T10:05:00.000Z").getTime();
@@ -68,5 +73,42 @@ describe("deploymentMeta", () => {
 		expect(
 			deploymentMeta(buildWith({}), new Date(NOW_MS - 5_000), NOW_MS),
 		).toEqual(["abc1234", "5 seconds ago"]);
+	});
+});
+
+function statusWith(
+	state: DashboardDeploymentStatus["state"],
+): DashboardDeploymentStatus {
+	return { state } as DashboardDeploymentStatus;
+}
+
+describe("hasActiveDeployment", () => {
+	it("treats an unspecified state as active", () => {
+		expect(
+			hasActiveDeployment(
+				statusWith("DEPLOYMENT_STATE_UNSPECIFIED"),
+				undefined,
+			),
+		).toBe(true);
+	});
+
+	it("treats a removed deployment as inactive", () => {
+		expect(
+			hasActiveDeployment(statusWith("DEPLOYMENT_STATE_REMOVED"), undefined),
+		).toBe(false);
+	});
+});
+
+describe("getDeploymentCardTone", () => {
+	it("renders a removed deployment as draining", () => {
+		expect(
+			getDeploymentCardTone({
+				build: undefined,
+				allocation: undefined,
+				active: false,
+				isCurrent: false,
+				status: statusWith("DEPLOYMENT_STATE_REMOVED"),
+			}),
+		).toBe("draining");
 	});
 });

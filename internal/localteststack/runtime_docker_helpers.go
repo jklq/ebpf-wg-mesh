@@ -19,8 +19,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/runtimeutil"
-
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func (r *DockerRuntime) inspectContainer(ctx context.Context, name string) (dockerContainerInspect, bool, error) {
@@ -182,7 +180,8 @@ func (r *DockerRuntime) persistDesiredService(svc *agentv1.DesiredService) error
 		return err
 	}
 	path += ".json"
-	if err := os.WriteFile(path, []byte(protojson.Format(svc)), 0o600); err != nil {
+	marker := fmt.Sprintf("{\"allocation_id\":%q}\n", svc.GetAllocationId())
+	if err := os.WriteFile(path, []byte(marker), 0o600); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)
