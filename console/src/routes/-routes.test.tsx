@@ -168,6 +168,7 @@ describe("dashboard routes", () => {
 		await waitFor(() =>
 			expect(submitted).toEqual({
 				repositorySelector: "octocat/hello",
+				builder: "BUILDER_KIND_RAILPACK",
 			}),
 		);
 		expect(
@@ -270,6 +271,7 @@ function homeState(
 			serviceId: "",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",
@@ -326,6 +328,7 @@ function fastCreateResult(repositorySelector: string): CreateServiceFastResult {
 			serviceId: "service-1",
 			repositorySelector,
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",

@@ -138,9 +138,16 @@ message DirectImageSource {
   string image = 1;
 }
 
+enum BuilderKind {
+  BUILDER_KIND_UNSPECIFIED = 0;
+  BUILDER_KIND_RAILPACK = 1;
+  BUILDER_KIND_DOCKERFILE = 2;
+}
+
 message BuildRecipe {
   string dockerfile_path = 1;
   string context_dir = 2;
+  BuilderKind builder = 3;
 }
 
 message ServiceSourceSpec {
@@ -322,6 +329,7 @@ message BuildStatus {
   string commit_message = 9;
   string commit_author = 10;
   repeated DeploymentStage stages = 11;
+  BuilderKind builder = 12;
 }
 
 enum ServiceUnappliedChangeAction {
@@ -536,6 +544,10 @@ message InspectSourceResponse {
   repeated string dockerfile_candidates = 3;
   BuildRecipe recommended_build_recipe = 4;
   repeated int32 recommended_ports = 5;
+  string detected_language = 6;
+  string detected_start_command = 7;
+  string analysis_error = 8;
+  BuildRecipe recommended_dockerfile_recipe = 9;
 }
 
 message CreateServiceRequest {

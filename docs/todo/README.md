@@ -82,14 +82,13 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | # | Item | Size | File |
 | --- | --- | --- | --- |
 | 1.3 | Continuous readiness and liveness (1.2) | M | [01](01-running-service.md#13-continuous-readiness-and-liveness) |
-| 1.6 | Railpack as the default builder (4.1) | M | [01](01-running-service.md#16-railpack-as-the-default-builder) |
 | 1.7 | Auto-deploy on/off per environment | S | [01](01-running-service.md#17-auto-deploy-onoff-per-environment) |
 | 1.8 | Safe deletion (0.3) | M | [01](01-running-service.md#18-safe-deletion) |
 | 1.9 | Credentials out of process arguments (0.1) | S | [01](01-running-service.md#19-credentials-out-of-process-arguments) |
 | 1.10 | Builder and agent architecture matching | S | [01](01-running-service.md#110-builder-and-agent-architecture-matching) |
 | 1.11 | Bounded ephemeral disk | S | [01](01-running-service.md#111-bounded-ephemeral-disk) |
 
-1.1, 1.4, and 1.5 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), and [landed.md](landed.md#15-truthful-time-and-status). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-versioned-secrets).
+1.1, 1.4, 1.5, and 1.6 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), [landed.md](landed.md#15-truthful-time-and-status), and [landed.md](landed.md#16-railpack-as-the-default-builder). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-versioned-secrets).
 
 ### Then: host untrusted code without a shared disk
 

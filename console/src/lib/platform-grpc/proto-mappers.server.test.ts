@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import {
 	AgentLifecycleState,
+	BuilderKind,
+	BuildRecipeSchema,
 	BuildStatusSchema,
 	DeploymentStatusSchema,
 	FleetSchema,
@@ -17,6 +19,8 @@ import {
 	toCreateAgentRequest,
 	toDeploymentStatus,
 	toFleet,
+	toProtoServiceSpec,
+	toRepositoryInspection,
 	toServiceLogLine,
 	toServiceStatus,
 } from "#/lib/platform-grpc/proto-mappers.server";
@@ -64,6 +68,94 @@ describe("platform protobuf mappers", () => {
 			logType: "SERVICE_LOG_TYPE_RUNTIME",
 			sequence: 42,
 		});
+	});
+
+	it("maps inspection analysis and both recipe recommendations", () => {
+		const inspection = toRepositoryInspection({
+			accessState: 2,
+			defaultBranch: "main",
+			dockerfileCandidates: ["Dockerfile"],
+			recommendedBuildRecipe: create(BuildRecipeSchema, {
+				builder: BuilderKind.RAILPACK,
+				contextDir: "apps/web",
+			}),
+			recommendedDockerfileRecipe: create(BuildRecipeSchema, {
+				builder: BuilderKind.DOCKERFILE,
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			}),
+			recommendedPorts: [3000],
+			detectedLanguage: "node",
+			detectedStartCommand: "npm run start",
+			analysisError: "",
+		});
+
+		expect(inspection.detectedLanguage).toBe("node");
+		expect(inspection.detectedStartCommand).toBe("npm run start");
+		expect(inspection.analysisError).toBe("");
+		expect(inspection.recommendedBuildRecipe).toMatchObject({
+			builder: "BUILDER_KIND_RAILPACK",
+			contextDir: "apps/web",
+		});
+		expect(inspection.recommendedDockerfileRecipe).toMatchObject({
+			builder: "BUILDER_KIND_DOCKERFILE",
+			dockerfilePath: "Dockerfile",
+		});
+	});
+
+	it("maps failed analysis without a recommended recipe", () => {
+		const inspection = toRepositoryInspection({
+			accessState: 2,
+			defaultBranch: "main",
+			dockerfileCandidates: ["Dockerfile"],
+			recommendedPorts: [],
+			detectedLanguage: "node",
+			detectedStartCommand: "",
+			analysisError: "no start command was found",
+		});
+
+		expect(inspection.recommendedBuildRecipe).toBeUndefined();
+		expect(inspection.analysisError).toBe("no start command was found");
+	});
+
+	it("maps the builder on build status and service specs", () => {
+		const status = toBuildStatus(
+			create(BuildStatusSchema, {
+				buildId: "build-1",
+				builder: BuilderKind.RAILPACK,
+			}),
+		);
+		if (!status) {
+			throw new Error("expected build status");
+		}
+		expect(status.builder).toBe("BUILDER_KIND_RAILPACK");
+
+		const legacy = toBuildStatus(
+			create(BuildStatusSchema, { buildId: "build-2" }),
+		);
+		if (!legacy) {
+			throw new Error("expected build status");
+		}
+		expect(legacy.builder).toBeUndefined();
+
+		const spec = toProtoServiceSpec({
+			source: {
+				provider: "github",
+				repositorySelector: "octocat/hello",
+				trackedRef: "main",
+				buildRecipe: {
+					builder: "BUILDER_KIND_DOCKERFILE",
+					dockerfilePath: "Dockerfile",
+					contextDir: ".",
+				},
+			},
+			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+		});
+		const sourceSpec = spec.source?.source;
+		if (sourceSpec?.case !== "sourceSpec") {
+			throw new Error("expected source spec");
+		}
+		expect(sourceSpec.value.buildRecipe?.builder).toBe(BuilderKind.DOCKERFILE);
 	});
 
 	it("creates valid generated request messages", () => {

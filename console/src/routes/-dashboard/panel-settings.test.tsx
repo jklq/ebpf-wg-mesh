@@ -112,6 +112,60 @@ describe("PanelSettings", () => {
 		);
 	});
 
+	it("switches the builder and persists the choice", async () => {
+		const dockerfile = service();
+		const source = dockerfile.spec?.source;
+		if (!source) {
+			throw new Error("expected service source");
+		}
+		source.buildRecipe = {
+			builder: "BUILDER_KIND_DOCKERFILE",
+			dockerfilePath: "Dockerfile",
+			contextDir: ".",
+		};
+		doUpdateServiceMock.mockResolvedValue(dockerfile);
+		render(
+			<PanelSettings
+				service={dockerfile}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Dockerfile path")).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("radio", { name: "Railpack" }));
+
+		expect(screen.queryByLabelText("Dockerfile path")).toBeNull();
+		await waitFor(() =>
+			expect(doUpdateServiceMock).toHaveBeenCalledWith({
+				data: expect.objectContaining({
+					serviceId: "service-1",
+					builder: "BUILDER_KIND_RAILPACK",
+				}),
+			}),
+		);
+	});
+
+	it("defaults services without a builder to railpack", () => {
+		render(
+			<PanelSettings
+				service={service()}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		expect(
+			(screen.getByRole("radio", { name: "Railpack" }) as HTMLInputElement)
+				.checked,
+		).toBe(true);
+		expect(screen.queryByLabelText("Dockerfile path")).toBeNull();
+		expect(screen.getByLabelText("Application directory")).toBeTruthy();
+	});
+
 	it("highlights changed settings immediately while persistence is pending", () => {
 		const save = deferred<DashboardServiceRecord>();
 		doUpdateServiceMock.mockReturnValue(save.promise);
@@ -524,6 +578,7 @@ function state(): DashboardHomeState {
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",

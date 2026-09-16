@@ -260,6 +260,8 @@ type BuilderConfig struct {
 	HeartbeatIntervalSeconds int
 	BuildctlBinary           string
 	BuildkitAddress          string
+	RailpackBinary           string
+	RailpackFrontendImage    string
 	CleanupWorkDir           bool
 }
 

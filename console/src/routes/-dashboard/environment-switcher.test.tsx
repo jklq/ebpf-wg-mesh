@@ -177,6 +177,7 @@ function state(): DashboardHomeState {
 			serviceId: "",
 			repositorySelector: "",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",

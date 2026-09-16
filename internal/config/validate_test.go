@@ -483,6 +483,12 @@ func TestFinalizeBuilderAppliesDefaults(t *testing.T) {
 	if cfg.BuildctlBinary != "buildctl" {
 		t.Fatalf("unexpected buildctl binary %q", cfg.BuildctlBinary)
 	}
+	if cfg.RailpackBinary != "railpack" {
+		t.Fatalf("unexpected railpack binary %q", cfg.RailpackBinary)
+	}
+	if cfg.RailpackFrontendImage != "ghcr.io/railwayapp/railpack-frontend:latest" {
+		t.Fatalf("unexpected railpack frontend image %q", cfg.RailpackFrontendImage)
+	}
 	if cfg.PollIntervalSeconds <= 0 || cfg.HeartbeatIntervalSeconds <= 0 {
 		t.Fatalf("expected positive intervals, got poll=%d heartbeat=%d", cfg.PollIntervalSeconds, cfg.HeartbeatIntervalSeconds)
 	}
