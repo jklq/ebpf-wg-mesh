@@ -262,7 +262,7 @@ func (d *Delivery) bumpServiceRolloutTx(ctx context.Context, tx *sql.Tx, service
 		`UPDATE service_delivery_status AS ds
 		    SET current_rollout_generation = $1,
 		        current_resolved_image = NULLIF($2, ''),
-		        latest_build_id = CASE WHEN $3 IS NULL THEN latest_build_id ELSE NULLIF($3, '') END,
+		        latest_build_id = CASE WHEN $3::text IS NULL THEN latest_build_id ELSE NULLIF($3::text, '') END,
 		        updated_at = $4
 		  WHERE service_id = $5 AND COALESCE(current_rollout_generation, 0) = $7
 		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $6)`,
