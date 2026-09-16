@@ -87,9 +87,9 @@ func (s *persistence) markAllocationUnavailableForFailoverTx(ctx context.Context
 	if current.phase == allocationPhaseUnavailable && current.message == message && len(current.healthyIPv4Ports) == 0 && len(current.healthyIPv6Ports) == 0 && !current.healthy {
 		return false, nil
 	}
-	err := (&Delivery{store: s}).applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{
-		Kind: DecisionSetMessage, AllocationID: allocationID, Message: message,
-	}))
+	err := (&Delivery{store: s}).applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{
+		Kind: MutationSetMessage, AllocationID: allocationID, Message: message,
+	})
 	return err == nil, err
 }
 

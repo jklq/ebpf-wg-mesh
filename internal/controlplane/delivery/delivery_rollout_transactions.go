@@ -100,14 +100,14 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 	result = plan.Result
 	result.EnvironmentID = service.EnvironmentID
 	for _, alloc := range plan.Remove {
-		if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionCompleteDrain, AllocationID: alloc.ID})); err != nil {
+		if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationCompleteDrain, AllocationID: alloc.ID}); err != nil {
 			return result, err
 		}
 	}
 	for _, alloc := range plan.Promote {
-		if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionChangeIntent, State: allocationAssignmentState{
+		if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationChangeIntent, State: allocationAssignmentState{
 			AllocationID: alloc.ID, RolloutState: AllocationRolloutServing, Intent: allocationIntentRun, UpdatedAt: now,
-		}})); err != nil {
+		}}); err != nil {
 			return result, err
 		}
 	}
@@ -189,10 +189,10 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 
 func (d *Delivery) persistRolloutWithdrawalsTx(ctx context.Context, tx *sql.Tx, withdrawals []rolloutWithdrawal, now time.Time) error {
 	for _, withdrawal := range withdrawals {
-		if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionChangeIntent, State: allocationAssignmentState{
+		if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationChangeIntent, State: allocationAssignmentState{
 			AllocationID: withdrawal.AllocationID, RolloutState: AllocationRolloutWithdrawing,
 			Intent: allocationIntentRun, IntentMessage: withdrawal.Message, UpdatedAt: now,
-		}})); err != nil {
+		}}); err != nil {
 			return err
 		}
 	}
@@ -254,12 +254,12 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 			return nil
 		}
 		for _, alloc := range withdrawing {
-			if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionBeginDrain, State: allocationAssignmentState{
+			if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationBeginDrain, State: allocationAssignmentState{
 				AllocationID: alloc.id, RolloutState: AllocationRolloutDraining, Intent: allocationIntentDrain,
 				IntentMessage: "ingress converged; gracefully draining",
 				DrainStarted:  sql.NullTime{Time: now.UTC(), Valid: true},
 				DrainDeadline: sql.NullTime{Time: deadline, Valid: true}, UpdatedAt: now.UTC(),
-			}})); err != nil {
+			}}); err != nil {
 				return err
 			}
 			result.AgentIDs = append(result.AgentIDs, alloc.agentID)
@@ -329,12 +329,12 @@ func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service Servic
 	s := d.store
 	deadline := now.Add(time.Duration(rollout.Strategy.GetDrainingSeconds()) * time.Second)
 	for _, alloc := range target {
-		if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionBeginDrain, State: allocationAssignmentState{
+		if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationBeginDrain, State: allocationAssignmentState{
 			AllocationID: alloc.ID, RolloutState: AllocationRolloutDraining, Intent: allocationIntentDrain,
 			IntentMessage: "failed replacement; cleaning up",
 			DrainStarted:  sql.NullTime{Time: now, Valid: true},
 			DrainDeadline: sql.NullTime{Time: deadline, Valid: true}, UpdatedAt: now,
-		}})); err != nil {
+		}}); err != nil {
 			return err
 		}
 	}
@@ -494,7 +494,7 @@ func (d *Delivery) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, se
 		if alloc.RolloutState != AllocationRolloutStarting {
 			continue
 		}
-		if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionCompleteDrain, AllocationID: alloc.ID})); err != nil {
+		if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationCompleteDrain, AllocationID: alloc.ID}); err != nil {
 			return err
 		}
 	}

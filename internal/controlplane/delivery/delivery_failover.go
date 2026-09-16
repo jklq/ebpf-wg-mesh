@@ -75,9 +75,9 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 	case failoverIgnore:
 		return result, nil
 	case failoverFinishDrain:
-		if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{
-			Kind: DecisionMarkLost, AllocationID: allocation.ID, Message: "node lost while draining; allocation will be removed",
-		})); err != nil {
+		if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{
+			Kind: MutationMarkLost, AllocationID: allocation.ID, Message: "node lost while draining; allocation will be removed",
+		}); err != nil {
 			return result, err
 		}
 		return nodeLossReplacementResult{Changed: true, Replaced: true}, nil
@@ -166,9 +166,9 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 
 	lostMessage := fmt.Sprintf("node lost; replacement scheduled from expired agent %s", deadAgentID)
 
-	if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{
-		Kind: DecisionMarkLost, AllocationID: allocation.ID, Message: lostMessage,
-	})); err != nil {
+	if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{
+		Kind: MutationMarkLost, AllocationID: allocation.ID, Message: lostMessage,
+	}); err != nil {
 		return result, err
 	}
 	if decision.Action == failoverAdvance {
