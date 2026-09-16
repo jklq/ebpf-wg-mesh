@@ -383,6 +383,20 @@ export interface DashboardServiceRecord {
 	placementMessage?: string;
 }
 
+export interface DashboardRestartObservation {
+	restartCount: number;
+	crashLoop: boolean;
+	lastCause: string;
+	message: string;
+	lastExitCode: number;
+	lastSignal: number;
+	awaitingRestart: boolean;
+	windowStartedAt?: Date;
+	lastRestartAt?: Date;
+	nextRestartAt?: Date;
+	startedAt?: Date;
+}
+
 export interface DashboardAllocationStatus {
 	allocationId: string;
 	serviceId: string;
@@ -403,12 +417,7 @@ export interface DashboardAllocationStatus {
 	rolloutState?: string;
 	drainStartedAt?: Date;
 	drainDeadline?: Date;
-	restart?: {
-		restartCount: number;
-		crashLoop: boolean;
-		lastCause: string;
-		message: string;
-	};
+	restart?: DashboardRestartObservation;
 }
 
 export interface DashboardServiceStatus {

@@ -9,8 +9,10 @@ import {
 	BuildStatusSchema,
 	DeploymentStatusSchema,
 	FleetSchema,
+	RestartCause,
 	ServiceLogLineSchema,
 	ServiceLogType,
+	ServiceStatusSchema,
 } from "#/lib/platform-gen/platform_pb";
 import {
 	toBuildStatus,
@@ -20,6 +22,7 @@ import {
 	toProtoServiceSpec,
 	toRepositoryInspection,
 	toServiceLogLine,
+	toServiceStatus,
 } from "#/lib/platform-grpc/proto-mappers.server";
 
 describe("platform protobuf mappers", () => {
@@ -167,6 +170,47 @@ describe("platform protobuf mappers", () => {
 		});
 		expect(request.$typeName).toBe("platform.v1.CreateAgentRequest");
 		expect(request.reservedCpuMillis).toBe(250n);
+	});
+
+	it("maps full crash evidence from allocation restart observations", () => {
+		const lastRestartAt = new Date("2026-04-24T11:00:00Z");
+		const status = toServiceStatus(
+			create(ServiceStatusSchema, {
+				service: {
+					id: "svc-1",
+					environmentId: "env-1",
+					name: "web",
+				},
+				allocations: [
+					{
+						allocationId: "alloc-1",
+						serviceId: "svc-1",
+						agentId: "agent-1",
+						phase: "CrashLoop",
+						restart: {
+							restartCount: 5,
+							crashLoop: true,
+							lastCause: RestartCause.OOM_KILL,
+							message: "crash loop after OOM kill",
+							lastExitCode: 137,
+							lastSignal: 9,
+							awaitingRestart: false,
+							lastRestartAt: timestampFromDate(lastRestartAt),
+						},
+					},
+				],
+			}),
+		);
+		expect(status.allocations?.[0].restart).toMatchObject({
+			restartCount: 5,
+			crashLoop: true,
+			lastCause: "RESTART_CAUSE_OOM_KILL",
+			message: "crash loop after OOM kill",
+			lastExitCode: 137,
+			lastSignal: 9,
+			awaitingRestart: false,
+			lastRestartAt,
+		});
 	});
 
 	it("keeps missing build and deployment timestamps absent", () => {

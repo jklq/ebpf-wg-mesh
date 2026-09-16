@@ -14,6 +14,10 @@ import (
 
 type Transaction func(context.Context, func(context.Context, *sql.Tx) error) error
 
+// ObservationTransaction runs fn in a transaction that bumps the global
+// status revision when fn reports a change.
+type ObservationTransaction func(context.Context, func(context.Context, *sql.Tx) (bool, error)) error
+
 type ServiceQueryer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
@@ -36,13 +40,16 @@ type Dependencies struct {
 	Mesh               config.ControlPlaneMeshConfig
 	Live               *Live
 	ProductTransaction Transaction
-	ReadState          func(context.Context, func(*sql.Tx, journal.DurableState) error) error
-	Authorizer         *authz.Authorizer
-	Notifier           PlatformNotifier
-	Ingress            PlatformIngress
-	Events             Events
-	LogEmitter         *logs.LogEmitter
-	ReservedAgentIDs   []string
+	// ObservationTransaction publishes status invalidations for observation
+	// changes that carry no product work. It may be nil in tests.
+	ObservationTransaction ObservationTransaction
+	ReadState              func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	Authorizer             *authz.Authorizer
+	Notifier               PlatformNotifier
+	Ingress                PlatformIngress
+	Events                 Events
+	LogEmitter             *logs.LogEmitter
+	ReservedAgentIDs       []string
 }
 
 type SourceStore interface {
@@ -61,12 +68,13 @@ type persistence struct {
 	sourceStore              SourceStore
 	authz                    *authz.Authorizer
 
-	db               *sql.DB
-	mesh             config.ControlPlaneMeshConfig
-	live             *Live
-	reservedAgentIDs []string
-	withProductTx    Transaction
-	readState        func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	db                *sql.DB
+	mesh              config.ControlPlaneMeshConfig
+	live              *Live
+	reservedAgentIDs  []string
+	withProductTx     Transaction
+	withObservationTx ObservationTransaction
+	readState         func(context.Context, func(*sql.Tx, journal.DurableState) error) error
 }
 
 func New(deps Dependencies) *Delivery {
@@ -81,6 +89,7 @@ func New(deps Dependencies) *Delivery {
 			live:                     live,
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
 			withProductTx:            deps.ProductTransaction,
+			withObservationTx:        deps.ObservationTransaction,
 			readState:                deps.ReadState,
 			createEnvironmentQuerier: deps.CreateEnvironment,
 			createVolumeTx:           deps.CreateVolume,

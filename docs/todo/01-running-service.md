@@ -20,19 +20,6 @@ Prompt:
 Replace the latched rollout readiness gate with continuous HTTP readiness, using the existing HTTP liveness and restart-policy path rather than creating a second probe system. Readiness controls whether an allocation receives ingress; liveness requests a restart for a wedged process. Support path, port, interval, timeout, and initial delay with bounded safe defaults. Probes must originate inside the persisted workload network namespace, target only the assigned workload address and declared port, refuse redirects and proxy environment variables, and work over both overlay families. Report recent readiness and liveness results, failure reasons, and transition times without writing CockroachDB on every successful tick. Remove the permanent readiness latch. Test recovery, intermittent failure, stale namespaces, undeclared ports, and post-readiness failure. Do not add startup probes, TCP probes, or Kubernetes-style success/failure thresholds.
 ```
 
-## 1.4 Crash evidence in the console
-
-Status: open
-Depends on: 1.3 so probe failures are distinct from process death. Restart observation already exists.
-
-Without last exit, OOM, and leftover logs, 1.3 is invisible.
-
-Prompt:
-
-```text
-Surface crash evidence on the service and allocation views from persisted restart observation and bounded recent logs. Show last exit code, signal, OOM kill, liveness failure, restart count, crash-loop, and a short tail of runtime logs that remains after the container is gone. Distinguish OOM, liveness restart, nonzero exit, and probe-not-ready. Do not require a new log backend; use the existing ClickHouse path and durable observation already stored for restart policy. Test that a crash-looped allocation remains diagnosable after the container has been removed.
-```
-
 ## 1.7 Auto-deploy on/off per environment
 
 Status: open

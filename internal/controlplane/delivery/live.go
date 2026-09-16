@@ -12,6 +12,10 @@ import (
 
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/restartpolicy"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/proto"
 )
 
 const LiveOwnerRedirectPrefix = "not the live owner; reconnect at "
@@ -169,7 +173,8 @@ func (d *Delivery) ResignLive() {
 }
 
 func (d *Delivery) EvaluateObservedDeploymentForTest(ctx context.Context, allocationID string) error {
-	return d.evaluateObservedDeployment(ctx, allocationID)
+	_, err := d.evaluateObservedDeployment(ctx, allocationID)
+	return err
 }
 
 func (d *Delivery) ServeLive(ctx context.Context) error {
@@ -331,7 +336,7 @@ func (d *Delivery) handleLiveEval(ctx context.Context, eval liveEval) {
 		if eval.AllocationID == "" {
 			return
 		}
-		if err := d.evaluateObservedDeployment(ctx, eval.AllocationID); err != nil {
+		if _, err := d.evaluateObservedDeployment(ctx, eval.AllocationID); err != nil {
 			return
 		}
 		if d.ingress != nil && d.live.Publishing() {
@@ -551,27 +556,71 @@ func observationPhaseClass(phase string) int {
 	}
 }
 
-func (l *Live) RecordObservation(obs AllocationObservation) (changed bool, err error) {
+// ObservationOutcome describes how a recorded allocation observation affects
+// downstream work and status subscribers.
+type ObservationOutcome struct {
+	// Changed reports phase, health, or topology changes that require rollout
+	// or deployment work. Changed always implies StatusInvalidated.
+	Changed bool
+	// StatusInvalidated reports that the rendered service status changed and
+	// status subscribers must refetch, even when no rollout work is needed
+	// (for example restart-only crash evidence updates).
+	StatusInvalidated bool
+}
+
+func (l *Live) RecordObservation(obs AllocationObservation) (ObservationOutcome, error) {
 	if l == nil {
-		return false, ErrNotLiveOwner
+		return ObservationOutcome{}, ErrNotLiveOwner
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := l.requireAccepting(); err != nil {
-		return false, err
+		return ObservationOutcome{}, err
 	}
 	session, ok := l.sessions[obs.AgentID]
 	if !ok || session.SessionID != obs.SessionID {
-		return false, ErrStaleAgentSession
+		return ObservationOutcome{}, ErrStaleAgentSession
 	}
 	key := liveObsKey{AllocationID: obs.AllocationID, Generation: obs.RolloutGeneration}
 	previous, exists := l.observations[key]
-	if exists && observationUnchanged(previous, obs) {
-		return false, nil
+	if !exists {
+		l.observations[key] = obs
+		l.touchLiveLocked()
+		return ObservationOutcome{Changed: true, StatusInvalidated: true}, nil
+	}
+	if observationUnchanged(previous, obs) {
+		l.observations[key] = obs
+		if observationStatusChanged(previous, obs) {
+			return ObservationOutcome{StatusInvalidated: true}, nil
+		}
+		return ObservationOutcome{}, nil
 	}
 	l.observations[key] = obs
 	l.touchLiveLocked()
-	return true, nil
+	return ObservationOutcome{Changed: true, StatusInvalidated: true}, nil
+}
+
+// observationStatusChanged reports whether any rendered status field differs,
+// including crash evidence and phase detail that do not trigger rollout work.
+func observationStatusChanged(previous, next AllocationObservation) bool {
+	return previous.AppliedSpecRevision != next.AppliedSpecRevision ||
+		previous.AppliedGeneration != next.AppliedGeneration ||
+		previous.Phase != next.Phase ||
+		previous.Message != next.Message ||
+		previous.Healthy != next.Healthy ||
+		!slices.Equal(previous.HealthyIPv4Ports, next.HealthyIPv4Ports) ||
+		!slices.Equal(previous.HealthyIPv6Ports, next.HealthyIPv6Ports) ||
+		!restartEvidenceEqual(previous.Restart, next.Restart)
+}
+
+func restartEvidenceEqual(previous, next *platformv1.RestartObservation) bool {
+	if previous == nil {
+		previous = &platformv1.RestartObservation{}
+	}
+	if next == nil {
+		next = &platformv1.RestartObservation{}
+	}
+	return proto.Equal(previous, next)
 }
 
 func (l *Live) Observation(allocationID string, generation int64) (AllocationObservation, bool) {
@@ -711,8 +760,16 @@ func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bo
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
 		rec.HealthyIPv6Ports = nil
-		if rec.Message == "" && hasObs {
-			rec.Message = obs.Message
+		if hasObs {
+			if rec.Message == "" {
+				rec.Message = obs.Message
+			}
+			if obs.Restart != nil {
+				rec.Restart = obs.Restart
+			}
+			if obs.ObservedAt.After(rec.UpdatedAt) {
+				rec.UpdatedAt = obs.ObservedAt
+			}
 		}
 		return rec
 	}
@@ -721,6 +778,9 @@ func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bo
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
 		rec.HealthyIPv6Ports = nil
+		if hasObs && obs.Restart != nil {
+			rec.Restart = obs.Restart
+		}
 		return rec
 	}
 	if rec.RolloutState == AllocationRolloutDraining && (!hasObs || obs.Phase != "Drained") {
@@ -728,8 +788,13 @@ func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bo
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
 		rec.HealthyIPv6Ports = nil
-		if rec.Message == "" && hasObs {
-			rec.Message = obs.Message
+		if hasObs {
+			if rec.Message == "" {
+				rec.Message = obs.Message
+			}
+			if obs.Restart != nil {
+				rec.Restart = obs.Restart
+			}
 		}
 		return rec
 	}

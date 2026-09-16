@@ -54,3 +54,19 @@ func TestAgentDeploymentDecisionPreservesRemoval(t *testing.T) {
 		t.Fatalf("crash observation: %+v, %v", input, ok)
 	}
 }
+
+func TestAgentDeploymentDecisionIgnoresTerminalDeployments(t *testing.T) {
+	observation := deploymentAgentObservation{Phase: "Failed", Healthy: false, AgentID: "node", AppliedGeneration: 2, DesiredGeneration: 2}
+	for _, state := range []string{
+		DeploymentStateCompleted,
+		DeploymentStateFailed,
+		DeploymentStateCancelled,
+		DeploymentStateCrashed,
+		DeploymentStateRemoved,
+		DeploymentStateSuperseded,
+	} {
+		if _, ok := decideAgentDeploymentTransition(DeploymentRecord{State: state}, observation); ok {
+			t.Fatalf("%s produced a transition", state)
+		}
+	}
+}

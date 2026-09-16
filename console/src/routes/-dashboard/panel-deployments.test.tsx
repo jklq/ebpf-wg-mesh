@@ -423,6 +423,81 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getByLabelText("Restart target")).toBeTruthy();
 	});
 
+	it("does not show another generation's crash evidence on a deployment card", async () => {
+		const failed = {
+			...failedDeployment(),
+			id: "deploy-3",
+			rolloutGeneration: 3,
+		};
+		serverFns.fetchServiceDeployments.mockResolvedValue([failed]);
+		const service = failedService();
+		render(
+			<PanelDeployments
+				service={service}
+				status={{
+					service,
+					allocations: [
+						allocation({
+							allocationId: "alloc-gen-2",
+							phase: "CrashLoop",
+							healthy: false,
+							desiredRolloutGeneration: 2,
+							appliedRolloutGeneration: 2,
+							restart: {
+								restartCount: 5,
+								crashLoop: true,
+								lastCause: "RESTART_CAUSE_OOM_KILL",
+								message: "crash loop after OOM kill",
+								lastExitCode: 137,
+								lastSignal: 0,
+								awaitingRestart: false,
+							},
+						}),
+					],
+				}}
+				project={project()}
+			/>,
+		);
+		expect(await screen.findByText("charge the invoice worker")).toBeTruthy();
+		expect(screen.queryByText("Crash evidence")).toBeNull();
+	});
+
+	it("shows crash evidence for allocations on the deployment's generation", async () => {
+		const failed = failedDeployment();
+		serverFns.fetchServiceDeployments.mockResolvedValue([failed]);
+		const service = failedService();
+		render(
+			<PanelDeployments
+				service={service}
+				status={{
+					service,
+					allocations: [
+						allocation({
+							allocationId: "alloc-gen-1",
+							phase: "CrashLoop",
+							healthy: false,
+							desiredRolloutGeneration: 1,
+							appliedRolloutGeneration: 1,
+							restart: {
+								restartCount: 5,
+								crashLoop: true,
+								lastCause: "RESTART_CAUSE_OOM_KILL",
+								message: "crash loop after OOM kill",
+								lastExitCode: 137,
+								lastSignal: 0,
+								awaitingRestart: false,
+							},
+						}),
+					],
+				}}
+				project={project()}
+			/>,
+		);
+		expect(await screen.findByText("charge the invoice worker")).toBeTruthy();
+		expect(screen.getByText("Crash evidence")).toBeTruthy();
+		expect(screen.getByText("OOM kill")).toBeTruthy();
+	});
+
 	it("summarizes exposure and replicas above the deployment cards", async () => {
 		render(
 			<PanelDeployments

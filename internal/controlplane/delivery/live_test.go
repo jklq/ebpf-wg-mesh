@@ -175,6 +175,169 @@ func TestRejectedStatusReportDoesNotConsumeSequence(t *testing.T) {
 	}
 }
 
+func TestStatusReportPublishesInvalidationForEvidenceOnlyObservation(t *testing.T) {
+	l := startLive(t)
+	now := time.Now().UTC()
+	l.ApplyDurable(journal.DurableState{
+		ClusterID: "test",
+		LogIndex:  1,
+		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
+		Services:  map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
+		Assignments: map[string]journal.Assignment{
+			"alloc": {
+				ID: "alloc", ServiceID: "svc", AgentID: "agent",
+				DesiredRolloutGeneration: 1, DesiredSpecRevision: 1,
+				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2",
+			},
+		},
+	})
+	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.AcceptReport("agent", "s1", 1, []string{"alloc"}, true); err != nil {
+		t.Fatal(err)
+	}
+	seed := AllocationObservation{
+		AllocationID: "alloc", RolloutGeneration: 1,
+		AppliedSpecRevision: 1, AppliedGeneration: 1,
+		Phase: "CrashLoop", Message: "crash loop", Healthy: false,
+		AgentID: "agent", SessionID: "s1", Sequence: 1, ObservedAt: now,
+		Restart: &platformv1.RestartObservation{
+			RestartCount: 5, CrashLoop: true,
+			LastCause:                platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+			LastExitCode:             137,
+			AppliedRolloutGeneration: 1,
+		},
+	}
+	if outcome, err := l.RecordObservation(seed); err != nil || !outcome.Changed {
+		t.Fatalf("seed: %v %+v", err, outcome)
+	}
+	var invalidations int
+	d := &Delivery{live: l, store: &persistence{withObservationTx: func(ctx context.Context, fn func(context.Context, *sql.Tx) (bool, error)) error {
+		invalidations++
+		changed, err := fn(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			t.Error("invalidation transaction reported no change")
+		}
+		return nil
+	}}}
+	report := func(sequence uint64, restart *platformv1.RestartObservation) *agentv1.StatusReport {
+		return &agentv1.StatusReport{
+			AgentId: "agent", SessionId: "s1", ObservationSequence: sequence,
+			Services: []*agentv1.ServiceCondition{{
+				AllocationId: "alloc", ServiceId: "svc",
+				DesiredRolloutGeneration: 1, AppliedRolloutGeneration: 1,
+				DesiredSpecRevision: 1, AppliedSpecRevision: 1,
+				Phase: "CrashLoop", Message: "crash loop", Healthy: false,
+				AllocationIpv4: "10.0.0.2", AllocationIpv6: "fd00::2",
+				Restart: restart,
+			}},
+		}
+	}
+	evidence := platformv1RestartClone(seed.Restart)
+	evidence.RestartCount = 6
+	evidence.LastExitCode = 1
+	evidence.LastCause = platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO
+	if _, _, err := d.recordStatusReport(context.Background(), "agent", report(2, evidence)); err != nil {
+		t.Fatalf("evidence report: %v", err)
+	}
+	if invalidations != 1 {
+		t.Fatalf("evidence-only observation published %d invalidations, want 1", invalidations)
+	}
+	stored, ok := l.Observation("alloc", 1)
+	if !ok || stored.Restart.GetRestartCount() != 6 {
+		t.Fatalf("stored evidence is stale: %+v", stored.Restart)
+	}
+	if _, _, err := d.recordStatusReport(context.Background(), "agent", report(3, platformv1RestartClone(evidence))); err != nil {
+		t.Fatalf("identical report: %v", err)
+	}
+	if invalidations != 1 {
+		t.Fatalf("identical observation published an invalidation: %d total", invalidations)
+	}
+}
+
+func TestStatusReportPublishesInvalidationWhenEvaluationChangesNothing(t *testing.T) {
+	l := startLive(t)
+	now := time.Now().UTC()
+	l.ApplyDurable(journal.DurableState{
+		ClusterID: "test",
+		LogIndex:  1,
+		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
+		Services:  map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
+		Assignments: map[string]journal.Assignment{
+			"alloc": {
+				ID: "alloc", ServiceID: "svc", AgentID: "agent",
+				DesiredRolloutGeneration: 1, DesiredSpecRevision: 1,
+				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2",
+			},
+		},
+	})
+	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.AcceptReport("agent", "s1", 1, []string{"alloc"}, true); err != nil {
+		t.Fatal(err)
+	}
+	seed := AllocationObservation{
+		AllocationID: "alloc", RolloutGeneration: 1,
+		AppliedSpecRevision: 1, AppliedGeneration: 1,
+		Phase: "Running", Message: "running", Healthy: true,
+		AgentID: "agent", SessionID: "s1", Sequence: 1, ObservedAt: now,
+	}
+	if outcome, err := l.RecordObservation(seed); err != nil || !outcome.Changed {
+		t.Fatalf("seed: %v %+v", err, outcome)
+	}
+	var evaluations, invalidations int
+	d := &Delivery{live: l, store: &persistence{
+		// The deployment evaluation ran but changed nothing, as happens
+		// when the deployment record is already terminal: no transition,
+		// no journal mutation, no revision bump.
+		withProductTx: func(context.Context, func(context.Context, *sql.Tx) error) error {
+			evaluations++
+			return nil
+		},
+		withObservationTx: func(ctx context.Context, fn func(context.Context, *sql.Tx) (bool, error)) error {
+			invalidations++
+			changed, err := fn(ctx, nil)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				t.Error("invalidation transaction reported no change")
+			}
+			return nil
+		},
+	}}
+	report := &agentv1.StatusReport{
+		AgentId: "agent", SessionId: "s1", ObservationSequence: 2,
+		Services: []*agentv1.ServiceCondition{{
+			AllocationId: "alloc", ServiceId: "svc",
+			DesiredRolloutGeneration: 1, AppliedRolloutGeneration: 1,
+			DesiredSpecRevision: 1, AppliedSpecRevision: 1,
+			Phase: "CrashLoop", Message: "crash loop", Healthy: false,
+			AllocationIpv4: "10.0.0.2", AllocationIpv6: "fd00::2",
+			Restart: &platformv1.RestartObservation{
+				RestartCount: 1, CrashLoop: true,
+				LastCause:                platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+				LastExitCode:             137,
+				AppliedRolloutGeneration: 1,
+			},
+		}},
+	}
+	if _, _, err := d.recordStatusReport(context.Background(), "agent", report); err != nil {
+		t.Fatalf("changed report: %v", err)
+	}
+	if evaluations != 1 {
+		t.Fatalf("deployment evaluated %d times, want 1", evaluations)
+	}
+	if invalidations != 1 {
+		t.Fatalf("unchanged evaluation published %d invalidations, want 1", invalidations)
+	}
+}
+
 func TestStatusReportChecksLiveOwnershipBeforePayload(t *testing.T) {
 	l := startLive(t)
 	l.resign()
@@ -255,12 +418,12 @@ func TestLiveSessionReplacementInvalidatesObservations(t *testing.T) {
 	if err := l.AcceptReport("agent", "s1", 1, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := l.RecordObservation(AllocationObservation{
+	outcome, err := l.RecordObservation(AllocationObservation{
 		AllocationID: "alloc", RolloutGeneration: 1, Phase: "Healthy", Healthy: true,
 		AgentID: "agent", SessionID: "s1", Sequence: 1,
 	})
-	if err != nil || !changed {
-		t.Fatalf("record: %v %v", changed, err)
+	if err != nil || !outcome.Changed {
+		t.Fatalf("record: %v %+v", err, outcome)
 	}
 	if err := l.BeginSession("agent", "s2", nil, nil, true); err != nil {
 		t.Fatal(err)
@@ -282,17 +445,17 @@ func TestLiveUnchangedObservationDoesNotTriggerWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	obs := AllocationObservation{AllocationID: "alloc", RolloutGeneration: 1, Phase: "Healthy", Healthy: true, AgentID: "agent", SessionID: "s1", Sequence: 1}
-	changed, err := l.RecordObservation(obs)
-	if err != nil || !changed {
-		t.Fatalf("first: %v %v", changed, err)
+	outcome, err := l.RecordObservation(obs)
+	if err != nil || !outcome.Changed {
+		t.Fatalf("first: %v %+v", err, outcome)
 	}
 	if err := l.AcceptReport("agent", "s1", 2, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	obs.Sequence = 2
-	changed, err = l.RecordObservation(obs)
-	if err != nil || changed {
-		t.Fatalf("unchanged: %v %v", changed, err)
+	outcome, err = l.RecordObservation(obs)
+	if err != nil || outcome.Changed || outcome.StatusInvalidated {
+		t.Fatalf("unchanged: %v %+v", err, outcome)
 	}
 }
 
@@ -305,11 +468,11 @@ func TestLiveObservationIgnoresMessageAndPhaseDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := AllocationObservation{AllocationID: "alloc", RolloutGeneration: 1, Phase: "Healthy", Message: "ok", Healthy: true, AgentID: "agent", SessionID: "s1", Sequence: 1}
-	if changed, err := l.RecordObservation(base); err != nil || !changed {
-		t.Fatalf("first: %v %v", changed, err)
+	if outcome, err := l.RecordObservation(base); err != nil || !outcome.Changed {
+		t.Fatalf("first: %v %+v", err, outcome)
 	}
 	seq := uint64(2)
-	record := func(mut func(*AllocationObservation)) bool {
+	record := func(mut func(*AllocationObservation)) ObservationOutcome {
 		if err := l.AcceptReport("agent", "s1", seq, nil, true); err != nil {
 			t.Fatal(err)
 		}
@@ -322,36 +485,107 @@ func TestLiveObservationIgnoresMessageAndPhaseDetail(t *testing.T) {
 		if mut != nil {
 			mut(&next)
 		}
-		changed, err := l.RecordObservation(next)
+		outcome, err := l.RecordObservation(next)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if changed {
-			base = next
-		}
-		return changed
+		base = next
+		return outcome
 	}
-	if record(func(o *AllocationObservation) { o.Message = "still ok but reworded" }) {
-		t.Fatal("message-only change triggered work")
+	if outcome := record(func(o *AllocationObservation) { o.Message = "still ok but reworded" }); outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("message-only change: %+v, want invalidation without work", outcome)
 	}
-	if record(func(o *AllocationObservation) { o.Phase = "Starting" }) {
-		t.Fatal("Healthy->Starting (same class) triggered work")
+	if outcome := record(func(o *AllocationObservation) { o.Phase = "Starting" }); outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("Healthy->Starting (same class): %+v, want invalidation without work", outcome)
 	}
-	if !record(func(o *AllocationObservation) { o.Phase = "Error" }) {
-		t.Fatal("Healthy->Error (class change) did not trigger work")
+	if outcome := record(func(o *AllocationObservation) { o.Phase = "Error" }); !outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("Healthy->Error (class change): %+v, want work", outcome)
 	}
-	if record(func(o *AllocationObservation) { o.Phase = "Failed"; o.Message = "different text" }) {
-		t.Fatal("Error->Failed (same error class) triggered work")
+	if outcome := record(func(o *AllocationObservation) { o.Phase = "Failed"; o.Message = "different text" }); outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("Error->Failed (same error class): %+v, want invalidation without work", outcome)
 	}
 	base.Restart = &platformv1.RestartObservation{RestartCount: 1, Message: "flapping"}
-	if record(nil) {
-		t.Fatal("restart observation without crashloop triggered work")
+	if outcome := record(nil); outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("new restart observation: %+v, want invalidation without work", outcome)
 	}
-	if record(func(o *AllocationObservation) { o.Restart.RestartCount = 5; o.Restart.Message = "still flapping" }) {
-		t.Fatal("restart count/message change triggered work")
+	if outcome := record(func(o *AllocationObservation) { o.Restart.RestartCount = 5; o.Restart.Message = "still flapping" }); outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("restart count/message change: %+v, want invalidation without work", outcome)
 	}
-	if !record(func(o *AllocationObservation) { o.Restart.CrashLoop = true }) {
-		t.Fatal("crashloop flag did not trigger work")
+	if outcome := record(func(o *AllocationObservation) { o.Restart.CrashLoop = true }); !outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("crashloop flag: %+v, want work", outcome)
+	}
+}
+
+func TestLiveObservationStoresCrashEvidenceWithoutTriggeringWork(t *testing.T) {
+	l := startLive(t)
+	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.AcceptReport("agent", "s1", 1, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	base := AllocationObservation{
+		AllocationID: "alloc", RolloutGeneration: 1, Phase: "Backoff", Healthy: false,
+		AgentID: "agent", SessionID: "s1", Sequence: 1,
+		Restart: &platformv1.RestartObservation{
+			RestartCount: 1, LastCause: platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO,
+			LastExitCode: 1, Message: "restarting",
+		},
+	}
+	if outcome, err := l.RecordObservation(base); err != nil || !outcome.Changed {
+		t.Fatalf("first: %v %+v", err, outcome)
+	}
+	if err := l.AcceptReport("agent", "s1", 2, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	next := base
+	next.Sequence = 2
+	next.Message = "reworded backoff"
+	next.Restart = platformv1RestartClone(base.Restart)
+	next.Restart.RestartCount = 3
+	next.Restart.LastExitCode = 137
+	next.Restart.LastCause = platformv1.RestartCause_RESTART_CAUSE_OOM_KILL
+	next.Restart.Message = "OOM kill"
+	outcome, err := l.RecordObservation(next)
+	if err != nil || outcome.Changed || !outcome.StatusInvalidated {
+		t.Fatalf("crash evidence update: %v %+v, want invalidation without work", err, outcome)
+	}
+	stored, ok := l.Observation("alloc", 1)
+	if !ok {
+		t.Fatal("missing stored observation")
+	}
+	if stored.Restart.GetRestartCount() != 3 || stored.Restart.GetLastExitCode() != 137 {
+		t.Fatalf("stored crash evidence is stale: %+v", stored.Restart)
+	}
+	if stored.Restart.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
+		t.Fatalf("stored cause = %s, want OOM_KILL", stored.Restart.GetLastCause())
+	}
+	if stored.Message != "reworded backoff" {
+		t.Fatalf("stored message = %q, want reworded backoff", stored.Message)
+	}
+}
+
+func TestLiveOverlayPreservesCrashEvidenceWhenUnavailable(t *testing.T) {
+	now := time.Now().UTC()
+	rec := AllocationRecord{ID: "alloc", AgentID: "agent", RolloutState: AllocationRolloutServing}
+	obs := AllocationObservation{
+		AllocationID: "alloc", Phase: "CrashLoop", Message: "crash loop after OOM kill",
+		Restart: &platformv1.RestartObservation{
+			RestartCount: 5, CrashLoop: true,
+			LastCause:    platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+			LastExitCode: 137, Message: "crash loop after OOM kill",
+		},
+		ObservedAt: now,
+	}
+	got := overlayAllocation(rec, AgentSession{}, false, obs, true, now, AgentHealthyTTL)
+	if got.Phase != "Unavailable" {
+		t.Fatalf("phase = %q, want Unavailable", got.Phase)
+	}
+	if got.Restart.GetRestartCount() != 5 || !got.Restart.GetCrashLoop() {
+		t.Fatalf("crash evidence lost on unavailable overlay: %+v", got.Restart)
+	}
+	if got.Restart.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
+		t.Fatalf("cause = %s, want OOM_KILL", got.Restart.GetLastCause())
 	}
 }
 
