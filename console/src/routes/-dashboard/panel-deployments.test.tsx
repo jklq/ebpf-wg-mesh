@@ -607,7 +607,7 @@ describe("deployments panel source revision banner", () => {
 		expect(onRedeployed).toHaveBeenCalled();
 	});
 
-	it("shows deployed and waiting states", async () => {
+	it("shows no banner when the deployment card already tells the story", async () => {
 		const deployed = failedService({
 			lastSuccessfulCommitSha: "aaa111aaa111",
 			sourceSummary: { latestRevision: { commitSha: "aaa111aaa111" } },
@@ -628,9 +628,8 @@ describe("deployments panel source revision banner", () => {
 				autoDeploy={false}
 			/>,
 		);
-		expect(
-			await screen.findByRole("status", { name: "Latest commit is deployed" }),
-		).toBeTruthy();
+		await screen.findByText("Commit aaa111a");
+		expect(screen.queryByRole("status")).toBeNull();
 		unmount();
 
 		const waiting = failedService({
@@ -653,9 +652,8 @@ describe("deployments panel source revision banner", () => {
 				autoDeploy={true}
 			/>,
 		);
-		expect(
-			await screen.findByRole("status", { name: "Latest commit is deploying" }),
-		).toBeTruthy();
+		await screen.findByText("Building");
+		expect(screen.queryByRole("status")).toBeNull();
 	});
 });
 

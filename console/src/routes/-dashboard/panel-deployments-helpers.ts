@@ -350,18 +350,16 @@ export function shouldRenderDeploymentHistoryEntry(
 	return Boolean(entry.build?.buildId);
 }
 
-export type SourceRevisionState = "deployed" | "waiting" | "ignored";
-
-export function sourceRevisionState(
+export function pendingManualDeployRevision(
 	service: DashboardServiceRecord,
 	autoDeploy: boolean,
-): { state: SourceRevisionState; commitSha: string } | undefined {
+): { commitSha: string } | undefined {
 	const latest = service.sourceSummary?.latestRevision?.commitSha;
 	if (!latest) {
 		return undefined;
 	}
 	if (latest === service.lastSuccessfulCommitSha) {
-		return { state: "deployed", commitSha: latest };
+		return undefined;
 	}
 	const build = service.latestBuild;
 	if (
@@ -376,9 +374,9 @@ export function sourceRevisionState(
 		(build.state === "BUILD_STATE_QUEUED" ||
 			build.state === "BUILD_STATE_RUNNING");
 	if (autoDeploy || building) {
-		return { state: "waiting", commitSha: latest };
+		return undefined;
 	}
-	return { state: "ignored", commitSha: latest };
+	return { commitSha: latest };
 }
 
 export function usesRepositorySource(service: DashboardServiceRecord): boolean {
