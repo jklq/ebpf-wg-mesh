@@ -197,16 +197,16 @@ func (d *Delivery) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.
 	if err := rows.Close(); err != nil {
 		return false, err
 	}
-	decisions := make([]SchedulingDecision, 0, len(missing))
+	mutations := make([]AllocationMutation, 0, len(missing))
 	for _, allocationID := range missing {
 		address, err := nextIPv4AddressFromSubnet(subnet, used)
 		if err != nil {
 			return false, err
 		}
-		decisions = append(decisions, SchedulingDecision{Kind: DecisionReserveAddress, AllocationID: allocationID, Allocation: AllocationAssignment{IPv4: address}})
+		mutations = append(mutations, AllocationMutation{Kind: MutationReserveAddress, AllocationID: allocationID, Allocation: AllocationAssignment{IPv4: address}})
 		used[address] = struct{}{}
 	}
-	if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, decisions...)); err != nil {
+	if err := d.applyAllocationMutationsTx(ctx, tx, now, mutations...); err != nil {
 		return false, err
 	}
 	return len(missing) > 0, nil

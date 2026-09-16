@@ -40,7 +40,7 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 	if int32(len(existing)) > desired {
 		removed, remaining := selectAllocationsToRemove(existing, int(desired))
 		for _, alloc := range removed {
-			if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, SchedulingDecision{Kind: DecisionCompleteDrain, AllocationID: alloc.ID})); err != nil {
+			if err := d.applyAllocationMutationsTx(ctx, tx, now, AllocationMutation{Kind: MutationCompleteDrain, AllocationID: alloc.ID}); err != nil {
 				return nil, err
 			}
 		}
