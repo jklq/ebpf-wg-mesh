@@ -169,7 +169,43 @@ func TestInvokeRailpackBuildPlansThenBuilds(t *testing.T) {
 	}
 }
 
-func TestInvokeRailpackBuildRejectsDockerBinary(t *testing.T) {
+func TestRailpackBuildCommandUsesBuildxFrontendSyntaxWhenDockerBinarySelected(t *testing.T) {
+	t.Parallel()
+
+	req := railpackBuildCommand(
+		"docker",
+		"docker-buildx",
+		"ghcr.io/railwayapp/railpack-frontend:latest",
+		"/workspace/repo",
+		"/workspace/plan",
+		"/workspace/plan/railpack-plan.json",
+		"registry.example.test/platform/service:build-1",
+		"/workspace/metadata.json",
+		[]string{"DOCKER_CONFIG=/tmp/docker"},
+	)
+	want := []string{
+		"buildx", "build",
+		"--progress=plain",
+		"--add-host", "host.docker.internal:host-gateway",
+		"--build-arg", "BUILDKIT_SYNTAX=ghcr.io/railwayapp/railpack-frontend:latest",
+		"--file", "/workspace/plan/railpack-plan.json",
+		"--tag", "registry.example.test/platform/service:build-1",
+		"--push",
+		"--metadata-file", "/workspace/metadata.json",
+		"/workspace/repo",
+	}
+	if req.Binary != "docker" {
+		t.Fatalf("unexpected binary %q", req.Binary)
+	}
+	if !reflect.DeepEqual(req.Args, want) {
+		t.Fatalf("unexpected railpack buildx args:\n got: %#v\nwant: %#v", req.Args, want)
+	}
+	if len(req.Env) != 1 || req.Env[0] != "DOCKER_CONFIG=/tmp/docker" {
+		t.Fatalf("expected registry capability on build step, got %#v", req.Env)
+	}
+}
+
+func TestInvokeRailpackBuildBuildsWithDockerBinary(t *testing.T) {
 	t.Parallel()
 
 	workDir := t.TempDir()
@@ -177,15 +213,62 @@ func TestInvokeRailpackBuildRejectsDockerBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareWorkspace: %v", err)
 	}
-	app := &App{
-		cfg:    config.BuilderConfig{ID: "builder-1", BuildctlBinary: "docker", BuildkitAddress: "docker-buildx"},
-		runner: &scriptedCommandRunner{handle: func(commandRequest) ([]byte, error) { return nil, errors.New("must not run") }},
+	if err := os.WriteFile(filepath.Join(workspace.repoDir, "package.json"), []byte(`{"scripts":{"start":"node server.js"}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
-	_, err = app.invokeBuild(context.Background(), &platformv1.BuildJob{
-		Source: &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
+
+	runner := &scriptedCommandRunner{
+		handle: func(req commandRequest) ([]byte, error) {
+			switch req.Binary {
+			case "railpack":
+				out := planOutPath(req.Args)
+				if out == "" {
+					return nil, errors.New("missing --out")
+				}
+				if err := os.WriteFile(out, []byte(`{"steps":[]}`), 0o644); err != nil {
+					return nil, err
+				}
+				return []byte("plan ok\n"), nil
+			case "docker":
+				metadata := metadataFilePath(req.Args)
+				if metadata == "" {
+					return nil, errors.New("missing --metadata-file")
+				}
+				if err := os.WriteFile(metadata, []byte(`{"containerimage.digest":"sha256:abc"}`), 0o644); err != nil {
+					return nil, err
+				}
+				return []byte("build ok\n"), nil
+			default:
+				return nil, errors.New("unexpected binary " + req.Binary)
+			}
+		},
+	}
+	app := &App{
+		cfg:    config.BuilderConfig{ID: "builder-1", RailpackBinary: "railpack", BuildctlBinary: "docker", BuildkitAddress: "docker-buildx", RailpackFrontendImage: "ghcr.io/railwayapp/railpack-frontend:latest"},
+		client: &recordingBuilderServiceClient{calls: make(chan struct{}, 8)},
+		runner: runner,
+	}
+	ref, err := app.invokeBuild(context.Background(), &platformv1.BuildJob{
+		Source:                &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
+		RegistryPushReference: "registry.example.test/platform/service:build-1",
+		RegistryUsername:      "alice",
+		RegistryPassword:      "secret",
 	}, workspace)
-	if err == nil || !strings.Contains(err.Error(), "require buildctl") {
-		t.Fatalf("expected buildctl requirement error, got %v", err)
+	if err != nil {
+		t.Fatalf("invokeBuild: %v", err)
+	}
+	if ref != "registry.example.test/platform/service@sha256:abc" {
+		t.Fatalf("unexpected digest ref %q", ref)
+	}
+	requests := runner.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("expected plan + build commands, got %d", len(requests))
+	}
+	if requests[0].Binary != "railpack" || requests[1].Binary != "docker" {
+		t.Fatalf("unexpected command order %#v", requests)
+	}
+	if !slicesContains(requests[1].Args, "BUILDKIT_SYNTAX=ghcr.io/railwayapp/railpack-frontend:latest") {
+		t.Fatalf("expected railpack frontend syntax, got %#v", requests[1].Args)
 	}
 }
 

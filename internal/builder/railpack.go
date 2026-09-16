@@ -23,9 +23,6 @@ func (a *App) invokeRailpackBuild(ctx context.Context, job *platformv1.BuildJob,
 	if err != nil {
 		return "", &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("context dir: %w", err)}
 	}
-	if isDockerBuildBinary(a.cfg.BuildctlBinary) {
-		return "", &buildFailureError{kind: failureKindBuild, err: errors.New("railpack builds require buildctl; the docker fallback only supports dockerfile builds")}
-	}
 	planDir, err := safeChildPath(workspace.root, "plan")
 	if err != nil {
 		return "", &buildFailureError{kind: failureKindBuild, err: err}
@@ -53,7 +50,7 @@ func (a *App) invokeRailpackBuild(ctx context.Context, job *platformv1.BuildJob,
 	}
 	defer cleanup()
 
-	req := railpackBuildctlCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, a.cfg.RailpackFrontendImage, appDir, planDir, job.GetRegistryPushReference(), workspace.metadataFile, env)
+	req := railpackBuildCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, a.cfg.RailpackFrontendImage, appDir, planDir, planPath, job.GetRegistryPushReference(), workspace.metadataFile, env)
 	output, err = a.runner.Run(ctx, req, report)
 	if err != nil {
 		return "", classifyBuildctlFailure(req, err, output)
@@ -65,6 +62,31 @@ func railpackPlanCommand(railpackBinary, appDir, planPath string) commandRequest
 	return commandRequest{
 		Binary: railpackBinary,
 		Args:   []string{"plan", appDir, "--out", planPath, "--error-missing-start"},
+	}
+}
+
+func railpackBuildCommand(buildBinary, buildkitAddress, frontendImage, appDir, planDir, planPath, pushRef, metadataFile string, env []string) commandRequest {
+	if isDockerBuildBinary(buildBinary) {
+		return railpackDockerBuildxCommand(buildBinary, frontendImage, appDir, planPath, pushRef, metadataFile, env)
+	}
+	return railpackBuildctlCommand(buildBinary, buildkitAddress, frontendImage, appDir, planDir, pushRef, metadataFile, env)
+}
+
+func railpackDockerBuildxCommand(dockerBinary, frontendImage, appDir, planPath, pushRef, metadataFile string, env []string) commandRequest {
+	return commandRequest{
+		Binary: dockerBinary,
+		Env:    env,
+		Args: []string{
+			"buildx", "build",
+			"--progress=plain",
+			"--add-host", "host.docker.internal:host-gateway",
+			"--build-arg", "BUILDKIT_SYNTAX=" + frontendImage,
+			"--file", planPath,
+			"--tag", pushRef,
+			"--push",
+			"--metadata-file", metadataFile,
+			appDir,
+		},
 	}
 }
 
