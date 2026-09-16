@@ -207,14 +207,14 @@ func buildRunRecordFromProto(status *platformv1.BuildStatus) deliverycore.BuildR
 	case platformv1.BuildState_BUILD_STATE_CANCELLED:
 		rec.State = deliverycore.BuildStateCancelled
 	}
-	if queued := status.GetQueuedAt(); queued != nil {
-		rec.QueuedAt = queued.AsTime()
+	if queued := status.GetQueuedAt(); queued != nil && queued.IsValid() {
+		rec.QueuedAt = queued.AsTime().UTC()
 	}
-	if started := status.GetStartedAt(); started != nil {
-		rec.StartedAt = sql.NullTime{Time: started.AsTime(), Valid: true}
+	if started := status.GetStartedAt(); started != nil && started.IsValid() {
+		rec.StartedAt = sql.NullTime{Time: started.AsTime().UTC(), Valid: true}
 	}
-	if finished := status.GetFinishedAt(); finished != nil {
-		rec.FinishedAt = sql.NullTime{Time: finished.AsTime(), Valid: true}
+	if finished := status.GetFinishedAt(); finished != nil && finished.IsValid() {
+		rec.FinishedAt = sql.NullTime{Time: finished.AsTime().UTC(), Valid: true}
 	}
 	return rec
 }

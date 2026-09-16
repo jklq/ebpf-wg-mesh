@@ -8,6 +8,12 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import {
+	cleanDate,
+	formatDuration,
+	formatRelativeTime,
+	NOT_DEPLOYED_LABEL,
+} from "#/lib/time";
 
 import { isInProgressDeploymentState } from "./deployment-inline";
 import { shortId, shortSha } from "./service-utils";
@@ -375,12 +381,13 @@ export function deploymentSubtitle(
 	build: DashboardBuildStatus | undefined,
 	rolloutGeneration: number | undefined,
 	nowMs: number,
-): string | undefined {
+): string {
 	const timestamp =
 		build?.startedAt ?? build?.queuedAt ?? build?.finishedAt ?? undefined;
-	if (timestamp) return formatRelativeAge(timestamp, nowMs);
-	if (rolloutGeneration !== undefined) return `Rollout ${rolloutGeneration}`;
-	return undefined;
+	if (timestamp) return formatRelativeTime(timestamp, nowMs);
+	if (rolloutGeneration !== undefined && rolloutGeneration > 0)
+		return `Rollout ${rolloutGeneration}`;
+	return NOT_DEPLOYED_LABEL;
 }
 
 export function matchesDeploymentLog(
@@ -407,12 +414,6 @@ export function matchesDeploymentLog(
 	return false;
 }
 
-export function formatDuration(ms: number): string {
-	const seconds = Math.max(0, Math.round(ms / 1000));
-	if (seconds < 60) return `${seconds}s`;
-	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
 export function deploymentMeta(
 	build: DashboardBuildStatus | undefined,
 	timestamp: Date | undefined,
@@ -423,7 +424,9 @@ export function deploymentMeta(
 	if (build?.commitAuthor) parts.push(build.commitAuthor);
 	const builder = builderLabel(build?.builder);
 	if (builder) parts.push(builder);
-	if (timestamp) parts.push(formatRelativeAge(timestamp, nowMs));
+	parts.push(
+		timestamp ? formatRelativeTime(timestamp, nowMs) : NOT_DEPLOYED_LABEL,
+	);
 	return parts;
 }
 
@@ -455,37 +458,6 @@ export function toneToHealthClass(
 	}
 }
 
-export function formatLogTime(date: Date): string {
-	return new Intl.DateTimeFormat(undefined, {
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		hour12: false,
-	}).format(date);
-}
-
-export function formatRelativeAge(date: Date, nowMs: number): string {
-	const diffMs = date.getTime() - nowMs;
-	const absSeconds = Math.round(Math.abs(diffMs) / 1000);
-	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-	if (absSeconds < 60) {
-		return rtf.format(Math.round(diffMs / 1000), "second");
-	}
-
-	const absMinutes = Math.round(absSeconds / 60);
-	if (absMinutes < 60) {
-		return rtf.format(Math.round(diffMs / 60_000), "minute");
-	}
-
-	const absHours = Math.round(absMinutes / 60);
-	if (absHours < 24) {
-		return rtf.format(Math.round(diffMs / 3_600_000), "hour");
-	}
-
-	return rtf.format(Math.round(diffMs / 86_400_000), "day");
-}
-
 export function formatError(error: unknown, fallback: string): string {
 	if (error && typeof error === "object" && "message" in error) {
 		return String((error as { message: unknown }).message);
@@ -498,25 +470,25 @@ export function hydrateDeploymentRecord(
 ): DashboardDeploymentRecord {
 	return {
 		...record,
-		createdAt: hydrateDate(record.createdAt),
+		createdAt: cleanDate(record.createdAt),
 		build: hydrateBuildStatus(record.build),
 		allocation: hydrateAllocationStatus(record.allocation),
 		status: record.status
 			? {
 					...record.status,
-					transitionedAt: hydrateDate(record.status.transitionedAt),
+					transitionedAt: cleanDate(record.status.transitionedAt),
 				}
 			: undefined,
 		stages:
 			record.stages?.map((stage) => ({
 				...stage,
-				startedAt: hydrateDate(stage.startedAt),
-				finishedAt: hydrateDate(stage.finishedAt),
+				startedAt: cleanDate(stage.startedAt),
+				finishedAt: cleanDate(stage.finishedAt),
 			})) ?? record.stages,
 		actions:
 			record.actions?.map((action) => ({
 				...action,
-				createdAt: hydrateDate(action.createdAt),
+				createdAt: cleanDate(action.createdAt),
 			})) ?? record.actions,
 	};
 }
@@ -527,14 +499,14 @@ export function hydrateBuildStatus(
 	if (!build) return undefined;
 	return {
 		...build,
-		queuedAt: hydrateDate(build.queuedAt),
-		startedAt: hydrateDate(build.startedAt),
-		finishedAt: hydrateDate(build.finishedAt),
+		queuedAt: cleanDate(build.queuedAt),
+		startedAt: cleanDate(build.startedAt),
+		finishedAt: cleanDate(build.finishedAt),
 		stages:
 			build.stages?.map((stage) => ({
 				...stage,
-				startedAt: hydrateDate(stage.startedAt),
-				finishedAt: hydrateDate(stage.finishedAt),
+				startedAt: cleanDate(stage.startedAt),
+				finishedAt: cleanDate(stage.finishedAt),
 			})) ?? [],
 	};
 }
@@ -545,7 +517,7 @@ export function hydrateAllocationStatus(
 	if (!allocation) return undefined;
 	return {
 		...allocation,
-		updatedAt: hydrateDate(allocation.updatedAt),
+		updatedAt: cleanDate(allocation.updatedAt),
 	};
 }
 
@@ -554,13 +526,6 @@ export function hydrateServiceLogLine(
 ): DashboardServiceLogLine {
 	return {
 		...line,
-		observedAt: hydrateDate(line.observedAt),
+		observedAt: cleanDate(line.observedAt),
 	};
-}
-
-export function hydrateDate(
-	value: Date | string | undefined,
-): Date | undefined {
-	if (!value) return undefined;
-	return value instanceof Date ? value : new Date(value);
 }
