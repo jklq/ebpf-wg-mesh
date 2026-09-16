@@ -168,7 +168,6 @@ describe("dashboard routes", () => {
 		await waitFor(() =>
 			expect(submitted).toEqual({
 				repositorySelector: "octocat/hello",
-				builder: "BUILDER_KIND_RAILPACK",
 			}),
 		);
 		expect(

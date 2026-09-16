@@ -192,7 +192,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 		Name:                    name,
 		Kind:                    deliverycore.EnvironmentKindPersistent,
 		IsProduction:            production,
-		AutoDeploy:              deliverycore.DefaultAutoDeploy(production),
+		AutoDeploy:              true,
 		NetworkIdentity:         networkIdentity,
 		CopiedFromEnvironmentID: copiedFrom,
 		CreatedAt:               now,

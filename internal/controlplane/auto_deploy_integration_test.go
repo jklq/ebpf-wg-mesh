@@ -25,8 +25,8 @@ func TestEnvironmentAutoDeployDefaultsAndAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if production.AutoDeploy {
-		t.Fatalf("expected production auto-deploy off by default, got %#v", production)
+	if !production.AutoDeploy {
+		t.Fatalf("expected production auto-deploy on by default, got %#v", production)
 	}
 	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
 	if err != nil {
@@ -49,6 +49,13 @@ func TestEnvironmentAutoDeployDefaultsAndAuthorization(t *testing.T) {
 	}
 	if !enabled.AutoDeploy {
 		t.Fatalf("expected auto-deploy override on, got %#v", enabled)
+	}
+	productionDisabled, err := store.catalog.updateEnvironmentAutoDeploy(ctx, testUser("owner"), production.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if productionDisabled.AutoDeploy {
+		t.Fatalf("expected production auto-deploy override off, got %#v", productionDisabled)
 	}
 	productionEnabled, err := store.catalog.updateEnvironmentAutoDeploy(ctx, testUser("owner"), production.ID, true)
 	if err != nil {
@@ -192,8 +199,11 @@ func TestGitHubPushRecordsRevisionWithoutBuildWhenAutoDeployOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if production.AutoDeploy {
-		t.Fatalf("expected production auto-deploy off, got %#v", production)
+	if !production.AutoDeploy {
+		t.Fatalf("expected production auto-deploy on by default, got %#v", production)
+	}
+	if _, err := store.catalog.updateEnvironmentAutoDeploy(ctx, testUser("user-1"), production.ID, false); err != nil {
+		t.Fatalf("disable production auto-deploy: %v", err)
 	}
 	service, err := createService(ctx, store, "user-1", productionID, "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
@@ -294,8 +304,11 @@ func TestGitHubStaleBindingHoldsBuildWhenAutoDeployOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if production.AutoDeploy {
-		t.Fatalf("expected production auto-deploy off, got %#v", production)
+	if !production.AutoDeploy {
+		t.Fatalf("expected production auto-deploy on by default, got %#v", production)
+	}
+	if _, err := store.catalog.updateEnvironmentAutoDeploy(ctx, testUser("user-1"), production.ID, false); err != nil {
+		t.Fatalf("disable production auto-deploy: %v", err)
 	}
 	service, err := createService(ctx, store, "user-1", productionID, "web", repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},

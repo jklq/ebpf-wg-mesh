@@ -429,7 +429,46 @@ describe("dashboard operations", () => {
 		expect(result.onboarding.builder).toBe("BUILDER_KIND_DOCKERFILE");
 	});
 
-	it("refuses railpack create when analysis fails", async () => {
+	it("falls back to dockerfile when railpack analysis fails", async () => {
+		const harness = createDashboardTestHarness();
+		await auth.completeAuthCallback(harness.runtime, {
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.nextRepositoryInspection = {
+			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+			defaultBranch: "main",
+			dockerfileCandidates: ["Dockerfile"],
+			recommendedDockerfileRecipe: {
+				builder: "BUILDER_KIND_DOCKERFILE",
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			},
+			recommendedPorts: [],
+			detectedLanguage: "node",
+			detectedStartCommand: "",
+			analysisError: 'detected Node.js in "." but no start command was found',
+		};
+
+		const result = await onboarding.createServiceFastFromSession(
+			harness.runtime,
+			{
+				repositorySelector: "octocat/hello",
+			},
+		);
+
+		expect(harness.platform.createServiceCalls[0].spec.source).toMatchObject({
+			buildRecipe: {
+				builder: "BUILDER_KIND_DOCKERFILE",
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			},
+		});
+		expect(result.onboarding.builder).toBe("BUILDER_KIND_DOCKERFILE");
+	});
+
+	it("refuses an explicit railpack create when analysis fails", async () => {
 		const harness = createDashboardTestHarness();
 		await auth.completeAuthCallback(harness.runtime, {
 			userId: "user-1",
@@ -454,6 +493,7 @@ describe("dashboard operations", () => {
 		await expect(
 			onboarding.createServiceFastFromSession(harness.runtime, {
 				repositorySelector: "octocat/hello",
+				builder: "BUILDER_KIND_RAILPACK",
 			}),
 		).rejects.toThrow("no start command was found");
 		expect(harness.platform.createServiceCalls).toEqual([]);

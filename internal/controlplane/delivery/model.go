@@ -40,10 +40,6 @@ type EnvironmentRecord struct {
 	UpdatedAt               time.Time
 }
 
-func DefaultAutoDeploy(production bool) bool {
-	return !production
-}
-
 type VolumeRecord struct {
 	ID            string
 	EnvironmentID string
