@@ -80,6 +80,15 @@ func (s *SQLStore) SourceBindingByServiceID(ctx context.Context, serviceID strin
 	return s.SourceBindingByServiceIDQuerier(ctx, s.db, serviceID)
 }
 
+func (s *SQLStore) EnvironmentAutoDeploy(ctx context.Context, environmentID string) (bool, error) {
+	var autoDeploy bool
+	err := s.db.QueryRowContext(ctx, `SELECT auto_deploy FROM environments WHERE id = $1`, strings.TrimSpace(environmentID)).Scan(&autoDeploy)
+	if err != nil {
+		return false, err
+	}
+	return autoDeploy, nil
+}
+
 func (s *SQLStore) SourceBindingsForGitHubRepositoryAndRef(ctx context.Context, repositoryExternalID, trackedRef string) ([]SourceBindingRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
@@ -407,6 +416,55 @@ func (s *SQLStore) SourceRevisionByIDTx(ctx context.Context, q Querier, sourceRe
 		return SourceRevisionRecord{}, err
 	}
 	return rec, nil
+}
+
+func (s *SQLStore) ServiceHasUnbuiltSourceRevisionTx(ctx context.Context, q Querier, serviceID string) (bool, error) {
+	var exists bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM (
+			SELECT sr.id FROM source_revisions sr
+			JOIN source_bindings sb ON sb.id = sr.source_binding_id
+			WHERE sb.service_id = $1
+			ORDER BY sr.observed_at DESC, sr.created_at DESC, sr.id DESC
+			LIMIT 1
+		) latest
+		LEFT JOIN build_runs b ON b.source_revision_id = latest.id
+		WHERE b.id IS NULL
+	)`, serviceID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (s *SQLStore) ServicesWithUnbuiltSourceRevisionsTx(ctx context.Context, q Querier, environmentID string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT s.id FROM services s
+		WHERE s.environment_id = $1
+		AND EXISTS (
+			SELECT 1 FROM (
+				SELECT sr.id FROM source_revisions sr
+				JOIN source_bindings sb ON sb.id = sr.source_binding_id
+				WHERE sb.service_id = s.id
+				ORDER BY sr.observed_at DESC, sr.created_at DESC, sr.id DESC
+				LIMIT 1
+			) latest
+			LEFT JOIN build_runs b ON b.source_revision_id = latest.id
+			WHERE b.id IS NULL
+		)
+		ORDER BY s.id FOR UPDATE OF s`, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (s *SQLStore) LatestSourceRevisionByBindingIDTx(ctx context.Context, q Querier, sourceBindingID string) (SourceRevisionRecord, error) {

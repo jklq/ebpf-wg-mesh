@@ -18,6 +18,7 @@ export interface DashboardEnvironment {
 	name: string;
 	kind: "persistent";
 	isProduction: boolean;
+	autoDeploy: boolean;
 	copiedFromEnvironmentId?: string;
 	createdAt?: Date;
 	updatedAt?: Date;
@@ -330,9 +331,15 @@ export interface DashboardDeploymentStage {
 	finishedAt?: Date;
 }
 
+export interface DashboardSourceRevision {
+	commitSha: string;
+	observedAt?: Date;
+}
+
 export interface DashboardServiceSourceSummary {
 	desiredSpec?: DashboardSourceSpec;
 	resolvedBinding?: DashboardResolvedSourceBinding;
+	latestRevision?: DashboardSourceRevision;
 }
 
 export interface DashboardServicePosition {

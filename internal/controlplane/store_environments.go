@@ -99,6 +99,30 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.U
 	return rec, err
 }
 
+func (s *catalogPersistence) updateEnvironmentAutoDeploy(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	var rec deliverycore.EnvironmentRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.environmentByScopeQuerier(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
+			return err
+		}
+		journal.RecordEnvironment(ctx, current.ID)
+		current.AutoDeploy = autoDeploy
+		current.UpdatedAt = now
+		rec = current
+		return nil
+	})
+	return rec, err
+}
+
 func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error) {
 	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
@@ -168,6 +192,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 		Name:                    name,
 		Kind:                    deliverycore.EnvironmentKindPersistent,
 		IsProduction:            production,
+		AutoDeploy:              deliverycore.DefaultAutoDeploy(production),
 		NetworkIdentity:         networkIdentity,
 		CopiedFromEnvironmentID: copiedFrom,
 		CreatedAt:               now,
@@ -175,10 +200,10 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 	}
 	_, err = q.ExecContext(ctx, `
 		INSERT INTO environments(
-			id, project_id, name, kind, is_production, network_identity,
+			id, project_id, name, kind, is_production, auto_deploy, network_identity,
 			copied_from_environment_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		rec.ID, rec.ProjectID, rec.Name, string(rec.Kind), rec.IsProduction,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		rec.ID, rec.ProjectID, rec.Name, string(rec.Kind), rec.IsProduction, rec.AutoDeploy,
 		rec.NetworkIdentity, nullIfEmpty(rec.CopiedFromEnvironmentID), rec.CreatedAt, rec.UpdatedAt,
 	)
 	if err != nil {
@@ -218,7 +243,7 @@ func (s *catalogPersistence) environmentByScopeQuerier(ctx context.Context, q de
 	return deliverycore.ScanEnvironmentRow(row)
 }
 
-const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
+const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production, e.auto_deploy,
 	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
 	FROM environments e`
 

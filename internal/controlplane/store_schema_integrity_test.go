@@ -17,7 +17,7 @@ func TestSchemaRejectsCrossServiceReferences(t *testing.T) {
 	err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		statements := []string{
 			`INSERT INTO projects(id, name, kind, owner_user_id, created_at) VALUES ('integrity-project', 'integrity', 'user', 'owner', $1)`,
-			`INSERT INTO environments(id, project_id, name, kind, network_identity, created_at, updated_at) VALUES ('integrity-environment', 'integrity-project', 'production', 'production', 9001, $1, $1)`,
+			`INSERT INTO environments(id, project_id, name, kind, auto_deploy, network_identity, created_at, updated_at) VALUES ('integrity-environment', 'integrity-project', 'production', 'production', TRUE, 9001, $1, $1)`,
 			`INSERT INTO services(id, environment_id, name, current_spec_revision, desired_replica_count, created_at, updated_at) VALUES ('service-a', 'integrity-environment', 'a', 1, 1, $1, $1), ('service-b', 'integrity-environment', 'b', 1, 1, $1, $1)`,
 			`INSERT INTO service_delivery_status(service_id, updated_at) VALUES ('service-a', $1), ('service-b', $1)`,
 			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ('service-a', 1, '{}', $1), ('service-b', 1, '{}', $1)`,

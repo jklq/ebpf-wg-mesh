@@ -232,6 +232,7 @@ describe("DashboardPage canvas", () => {
 				name: "Production",
 				kind: "persistent",
 				isProduction: true,
+				autoDeploy: false,
 			},
 			service: created,
 			serviceStatus: null,
@@ -277,6 +278,7 @@ describe("DashboardPage canvas", () => {
 			name: "Production",
 			kind: "persistent" as const,
 			isProduction: true,
+			autoDeploy: false,
 		};
 		doCreateServiceFastMock.mockResolvedValue({
 			project: { id: "project-1", name: "test-project", kind: "user" },
@@ -344,6 +346,7 @@ describe("DashboardPage canvas", () => {
 				name: string;
 				kind: "persistent";
 				isProduction: boolean;
+				autoDeploy: boolean;
 			};
 			service: ReturnType<typeof serviceRecord>;
 			serviceStatus: null;
@@ -392,6 +395,7 @@ describe("DashboardPage canvas", () => {
 				name: "Production",
 				kind: "persistent",
 				isProduction: true,
+				autoDeploy: false,
 			},
 			service: created,
 			serviceStatus: null,
@@ -437,6 +441,7 @@ describe("DashboardPage canvas", () => {
 			name: "Production",
 			kind: "persistent" as const,
 			isProduction: true,
+			autoDeploy: false,
 		};
 		doCreateServiceFastMock.mockResolvedValue({
 			project: { id: "project-1", name: "test-project", kind: "user" },

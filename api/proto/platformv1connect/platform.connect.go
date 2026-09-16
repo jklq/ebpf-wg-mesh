@@ -62,6 +62,9 @@ const (
 	// PlatformServiceRenameEnvironmentProcedure is the fully-qualified name of the PlatformService's
 	// RenameEnvironment RPC.
 	PlatformServiceRenameEnvironmentProcedure = "/platform.v1.PlatformService/RenameEnvironment"
+	// PlatformServiceUpdateEnvironmentAutoDeployProcedure is the fully-qualified name of the
+	// PlatformService's UpdateEnvironmentAutoDeploy RPC.
+	PlatformServiceUpdateEnvironmentAutoDeployProcedure = "/platform.v1.PlatformService/UpdateEnvironmentAutoDeploy"
 	// PlatformServiceDeleteEnvironmentProcedure is the fully-qualified name of the PlatformService's
 	// DeleteEnvironment RPC.
 	PlatformServiceDeleteEnvironmentProcedure = "/platform.v1.PlatformService/DeleteEnvironment"
@@ -176,6 +179,7 @@ type PlatformServiceClient interface {
 	CreateEnvironment(context.Context, *connect.Request[platformv1.CreateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	DuplicateEnvironment(context.Context, *connect.Request[platformv1.DuplicateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
+	UpdateEnvironmentAutoDeploy(context.Context, *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error)
 	DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error)
 	ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error)
 	LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
@@ -260,6 +264,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			httpClient,
 			baseURL+PlatformServiceRenameEnvironmentProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("RenameEnvironment")),
+			connect.WithClientOptions(opts...),
+		),
+		updateEnvironmentAutoDeploy: connect.NewClient[platformv1.UpdateEnvironmentAutoDeployRequest, platformv1.Environment](
+			httpClient,
+			baseURL+PlatformServiceUpdateEnvironmentAutoDeployProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("UpdateEnvironmentAutoDeploy")),
 			connect.WithClientOptions(opts...),
 		),
 		deleteEnvironment: connect.NewClient[platformv1.DeleteEnvironmentRequest, emptypb.Empty](
@@ -417,39 +427,40 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 
 // platformServiceClient implements PlatformServiceClient.
 type platformServiceClient struct {
-	createProject          *connect.Client[platformv1.CreateProjectRequest, platformv1.Project]
-	listProjects           *connect.Client[emptypb.Empty, platformv1.ListProjectsResponse]
-	getProject             *connect.Client[platformv1.GetProjectRequest, platformv1.Project]
-	listEnvironments       *connect.Client[platformv1.ListEnvironmentsRequest, platformv1.ListEnvironmentsResponse]
-	getEnvironment         *connect.Client[platformv1.GetEnvironmentRequest, platformv1.Environment]
-	createEnvironment      *connect.Client[platformv1.CreateEnvironmentRequest, platformv1.Environment]
-	duplicateEnvironment   *connect.Client[platformv1.DuplicateEnvironmentRequest, platformv1.Environment]
-	renameEnvironment      *connect.Client[platformv1.RenameEnvironmentRequest, platformv1.Environment]
-	deleteEnvironment      *connect.Client[platformv1.DeleteEnvironmentRequest, emptypb.Empty]
-	releaseEnvironment     *connect.Client[platformv1.ReleaseEnvironmentRequest, platformv1.ReleaseEnvironmentResponse]
-	linkGitHubRepository   *connect.Client[platformv1.LinkGitHubRepositoryRequest, platformv1.InspectSourceResponse]
-	inspectSource          *connect.Client[platformv1.InspectSourceRequest, platformv1.InspectSourceResponse]
-	createService          *connect.Client[platformv1.CreateServiceRequest, platformv1.Service]
-	updateService          *connect.Client[platformv1.UpdateServiceRequest, platformv1.Service]
-	scaleService           *connect.Client[platformv1.ScaleServiceRequest, platformv1.ServiceStatus]
-	applyDeploymentAction  *connect.Client[platformv1.ApplyDeploymentActionRequest, platformv1.ServiceStatus]
-	discardServiceChanges  *connect.Client[platformv1.DiscardServiceChangesRequest, platformv1.Service]
-	deleteService          *connect.Client[platformv1.DeleteServiceRequest, emptypb.Empty]
-	getService             *connect.Client[platformv1.GetServiceRequest, platformv1.Service]
-	listServices           *connect.Client[platformv1.ListServicesRequest, platformv1.ListServicesResponse]
-	createVolume           *connect.Client[platformv1.CreateVolumeRequest, platformv1.Volume]
-	deleteVolume           *connect.Client[platformv1.DeleteVolumeRequest, emptypb.Empty]
-	listVolumes            *connect.Client[platformv1.ListVolumesRequest, platformv1.ListVolumesResponse]
-	createDomainBinding    *connect.Client[platformv1.CreateDomainBindingRequest, platformv1.DomainBinding]
-	generateDomainBinding  *connect.Client[platformv1.GenerateDomainBindingRequest, platformv1.DomainBinding]
-	getDomainBinding       *connect.Client[platformv1.GetDomainBindingRequest, platformv1.DomainBinding]
-	listDomainBindings     *connect.Client[platformv1.ListDomainBindingsRequest, platformv1.ListDomainBindingsResponse]
-	updateDomainBinding    *connect.Client[platformv1.UpdateDomainBindingRequest, platformv1.DomainBinding]
-	deleteDomainBinding    *connect.Client[platformv1.DeleteDomainBindingRequest, emptypb.Empty]
-	getServiceStatus       *connect.Client[platformv1.GetServiceStatusRequest, platformv1.ServiceStatus]
-	listServiceLogs        *connect.Client[platformv1.ListServiceLogsRequest, platformv1.ListServiceLogsResponse]
-	listServiceDeployments *connect.Client[platformv1.ListServiceDeploymentsRequest, platformv1.ListServiceDeploymentsResponse]
-	listAgents             *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
+	createProject               *connect.Client[platformv1.CreateProjectRequest, platformv1.Project]
+	listProjects                *connect.Client[emptypb.Empty, platformv1.ListProjectsResponse]
+	getProject                  *connect.Client[platformv1.GetProjectRequest, platformv1.Project]
+	listEnvironments            *connect.Client[platformv1.ListEnvironmentsRequest, platformv1.ListEnvironmentsResponse]
+	getEnvironment              *connect.Client[platformv1.GetEnvironmentRequest, platformv1.Environment]
+	createEnvironment           *connect.Client[platformv1.CreateEnvironmentRequest, platformv1.Environment]
+	duplicateEnvironment        *connect.Client[platformv1.DuplicateEnvironmentRequest, platformv1.Environment]
+	renameEnvironment           *connect.Client[platformv1.RenameEnvironmentRequest, platformv1.Environment]
+	updateEnvironmentAutoDeploy *connect.Client[platformv1.UpdateEnvironmentAutoDeployRequest, platformv1.Environment]
+	deleteEnvironment           *connect.Client[platformv1.DeleteEnvironmentRequest, emptypb.Empty]
+	releaseEnvironment          *connect.Client[platformv1.ReleaseEnvironmentRequest, platformv1.ReleaseEnvironmentResponse]
+	linkGitHubRepository        *connect.Client[platformv1.LinkGitHubRepositoryRequest, platformv1.InspectSourceResponse]
+	inspectSource               *connect.Client[platformv1.InspectSourceRequest, platformv1.InspectSourceResponse]
+	createService               *connect.Client[platformv1.CreateServiceRequest, platformv1.Service]
+	updateService               *connect.Client[platformv1.UpdateServiceRequest, platformv1.Service]
+	scaleService                *connect.Client[platformv1.ScaleServiceRequest, platformv1.ServiceStatus]
+	applyDeploymentAction       *connect.Client[platformv1.ApplyDeploymentActionRequest, platformv1.ServiceStatus]
+	discardServiceChanges       *connect.Client[platformv1.DiscardServiceChangesRequest, platformv1.Service]
+	deleteService               *connect.Client[platformv1.DeleteServiceRequest, emptypb.Empty]
+	getService                  *connect.Client[platformv1.GetServiceRequest, platformv1.Service]
+	listServices                *connect.Client[platformv1.ListServicesRequest, platformv1.ListServicesResponse]
+	createVolume                *connect.Client[platformv1.CreateVolumeRequest, platformv1.Volume]
+	deleteVolume                *connect.Client[platformv1.DeleteVolumeRequest, emptypb.Empty]
+	listVolumes                 *connect.Client[platformv1.ListVolumesRequest, platformv1.ListVolumesResponse]
+	createDomainBinding         *connect.Client[platformv1.CreateDomainBindingRequest, platformv1.DomainBinding]
+	generateDomainBinding       *connect.Client[platformv1.GenerateDomainBindingRequest, platformv1.DomainBinding]
+	getDomainBinding            *connect.Client[platformv1.GetDomainBindingRequest, platformv1.DomainBinding]
+	listDomainBindings          *connect.Client[platformv1.ListDomainBindingsRequest, platformv1.ListDomainBindingsResponse]
+	updateDomainBinding         *connect.Client[platformv1.UpdateDomainBindingRequest, platformv1.DomainBinding]
+	deleteDomainBinding         *connect.Client[platformv1.DeleteDomainBindingRequest, emptypb.Empty]
+	getServiceStatus            *connect.Client[platformv1.GetServiceStatusRequest, platformv1.ServiceStatus]
+	listServiceLogs             *connect.Client[platformv1.ListServiceLogsRequest, platformv1.ListServiceLogsResponse]
+	listServiceDeployments      *connect.Client[platformv1.ListServiceDeploymentsRequest, platformv1.ListServiceDeploymentsResponse]
+	listAgents                  *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
 }
 
 // CreateProject calls platform.v1.PlatformService.CreateProject.
@@ -490,6 +501,11 @@ func (c *platformServiceClient) DuplicateEnvironment(ctx context.Context, req *c
 // RenameEnvironment calls platform.v1.PlatformService.RenameEnvironment.
 func (c *platformServiceClient) RenameEnvironment(ctx context.Context, req *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
 	return c.renameEnvironment.CallUnary(ctx, req)
+}
+
+// UpdateEnvironmentAutoDeploy calls platform.v1.PlatformService.UpdateEnvironmentAutoDeploy.
+func (c *platformServiceClient) UpdateEnvironmentAutoDeploy(ctx context.Context, req *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error) {
+	return c.updateEnvironmentAutoDeploy.CallUnary(ctx, req)
 }
 
 // DeleteEnvironment calls platform.v1.PlatformService.DeleteEnvironment.
@@ -627,6 +643,7 @@ type PlatformServiceHandler interface {
 	CreateEnvironment(context.Context, *connect.Request[platformv1.CreateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	DuplicateEnvironment(context.Context, *connect.Request[platformv1.DuplicateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
+	UpdateEnvironmentAutoDeploy(context.Context, *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error)
 	DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error)
 	ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error)
 	LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
@@ -707,6 +724,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		PlatformServiceRenameEnvironmentProcedure,
 		svc.RenameEnvironment,
 		connect.WithSchema(platformServiceMethods.ByName("RenameEnvironment")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceUpdateEnvironmentAutoDeployHandler := connect.NewUnaryHandler(
+		PlatformServiceUpdateEnvironmentAutoDeployProcedure,
+		svc.UpdateEnvironmentAutoDeploy,
+		connect.WithSchema(platformServiceMethods.ByName("UpdateEnvironmentAutoDeploy")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServiceDeleteEnvironmentHandler := connect.NewUnaryHandler(
@@ -877,6 +900,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceDuplicateEnvironmentHandler.ServeHTTP(w, r)
 		case PlatformServiceRenameEnvironmentProcedure:
 			platformServiceRenameEnvironmentHandler.ServeHTTP(w, r)
+		case PlatformServiceUpdateEnvironmentAutoDeployProcedure:
+			platformServiceUpdateEnvironmentAutoDeployHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteEnvironmentProcedure:
 			platformServiceDeleteEnvironmentHandler.ServeHTTP(w, r)
 		case PlatformServiceReleaseEnvironmentProcedure:
@@ -966,6 +991,10 @@ func (UnimplementedPlatformServiceHandler) DuplicateEnvironment(context.Context,
 
 func (UnimplementedPlatformServiceHandler) RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RenameEnvironment is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) UpdateEnvironmentAutoDeploy(context.Context, *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.UpdateEnvironmentAutoDeploy is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error) {

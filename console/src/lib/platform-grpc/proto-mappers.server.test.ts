@@ -8,20 +8,24 @@ import {
 	BuildRecipeSchema,
 	BuildStatusSchema,
 	DeploymentStatusSchema,
+	EnvironmentSchema,
 	FleetSchema,
 	RestartCause,
 	ServiceLogLineSchema,
 	ServiceLogType,
+	ServiceSchema,
 	ServiceStatusSchema,
 } from "#/lib/platform-gen/platform_pb";
 import {
 	toBuildStatus,
 	toCreateAgentRequest,
 	toDeploymentStatus,
+	toEnvironment,
 	toFleet,
 	toProtoServiceSpec,
 	toRepositoryInspection,
 	toServiceLogLine,
+	toServiceRecord,
 	toServiceStatus,
 } from "#/lib/platform-grpc/proto-mappers.server";
 
@@ -67,6 +71,50 @@ describe("platform protobuf mappers", () => {
 			line: "ready",
 			logType: "SERVICE_LOG_TYPE_RUNTIME",
 			sequence: 42,
+		});
+	});
+
+	it("maps environment auto-deploy into dashboard values", () => {
+		const environment = toEnvironment(
+			create(EnvironmentSchema, {
+				id: "environment-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: 1,
+				isProduction: true,
+				autoDeploy: false,
+			}),
+		);
+		expect(environment).toMatchObject({
+			id: "environment-1",
+			isProduction: true,
+			autoDeploy: false,
+		});
+	});
+
+	it("maps the latest source revision into the service summary", () => {
+		const observedAt = new Date("2026-09-15T12:00:00Z");
+		const service = toServiceRecord(
+			create(ServiceSchema, {
+				id: "service-1",
+				environmentId: "environment-1",
+				name: "web",
+				sourceSummary: {
+					source: {
+						case: "sourceState",
+						value: {
+							latestRevision: {
+								commitSha: "bbb222bbb222",
+								observedAt: timestampFromDate(observedAt),
+							},
+						},
+					},
+				},
+			}),
+		);
+		expect(service.sourceSummary?.latestRevision).toEqual({
+			commitSha: "bbb222bbb222",
+			observedAt,
 		});
 	});
 

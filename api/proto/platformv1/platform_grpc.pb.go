@@ -20,39 +20,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_CreateProject_FullMethodName          = "/platform.v1.PlatformService/CreateProject"
-	PlatformService_ListProjects_FullMethodName           = "/platform.v1.PlatformService/ListProjects"
-	PlatformService_GetProject_FullMethodName             = "/platform.v1.PlatformService/GetProject"
-	PlatformService_ListEnvironments_FullMethodName       = "/platform.v1.PlatformService/ListEnvironments"
-	PlatformService_GetEnvironment_FullMethodName         = "/platform.v1.PlatformService/GetEnvironment"
-	PlatformService_CreateEnvironment_FullMethodName      = "/platform.v1.PlatformService/CreateEnvironment"
-	PlatformService_DuplicateEnvironment_FullMethodName   = "/platform.v1.PlatformService/DuplicateEnvironment"
-	PlatformService_RenameEnvironment_FullMethodName      = "/platform.v1.PlatformService/RenameEnvironment"
-	PlatformService_DeleteEnvironment_FullMethodName      = "/platform.v1.PlatformService/DeleteEnvironment"
-	PlatformService_ReleaseEnvironment_FullMethodName     = "/platform.v1.PlatformService/ReleaseEnvironment"
-	PlatformService_LinkGitHubRepository_FullMethodName   = "/platform.v1.PlatformService/LinkGitHubRepository"
-	PlatformService_InspectSource_FullMethodName          = "/platform.v1.PlatformService/InspectSource"
-	PlatformService_CreateService_FullMethodName          = "/platform.v1.PlatformService/CreateService"
-	PlatformService_UpdateService_FullMethodName          = "/platform.v1.PlatformService/UpdateService"
-	PlatformService_ScaleService_FullMethodName           = "/platform.v1.PlatformService/ScaleService"
-	PlatformService_ApplyDeploymentAction_FullMethodName  = "/platform.v1.PlatformService/ApplyDeploymentAction"
-	PlatformService_DiscardServiceChanges_FullMethodName  = "/platform.v1.PlatformService/DiscardServiceChanges"
-	PlatformService_DeleteService_FullMethodName          = "/platform.v1.PlatformService/DeleteService"
-	PlatformService_GetService_FullMethodName             = "/platform.v1.PlatformService/GetService"
-	PlatformService_ListServices_FullMethodName           = "/platform.v1.PlatformService/ListServices"
-	PlatformService_CreateVolume_FullMethodName           = "/platform.v1.PlatformService/CreateVolume"
-	PlatformService_DeleteVolume_FullMethodName           = "/platform.v1.PlatformService/DeleteVolume"
-	PlatformService_ListVolumes_FullMethodName            = "/platform.v1.PlatformService/ListVolumes"
-	PlatformService_CreateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/CreateDomainBinding"
-	PlatformService_GenerateDomainBinding_FullMethodName  = "/platform.v1.PlatformService/GenerateDomainBinding"
-	PlatformService_GetDomainBinding_FullMethodName       = "/platform.v1.PlatformService/GetDomainBinding"
-	PlatformService_ListDomainBindings_FullMethodName     = "/platform.v1.PlatformService/ListDomainBindings"
-	PlatformService_UpdateDomainBinding_FullMethodName    = "/platform.v1.PlatformService/UpdateDomainBinding"
-	PlatformService_DeleteDomainBinding_FullMethodName    = "/platform.v1.PlatformService/DeleteDomainBinding"
-	PlatformService_GetServiceStatus_FullMethodName       = "/platform.v1.PlatformService/GetServiceStatus"
-	PlatformService_ListServiceLogs_FullMethodName        = "/platform.v1.PlatformService/ListServiceLogs"
-	PlatformService_ListServiceDeployments_FullMethodName = "/platform.v1.PlatformService/ListServiceDeployments"
-	PlatformService_ListAgents_FullMethodName             = "/platform.v1.PlatformService/ListAgents"
+	PlatformService_CreateProject_FullMethodName               = "/platform.v1.PlatformService/CreateProject"
+	PlatformService_ListProjects_FullMethodName                = "/platform.v1.PlatformService/ListProjects"
+	PlatformService_GetProject_FullMethodName                  = "/platform.v1.PlatformService/GetProject"
+	PlatformService_ListEnvironments_FullMethodName            = "/platform.v1.PlatformService/ListEnvironments"
+	PlatformService_GetEnvironment_FullMethodName              = "/platform.v1.PlatformService/GetEnvironment"
+	PlatformService_CreateEnvironment_FullMethodName           = "/platform.v1.PlatformService/CreateEnvironment"
+	PlatformService_DuplicateEnvironment_FullMethodName        = "/platform.v1.PlatformService/DuplicateEnvironment"
+	PlatformService_RenameEnvironment_FullMethodName           = "/platform.v1.PlatformService/RenameEnvironment"
+	PlatformService_UpdateEnvironmentAutoDeploy_FullMethodName = "/platform.v1.PlatformService/UpdateEnvironmentAutoDeploy"
+	PlatformService_DeleteEnvironment_FullMethodName           = "/platform.v1.PlatformService/DeleteEnvironment"
+	PlatformService_ReleaseEnvironment_FullMethodName          = "/platform.v1.PlatformService/ReleaseEnvironment"
+	PlatformService_LinkGitHubRepository_FullMethodName        = "/platform.v1.PlatformService/LinkGitHubRepository"
+	PlatformService_InspectSource_FullMethodName               = "/platform.v1.PlatformService/InspectSource"
+	PlatformService_CreateService_FullMethodName               = "/platform.v1.PlatformService/CreateService"
+	PlatformService_UpdateService_FullMethodName               = "/platform.v1.PlatformService/UpdateService"
+	PlatformService_ScaleService_FullMethodName                = "/platform.v1.PlatformService/ScaleService"
+	PlatformService_ApplyDeploymentAction_FullMethodName       = "/platform.v1.PlatformService/ApplyDeploymentAction"
+	PlatformService_DiscardServiceChanges_FullMethodName       = "/platform.v1.PlatformService/DiscardServiceChanges"
+	PlatformService_DeleteService_FullMethodName               = "/platform.v1.PlatformService/DeleteService"
+	PlatformService_GetService_FullMethodName                  = "/platform.v1.PlatformService/GetService"
+	PlatformService_ListServices_FullMethodName                = "/platform.v1.PlatformService/ListServices"
+	PlatformService_CreateVolume_FullMethodName                = "/platform.v1.PlatformService/CreateVolume"
+	PlatformService_DeleteVolume_FullMethodName                = "/platform.v1.PlatformService/DeleteVolume"
+	PlatformService_ListVolumes_FullMethodName                 = "/platform.v1.PlatformService/ListVolumes"
+	PlatformService_CreateDomainBinding_FullMethodName         = "/platform.v1.PlatformService/CreateDomainBinding"
+	PlatformService_GenerateDomainBinding_FullMethodName       = "/platform.v1.PlatformService/GenerateDomainBinding"
+	PlatformService_GetDomainBinding_FullMethodName            = "/platform.v1.PlatformService/GetDomainBinding"
+	PlatformService_ListDomainBindings_FullMethodName          = "/platform.v1.PlatformService/ListDomainBindings"
+	PlatformService_UpdateDomainBinding_FullMethodName         = "/platform.v1.PlatformService/UpdateDomainBinding"
+	PlatformService_DeleteDomainBinding_FullMethodName         = "/platform.v1.PlatformService/DeleteDomainBinding"
+	PlatformService_GetServiceStatus_FullMethodName            = "/platform.v1.PlatformService/GetServiceStatus"
+	PlatformService_ListServiceLogs_FullMethodName             = "/platform.v1.PlatformService/ListServiceLogs"
+	PlatformService_ListServiceDeployments_FullMethodName      = "/platform.v1.PlatformService/ListServiceDeployments"
+	PlatformService_ListAgents_FullMethodName                  = "/platform.v1.PlatformService/ListAgents"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -67,6 +68,7 @@ type PlatformServiceClient interface {
 	CreateEnvironment(ctx context.Context, in *CreateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
 	DuplicateEnvironment(ctx context.Context, in *DuplicateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
 	RenameEnvironment(ctx context.Context, in *RenameEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
+	UpdateEnvironmentAutoDeploy(ctx context.Context, in *UpdateEnvironmentAutoDeployRequest, opts ...grpc.CallOption) (*Environment, error)
 	DeleteEnvironment(ctx context.Context, in *DeleteEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ReleaseEnvironment(ctx context.Context, in *ReleaseEnvironmentRequest, opts ...grpc.CallOption) (*ReleaseEnvironmentResponse, error)
 	LinkGitHubRepository(ctx context.Context, in *LinkGitHubRepositoryRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
@@ -176,6 +178,16 @@ func (c *platformServiceClient) RenameEnvironment(ctx context.Context, in *Renam
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Environment)
 	err := c.cc.Invoke(ctx, PlatformService_RenameEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) UpdateEnvironmentAutoDeploy(ctx context.Context, in *UpdateEnvironmentAutoDeployRequest, opts ...grpc.CallOption) (*Environment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Environment)
+	err := c.cc.Invoke(ctx, PlatformService_UpdateEnvironmentAutoDeploy_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -444,6 +456,7 @@ type PlatformServiceServer interface {
 	CreateEnvironment(context.Context, *CreateEnvironmentRequest) (*Environment, error)
 	DuplicateEnvironment(context.Context, *DuplicateEnvironmentRequest) (*Environment, error)
 	RenameEnvironment(context.Context, *RenameEnvironmentRequest) (*Environment, error)
+	UpdateEnvironmentAutoDeploy(context.Context, *UpdateEnvironmentAutoDeployRequest) (*Environment, error)
 	DeleteEnvironment(context.Context, *DeleteEnvironmentRequest) (*emptypb.Empty, error)
 	ReleaseEnvironment(context.Context, *ReleaseEnvironmentRequest) (*ReleaseEnvironmentResponse, error)
 	LinkGitHubRepository(context.Context, *LinkGitHubRepositoryRequest) (*InspectSourceResponse, error)
@@ -502,6 +515,9 @@ func (UnimplementedPlatformServiceServer) DuplicateEnvironment(context.Context, 
 }
 func (UnimplementedPlatformServiceServer) RenameEnvironment(context.Context, *RenameEnvironmentRequest) (*Environment, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenameEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) UpdateEnvironmentAutoDeploy(context.Context, *UpdateEnvironmentAutoDeployRequest) (*Environment, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateEnvironmentAutoDeploy not implemented")
 }
 func (UnimplementedPlatformServiceServer) DeleteEnvironment(context.Context, *DeleteEnvironmentRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteEnvironment not implemented")
@@ -739,6 +755,24 @@ func _PlatformService_RenameEnvironment_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).RenameEnvironment(ctx, req.(*RenameEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_UpdateEnvironmentAutoDeploy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateEnvironmentAutoDeployRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).UpdateEnvironmentAutoDeploy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_UpdateEnvironmentAutoDeploy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).UpdateEnvironmentAutoDeploy(ctx, req.(*UpdateEnvironmentAutoDeployRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1231,6 +1265,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RenameEnvironment",
 			Handler:    _PlatformService_RenameEnvironment_Handler,
+		},
+		{
+			MethodName: "UpdateEnvironmentAutoDeploy",
+			Handler:    _PlatformService_UpdateEnvironmentAutoDeploy_Handler,
 		},
 		{
 			MethodName: "DeleteEnvironment",

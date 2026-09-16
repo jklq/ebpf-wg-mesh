@@ -138,6 +138,16 @@ export async function renameEnvironmentFromSession(
 	);
 }
 
+export async function updateEnvironmentAutoDeployFromSession(
+	runtime: DashboardRuntime,
+	input: { environmentId: string; autoDeploy: boolean },
+): Promise<DashboardEnvironment> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "updateEnvironmentAutoDeploy", (platform) =>
+		platform.updateEnvironmentAutoDeploy(session.user, input),
+	);
+}
+
 export async function deleteEnvironmentFromSession(
 	runtime: DashboardRuntime,
 	environmentId: string,

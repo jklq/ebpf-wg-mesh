@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production,
+const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production, e.auto_deploy,
 	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
 	FROM environments e`
 
@@ -30,7 +30,7 @@ func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRec
 	var rec EnvironmentRecord
 	var kind string
 	var networkIdentity int64
-	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction,
+	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction, &rec.AutoDeploy,
 		&networkIdentity, &rec.CopiedFromEnvironmentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 		return EnvironmentRecord{}, err
 	}

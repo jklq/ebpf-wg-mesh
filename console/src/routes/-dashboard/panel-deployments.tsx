@@ -10,7 +10,7 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
-import { errorMsg } from "#/lib/ui-classes";
+import { btnSecondary, errorMsg } from "#/lib/ui-classes";
 
 import {
 	isInProgressDeploymentState,
@@ -28,8 +28,14 @@ import {
 	newIdempotencyKey,
 	reconcileCurrentDeployment,
 	shouldRenderDeploymentHistoryEntry,
+	sourceRevisionState,
 } from "./panel-deployments-helpers";
-import { doApplyDeploymentAction, fetchServiceDeployments } from "./server-fns";
+import {
+	doApplyDeploymentAction,
+	doReleaseEnvironment,
+	fetchServiceDeployments,
+} from "./server-fns";
+import { shortSha } from "./service-utils";
 import { usePolling } from "./use-polling";
 
 type DeploymentLogTarget = {
@@ -47,6 +53,7 @@ export function PanelDeployments({
 	status,
 	project,
 	domains = [],
+	autoDeploy = true,
 	onOpenVariables,
 	onRedeployed,
 }: {
@@ -54,6 +61,7 @@ export function PanelDeployments({
 	status: DashboardServiceStatus | null;
 	project: DashboardProject | undefined;
 	domains?: DashboardDomainBinding[];
+	autoDeploy?: boolean;
 	onOpenVariables?: (key: string) => void;
 	onRedeployed?: (status: DashboardServiceStatus) => void;
 }) {
@@ -72,6 +80,9 @@ export function PanelDeployments({
 	const [logTarget, setLogTarget] = useState<DeploymentLogTarget | null>(null);
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
+	const [deployingRevision, setDeployingRevision] = useState(false);
+	const [revisionDeployError, setRevisionDeployError] = useState<string>();
+	const revision = sourceRevisionState(currentService, autoDeploy);
 	const actionKeys = useRef(new Map<string, string>());
 	const deploymentActivityKey = [
 		currentService.latestBuild?.buildId,
@@ -143,6 +154,32 @@ export function PanelDeployments({
 		},
 		[service.id, loadDeployments, onRedeployed],
 	);
+
+	const deployRevision = useCallback(async () => {
+		if (deployingRevision) return;
+		setDeployingRevision(true);
+		setRevisionDeployError(undefined);
+		try {
+			const statuses = await doReleaseEnvironment({
+				data: { environmentId: currentService.environmentId },
+			});
+			const next = statuses.find(
+				(entry) => entry.service.id === currentService.id,
+			);
+			if (next) onRedeployed?.(next);
+			await loadDeployments();
+		} catch (cause) {
+			setRevisionDeployError(formatError(cause, "Unable to deploy."));
+		} finally {
+			setDeployingRevision(false);
+		}
+	}, [
+		currentService.environmentId,
+		currentService.id,
+		deployingRevision,
+		loadDeployments,
+		onRedeployed,
+	]);
 
 	useEffect(() => {
 		const id = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -220,6 +257,69 @@ export function PanelDeployments({
 						</span>
 					</div>
 				</div>
+				{revision && (
+					<output
+						aria-label={
+							revision.state === "deployed"
+								? "Latest commit is deployed"
+								: revision.state === "waiting"
+									? "Latest commit is deploying"
+									: "Latest commit is waiting for manual deploy"
+						}
+						className={cn(
+							"flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-sm border px-2.5 py-1.5 text-xs leading-[1.35]",
+							revision.state === "deployed" &&
+								"border-[rgba(80,76,71,0.55)] bg-white/[0.02] text-muted",
+							revision.state === "waiting" &&
+								"border-[rgba(192,133,32,0.28)] bg-[rgba(192,133,32,0.07)] text-building",
+							revision.state === "ignored" &&
+								"border-[rgba(80,76,71,0.55)] bg-[rgba(15,14,13,0.42)] text-muted",
+						)}
+					>
+						{revision.state === "deployed" && (
+							<span>
+								Latest commit{" "}
+								<span className="font-mono text-accent">
+									{shortSha(revision.commitSha)}
+								</span>{" "}
+								is deployed.
+							</span>
+						)}
+						{revision.state === "waiting" && (
+							<span>
+								Deploying{" "}
+								<span className="font-mono">
+									{shortSha(revision.commitSha)}
+								</span>
+								…
+							</span>
+						)}
+						{revision.state === "ignored" && (
+							<>
+								<span className="min-w-0 flex-1">
+									Auto-deploy is off —{" "}
+									<span className="font-mono text-ink">
+										{shortSha(revision.commitSha)}
+									</span>{" "}
+									is waiting.
+								</span>
+								<button
+									type="button"
+									className={cn(btnSecondary, "min-h-7 px-[11px]")}
+									disabled={deployingRevision}
+									onClick={() => void deployRevision()}
+								>
+									{deployingRevision ? "Deploying…" : "Deploy now"}
+								</button>
+							</>
+						)}
+					</output>
+				)}
+				{revisionDeployError && (
+					<div className={cn(errorMsg, "px-[9px] py-[7px] text-[11px]")}>
+						{revisionDeployError}
+					</div>
+				)}
 				<div className="flex flex-col gap-2.5">
 					{liveDeployments.map((entry) => (
 						<DeploymentCard

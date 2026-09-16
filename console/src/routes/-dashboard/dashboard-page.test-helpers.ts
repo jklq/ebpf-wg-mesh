@@ -73,6 +73,7 @@ export function dashboardState(
 				name: "Production",
 				kind: "persistent",
 				isProduction: true,
+				autoDeploy: false,
 			},
 		],
 		environment: {
@@ -81,6 +82,7 @@ export function dashboardState(
 			name: "Production",
 			kind: "persistent",
 			isProduction: true,
+			autoDeploy: false,
 		},
 		onboarding: {
 			projectId: "project-1",

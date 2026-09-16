@@ -53,6 +53,7 @@ import {
 	toSetAgentLifecycleRequest,
 	toUpdateAgentRequest,
 	toUpdateDomainBindingRequest,
+	toUpdateEnvironmentAutoDeployRequest,
 	toUpdateServiceRequest,
 } from "#/lib/platform-grpc/proto-mappers.server";
 
@@ -195,6 +196,18 @@ export function createPlatformGateway(
 				);
 			} catch (cause) {
 				throw toPlatformGatewayError("RenameEnvironment", cause);
+			}
+		},
+		async updateEnvironmentAutoDeploy(user, input) {
+			try {
+				return toEnvironment(
+					await platform.updateEnvironmentAutoDeploy(
+						toUpdateEnvironmentAutoDeployRequest(input),
+						callOptions(user),
+					),
+				);
+			} catch (cause) {
+				throw toPlatformGatewayError("UpdateEnvironmentAutoDeploy", cause);
 			}
 		},
 		async deleteEnvironment(user, environmentId) {

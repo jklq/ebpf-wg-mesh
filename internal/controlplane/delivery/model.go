@@ -33,10 +33,15 @@ type EnvironmentRecord struct {
 	Name                    string
 	Kind                    EnvironmentKind
 	IsProduction            bool
+	AutoDeploy              bool
 	NetworkIdentity         uint32
 	CopiedFromEnvironmentID string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+}
+
+func DefaultAutoDeploy(production bool) bool {
+	return !production
 }
 
 type VolumeRecord struct {

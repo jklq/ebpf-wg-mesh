@@ -513,6 +513,7 @@ describe("DashboardPage", () => {
 			name: "Staging",
 			kind: "persistent" as const,
 			isProduction: false,
+			autoDeploy: true,
 		};
 		rerender(
 			<DashboardPage
@@ -524,6 +525,7 @@ describe("DashboardPage", () => {
 							name: "Production",
 							kind: "persistent",
 							isProduction: true,
+							autoDeploy: false,
 						},
 						secondEnvironment,
 					],
