@@ -229,7 +229,10 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	if target.ResolvedSpec == nil || strings.TrimSpace(target.ImageDigest) == "" {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image snapshot", ErrDeploymentActionInvalid)
 	}
-	existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+	now := time.Now().UTC()
+	rolloutService := service
+	rolloutService.Spec = target.ResolvedSpec
+	existing, err := d.beginReplacementRolloutTx(ctx, tx, rolloutService, now)
 	if err != nil {
 		return "", err
 	}
@@ -245,12 +248,6 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 			return "", sql.ErrNoRows
 		}
 	}
-	now := time.Now().UTC()
-	rolloutService := service
-	rolloutService.Spec = target.ResolvedSpec
-	if _, err := d.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
-		return "", err
-	}
 	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
 	if err != nil {
 		return "", err
@@ -262,33 +259,12 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	if err := validateVolumeReplicaCompatibility(target.ResolvedSpec, desiredReplicas); err != nil {
 		return "", err
 	}
-	nextRollout := service.RolloutGeneration + 1
-	result, err := tx.ExecContext(ctx,
-		`UPDATE service_delivery_status AS ds
-		    SET current_rollout_generation = $1,
-		        current_resolved_image = NULLIF($2, ''),
-		        latest_build_id = NULLIF($3, ''),
-		        updated_at = $4
-		  WHERE service_id = $5 AND COALESCE(current_rollout_generation, 0) = $7
-		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $6)`,
-		nextRollout, target.ImageDigest, target.BuildID, now,
-		service.ID, service.SpecRevision, service.RolloutGeneration,
-	)
+	nextRollout, err := d.bumpServiceRolloutTx(ctx, tx, service, replacementRolloutBump{
+		SpecRevision: nextSpecRevision, Replicas: desiredReplicas,
+		ResolvedImage: target.ImageDigest, BuildID: &target.BuildID,
+		RolloutReason: strings.ToLower(reasonCode), UserID: userID,
+	}, now)
 	if err != nil {
-		return "", err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return "", err
-	}
-	if affected != 1 {
-		return "", ErrConcurrentUpdate
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, nextSpecRevision, desiredReplicas, now, service.ID); err != nil {
-		return "", err
-	}
-	journal.RecordService(ctx, service.ID)
-	if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, nextSpecRevision, strings.ToLower(reasonCode), target.BuildID, userID, now); err != nil {
 		return "", err
 	}
 	if targetAllocationID != "" {
@@ -569,14 +545,10 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	if target.ResolvedSpec == nil || source.DesiredSourceSpec(target.ResolvedSpec) == nil {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image or source configuration", ErrDeploymentActionInvalid)
 	}
-	existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
-	if err != nil {
-		return "", err
-	}
 	rolloutService := service
 	rolloutService.Spec = target.ResolvedSpec
 	now := time.Now().UTC()
-	if _, err := d.prepareReplacementRolloutTx(ctx, tx, rolloutService, existing, now); err != nil {
+	if _, err := d.beginReplacementRolloutTx(ctx, tx, rolloutService, now); err != nil {
 		return "", err
 	}
 	desiredReplicas := specReplicaCount(target.ResolvedSpec, service.DesiredReplicaCount)
@@ -590,32 +562,12 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	if err != nil {
 		return "", err
 	}
-	nextRollout := service.RolloutGeneration + 1
-	result, err := tx.ExecContext(ctx,
-		`UPDATE service_delivery_status AS ds
-		    SET current_rollout_generation = $1,
-		        current_resolved_image = NULL,
-		        latest_build_id = NULL,
-		        updated_at = $2
-		  WHERE service_id = $3 AND COALESCE(current_rollout_generation, 0) = $5
-		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $4)`,
-		nextRollout, now, service.ID, service.SpecRevision, service.RolloutGeneration,
-	)
+	noBuild := ""
+	nextRollout, err := d.bumpServiceRolloutTx(ctx, tx, service, replacementRolloutBump{
+		SpecRevision: nextSpecRevision, Replicas: desiredReplicas,
+		ResolvedImage: "", BuildID: &noBuild, RolloutReason: "retry", UserID: userID,
+	}, now)
 	if err != nil {
-		return "", err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return "", err
-	}
-	if affected != 1 {
-		return "", ErrConcurrentUpdate
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, nextSpecRevision, desiredReplicas, now, service.ID); err != nil {
-		return "", err
-	}
-	journal.RecordService(ctx, service.ID)
-	if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, nextSpecRevision, "retry", "", userID, now); err != nil {
 		return "", err
 	}
 	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateStaged,

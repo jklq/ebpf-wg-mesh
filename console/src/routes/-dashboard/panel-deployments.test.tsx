@@ -520,7 +520,7 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getByText("3 Replicas")).toBeTruthy();
 	});
 
-	it("shows a removed current deployment in history with a green status", async () => {
+	it("shows a removed current deployment in history with an offline status", async () => {
 		const active = activeDeployment();
 		if (!active.status) throw new Error("active deployment status is required");
 		const removed: DashboardDeploymentRecord = {
@@ -551,7 +551,7 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.queryByRole("button", { name: "View logs" })).toBeNull();
 
 		fireEvent.click(historyToggle);
-		expect(screen.getByLabelText("Status: healthy")).toBeTruthy();
+		expect(screen.getByLabelText("Status: offline")).toBeTruthy();
 	});
 });
 

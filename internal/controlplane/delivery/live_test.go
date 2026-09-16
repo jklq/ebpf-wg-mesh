@@ -727,7 +727,7 @@ func TestLiveReadAndSubscribeSeesApply(t *testing.T) {
 	}
 }
 
-func TestLiveDesiredStateAndPlacementUseMemory(t *testing.T) {
+func TestLiveDesiredStateUsesMemory(t *testing.T) {
 	l := startLive(t)
 	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
 		t.Fatal(err)
@@ -785,10 +785,6 @@ func TestLiveDesiredStateAndPlacementUseMemory(t *testing.T) {
 	}
 	if got := state.GetServices()[0].GetSpec().GetRuntime().GetPorts(); len(got) == 0 || got[0].GetPort() != 8080 {
 		t.Fatalf("domain ports = %+v", got)
-	}
-	candidates := l.PlacementCandidates()
-	if len(candidates) != 1 || candidates[0].ID != "agent" || candidates[0].ServiceCount != 1 {
-		t.Fatalf("placement %+v", candidates)
 	}
 	allocs := l.AllocationsByService("svc")
 	if len(allocs) != 1 || allocs[0].ID != "alloc" {

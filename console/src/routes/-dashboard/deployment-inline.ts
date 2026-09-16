@@ -112,6 +112,7 @@ export function trafficRetentionCopy(options: {
 }
 
 const LIVE_STATES = new Set<DashboardDeploymentState>([
+	"DEPLOYMENT_STATE_UNSPECIFIED",
 	"DEPLOYMENT_STATE_STAGED",
 	"DEPLOYMENT_STATE_QUEUED_BUILD",
 	"DEPLOYMENT_STATE_BUILDING",
@@ -124,6 +125,7 @@ const LIVE_STATES = new Set<DashboardDeploymentState>([
 ]);
 
 const IN_PROGRESS_STATES = new Set<DashboardDeploymentState>([
+	"DEPLOYMENT_STATE_UNSPECIFIED",
 	"DEPLOYMENT_STATE_STAGED",
 	"DEPLOYMENT_STATE_QUEUED_BUILD",
 	"DEPLOYMENT_STATE_BUILDING",

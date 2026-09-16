@@ -254,12 +254,8 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 		}
 	}
 	for key, value := range next {
-		if key.Prefixlen == 128 {
-			if runtime := localRuntimeByIP(m.containers, key.IpAddress); runtime != nil {
-				value.HostIp = m.localHostIP
-				value.VethIfindex = runtime.ifindex
-			}
-		}
+		value = effectiveIdentityValue(key, value, m.containers, m.localHostIP)
+		next[key] = value
 		if current, exists := m.configuredByKey[key]; exists && current == value {
 			continue
 		}
@@ -447,27 +443,22 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		HostIp:          m.localHostIP,
 		VethIfindex:     ifKey,
 	}
-	identityKeys := []firewallIdentityKey{
-		identityKeyForPrefix(netip.PrefixFrom(identity.IPv4, 32)),
-		identityKeyForPrefix(netip.PrefixFrom(identity.IPv6, 128)),
+	runtime := &containerRuntime{
+		containerID:     evt.ContainerID,
+		ifindex:         ifKey,
+		networkIdentity: identity.NetworkIdentity,
+		innerMap:        innerMap,
 	}
-	for _, identityKey := range identityKeys {
+	for _, addr := range []netip.Addr{identity.IPv4, identity.IPv6} {
+		identityKey := identityKeyForPrefix(netip.PrefixFrom(addr, addr.BitLen()))
 		if err := m.objs.ClusterIdentityTrie.Put(identityKey, identityValue); err != nil {
-			for _, inserted := range identityKeys {
-				if inserted == identityKey {
-					break
-				}
-				if seed, ok := m.seedByIP[inserted.IpAddress]; ok {
-					_ = m.objs.ClusterIdentityTrie.Put(inserted, seed)
-				} else {
-					_ = m.objs.ClusterIdentityTrie.Delete(inserted)
-				}
-			}
-			_ = m.objs.InterfaceRoleMap.Delete(ifKey)
-			_ = m.objs.ContainerPolicyMap.Delete(ifKey)
-			_ = m.objs.ConntrackMatrix.Delete(ifKey)
-			innerMap.Close()
+			_ = m.removeContainerLocked(runtime)
 			return fmt.Errorf("write identity trie entry: %w", err)
+		}
+		if addr.Is4() {
+			runtime.ipv4 = addr
+		} else {
+			runtime.ipv6 = addr
 		}
 	}
 
@@ -477,19 +468,10 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		Program:   m.objs.TcxIngress,
 	})
 	if err != nil {
-		for _, identityKey := range identityKeys {
-			if seed, ok := m.seedByIP[identityKey.IpAddress]; ok {
-				_ = m.objs.ClusterIdentityTrie.Put(identityKey, seed)
-			} else {
-				_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
-			}
-		}
-		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
-		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
-		_ = m.objs.ConntrackMatrix.Delete(ifKey)
-		innerMap.Close()
+		_ = m.removeContainerLocked(runtime)
 		return fmt.Errorf("attach veth ingress tcx: %w", err)
 	}
+	runtime.ingressLink = ingress
 
 	egress, err := link.AttachTCX(link.TCXOptions{
 		Interface: ifindex,
@@ -497,31 +479,10 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		Program:   m.objs.TcxEgress,
 	})
 	if err != nil {
-		_ = ingress.Close()
-		for _, identityKey := range identityKeys {
-			if seed, ok := m.seedByIP[identityKey.IpAddress]; ok {
-				_ = m.objs.ClusterIdentityTrie.Put(identityKey, seed)
-			} else {
-				_ = m.objs.ClusterIdentityTrie.Delete(identityKey)
-			}
-		}
-		_ = m.objs.InterfaceRoleMap.Delete(ifKey)
-		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
-		_ = m.objs.ConntrackMatrix.Delete(ifKey)
-		innerMap.Close()
+		_ = m.removeContainerLocked(runtime)
 		return fmt.Errorf("attach veth egress tcx: %w", err)
 	}
-
-	runtime := &containerRuntime{
-		containerID:     evt.ContainerID,
-		ifindex:         ifKey,
-		ipv4:            identity.IPv4,
-		ipv6:            identity.IPv6,
-		networkIdentity: identity.NetworkIdentity,
-		innerMap:        innerMap,
-		ingressLink:     ingress,
-		egressLink:      egress,
-	}
+	runtime.egressLink = egress
 	m.containers[evt.ContainerID] = runtime
 	slog.Info("container firewall attached",
 		"container", evt.ContainerID,
@@ -710,6 +671,16 @@ func resolveHostVethIfindexWithRetry(ctx context.Context, pid uint32, attempts i
 		}
 	}
 	return 0, lastErr
+}
+
+func effectiveIdentityValue(key firewallIdentityKey, value firewallIdentityValue, containers map[string]*containerRuntime, localHostIP [16]byte) firewallIdentityValue {
+	if key.Prefixlen == 128 {
+		if runtime := localRuntimeByIP(containers, key.IpAddress); runtime != nil {
+			value.HostIp = localHostIP
+			value.VethIfindex = runtime.ifindex
+		}
+	}
+	return value
 }
 
 func localRuntimeByIP(containers map[string]*containerRuntime, ip [16]byte) *containerRuntime {

@@ -56,7 +56,7 @@ func (a *App) invokeRailpackBuild(ctx context.Context, job *platformv1.BuildJob,
 	req := railpackBuildctlCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, a.cfg.RailpackFrontendImage, appDir, planDir, job.GetRegistryPushReference(), workspace.metadataFile, env)
 	output, err = a.runner.Run(ctx, req, report)
 	if err != nil {
-		return "", classifyBuildctlFailure(formatBuildCommandError(req, err, output))
+		return "", classifyBuildctlFailure(req, err, output)
 	}
 	return buildDigestRefFromMetadata(job.GetRegistryPushReference(), workspace.metadataFile)
 }

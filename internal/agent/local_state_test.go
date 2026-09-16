@@ -370,8 +370,8 @@ func TestLocalStatePersistsObservationSequenceAndAppliedGeneration(t *testing.T)
 		if err != nil {
 			return err
 		}
-		if !allocation.Terminal || allocation.Phase != "Stopped" || allocation.RuntimeID != "" || allocation.PendingOperation != "" {
-			t.Fatalf("terminal allocation = %+v", allocation)
+		if allocation.Phase != "Stopped" || allocation.RuntimeID != "" {
+			t.Fatalf("stopped allocation = %+v", allocation)
 		}
 		return nil
 	}); err != nil {
@@ -379,7 +379,7 @@ func TestLocalStatePersistsObservationSequenceAndAppliedGeneration(t *testing.T)
 	}
 }
 
-func TestLocalStateRetainsDrainOperationUntilTerminalObservation(t *testing.T) {
+func TestLocalStateTracksDrainPhaseThroughObservation(t *testing.T) {
 	t.Parallel()
 
 	store := openTestLocalState(t)
@@ -402,7 +402,7 @@ func TestLocalStateRetainsDrainOperationUntilTerminalObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAllocationState(t, store, "alloc-1", func(allocation localAllocationState) bool {
-		return allocation.PendingOperation == "drain" && !allocation.Terminal && allocation.RuntimeID == "platform-alloc-1"
+		return allocation.Phase == "Draining" && allocation.RuntimeID == "platform-alloc-1"
 	})
 
 	report.Services[0].Phase = "Drained"
@@ -413,7 +413,7 @@ func TestLocalStateRetainsDrainOperationUntilTerminalObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertAllocationState(t, store, "alloc-1", func(allocation localAllocationState) bool {
-		return allocation.PendingOperation == "" && allocation.Terminal && allocation.RuntimeID == ""
+		return allocation.Phase == "Drained" && allocation.RuntimeID == ""
 	})
 }
 

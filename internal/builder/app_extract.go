@@ -175,16 +175,28 @@ func parseBuildMetadata(data []byte) (string, error) {
 	return digest, nil
 }
 
-func classifyBuildctlFailure(err error) error {
-	message := strings.ToLower(err.Error())
+var pushFailureTokens = []string{
+	"failed to push",
+	"push failed",
+	"error pushing",
+	"unauthorized",
+	"denied",
+	"insufficient_scope",
+	"authentication required",
+	"requested access",
+}
+
+func classifyBuildctlFailure(req commandRequest, runErr error, output []byte) error {
+	formatted := formatBuildCommandError(req, runErr, output)
+	signal := strings.ToLower(runErr.Error() + "\n" + string(output))
 	kind := failureKindBuild
-	for _, token := range []string{"push", "registry", "unauthorized", "denied", "insufficient_scope"} {
-		if strings.Contains(message, token) {
+	for _, token := range pushFailureTokens {
+		if strings.Contains(signal, token) {
 			kind = failureKindPush
 			break
 		}
 	}
-	return &buildFailureError{kind: kind, err: err}
+	return &buildFailureError{kind: kind, err: formatted}
 }
 
 func formatBuildCommandError(req commandRequest, err error, output []byte) error {

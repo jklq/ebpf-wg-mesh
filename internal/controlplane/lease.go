@@ -145,71 +145,33 @@ func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Co
 		return nil
 	}
 	for ctx.Err() == nil {
-		claim, acquired, err := m.acquire(ctx, name)
+		leaseCtx, release, err := m.hold(ctx, name)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			slog.Warn("acquire control-plane lease failed", "lease", name, "error", err)
 			if !waitContext(ctx, jitter(m.retryInterval)) {
 				return nil
 			}
 			continue
 		}
-		if !acquired {
-			if !waitContext(ctx, jitter(m.retryInterval)) {
-				return nil
-			}
-			continue
-		}
-		m.notifyChanged(name)
-
-		leaseCtx, cancel := context.WithCancel(context.WithValue(ctx, leaseContextKey{}, claim))
 		jobDone := make(chan error, 1)
 		go func() { jobDone <- job(leaseCtx) }()
-		renewInterval := m.ttl / 3
-		if renewInterval <= 0 {
-			renewInterval = time.Millisecond
-		}
-		renew := time.NewTicker(renewInterval)
-		lost := false
-		for !lost {
-			select {
-			case <-ctx.Done():
-				cancel()
-				renew.Stop()
-				_ = m.release(context.Background(), claim)
-				m.notifyChanged(name)
-				<-jobDone
-				return nil
-			case err := <-jobDone:
-				cancel()
-				renew.Stop()
-				_ = m.release(context.Background(), claim)
-				m.notifyChanged(name)
-				if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLeaseLost) {
-					return err
-				}
-				lost = true
-			case <-renew.C:
-				ok, err := m.renew(ctx, claim)
-				if err != nil {
-					slog.Warn("renew control-plane lease failed", "lease", name, "error", err)
-					if m.onUnfenced != nil {
-						m.onUnfenced()
-					}
-					m.notifyChanged(name)
-					continue
-				}
-				if !ok {
-					m.notifyChanged(name)
-					cancel()
-					renew.Stop()
-					<-jobDone
-					lost = true
-				} else if m.onFenced != nil {
-					m.onFenced()
-				}
+		select {
+		case <-ctx.Done():
+			release()
+			<-jobDone
+			return nil
+		case err := <-jobDone:
+			release()
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLeaseLost) {
+				return err
 			}
+		case <-leaseCtx.Done():
+			release()
+			<-jobDone
 		}
-		cancel()
 	}
 	return nil
 }
@@ -368,8 +330,7 @@ func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 }
 
 func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
-	claim, ok := ctx.Value(leaseContextKey{}).(leaseClaim)
-	if !ok {
+	if _, ok := ctx.Value(leaseContextKey{}).(leaseClaim); !ok {
 		return fn()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -377,16 +338,8 @@ func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
 		return err
 	}
 	defer tx.Rollback()
-	var valid bool
-	if err := tx.QueryRowContext(ctx, `SELECT holder_id = $2 AND fencing_token = $3 AND expires_at > statement_timestamp()
-		FROM control_plane_leases WHERE name = $1 FOR UPDATE`, claim.name, claim.holder, claim.token).Scan(&valid); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: %s", errLeaseLost, claim.name)
-		}
+	if err := assertLeaseTx(ctx, tx); err != nil {
 		return err
-	}
-	if !valid {
-		return fmt.Errorf("%w: %s", errLeaseLost, claim.name)
 	}
 	if err := fn(); err != nil {
 		return err
