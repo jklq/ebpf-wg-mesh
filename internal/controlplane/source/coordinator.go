@@ -265,7 +265,10 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
-	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author)
+	// Unanchored syncs carry no spec revision: they are automatic refreshes
+	// triggered by push or provider events, not explicit spec writes or
+	// releases, so they honor the environment auto-deploy switch.
+	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0)
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec SourceWorkItemRecord) error {
@@ -280,6 +283,11 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec Sour
 	for _, binding := range bindings {
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
+			if binding.AccessState == SourceAccessStateAvailable {
+				if _, err := c.recordBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor); err != nil {
+					return err
+				}
+			}
 			if _, err := c.store.EnqueueSourceWorkItem(ctx, SourceWorkItemRecord{
 				Kind:           SourceWorkKindSourceSpecChanged,
 				IdempotencyKey: fmt.Sprintf("%s:%s:%d", SourceWorkKindSourceSpecChanged, binding.ServiceID, time.Now().UTC().UnixNano()),
@@ -294,29 +302,31 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec Sour
 			continue
 		}
 		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
-		revision, err := c.recordBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor)
-		if err != nil {
-			return err
-		}
-		autoDeploy, err := c.store.EnvironmentAutoDeploy(ctx, binding.EnvironmentID)
-		if err != nil {
-			return err
-		}
-		if !autoDeploy {
-			slog.InfoContext(ctx, "github revision recorded; auto-deploy is off", "service_id", binding.ServiceID, "environment_id", binding.EnvironmentID, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA, "source_revision_id", revision.ID)
-			continue
-		}
-		if err := c.queueBoundRevisionBuild(ctx, binding, revision); err != nil {
+		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string) error {
+// observeBoundRevision records the observed commit for the bound service and
+// queues a build for it. Automatic observations (pushes and refresh syncs)
+// honor the environment auto-deploy switch: when it is off the revision is
+// recorded and held for a manual release instead of building.
+func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool) error {
 	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor)
 	if err != nil {
 		return err
+	}
+	if automatic {
+		autoDeploy, err := c.store.EnvironmentAutoDeploy(ctx, binding.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		if !autoDeploy {
+			slog.InfoContext(ctx, "github revision recorded; auto-deploy is off", "service_id", binding.ServiceID, "environment_id", binding.EnvironmentID, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
+			return nil
+		}
 	}
 	return c.queueBoundRevisionBuild(ctx, binding, revision)
 }

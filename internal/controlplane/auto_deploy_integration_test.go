@@ -272,6 +272,106 @@ func TestGitHubPushRecordsRevisionWithoutBuildWhenAutoDeployOff(t *testing.T) {
 	}
 }
 
+func TestGitHubStaleBindingHoldsBuildWhenAutoDeployOff(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	server := newTestGitHubServer(t, nil)
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	processor := NewGitHubWebhookProcessor(store.source, coordinator)
+	ctx := context.Background()
+
+	projectID := bootstrapProjectAndAgent(t, store, ctx)
+	linkTestProjectRepository(t, store, catalog, projectID, "public/hello")
+	productionID := productionEnvironmentID(t, store, projectID)
+	production, err := store.catalog.productionEnvironmentByProjectInternal(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if production.AutoDeploy {
+		t.Fatalf("expected production auto-deploy off, got %#v", production)
+	}
+	service, err := createService(ctx, store, "user-1", productionID, "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "public/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "user-1", productionID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
+	}
+	drainSourceWork(t, reconciler, ctx)
+	if got := countBuildRuns(t, store, ctx, service.ID); got != 1 {
+		t.Fatalf("expected manual release to queue the initial build while off, got %d", got)
+	}
+	deploymentsBefore := countDeployments(t, store, ctx, service.ID)
+
+	// Expire the binding so the next push takes the stale refresh path.
+	if _, err := store.db.ExecContext(ctx, `UPDATE source_bindings SET fresh_until = $1 WHERE service_id = $2`, time.Now().UTC().Add(-time.Hour), service.ID); err != nil {
+		t.Fatalf("expire source binding: %v", err)
+	}
+
+	pushPayload := []byte(`{
+		"ref":"refs/heads/main",
+		"after":"commit-stale-9",
+		"head_commit":{"message":"Stale revision","author":{"name":"Octocat"}},
+		"repository":{"id":1,"name":"hello","full_name":"public/hello","owner":{"login":"public"}},
+		"installation":{"id":0}
+	}`)
+	if err := processor.ProcessPushEvent(ctx, pushPayload); err != nil {
+		t.Fatalf("processPushEvent: %v", err)
+	}
+	drainSourceWork(t, reconciler, ctx)
+
+	var recorded string
+	if err := store.db.QueryRowContext(ctx, `SELECT commit_sha FROM source_revisions WHERE service_id = $1 ORDER BY observed_at DESC, created_at DESC, id DESC LIMIT 1`, service.ID).Scan(&recorded); err != nil {
+		t.Fatalf("latest source revision: %v", err)
+	}
+	if recorded != "commit-stale-9" {
+		t.Fatalf("expected pushed revision to be recorded, got %q", recorded)
+	}
+	if got := countBuildRuns(t, store, ctx, service.ID); got != 1 {
+		t.Fatalf("expected no build while auto-deploy is off, got %d builds", got)
+	}
+	if got := countDeployments(t, store, ctx, service.ID); got != deploymentsBefore {
+		t.Fatalf("expected no rollout while auto-deploy is off, got %d deployments (was %d)", got, deploymentsBefore)
+	}
+	if got := server.pathHits("/repos/public/hello/tarball/commit-stale-9"); got != 0 {
+		t.Fatalf("expected no snapshot fetch while auto-deploy is off, got %d fetches", got)
+	}
+
+	released, _, err := releaseEnvironmentForTest(ctx, store, "user-1", productionID)
+	if err != nil {
+		t.Fatalf("manual releaseEnvironment: %v", err)
+	}
+	if len(released) != 1 || released[0].ID != service.ID {
+		t.Fatalf("expected manual release to pick up the recorded revision, got %d services", len(released))
+	}
+	drainSourceWork(t, reconciler, ctx)
+	if got := countBuildRuns(t, store, ctx, service.ID); got != 2 {
+		t.Fatalf("expected manual deploy to queue a build for the recorded revision, got %d builds", got)
+	}
+	var manualCommit string
+	if err := store.db.QueryRowContext(ctx, `SELECT commit_sha FROM build_runs WHERE service_id = $1 ORDER BY queued_at DESC, id DESC LIMIT 1`, service.ID).Scan(&manualCommit); err != nil {
+		t.Fatalf("manual build commit: %v", err)
+	}
+	if manualCommit != "commit-public-main" {
+		t.Fatalf("expected manual deploy to build the tracked head, got %q", manualCommit)
+	}
+}
+
 func drainSourceWork(t *testing.T, reconciler *GitHubReconciler, ctx context.Context) {
 	t.Helper()
 	for i := 0; i < 10; i++ {
