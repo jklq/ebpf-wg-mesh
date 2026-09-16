@@ -143,6 +143,45 @@ describe("ServicePanel deployment badge", () => {
 		expect(progress.firstElementChild?.className).toContain("bg-building");
 	});
 
+	it("shows Not deployed for a newly staged service", () => {
+		const current = {
+			...service(),
+			rolloutGeneration: 0,
+			latestBuild: undefined,
+			latestDeployment: {
+				deploymentId: "deployment-1",
+				state: "DEPLOYMENT_STATE_STAGED" as const,
+				causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
+				causeId: "user-1",
+				reasonCode: "SERVICE_STAGED",
+				detail: "Configuration staged",
+				specRevision: 1,
+				imageDigest: "",
+				rolloutGeneration: 0,
+				transitionedAt: undefined,
+			},
+		};
+		render(
+			<ServicePanel
+				service={current}
+				status={null}
+				project={undefined}
+				state={state()}
+				activeTab="deployments"
+				onTabChange={() => {}}
+				onClose={() => {}}
+				onRefresh={() => {}}
+				onServiceUpdated={() => {}}
+				onServiceDeleted={() => {}}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Service status").textContent).toContain(
+			"Not deployed",
+		);
+		expect(document.body.textContent).not.toContain("1970");
+	});
+
 	it("does not retain deployment ticks while offline", () => {
 		const current = {
 			...service(),
@@ -189,7 +228,7 @@ describe("ServicePanel deployment badge", () => {
 		);
 
 		expect(screen.getByLabelText("Service status").textContent).toContain(
-			"Offline",
+			"Removed",
 		);
 		expect(screen.queryByRole("img", { name: "Deploy progress" })).toBeNull();
 	});

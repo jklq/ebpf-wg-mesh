@@ -11,6 +11,7 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { formatRelativeTime, NOT_DEPLOYED_LABEL } from "#/lib/time";
 import {
 	badge,
 	badgeClass,
@@ -19,7 +20,6 @@ import {
 	errorMsg,
 	statusDotClass,
 } from "#/lib/ui-classes";
-
 import {
 	buildStepHint,
 	deploymentBadgeLabel,
@@ -37,7 +37,6 @@ import {
 	deploymentCardHeadline,
 	deploymentMeta,
 	formatError,
-	formatRelativeAge,
 	getDeploymentCardTone,
 	hasActiveDeployment,
 	logLinesForStage,
@@ -479,7 +478,11 @@ export function DeploymentHistoryRow({
 						{build?.commitSha && (
 							<span className="font-mono">{shortSha(build.commitSha)}</span>
 						)}
-						{timestamp && <span>{formatRelativeAge(timestamp, nowMs)}</span>}
+						<span>
+							{timestamp
+								? formatRelativeTime(timestamp, nowMs)
+								: NOT_DEPLOYED_LABEL}
+						</span>
 					</span>
 				</button>
 				{actions.length > 0 && (

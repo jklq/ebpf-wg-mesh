@@ -101,9 +101,7 @@ func toProtoLiveRead(pos deliverycore.LivePosition) *platformv1.LiveReadMeta {
 		AppliedLivePosition:     pos.AppliedLive,
 		LiveOwnerReady:          pos.Ready,
 	}
-	if !pos.ObservationFreshness.IsZero() {
-		meta.ObservationFreshness = timestamppb.New(pos.ObservationFreshness)
-	}
+	meta.ObservationFreshness = deliverycore.ToProtoTimestamp(pos.ObservationFreshness)
 	return meta
 }
 
@@ -274,5 +272,5 @@ func toProtoMaybeBuildStatus(rec *deliverycore.BuildRunRecord) *platformv1.Build
 }
 
 func ts(v time.Time) *timestamppb.Timestamp {
-	return timestamppb.New(v)
+	return deliverycore.ToProtoTimestamp(v)
 }

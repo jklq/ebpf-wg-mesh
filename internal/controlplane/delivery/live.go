@@ -680,7 +680,7 @@ func overlayAgentAbsent(rec AgentRecord) AgentRecord {
 		rec.StateBeforeUnavailable = rec.LifecycleState
 		rec.LifecycleState = AgentStateUnavailable
 	}
-	rec.LastSeenAt = time.Unix(0, 0).UTC()
+	rec.LastSeenAt = time.Time{}
 	return rec
 }
 

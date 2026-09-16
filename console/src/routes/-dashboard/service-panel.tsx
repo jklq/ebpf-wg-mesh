@@ -27,7 +27,11 @@ import { deploymentStagesForDisplay } from "./deployment-inline";
 import { PanelDeployments } from "./panel-deployments";
 import { withSourceStage } from "./panel-deployments-helpers";
 import { doUpdateService } from "./server-fns";
-import { formatError, healthLabel, serviceHealth } from "./service-utils";
+import {
+	formatError,
+	serviceHealth,
+	serviceStatusLabel,
+} from "./service-utils";
 import type { DashboardTab } from "./types";
 import { usePulseDelay } from "./use-pulse-delay";
 
@@ -212,7 +216,7 @@ export function ServicePanel({
 											: "text-muted",
 							)}
 						>
-							{healthLabel(health)}
+							{serviceStatusLabel(currentService)}
 						</span>
 						{health === "building" && stages.length > 0 && (
 							<div

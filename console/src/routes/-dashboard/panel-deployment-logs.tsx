@@ -9,10 +9,10 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { formatLogTime } from "#/lib/time";
 import { errorMsg } from "#/lib/ui-classes";
 import {
 	formatError,
-	formatLogTime,
 	hydrateServiceLogLine,
 	type LogTypeFilter,
 	matchesDeploymentLog,

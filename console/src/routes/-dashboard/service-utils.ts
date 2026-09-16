@@ -3,7 +3,9 @@ import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { NOT_DEPLOYED_LABEL } from "#/lib/time";
 
+import { deploymentBadgeLabel } from "./deployment-inline";
 import type { ServiceHealth } from "./types";
 
 export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
@@ -46,17 +48,15 @@ export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
 	return "offline";
 }
 
-export function healthLabel(h: ServiceHealth): string {
-	switch (h) {
-		case "healthy":
-			return "Healthy";
-		case "building":
-			return "Building";
-		case "failed":
-			return "Failed";
-		case "offline":
-			return "Offline";
+export function serviceStatusLabel(service: DashboardServiceRecord): string {
+	const deployment = service.latestDeployment;
+	if (
+		deployment?.state === "DEPLOYMENT_STATE_STAGED" &&
+		deployment.rolloutGeneration === 0
+	) {
+		return NOT_DEPLOYED_LABEL;
 	}
+	return deploymentBadgeLabel(deployment?.state, service.latestBuild);
 }
 
 function deploymentStageHealth(

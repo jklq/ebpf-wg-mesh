@@ -65,7 +65,24 @@ func ipv4PrefixesOverlap(left, right netip.Prefix) bool {
 }
 
 func ts(v time.Time) *timestamppb.Timestamp {
-	return timestamppb.New(v)
+	return ToProtoTimestamp(v)
+}
+
+// ToProtoTimestamp represents absent, zero, epoch, and out-of-range times
+// as nil; every valid instant is transported in UTC.
+func ToProtoTimestamp(v time.Time) *timestamppb.Timestamp {
+	if v.IsZero() {
+		return nil
+	}
+	v = v.UTC()
+	if v.Unix() == 0 && v.Nanosecond() == 0 {
+		return nil
+	}
+	out := timestamppb.New(v)
+	if out == nil || !out.IsValid() {
+		return nil
+	}
+	return out
 }
 
 func privateIPv6(subnetCIDR, environmentID, allocationID string) (string, error) {

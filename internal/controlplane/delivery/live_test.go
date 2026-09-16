@@ -423,8 +423,8 @@ func TestLiveOverlayAbsentHasNoLastContact(t *testing.T) {
 	if got.StateBeforeUnavailable != AgentStateActive {
 		t.Fatalf("admin state = %s", got.StateBeforeUnavailable)
 	}
-	if !got.LastSeenAt.Equal(time.Unix(0, 0).UTC()) {
-		t.Fatalf("last seen = %v, want unknown", got.LastSeenAt)
+	if !got.LastSeenAt.IsZero() {
+		t.Fatalf("last seen = %v, want zero for unknown", got.LastSeenAt)
 	}
 }
 
