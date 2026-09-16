@@ -77,7 +77,7 @@ func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.
 	return nil
 }
 
-func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, SchedulingDecision, error) {
+func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, AllocationMutation, error) {
 	s := d.store
 	alloc := AllocationRecord{
 		ID:                       uuid.NewString(),
@@ -94,22 +94,22 @@ func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, ser
 	}
 	var workloadIPv6Subnet string
 	if err := tx.QueryRowContext(ctx, `SELECT workload_ipv6_subnet FROM agents WHERE id = $1`, agentID).Scan(&workloadIPv6Subnet); err != nil {
-		return AllocationRecord{}, SchedulingDecision{}, err
+		return AllocationRecord{}, AllocationMutation{}, err
 	}
 	var err error
 	alloc.AllocationIPv4, err = s.allocateWorkloadIPv4AddressTx(ctx, tx, agentID)
 	if err != nil {
-		return AllocationRecord{}, SchedulingDecision{}, err
+		return AllocationRecord{}, AllocationMutation{}, err
 	}
 	alloc.AllocationIPv6, err = privateIPv6(workloadIPv6Subnet, service.EnvironmentID, alloc.ID)
 	if err != nil {
-		return AllocationRecord{}, SchedulingDecision{}, err
+		return AllocationRecord{}, AllocationMutation{}, err
 	}
 	var deploymentID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments
 		WHERE service_id = $1 AND rollout_generation = $2
 		ORDER BY is_current DESC, created_at DESC, id DESC LIMIT 1`, service.ID, service.RolloutGeneration).Scan(&deploymentID); err != nil {
-		return AllocationRecord{}, SchedulingDecision{}, fmt.Errorf("load allocation deployment: %w", err)
+		return AllocationRecord{}, AllocationMutation{}, fmt.Errorf("load allocation deployment: %w", err)
 	}
 	assignment := AllocationAssignment{
 		ID: alloc.ID, ServiceID: alloc.ServiceID, DeploymentID: deploymentID, AgentID: alloc.AgentID,
@@ -118,15 +118,15 @@ func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, ser
 		RolloutState: alloc.RolloutState, Intent: allocationIntentRun,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	return alloc, SchedulingDecision{Kind: DecisionCreateAllocation, Allocation: assignment}, nil
+	return alloc, AllocationMutation{Kind: MutationCreateAllocation, Allocation: assignment}, nil
 }
 
 func (d *Delivery) insertAllocationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, error) {
-	alloc, decision, err := d.planAllocationCreationTx(ctx, tx, service, agentID, now)
+	alloc, mutation, err := d.planAllocationCreationTx(ctx, tx, service, agentID, now)
 	if err != nil {
 		return AllocationRecord{}, err
 	}
-	if err := d.applySchedulingPlanTx(ctx, tx, allocationMutationPlan(now, decision)); err != nil {
+	if err := d.applyAllocationMutationsTx(ctx, tx, now, mutation); err != nil {
 		return AllocationRecord{}, err
 	}
 	return alloc, nil
