@@ -177,7 +177,7 @@ type liveFixture interface {
 	Admitted(string) bool
 	Session(string) (deliverycore.AgentSession, bool)
 	Observation(string, int64) (deliverycore.AllocationObservation, bool)
-	RecordObservation(deliverycore.AllocationObservation) (bool, error)
+	RecordObservation(deliverycore.AllocationObservation) (deliverycore.ObservationOutcome, error)
 	AcceptReport(string, string, uint64, []string, bool) error
 	DesiredRevision(string) (int64, bool)
 	SetLastContactForTest(string, time.Time)

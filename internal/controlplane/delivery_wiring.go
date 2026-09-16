@@ -15,9 +15,10 @@ func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNoti
 	return deliverycore.Dependencies{
 		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.EnqueueSourceWorkItemTx, SourceStore: store.source,
 		DB: store.db, Mesh: store.mesh, Live: store.liveImplementation, ProductTransaction: store.withProductTx,
-		ReadState:        store.readLiveState,
-		ReservedAgentIDs: store.reservedAgentIDs,
-		Notifier:         notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
+		ObservationTransaction: store.withObservationTx,
+		ReadState:              store.readLiveState,
+		ReservedAgentIDs:       store.reservedAgentIDs,
+		Notifier:               notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
 		Authorizer: store.authorizer(),
 	}
 }

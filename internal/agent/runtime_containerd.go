@@ -35,6 +35,11 @@ var jsonEncoderPool = sync.Pool{
 type serviceEngine interface {
 	DiscoverServices(context.Context) ([]RuntimeResource, error)
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
+	// InspectService reports the current status of the allocation's container
+	// without creating one. It reports exists=false when no container matches
+	// the desired rollout generation and network identity, either because the
+	// container is missing or because it is stale.
+	InspectService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
 	DrainService(context.Context, string, time.Time) (bool, bool, error)
 	RemoveService(context.Context, string) error
 	SetLogSink(LogSink)
@@ -272,6 +277,11 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		cond.AllocationIpv4 = svc.GetPrivateIpv4()
 		cond.AllocationIpv6 = svc.GetPrivateIpv6()
 		cond.Healthy = false
+		// Preserve crash evidence across the drain: the control plane
+		// replaces the live observation with this condition, so a nil
+		// restart would drop the prior exit cause and count from the
+		// draining overlay.
+		cond.Restart = r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
 		if drained {
 			cond.Phase = "Drained"
 			if forced {
@@ -285,15 +295,39 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		}
 		return cond
 	}
-	status, created, err := r.engine.EnsureService(ctx, svc)
-	if err != nil {
-		cond.Phase = "Error"
-		cond.Message = err.Error()
-		return cond
+	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
+	operatorNonce := svc.GetOperatorRestartNonce()
+	if r.forceStart[svc.GetAllocationId()] {
+		if obs.GetAppliedOperatorRestartNonce() >= operatorNonce {
+			operatorNonce = obs.GetAppliedOperatorRestartNonce() + 1
+		}
+		delete(r.forceStart, svc.GetAllocationId())
 	}
-	if created {
-		status.Running = true
-		delete(r.ready, svc.GetAllocationId())
+	var status serviceStatus
+	var created bool
+	if shouldPreserveTerminalObservation(r.now(), svc.GetSpec().GetRuntime().GetRestart(), obs, svc.GetDesiredRolloutGeneration(), operatorNonce) {
+		// A terminal allocation must never execute: resolve its status without
+		// creating a container, so a missing container stays missing instead
+		// of being started and immediately removed on every safety resync.
+		preserved, err := r.inspectPreservedService(ctx, svc, obs)
+		if err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			return cond
+		}
+		status = preserved
+	} else {
+		var err error
+		status, created, err = r.engine.EnsureService(ctx, svc)
+		if err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			return cond
+		}
+		if created {
+			status.Running = true
+			delete(r.ready, svc.GetAllocationId())
+		}
 	}
 	livenessFailed := false
 	if status.Running {
@@ -308,14 +342,6 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 			status.Running = false
 			_ = reason
 		}
-	}
-	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
-	operatorNonce := svc.GetOperatorRestartNonce()
-	if r.forceStart[svc.GetAllocationId()] {
-		if obs.GetAppliedOperatorRestartNonce() >= operatorNonce {
-			operatorNonce = obs.GetAppliedOperatorRestartNonce() + 1
-		}
-		delete(r.forceStart, svc.GetAllocationId())
 	}
 	r.rngMu.Lock()
 	decision := restartpolicy.Evaluate(r.now(), r.randSource(), svc.GetSpec().GetRuntime().GetRestart(), obs, restartpolicy.Input{
@@ -354,6 +380,7 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 				return cond
 			}
 			delete(r.ready, svc.GetAllocationId())
+			var err error
 			status, created, err = r.engine.EnsureService(ctx, svc)
 			if err != nil {
 				cond.Phase = "Error"
@@ -452,6 +479,58 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 	}
 	reason := fmt.Sprintf("IPv4: %s; IPv6: %s", ipv4Probe.failureReason, ipv6Probe.failureReason)
 	return reason, true
+}
+
+// inspectPreservedService resolves the status of an allocation whose saved
+// restart observation requires it to stay stopped, without starting a
+// container. A missing or stale container is cleaned up and reported as
+// stopped from the saved observation; a live container keeps its real status
+// so a running workload wins over stale history.
+func (r *ContainerdRuntime) inspectPreservedService(ctx context.Context, svc *agentv1.DesiredService, obs *platformv1.RestartObservation) (serviceStatus, error) {
+	status, exists, err := r.engine.InspectService(ctx, svc)
+	if err != nil {
+		return serviceStatus{}, err
+	}
+	if exists {
+		return status, nil
+	}
+	if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+		return serviceStatus{}, err
+	}
+	return serviceStatus{
+		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
+		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
+		AllocationIPv4:           svc.GetPrivateIpv4(),
+		AllocationIPv6:           svc.GetPrivateIpv6(),
+		Running:                  false,
+		ExitCode:                 obs.GetLastExitCode(),
+		Signal:                   obs.GetLastSignal(),
+		OOMKilled:                obs.GetLastCause() == platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+	}, nil
+}
+
+func shouldPreserveTerminalObservation(now time.Time, restart *platformv1.ServiceRestart, obs *platformv1.RestartObservation, desiredGeneration, operatorNonce int64) bool {
+	if obs == nil {
+		return false
+	}
+	if desiredGeneration > obs.GetAppliedRolloutGeneration() || operatorNonce > obs.GetAppliedOperatorRestartNonce() {
+		return false
+	}
+	if obs.GetCrashLoop() {
+		return true
+	}
+	if next := obs.GetNextRestartAt(); obs.GetAwaitingRestart() && next != nil && next.IsValid() {
+		if now.Before(next.AsTime()) {
+			return true
+		}
+	}
+	if obs.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_UNSPECIFIED {
+		policy := restartpolicy.CanonicalRestart(restart).GetPolicy()
+		if !restartpolicy.ShouldRestart(policy, obs.GetLastCause()) {
+			return true
+		}
+	}
+	return false
 }
 
 func healthyFamilyPorts(healthy bool, ports []int32) []int32 {

@@ -353,6 +353,10 @@ func (s *persistence) completeDrainedPredecessorsTx(ctx context.Context, tx *sql
 	return nil
 }
 
+// applyAgentDeploymentObservationTx applies an agent observation to the
+// deployment record and reports whether durable state changed. Terminal
+// records never transition, so callers must not assume that reaching this
+// path bumped the status revision.
 func (s *persistence) applyAgentDeploymentObservationTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -363,15 +367,15 @@ func (s *persistence) applyAgentDeploymentObservationTx(
 	healthy bool,
 	appliedRolloutGeneration int64,
 	agentID string,
-) error {
+) (bool, error) {
 	rec, ok, err := s.deploymentByRolloutTx(ctx, tx, serviceID, desiredRolloutGeneration)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !ok {
 		rec, ok, err = s.currentDeploymentTx(ctx, tx, serviceID)
 		if err != nil || !ok {
-			return err
+			return false, err
 		}
 	}
 	input, recognized := decideAgentDeploymentTransition(rec, deploymentAgentObservation{
@@ -379,16 +383,22 @@ func (s *persistence) applyAgentDeploymentObservationTx(
 		AppliedGeneration: appliedRolloutGeneration, DesiredGeneration: desiredRolloutGeneration,
 	})
 	if !recognized {
-		return nil
+		return false, nil
 	}
 	updated, err := s.applyDeploymentTransitionTx(ctx, tx, rec.ID, input)
 	if err != nil {
-		return err
+		return false, err
+	}
+	// Agent transitions always target a different state, so an applied
+	// transition is visible as a state change; an ignored one (for example a
+	// record that turned terminal) leaves the record untouched.
+	if updated.State == rec.State {
+		return false, nil
 	}
 	if updated.State == DeploymentStateActive {
-		return s.completeDrainedPredecessorsTx(ctx, tx, serviceID, updated.ID, deploymentActor{Kind: DeploymentCauseAgent, ID: agentID})
+		return true, s.completeDrainedPredecessorsTx(ctx, tx, serviceID, updated.ID, deploymentActor{Kind: DeploymentCauseAgent, ID: agentID})
 	}
-	return nil
+	return true, nil
 }
 
 func (s *persistence) markCurrentDeploymentRemovedTx(ctx context.Context, tx *sql.Tx, serviceID string, actor deploymentActor) error {
