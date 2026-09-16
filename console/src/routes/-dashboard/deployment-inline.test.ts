@@ -5,6 +5,8 @@ import {
 	deploymentBadgeLabel,
 	deploymentProgressCopy,
 	extractMissingEnvKeys,
+	isInProgressDeploymentState,
+	isLiveDeploymentState,
 	isPinnedDeployment,
 	partitionDeployments,
 	selectInlineLogSnippet,
@@ -160,6 +162,20 @@ describe("partitionDeployments", () => {
 	});
 });
 
+describe("deploymentStateSets", () => {
+	it("treats an unspecified state as live and in progress", () => {
+		expect(isLiveDeploymentState("DEPLOYMENT_STATE_UNSPECIFIED")).toBe(true);
+		expect(isInProgressDeploymentState("DEPLOYMENT_STATE_UNSPECIFIED")).toBe(
+			true,
+		);
+	});
+
+	it("treats a removed deployment as neither live nor in progress", () => {
+		expect(isLiveDeploymentState("DEPLOYMENT_STATE_REMOVED")).toBe(false);
+		expect(isInProgressDeploymentState("DEPLOYMENT_STATE_REMOVED")).toBe(false);
+	});
+});
+
 describe("deploymentProgressCopy", () => {
 	it("names the live step instead of listing the pipeline", () => {
 		expect(
@@ -223,7 +239,36 @@ describe("deploymentProgressCopy", () => {
 describe("deploymentBadgeLabel", () => {
 	it("uses the deployment state for the compact badge", () => {
 		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_BUILDING")).toBe("Building");
-		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_ACTIVE")).toBe("Active");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_ACTIVE")).toBe("Healthy");
 		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_DRAINING")).toBe("Draining");
+	});
+
+	it("distinguishes every user-visible deployment state", () => {
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_STAGED")).toBe("Staged");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_QUEUED_BUILD")).toBe(
+			"Queued",
+		);
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_BUILDING")).toBe("Building");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_SCHEDULING")).toBe(
+			"Deploying",
+		);
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_IMAGE_PULL")).toBe(
+			"Deploying",
+		);
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_STARTING")).toBe("Deploying");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_READINESS")).toBe(
+			"Deploying",
+		);
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_ACTIVE")).toBe("Healthy");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_FAILED")).toBe("Unhealthy");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_CRASHED")).toBe("Crashed");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_CANCELLED")).toBe(
+			"Cancelled",
+		);
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_REMOVED")).toBe("Removed");
+		expect(deploymentBadgeLabel("DEPLOYMENT_STATE_SUPERSEDED")).toBe(
+			"Superseded",
+		);
+		expect(deploymentBadgeLabel(undefined)).toBe("Not deployed");
 	});
 });

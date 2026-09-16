@@ -16,6 +16,7 @@ import type {
 	DashboardFleetAgent,
 	FleetAgentInput,
 } from "#/lib/dashboard/core/types.server";
+import { formatRelativeTime } from "#/lib/time";
 import {
 	btnDangerOutline,
 	btnGhost,
@@ -319,7 +320,7 @@ function AgentCard({
 				/>
 				<Metric
 					label="Heartbeat"
-					value={agent.lastSeenAt ? relativeTime(agent.lastSeenAt) : "Never"}
+					value={formatRelativeTime(agent.lastSeenAt, Date.now(), "Never")}
 				/>
 				<Metric
 					label="Version"
@@ -577,13 +578,4 @@ function formatMemory(mebibytes: number): string {
 	return mebibytes >= 1024
 		? `${(mebibytes / 1024).toFixed(1)} GiB`
 		: `${mebibytes} MiB`;
-}
-function relativeTime(value: Date): string {
-	const seconds = Math.max(
-		0,
-		Math.round((Date.now() - new Date(value).getTime()) / 1000),
-	);
-	if (seconds < 60) return `${seconds}s ago`;
-	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-	return `${Math.floor(seconds / 3600)}h ago`;
 }

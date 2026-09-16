@@ -79,6 +79,7 @@ describe("dashboard operations", () => {
 			serviceId: "service-1",
 			repositorySelector: "",
 			trackedRef: "",
+			builder: "BUILDER_KIND_RAILPACK",
 			dockerfilePath: "",
 			contextDir: ".",
 			hostname: "",
@@ -148,6 +149,7 @@ describe("dashboard operations", () => {
 			serviceId: "service-1",
 			repositorySelector: "",
 			trackedRef: "",
+			builder: "BUILDER_KIND_RAILPACK",
 			dockerfilePath: "",
 			contextDir: ".",
 			hostname: "",
@@ -235,6 +237,7 @@ describe("dashboard operations", () => {
 			serviceId: "service-1",
 			repositorySelector: "",
 			trackedRef: "",
+			builder: "BUILDER_KIND_RAILPACK",
 			dockerfilePath: "",
 			contextDir: ".",
 			hostname: "hello.example.test",
@@ -300,6 +303,7 @@ describe("dashboard operations", () => {
 						repositorySelector: "octocat/hello",
 						trackedRef: "main",
 						buildRecipe: {
+							builder: "BUILDER_KIND_DOCKERFILE",
 							dockerfilePath: "Dockerfile",
 							contextDir: ".",
 						},
@@ -319,6 +323,7 @@ describe("dashboard operations", () => {
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 			hostname: "",
@@ -348,7 +353,8 @@ describe("dashboard operations", () => {
 						repositorySelector: "octocat/hello",
 						trackedRef: "main",
 						buildRecipe: {
-							dockerfilePath: "Dockerfile",
+							builder: "BUILDER_KIND_RAILPACK",
+							dockerfilePath: "",
 							contextDir: ".",
 						},
 					},
@@ -358,6 +364,7 @@ describe("dashboard operations", () => {
 			},
 		]);
 		expect(draft.serviceId).toBe("service-2");
+		expect(draft.builder).toBe("BUILDER_KIND_RAILPACK");
 	});
 
 	it("seeds service runtime ports from repository inspection", async () => {
@@ -372,10 +379,14 @@ describe("dashboard operations", () => {
 			defaultBranch: "main",
 			dockerfileCandidates: ["Dockerfile"],
 			recommendedBuildRecipe: {
-				dockerfilePath: "Dockerfile",
+				builder: "BUILDER_KIND_RAILPACK",
+				dockerfilePath: "",
 				contextDir: ".",
 			},
 			recommendedPorts: [3000, 8080],
+			detectedLanguage: "node",
+			detectedStartCommand: "npm run start",
+			analysisError: "",
 		};
 
 		await onboarding.createServiceFastFromSession(harness.runtime, {
@@ -387,6 +398,115 @@ describe("dashboard operations", () => {
 			{ port: 3000, primary: true },
 			{ port: 8080, primary: false },
 		]);
+	});
+
+	it("creates dockerfile services when explicitly selected", async () => {
+		const harness = createDashboardTestHarness();
+		await auth.completeAuthCallback(harness.runtime, {
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+
+		const result = await onboarding.createServiceFastFromSession(
+			harness.runtime,
+			{
+				repositorySelector: "octocat/hello",
+				serviceName: "talented-harmony",
+				builder: "BUILDER_KIND_DOCKERFILE",
+				dockerfilePath: "deploy/Dockerfile",
+				contextDir: "deploy",
+			},
+		);
+
+		expect(harness.platform.createServiceCalls[0].spec.source).toMatchObject({
+			buildRecipe: {
+				builder: "BUILDER_KIND_DOCKERFILE",
+				dockerfilePath: "deploy/Dockerfile",
+				contextDir: "deploy",
+			},
+		});
+		expect(result.onboarding.builder).toBe("BUILDER_KIND_DOCKERFILE");
+	});
+
+	it("refuses railpack create when analysis fails", async () => {
+		const harness = createDashboardTestHarness();
+		await auth.completeAuthCallback(harness.runtime, {
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.nextRepositoryInspection = {
+			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+			defaultBranch: "main",
+			dockerfileCandidates: ["Dockerfile"],
+			recommendedDockerfileRecipe: {
+				builder: "BUILDER_KIND_DOCKERFILE",
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			},
+			recommendedPorts: [],
+			detectedLanguage: "node",
+			detectedStartCommand: "",
+			analysisError: 'detected Node.js in "." but no start command was found',
+		};
+
+		await expect(
+			onboarding.createServiceFastFromSession(harness.runtime, {
+				repositorySelector: "octocat/hello",
+			}),
+		).rejects.toThrow("no start command was found");
+		expect(harness.platform.createServiceCalls).toEqual([]);
+	});
+
+	it("switches the builder through settings updates", async () => {
+		const harness = createDashboardTestHarness();
+		await auth.completeAuthCallback(harness.runtime, {
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		harness.platform.services = [
+			{
+				id: "service-1",
+				environmentId: "environment-project-1",
+				projectId: "project-1",
+				name: "hello",
+				spec: {
+					source: {
+						provider: "github",
+						repositorySelector: "octocat/hello",
+						trackedRef: "main",
+						buildRecipe: {
+							builder: "BUILDER_KIND_RAILPACK",
+							dockerfilePath: "",
+							contextDir: ".",
+						},
+					},
+					runtime: {
+						env: {},
+						cpuMillis: 250,
+						memoryMebibytes: 256,
+						ports: [],
+					},
+				},
+			},
+		];
+
+		await services.updateServiceFromSession(harness.runtime, {
+			serviceId: "service-1",
+			builder: "BUILDER_KIND_DOCKERFILE",
+			dockerfilePath: "Dockerfile",
+			contextDir: ".",
+		});
+
+		expect(harness.platform.updateServiceCalls[0].spec.source).toMatchObject({
+			buildRecipe: {
+				builder: "BUILDER_KIND_DOCKERFILE",
+				dockerfilePath: "Dockerfile",
+				contextDir: ".",
+			},
+		});
 	});
 
 	it("returns fast-created service details for immediate rendering", async () => {
@@ -502,6 +622,7 @@ describe("dashboard operations", () => {
 						repositorySelector: "octocat/hello",
 						trackedRef: "main",
 						buildRecipe: {
+							builder: "BUILDER_KIND_DOCKERFILE",
 							dockerfilePath: "Dockerfile",
 							contextDir: ".",
 						},
@@ -533,6 +654,7 @@ describe("dashboard operations", () => {
 			serviceName: "talented-harmony",
 			repositorySelector: "octocat/hello",
 			trackedRef: "main",
+			builder: "BUILDER_KIND_DOCKERFILE",
 			dockerfilePath: "Dockerfile",
 			contextDir: ".",
 		});
@@ -542,6 +664,13 @@ describe("dashboard operations", () => {
 			serviceId: "service-1",
 			name: "talented-harmony",
 			spec: {
+				source: {
+					buildRecipe: {
+						builder: "BUILDER_KIND_DOCKERFILE",
+						dockerfilePath: "Dockerfile",
+						contextDir: ".",
+					},
+				},
 				runtime: {
 					healthCheck: {
 						path: "/ready",

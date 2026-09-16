@@ -20,6 +20,7 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 		FailureReason: rec.FailureReason,
 		CommitMessage: rec.CommitMessage,
 		CommitAuthor:  rec.CommitAuthor,
+		Builder:       rec.BuildRecipe.GetBuilder(),
 	}
 	if rec.StartedAt.Valid {
 		status.StartedAt = ts(rec.StartedAt.Time)

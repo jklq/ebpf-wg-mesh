@@ -273,7 +273,7 @@ func TestInterruptedDesiredTransactionRetainsSnapshotAndCursor(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 2)); err == nil {
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 2, "allocation")); err == nil {
 		t.Fatal("failed persistence acknowledged acceptance")
 	}
 	state, err := store.desiredState()

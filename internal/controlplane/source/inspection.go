@@ -16,6 +16,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/railpack"
 )
 
 type Inspector struct {
@@ -172,24 +173,64 @@ func (i *Inspector) inspectView(ctx context.Context, view GitHubRepositoryView) 
 	if err != nil {
 		return nil, err
 	}
+	return analyzeSourceArchive(resp, archiveTGZ)
+}
+
+func analyzeSourceArchive(resp *platformv1.InspectSourceResponse, archiveTGZ []byte) (*platformv1.InspectSourceResponse, error) {
 	candidates, err := detectDockerfileCandidates(archiveTGZ)
 	if err != nil {
 		return nil, err
 	}
 	resp.DockerfileCandidates = candidates
-	recipe, err := recommendBuildRecipe(candidates, archiveTGZ)
+	dockerfileRecipe, err := recommendDockerfileRecipe(candidates, archiveTGZ)
 	if err != nil {
 		return nil, err
 	}
-	if recipe != nil {
-		resp.RecommendedBuildRecipe = recipe
-		dockerfileBody, err := readArchiveFile(archiveTGZ, recipe.GetDockerfilePath())
+	if dockerfileRecipe != nil {
+		resp.RecommendedDockerfileRecipe = dockerfileRecipe
+		dockerfileBody, err := readArchiveFile(archiveTGZ, dockerfileRecipe.GetDockerfilePath())
 		if err != nil {
 			return nil, err
 		}
 		resp.RecommendedPorts = parseDockerfileExposePorts(dockerfileBody)
 	}
+	paths, err := collectArchivePaths(archiveTGZ)
+	if err != nil {
+		return nil, err
+	}
+	analysis, err := railpack.Analyze(paths, func(target string) ([]byte, error) {
+		return readArchiveFile(archiveTGZ, target)
+	})
+	resp.DetectedLanguage = analysis.Language
+	if err != nil {
+		resp.AnalysisError = analysisErrorWithDockerfileHint(err, candidates)
+		return resp, nil
+	}
+	resp.DetectedStartCommand = analysis.StartCommand
+	resp.RecommendedBuildRecipe = &platformv1.BuildRecipe{
+		Builder:    platformv1.BuilderKind_BUILDER_KIND_RAILPACK,
+		ContextDir: analysis.AppDir,
+	}
 	return resp, nil
+}
+
+func analysisErrorWithDockerfileHint(err error, candidates []string) string {
+	if len(candidates) == 0 {
+		return err.Error()
+	}
+	names := candidates
+	if len(names) > 3 {
+		names = names[:3]
+	}
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, `"`+name+`"`)
+	}
+	hint := strings.Join(quoted, ", ")
+	if len(candidates) > len(names) {
+		hint += fmt.Sprintf(", and %d more", len(candidates)-len(names))
+	}
+	return fmt.Sprintf("%s; found Dockerfile at %s — select the Dockerfile builder to build with it", err.Error(), hint)
 }
 
 func inspectionResponseForView(view GitHubRepositoryView) *platformv1.InspectSourceResponse {
@@ -233,7 +274,7 @@ func detectDockerfileCandidates(archiveTGZ []byte) ([]string, error) {
 	}
 }
 
-func recommendBuildRecipe(candidates []string, archiveTGZ []byte) (*platformv1.BuildRecipe, error) {
+func recommendDockerfileRecipe(candidates []string, archiveTGZ []byte) (*platformv1.BuildRecipe, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -249,6 +290,7 @@ func recommendBuildRecipe(candidates []string, archiveTGZ []byte) (*platformv1.B
 		return nil, err
 	}
 	return &platformv1.BuildRecipe{
+		Builder:        platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE,
 		DockerfilePath: chosen,
 		ContextDir:     contextDir,
 	}, nil

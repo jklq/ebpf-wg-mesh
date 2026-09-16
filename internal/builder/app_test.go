@@ -526,6 +526,68 @@ func TestRuntimeDigestRefPreservesRegistryPort(t *testing.T) {
 	}
 }
 
+func TestClassifyBuildctlFailureIgnoresCommandText(t *testing.T) {
+	t.Parallel()
+	withPushArgs := commandRequest{
+		Binary: "buildctl",
+		Args:   []string{"build", "--output", "type=image,name=ghcr.io/example/image:tag,push=true"},
+	}
+	cases := []struct {
+		name   string
+		req    commandRequest
+		runErr error
+		output string
+		want   string
+	}{
+		{
+			name:   "compile failure with push args stays a build failure",
+			req:    withPushArgs,
+			runErr: errors.New("exit status 1"),
+			output: "ERROR: failed to solve: dockerfile parse error line 3: unknown instruction",
+			want:   failureKindBuild,
+		},
+		{
+			name:   "docker push flag with empty output stays a build failure",
+			req:    commandRequest{Binary: "docker", Args: []string{"buildx", "build", "--push", "."}},
+			runErr: errors.New("exit status 1"),
+			want:   failureKindBuild,
+		},
+		{
+			name:   "denied output is a push failure",
+			req:    withPushArgs,
+			runErr: errors.New("exit status 1"),
+			output: "denied: requested access to the resource is denied",
+			want:   failureKindPush,
+		},
+		{
+			name:   "failed to push output is a push failure",
+			req:    withPushArgs,
+			runErr: errors.New("exit status 1"),
+			output: "error: failed to push ghcr.io/example/image:tag: unexpected status: 401",
+			want:   failureKindPush,
+		},
+		{
+			name:   "unauthorized run error is a push failure",
+			req:    withPushArgs,
+			runErr: errors.New("unauthorized: authentication required"),
+			want:   failureKindPush,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := classifyBuildctlFailure(tc.req, tc.runErr, []byte(tc.output))
+			var buildErr *buildFailureError
+			if !errors.As(err, &buildErr) {
+				t.Fatalf("classifyBuildctlFailure() = %v, want *buildFailureError", err)
+			}
+			if buildErr.kind != tc.want {
+				t.Fatalf("kind = %q, want %q (err: %v)", buildErr.kind, tc.want, err)
+			}
+		})
+	}
+}
+
 func extractSourceSnapshot(repoDir string, archiveTGZ []byte) error {
 	return extractSourceSnapshotReader(repoDir, bytes.NewReader(archiveTGZ), int64(len(archiveTGZ)))
 }
@@ -574,6 +636,9 @@ func TestCommandRunnerHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString("hello\n")
 		_, _ = os.Stderr.WriteString("boom\n")
 		os.Exit(7)
+	case "exit75":
+		_, _ = os.Stderr.WriteString("temporary failure in name resolution\n")
+		os.Exit(75)
 	default:
 		os.Exit(2)
 	}

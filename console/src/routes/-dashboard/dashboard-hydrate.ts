@@ -2,6 +2,7 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { cleanDate } from "#/lib/time";
 
 import type {
 	ServiceStatusSnapshot,
@@ -19,10 +20,31 @@ export function hydrateServiceStatusSnapshot(
 	return {
 		...snapshot,
 		service: hydrateServiceSnapshot(snapshot.service),
-		allocation: snapshot.allocation
+		allocation: hydrateAllocation(snapshot.allocation),
+		allocations: Array.isArray(snapshot.allocations)
+			? snapshot.allocations
+					.map(hydrateAllocation)
+					.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+			: undefined,
+	};
+}
+
+function hydrateAllocation(
+	allocation: DashboardServiceStatus["allocation"],
+): DashboardServiceStatus["allocation"] {
+	if (!allocation) return undefined;
+	return {
+		...allocation,
+		updatedAt: cleanDate(allocation.updatedAt),
+		drainStartedAt: cleanDate(allocation.drainStartedAt),
+		drainDeadline: cleanDate(allocation.drainDeadline),
+		restart: allocation.restart
 			? {
-					...snapshot.allocation,
-					updatedAt: hydrateDate(snapshot.allocation.updatedAt),
+					...allocation.restart,
+					windowStartedAt: cleanDate(allocation.restart.windowStartedAt),
+					lastRestartAt: cleanDate(allocation.restart.lastRestartAt),
+					nextRestartAt: cleanDate(allocation.restart.nextRestartAt),
+					startedAt: cleanDate(allocation.restart.startedAt),
 				}
 			: undefined,
 	};
@@ -75,26 +97,26 @@ export function hydrateServiceSnapshot(
 ): DashboardServiceRecord {
 	return {
 		...service,
-		createdAt: hydrateDate(service.createdAt),
-		updatedAt: hydrateDate(service.updatedAt),
+		createdAt: cleanDate(service.createdAt),
+		updatedAt: cleanDate(service.updatedAt),
 		latestBuild: service.latestBuild
 			? {
 					...service.latestBuild,
-					queuedAt: hydrateDate(service.latestBuild.queuedAt),
-					startedAt: hydrateDate(service.latestBuild.startedAt),
-					finishedAt: hydrateDate(service.latestBuild.finishedAt),
+					queuedAt: cleanDate(service.latestBuild.queuedAt),
+					startedAt: cleanDate(service.latestBuild.startedAt),
+					finishedAt: cleanDate(service.latestBuild.finishedAt),
 					stages:
 						service.latestBuild.stages?.map((stage) => ({
 							...stage,
-							startedAt: hydrateDate(stage.startedAt),
-							finishedAt: hydrateDate(stage.finishedAt),
+							startedAt: cleanDate(stage.startedAt),
+							finishedAt: cleanDate(stage.finishedAt),
 						})) ?? [],
 				}
 			: undefined,
 		latestDeployment: service.latestDeployment
 			? {
 					...service.latestDeployment,
-					transitionedAt: hydrateDate(service.latestDeployment.transitionedAt),
+					transitionedAt: cleanDate(service.latestDeployment.transitionedAt),
 				}
 			: undefined,
 	};
@@ -102,9 +124,4 @@ export function hydrateServiceSnapshot(
 
 function asRevision(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function hydrateDate(value: Date | string | undefined): Date | undefined {
-	if (!value) return undefined;
-	return value instanceof Date ? value : new Date(value);
 }

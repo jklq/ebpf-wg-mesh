@@ -198,6 +198,9 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if err := ValidateServicePlacement(spec); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
+	if err := ValidateBuildRecipe(spec); err != nil {
+		return ServiceRecord{}, false, false, err
+	}
 	if err := ValidateRollingStrategy(spec); err != nil {
 		return ServiceRecord{}, false, false, err
 	}

@@ -372,17 +372,6 @@ func backoffDelay(settings *platformv1.ServiceRestart, completedRestarts int32, 
 	return time.Duration(base)
 }
 
-func NodeLossObservation(now time.Time, rolloutGeneration, operatorNonce int64) *platformv1.RestartObservation {
-	now = now.UTC()
-	return &platformv1.RestartObservation{
-		LastCause:                   platformv1.RestartCause_RESTART_CAUSE_NODE_LOSS,
-		LastRestartAt:               timestamppb.New(now),
-		AppliedRolloutGeneration:    rolloutGeneration,
-		AppliedOperatorRestartNonce: operatorNonce,
-		Message:                     "allocation moved after node loss",
-	}
-}
-
 func FormatRestart(restart *platformv1.ServiceRestart) string {
 	restart = CanonicalRestart(restart)
 	var b strings.Builder

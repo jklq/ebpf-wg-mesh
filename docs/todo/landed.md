@@ -58,6 +58,45 @@ Prompt:
 Add IPv4 as a second overlay family next to the existing IPv6 mesh so every allocated workload gets both addresses, both are routed in WireGuard AllowedIPs, and both are enforced by the eBPF identity policy under the same network_identity. Allocate IPv4 from a real sequential pool and non-overlapping per-node prefixes—do not hash it the IPv6 way—and reject pool exhaustion or overlap transactionally. Keep the host-identity `advertise_addr` on IPv6; the WireGuard transport endpoint is independently advertised and may use IPv4 or IPv6. Extend desired state, allocation reports, container labels, CNI setup, internal host entries, service DNS, health probes, metrics labels, and ingress backends to understand both addresses and choose a reachable healthy family without weakening environment isolation. A process binding only 0.0.0.0 must become healthy and publicly reachable, and a process binding only :: must continue to work. Isolation tests must prove same-environment allow, cross-environment deny, unknown-destination deny, identity removal, and node failover on both families.
 ```
 
+## 1.4 Crash evidence in the console
+
+Status: done
+Depends on: 1.3 so probe failures are distinct from process death. Restart observation already exists.
+
+Without last exit, OOM, and leftover logs, 1.3 is invisible.
+
+Prompt:
+
+```text
+Surface crash evidence on the service and allocation views from persisted restart observation and bounded recent logs. Show last exit code, signal, OOM kill, liveness failure, restart count, crash-loop, and a short tail of runtime logs that remains after the container is gone. Distinguish OOM, liveness restart, nonzero exit, and probe-not-ready. Do not require a new log backend; use the existing ClickHouse path and durable observation already stored for restart policy. Test that a crash-looped allocation remains diagnosable after the container has been removed.
+```
+
+## 1.5 Truthful time and status
+
+Was: 0.2
+Status: done
+Depends on: 1.3 so status labels can distinguish unhealthy from not-yet-ready.
+
+Prompt:
+
+```text
+Remove impossible timestamps and ambiguous deployment state from the control-plane-to-console path. Define how absent protobuf timestamps are represented, ensure zero/epoch values stay absent rather than becoming JavaScript Date objects, and make every deployment/build/allocation timestamp use UTC at storage and transport boundaries. A newly staged service with no build or rollout time must show an intentional label such as “Not deployed” rather than an age measured from 1970. Consolidate relative-time formatting, handle future clock skew defensively, and ensure status labels distinguish staged, queued, building, deploying, healthy, unhealthy, crashed, superseded, cancelled, and removed states once those states exist. Add codec and component tests for missing, zero, malformed, future, and valid timestamps.
+```
+
+## 1.6 Railpack as the default builder
+
+Was: 4.1
+Status: done
+Depends on: none. The build executor boundary (2.4a) can wrap this later.
+
+Most repositories have no Dockerfile. Silent Dockerfile fallback hides why a source deploy failed.
+
+Prompt:
+
+```text
+Make Railpack a first-class field on BuildRecipe and the default for every new inspect, create, and onboarding path, while Dockerfile remains an explicit selectable recipe with dockerfile_path and context_dir. Do it as a clean cutover: builder is required, omitted or unspecified values are rejected, and all newly created repository services choose Railpack unless the user selects Dockerfile. Thread the builder choice through protobufs, JSON recipe encoding, source inspection, staged-change descriptions, console create/update/settings, claimed BuildJob, and deployment details. Dispatch in internal/builder so both paths use the same immutable snapshot workspace, exact registry capability, log reporting, cancellation, resource limits, and final digest verification. Railpack analysis failure must produce actionable detected-language and missing-start-command details rather than silently falling back to Dockerfile. Add representative Node, Python, Go, static-site, monorepo, Dockerfile, and no-buildable-source tests.
+```
+
 ## 1.7 Auto-deploy on/off per environment
 
 Status: done

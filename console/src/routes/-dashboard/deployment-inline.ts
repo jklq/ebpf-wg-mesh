@@ -5,6 +5,7 @@ import type {
 	DashboardDeploymentState,
 	DashboardDeploymentStatus,
 } from "#/lib/dashboard/core/types.server";
+import { NOT_DEPLOYED_LABEL } from "#/lib/time";
 
 const ENV_STOPWORDS = new Set([
 	"ERROR",
@@ -111,6 +112,7 @@ export function trafficRetentionCopy(options: {
 }
 
 const LIVE_STATES = new Set<DashboardDeploymentState>([
+	"DEPLOYMENT_STATE_UNSPECIFIED",
 	"DEPLOYMENT_STATE_STAGED",
 	"DEPLOYMENT_STATE_QUEUED_BUILD",
 	"DEPLOYMENT_STATE_BUILDING",
@@ -123,6 +125,7 @@ const LIVE_STATES = new Set<DashboardDeploymentState>([
 ]);
 
 const IN_PROGRESS_STATES = new Set<DashboardDeploymentState>([
+	"DEPLOYMENT_STATE_UNSPECIFIED",
 	"DEPLOYMENT_STATE_STAGED",
 	"DEPLOYMENT_STATE_QUEUED_BUILD",
 	"DEPLOYMENT_STATE_BUILDING",
@@ -196,21 +199,18 @@ export function deploymentBadgeLabel(
 		case "DEPLOYMENT_STATE_BUILDING":
 			return "Building";
 		case "DEPLOYMENT_STATE_SCHEDULING":
-			return "Scheduling";
 		case "DEPLOYMENT_STATE_IMAGE_PULL":
-			return "Pulling";
 		case "DEPLOYMENT_STATE_STARTING":
-			return "Starting";
 		case "DEPLOYMENT_STATE_READINESS":
-			return "Health";
+			return "Deploying";
 		case "DEPLOYMENT_STATE_ACTIVE":
-			return "Active";
+			return "Healthy";
 		case "DEPLOYMENT_STATE_DRAINING":
 			return "Draining";
 		case "DEPLOYMENT_STATE_COMPLETED":
 			return "Done";
 		case "DEPLOYMENT_STATE_FAILED":
-			return "Failed";
+			return "Unhealthy";
 		case "DEPLOYMENT_STATE_CANCELLED":
 			return "Cancelled";
 		case "DEPLOYMENT_STATE_CRASHED":
@@ -222,9 +222,9 @@ export function deploymentBadgeLabel(
 		default:
 			if (build?.state === "BUILD_STATE_QUEUED") return "Queued";
 			if (build?.state === "BUILD_STATE_RUNNING") return "Building";
-			if (build?.state === "BUILD_STATE_FAILED") return "Failed";
-			if (build?.state === "BUILD_STATE_SUCCEEDED") return "Active";
-			return "Deploy";
+			if (build?.state === "BUILD_STATE_FAILED") return "Unhealthy";
+			if (build?.state === "BUILD_STATE_SUCCEEDED") return "Healthy";
+			return NOT_DEPLOYED_LABEL;
 	}
 }
 

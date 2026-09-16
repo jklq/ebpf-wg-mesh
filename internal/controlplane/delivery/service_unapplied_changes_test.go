@@ -29,13 +29,14 @@ func TestServiceUnappliedChangesSemanticSourceEquality(t *testing.T) {
 	deployed := repositoryServiceSpec(nil, &platformv1.ServiceSourceSpec{
 		Provider:           "github",
 		RepositorySelector: "OWNER/Repo",
-		BuildRecipe:        &platformv1.BuildRecipe{},
+		BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE},
 	})
 	current := repositoryServiceSpec(nil, &platformv1.ServiceSourceSpec{
 		Provider:           "github",
 		RepositorySelector: "owner/repo",
 		TrackedRef:         "main",
 		BuildRecipe: &platformv1.BuildRecipe{
+			Builder:        platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE,
 			DockerfilePath: "Dockerfile",
 			ContextDir:     ".",
 		},
@@ -43,6 +44,40 @@ func TestServiceUnappliedChangesSemanticSourceEquality(t *testing.T) {
 
 	if changes := diffServiceUnappliedChanges(current, deployed); len(changes) != 0 {
 		t.Fatalf("changes = %#v, want none", changes)
+	}
+}
+
+func TestServiceUnappliedChangesIncludesBuilder(t *testing.T) {
+	deployed := repositoryServiceSpec(nil, &platformv1.ServiceSourceSpec{
+		Provider:           "github",
+		RepositorySelector: "owner/repo",
+		TrackedRef:         "main",
+		BuildRecipe: &platformv1.BuildRecipe{
+			Builder:        platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE,
+			DockerfilePath: "Dockerfile",
+			ContextDir:     ".",
+		},
+	})
+	current := repositoryServiceSpec(nil, &platformv1.ServiceSourceSpec{
+		Provider:           "github",
+		RepositorySelector: "owner/repo",
+		TrackedRef:         "main",
+		BuildRecipe: &platformv1.BuildRecipe{
+			Builder:        platformv1.BuilderKind_BUILDER_KIND_RAILPACK,
+			DockerfilePath: "Dockerfile",
+			ContextDir:     ".",
+		},
+	})
+
+	changes := diffServiceUnappliedChanges(current, deployed)
+	if got, want := len(changes), 1; got != want {
+		t.Fatalf("change count = %d, want %d: %#v", got, want, changes)
+	}
+	assertChange(t, changes[0], "source.buildRecipe.builder", platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE, "Dockerfile", "Railpack")
+
+	discarded := applyDiscardedServiceChanges(current, deployed, false, []string{"source.buildRecipe.builder"})
+	if got := discarded.GetSource().GetSourceSpec().GetBuildRecipe().GetBuilder(); got != platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE {
+		t.Fatalf("discarded builder = %v, want dockerfile", got)
 	}
 }
 

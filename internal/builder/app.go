@@ -244,7 +244,7 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 	if err := a.materializeSourceSnapshot(ctx, job, workspace.repoDir); err != nil {
 		return "", err
 	}
-	return a.invokeBuildctl(ctx, job, workspace)
+	return a.invokeBuild(ctx, job, workspace)
 }
 
 func (a *App) materializeSourceSnapshot(ctx context.Context, job *platformv1.BuildJob, repoDir string) error {
@@ -346,7 +346,20 @@ func (a *App) materializeSourceSnapshot(ctx context.Context, job *platformv1.Bui
 	return nil
 }
 
-func (a *App) invokeBuildctl(ctx context.Context, job *platformv1.BuildJob, workspace jobWorkspace) (string, error) {
+func (a *App) invokeBuild(ctx context.Context, job *platformv1.BuildJob, workspace jobWorkspace) (string, error) {
+	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId())
+	defer reporter.Close()
+	switch job.GetSource().GetBuildRecipe().GetBuilder() {
+	case platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE:
+		return a.invokeDockerfileBuild(ctx, job, workspace, reporter)
+	case platformv1.BuilderKind_BUILDER_KIND_RAILPACK:
+		return a.invokeRailpackBuild(ctx, job, workspace, reporter)
+	default:
+		return "", &buildFailureError{kind: failureKindBuild, err: errors.New("build recipe builder is required: railpack or dockerfile")}
+	}
+}
+
+func (a *App) invokeDockerfileBuild(ctx context.Context, job *platformv1.BuildJob, workspace jobWorkspace, reporter *buildLogReporter) (string, error) {
 	contextDir, dockerfilePath, err := validateBuildInputs(workspace.repoDir, job.GetSource().GetBuildRecipe())
 	if err != nil {
 		return "", &buildFailureError{kind: failureKindBuild, err: err}
@@ -358,15 +371,17 @@ func (a *App) invokeBuildctl(ctx context.Context, job *platformv1.BuildJob, work
 	defer cleanup()
 
 	req := buildCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, contextDir, workspace.repoDir, dockerfilePath, job.GetRegistryPushReference(), workspace.metadataFile, env)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId())
-	defer reporter.Close()
 	output, err := a.runner.Run(ctx, req, func(line commandOutputLine) {
 		reporter.Report(ctx, line)
 	})
 	if err != nil {
-		return "", classifyBuildctlFailure(formatBuildCommandError(req, err, output))
+		return "", classifyBuildctlFailure(req, err, output)
 	}
-	data, err := os.ReadFile(workspace.metadataFile)
+	return buildDigestRefFromMetadata(job.GetRegistryPushReference(), workspace.metadataFile)
+}
+
+func buildDigestRefFromMetadata(pushRef, metadataFile string) (string, error) {
+	data, err := os.ReadFile(metadataFile)
 	if err != nil {
 		return "", &buildFailureError{kind: failureKindProtocol, err: fmt.Errorf("read build metadata: %w", err)}
 	}
@@ -374,14 +389,18 @@ func (a *App) invokeBuildctl(ctx context.Context, job *platformv1.BuildJob, work
 	if err != nil {
 		return "", &buildFailureError{kind: failureKindProtocol, err: err}
 	}
-	return runtimeDigestRef(job.GetRegistryPushReference(), digest), nil
+	return runtimeDigestRef(pushRef, digest), nil
 }
 
 func buildCommand(buildBinary, buildkitAddress, contextDir, repoDir, dockerfilePath, pushRef, metadataFile string, env []string) commandRequest {
-	if filepath.Base(strings.TrimSpace(buildBinary)) == "docker" {
+	if isDockerBuildBinary(buildBinary) {
 		return dockerBuildxCommand(buildBinary, contextDir, repoDir, dockerfilePath, pushRef, metadataFile, env)
 	}
 	return buildctlCommand(buildBinary, buildkitAddress, contextDir, repoDir, dockerfilePath, pushRef, metadataFile, env)
+}
+
+func isDockerBuildBinary(buildBinary string) bool {
+	return filepath.Base(strings.TrimSpace(buildBinary)) == "docker"
 }
 
 func dockerBuildxCommand(dockerBinary, contextDir, repoDir, dockerfilePath, pushRef, metadataFile string, env []string) commandRequest {

@@ -49,6 +49,10 @@ const rollingStrategy = z.object({
 	healthcheckTimeoutSeconds: z.number().int(),
 	drainingSeconds: z.number().int(),
 });
+const builderKind = z.enum([
+	"BUILDER_KIND_RAILPACK",
+	"BUILDER_KIND_DOCKERFILE",
+]);
 const updateServiceInput = z.object({
 	serviceId: identifier,
 	serviceName: z.string().optional(),
@@ -57,6 +61,7 @@ const updateServiceInput = z.object({
 	memoryMebibytes: z.number().optional(),
 	repositorySelector: z.string().optional(),
 	trackedRef: z.string().optional(),
+	builder: builderKind.optional(),
 	dockerfilePath: z.string().optional(),
 	contextDir: z.string().optional(),
 	restart: restartSpec.optional(),
@@ -68,6 +73,7 @@ const confirmRepositoryInput = z.object({
 	repositorySelector: identifier,
 	serviceName: z.string().optional(),
 	trackedRef: z.string().optional(),
+	builder: builderKind.optional(),
 	dockerfilePath: z.string().optional(),
 	contextDir: z.string().optional(),
 	cpuMillis: z.number().optional(),

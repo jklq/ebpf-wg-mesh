@@ -64,4 +64,50 @@ describe("dashboard CockroachDB migrations", () => {
 		]);
 	});
 
+	it("upgrades onboarding drafts with the builder column", async () => {
+		const runtime = newRuntime("dashboard_upgrade");
+		const migrations = dashboardStoreMigrations(runtime);
+		const initial = migrations.find((migration) => migration.version === 1);
+		if (!initial) {
+			throw new Error("expected migration version 1");
+		}
+		await pool.query(
+			`CREATE SCHEMA IF NOT EXISTS ${runtime.databaseSchema}`,
+		);
+		await pool.query(
+			`CREATE TABLE IF NOT EXISTS ${runtime.databaseSchema}.schema_migrations (version INT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`,
+		);
+		for (const statement of initial.statements) {
+			await pool.query(statement);
+		}
+		await pool.query(
+			`INSERT INTO ${runtime.databaseSchema}.schema_migrations (version, applied_at) VALUES (1, NOW())`,
+		);
+		await pool.query(
+			`INSERT INTO ${runtime.databaseSchema}.users (id, email, created_at, updated_at) VALUES ('user-1', 'user@example.test', NOW(), NOW())`,
+		);
+		await pool.query(
+			`INSERT INTO ${runtime.databaseSchema}.onboarding (user_id, repository_selector, tracked_ref, dockerfile_path, context_dir, hostname, created_at, updated_at) VALUES ('user-1', 'octocat/hello', 'main', 'Dockerfile', '.', '', NOW(), NOW())`,
+		);
+
+		const store = createPostgresDashboardStore(runtime, pool);
+		await store.ensureInitialized();
+
+		const versions = await pool.query<{ version: string }>(
+			`SELECT version FROM ${runtime.databaseSchema}.schema_migrations ORDER BY version`,
+		);
+		expect(versions.rows.map((row) => Number(row.version))).toEqual([1, 2]);
+
+		const draft = await store.getOnboardingDraft("user-1");
+		if (!draft) {
+			throw new Error("expected onboarding draft");
+		}
+		expect(draft.builder).toBe("");
+		await store.saveOnboardingDraft("user-1", {
+			...draft,
+			builder: "BUILDER_KIND_RAILPACK",
+		});
+		const reloaded = await store.getOnboardingDraft("user-1");
+		expect(reloaded?.builder).toBe("BUILDER_KIND_RAILPACK");
+	});
 });

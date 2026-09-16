@@ -50,7 +50,7 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 				Provider:           "github",
 				RepositorySelector: "public/hello",
 				TrackedRef:         "main",
-				BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+				BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 			}),
 		},
 	})
@@ -109,7 +109,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 				Provider:           "github",
 				RepositorySelector: "public/hello",
 				TrackedRef:         "release",
-				BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+				BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 			}),
 		},
 	})
@@ -168,7 +168,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "public/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -245,7 +245,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 			Provider:           "github",
 			RepositorySelector: "public/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	)
 	productionID := productionEnvironmentID(t, store, projectID)

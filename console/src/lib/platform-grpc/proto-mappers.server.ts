@@ -1,10 +1,5 @@
 import { create, type DescEnum, type DescEnumValue } from "@bufbuild/protobuf";
-import {
-	EmptySchema,
-	type Timestamp,
-	timestampDate,
-	timestampFromDate,
-} from "@bufbuild/protobuf/wkt";
+import { EmptySchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
 	type DashboardAgentEnrollment,
 	type DashboardAgentLifecycleState,
@@ -54,6 +49,7 @@ import {
 	AgentLifecycleStateSchema,
 	type AllocationStatus,
 	ApplyDeploymentActionRequestSchema,
+	BuilderKindSchema,
 	type BuildRecipe,
 	BuildStateSchema,
 	type BuildStatus,
@@ -130,6 +126,7 @@ import {
 	type UpdateServiceRequest,
 	UpdateServiceRequestSchema,
 } from "#/lib/platform-gen/platform_pb";
+import { protoTimestampToDate } from "#/lib/time";
 
 function enumValueByNumber(
 	desc: DescEnum,
@@ -167,8 +164,10 @@ function requireString(value: string, context: string): string {
 	return value;
 }
 
-function optionalDate(value: Timestamp | undefined): Date | undefined {
-	return value ? timestampDate(value) : undefined;
+function optionalDate(
+	value: Parameters<typeof protoTimestampToDate>[0],
+): Date | undefined {
+	return protoTimestampToDate(value);
 }
 
 export function toProject(project: Project): DashboardProject {
@@ -221,7 +220,11 @@ export function toRepositoryInspection(response: {
 	defaultBranch: string;
 	dockerfileCandidates: string[];
 	recommendedBuildRecipe?: BuildRecipe;
+	recommendedDockerfileRecipe?: BuildRecipe;
 	recommendedPorts: number[];
+	detectedLanguage: string;
+	detectedStartCommand: string;
+	analysisError: string;
 }): DashboardRepositoryInspection {
 	return {
 		accessState: enumName(
@@ -231,20 +234,39 @@ export function toRepositoryInspection(response: {
 		defaultBranch: response.defaultBranch,
 		dockerfileCandidates: response.dockerfileCandidates,
 		recommendedBuildRecipe: toBuildRecipe(response.recommendedBuildRecipe),
+		recommendedDockerfileRecipe: toBuildRecipe(
+			response.recommendedDockerfileRecipe,
+		),
 		recommendedPorts: response.recommendedPorts,
+		detectedLanguage: response.detectedLanguage,
+		detectedStartCommand: response.detectedStartCommand,
+		analysisError: response.analysisError,
 	};
 }
 
 function toBuildRecipe(
 	recipe: BuildRecipe | undefined,
 ): DashboardBuildRecipe | undefined {
-	if (!recipe || (recipe.dockerfilePath === "" && recipe.contextDir === "")) {
+	if (!recipe) {
+		return undefined;
+	}
+	const builder = toBuilderKind(recipe.builder);
+	if (!builder && recipe.dockerfilePath === "" && recipe.contextDir === "") {
 		return undefined;
 	}
 	return {
+		...(builder ? { builder } : {}),
 		dockerfilePath: recipe.dockerfilePath,
 		contextDir: recipe.contextDir,
 	};
+}
+
+function toBuilderKind(builder: number): DashboardBuildRecipe["builder"] {
+	const name = enumName(BuilderKindSchema, builder);
+	if (name === "BUILDER_KIND_RAILPACK" || name === "BUILDER_KIND_DOCKERFILE") {
+		return name;
+	}
+	return undefined;
 }
 
 export function toDomainBinding(
@@ -320,6 +342,7 @@ export function toBuildStatus(
 	if (!build?.buildId) {
 		return undefined;
 	}
+	const builder = toBuilderKind(build.builder);
 	return {
 		buildId: build.buildId,
 		state: enumName(BuildStateSchema, build.state) as DashboardBuildState,
@@ -332,6 +355,7 @@ export function toBuildStatus(
 		commitMessage: build.commitMessage || undefined,
 		commitAuthor: build.commitAuthor || undefined,
 		stages: build.stages.map(toDeploymentStage),
+		...(builder ? { builder } : {}),
 	};
 }
 
@@ -685,6 +709,13 @@ function toRestartObservation(
 		crashLoop: observation.crashLoop,
 		lastCause: enumName(RestartCauseSchema, observation.lastCause),
 		message: observation.message,
+		lastExitCode: observation.lastExitCode,
+		lastSignal: observation.lastSignal,
+		awaitingRestart: observation.awaitingRestart,
+		windowStartedAt: optionalDate(observation.windowStartedAt),
+		lastRestartAt: optionalDate(observation.lastRestartAt),
+		nextRestartAt: optionalDate(observation.nextRestartAt),
+		startedAt: optionalDate(observation.startedAt),
 	};
 }
 
@@ -1020,7 +1051,7 @@ export function toCreateServiceRequest(input: {
 	});
 }
 
-function toProtoServiceSpec(spec: DashboardServiceSpec) {
+export function toProtoServiceSpec(spec: DashboardServiceSpec) {
 	return {
 		runtime: toProtoRuntimeSpec(spec.runtime),
 		source: {
@@ -1032,6 +1063,10 @@ function toProtoServiceSpec(spec: DashboardServiceSpec) {
 					trackedRef: spec.source?.trackedRef ?? "",
 					buildRecipe: spec.source?.buildRecipe
 						? {
+								builder: enumNumber(
+									BuilderKindSchema,
+									spec.source.buildRecipe.builder ?? "BUILDER_KIND_UNSPECIFIED",
+								),
 								dockerfilePath: spec.source.buildRecipe.dockerfilePath,
 								contextDir: spec.source.buildRecipe.contextDir,
 							}

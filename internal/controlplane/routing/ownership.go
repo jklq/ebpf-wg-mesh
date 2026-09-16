@@ -14,8 +14,6 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
@@ -174,6 +172,6 @@ func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.Doma
 	return &platformv1.DomainBinding{
 		Hostname: rec.Hostname, ServiceId: rec.ServiceID, TargetPort: rec.TargetPort,
 		PlatformGenerated: rec.PlatformGenerated,
-		CreatedAt:         timestamppb.New(rec.CreatedAt), UpdatedAt: timestamppb.New(rec.UpdatedAt),
+		CreatedAt:         deliverycore.ToProtoTimestamp(rec.CreatedAt), UpdatedAt: deliverycore.ToProtoTimestamp(rec.UpdatedAt),
 	}
 }

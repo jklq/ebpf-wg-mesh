@@ -29,6 +29,7 @@ const MANUAL_SELECTOR = /^[\w.-]+\/[\w.-]+$/;
 type SettingsDraft = {
 	repoSelector: string;
 	trackedRef: string;
+	builder: "railpack" | "dockerfile";
 	dockerfilePath: string;
 	contextDir: string;
 	restartPolicy: "on-failure" | "always" | "never";
@@ -77,6 +78,7 @@ export function PanelSettings({
 					serviceId: service.id,
 					repositorySelector: next.repoSelector,
 					trackedRef: next.trackedRef,
+					builder: builderToProto(next.builder),
 					dockerfilePath: next.dockerfilePath,
 					contextDir: next.contextDir,
 					restart: {
@@ -172,35 +174,76 @@ export function PanelSettings({
 			</PanelSection>
 
 			<PanelSection title="Build">
-				<div>
-					<label className={fieldLabel} htmlFor={dockerfilePathId}>
-						Dockerfile path
-					</label>
-					<input
-						id={dockerfilePathId}
-						className={
-							changedFields.has("source.buildRecipe.dockerfilePath")
-								? fieldInputUnapplied
-								: fieldInput
+				<fieldset
+					className={cn(
+						"relative m-0 flex flex-wrap border p-0",
+						changedFields.has("source.buildRecipe.builder")
+							? unappliedSurface
+							: "border-line bg-canvas",
+					)}
+					data-unapplied={
+						changedFields.has("source.buildRecipe.builder") || undefined
+					}
+				>
+					<legend
+						className={cn(
+							fieldLabel,
+							"absolute -top-2.5 mb-0 bg-canvas px-1.5",
+						)}
+					>
+						Builder
+					</legend>
+					<BuilderOption
+						name={`service-builder-${service.id}`}
+						label="Railpack"
+						checked={draft.builder === "railpack"}
+						onSelect={() =>
+							setDraft((current) => ({ ...current, builder: "railpack" }))
 						}
-						data-unapplied={
-							changedFields.has("source.buildRecipe.dockerfilePath") ||
-							undefined
-						}
-						value={draft.dockerfilePath}
-						onChange={(e) =>
-							setDraft((current) => ({
-								...current,
-								dockerfilePath: e.target.value,
-							}))
-						}
-						placeholder="Dockerfile"
 					/>
-				</div>
+					<BuilderOption
+						name={`service-builder-${service.id}`}
+						label="Dockerfile"
+						checked={draft.builder === "dockerfile"}
+						onSelect={() =>
+							setDraft((current) => ({ ...current, builder: "dockerfile" }))
+						}
+					/>
+				</fieldset>
+
+				{draft.builder === "dockerfile" && (
+					<div>
+						<label className={fieldLabel} htmlFor={dockerfilePathId}>
+							Dockerfile path
+						</label>
+						<input
+							id={dockerfilePathId}
+							className={
+								changedFields.has("source.buildRecipe.dockerfilePath")
+									? fieldInputUnapplied
+									: fieldInput
+							}
+							data-unapplied={
+								changedFields.has("source.buildRecipe.dockerfilePath") ||
+								undefined
+							}
+							value={draft.dockerfilePath}
+							onChange={(e) =>
+								setDraft((current) => ({
+									...current,
+									dockerfilePath: e.target.value,
+								}))
+							}
+							placeholder="Dockerfile"
+						/>
+					</div>
+				)}
 
 				<div>
 					<label className={fieldLabel} htmlFor={contextDirId}>
-						Build context directory
+						{draft.builder === "dockerfile"
+							? "Build context directory"
+							: "Application directory"}
 					</label>
 					<input
 						id={contextDirId}
@@ -496,6 +539,9 @@ function settingsChangedFields(
 	if (draft.trackedRef !== incoming.trackedRef) {
 		changed.add("source.trackedRef");
 	}
+	if (draft.builder !== incoming.builder) {
+		changed.add("source.buildRecipe.builder");
+	}
 	if (draft.dockerfilePath !== incoming.dockerfilePath) {
 		changed.add("source.buildRecipe.dockerfilePath");
 	}
@@ -528,6 +574,10 @@ function settingsDraftFromService(
 	return {
 		repoSelector: source?.repositorySelector ?? "",
 		trackedRef: source?.trackedRef ?? "",
+		builder:
+			source?.buildRecipe?.builder === "BUILDER_KIND_DOCKERFILE"
+				? "dockerfile"
+				: "railpack",
 		dockerfilePath: source?.buildRecipe?.dockerfilePath ?? "",
 		contextDir: source?.buildRecipe?.contextDir ?? ".",
 		restartPolicy: restartPolicyToDraft(service.spec?.runtime.restart?.policy),
@@ -541,6 +591,46 @@ function settingsDraftFromService(
 			service.spec?.rollingStrategy?.drainingSeconds ?? 0,
 		),
 	};
+}
+
+function BuilderOption({
+	name,
+	label,
+	checked,
+	onSelect,
+}: {
+	name: string;
+	label: string;
+	checked: boolean;
+	onSelect: () => void;
+}) {
+	return (
+		<label
+			className={cn(
+				"flex min-h-9 flex-1 cursor-pointer items-center justify-center border-r border-line px-3 font-condensed text-xs font-bold tracking-[0.08em] uppercase last:border-r-0",
+				checked
+					? "bg-surface-hover text-ink shadow-[inset_0_-2px_0_var(--color-accent)]"
+					: "text-muted",
+			)}
+		>
+			<input
+				type="radio"
+				className="pointer-events-none absolute opacity-0"
+				name={name}
+				checked={checked}
+				onChange={onSelect}
+			/>
+			{label}
+		</label>
+	);
+}
+
+function builderToProto(
+	builder: SettingsDraft["builder"],
+): "BUILDER_KIND_RAILPACK" | "BUILDER_KIND_DOCKERFILE" {
+	return builder === "dockerfile"
+		? "BUILDER_KIND_DOCKERFILE"
+		: "BUILDER_KIND_RAILPACK";
 }
 
 function restartPolicyFromDraft(

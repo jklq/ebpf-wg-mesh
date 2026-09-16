@@ -113,7 +113,12 @@ export type DashboardServiceLogType =
 	| "SERVICE_LOG_TYPE_NETWORK"
 	| "SERVICE_LOG_TYPE_UNSPECIFIED";
 
+export type DashboardBuilderKind =
+	| "BUILDER_KIND_RAILPACK"
+	| "BUILDER_KIND_DOCKERFILE";
+
 export interface DashboardBuildRecipe {
+	builder?: DashboardBuilderKind;
 	dockerfilePath: string;
 	contextDir: string;
 }
@@ -140,6 +145,7 @@ export interface DashboardOnboardingDraft {
 	serviceId: string;
 	repositorySelector: string;
 	trackedRef: string;
+	builder: string;
 	dockerfilePath: string;
 	contextDir: string;
 	hostname: string;
@@ -158,7 +164,11 @@ export interface DashboardRepositoryInspection {
 	defaultBranch: string;
 	dockerfileCandidates: Array<string>;
 	recommendedBuildRecipe?: DashboardBuildRecipe;
+	recommendedDockerfileRecipe?: DashboardBuildRecipe;
 	recommendedPorts: number[];
+	detectedLanguage: string;
+	detectedStartCommand: string;
+	analysisError: string;
 }
 
 export interface DashboardSourceSpec {
@@ -309,6 +319,7 @@ export interface DashboardBuildStatus {
 	commitMessage?: string;
 	commitAuthor?: string;
 	stages?: Array<DashboardDeploymentStage>;
+	builder?: DashboardBuilderKind;
 }
 
 export interface DashboardDeploymentStage {
@@ -379,6 +390,20 @@ export interface DashboardServiceRecord {
 	placementMessage?: string;
 }
 
+export interface DashboardRestartObservation {
+	restartCount: number;
+	crashLoop: boolean;
+	lastCause: string;
+	message: string;
+	lastExitCode: number;
+	lastSignal: number;
+	awaitingRestart: boolean;
+	windowStartedAt?: Date;
+	lastRestartAt?: Date;
+	nextRestartAt?: Date;
+	startedAt?: Date;
+}
+
 export interface DashboardAllocationStatus {
 	allocationId: string;
 	serviceId: string;
@@ -399,12 +424,7 @@ export interface DashboardAllocationStatus {
 	rolloutState?: string;
 	drainStartedAt?: Date;
 	drainDeadline?: Date;
-	restart?: {
-		restartCount: number;
-		crashLoop: boolean;
-		lastCause: string;
-		message: string;
-	};
+	restart?: DashboardRestartObservation;
 }
 
 export interface DashboardServiceStatus {

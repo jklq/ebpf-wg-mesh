@@ -51,7 +51,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -162,7 +162,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -232,7 +232,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -457,7 +457,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -494,7 +494,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -544,7 +544,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -603,7 +603,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -689,7 +689,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -748,7 +748,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -811,7 +811,7 @@ func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.S
 			Provider:           "github",
 			RepositorySelector: "octocat/hello",
 			TrackedRef:         "main",
-			BuildRecipe:        &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 		},
 	), "node-1")
 	if err != nil {
@@ -838,7 +838,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 			ProviderRepositoryExternalID: "repo-1",
 			ProviderScopeExternalID:      "",
 			AccessState:                  source.SourceAccessStateAvailable,
-			BuildRecipe:                  &platformv1.BuildRecipe{DockerfilePath: "Dockerfile", ContextDir: "."},
+			BuildRecipe:                  &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
 			ResolvedAt:                   time.Now().UTC(),
 			FreshUntil:                   time.Now().UTC().Add(time.Hour),
 		})

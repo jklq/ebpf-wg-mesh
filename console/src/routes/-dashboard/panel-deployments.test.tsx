@@ -223,7 +223,7 @@ describe("deployments panel live rollouts", () => {
 		);
 
 		expect(await screen.findByText("Building")).toBeTruthy();
-		expect(screen.getByText("Active")).toBeTruthy();
+		expect(screen.getByText("Healthy")).toBeTruthy();
 		expect(
 			screen.getByText("Deployment in progress: Publishing image"),
 		).toBeTruthy();
@@ -264,6 +264,48 @@ describe("deployments panel live rollouts", () => {
 		expect(
 			screen.getByText("Deploy your changes to create the first deployment."),
 		).toBeTruthy();
+	});
+
+	it("labels history entries without times instead of measuring from 1970", async () => {
+		serverFns.fetchServiceDeployments.mockResolvedValue([
+			{
+				id: "deploy-0",
+				rolloutGeneration: 1,
+				isCurrent: false,
+				build: {
+					buildId: "build-0",
+					state: "BUILD_STATE_SUCCEEDED",
+					commitSha: "ee55ff66aa",
+					imageDigest: "sha256:older",
+					failureReason: "",
+					commitMessage: "older worker",
+				},
+				status: {
+					deploymentId: "deploy-0",
+					state: "DEPLOYMENT_STATE_COMPLETED",
+					causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
+					causeId: "github",
+					reasonCode: "DEPLOYMENT_COMPLETED",
+					detail: "Replaced",
+					specRevision: 1,
+					imageDigest: "sha256:older",
+					rolloutGeneration: 1,
+				},
+			},
+		]);
+		const service = rollingService({
+			latestBuild: undefined,
+			latestDeployment: undefined,
+		});
+
+		render(
+			<PanelDeployments service={service} status={null} project={project()} />,
+		);
+
+		fireEvent.click(await screen.findByRole("button", { name: /History/ }));
+		expect(await screen.findByText("older worker")).toBeTruthy();
+		expect(screen.getByText("Not deployed")).toBeTruthy();
+		expect(document.body.textContent).not.toContain("1970");
 	});
 
 	it("keeps generation-zero staged configuration out of deployment history", async () => {
@@ -383,6 +425,81 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getByLabelText("Restart target")).toBeTruthy();
 	});
 
+	it("does not show another generation's crash evidence on a deployment card", async () => {
+		const failed = {
+			...failedDeployment(),
+			id: "deploy-3",
+			rolloutGeneration: 3,
+		};
+		serverFns.fetchServiceDeployments.mockResolvedValue([failed]);
+		const service = failedService();
+		render(
+			<PanelDeployments
+				service={service}
+				status={{
+					service,
+					allocations: [
+						allocation({
+							allocationId: "alloc-gen-2",
+							phase: "CrashLoop",
+							healthy: false,
+							desiredRolloutGeneration: 2,
+							appliedRolloutGeneration: 2,
+							restart: {
+								restartCount: 5,
+								crashLoop: true,
+								lastCause: "RESTART_CAUSE_OOM_KILL",
+								message: "crash loop after OOM kill",
+								lastExitCode: 137,
+								lastSignal: 0,
+								awaitingRestart: false,
+							},
+						}),
+					],
+				}}
+				project={project()}
+			/>,
+		);
+		expect(await screen.findByText("charge the invoice worker")).toBeTruthy();
+		expect(screen.queryByText("Crash evidence")).toBeNull();
+	});
+
+	it("shows crash evidence for allocations on the deployment's generation", async () => {
+		const failed = failedDeployment();
+		serverFns.fetchServiceDeployments.mockResolvedValue([failed]);
+		const service = failedService();
+		render(
+			<PanelDeployments
+				service={service}
+				status={{
+					service,
+					allocations: [
+						allocation({
+							allocationId: "alloc-gen-1",
+							phase: "CrashLoop",
+							healthy: false,
+							desiredRolloutGeneration: 1,
+							appliedRolloutGeneration: 1,
+							restart: {
+								restartCount: 5,
+								crashLoop: true,
+								lastCause: "RESTART_CAUSE_OOM_KILL",
+								message: "crash loop after OOM kill",
+								lastExitCode: 137,
+								lastSignal: 0,
+								awaitingRestart: false,
+							},
+						}),
+					],
+				}}
+				project={project()}
+			/>,
+		);
+		expect(await screen.findByText("charge the invoice worker")).toBeTruthy();
+		expect(screen.getByText("Crash evidence")).toBeTruthy();
+		expect(screen.getByText("OOM kill")).toBeTruthy();
+	});
+
 	it("summarizes exposure and replicas above the deployment cards", async () => {
 		render(
 			<PanelDeployments
@@ -405,7 +522,7 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.getByText("3 Replicas")).toBeTruthy();
 	});
 
-	it("shows a removed current deployment in history with a green status", async () => {
+	it("shows a removed current deployment in history with an offline status", async () => {
 		const active = activeDeployment();
 		if (!active.status) throw new Error("active deployment status is required");
 		const removed: DashboardDeploymentRecord = {
@@ -436,7 +553,7 @@ describe("deployments panel live rollouts", () => {
 		expect(screen.queryByRole("button", { name: "View logs" })).toBeNull();
 
 		fireEvent.click(historyToggle);
-		expect(screen.getByLabelText("Status: healthy")).toBeTruthy();
+		expect(screen.getByLabelText("Status: offline")).toBeTruthy();
 	});
 });
 

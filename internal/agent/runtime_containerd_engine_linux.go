@@ -22,10 +22,12 @@ import (
 	"ebof-wg-mesh/internal/meshlabels"
 
 	containerd "github.com/containerd/containerd"
+	eventsapi "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/remotes/docker"
 	cni "github.com/containerd/go-cni"
+	"github.com/containerd/typeurl/v2"
 )
 
 const (
@@ -151,7 +153,7 @@ func (e *containerdEngine) ReconcileEvents(ctx context.Context) (<-chan struct{}
 					continue
 				}
 				if strings.Contains(event.Topic, "/tasks/oom") {
-					e.noteOOMTopic(event.Topic, event.Event)
+					e.noteOOMEvent(event.Event)
 				}
 				select {
 				case out <- struct{}{}:
@@ -208,17 +210,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		if rec.rolloutGeneration == svc.GetDesiredRolloutGeneration() &&
 			rec.networkIdentity == svc.GetNetworkIdentity() {
 			netnsPath, _ := e.netnsPath(svc.GetAllocationId())
-			return serviceStatus{
-				AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
-				AppliedRolloutGeneration: rec.rolloutGeneration,
-				AllocationIPv4:           svc.GetPrivateIpv4(),
-				AllocationIPv6:           svc.GetPrivateIpv6(),
-				NetworkNamespacePath:     netnsPath,
-				Running:                  rec.running,
-				ExitCode:                 rec.exitCode,
-				Signal:                   rec.signal,
-				OOMKilled:                rec.oomKilled,
-			}, false, nil
+			return matchedServiceStatus(svc, rec, netnsPath), false, nil
 		}
 		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			return serviceStatus{}, false, err
@@ -284,6 +276,37 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		NetworkNamespacePath:     netnsPath,
 		Running:                  true,
 	}, true, nil
+}
+
+func (e *containerdEngine) InspectService(ctx context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
+	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
+		return serviceStatus{}, false, err
+	}
+	ctx = e.namespaced(ctx)
+	containerID := containerName(svc.GetAllocationId())
+	rec, exists, err := e.inspect(ctx, containerID)
+	if err != nil {
+		return serviceStatus{}, false, err
+	}
+	if !exists || rec.rolloutGeneration != svc.GetDesiredRolloutGeneration() || rec.networkIdentity != svc.GetNetworkIdentity() {
+		return serviceStatus{}, false, nil
+	}
+	netnsPath, _ := e.netnsPath(svc.GetAllocationId())
+	return matchedServiceStatus(svc, rec, netnsPath), true, nil
+}
+
+func matchedServiceStatus(svc *agentv1.DesiredService, rec inspectRecord, netnsPath string) serviceStatus {
+	return serviceStatus{
+		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
+		AppliedRolloutGeneration: rec.rolloutGeneration,
+		AllocationIPv4:           svc.GetPrivateIpv4(),
+		AllocationIPv6:           svc.GetPrivateIpv6(),
+		NetworkNamespacePath:     netnsPath,
+		Running:                  rec.running,
+		ExitCode:                 rec.exitCode,
+		Signal:                   rec.signal,
+		OOMKilled:                rec.oomKilled,
+	}
 }
 
 func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator {
@@ -552,34 +575,19 @@ func (e *containerdEngine) noteOOM(containerID string) {
 	e.oom[containerID] = true
 }
 
-func (e *containerdEngine) noteOOMTopic(topic string, payload any) {
+func (e *containerdEngine) noteOOMEvent(payload typeurl.Any) {
 	if payload == nil {
 		return
 	}
-	raw := fmt.Sprint(payload)
-	if id := containerIDFromEventText(raw); id != "" {
-		e.noteOOM(id)
+	evt, err := typeurl.UnmarshalAny(payload)
+	if err != nil {
 		return
 	}
-	if id := containerIDFromEventText(topic); id != "" {
-		e.noteOOM(id)
+	oom, ok := evt.(*eventsapi.TaskOOM)
+	if !ok {
+		return
 	}
-}
-
-func containerIDFromEventText(text string) string {
-	const prefix = "platform-"
-	idx := strings.Index(text, prefix)
-	if idx < 0 {
-		return ""
-	}
-	id := text[idx:]
-	for i, r := range id {
-		if r == '"' || r == ' ' || r == ',' || r == '}' {
-			id = id[:i]
-			break
-		}
-	}
-	return id
+	e.noteOOM(oom.ContainerID)
 }
 
 func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, password string) (containerd.Image, error) {

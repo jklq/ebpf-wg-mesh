@@ -11,9 +11,12 @@ import {
 } from "#/lib/dashboard/core/runtime.server";
 import {
 	type CreateServiceFastResult,
+	type DashboardBuilderKind,
+	type DashboardBuildRecipe,
 	type DashboardEnvironment,
 	type DashboardGitHubAccount,
 	type DashboardProject,
+	type DashboardRepositoryInspection,
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
 	DashboardValidationError,
@@ -171,6 +174,7 @@ export async function createServiceFastFromSession(
 		repositorySelector: string;
 		serviceName?: string;
 		trackedRef?: string;
+		builder?: DashboardBuilderKind;
 		dockerfilePath?: string;
 		contextDir?: string;
 		cpuMillis?: number;
@@ -228,14 +232,11 @@ export async function createServiceFastFromSession(
 		});
 	}
 
-	const dockerfilePath =
-		input.dockerfilePath?.trim() ||
-		inspection.recommendedBuildRecipe?.dockerfilePath ||
-		"";
-	const contextDir =
-		input.contextDir?.trim() ||
-		inspection.recommendedBuildRecipe?.contextDir ||
-		".";
+	const builder: DashboardBuilderKind =
+		input.builder ?? "BUILDER_KIND_RAILPACK";
+	const buildRecipe = buildRecipeForCreate(builder, input, inspection);
+	const dockerfilePath = buildRecipe.dockerfilePath;
+	const contextDir = buildRecipe.contextDir;
 	const trackedRef =
 		input.trackedRef?.trim() || inspection.defaultBranch || "main";
 	const servicesSnapshot = await platformCall(
@@ -249,10 +250,7 @@ export async function createServiceFastFromSession(
 			provider: "github",
 			repositorySelector: selector,
 			trackedRef,
-			buildRecipe: {
-				dockerfilePath,
-				contextDir,
-			},
+			buildRecipe,
 		},
 		inspection.recommendedPorts,
 		input.cpuMillis,
@@ -275,6 +273,7 @@ export async function createServiceFastFromSession(
 		serviceId: service.id,
 		repositorySelector: selector,
 		trackedRef,
+		builder,
 		dockerfilePath,
 		contextDir,
 		hostname: "",
@@ -291,5 +290,43 @@ export async function createServiceFastFromSession(
 		service,
 		serviceStatus,
 		onboarding,
+	};
+}
+
+function buildRecipeForCreate(
+	builder: DashboardBuilderKind,
+	input: {
+		dockerfilePath?: string;
+		contextDir?: string;
+	},
+	inspection: DashboardRepositoryInspection,
+): DashboardBuildRecipe {
+	if (builder === "BUILDER_KIND_DOCKERFILE") {
+		const recommended = inspection.recommendedDockerfileRecipe;
+		return {
+			builder,
+			dockerfilePath:
+				input.dockerfilePath?.trim() ||
+				recommended?.dockerfilePath ||
+				inspection.dockerfileCandidates[0] ||
+				"Dockerfile",
+			contextDir: input.contextDir?.trim() || recommended?.contextDir || ".",
+		};
+	}
+	if (inspection.analysisError) {
+		throw new DashboardValidationError({
+			message: inspection.analysisError,
+		});
+	}
+	const recommended = inspection.recommendedBuildRecipe;
+	if (!recommended) {
+		throw new DashboardValidationError({
+			message: "Railpack could not analyze this repository.",
+		});
+	}
+	return {
+		builder,
+		dockerfilePath: "",
+		contextDir: input.contextDir?.trim() || recommended.contextDir || ".",
 	};
 }
