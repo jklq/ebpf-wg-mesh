@@ -210,6 +210,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					name: "Production",
 					kind: "persistent",
 					isProduction: true,
+					autoDeploy: false,
 				},
 			];
 			return project;
@@ -229,6 +230,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					name: "Production",
 					kind: "persistent",
 					isProduction: true,
+					autoDeploy: false,
 				};
 				platform.environments.push(production);
 				environments = [production];
@@ -249,6 +251,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				name: input.name,
 				kind: "persistent",
 				isProduction: false,
+				autoDeploy: true,
 			};
 			platform.environments.push(environment);
 			return environment;
@@ -274,6 +277,14 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			);
 			if (!environment) throw new Error("environment not found");
 			environment.name = input.name;
+			return environment;
+		},
+		async updateEnvironmentAutoDeploy(_, input) {
+			const environment = platform.environments.find(
+				(entry) => entry.id === input.environmentId,
+			);
+			if (!environment) throw new Error("environment not found");
+			environment.autoDeploy = input.autoDeploy;
 			return environment;
 		},
 		async deleteEnvironment(_, environmentId) {

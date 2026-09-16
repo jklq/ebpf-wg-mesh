@@ -168,6 +168,7 @@ type fakePlatformStore struct {
 	environmentByIDFn                 func(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
 	createEnvironmentFn               func(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error)
 	renameEnvironmentFn               func(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error)
+	updateEnvironmentAutoDeployFn     func(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error)
 	deleteEnvironmentFn               func(ctx context.Context, user authz.User, environmentID string) ([]string, error)
 }
 
@@ -204,6 +205,13 @@ func (f *fakePlatformStore) renameEnvironment(ctx context.Context, user authz.Us
 		return f.renameEnvironmentFn(ctx, user, environmentID, name)
 	}
 	return deliverycore.EnvironmentRecord{ID: environmentID, ProjectID: "project-1", Name: name, Kind: deliverycore.EnvironmentKindPersistent}, nil
+}
+
+func (f *fakePlatformStore) updateEnvironmentAutoDeploy(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error) {
+	if f.updateEnvironmentAutoDeployFn != nil {
+		return f.updateEnvironmentAutoDeployFn(ctx, user, environmentID, autoDeploy)
+	}
+	return deliverycore.EnvironmentRecord{ID: environmentID, ProjectID: "project-1", Kind: deliverycore.EnvironmentKindPersistent, AutoDeploy: autoDeploy}, nil
 }
 
 func (f *fakePlatformStore) deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error) {

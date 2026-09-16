@@ -10,13 +10,19 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 
 import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
-import { doDeleteEnvironment, doRenameEnvironment } from "./server-fns";
+import {
+	doDeleteEnvironment,
+	doRenameEnvironment,
+	doUpdateEnvironmentAutoDeploy,
+} from "./server-fns";
 import { formatError } from "./service-utils";
 
 type RowMenuAnchor = { environmentId: string; top: number; right: number };
 
 const envTag =
 	"rounded-[1px] border border-accent-glow bg-accent-dim px-[5px] py-px font-condensed text-[9px] font-bold uppercase tracking-[0.1em] text-accent";
+const manualTag =
+	"rounded-[1px] border border-line bg-surface-raised px-[5px] py-px font-condensed text-[9px] font-bold uppercase tracking-[0.1em] text-muted";
 const rowMenuItem =
 	"cursor-pointer border-0 bg-transparent px-3 py-[7px] text-left font-sans text-xs text-ink enabled:hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-35";
 
@@ -150,6 +156,22 @@ export function EnvironmentSwitcher({
 		}
 	};
 
+	const toggleAutoDeploy = async (target: DashboardEnvironment) => {
+		setMenuFor(null);
+		setBusy(true);
+		setError(undefined);
+		try {
+			await doUpdateEnvironmentAutoDeploy({
+				data: { environmentId: target.id, autoDeploy: !target.autoDeploy },
+			});
+			onChanged();
+		} catch (cause) {
+			setError(formatError(cause));
+		} finally {
+			setBusy(false);
+		}
+	};
+
 	const confirmDelete = async () => {
 		if (!deleting) return;
 		setBusy(true);
@@ -193,6 +215,7 @@ export function EnvironmentSwitcher({
 			>
 				<span className="truncate">{environment.name}</span>
 				{environment.isProduction && <span className={envTag}>prod</span>}
+				{!environment.autoDeploy && <span className={manualTag}>manual</span>}
 				<ChevronDown
 					size={13}
 					className={cn("shrink-0 text-muted", open && "rotate-180")}
@@ -259,6 +282,9 @@ export function EnvironmentSwitcher({
 										</span>
 										<span className="truncate">{entry.name}</span>
 										{entry.isProduction && <span className={envTag}>prod</span>}
+										{!entry.autoDeploy && (
+											<span className={manualTag}>manual</span>
+										)}
 									</button>
 									<button
 										type="button"
@@ -279,6 +305,18 @@ export function EnvironmentSwitcher({
 												onClick={() => startRename(entry)}
 											>
 												Rename
+											</button>
+											<button
+												type="button"
+												role="menuitemcheckbox"
+												aria-checked={entry.autoDeploy}
+												className={rowMenuItem}
+												disabled={busy}
+												onClick={() => void toggleAutoDeploy(entry)}
+											>
+												{entry.autoDeploy
+													? "Turn auto-deploy off"
+													: "Turn auto-deploy on"}
 											</button>
 											<button
 												type="button"

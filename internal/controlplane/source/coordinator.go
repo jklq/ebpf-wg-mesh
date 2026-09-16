@@ -265,7 +265,10 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
-	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author)
+	// Unanchored syncs carry no spec revision: they are automatic refreshes
+	// triggered by push or provider events, not explicit spec writes or
+	// releases, so they honor the environment auto-deploy switch.
+	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0)
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec SourceWorkItemRecord) error {
@@ -280,6 +283,11 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec Sour
 	for _, binding := range bindings {
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
+			if binding.AccessState == SourceAccessStateAvailable {
+				if _, err := c.recordBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor); err != nil {
+					return err
+				}
+			}
 			if _, err := c.store.EnqueueSourceWorkItem(ctx, SourceWorkItemRecord{
 				Kind:           SourceWorkKindSourceSpecChanged,
 				IdempotencyKey: fmt.Sprintf("%s:%s:%d", SourceWorkKindSourceSpecChanged, binding.ServiceID, time.Now().UTC().UnixNano()),
@@ -294,20 +302,37 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec Sour
 			continue
 		}
 		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
-		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor); err != nil {
+		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string) error {
-	owner, repo, err := SplitGitHubRepositorySelector(binding.RepositorySelector)
+// observeBoundRevision records the observed commit for the bound service and
+// queues a build for it. Automatic observations (pushes and refresh syncs)
+// honor the environment auto-deploy switch: when it is off the revision is
+// recorded and held for a manual release instead of building.
+func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool) error {
+	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor)
 	if err != nil {
 		return err
 	}
-	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
-	revision, err := c.store.UpsertSourceRevision(ctx, SourceRevisionRecord{
+	if automatic {
+		autoDeploy, err := c.store.EnvironmentAutoDeploy(ctx, binding.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		if !autoDeploy {
+			slog.InfoContext(ctx, "github revision recorded; auto-deploy is off", "service_id", binding.ServiceID, "environment_id", binding.EnvironmentID, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
+			return nil
+		}
+	}
+	return c.queueBoundRevisionBuild(ctx, binding, revision)
+}
+
+func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string) (SourceRevisionRecord, error) {
+	return c.store.UpsertSourceRevision(ctx, SourceRevisionRecord{
 		SourceBindingID:              binding.ID,
 		ServiceID:                    binding.ServiceID,
 		Provider:                     binding.Provider,
@@ -318,13 +343,17 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 		CommitAuthor:                 strings.TrimSpace(commitAuthor),
 		ObservedAt:                   time.Now().UTC(),
 	})
+}
+
+func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding SourceBindingRecord, revision SourceRevisionRecord) error {
+	owner, repo, err := SplitGitHubRepositorySelector(binding.RepositorySelector)
 	if err != nil {
 		return err
 	}
-
+	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
 	var pendingSnapshot SourceSnapshotRecord
 	if _, err := c.store.SourceSnapshotByRevisionID(ctx, revision.ID); errors.Is(err, sql.ErrNoRows) {
-		archive, err := c.client.FetchArchive(ctx, owner, repo, commitSHA, installationID)
+		archive, err := c.client.FetchArchive(ctx, owner, repo, revision.CommitSHA, installationID)
 		if err != nil {
 			return err
 		}
@@ -336,7 +365,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 			SourceRevisionID:             revision.ID,
 			Provider:                     binding.Provider,
 			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
-			CommitSHA:                    commitSHA,
+			CommitSHA:                    revision.CommitSHA,
 			Digest:                       digest,
 			ObjectKey:                    objectKey,
 			ArchiveSizeBytes:             int64(len(archive)),
@@ -347,11 +376,11 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 		return err
 	}
 
-	queued, err := c.delivery.QueueSourceBuild(ctx, binding, commitSHA, pendingSnapshot)
+	queued, err := c.delivery.QueueSourceBuild(ctx, binding, revision.CommitSHA, pendingSnapshot)
 	if err != nil {
 		return err
 	}
-	slog.InfoContext(ctx, "github build queued", "service_id", binding.ServiceID, "build_id", queued.BuildID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", commitSHA, "source_revision_id", revision.ID)
+	slog.InfoContext(ctx, "github build queued", "service_id", binding.ServiceID, "build_id", queued.BuildID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
 	return nil
 }
 

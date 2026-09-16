@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -119,6 +120,18 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		if !environment.AutoDeploy {
+			pending, err := d.store.sourceStore.ServicesWithUnbuiltSourceRevisionsTx(ctx, tx, environment.ID)
+			if err != nil {
+				return err
+			}
+			for _, id := range pending {
+				if !slices.Contains(serviceIDs, id) {
+					serviceIDs = append(serviceIDs, id)
+				}
+			}
+			slices.Sort(serviceIDs)
+		}
 		for _, serviceID := range serviceIDs {
 			service, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, scope, serviceID)
 			if err != nil {
@@ -145,7 +158,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 			if service.AllocatedAgentID == "" {
 				identityCatalogChanged = true
 			}
-			needsSourceBuild, err := d.serviceNeedsSourceBuildTx(ctx, tx, service)
+			needsSourceBuild, err := d.serviceNeedsSourceBuildTx(ctx, tx, service, environment.AutoDeploy)
 			if err != nil {
 				return err
 			}
@@ -208,12 +221,21 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 	return services, nil
 }
 
-func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord) (bool, error) {
+func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, autoDeploy bool) (bool, error) {
 	if source.DesiredSourceSpec(service.Spec) == nil {
 		return false, nil
 	}
 	if service.RolloutGeneration == 0 || strings.TrimSpace(service.ResolvedImage) == "" {
 		return true, nil
+	}
+	if !autoDeploy {
+		pending, err := d.store.sourceStore.ServiceHasUnbuiltSourceRevisionTx(ctx, tx, service.ID)
+		if err != nil {
+			return false, err
+		}
+		if pending {
+			return true, nil
+		}
 	}
 
 	var deployedSpecRevision int64

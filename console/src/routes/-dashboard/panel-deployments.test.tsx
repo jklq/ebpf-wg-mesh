@@ -24,12 +24,14 @@ const serverFns = vi.hoisted(() => ({
 	fetchServiceDeployments: vi.fn(),
 	fetchServiceLogs: vi.fn(),
 	doApplyDeploymentAction: vi.fn(),
+	doReleaseEnvironment: vi.fn(),
 }));
 
 vi.mock("./server-fns", () => ({
 	fetchServiceDeployments: serverFns.fetchServiceDeployments,
 	fetchServiceLogs: serverFns.fetchServiceLogs,
 	doApplyDeploymentAction: serverFns.doApplyDeploymentAction,
+	doReleaseEnvironment: serverFns.doReleaseEnvironment,
 }));
 
 describe("deployments panel inline failure", () => {
@@ -435,6 +437,108 @@ describe("deployments panel live rollouts", () => {
 
 		fireEvent.click(historyToggle);
 		expect(screen.getByLabelText("Status: healthy")).toBeTruthy();
+	});
+});
+
+describe("deployments panel source revision banner", () => {
+	afterEach(cleanup);
+
+	beforeEach(() => {
+		serverFns.fetchServiceDeployments.mockReset().mockResolvedValue([]);
+		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([]);
+		serverFns.doReleaseEnvironment.mockReset().mockResolvedValue([]);
+	});
+
+	it("offers a manual deploy when auto-deploy is off", async () => {
+		const service = failedService({
+			lastSuccessfulCommitSha: "aaa111aaa111",
+			sourceSummary: { latestRevision: { commitSha: "bbb222bbb222" } },
+			latestBuild: {
+				buildId: "build-0",
+				state: "BUILD_STATE_SUCCEEDED",
+				commitSha: "aaa111aaa111",
+				imageDigest: "",
+				failureReason: "",
+			},
+			latestDeployment: undefined,
+		});
+		serverFns.doReleaseEnvironment.mockResolvedValue([
+			{ service, allocations: [] },
+		]);
+		const onRedeployed = vi.fn();
+		render(
+			<PanelDeployments
+				service={service}
+				status={null}
+				project={project()}
+				autoDeploy={false}
+				onRedeployed={onRedeployed}
+			/>,
+		);
+
+		const banner = await screen.findByRole("status", {
+			name: "Latest commit is waiting for manual deploy",
+		});
+		expect(banner.textContent).toContain("bbb222b");
+		fireEvent.click(screen.getByRole("button", { name: "Deploy now" }));
+
+		await waitFor(() =>
+			expect(serverFns.doReleaseEnvironment).toHaveBeenCalledWith({
+				data: { environmentId: "environment-1" },
+			}),
+		);
+		expect(onRedeployed).toHaveBeenCalled();
+	});
+
+	it("shows deployed and waiting states", async () => {
+		const deployed = failedService({
+			lastSuccessfulCommitSha: "aaa111aaa111",
+			sourceSummary: { latestRevision: { commitSha: "aaa111aaa111" } },
+			latestBuild: {
+				buildId: "build-0",
+				state: "BUILD_STATE_SUCCEEDED",
+				commitSha: "aaa111aaa111",
+				imageDigest: "",
+				failureReason: "",
+			},
+			latestDeployment: undefined,
+		});
+		const { unmount } = render(
+			<PanelDeployments
+				service={deployed}
+				status={null}
+				project={project()}
+				autoDeploy={false}
+			/>,
+		);
+		expect(
+			await screen.findByRole("status", { name: "Latest commit is deployed" }),
+		).toBeTruthy();
+		unmount();
+
+		const waiting = failedService({
+			lastSuccessfulCommitSha: "aaa111aaa111",
+			sourceSummary: { latestRevision: { commitSha: "bbb222bbb222" } },
+			latestBuild: {
+				buildId: "build-1",
+				state: "BUILD_STATE_RUNNING",
+				commitSha: "bbb222bbb222",
+				imageDigest: "",
+				failureReason: "",
+			},
+			latestDeployment: undefined,
+		});
+		render(
+			<PanelDeployments
+				service={waiting}
+				status={null}
+				project={project()}
+				autoDeploy={true}
+			/>,
+		);
+		expect(
+			await screen.findByRole("status", { name: "Latest commit is deploying" }),
+		).toBeTruthy();
 	});
 });
 

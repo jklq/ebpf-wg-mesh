@@ -53,6 +53,7 @@ message Environment {
   string copied_from_environment_id = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  bool auto_deploy = 9;
 }
 
 message HealthCheck {
@@ -509,6 +510,11 @@ message RenameEnvironmentRequest {
   string name = 2;
 }
 
+message UpdateEnvironmentAutoDeployRequest {
+  string environment_id = 1;
+  bool auto_deploy = 2;
+}
+
 message DeleteEnvironmentRequest {
   string environment_id = 1;
 }
@@ -860,6 +866,7 @@ service PlatformService {
   rpc CreateEnvironment(CreateEnvironmentRequest) returns (Environment);
   rpc DuplicateEnvironment(DuplicateEnvironmentRequest) returns (Environment);
   rpc RenameEnvironment(RenameEnvironmentRequest) returns (Environment);
+  rpc UpdateEnvironmentAutoDeploy(UpdateEnvironmentAutoDeployRequest) returns (Environment);
   rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (google.protobuf.Empty);
   rpc ReleaseEnvironment(ReleaseEnvironmentRequest) returns (ReleaseEnvironmentResponse);
   rpc LinkGitHubRepository(LinkGitHubRepositoryRequest) returns (InspectSourceResponse);

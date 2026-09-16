@@ -52,6 +52,8 @@ type SourceStore interface {
 	SourceSnapshotByRevisionIDTx(context.Context, source.Querier, string) (source.SourceSnapshotRecord, error)
 	LatestSourceRevisionByBindingIDTx(context.Context, source.Querier, string) (source.SourceRevisionRecord, error)
 	UpsertSourceSnapshotTx(context.Context, *sql.Tx, source.SourceSnapshotRecord) (source.SourceSnapshotRecord, error)
+	ServiceHasUnbuiltSourceRevisionTx(context.Context, source.Querier, string) (bool, error)
+	ServicesWithUnbuiltSourceRevisionsTx(context.Context, source.Querier, string) ([]string, error)
 }
 
 type persistence struct {
