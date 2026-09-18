@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -37,18 +38,21 @@ const (
 	serviceHostsDir                     = "hosts"
 	defaultServiceCPUMillis       int64 = 250
 	defaultServiceMemoryMebibytes int64 = 256
+	// Platform policy, not a customer API field.
+	defaultEphemeralDiskLimitBytes int64 = 1 << 30
 )
 
 type containerdEngine struct {
-	cfg                  config.AgentConfig
-	client               *containerd.Client
-	cni                  cni.CNI
-	logSinkMu            sync.RWMutex
-	logSink              LogSink
-	logSequence          atomic.Uint64
-	oomMu                sync.Mutex
-	oom                  map[string]bool
-	workloadCgroupParent string
+	cfg                     config.AgentConfig
+	client                  *containerd.Client
+	cni                     cni.CNI
+	logSinkMu               sync.RWMutex
+	logSink                 LogSink
+	logSequence             atomic.Uint64
+	oomMu                   sync.Mutex
+	oom                     map[string]bool
+	workloadCgroupParent    string
+	ephemeralDiskLimitBytes int64
 }
 
 func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
@@ -306,6 +310,7 @@ func matchedServiceStatus(svc *agentv1.DesiredService, rec inspectRecord, netnsP
 		ExitCode:                 rec.exitCode,
 		Signal:                   rec.signal,
 		OOMKilled:                rec.oomKilled,
+		DiskExhausted:            rec.diskExhausted,
 	}
 }
 
@@ -502,6 +507,7 @@ type inspectRecord struct {
 	exitCode          int32
 	signal            int32
 	oomKilled         bool
+	diskExhausted     bool
 }
 
 func (e *containerdEngine) inspect(ctx context.Context, containerID string) (inspectRecord, bool, error) {
@@ -534,7 +540,45 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 		rec.exitCode, rec.signal = classifyContainerExit(status.ExitStatus)
 		rec.oomKilled = e.containerOOMKilled(containerID)
 	}
+	rec.diskExhausted = e.ephemeralDiskExhausted(ctx, containerID)
 	return rec, true, nil
+}
+
+func (e *containerdEngine) ephemeralDiskLimit() int64 {
+	if e != nil && e.ephemeralDiskLimitBytes > 0 {
+		return e.ephemeralDiskLimitBytes
+	}
+	return defaultEphemeralDiskLimitBytes
+}
+
+func (e *containerdEngine) ephemeralDiskExhausted(ctx context.Context, containerID string) bool {
+	written, err := e.ephemeralDiskBytes(ctx, containerID)
+	if err != nil {
+		if !errdefs.IsNotFound(err) {
+			slog.Warn("measure ephemeral disk usage", "container_id", containerID, "error", err)
+		}
+		return false
+	}
+	return written > e.ephemeralDiskLimit()
+}
+
+func (e *containerdEngine) ephemeralDiskBytes(ctx context.Context, containerID string) (int64, error) {
+	snapshots := e.client.SnapshotService(e.cfg.Runtime.Snapshotter)
+	usage, err := snapshots.Usage(ctx, containerID)
+	if err != nil {
+		return 0, err
+	}
+	if e.cfg.Runtime.Snapshotter == "native" {
+		if info, err := snapshots.Stat(ctx, containerID); err == nil && info.Parent != "" {
+			if parent, err := snapshots.Usage(ctx, info.Parent); err == nil {
+				usage.Size -= parent.Size
+			}
+		}
+	}
+	if usage.Size < 0 {
+		return 0, nil
+	}
+	return usage.Size, nil
 }
 
 func classifyContainerExit(exitStatus uint32) (int32, int32) {

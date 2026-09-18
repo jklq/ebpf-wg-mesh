@@ -289,14 +289,15 @@ func (RestartPolicy) EnumDescriptor() ([]byte, []int) {
 type RestartCause int32
 
 const (
-	RestartCause_RESTART_CAUSE_UNSPECIFIED  RestartCause = 0
-	RestartCause_RESTART_CAUSE_EXIT_ZERO    RestartCause = 1
-	RestartCause_RESTART_CAUSE_EXIT_NONZERO RestartCause = 2
-	RestartCause_RESTART_CAUSE_SIGNAL       RestartCause = 3
-	RestartCause_RESTART_CAUSE_OOM_KILL     RestartCause = 4
-	RestartCause_RESTART_CAUSE_LIVENESS     RestartCause = 5
-	RestartCause_RESTART_CAUSE_OPERATOR     RestartCause = 6
-	RestartCause_RESTART_CAUSE_NODE_LOSS    RestartCause = 7
+	RestartCause_RESTART_CAUSE_UNSPECIFIED    RestartCause = 0
+	RestartCause_RESTART_CAUSE_EXIT_ZERO      RestartCause = 1
+	RestartCause_RESTART_CAUSE_EXIT_NONZERO   RestartCause = 2
+	RestartCause_RESTART_CAUSE_SIGNAL         RestartCause = 3
+	RestartCause_RESTART_CAUSE_OOM_KILL       RestartCause = 4
+	RestartCause_RESTART_CAUSE_LIVENESS       RestartCause = 5
+	RestartCause_RESTART_CAUSE_OPERATOR       RestartCause = 6
+	RestartCause_RESTART_CAUSE_NODE_LOSS      RestartCause = 7
+	RestartCause_RESTART_CAUSE_DISK_EXHAUSTED RestartCause = 8
 )
 
 // Enum value maps for RestartCause.
@@ -310,16 +311,18 @@ var (
 		5: "RESTART_CAUSE_LIVENESS",
 		6: "RESTART_CAUSE_OPERATOR",
 		7: "RESTART_CAUSE_NODE_LOSS",
+		8: "RESTART_CAUSE_DISK_EXHAUSTED",
 	}
 	RestartCause_value = map[string]int32{
-		"RESTART_CAUSE_UNSPECIFIED":  0,
-		"RESTART_CAUSE_EXIT_ZERO":    1,
-		"RESTART_CAUSE_EXIT_NONZERO": 2,
-		"RESTART_CAUSE_SIGNAL":       3,
-		"RESTART_CAUSE_OOM_KILL":     4,
-		"RESTART_CAUSE_LIVENESS":     5,
-		"RESTART_CAUSE_OPERATOR":     6,
-		"RESTART_CAUSE_NODE_LOSS":    7,
+		"RESTART_CAUSE_UNSPECIFIED":    0,
+		"RESTART_CAUSE_EXIT_ZERO":      1,
+		"RESTART_CAUSE_EXIT_NONZERO":   2,
+		"RESTART_CAUSE_SIGNAL":         3,
+		"RESTART_CAUSE_OOM_KILL":       4,
+		"RESTART_CAUSE_LIVENESS":       5,
+		"RESTART_CAUSE_OPERATOR":       6,
+		"RESTART_CAUSE_NODE_LOSS":      7,
+		"RESTART_CAUSE_DISK_EXHAUSTED": 8,
 	}
 )
 
@@ -8479,7 +8482,7 @@ const file_platform_proto_rawDesc = "" +
 	"\x1aRESTART_POLICY_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15RESTART_POLICY_ALWAYS\x10\x01\x12\x1d\n" +
 	"\x19RESTART_POLICY_ON_FAILURE\x10\x02\x12\x18\n" +
-	"\x14RESTART_POLICY_NEVER\x10\x03*\xf5\x01\n" +
+	"\x14RESTART_POLICY_NEVER\x10\x03*\x97\x02\n" +
 	"\fRestartCause\x12\x1d\n" +
 	"\x19RESTART_CAUSE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17RESTART_CAUSE_EXIT_ZERO\x10\x01\x12\x1e\n" +
@@ -8488,7 +8491,8 @@ const file_platform_proto_rawDesc = "" +
 	"\x16RESTART_CAUSE_OOM_KILL\x10\x04\x12\x1a\n" +
 	"\x16RESTART_CAUSE_LIVENESS\x10\x05\x12\x1a\n" +
 	"\x16RESTART_CAUSE_OPERATOR\x10\x06\x12\x1b\n" +
-	"\x17RESTART_CAUSE_NODE_LOSS\x10\a*c\n" +
+	"\x17RESTART_CAUSE_NODE_LOSS\x10\a\x12 \n" +
+	"\x1cRESTART_CAUSE_DISK_EXHAUSTED\x10\b*c\n" +
 	"\vBuilderKind\x12\x1c\n" +
 	"\x18BUILDER_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15BUILDER_KIND_RAILPACK\x10\x01\x12\x1b\n" +

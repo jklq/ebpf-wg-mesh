@@ -2,6 +2,7 @@ import type { DashboardAllocationStatus } from "#/lib/dashboard/core/types.serve
 
 export type CrashCause =
 	| "oom"
+	| "disk"
 	| "liveness"
 	| "nonzero-exit"
 	| "signal"
@@ -18,6 +19,8 @@ export function crashCauseForAllocation(
 	switch (cause) {
 		case "RESTART_CAUSE_OOM_KILL":
 			return "oom";
+		case "RESTART_CAUSE_DISK_EXHAUSTED":
+			return "disk";
 		case "RESTART_CAUSE_LIVENESS":
 			return "liveness";
 		case "RESTART_CAUSE_EXIT_NONZERO":
@@ -43,6 +46,8 @@ export function crashCauseLabel(cause: CrashCause): string {
 	switch (cause) {
 		case "oom":
 			return "OOM kill";
+		case "disk":
+			return "Disk exhausted";
 		case "liveness":
 			return "Liveness restart";
 		case "nonzero-exit":
@@ -90,6 +95,7 @@ export function isProbeNotReady(
 	const cause = allocation.restart?.lastCause ?? "";
 	if (
 		cause === "RESTART_CAUSE_OOM_KILL" ||
+		cause === "RESTART_CAUSE_DISK_EXHAUSTED" ||
 		cause === "RESTART_CAUSE_LIVENESS" ||
 		cause === "RESTART_CAUSE_EXIT_NONZERO" ||
 		cause === "RESTART_CAUSE_SIGNAL"

@@ -76,15 +76,33 @@ describe("crash evidence classification", () => {
 			phase: "Starting",
 			message: "HTTP readiness check not ready: IPv4: connection refused",
 		});
+		const disk = allocation({
+			healthy: false,
+			phase: "CrashLoop",
+			restart: {
+				restartCount: 5,
+				crashLoop: true,
+				lastCause: "RESTART_CAUSE_DISK_EXHAUSTED",
+				message: "crash loop after disk exhausted",
+				lastExitCode: 0,
+				lastSignal: 0,
+				awaitingRestart: false,
+			},
+		});
 
 		expect(crashCauseForAllocation(oom)).toBe("oom");
 		expect(crashCauseForAllocation(liveness)).toBe("liveness");
 		expect(crashCauseForAllocation(nonzero)).toBe("nonzero-exit");
 		expect(crashCauseForAllocation(notReady)).toBe("probe-not-ready");
+		expect(crashCauseForAllocation(disk)).toBe("disk");
 		expect(crashCauseLabel("oom")).toBe("OOM kill");
+		expect(crashCauseLabel("disk")).toBe("Disk exhausted");
 		expect(crashCauseLabel("liveness")).toBe("Liveness restart");
 		expect(crashCauseLabel("nonzero-exit")).toBe("Non-zero exit");
 		expect(crashCauseLabel("probe-not-ready")).toBe("Probe not ready");
+		expect(hasCrashEvidence(disk)).toBe(true);
+		expect(isProbeNotReady(disk)).toBe(false);
+		expect(formatCrashSummary(disk)).toContain("Disk exhausted");
 	});
 
 	it("keeps probe-not-ready separate from process death", () => {

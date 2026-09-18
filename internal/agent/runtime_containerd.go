@@ -48,6 +48,7 @@ type serviceStatus struct {
 	ExitCode                 int32
 	Signal                   int32
 	OOMKilled                bool
+	DiskExhausted            bool
 }
 
 type ContainerdRuntime struct {
@@ -321,6 +322,15 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 			delete(r.ready, svc.GetAllocationId())
 		}
 	}
+	if status.DiskExhausted && status.Running {
+		if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			return cond
+		}
+		delete(r.ready, svc.GetAllocationId())
+		status.Running = false
+	}
 	livenessFailed := false
 	if status.Running {
 		if reason, failed := r.livenessFailed(ctx, status, svc); failed {
@@ -338,10 +348,11 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 	r.rngMu.Lock()
 	decision := restartpolicy.Evaluate(r.now(), r.randSource(), svc.GetSpec().GetRuntime().GetRestart(), obs, restartpolicy.Input{
 		State: restartpolicy.ProcessState{
-			Running:   status.Running,
-			ExitCode:  status.ExitCode,
-			Signal:    status.Signal,
-			OOMKilled: status.OOMKilled,
+			Running:       status.Running,
+			ExitCode:      status.ExitCode,
+			Signal:        status.Signal,
+			OOMKilled:     status.OOMKilled,
+			DiskExhausted: status.DiskExhausted,
 		},
 		LivenessFailed:           livenessFailed,
 		DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(),
@@ -498,6 +509,7 @@ func (r *ContainerdRuntime) inspectPreservedService(ctx context.Context, svc *ag
 		ExitCode:                 obs.GetLastExitCode(),
 		Signal:                   obs.GetLastSignal(),
 		OOMKilled:                obs.GetLastCause() == platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+		DiskExhausted:            obs.GetLastCause() == platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED,
 	}, nil
 }
 

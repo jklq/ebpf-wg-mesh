@@ -10,7 +10,7 @@ The production sandbox is designed for ordinary Docker Hub and 12-factor
 images. The agent:
 
 - preserves the image `USER`, including UID 0
-- leaves the ephemeral overlay root filesystem writable
+- leaves the ephemeral overlay root filesystem writable, capped at 1 GiB per allocation
 - keeps only `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `SETGID`, `SETUID`,
   `SETPCAP`, `NET_BIND_SERVICE`, and `KILL`; administrative, raw-network, BPF,
   tracing, module, time, and device capabilities remain absent
@@ -32,9 +32,13 @@ images. The agent:
 
 Overlay writes are ephemeral and disappear with the container. Persistent data
 belongs on the platform volume mounted at `PLATFORM_VOLUME_DIR`. Each
-allocation's ephemeral overlay is capped at 1 GiB once
-[docs/todo/01-running-service.md](todo/01-running-service.md#111-bounded-ephemeral-disk)
-lands; until then overlay growth can fill the host.
+allocation's ephemeral overlay is capped at 1 GiB of platform policy, not a
+customer API field: the agent measures the writable layer through the
+containerd snapshotter on every reconciliation (plus a 15-second enforcement
+tick, since disk growth emits no container event) and stops an allocation that
+writes past the cap. The failure surfaces as restart cause
+`RESTART_CAUSE_DISK_EXHAUSTED`, so allocation status and the console name disk
+exhaustion instead of the host filling up.
 
 ## Agent and runtime reservation
 

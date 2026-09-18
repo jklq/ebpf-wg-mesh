@@ -56,10 +56,11 @@ func (a Action) String() string {
 }
 
 type ProcessState struct {
-	Running   bool
-	ExitCode  int32
-	Signal    int32
-	OOMKilled bool
+	Running       bool
+	ExitCode      int32
+	Signal        int32
+	OOMKilled     bool
+	DiskExhausted bool
 }
 
 type Input struct {
@@ -149,6 +150,9 @@ func ClassifyExit(state ProcessState) platformv1.RestartCause {
 	if state.OOMKilled {
 		return platformv1.RestartCause_RESTART_CAUSE_OOM_KILL
 	}
+	if state.DiskExhausted {
+		return platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED
+	}
 	if state.Signal != 0 {
 		return platformv1.RestartCause_RESTART_CAUSE_SIGNAL
 	}
@@ -163,6 +167,7 @@ func Failure(cause platformv1.RestartCause) bool {
 	case platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO,
 		platformv1.RestartCause_RESTART_CAUSE_SIGNAL,
 		platformv1.RestartCause_RESTART_CAUSE_OOM_KILL,
+		platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED,
 		platformv1.RestartCause_RESTART_CAUSE_LIVENESS:
 		return true
 	default:
@@ -452,6 +457,8 @@ func causeLabel(cause platformv1.RestartCause) string {
 		return "signal"
 	case platformv1.RestartCause_RESTART_CAUSE_OOM_KILL:
 		return "OOM kill"
+	case platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED:
+		return "disk exhausted"
 	case platformv1.RestartCause_RESTART_CAUSE_LIVENESS:
 		return "liveness restart"
 	case platformv1.RestartCause_RESTART_CAUSE_OPERATOR:

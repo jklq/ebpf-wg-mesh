@@ -84,6 +84,7 @@ enum RestartCause {
   RESTART_CAUSE_LIVENESS = 5;
   RESTART_CAUSE_OPERATOR = 6;
   RESTART_CAUSE_NODE_LOSS = 7;
+  RESTART_CAUSE_DISK_EXHAUSTED = 8;
 }
 
 message ServiceRestart {
