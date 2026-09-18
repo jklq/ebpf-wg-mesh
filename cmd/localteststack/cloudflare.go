@@ -97,7 +97,7 @@ func describeOnePasswordLoadError(err error) string {
 	return fmt.Sprintf("load 1Password environment: %v", err)
 }
 
-func describeCloudflareStartupError(err error, hostname string) string {
+func describeCloudflareStartupError(err error, hostname string, secrets ...string) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Sprintf("start cloudflare tunnel for %s: timed out after 30s; verify `cloudflared` is installed, then confirm %s points at a pre-provisioned Cloudflare Tunnel", hostname, localteststack.CloudflareHostnameKey)
@@ -135,6 +135,6 @@ func describeCloudflareStartupError(err error, hostname string) string {
 			localteststack.CloudflareHostnameKey,
 		)
 	default:
-		return fmt.Sprintf("start cloudflare tunnel for %s: %v", hostname, err)
+		return fmt.Sprintf("start cloudflare tunnel for %s: %v", hostname, localteststack.RedactError(err, secrets...))
 	}
 }

@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	CloudflareTunnelTokenKey = "CLOUDFLARE_TUNNEL_TOKEN"
-	CloudflareHostnameKey    = "CLOUDFLARE_HOSTNAME"
+	CloudflareTunnelTokenKey  = "CLOUDFLARE_TUNNEL_TOKEN"
+	CloudflareHostnameKey     = "CLOUDFLARE_HOSTNAME"
+	CloudflaredTunnelTokenEnv = "TUNNEL_TOKEN"
 )
 
 type PublicURLResult struct {
@@ -36,16 +37,21 @@ func StartCloudflareTunnel(ctx context.Context, tunnelToken string, hostname str
 		return PublicURLResult{}, fmt.Errorf("invalid %s %q: %w", CloudflareHostnameKey, hostname, err)
 	}
 
-	cmd := exec.CommandContext(ctx, "cloudflared", "tunnel", "run", "--token", token)
+	cmd, err := ChildCommand(ctx, "cloudflared", []string{"tunnel", "run"}, map[string]string{
+		CloudflaredTunnelTokenEnv: token,
+	})
+	if err != nil {
+		return PublicURLResult{}, err
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return PublicURLResult{}, fmt.Errorf("start cloudflared: %w", err)
+		return PublicURLResult{}, RedactError(fmt.Errorf("start cloudflared: %w", err), token)
 	}
 
 	if err := waitForCommandStartup(ctx, cmd, 5*time.Second); err != nil {
 		_ = stopCommand(cmd)
-		return PublicURLResult{}, err
+		return PublicURLResult{}, RedactError(err, token)
 	}
 
 	return PublicURLResult{
