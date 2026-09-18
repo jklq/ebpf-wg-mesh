@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -15,7 +14,10 @@ type DockerRunner interface {
 type ExecDockerRunner struct{}
 
 func (ExecDockerRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd, err := ChildCommand(ctx, "docker", args, nil)
+	if err != nil {
+		return nil, err
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -28,9 +30,41 @@ func (ExecDockerRunner) Run(ctx context.Context, args ...string) ([]byte, error)
 		if message == "" {
 			message = err.Error()
 		}
-		return nil, fmt.Errorf("docker %s: %s", strings.Join(args, " "), message)
+		return nil, fmt.Errorf("docker %s: %s", strings.Join(sanitizeDockerArgsForError(args), " "), message)
 	}
 	return stdout.Bytes(), nil
+}
+
+func sanitizeDockerArgsForError(args []string) []string {
+	sanitized := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--env" || arg == "-e" {
+			sanitized = append(sanitized, arg)
+			if i+1 < len(args) {
+				i++
+				sanitized = append(sanitized, redactEnvAssignment(args[i]))
+			}
+			continue
+		}
+		if value, ok := strings.CutPrefix(arg, "--env="); ok {
+			sanitized = append(sanitized, "--env="+redactEnvAssignment(value))
+			continue
+		}
+		if value, ok := strings.CutPrefix(arg, "-e="); ok {
+			sanitized = append(sanitized, "-e="+redactEnvAssignment(value))
+			continue
+		}
+		sanitized = append(sanitized, arg)
+	}
+	return sanitized
+}
+
+func redactEnvAssignment(assignment string) string {
+	if key, _, ok := strings.Cut(assignment, "="); ok {
+		return key + "=" + redactedValue
+	}
+	return redactedValue
 }
 
 func EnsureDockerNetwork(ctx context.Context, runner DockerRunner, name string) error {

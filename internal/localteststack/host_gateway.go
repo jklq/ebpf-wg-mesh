@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 )
@@ -29,7 +28,11 @@ func ResolveDockerHostGateway(ctx context.Context) (string, error) {
 }
 
 func dockerHostGatewayFromBuildx(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "docker", "buildx", "inspect").CombinedOutput()
+	cmd, err := ChildCommand(ctx, "docker", []string{"buildx", "inspect"}, nil)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", err
 	}
@@ -48,12 +51,16 @@ func dockerHostGatewayFromBuildx(ctx context.Context) (string, error) {
 }
 
 func dockerHostGatewayFromContainer(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx,
-		"docker", "run", "--rm",
+	cmd, err := ChildCommand(ctx, "docker", []string{
+		"run", "--rm",
 		"--add-host=host.docker.internal:host-gateway",
 		"alpine",
 		"getent", "ahostsv4", "host.docker.internal",
-	).CombinedOutput()
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("resolve host-gateway via container: %w: %s", err, strings.TrimSpace(string(out)))
 	}

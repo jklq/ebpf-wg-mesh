@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/testutil"
 )
 
@@ -31,15 +32,16 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
 
 	var cmd *exec.Cmd
-	commandEnv := mergeCommandEnv(os.Environ(), env)
 	if os.Getenv("LOCALTESTSTACK_CONSOLE_PRODUCTION") == "1" {
-		build := exec.CommandContext(ctx, "bun", "--bun", "vite", "build")
+		buildEnv := cloneEnvironmentOverrides(env)
+		buildEnv["NITRO_PRESET"] = "bun"
+		build, err := localteststack.ChildCommand(ctx, "bun", []string{"--bun", "vite", "build"}, buildEnv)
+		if err != nil {
+			return nil, err
+		}
 		build.Dir = consoleDir
 		build.Stdout = os.Stdout
 		build.Stderr = os.Stderr
-		buildEnv := cloneEnvironmentOverrides(env)
-		buildEnv["NITRO_PRESET"] = "bun"
-		build.Env = mergeCommandEnv(os.Environ(), buildEnv)
 		if err := build.Run(); err != nil {
 			if reserved != nil {
 				_ = reserved.Close()
@@ -47,18 +49,23 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 			return nil, fmt.Errorf("build console: %w", err)
 		}
 
-		cmd = exec.CommandContext(ctx, "bun", "run", ".output/server/index.mjs")
 		runtimeEnv := cloneEnvironmentOverrides(env)
 		runtimeEnv["HOST"] = bindAddress
 		runtimeEnv["PORT"] = strconv.Itoa(port)
-		commandEnv = mergeCommandEnv(os.Environ(), runtimeEnv)
+		cmd, err = localteststack.ChildCommand(ctx, "bun", []string{"run", ".output/server/index.mjs"}, runtimeEnv)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		cmd = exec.CommandContext(ctx, "bun", "--bun", "vite", "dev", "--host", bindAddress, "--port", strconv.Itoa(port), "--strictPort")
+		var err error
+		cmd, err = localteststack.ChildCommand(ctx, "bun", []string{"--bun", "vite", "dev", "--host", bindAddress, "--port", strconv.Itoa(port), "--strictPort"}, env)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cmd.Dir = consoleDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = commandEnv
 	if reserved != nil {
 		if err := reserved.Close(); err != nil {
 			return nil, fmt.Errorf("release reserved console port %d: %w", port, err)
@@ -109,35 +116,6 @@ func cloneEnvironmentOverrides(env map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func mergeCommandEnv(base []string, overrides map[string]string) []string {
-	merged := make([]string, 0, len(base)+len(overrides))
-	for _, entry := range base {
-		key, _, ok := strings.Cut(entry, "=")
-		if ok {
-			if _, overridden := overrides[key]; overridden {
-				continue
-			}
-			if sensitiveEnvironmentKey(key) {
-				continue
-			}
-		}
-		merged = append(merged, entry)
-	}
-	for key, value := range overrides {
-		merged = append(merged, key+"="+value)
-	}
-	return merged
-}
-
-func sensitiveEnvironmentKey(key string) bool {
-	key = strings.ToUpper(key)
-	return strings.Contains(key, "TOKEN") ||
-		strings.Contains(key, "SECRET") ||
-		strings.Contains(key, "PASSWORD") ||
-		strings.Contains(key, "PRIVATE_KEY") ||
-		strings.Contains(key, "CREDENTIAL")
 }
 
 func randomSecret(byteLength int) (string, error) {

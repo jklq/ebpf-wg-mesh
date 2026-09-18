@@ -58,9 +58,15 @@ func TestFinalizeAcceptsValidMinimalProductionConfigs(t *testing.T) {
 	if err := FinalizeAgent(&agent); err != nil {
 		t.Fatalf("FinalizeAgent: %v", err)
 	}
+	if contract := AgentStartupContract(agent).String(); strings.Contains(contract, "token-a") {
+		t.Fatalf("agent startup contract leaked private data: %q", contract)
+	}
 	builder := validMinimalProductionBuilder()
 	if err := FinalizeBuilder(&builder); err != nil {
 		t.Fatalf("FinalizeBuilder: %v", err)
+	}
+	if contract := BuilderStartupContract(builder).String(); strings.Contains(contract, "builder.key") || strings.Contains(contract, "builder.crt") {
+		t.Fatalf("builder startup contract leaked private data: %q", contract)
 	}
 }
 

@@ -109,3 +109,15 @@ Prompt:
 ```text
 Add an explicit auto-deploy setting on each environment. When on, a verified push to a service’s tracked ref queues a deploy. When off, the control plane records the new source revision and does not start a build or rollout until an authorized Deploy/Retry. Default on for all environments; the setting is overridable. Manual deploy always works. The console must show whether the latest commit is deployed, waiting, or ignored because auto-deploy is off. Test webhook delivery with the flag on and off and a later manual deploy of the recorded revision.
 ```
+
+## 1.9 Credentials out of process arguments
+
+Was: 0.1
+Status: done
+Depends on: none
+
+Prompt:
+
+```text
+Eliminate the Cloudflare tunnel token exposure in the local product harness and establish a reusable child-process secret-handling rule. The tunnel credential must never appear in argv, inherited environment diagnostics, structured logs, test artifacts, command error strings, or process startup summaries.
+```

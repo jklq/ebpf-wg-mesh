@@ -94,23 +94,16 @@ func TestDescribeCloudflareStartupErrors(t *testing.T) {
 	}
 }
 
-func TestMergeCommandEnvReplacesInheritedSecrets(t *testing.T) {
+func TestDescribeCloudflareStartupErrorRedactsTunnelToken(t *testing.T) {
 	t.Parallel()
 
-	merged := mergeCommandEnv(
-		[]string{"PATH=/bin", "DASHBOARD_DEV_USERS=inherited", "DASHBOARD_JWT_SECRET=old", "UNRELATED_API_TOKEN=do-not-inherit"},
-		map[string]string{"DASHBOARD_DEV_USERS": "", "DASHBOARD_JWT_SECRET": "fresh"},
-	)
-	values := make(map[string]string, len(merged))
-	for _, entry := range merged {
-		key, value, _ := strings.Cut(entry, "=")
-		values[key] = value
+	const token = "tunnel-token-secret-value"
+	message := describeCloudflareStartupError(errors.New("unexpected failure carrying "+token), "mesh.example.test", token)
+	if strings.Contains(message, token) {
+		t.Fatalf("tunnel token leaked into startup error: %q", message)
 	}
-	if values["DASHBOARD_DEV_USERS"] != "" || values["DASHBOARD_JWT_SECRET"] != "fresh" {
-		t.Fatalf("explicit overrides not enforced: %#v", values)
-	}
-	if _, exists := values["UNRELATED_API_TOKEN"]; exists {
-		t.Fatalf("unrelated secret inherited by console: %#v", values)
+	if !strings.Contains(message, "[redacted]") {
+		t.Fatalf("expected redacted marker in %q", message)
 	}
 }
 

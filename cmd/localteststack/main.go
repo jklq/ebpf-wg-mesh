@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -328,7 +327,7 @@ func main() {
 			if startupInterrupted(ctx) {
 				return
 			}
-			log.Fatalf("%s", describeCloudflareStartupError(err, cloudflareHostname))
+			log.Fatalf("%s", describeCloudflareStartupError(err, cloudflareHostname, cloudflareTunnelToken))
 		}
 		log.Printf("cloudflare tunnel ready: %s", publicURL.BaseURL)
 		publicBaseURL = publicURL.BaseURL
@@ -536,13 +535,15 @@ func main() {
 
 	runPlaywright := os.Getenv("LOCALTESTSTACK_RUN_PLAYWRIGHT") != "0"
 	if runPlaywright {
-		playwright := exec.CommandContext(ctx, "bun", "run", "test:e2e:local")
+		playwright, err := localteststack.ChildCommand(ctx, "bun", []string{"run", "test:e2e:local"}, map[string]string{
+			"DASHBOARD_E2E_BASE_URL": ingressURL[:len(ingressURL)-1],
+		})
+		if err != nil {
+			log.Fatalf("build playwright command: %v", err)
+		}
 		playwright.Dir = consoleDir
 		playwright.Stdout = os.Stdout
 		playwright.Stderr = os.Stderr
-		playwright.Env = append(os.Environ(),
-			"DASHBOARD_E2E_BASE_URL="+ingressURL[:len(ingressURL)-1],
-		)
 		if err := playwright.Run(); err != nil {
 			log.Fatalf("run playwright: %v", err)
 		}
