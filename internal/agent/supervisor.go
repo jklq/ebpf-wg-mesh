@@ -73,6 +73,8 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 func (s *workloadSupervisor) run(ctx context.Context) {
 	ticker := time.NewTicker(reconcileSafetyInterval)
 	defer ticker.Stop()
+	diskTicker := time.NewTicker(diskEnforcementInterval)
+	defer diskTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,6 +83,8 @@ func (s *workloadSupervisor) run(ctx context.Context) {
 			s.reconcile(ctx, "desired-state")
 		case <-ticker.C:
 			s.reconcile(ctx, "safety-resync")
+		case <-diskTicker.C:
+			s.reconcile(ctx, "disk-enforcement")
 		}
 	}
 }

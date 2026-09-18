@@ -2,7 +2,7 @@
 
 Until these items land, the product does not actually run a typical app, or it lies about whether it did.
 
-Independent items in this file may proceed in parallel. 1.1 is done; see [landed.md](landed.md). 1.2 is parked; see [freeze.md](freeze.md). 1.3 sees both overlay families because 1.1 landed.
+Independent items in this file may proceed in parallel. 1.1 is done; see [landed.md](landed.md). 1.2 is parked; see [freeze.md](freeze.md). 1.3 sees both overlay families because 1.1 landed. 1.11 is done; see [landed.md](landed.md#111-bounded-ephemeral-disk).
 
 
 
@@ -43,17 +43,4 @@ Prompt:
 
 ```text
 Builders and agents must report their runtime architecture. Every build records the target architecture (default: the builder’s architecture). The scheduler must refuse to place an allocation on a node that cannot run that digest, with a pending message that names the required and actual architectures. Direct-image deploys resolve and persist architecture the same way. Do not silently run through qemu. Test a mismatched node, a matching node, and a reconnect that does not place the alloc on the wrong arch.
-```
-
-## 1.11 Bounded ephemeral disk
-
-Status: open
-Depends on: none. The production sandbox already exists.
-
-Overlay writes can fill the node.
-
-Prompt:
-
-```text
-Cap each allocation’s ephemeral writable overlay at 1 GiB by default using cgroup v2 I/O or filesystem quota on the production sandbox. When the cap is hit, the allocation must fail with a visible disk-full cause rather than filling the host. The cap is platform policy, not a customer API field, until a later quota item exists. Test that a workload writing past 1 GiB is stopped, that the host disk is not exhausted, and that the console/allocation status names disk exhaustion.
 ```

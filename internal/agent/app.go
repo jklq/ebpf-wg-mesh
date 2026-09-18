@@ -44,6 +44,7 @@ const (
 	stableSessionDuration   = time.Minute
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
+	diskEnforcementInterval = 15 * time.Second
 )
 
 var (

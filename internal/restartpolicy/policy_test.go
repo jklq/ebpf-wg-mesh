@@ -2,6 +2,7 @@ package restartpolicy
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,7 @@ func TestEvaluateNeverDoesNotRestartFailures(t *testing.T) {
 		{ExitCode: 2},
 		{Signal: 9},
 		{OOMKilled: true, Signal: 9},
+		{DiskExhausted: true},
 	} {
 		decision := Evaluate(clock.Now(), nil, &platformv1.ServiceRestart{
 			Policy: platformv1.RestartPolicy_RESTART_POLICY_NEVER,
@@ -71,6 +73,7 @@ func TestEvaluateClassifiesCauses(t *testing.T) {
 		{"exit-nonzero", Input{State: ProcessState{ExitCode: 7}}, platformv1.RestartCause_RESTART_CAUSE_EXIT_NONZERO},
 		{"signal", Input{State: ProcessState{Signal: 15, ExitCode: 143}}, platformv1.RestartCause_RESTART_CAUSE_SIGNAL},
 		{"oom", Input{State: ProcessState{OOMKilled: true, Signal: 9, ExitCode: 137}}, platformv1.RestartCause_RESTART_CAUSE_OOM_KILL},
+		{"disk", Input{State: ProcessState{DiskExhausted: true}}, platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED},
 		{"liveness", Input{State: ProcessState{Running: true}, LivenessFailed: true}, platformv1.RestartCause_RESTART_CAUSE_LIVENESS},
 	}
 	for _, tc := range cases {
@@ -281,6 +284,38 @@ func TestClassifyExitPrefersOOMOverSignal(t *testing.T) {
 	t.Parallel()
 	if got := ClassifyExit(ProcessState{OOMKilled: true, Signal: 9, ExitCode: 137}); got != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestClassifyExitPrefersOOMOverDiskExhaustion(t *testing.T) {
+	t.Parallel()
+	if got := ClassifyExit(ProcessState{OOMKilled: true, DiskExhausted: true, Signal: 9, ExitCode: 137}); got != platformv1.RestartCause_RESTART_CAUSE_OOM_KILL {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestEvaluateDiskExhaustionNamesTheCause(t *testing.T) {
+	t.Parallel()
+	clock := NewManualClock(time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC))
+	if !Failure(platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED) {
+		t.Fatal("disk exhaustion is not a failure")
+	}
+	if !ShouldRestart(platformv1.RestartPolicy_RESTART_POLICY_ON_FAILURE, platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED) {
+		t.Fatal("on-failure does not restart disk exhaustion")
+	}
+	decision := Evaluate(clock.Now(), nil, &platformv1.ServiceRestart{
+		Policy:            platformv1.RestartPolicy_RESTART_POLICY_ON_FAILURE,
+		MaxRestarts:       4,
+		InitialDelayMs:    1000,
+		MaxDelayMs:        1000,
+		BackoffMultiplier: 1,
+		Jitter:            0,
+	}, appliedObs(1), Input{State: ProcessState{DiskExhausted: true}, DesiredRolloutGeneration: 1})
+	if decision.Observation.GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED {
+		t.Fatalf("cause = %s", decision.Observation.GetLastCause())
+	}
+	if !strings.Contains(strings.ToLower(decision.Message), "disk exhausted") {
+		t.Fatalf("message %q does not name disk exhaustion", decision.Message)
 	}
 }
 

@@ -34,7 +34,7 @@ Enroll / cordon / drain / retire, failure-domain placement, credential revocatio
 
 ## Production OCI sandbox (1.8)
 
-Single untrusted-workload sandbox, cgroup isolation, no customer-selectable privileged profile. Ephemeral disk cap is [1.11](01-running-service.md#111-bounded-ephemeral-disk).
+Single untrusted-workload sandbox, cgroup isolation, no customer-selectable privileged profile. Ephemeral disk is capped at 1 GiB per allocation (1.11 below).
 
 ## Multi-replica control plane (2.1)
 
@@ -120,4 +120,17 @@ Prompt:
 
 ```text
 Eliminate the Cloudflare tunnel token exposure in the local product harness and establish a reusable child-process secret-handling rule. The tunnel credential must never appear in argv, inherited environment diagnostics, structured logs, test artifacts, command error strings, or process startup summaries.
+```
+
+## 1.11 Bounded ephemeral disk
+
+Status: done
+Depends on: none. The production sandbox already exists.
+
+Overlay writes can fill the node.
+
+Prompt:
+
+```text
+Cap each allocation’s ephemeral writable overlay at 1 GiB by default using cgroup v2 I/O or filesystem quota on the production sandbox. When the cap is hit, the allocation must fail with a visible disk-full cause rather than filling the host. The cap is platform policy, not a customer API field, until a later quota item exists. Test that a workload writing past 1 GiB is stopped, that the host disk is not exhausted, and that the console/allocation status names disk exhaustion.
 ```

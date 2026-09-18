@@ -766,3 +766,69 @@ func TestContainerdRuntimeForceKillAfterDrainDeadline(t *testing.T) {
 		t.Fatalf("expected force-killed drain, got %+v", cond)
 	}
 }
+
+func TestContainerdRuntimeStopsDiskExhaustedAllocation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := &fakeEngine{
+		status: map[string]serviceStatus{"alloc-1": {
+			AppliedSpecRevision:      1,
+			AppliedRolloutGeneration: 1,
+			AllocationIPv4:           "10.200.0.2",
+			AllocationIPv6:           "fd00::10",
+		}},
+	}
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: engine,
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "volumes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := &agentv1.DesiredNodeState{
+		AgentId:              "node-1",
+		ReconciliationCursor: 1,
+		Services: []*agentv1.DesiredService{{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			DesiredSpecRevision:      1,
+			DesiredRolloutGeneration: 1,
+			PrivateIpv4:              "10.200.0.2",
+			PrivateIpv6:              "fd00::10",
+			Spec: &platformv1.ResolvedServiceSpec{
+				Image:   "example.com/test@sha256:abc",
+				Runtime: &platformv1.ServiceRuntime{},
+			},
+		}},
+	}
+	if _, err := runtime.Reconcile(context.Background(), state); err != nil {
+		t.Fatalf("Reconcile before exhaustion: %v", err)
+	}
+	if len(engine.removed) != 0 {
+		t.Fatalf("healthy allocation was removed: %#v", engine.removed)
+	}
+	overQuota := engine.status["alloc-1"]
+	overQuota.DiskExhausted = true
+	engine.status["alloc-1"] = overQuota
+	report, err := runtime.Reconcile(context.Background(), state)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(engine.removed) != 1 || engine.removed[0] != "alloc-1" {
+		t.Fatalf("removed = %#v, want the disk-exhausted writer stopped", engine.removed)
+	}
+	cond := report.Services[0]
+	if cond.GetHealthy() {
+		t.Fatal("disk-exhausted allocation is reported healthy")
+	}
+	if cond.GetRestart().GetLastCause() != platformv1.RestartCause_RESTART_CAUSE_DISK_EXHAUSTED {
+		t.Fatalf("last cause = %s", cond.GetRestart().GetLastCause())
+	}
+	if !strings.Contains(strings.ToLower(cond.GetMessage()), "disk exhausted") {
+		t.Fatalf("message %q does not name disk exhaustion", cond.GetMessage())
+	}
+}
