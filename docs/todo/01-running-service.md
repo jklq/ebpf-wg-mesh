@@ -4,12 +4,10 @@ Until these items land, the product does not actually run a typical app, or it l
 
 Independent items in this file may proceed in parallel. 1.1 is done; see [landed.md](landed.md). 1.2 is parked; see [freeze.md](freeze.md). 1.3 sees both overlay families because 1.1 landed. 1.11 is done; see [landed.md](landed.md#111-bounded-ephemeral-disk).
 
-
-
 ## 1.3 Continuous readiness and liveness
 
 Was: 1.2
-Status: open
+Status: icebox, backlogged, do not start
 Depends on: 1.1 for probing both overlay families. Restart policy already exists.
 
 Readiness is still a latched rollout gate. The existing HTTP liveness loop can restart a wedged process, but a post-rollout readiness failure alone does not withdraw ingress and the allocation stays “healthy.”
