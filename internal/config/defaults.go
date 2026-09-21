@@ -368,6 +368,9 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 			"fd00:ec2::254/128",
 		}
 	}
+	if cfg.Cache.Mode == "" {
+		cfg.Cache.Mode = "none"
+	}
 }
 
 func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {

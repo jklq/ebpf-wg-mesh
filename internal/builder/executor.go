@@ -116,8 +116,10 @@ type PushCredentials struct {
 
 // BuildkitEndpoint is the BuildKit endpoint isolated to this execution.
 // The development executor receives the single configured endpoint
-// explicitly rather than reading it from ambient state; per-execution
-// isolation of the daemon itself is 2.4b work.
+// explicitly rather than reading it from ambient state. The hardened
+// executor ignores the shared address and starts a per-execution
+// daemon with an isolated root and socket instead, so sibling builds
+// share no daemon state.
 type BuildkitEndpoint struct {
 	Binary  string
 	Address string
@@ -137,10 +139,11 @@ type ResourceLimits struct {
 	// Timeout bounds total execution time including snapshot setup.
 	Timeout time.Duration
 	// MemoryBytes caps child-process virtual address space
-	// (RLIMIT_AS). Virtual, not resident: Go-based build tools
-	// reserve over a gigabyte at startup, so this needs generous
-	// headroom and bounds runaway reservation rather than
-	// containing RSS. Hard resident-set containment is 2.4b work.
+	// (RLIMIT_AS) under the development executor. Virtual, not
+	// resident: Go-based build tools reserve over a gigabyte at
+	// startup, so this needs generous headroom and bounds runaway
+	// reservation rather than containing RSS. The hardened executor
+	// additionally enforces it as a hard cgroup resident-set cap.
 	MemoryBytes int64
 	// CPUSeconds caps child-process CPU time (RLIMIT_CPU).
 	CPUSeconds int64
@@ -215,8 +218,10 @@ func (l ResourceLimits) ProcessLimits() ProcessLimits {
 // execution, expressed as input rather than ambient host state. The
 // development executor validates the policy, scrubs ambient
 // network-shaping environment (proxy variables, docker contexts) from
-// build children, and honestly reports itself non-isolating; CIDR
-// enforcement at the build data plane is 2.4b work.
+// build children, and honestly reports itself non-isolating. The
+// hardened executor enforces the policy at the data plane: a private
+// network namespace that is loopback-only when general egress is
+// denied, or CNI-attached with denied-CIDR blackholes otherwise.
 type NetworkPolicy struct {
 	AllowGeneralEgress bool
 	DeniedCIDRs        []string

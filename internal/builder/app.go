@@ -87,8 +87,12 @@ func New(cfg config.BuilderConfig) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Defense in depth: config validation already refuses the
+	// development executor in production, but the builder must never
+	// run untrusted builds without isolation even if validation is
+	// bypassed.
 	if cfg.Profile.IsProduction() && !executor.Isolating() {
-		slog.Warn("builder executor does not isolate untrusted code", "executor", executor.Name())
+		return nil, fmt.Errorf("builder executor %q does not isolate untrusted code: production requires the hardened executor", executor.Name())
 	}
 	creds, err := loadTransportCredentials(cfg.ControlPlane.TLS)
 	if err != nil {
@@ -115,6 +119,24 @@ func newExecutorForConfig(cfg config.BuilderConfig) (BuildExecutor, error) {
 	switch cfg.Executor {
 	case "", ExecutorDevelopment:
 		return newDevelopmentExecutor(cfg.WorkDir, osCommandRunner{}, os.Getenv("PATH")), nil
+	case ExecutorHardened:
+		backend, err := NewSandboxBackend(SandboxBackendConfig{
+			Socket:          cfg.Sandbox.Socket,
+			Namespace:       cfg.Sandbox.Namespace,
+			Image:           cfg.Sandbox.Image,
+			Runtime:         cfg.Sandbox.Runtime,
+			Snapshotter:     cfg.Sandbox.Snapshotter,
+			CNIPluginDir:    cfg.Sandbox.CNIPluginDir,
+			CNIConfDir:      cfg.Sandbox.CNIConfDir,
+			CNINetwork:      cfg.Sandbox.CNINetwork,
+			Nameservers:     cfg.Sandbox.Nameservers,
+			BuildkitdBinary: cfg.Sandbox.BuildkitdBinary,
+			WorkDir:         cfg.WorkDir,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return newHardenedExecutor(cfg.WorkDir, backend, cfg.Sandbox.BuildkitdBinary, cfg.Sandbox.Nameservers), nil
 	default:
 		return nil, fmt.Errorf("unknown build executor %q", cfg.Executor)
 	}
@@ -315,14 +337,28 @@ func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob,
 			DeniedCIDRs:        a.cfg.Network.DeniedCIDRs,
 		},
 		// The development executor exports no cache between
-		// executions; any BuildKit daemon-local caching is keyed by
-		// the daemon's content digests, never by project identity.
-		// 2.4b backends namespace cache exports via ContentCacheKey.
-		Cache:   CachePolicy{Mode: CacheModeNone},
+		// executions. The hardened executor mounts a host cache dir
+		// namespaced by ContentCacheKey when the operator enables
+		// content-addressed mode, and refuses any key that does not
+		// match the build content.
+		Cache:   a.cachePolicyForJob(job, digest),
 		Cleanup: a.cfg.CleanupWorkDir,
 		OnLog: func(line commandOutputLine) {
 			reporter.Report(ctx, line)
 		},
+	}
+}
+
+// cachePolicyForJob maps the configured cache mode to an execution
+// cache policy. Content-addressed keys derive purely from build
+// content so cached data cannot carry state between projects.
+func (a *App) cachePolicyForJob(job *platformv1.BuildJob, digest string) CachePolicy {
+	if a.cfg.Cache.Mode != string(CacheModeContentAddressed) {
+		return CachePolicy{Mode: CacheModeNone}
+	}
+	return CachePolicy{
+		Mode: CacheModeContentAddressed,
+		Key:  ContentCacheKey(digest, job.GetSource().GetBuildRecipe(), a.cfg.RailpackFrontendImage),
 	}
 }
 

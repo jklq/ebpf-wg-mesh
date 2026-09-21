@@ -390,6 +390,11 @@ func validateBuilder(cfg BuilderConfig) error {
 			return fmt.Errorf("builder.network.deniedCidrs must be valid CIDRs: %q", raw)
 		}
 	}
+	switch cfg.Cache.Mode {
+	case "", "none", "content-addressed":
+	default:
+		return fmt.Errorf("builder.cache.mode must be %q or %q", "none", "content-addressed")
+	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionBuilder(cfg)
 	}

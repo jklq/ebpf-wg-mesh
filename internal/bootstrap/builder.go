@@ -42,6 +42,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	stringFlag(fs, &cfg.Sandbox.CNINetwork, "sandbox-cni-network", "BUILDER_SANDBOX_CNI_NETWORK", "build-sandbox", "CNI network name for build sandboxes")
 	stringFlag(fs, &cfg.Sandbox.BuildkitdBinary, "sandbox-buildkitd-binary", "BUILDER_SANDBOX_BUILDKITD_BINARY", "buildkitd", "per-execution BuildKit daemon binary")
 	stringFlag(fs, &nameservers, "sandbox-nameservers", "BUILDER_SANDBOX_NAMESERVERS", "", "comma-separated sandbox resolver IPs; empty inherits host non-loopback resolvers")
+	stringFlag(fs, &cfg.Cache.Mode, "cache-mode", "BUILDER_CACHE_MODE", "none", "build cache mode: none or content-addressed")
 	intFlag(fs, &cfg.Limits.TimeoutSeconds, "build-timeout-seconds", "BUILDER_BUILD_TIMEOUT_SECONDS", 1800, "")
 	int64Flag(fs, &cfg.Limits.MemoryBytes, "build-memory-bytes", "BUILDER_BUILD_MEMORY_BYTES", 8<<30, "")
 	int64Flag(fs, &cfg.Limits.CPUSeconds, "build-cpu-seconds", "BUILDER_BUILD_CPU_SECONDS", 3600, "")

@@ -303,6 +303,7 @@ type BuilderConfig struct {
 	RailpackFrontendImage    string
 	Limits                   BuilderLimitsConfig
 	Network                  BuilderNetworkConfig
+	Cache                    BuilderCacheConfig
 	Sandbox                  BuilderSandboxConfig
 	CleanupWorkDir           bool
 }
@@ -325,6 +326,17 @@ type BuilderNetworkConfig struct {
 	// current behavior of allowing dependency fetches during builds.
 	DenyGeneralEgress bool
 	DeniedCIDRs       []string
+}
+
+// BuilderCacheConfig selects how build cache data persists between
+// executions. Mode "none" persists nothing; mode "content-addressed"
+// lets the hardened executor mount a host cache dir keyed purely by
+// build content (snapshot digest, recipe, toolchain), never by
+// project identity. Cache dirs accumulate under the builder work dir;
+// the operator prunes them. The development executor validates the
+// mode but exports no cache.
+type BuilderCacheConfig struct {
+	Mode string
 }
 
 // BuilderSandboxConfig selects the hardened executor's sandbox
