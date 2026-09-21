@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -13,11 +14,10 @@ type GitHubReconciler struct {
 	coordinator       *GitHubCoordinator
 	buildStaleAfter   time.Duration
 	webhookStaleAfter time.Duration
-	workStaleAfter    time.Duration
 	workerID          string
 }
 
-func NewGitHubReconciler(store Store, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter, workStaleAfter time.Duration) *GitHubReconciler {
+func NewGitHubReconciler(store Store, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter time.Duration) *GitHubReconciler {
 	if store == nil || coordinator == nil || !coordinator.Enabled() {
 		return nil
 	}
@@ -26,7 +26,6 @@ func NewGitHubReconciler(store Store, coordinator *GitHubCoordinator, buildStale
 		coordinator:       coordinator,
 		buildStaleAfter:   buildStaleAfter,
 		webhookStaleAfter: webhookStaleAfter,
-		workStaleAfter:    workStaleAfter,
 		workerID:          "github-reconciler-" + uuid.NewString(),
 	}
 }
@@ -41,9 +40,9 @@ func (r *GitHubReconciler) Bootstrap(ctx context.Context) error {
 	if err := r.store.RecoverGitHubWebhookDeliveries(ctx, r.webhookStaleAfter); err != nil {
 		return err
 	}
-	if err := r.coordinator.RecoverWorkItems(ctx, r.workStaleAfter); err != nil {
-		return err
-	}
+	// Source work needs no recovery scan: records are leased with expiry and
+	// the next claim transparently takes over whatever a dead worker left
+	// behind.
 	installationIDs, err := r.store.ListActiveGitHubInstallationIDs(ctx)
 	if err != nil {
 		return err
@@ -102,19 +101,31 @@ func (r *GitHubReconciler) ProcessNext(ctx context.Context) (bool, error) {
 	if rec.ID == "" {
 		return false, nil
 	}
-	slog.InfoContext(ctx, "github work item claimed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
-	if err := r.coordinator.processWorkItem(ctx, rec); err != nil {
-		if releaseErr := r.coordinator.ReleaseWorkItem(ctx, rec.ID, r.workerID, err, r.coordinator.retryAfter); releaseErr != nil {
-			return false, releaseErr
+	payload, err := DecodeWorkPayload(rec.Payload)
+	if err != nil {
+		// A corrupt payload can never succeed: fail it without retry so it
+		// lands in the failed state for inspection instead of burning the
+		// attempt budget.
+		if failErr := r.coordinator.FailWorkItem(ctx, rec, err, false); failErr != nil {
+			return false, failErr
+		}
+		slog.Warn("github work item had a corrupt payload", "kind", rec.Kind, "dedup_key", rec.DedupKey, "error", err)
+		return true, nil
+	}
+	slog.InfoContext(ctx, "github work item claimed", "kind", rec.Kind, "service_id", payload.ServiceID, "provider_scope_external_id", payload.ProviderScopeExternalID, "provider_repository_external_id", payload.ProviderRepositoryExternalID, "tracked_ref", payload.TrackedRef, "commit_sha", payload.CommitSHA)
+	if err := r.coordinator.processWorkItem(ctx, rec, payload); err != nil {
+		retryable := !errors.Is(err, errUnknownWorkKind)
+		if failErr := r.coordinator.FailWorkItem(ctx, rec, err, retryable); failErr != nil {
+			return false, failErr
 		}
 		if err != errGitHubWorkDeferred {
-			slog.Warn("github work item failed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "error", err)
+			slog.Warn("github work item failed", "kind", rec.Kind, "service_id", payload.ServiceID, "provider_scope_external_id", payload.ProviderScopeExternalID, "retryable", retryable, "error", err)
 		}
 		return true, nil
 	}
-	if err := r.coordinator.CompleteWorkItem(ctx, rec.ID, r.workerID); err != nil {
+	if err := r.coordinator.CompleteWorkItem(ctx, rec); err != nil {
 		return false, err
 	}
-	slog.InfoContext(ctx, "github work item completed", "kind", rec.Kind, "service_id", rec.ServiceID, "provider_scope_external_id", rec.ProviderScopeExternalID, "provider_repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
+	slog.InfoContext(ctx, "github work item completed", "kind", rec.Kind, "service_id", payload.ServiceID, "provider_scope_external_id", payload.ProviderScopeExternalID, "provider_repository_external_id", payload.ProviderRepositoryExternalID, "tracked_ref", payload.TrackedRef, "commit_sha", payload.CommitSHA)
 	return true, nil
 }

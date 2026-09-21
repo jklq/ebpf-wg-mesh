@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/durablework"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"strings"
@@ -327,9 +328,9 @@ func TestDeploymentActionRetryCancelledUnresolvedSource(t *testing.T) {
 	assertRolloutState(t, store, service.ID, 2, "pending_build", "")
 	var queued int
 	if err := store.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM source_work_items
-		  WHERE service_id = $1 AND spec_revision = $2 AND state = $3`,
-		service.ID, retried.SpecRevision, source.SourceWorkStatePending,
+		`SELECT count(*) FROM durable_work_items
+		  WHERE kind = $1 AND payload->>'service_id' = $2 AND (payload->>'spec_revision')::INT8 = $3 AND state = $4`,
+		source.SourceWorkKindSourceSpecChanged, service.ID, retried.SpecRevision, durablework.StatePending,
 	).Scan(&queued); err != nil {
 		t.Fatalf("count retry source work: %v", err)
 	}

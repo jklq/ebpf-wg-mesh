@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"ebof-wg-mesh/internal/controlplane/durablework"
 )
 
 type Querier interface {
@@ -19,21 +21,19 @@ type SQLStore struct {
 	withCoordinationTx func(context.Context, func(context.Context, *sql.Tx) error) error
 	services           func(context.Context, string) (Service, error)
 	archives           ArchiveStore
-	workReady          chan struct{}
+	work               *durablework.Store
 }
 
 func NewSQLStore(db *sql.DB, withCoordinationTx func(context.Context, func(context.Context, *sql.Tx) error) error, services func(context.Context, string) (Service, error)) *SQLStore {
-	return &SQLStore{db: db, withCoordinationTx: withCoordinationTx, services: services, workReady: make(chan struct{}, 1)}
+	return &SQLStore{db: db, withCoordinationTx: withCoordinationTx, services: services, work: durablework.NewStore(db, withCoordinationTx)}
 }
 
-func (s *SQLStore) SourceWorkReady() <-chan struct{} { return s.workReady }
+// Work is the durable work queue carrying source background work. Source
+// records live in the shared durable_work_items table keyed by the source
+// work kinds; there is no source-specific queue table.
+func (s *SQLStore) Work() *durablework.Store { return s.work }
 
-func (s *SQLStore) signalSourceWork() {
-	select {
-	case s.workReady <- struct{}{}:
-	default:
-	}
-}
+func (s *SQLStore) SourceWorkReady() <-chan struct{} { return s.work.Ready() }
 
 var _ Store = (*SQLStore)(nil)
 

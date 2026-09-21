@@ -7,6 +7,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/durablework"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -31,7 +32,7 @@ type Events interface {
 type Dependencies struct {
 	CreateEnvironment func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
 	CreateVolume      func(context.Context, *sql.Tx, authz.Project, string, string, int64) (VolumeRecord, error)
-	EnqueueSourceWork func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
+	EnqueueSourceWork func(context.Context, *sql.Tx, durablework.EnqueueParams) (bool, error)
 	// SourceStore supplies source-table reads/writes scoped to delivery's
 	// transactions. Delivery never touches source tables directly.
 	SourceStore SourceStore
@@ -66,7 +67,7 @@ type SourceStore interface {
 type persistence struct {
 	createEnvironmentQuerier func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
 	createVolumeTx           func(context.Context, *sql.Tx, authz.Project, string, string, int64) (VolumeRecord, error)
-	enqueueSourceWorkItemTx  func(context.Context, *sql.Tx, source.SourceWorkItemRecord) (bool, error)
+	enqueueSourceWorkItemTx  func(context.Context, *sql.Tx, durablework.EnqueueParams) (bool, error)
 	sourceStore              SourceStore
 	authz                    *authz.Authorizer
 

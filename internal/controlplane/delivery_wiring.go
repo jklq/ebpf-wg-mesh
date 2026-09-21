@@ -13,7 +13,7 @@ func newDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ing
 
 func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents, logEmitter *logs.LogEmitter) deliverycore.Dependencies {
 	return deliverycore.Dependencies{
-		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.EnqueueSourceWorkItemTx, SourceStore: store.source,
+		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.Work().EnqueueTx, SourceStore: store.source,
 		DB: store.db, Mesh: store.mesh, Live: store.liveImplementation, ProductTransaction: store.withProductTx,
 		ObservationTransaction: store.withObservationTx,
 		ReadState:              store.readLiveState,

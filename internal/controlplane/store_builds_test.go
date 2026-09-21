@@ -113,7 +113,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("grant source repository: %v", err)
 	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM durable_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
 	if _, _, err := scaleService(ctx, store, "user-1", service.ID, 2); err != nil {

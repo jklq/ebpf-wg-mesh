@@ -164,7 +164,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"environment_events",
 		"deployment_actions",
 		"project_github_repositories",
-		"source_work_items",
+		"durable_work_items",
 		"source_snapshots",
 		"source_revisions",
 		"source_bindings",

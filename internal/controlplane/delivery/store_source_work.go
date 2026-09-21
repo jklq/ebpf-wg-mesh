@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -51,15 +49,6 @@ func (s *persistence) enqueueSourceSpecChangedTx(ctx context.Context, tx *sql.Tx
 	if serviceID == "" {
 		return errors.New("service id is required")
 	}
-	key := fmt.Sprintf("%s:%s:%d", source.SourceWorkKindSourceSpecChanged, serviceID, specRevision)
-	if force {
-		key = fmt.Sprintf("%s:%s:%d:%d", source.SourceWorkKindSourceSpecChanged, serviceID, specRevision, time.Now().UTC().UnixNano())
-	}
-	_, err := s.enqueueSourceWorkItemTx(ctx, tx, source.SourceWorkItemRecord{
-		Kind:           source.SourceWorkKindSourceSpecChanged,
-		IdempotencyKey: key,
-		ServiceID:      serviceID,
-		SpecRevision:   specRevision,
-	})
+	_, err := s.enqueueSourceWorkItemTx(ctx, tx, source.SourceSpecChangedParams(serviceID, specRevision, force))
 	return err
 }

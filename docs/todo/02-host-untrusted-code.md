@@ -11,10 +11,14 @@ Extend the VM harness as each item needs a new topology component; 2.13 is done 
 ## 2.1 Durable-work package
 
 Was: 2.7
-Status: open
+Status: in review
 Depends on: none
 
 Not partner-visible. This is consolidation of code that already exists in triplicate — `github_work_items`, `source_work_items`, and `github_webhook_deliveries` are the same table written three times, and `claimNextSourceWorkItem` hand-rolls stale reclaim. It unblocks no product gate on its own. Prefer writing it *as* the deletion GC loop 1.8 needs and generalizing on the second caller, over landing it standalone ahead of work a user can see.
+
+Implemented: `internal/controlplane/durablework` is the shared CockroachDB-backed queue (stable kind/ID, dedup key, scoped resource identity, pending/leased/succeeded/failed/dead states, attempt count/limit, owner epoch fencing, lease expiry with heartbeat, sanitized last error, backoff available-at). Claim, heartbeat, complete, and fail are single compare-and-swaps on (owner, epoch). Source work is the first migrated caller and `source_work_items` is deleted; delivery enqueues spec-changed work in the same product transaction via `EnqueueTx`. Bounded jittered retry, dead-letter inspection (`ListDead`/`Get`), a queue-lag query, and the external-effect intent rule with the source-sync worked handler are documented in the package. Tests cover multi-replica claim contention, worker death before/after the effect boundary, stale-owner late commit, retry exhaustion, and resurrection.
+
+Remaining: migrate `github_webhook_deliveries` and `github_work_items` when next touched. No scheduled pruning of terminal rows yet (`PruneTerminal` exists for operators). Console dead-letter view and its RPC are deferred; see `docs/frontend-handoff/2.1.md`.
 
 Prompt:
 

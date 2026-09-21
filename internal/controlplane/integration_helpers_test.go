@@ -101,10 +101,6 @@ func registerAgent(ctx context.Context, store *persistence, hello *agentv1.Agent
 	return testDelivery(store).RegisterAgent(ctx, hello)
 }
 
-func claimNextSourceWorkItem(ctx context.Context, store *persistence, processorID string) (source.SourceWorkItemRecord, error) {
-	return store.source.ClaimNextSourceWorkItem(ctx, processorID)
-}
-
 func completeBuildForTest(ctx context.Context, store *persistence, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) error {
 	_, err := newTestDelivery(store, nil, nil, nil).CompleteBuild(ctx, builderID, buildID, state, commitSHA, imageDigest, failureReason)
 	return err
