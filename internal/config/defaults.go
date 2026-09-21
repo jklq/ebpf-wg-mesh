@@ -333,8 +333,16 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 		cfg.RailpackFrontendImage = "ghcr.io/railwayapp/railpack-frontend:latest"
 	}
 	if cfg.Executor == "" {
-		cfg.Executor = "development"
+		// Production defaults to the isolating backend; development
+		// keeps the host-process executor so unprivileged checkouts
+		// can still build.
+		if cfg.Profile.IsProduction() {
+			cfg.Executor = "hardened"
+		} else {
+			cfg.Executor = "development"
+		}
 	}
+	applyBuilderSandboxDefaults(&cfg.Sandbox)
 	if cfg.Limits.TimeoutSeconds <= 0 {
 		cfg.Limits.TimeoutSeconds = 1800
 	}
@@ -359,6 +367,38 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 			"100.100.100.200/32",
 			"fd00:ec2::254/128",
 		}
+	}
+}
+
+func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {
+	if cfg.Backend == "" {
+		cfg.Backend = "containerd"
+	}
+	if cfg.Socket == "" {
+		cfg.Socket = "/run/containerd/containerd.sock"
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = "builder"
+	}
+	// Image has no default: the operator chooses the image builds
+	// run in, and validation requires it for the hardened executor.
+	if cfg.Runtime == "" {
+		cfg.Runtime = "io.containerd.runc.v2"
+	}
+	if cfg.Snapshotter == "" {
+		cfg.Snapshotter = "overlayfs"
+	}
+	if cfg.CNIPluginDir == "" {
+		cfg.CNIPluginDir = "/usr/lib/cni"
+	}
+	if cfg.CNIConfDir == "" {
+		cfg.CNIConfDir = "/etc/cni/net.d"
+	}
+	if cfg.CNINetwork == "" {
+		cfg.CNINetwork = "build-sandbox"
+	}
+	if cfg.BuildkitdBinary == "" {
+		cfg.BuildkitdBinary = "buildkitd"
 	}
 }
 

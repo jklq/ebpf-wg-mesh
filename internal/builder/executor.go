@@ -9,10 +9,10 @@
 // completion, cancellation, and worker death (via RecoverStaleWorkspaces
 // on the next start).
 //
-// The development executor is the only implementation in this item. It
-// establishes the seam, the limits, and the credential scoping that the
-// hardened backend (2.4b) enforces; it does not isolate hostile code and
-// is labeled non-isolating in the builder startup contract.
+// The development executor establishes the seam, the limits, and the
+// credential scoping that the hardened backend enforces; it does not
+// isolate hostile code and is labeled non-isolating in the builder
+// startup contract. The hardened executor is the production backend.
 package builder
 
 import (
@@ -28,11 +28,16 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// ExecutorDevelopment is the only executor selection until 2.4b adds a
-// hardened backend. Production refuses unknown executors at config
-// validation time; 2.4b makes production refuse the development
-// executor as well.
+// ExecutorDevelopment runs builds as host child processes. It does not
+// isolate hostile code; production refuses it at config validation
+// time.
 const ExecutorDevelopment = "development"
+
+// ExecutorHardened runs every build step inside a one-shot OCI sandbox
+// with its own mount, PID, network, IPC, UTS, and cgroup namespaces,
+// a private network namespace with enforced egress policy, and a
+// per-execution BuildKit daemon. It is the production backend.
+const ExecutorHardened = "hardened"
 
 // ErrBuildTimeout reports a build that exceeded its executor time limit.
 var ErrBuildTimeout = errors.New("build timed out")

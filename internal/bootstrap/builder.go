@@ -11,6 +11,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	var cfg config.BuilderConfig
 	var profile string
 	var deniedCIDRs string
+	var nameservers string
 
 	fs := flag.NewFlagSet("builder", flag.ContinueOnError)
 	stringFlag(fs, &profile, "profile", "BUILDER_PROFILE", "", "development or production; empty defaults to production")
@@ -29,7 +30,18 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	stringFlag(fs, &cfg.BuildkitAddress, "buildkit-address", "BUILDER_BUILDKIT_ADDRESS", "unix:///run/buildkit/buildkitd.sock", "")
 	stringFlag(fs, &cfg.RailpackBinary, "railpack-binary", "BUILDER_RAILPACK_BINARY", "railpack", "")
 	stringFlag(fs, &cfg.RailpackFrontendImage, "railpack-frontend-image", "BUILDER_RAILPACK_FRONTEND_IMAGE", "ghcr.io/railwayapp/railpack-frontend:latest", "")
-	stringFlag(fs, &cfg.Executor, "executor", "BUILDER_EXECUTOR", "development", "build executor backend; only development exists until 2.4b")
+	stringFlag(fs, &cfg.Executor, "executor", "BUILDER_EXECUTOR", "", "build executor backend: development or hardened; empty defaults by profile")
+	stringFlag(fs, &cfg.Sandbox.Backend, "sandbox-backend", "BUILDER_SANDBOX_BACKEND", "containerd", "hardened executor sandbox backend")
+	stringFlag(fs, &cfg.Sandbox.Socket, "sandbox-socket", "BUILDER_SANDBOX_SOCKET", "/run/containerd/containerd.sock", "containerd socket for build sandboxes")
+	stringFlag(fs, &cfg.Sandbox.Namespace, "sandbox-namespace", "BUILDER_SANDBOX_NAMESPACE", "builder", "containerd namespace for build sandboxes")
+	stringFlag(fs, &cfg.Sandbox.Image, "sandbox-image", "BUILDER_SANDBOX_IMAGE", "", "sandbox image carrying the build toolchain (required for hardened)")
+	stringFlag(fs, &cfg.Sandbox.Runtime, "sandbox-runtime", "BUILDER_SANDBOX_RUNTIME", "io.containerd.runc.v2", "OCI runtime for build sandboxes")
+	stringFlag(fs, &cfg.Sandbox.Snapshotter, "sandbox-snapshotter", "BUILDER_SANDBOX_SNAPSHOTTER", "overlayfs", "containerd snapshotter for sandbox roots")
+	stringFlag(fs, &cfg.Sandbox.CNIPluginDir, "sandbox-cni-plugin-dir", "BUILDER_SANDBOX_CNI_PLUGIN_DIR", "/usr/lib/cni", "CNI plugin directory for build networking")
+	stringFlag(fs, &cfg.Sandbox.CNIConfDir, "sandbox-cni-conf-dir", "BUILDER_SANDBOX_CNI_CONF_DIR", "/etc/cni/net.d", "CNI configuration directory for build networking")
+	stringFlag(fs, &cfg.Sandbox.CNINetwork, "sandbox-cni-network", "BUILDER_SANDBOX_CNI_NETWORK", "build-sandbox", "CNI network name for build sandboxes")
+	stringFlag(fs, &cfg.Sandbox.BuildkitdBinary, "sandbox-buildkitd-binary", "BUILDER_SANDBOX_BUILDKITD_BINARY", "buildkitd", "per-execution BuildKit daemon binary")
+	stringFlag(fs, &nameservers, "sandbox-nameservers", "BUILDER_SANDBOX_NAMESERVERS", "", "comma-separated sandbox resolver IPs; empty inherits host non-loopback resolvers")
 	intFlag(fs, &cfg.Limits.TimeoutSeconds, "build-timeout-seconds", "BUILDER_BUILD_TIMEOUT_SECONDS", 1800, "")
 	int64Flag(fs, &cfg.Limits.MemoryBytes, "build-memory-bytes", "BUILDER_BUILD_MEMORY_BYTES", 8<<30, "")
 	int64Flag(fs, &cfg.Limits.CPUSeconds, "build-cpu-seconds", "BUILDER_BUILD_CPU_SECONDS", 3600, "")
@@ -50,6 +62,9 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	cfg.Profile = normalized
 	if cidrs := splitCommaList(deniedCIDRs); len(cidrs) > 0 {
 		cfg.Network.DeniedCIDRs = cidrs
+	}
+	if servers := splitCommaList(nameservers); len(servers) > 0 {
+		cfg.Sandbox.Nameservers = servers
 	}
 	if err := config.FinalizeBuilder(&cfg); err != nil {
 		return config.BuilderConfig{}, fmt.Errorf("bootstrap builder: %w", err)

@@ -303,6 +303,7 @@ type BuilderConfig struct {
 	RailpackFrontendImage    string
 	Limits                   BuilderLimitsConfig
 	Network                  BuilderNetworkConfig
+	Sandbox                  BuilderSandboxConfig
 	CleanupWorkDir           bool
 }
 
@@ -324,6 +325,50 @@ type BuilderNetworkConfig struct {
 	// current behavior of allowing dependency fetches during builds.
 	DenyGeneralEgress bool
 	DeniedCIDRs       []string
+}
+
+// BuilderSandboxConfig selects the hardened executor's sandbox
+// backend. The development executor ignores it. Only the containerd
+// backend exists today; the operator selects the sandbox technology
+// through Runtime (the default runc runtime, gVisor's runsc, Kata, or
+// another installed OCI runtime) and the build CNI network. Unknown
+// backends fail validation: execution never silently falls back to a
+// weaker backend.
+type BuilderSandboxConfig struct {
+	// Backend is the sandbox backend. Only "containerd" exists.
+	Backend string
+	// Socket is the containerd socket the builder dials.
+	Socket string
+	// Namespace is the containerd namespace holding build sandboxes.
+	// It must not be the workload namespace: build sandboxes are
+	// one-shot and carry no mesh identity.
+	Namespace string
+	// Image is the sandbox image. It must provide the build
+	// toolchain (buildctl, railpack when railpack builds run); the
+	// executor bind-mounts the execution workspace at /build. There
+	// is no default: the operator chooses the image builds run in.
+	Image string
+	// Runtime is the OCI runtime for build sandboxes.
+	Runtime string
+	// Snapshotter is the containerd snapshotter for sandbox roots.
+	Snapshotter string
+	// CNIPluginDir and CNIConfDir locate the CNI plugins and the
+	// build network configuration. The conf dir must contain exactly
+	// the CNINetwork: build sandboxes never join the workload mesh.
+	CNIPluginDir string
+	CNIConfDir   string
+	CNINetwork   string
+	// Nameservers overrides the resolver configuration rendered
+	// into sandboxes. Empty inherits the builder host's
+	// non-loopback nameservers; loopback entries never survive the
+	// copy because a private network namespace cannot reach the
+	// host's loopback resolver.
+	Nameservers []string
+	// BuildkitdBinary is the BuildKit daemon the hardened executor
+	// starts per execution. Each build gets a fresh daemon with an
+	// isolated root and socket so sibling builds share no cache,
+	// worker, or session state.
+	BuildkitdBinary string
 }
 
 type MeshRuntimeConfig struct {
