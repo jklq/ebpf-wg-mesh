@@ -40,18 +40,6 @@ Prompt:
 Agents and builders report version and capabilities; the control plane rejects unsupported combinations with actionable status rather than corrupting desired state. Database and protobuf cutovers are explicit convert-or-refuse steps with a backup, not dual-shape compatibility windows. Exercise eBPF program replacement without dropping fail-closed policy. Do not require one-version-back wire compatibility or SBOM-signed release trains in this item.
 ```
 
-## 7.4 Support boundaries and readiness checks
-
-Was: 9.8
-Status: open
-Depends on: 3.11 for backup freshness.
-
-Prompt:
-
-```text
-Create a machine-checkable production readiness report for an installation and a human checklist for a project. Installation checks must cover replica count, dependency durability, TLS and key provider, backup freshness and restore drill, Envoy convergence, capacity headroom, VictoriaMetrics/ClickHouse retention, object storage, registry trust, on-call routes, supported versions, and unsafe development flags. Project checks must cover replicas, health probes, restart policy, resource limits, graceful shutdown, domains, and recent successful deployment. Clearly document unsupported behavior and failure domains at each release gate. The console must never imply high availability merely because a service is currently healthy. Omit spend-limit and volume-backup checks until those products exist.
-```
-
 ## 7.5 Continuous backup and disaster-recovery drills
 
 Was: 9.4

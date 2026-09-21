@@ -32,15 +32,15 @@ Model versioned plans and prices separately from measured usage so a price chang
 
 Was: 6.7
 Status: open
-Depends on: 3.3, 3.8, 3.18, 3.19
+Depends on: 3.3, 3.18, 3.19
 
 Prompt:
 
 ```text
-Protect shared infrastructure from abusive or accidentally pathological tenants. Add per-actor API token buckets, expensive-query budgets, build and deployment churn limits, log and metrics cardinality limits, webhook destination controls, outbound connection and bandwidth policies, registry request limits, and configurable account-risk holds. Limits must be hierarchical, observable, machine-readable, and degrade the offending scope without destabilizing other tenants. Security-sensitive limits must not be user-increasable; commercial limits may have audited operator overrides. Avoid brittle content classification inside the platform: integrate external fraud or abuse review only through a narrow status provider and retain human override. Provide a customer-visible reason and appeal/support reference without revealing detection internals. Load-test noisy-neighbor isolation and verify that one workspace cannot exhaust control-plane workers, ClickHouse, VictoriaMetrics, builders, registry, or ingress.
+Protect shared infrastructure from abusive or accidentally pathological tenants. Add per-actor API token buckets, expensive-query budgets, build and deployment churn limits, log rate and metrics cardinality limits, webhook destination controls, registry request limits, SMTP/abuse-sensitive outbound port policy, and configurable account-risk holds. Limits must be hierarchical, observable, machine-readable, and degrade the offending scope without destabilizing other tenants. Security-sensitive limits must not be user-increasable; commercial limits may have audited operator overrides. Avoid brittle content classification inside the platform: integrate external fraud or abuse review only through a narrow status provider and retain human override. Provide a customer-visible reason and appeal/support reference without revealing detection internals. Load-test noisy-neighbor isolation and verify that one workspace cannot exhaust control-plane workers, ClickHouse, VictoriaMetrics, builders, registry, or ingress.
 ```
 
-## 5.4 Account export, retention, and closure
+## 5.4 Account retention and closure
 
 Was: 6.8
 Status: open
@@ -49,21 +49,7 @@ Depends on: 1.6, 3.4, 5.1
 Prompt:
 
 ```text
-Define customer data categories and retention for identity, configuration, source snapshots, images, secrets, logs, metrics, usage ledger, invoices, audit events, backups, and support artifacts. Add an authorized export job that produces a manifest and portable copies of customer-owned configuration and data that can be exported safely, with secret inclusion requiring a separate high-assurance flow. Account closure must disable new work, settle or preserve required billing records, revoke credentials, tombstone resources, honor recovery grace, and then delete external artifacts through idempotent jobs while retaining only legally required records. Expose progress and failures to operators and the customer. Make retention configurable by plan where appropriate but never shorter than safety or billing invariants. Test cancellation during grace, export while resources change, partial provider deletion, and proof that closed tenants disappear from product queries.
-```
-
-## 5.5 Operator and support access
-
-Was: 6.9
-Status: open
-Depends on: 3.1, 3.4, 3.10
-
-Ship the invariant, not the approval workflow. Multi-approver break-glass is something a customer contract asks for; it is not something you need before there are customers.
-
-Prompt:
-
-```text
-Separate ordinary operator health access from exceptional customer-resource support access. Operators diagnose aggregate platform state without automatically reading customer logs, configuration, source metadata, or secrets. Any support access to a customer scope requires an eligible operator role, a recorded reason, a bounded duration with automatic expiry, least-privilege capability, and an audit event naming the true operator actor. Secret plaintext stays unavailable to support access entirely. Do not implement silent impersonation: all downstream API and query calls retain the true operator actor plus the delegated customer scope. Add step-up re-authentication for support session creation and for sensitive production actions generally — the piece deliberately left out of 3.2. Support-session revocation is required; a second-approver workflow, immutable audit export, and customer-visible support notifications are not, and should be added when a customer contract requires them rather than in advance. Test expiry, revocation, attempted scope expansion, secret access refusal, and audit redaction.
+Define customer data categories and retention for identity, configuration, source snapshots, images, secrets, logs, metrics, usage ledger, invoices, audit events, backups, and support artifacts. Account closure must disable new work, settle or preserve required billing records, revoke credentials, tombstone resources, honor recovery grace, and then delete external artifacts through idempotent jobs while retaining only legally required records. Expose progress and failures to operators and the customer. Make retention configurable by plan where appropriate but never shorter than safety or billing invariants. Test cancellation during grace, partial provider deletion, and proof that closed tenants disappear from product queries.
 ```
 
 

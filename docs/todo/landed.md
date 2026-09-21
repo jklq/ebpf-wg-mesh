@@ -22,7 +22,7 @@ Desired replica count, independent allocation identities, scheduler placement, s
 
 ## Zero-downtime rolling replacement (1.5)
 
-New allocations alongside the serving generation, ingress switch, graceful drain. Volume-backed services still reject overlap until [6.4](06-stateful.md#64-fenced-stateful-failover).
+New allocations alongside the serving generation, ingress switch, graceful drain. Volume-backed services reject overlap: a volume redeploy takes downtime, and replicas cannot be used with volumes.
 
 ## Deployment actions (1.6)
 
@@ -30,7 +30,7 @@ Restart, exact redeploy, rollback, cancel, remove, retry. Audit events wait for 
 
 ## Agent fleet lifecycle (1.7)
 
-Enroll / cordon / drain / retire, failure-domain placement, credential revocation. Stateful drain waits for [6.4](06-stateful.md#64-fenced-stateful-failover).
+Enroll / cordon / drain / retire, failure-domain placement, credential revocation. Volume-backed allocations stay on their node through drain; they are not failed over to another node.
 
 ## Production OCI sandbox (1.8)
 
@@ -75,7 +75,7 @@ Surface crash evidence on the service and allocation views from persisted restar
 
 Was: 0.2
 Status: done
-Depends on: 1.3 so status labels can distinguish unhealthy from not-yet-ready.
+Depends on: restart observation so status labels can distinguish crashed from not-yet-ready.
 
 Prompt:
 
