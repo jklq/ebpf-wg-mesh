@@ -9,7 +9,7 @@ import (
 
 func (s *persistence) requireVolumeQuerier(ctx context.Context, q ServiceQueryer, environmentID, volumeName string) error {
 	var one int
-	err := q.QueryRowContext(ctx, `SELECT 1 FROM volumes WHERE environment_id = $1 AND name = $2`, environmentID, volumeName).Scan(&one)
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM volumes WHERE environment_id = $1 AND name = $2 AND deleted_at IS NULL`, environmentID, volumeName).Scan(&one)
 	switch {
 	case err == nil:
 		return nil

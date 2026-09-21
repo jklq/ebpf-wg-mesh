@@ -74,7 +74,8 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
-	store, err := openPersistence(cfg.Database, cfg.Mesh)
+	store, err := openPersistence(cfg.Database, cfg.Mesh,
+		WithDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays)*24*time.Hour))
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +402,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { errCh <- s.buildLeaseRepairLoop(ctx) }()
 	go func() { errCh <- s.journalCompactionLoop(ctx) }()
 	go func() { s.sourceArchiveRetentionLoop(ctx); errCh <- nil }()
+	go func() { errCh <- s.deletionGC(ctx) }()
 	select {
 	case <-ctx.Done():
 		return nil
@@ -449,6 +451,11 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 			repair()
 		}
 	}
+}
+
+func (s *Server) deletionGC(ctx context.Context) error {
+	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
+	return gc.Run(ctx)
 }
 
 func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {

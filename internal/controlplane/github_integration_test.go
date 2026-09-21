@@ -42,7 +42,7 @@ func TestProjectGitHubRepositoryLinksAreProjectScoped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 2 {
 		t.Fatalf("list projects: %v (%d)", err, len(projects))
 	}
@@ -84,7 +84,7 @@ func bootstrapProjectAndAgent(t *testing.T, store *persistence, ctx context.Cont
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

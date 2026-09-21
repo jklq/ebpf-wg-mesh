@@ -87,6 +87,7 @@ import {
 	LinkGitHubRepositoryRequestSchema,
 	ListDomainBindingsRequestSchema,
 	ListEnvironmentsRequestSchema,
+	ListProjectsRequestSchema,
 	ListServiceDeploymentsRequestSchema,
 	type ListServiceDeploymentsResponse,
 	type ListServiceLogsRequest,
@@ -851,6 +852,10 @@ export function toEmptyRequest() {
 
 export function toCreateProjectRequest(name: string) {
 	return create(CreateProjectRequestSchema, { name });
+}
+
+export function toListProjectsRequest(includeDeleted = false) {
+	return create(ListProjectsRequestSchema, { includeDeleted });
 }
 
 export function toListEnvironmentsRequest(projectId: string) {

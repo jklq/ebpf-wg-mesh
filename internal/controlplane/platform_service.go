@@ -25,7 +25,7 @@ type PlatformService struct {
 	platformv1.UnimplementedPlatformServiceServer
 	store                platformStore
 	domains              *routing.Domains
-	environments         *EnvironmentOperations
+	catalog              *CatalogOperations
 	delivery             platformDelivery
 	logStore             serviceLogStore
 	emitter              *logs.LogEmitter
@@ -39,16 +39,16 @@ type PlatformService struct {
 }
 
 type platformStore interface {
-	environmentStore
+	catalogStore
 	routing.Store
 	createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
-	listProjects(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error)
+	listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
 	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
-	ListServices(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ServiceRecord, error)
+	ListServices(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
-	listVolumes(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.VolumeRecord, error)
-	deleteVolume(ctx context.Context, user authz.User, volumeID string) error
+	listVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
+	deleteVolume(ctx context.Context, user authz.User, volumeID, confirmation string) error
 	ServiceStatus(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
 	ListServiceDeployments(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
 	ListAllocationsByServiceID(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error)
@@ -64,6 +64,7 @@ type platformDelivery interface {
 	UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
 	DiscardServiceChanges(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	DeleteService(ctx context.Context, user authz.User, serviceID string) error
+	RestoreService(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
 	ScaleService(ctx context.Context, user authz.User, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
 	LiveAllocationsByEnvironment(environmentID string) (map[string][]deliverycore.AllocationRecord, error)
 	SealServiceSecret(ctx context.Context, user authz.User, serviceID, name string, value []byte) (int64, error)
@@ -72,13 +73,20 @@ type platformDelivery interface {
 	livePositionReader
 }
 
-type environmentStore interface {
-	listEnvironments(ctx context.Context, user authz.User, projectID string) ([]deliverycore.EnvironmentRecord, error)
+type catalogStore interface {
+	listEnvironments(ctx context.Context, user authz.User, projectID string, includeDeleted bool) ([]deliverycore.EnvironmentRecord, error)
 	EnvironmentByID(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
 	createEnvironment(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error)
 	renameEnvironment(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error)
 	updateEnvironmentAutoDeploy(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error)
-	deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error)
+	deleteEnvironment(ctx context.Context, user authz.User, environmentID, confirmation string) ([]string, error)
+	restoreEnvironment(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
+	deleteProject(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error)
+	restoreProject(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
+	previewProjectDeletion(ctx context.Context, user authz.User, projectID string) (DeletionPreview, error)
+	previewEnvironmentDeletion(ctx context.Context, user authz.User, environmentID string) (DeletionPreview, error)
+	previewVolumeDeletion(ctx context.Context, user authz.User, volumeID string) (DeletionPreview, error)
+	AgentIDs(ctx context.Context) ([]string, error)
 }
 
 // authorizedUser resolves the delegated dashboard user into the authorization
@@ -197,7 +205,7 @@ func NewPlatformService(store platformStore, notifier deliverycore.PlatformNotif
 		}
 	}
 	service.domains = routing.NewDomains(store, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
-	service.environments = NewEnvironmentOperations(store, notifier, ingress)
+	service.catalog = NewCatalogOperations(store, notifier, ingress)
 	return service
 }
 
@@ -214,17 +222,20 @@ func (s *PlatformService) CreateProject(ctx context.Context, req *platformv1.Cre
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
+		if errors.Is(err, deliverycore.ErrProjectDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "create project: %v", err)
+		}
 		return nil, writeAccessError("create project", err)
 	}
 	return toProtoProject(project), nil
 }
 
-func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListProjectsResponse, error) {
+func (s *PlatformService) ListProjects(ctx context.Context, req *platformv1.ListProjectsRequest) (*platformv1.ListProjectsResponse, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listProjects(ctx, user)
+	items, err := s.store.listProjects(ctx, user, req.GetIncludeDeleted())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list projects: %v", err)
 	}
@@ -233,6 +244,79 @@ func (s *PlatformService) ListProjects(ctx context.Context, _ *emptypb.Empty) (*
 		resp.Projects = append(resp.Projects, toProtoProject(item))
 	}
 	return resp, nil
+}
+
+func (s *PlatformService) DeleteProject(ctx context.Context, req *platformv1.DeleteProjectRequest) (*emptypb.Empty, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetProjectId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	result, err := s.catalog.DeleteProject(ctx, req)
+	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+		return nil, mapped
+	}
+	return result, err
+}
+
+func (s *PlatformService) RestoreProject(ctx context.Context, req *platformv1.RestoreProjectRequest) (*platformv1.Project, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetProjectId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	result, err := s.catalog.RestoreProject(ctx, req.GetProjectId())
+	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+		return nil, mapped
+	}
+	return result, err
+}
+
+func (s *PlatformService) PreviewProjectDeletion(ctx context.Context, req *platformv1.PreviewProjectDeletionRequest) (*platformv1.DeletionPreview, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetProjectId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	preview, err := s.store.previewProjectDeletion(ctx, user, req.GetProjectId())
+	if err != nil {
+		return nil, writeAccessError("preview project deletion", err)
+	}
+	return toProtoDeletionPreview(preview), nil
+}
+
+func (s *PlatformService) PreviewEnvironmentDeletion(ctx context.Context, req *platformv1.PreviewEnvironmentDeletionRequest) (*platformv1.DeletionPreview, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetEnvironmentId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "environment_id is required")
+	}
+	preview, err := s.store.previewEnvironmentDeletion(ctx, user, req.GetEnvironmentId())
+	if err != nil {
+		return nil, writeAccessError("preview environment deletion", err)
+	}
+	return toProtoDeletionPreview(preview), nil
+}
+
+func (s *PlatformService) PreviewVolumeDeletion(ctx context.Context, req *platformv1.PreviewVolumeDeletionRequest) (*platformv1.DeletionPreview, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetVolumeId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
+	}
+	preview, err := s.store.previewVolumeDeletion(ctx, user, req.GetVolumeId())
+	if err != nil {
+		return nil, writeAccessError("preview volume deletion", err)
+	}
+	return toProtoDeletionPreview(preview), nil
 }
 
 func (s *PlatformService) GetProject(ctx context.Context, req *platformv1.GetProjectRequest) (*platformv1.Project, error) {
@@ -252,7 +336,7 @@ func (s *PlatformService) ListEnvironments(ctx context.Context, req *platformv1.
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listEnvironments(ctx, user, req.GetProjectId())
+	items, err := s.store.listEnvironments(ctx, user, req.GetProjectId(), req.GetIncludeDeleted())
 	if err != nil {
 		return nil, writeAccessError("list environments", err)
 	}
@@ -288,6 +372,12 @@ func (s *PlatformService) CreateEnvironment(ctx context.Context, req *platformv1
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
+		if errors.Is(err, deliverycore.ErrEnvironmentAlreadyExists) {
+			return nil, status.Errorf(codes.AlreadyExists, "create environment: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrProjectDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "create environment: %v", err)
+		}
 		return nil, writeAccessError("create environment", err)
 	}
 	return toProtoEnvironment(rec), nil
@@ -305,6 +395,9 @@ func (s *PlatformService) DuplicateEnvironment(ctx context.Context, req *platfor
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "duplicate environment: %v", err)
 		}
 		return nil, writeAccessError("duplicate environment", err)
 	}
@@ -324,6 +417,9 @@ func (s *PlatformService) RenameEnvironment(ctx context.Context, req *platformv1
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
+		if errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "rename environment: %v", err)
+		}
 		return nil, writeAccessError("rename environment", err)
 	}
 	return toProtoEnvironment(rec), nil
@@ -342,16 +438,33 @@ func (s *PlatformService) UpdateEnvironmentAutoDeploy(ctx context.Context, req *
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
+		if errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "update environment auto-deploy: %v", err)
+		}
 		return nil, writeAccessError("update environment auto-deploy", err)
 	}
 	return toProtoEnvironment(rec), nil
+}
+
+func (s *PlatformService) RestoreEnvironment(ctx context.Context, req *platformv1.RestoreEnvironmentRequest) (*platformv1.Environment, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetEnvironmentId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "environment_id is required")
+	}
+	result, err := s.catalog.RestoreEnvironment(ctx, req.GetEnvironmentId())
+	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+		return nil, mapped
+	}
+	return result, err
 }
 
 func (s *PlatformService) DeleteEnvironment(ctx context.Context, req *platformv1.DeleteEnvironmentRequest) (*emptypb.Empty, error) {
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
-	result, err := s.environments.DeleteEnvironment(ctx, req)
+	result, err := s.catalog.DeleteEnvironment(ctx, req)
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return nil, mapped
 	}

@@ -35,8 +35,9 @@ type buildsPersistence struct {
 }
 type catalogPersistence struct {
 	*database
-	authz *authz.Authorizer
-	reads *readsPersistence
+	authz  *authz.Authorizer
+	reads  *readsPersistence
+	source deliverycore.SourceStore
 }
 type eventsPersistence struct {
 	*database
@@ -79,9 +80,10 @@ func newPersistence(db *database) *persistence {
 		if err != nil {
 			return source.Service{}, err
 		}
-		return source.Service{ID: rec.ID, ProjectID: rec.ProjectID, Spec: rec.Spec, SpecRevision: rec.SpecRevision}, nil
+		return source.Service{ID: rec.ID, ProjectID: rec.ProjectID, Spec: rec.Spec, SpecRevision: rec.SpecRevision, Deleted: rec.Deletion != nil}, nil
 	})
 	p.catalog.reads = p.reads
+	p.catalog.source = p.source
 	p.fleet.reads = p.reads
 	return p
 }

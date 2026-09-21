@@ -141,6 +141,9 @@ type Service struct {
 	ProjectID    string
 	Spec         *platformv1.ServiceSpec
 	SpecRevision int64
+	// Deleted marks a tombstoned service (or one under a tombstoned
+	// ancestor). The coordinator drops work for deleted services.
+	Deleted bool
 }
 
 type QueuedBuild struct {

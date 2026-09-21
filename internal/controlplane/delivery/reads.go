@@ -25,12 +25,12 @@ func (r *readModel) ListServiceDeployments(ctx context.Context, user authz.User,
 	return r.store.listServiceDeployments(ctx, scope, limit)
 }
 
-func (r *readModel) ListDomainBindings(ctx context.Context, user authz.User, serviceID string) ([]DomainBindingRecord, error) {
+func (r *readModel) ListDomainBindings(ctx context.Context, user authz.User, serviceID string, includeDeleted bool) ([]DomainBindingRecord, error) {
 	scope, err := r.store.authz.AuthorizeService(ctx, user, serviceID, authz.Read)
 	if err != nil {
 		return nil, err
 	}
-	return r.store.listDomainBindings(ctx, scope)
+	return r.store.listDomainBindings(ctx, scope, includeDeleted)
 }
 func (r *readModel) ServiceStatus(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, []AllocationRecord, error) {
 	scope, err := r.store.authz.AuthorizeService(ctx, user, serviceID, authz.Read)
@@ -52,12 +52,12 @@ func (r *readModel) ListAllocationsByServiceID(ctx context.Context, serviceID st
 	return r.store.listAllocationsByServiceID(ctx, serviceID)
 }
 
-func (r *readModel) ListServices(ctx context.Context, user authz.User, environmentID string) ([]ServiceRecord, error) {
+func (r *readModel) ListServices(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]ServiceRecord, error) {
 	scope, err := r.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Read)
 	if err != nil {
 		return nil, err
 	}
-	return r.store.listServices(ctx, scope)
+	return r.store.listServices(ctx, scope, includeDeleted)
 }
 func (r *readModel) ServiceByID(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, error) {
 	scope, err := r.store.authz.AuthorizeService(ctx, user, serviceID, authz.Read)

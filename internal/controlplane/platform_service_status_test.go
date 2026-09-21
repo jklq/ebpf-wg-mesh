@@ -64,7 +64,7 @@ func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
 
 	var allocationReads atomic.Int32
 	store := &fakePlatformStore{
-		listServicesFn: func(context.Context, authz.User, string) ([]deliverycore.ServiceRecord, error) {
+		listServicesFn: func(context.Context, authz.User, string, bool) ([]deliverycore.ServiceRecord, error) {
 			return []deliverycore.ServiceRecord{
 				{ID: "service-a", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
 				{ID: "service-b", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},

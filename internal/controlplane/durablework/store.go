@@ -126,6 +126,21 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, params EnqueueParams)
 	return enqueued, nil
 }
 
+// CancelPendingForResourceTx deletes pending records for one resource inside
+// the caller's transaction. Deletion quiesce uses it to stop new work for a
+// tombstoned resource atomically with the tombstone write. Leased records
+// are left alone: their owners finish into guards that drop tombstoned
+// resources, and deleting a leased row would strand the owner on a lease it
+// can never commit. Terminal records are history and are never cancelled.
+func (s *Store) CancelPendingForResourceTx(ctx context.Context, tx *sql.Tx, resourceType, resourceID string) error {
+	_, err := tx.ExecContext(ctx,
+		`DELETE FROM durable_work_items
+		  WHERE resource_type = $1 AND resource_id = $2 AND state = $3`,
+		resourceType, resourceID, StatePending,
+	)
+	return err
+}
+
 // maxClaimSweeps bounds how many exhausted records one Claim dead-letters
 // before either leasing a live record or reporting no work.
 const maxClaimSweeps = 8

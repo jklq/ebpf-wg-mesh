@@ -79,11 +79,7 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 
 ### Next: the running service is real
 
-| # | Item | Size | File |
-| --- | --- | --- | --- |
-| 1.8 | Safe deletion (0.3) | M | [01](01-running-service.md#18-safe-deletion) |
-
-1.1, 1.4, 1.5, 1.6, 1.7, 1.9, and 1.11 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), [landed.md](landed.md#15-truthful-time-and-status), [landed.md](landed.md#16-railpack-as-the-default-builder), [landed.md](landed.md#17-auto-deploy-onoff-per-environment), [landed.md](landed.md#19-credentials-out-of-process-arguments), and [landed.md](landed.md#111-bounded-ephemeral-disk). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-sealed-secrets).
+Done. 1.1, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, and 1.11 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), [landed.md](landed.md#15-truthful-time-and-status), [landed.md](landed.md#16-railpack-as-the-default-builder), [landed.md](landed.md#17-auto-deploy-onoff-per-environment), [landed.md](landed.md#18-safe-deletion), [landed.md](landed.md#19-credentials-out-of-process-arguments), and [landed.md](landed.md#111-bounded-ephemeral-disk). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-sealed-secrets).
 
 ### Then: host untrusted code without a shared disk
 

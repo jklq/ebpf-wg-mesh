@@ -60,7 +60,10 @@ func (s *PlatformService) CreateService(ctx context.Context, req *platformv1.Cre
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) {
+		if errors.Is(err, deliverycore.ErrServiceAlreadyExists) {
+			return nil, status.Errorf(codes.AlreadyExists, "create service: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
 		return nil, writeAccessError("create service", err)
@@ -146,7 +149,7 @@ func (s *PlatformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "update service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) {
+		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "update service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "update service: %v", err)
@@ -188,7 +191,8 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 		case errors.Is(err, deliverycore.ErrDeploymentActionInvalid), errors.Is(err, deliverycore.ErrDeploymentStale),
 			errors.Is(err, deliverycore.ErrInvalidReplicaCount), errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported),
 			errors.Is(err, deliverycore.ErrRolloutInProgress), errors.Is(err, deliverycore.ErrVolumeRollingUnsupported),
-			errors.Is(err, deliverycore.ErrSealedNameConflict):
+			errors.Is(err, deliverycore.ErrSealedNameConflict),
+			errors.Is(err, deliverycore.ErrServiceDeleted):
 			return nil, status.Errorf(codes.FailedPrecondition, "deployment action: %v", err)
 		default:
 			return nil, status.Errorf(codes.Internal, "deployment action: %v", err)
@@ -229,7 +233,7 @@ func (s *PlatformService) ScaleService(ctx context.Context, req *platformv1.Scal
 		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "scale service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrInvalidReplicaCount) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) {
+		if errors.Is(err, deliverycore.ErrInvalidReplicaCount) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "scale service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "scale service: %v", err)
@@ -266,6 +270,9 @@ func (s *PlatformService) DiscardServiceChanges(ctx context.Context, req *platfo
 		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "discard service changes: %v", err)
 		}
+		if errors.Is(err, deliverycore.ErrServiceDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "discard service changes: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "discard service changes: %v", err)
 	}
 	service, err = s.decorateServiceRecord(ctx, service)
@@ -296,6 +303,37 @@ func (s *PlatformService) DeleteService(ctx context.Context, req *platformv1.Del
 		return nil, writeAccessError("delete service", err)
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func (s *PlatformService) RestoreService(ctx context.Context, req *platformv1.RestoreServiceRequest) (*platformv1.Service, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetServiceId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_id is required")
+	}
+	service, err := s.delivery.RestoreService(ctx, user, req.GetServiceId())
+	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
+		if errors.Is(err, deliverycore.ErrAncestorDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "restore service: %v", err)
+		}
+		return nil, writeAccessError("restore service", err)
+	}
+	service, err = s.decorateServiceRecord(ctx, service)
+	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
+		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+	}
+	return toProtoService(service), nil
 }
 
 func (s *PlatformService) GetService(ctx context.Context, req *platformv1.GetServiceRequest) (*platformv1.Service, error) {
@@ -342,7 +380,7 @@ func (s *PlatformService) ListServices(ctx context.Context, req *platformv1.List
 	if !changed {
 		return &platformv1.ListServicesResponse{Index: index, NotModified: true}, nil
 	}
-	items, err := s.store.ListServices(ctx, user, req.GetEnvironmentId())
+	items, err := s.store.ListServices(ctx, user, req.GetEnvironmentId(), req.GetIncludeDeleted())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped

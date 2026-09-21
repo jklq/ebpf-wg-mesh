@@ -96,9 +96,11 @@ func (s *SQLStore) SourceBindingsForGitHubRepositoryAndRef(ctx context.Context, 
 		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
 		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
 		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id
 		  WHERE sb.provider = 'github'
 		    AND sb.provider_repository_external_id = $1
 		    AND sb.tracked_ref = $2
+		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL
 		  ORDER BY sb.created_at ASC, sb.id ASC`,
 		strings.TrimSpace(repositoryExternalID), strings.TrimSpace(trackedRef),
 	)
@@ -148,8 +150,10 @@ func (s *SQLStore) SourceBindingsForProviderScope(ctx context.Context, provider,
 		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
 		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
 		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id
 		  WHERE sb.provider = $1
 		    AND sb.provider_scope_external_id = $2
+		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL
 		  ORDER BY sb.created_at ASC, sb.id ASC`,
 		strings.TrimSpace(provider), strings.TrimSpace(providerScopeExternalID),
 	)
@@ -445,6 +449,7 @@ func (s *SQLStore) ServiceHasUnbuiltSourceRevisionTx(ctx context.Context, q Quer
 func (s *SQLStore) ServicesWithUnbuiltSourceRevisionsTx(ctx context.Context, q Querier, environmentID string) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT s.id FROM services s
 		WHERE s.environment_id = $1
+		AND s.deleted_at IS NULL
 		AND EXISTS (
 			SELECT 1 FROM (
 				SELECT sr.id FROM source_revisions sr

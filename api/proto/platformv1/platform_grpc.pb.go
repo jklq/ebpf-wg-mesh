@@ -23,6 +23,9 @@ const (
 	PlatformService_CreateProject_FullMethodName               = "/platform.v1.PlatformService/CreateProject"
 	PlatformService_ListProjects_FullMethodName                = "/platform.v1.PlatformService/ListProjects"
 	PlatformService_GetProject_FullMethodName                  = "/platform.v1.PlatformService/GetProject"
+	PlatformService_DeleteProject_FullMethodName               = "/platform.v1.PlatformService/DeleteProject"
+	PlatformService_RestoreProject_FullMethodName              = "/platform.v1.PlatformService/RestoreProject"
+	PlatformService_PreviewProjectDeletion_FullMethodName      = "/platform.v1.PlatformService/PreviewProjectDeletion"
 	PlatformService_ListEnvironments_FullMethodName            = "/platform.v1.PlatformService/ListEnvironments"
 	PlatformService_GetEnvironment_FullMethodName              = "/platform.v1.PlatformService/GetEnvironment"
 	PlatformService_CreateEnvironment_FullMethodName           = "/platform.v1.PlatformService/CreateEnvironment"
@@ -30,6 +33,8 @@ const (
 	PlatformService_RenameEnvironment_FullMethodName           = "/platform.v1.PlatformService/RenameEnvironment"
 	PlatformService_UpdateEnvironmentAutoDeploy_FullMethodName = "/platform.v1.PlatformService/UpdateEnvironmentAutoDeploy"
 	PlatformService_DeleteEnvironment_FullMethodName           = "/platform.v1.PlatformService/DeleteEnvironment"
+	PlatformService_RestoreEnvironment_FullMethodName          = "/platform.v1.PlatformService/RestoreEnvironment"
+	PlatformService_PreviewEnvironmentDeletion_FullMethodName  = "/platform.v1.PlatformService/PreviewEnvironmentDeletion"
 	PlatformService_ReleaseEnvironment_FullMethodName          = "/platform.v1.PlatformService/ReleaseEnvironment"
 	PlatformService_LinkGitHubRepository_FullMethodName        = "/platform.v1.PlatformService/LinkGitHubRepository"
 	PlatformService_InspectSource_FullMethodName               = "/platform.v1.PlatformService/InspectSource"
@@ -39,6 +44,7 @@ const (
 	PlatformService_ApplyDeploymentAction_FullMethodName       = "/platform.v1.PlatformService/ApplyDeploymentAction"
 	PlatformService_DiscardServiceChanges_FullMethodName       = "/platform.v1.PlatformService/DiscardServiceChanges"
 	PlatformService_DeleteService_FullMethodName               = "/platform.v1.PlatformService/DeleteService"
+	PlatformService_RestoreService_FullMethodName              = "/platform.v1.PlatformService/RestoreService"
 	PlatformService_GetService_FullMethodName                  = "/platform.v1.PlatformService/GetService"
 	PlatformService_ListServices_FullMethodName                = "/platform.v1.PlatformService/ListServices"
 	PlatformService_SealServiceSecret_FullMethodName           = "/platform.v1.PlatformService/SealServiceSecret"
@@ -46,6 +52,7 @@ const (
 	PlatformService_ListServiceSecrets_FullMethodName          = "/platform.v1.PlatformService/ListServiceSecrets"
 	PlatformService_CreateVolume_FullMethodName                = "/platform.v1.PlatformService/CreateVolume"
 	PlatformService_DeleteVolume_FullMethodName                = "/platform.v1.PlatformService/DeleteVolume"
+	PlatformService_PreviewVolumeDeletion_FullMethodName       = "/platform.v1.PlatformService/PreviewVolumeDeletion"
 	PlatformService_ListVolumes_FullMethodName                 = "/platform.v1.PlatformService/ListVolumes"
 	PlatformService_CreateDomainBinding_FullMethodName         = "/platform.v1.PlatformService/CreateDomainBinding"
 	PlatformService_GenerateDomainBinding_FullMethodName       = "/platform.v1.PlatformService/GenerateDomainBinding"
@@ -53,6 +60,7 @@ const (
 	PlatformService_ListDomainBindings_FullMethodName          = "/platform.v1.PlatformService/ListDomainBindings"
 	PlatformService_UpdateDomainBinding_FullMethodName         = "/platform.v1.PlatformService/UpdateDomainBinding"
 	PlatformService_DeleteDomainBinding_FullMethodName         = "/platform.v1.PlatformService/DeleteDomainBinding"
+	PlatformService_RestoreDomainBinding_FullMethodName        = "/platform.v1.PlatformService/RestoreDomainBinding"
 	PlatformService_GetServiceStatus_FullMethodName            = "/platform.v1.PlatformService/GetServiceStatus"
 	PlatformService_ListServiceLogs_FullMethodName             = "/platform.v1.PlatformService/ListServiceLogs"
 	PlatformService_ListServiceDeployments_FullMethodName      = "/platform.v1.PlatformService/ListServiceDeployments"
@@ -64,8 +72,11 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PlatformServiceClient interface {
 	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error)
-	ListProjects(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListProjectsResponse, error)
+	ListProjects(ctx context.Context, in *ListProjectsRequest, opts ...grpc.CallOption) (*ListProjectsResponse, error)
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*Project, error)
+	DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RestoreProject(ctx context.Context, in *RestoreProjectRequest, opts ...grpc.CallOption) (*Project, error)
+	PreviewProjectDeletion(ctx context.Context, in *PreviewProjectDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error)
 	ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error)
 	GetEnvironment(ctx context.Context, in *GetEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
 	CreateEnvironment(ctx context.Context, in *CreateEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
@@ -73,6 +84,8 @@ type PlatformServiceClient interface {
 	RenameEnvironment(ctx context.Context, in *RenameEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
 	UpdateEnvironmentAutoDeploy(ctx context.Context, in *UpdateEnvironmentAutoDeployRequest, opts ...grpc.CallOption) (*Environment, error)
 	DeleteEnvironment(ctx context.Context, in *DeleteEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RestoreEnvironment(ctx context.Context, in *RestoreEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
+	PreviewEnvironmentDeletion(ctx context.Context, in *PreviewEnvironmentDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error)
 	ReleaseEnvironment(ctx context.Context, in *ReleaseEnvironmentRequest, opts ...grpc.CallOption) (*ReleaseEnvironmentResponse, error)
 	LinkGitHubRepository(ctx context.Context, in *LinkGitHubRepositoryRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
 	InspectSource(ctx context.Context, in *InspectSourceRequest, opts ...grpc.CallOption) (*InspectSourceResponse, error)
@@ -82,6 +95,7 @@ type PlatformServiceClient interface {
 	ApplyDeploymentAction(ctx context.Context, in *ApplyDeploymentActionRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	DiscardServiceChanges(ctx context.Context, in *DiscardServiceChangesRequest, opts ...grpc.CallOption) (*Service, error)
 	DeleteService(ctx context.Context, in *DeleteServiceRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RestoreService(ctx context.Context, in *RestoreServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	GetService(ctx context.Context, in *GetServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
 	SealServiceSecret(ctx context.Context, in *SealServiceSecretRequest, opts ...grpc.CallOption) (*SealServiceSecretResponse, error)
@@ -89,6 +103,7 @@ type PlatformServiceClient interface {
 	ListServiceSecrets(ctx context.Context, in *ListServiceSecretsRequest, opts ...grpc.CallOption) (*ListServiceSecretsResponse, error)
 	CreateVolume(ctx context.Context, in *CreateVolumeRequest, opts ...grpc.CallOption) (*Volume, error)
 	DeleteVolume(ctx context.Context, in *DeleteVolumeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	PreviewVolumeDeletion(ctx context.Context, in *PreviewVolumeDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error)
 	ListVolumes(ctx context.Context, in *ListVolumesRequest, opts ...grpc.CallOption) (*ListVolumesResponse, error)
 	CreateDomainBinding(ctx context.Context, in *CreateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	GenerateDomainBinding(ctx context.Context, in *GenerateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
@@ -96,6 +111,7 @@ type PlatformServiceClient interface {
 	ListDomainBindings(ctx context.Context, in *ListDomainBindingsRequest, opts ...grpc.CallOption) (*ListDomainBindingsResponse, error)
 	UpdateDomainBinding(ctx context.Context, in *UpdateDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	DeleteDomainBinding(ctx context.Context, in *DeleteDomainBindingRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RestoreDomainBinding(ctx context.Context, in *RestoreDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error)
 	GetServiceStatus(ctx context.Context, in *GetServiceStatusRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(ctx context.Context, in *ListServiceDeploymentsRequest, opts ...grpc.CallOption) (*ListServiceDeploymentsResponse, error)
@@ -120,7 +136,7 @@ func (c *platformServiceClient) CreateProject(ctx context.Context, in *CreatePro
 	return out, nil
 }
 
-func (c *platformServiceClient) ListProjects(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListProjectsResponse, error) {
+func (c *platformServiceClient) ListProjects(ctx context.Context, in *ListProjectsRequest, opts ...grpc.CallOption) (*ListProjectsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListProjectsResponse)
 	err := c.cc.Invoke(ctx, PlatformService_ListProjects_FullMethodName, in, out, cOpts...)
@@ -134,6 +150,36 @@ func (c *platformServiceClient) GetProject(ctx context.Context, in *GetProjectRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Project)
 	err := c.cc.Invoke(ctx, PlatformService_GetProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_DeleteProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RestoreProject(ctx context.Context, in *RestoreProjectRequest, opts ...grpc.CallOption) (*Project, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Project)
+	err := c.cc.Invoke(ctx, PlatformService_RestoreProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) PreviewProjectDeletion(ctx context.Context, in *PreviewProjectDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeletionPreview)
+	err := c.cc.Invoke(ctx, PlatformService_PreviewProjectDeletion_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +250,26 @@ func (c *platformServiceClient) DeleteEnvironment(ctx context.Context, in *Delet
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, PlatformService_DeleteEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RestoreEnvironment(ctx context.Context, in *RestoreEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Environment)
+	err := c.cc.Invoke(ctx, PlatformService_RestoreEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) PreviewEnvironmentDeletion(ctx context.Context, in *PreviewEnvironmentDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeletionPreview)
+	err := c.cc.Invoke(ctx, PlatformService_PreviewEnvironmentDeletion_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -300,6 +366,16 @@ func (c *platformServiceClient) DeleteService(ctx context.Context, in *DeleteSer
 	return out, nil
 }
 
+func (c *platformServiceClient) RestoreService(ctx context.Context, in *RestoreServiceRequest, opts ...grpc.CallOption) (*Service, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Service)
+	err := c.cc.Invoke(ctx, PlatformService_RestoreService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) GetService(ctx context.Context, in *GetServiceRequest, opts ...grpc.CallOption) (*Service, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Service)
@@ -364,6 +440,16 @@ func (c *platformServiceClient) DeleteVolume(ctx context.Context, in *DeleteVolu
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, PlatformService_DeleteVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) PreviewVolumeDeletion(ctx context.Context, in *PreviewVolumeDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeletionPreview)
+	err := c.cc.Invoke(ctx, PlatformService_PreviewVolumeDeletion_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -440,6 +526,16 @@ func (c *platformServiceClient) DeleteDomainBinding(ctx context.Context, in *Del
 	return out, nil
 }
 
+func (c *platformServiceClient) RestoreDomainBinding(ctx context.Context, in *RestoreDomainBindingRequest, opts ...grpc.CallOption) (*DomainBinding, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DomainBinding)
+	err := c.cc.Invoke(ctx, PlatformService_RestoreDomainBinding_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) GetServiceStatus(ctx context.Context, in *GetServiceStatusRequest, opts ...grpc.CallOption) (*ServiceStatus, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ServiceStatus)
@@ -485,8 +581,11 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empt
 // for forward compatibility.
 type PlatformServiceServer interface {
 	CreateProject(context.Context, *CreateProjectRequest) (*Project, error)
-	ListProjects(context.Context, *emptypb.Empty) (*ListProjectsResponse, error)
+	ListProjects(context.Context, *ListProjectsRequest) (*ListProjectsResponse, error)
 	GetProject(context.Context, *GetProjectRequest) (*Project, error)
+	DeleteProject(context.Context, *DeleteProjectRequest) (*emptypb.Empty, error)
+	RestoreProject(context.Context, *RestoreProjectRequest) (*Project, error)
+	PreviewProjectDeletion(context.Context, *PreviewProjectDeletionRequest) (*DeletionPreview, error)
 	ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error)
 	GetEnvironment(context.Context, *GetEnvironmentRequest) (*Environment, error)
 	CreateEnvironment(context.Context, *CreateEnvironmentRequest) (*Environment, error)
@@ -494,6 +593,8 @@ type PlatformServiceServer interface {
 	RenameEnvironment(context.Context, *RenameEnvironmentRequest) (*Environment, error)
 	UpdateEnvironmentAutoDeploy(context.Context, *UpdateEnvironmentAutoDeployRequest) (*Environment, error)
 	DeleteEnvironment(context.Context, *DeleteEnvironmentRequest) (*emptypb.Empty, error)
+	RestoreEnvironment(context.Context, *RestoreEnvironmentRequest) (*Environment, error)
+	PreviewEnvironmentDeletion(context.Context, *PreviewEnvironmentDeletionRequest) (*DeletionPreview, error)
 	ReleaseEnvironment(context.Context, *ReleaseEnvironmentRequest) (*ReleaseEnvironmentResponse, error)
 	LinkGitHubRepository(context.Context, *LinkGitHubRepositoryRequest) (*InspectSourceResponse, error)
 	InspectSource(context.Context, *InspectSourceRequest) (*InspectSourceResponse, error)
@@ -503,6 +604,7 @@ type PlatformServiceServer interface {
 	ApplyDeploymentAction(context.Context, *ApplyDeploymentActionRequest) (*ServiceStatus, error)
 	DiscardServiceChanges(context.Context, *DiscardServiceChangesRequest) (*Service, error)
 	DeleteService(context.Context, *DeleteServiceRequest) (*emptypb.Empty, error)
+	RestoreService(context.Context, *RestoreServiceRequest) (*Service, error)
 	GetService(context.Context, *GetServiceRequest) (*Service, error)
 	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
 	SealServiceSecret(context.Context, *SealServiceSecretRequest) (*SealServiceSecretResponse, error)
@@ -510,6 +612,7 @@ type PlatformServiceServer interface {
 	ListServiceSecrets(context.Context, *ListServiceSecretsRequest) (*ListServiceSecretsResponse, error)
 	CreateVolume(context.Context, *CreateVolumeRequest) (*Volume, error)
 	DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error)
+	PreviewVolumeDeletion(context.Context, *PreviewVolumeDeletionRequest) (*DeletionPreview, error)
 	ListVolumes(context.Context, *ListVolumesRequest) (*ListVolumesResponse, error)
 	CreateDomainBinding(context.Context, *CreateDomainBindingRequest) (*DomainBinding, error)
 	GenerateDomainBinding(context.Context, *GenerateDomainBindingRequest) (*DomainBinding, error)
@@ -517,6 +620,7 @@ type PlatformServiceServer interface {
 	ListDomainBindings(context.Context, *ListDomainBindingsRequest) (*ListDomainBindingsResponse, error)
 	UpdateDomainBinding(context.Context, *UpdateDomainBindingRequest) (*DomainBinding, error)
 	DeleteDomainBinding(context.Context, *DeleteDomainBindingRequest) (*emptypb.Empty, error)
+	RestoreDomainBinding(context.Context, *RestoreDomainBindingRequest) (*DomainBinding, error)
 	GetServiceStatus(context.Context, *GetServiceStatusRequest) (*ServiceStatus, error)
 	ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error)
@@ -534,11 +638,20 @@ type UnimplementedPlatformServiceServer struct{}
 func (UnimplementedPlatformServiceServer) CreateProject(context.Context, *CreateProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateProject not implemented")
 }
-func (UnimplementedPlatformServiceServer) ListProjects(context.Context, *emptypb.Empty) (*ListProjectsResponse, error) {
+func (UnimplementedPlatformServiceServer) ListProjects(context.Context, *ListProjectsRequest) (*ListProjectsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListProjects not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetProject(context.Context, *GetProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProject not implemented")
+}
+func (UnimplementedPlatformServiceServer) DeleteProject(context.Context, *DeleteProjectRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteProject not implemented")
+}
+func (UnimplementedPlatformServiceServer) RestoreProject(context.Context, *RestoreProjectRequest) (*Project, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreProject not implemented")
+}
+func (UnimplementedPlatformServiceServer) PreviewProjectDeletion(context.Context, *PreviewProjectDeletionRequest) (*DeletionPreview, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewProjectDeletion not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEnvironments not implemented")
@@ -560,6 +673,12 @@ func (UnimplementedPlatformServiceServer) UpdateEnvironmentAutoDeploy(context.Co
 }
 func (UnimplementedPlatformServiceServer) DeleteEnvironment(context.Context, *DeleteEnvironmentRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) RestoreEnvironment(context.Context, *RestoreEnvironmentRequest) (*Environment, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreEnvironment not implemented")
+}
+func (UnimplementedPlatformServiceServer) PreviewEnvironmentDeletion(context.Context, *PreviewEnvironmentDeletionRequest) (*DeletionPreview, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewEnvironmentDeletion not implemented")
 }
 func (UnimplementedPlatformServiceServer) ReleaseEnvironment(context.Context, *ReleaseEnvironmentRequest) (*ReleaseEnvironmentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReleaseEnvironment not implemented")
@@ -588,6 +707,9 @@ func (UnimplementedPlatformServiceServer) DiscardServiceChanges(context.Context,
 func (UnimplementedPlatformServiceServer) DeleteService(context.Context, *DeleteServiceRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteService not implemented")
 }
+func (UnimplementedPlatformServiceServer) RestoreService(context.Context, *RestoreServiceRequest) (*Service, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreService not implemented")
+}
 func (UnimplementedPlatformServiceServer) GetService(context.Context, *GetServiceRequest) (*Service, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetService not implemented")
 }
@@ -609,6 +731,9 @@ func (UnimplementedPlatformServiceServer) CreateVolume(context.Context, *CreateV
 func (UnimplementedPlatformServiceServer) DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteVolume not implemented")
 }
+func (UnimplementedPlatformServiceServer) PreviewVolumeDeletion(context.Context, *PreviewVolumeDeletionRequest) (*DeletionPreview, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewVolumeDeletion not implemented")
+}
 func (UnimplementedPlatformServiceServer) ListVolumes(context.Context, *ListVolumesRequest) (*ListVolumesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListVolumes not implemented")
 }
@@ -629,6 +754,9 @@ func (UnimplementedPlatformServiceServer) UpdateDomainBinding(context.Context, *
 }
 func (UnimplementedPlatformServiceServer) DeleteDomainBinding(context.Context, *DeleteDomainBindingRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDomainBinding not implemented")
+}
+func (UnimplementedPlatformServiceServer) RestoreDomainBinding(context.Context, *RestoreDomainBindingRequest) (*DomainBinding, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreDomainBinding not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetServiceStatus(context.Context, *GetServiceStatusRequest) (*ServiceStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetServiceStatus not implemented")
@@ -682,7 +810,7 @@ func _PlatformService_CreateProject_Handler(srv interface{}, ctx context.Context
 }
 
 func _PlatformService_ListProjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
+	in := new(ListProjectsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -694,7 +822,7 @@ func _PlatformService_ListProjects_Handler(srv interface{}, ctx context.Context,
 		FullMethod: PlatformService_ListProjects_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).ListProjects(ctx, req.(*emptypb.Empty))
+		return srv.(PlatformServiceServer).ListProjects(ctx, req.(*ListProjectsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -713,6 +841,60 @@ func _PlatformService_GetProject_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetProject(ctx, req.(*GetProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DeleteProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DeleteProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DeleteProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DeleteProject(ctx, req.(*DeleteProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RestoreProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RestoreProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RestoreProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RestoreProject(ctx, req.(*RestoreProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_PreviewProjectDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewProjectDeletionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).PreviewProjectDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_PreviewProjectDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).PreviewProjectDeletion(ctx, req.(*PreviewProjectDeletionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -839,6 +1021,42 @@ func _PlatformService_DeleteEnvironment_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).DeleteEnvironment(ctx, req.(*DeleteEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RestoreEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RestoreEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RestoreEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RestoreEnvironment(ctx, req.(*RestoreEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_PreviewEnvironmentDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewEnvironmentDeletionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).PreviewEnvironmentDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_PreviewEnvironmentDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).PreviewEnvironmentDeletion(ctx, req.(*PreviewEnvironmentDeletionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1005,6 +1223,24 @@ func _PlatformService_DeleteService_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_RestoreService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RestoreService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RestoreService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RestoreService(ctx, req.(*RestoreServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_GetService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetServiceRequest)
 	if err := dec(in); err != nil {
@@ -1127,6 +1363,24 @@ func _PlatformService_DeleteVolume_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).DeleteVolume(ctx, req.(*DeleteVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_PreviewVolumeDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewVolumeDeletionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).PreviewVolumeDeletion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_PreviewVolumeDeletion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).PreviewVolumeDeletion(ctx, req.(*PreviewVolumeDeletionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1257,6 +1511,24 @@ func _PlatformService_DeleteDomainBinding_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_RestoreDomainBinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreDomainBindingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RestoreDomainBinding(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RestoreDomainBinding_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RestoreDomainBinding(ctx, req.(*RestoreDomainBindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_GetServiceStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetServiceStatusRequest)
 	if err := dec(in); err != nil {
@@ -1349,6 +1621,18 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PlatformService_GetProject_Handler,
 		},
 		{
+			MethodName: "DeleteProject",
+			Handler:    _PlatformService_DeleteProject_Handler,
+		},
+		{
+			MethodName: "RestoreProject",
+			Handler:    _PlatformService_RestoreProject_Handler,
+		},
+		{
+			MethodName: "PreviewProjectDeletion",
+			Handler:    _PlatformService_PreviewProjectDeletion_Handler,
+		},
+		{
 			MethodName: "ListEnvironments",
 			Handler:    _PlatformService_ListEnvironments_Handler,
 		},
@@ -1375,6 +1659,14 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteEnvironment",
 			Handler:    _PlatformService_DeleteEnvironment_Handler,
+		},
+		{
+			MethodName: "RestoreEnvironment",
+			Handler:    _PlatformService_RestoreEnvironment_Handler,
+		},
+		{
+			MethodName: "PreviewEnvironmentDeletion",
+			Handler:    _PlatformService_PreviewEnvironmentDeletion_Handler,
 		},
 		{
 			MethodName: "ReleaseEnvironment",
@@ -1413,6 +1705,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PlatformService_DeleteService_Handler,
 		},
 		{
+			MethodName: "RestoreService",
+			Handler:    _PlatformService_RestoreService_Handler,
+		},
+		{
 			MethodName: "GetService",
 			Handler:    _PlatformService_GetService_Handler,
 		},
@@ -1441,6 +1737,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PlatformService_DeleteVolume_Handler,
 		},
 		{
+			MethodName: "PreviewVolumeDeletion",
+			Handler:    _PlatformService_PreviewVolumeDeletion_Handler,
+		},
+		{
 			MethodName: "ListVolumes",
 			Handler:    _PlatformService_ListVolumes_Handler,
 		},
@@ -1467,6 +1767,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDomainBinding",
 			Handler:    _PlatformService_DeleteDomainBinding_Handler,
+		},
+		{
+			MethodName: "RestoreDomainBinding",
+			Handler:    _PlatformService_RestoreDomainBinding_Handler,
 		},
 		{
 			MethodName: "GetServiceStatus",

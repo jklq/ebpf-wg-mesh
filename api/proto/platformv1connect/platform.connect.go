@@ -47,6 +47,15 @@ const (
 	// PlatformServiceGetProjectProcedure is the fully-qualified name of the PlatformService's
 	// GetProject RPC.
 	PlatformServiceGetProjectProcedure = "/platform.v1.PlatformService/GetProject"
+	// PlatformServiceDeleteProjectProcedure is the fully-qualified name of the PlatformService's
+	// DeleteProject RPC.
+	PlatformServiceDeleteProjectProcedure = "/platform.v1.PlatformService/DeleteProject"
+	// PlatformServiceRestoreProjectProcedure is the fully-qualified name of the PlatformService's
+	// RestoreProject RPC.
+	PlatformServiceRestoreProjectProcedure = "/platform.v1.PlatformService/RestoreProject"
+	// PlatformServicePreviewProjectDeletionProcedure is the fully-qualified name of the
+	// PlatformService's PreviewProjectDeletion RPC.
+	PlatformServicePreviewProjectDeletionProcedure = "/platform.v1.PlatformService/PreviewProjectDeletion"
 	// PlatformServiceListEnvironmentsProcedure is the fully-qualified name of the PlatformService's
 	// ListEnvironments RPC.
 	PlatformServiceListEnvironmentsProcedure = "/platform.v1.PlatformService/ListEnvironments"
@@ -68,6 +77,12 @@ const (
 	// PlatformServiceDeleteEnvironmentProcedure is the fully-qualified name of the PlatformService's
 	// DeleteEnvironment RPC.
 	PlatformServiceDeleteEnvironmentProcedure = "/platform.v1.PlatformService/DeleteEnvironment"
+	// PlatformServiceRestoreEnvironmentProcedure is the fully-qualified name of the PlatformService's
+	// RestoreEnvironment RPC.
+	PlatformServiceRestoreEnvironmentProcedure = "/platform.v1.PlatformService/RestoreEnvironment"
+	// PlatformServicePreviewEnvironmentDeletionProcedure is the fully-qualified name of the
+	// PlatformService's PreviewEnvironmentDeletion RPC.
+	PlatformServicePreviewEnvironmentDeletionProcedure = "/platform.v1.PlatformService/PreviewEnvironmentDeletion"
 	// PlatformServiceReleaseEnvironmentProcedure is the fully-qualified name of the PlatformService's
 	// ReleaseEnvironment RPC.
 	PlatformServiceReleaseEnvironmentProcedure = "/platform.v1.PlatformService/ReleaseEnvironment"
@@ -95,6 +110,9 @@ const (
 	// PlatformServiceDeleteServiceProcedure is the fully-qualified name of the PlatformService's
 	// DeleteService RPC.
 	PlatformServiceDeleteServiceProcedure = "/platform.v1.PlatformService/DeleteService"
+	// PlatformServiceRestoreServiceProcedure is the fully-qualified name of the PlatformService's
+	// RestoreService RPC.
+	PlatformServiceRestoreServiceProcedure = "/platform.v1.PlatformService/RestoreService"
 	// PlatformServiceGetServiceProcedure is the fully-qualified name of the PlatformService's
 	// GetService RPC.
 	PlatformServiceGetServiceProcedure = "/platform.v1.PlatformService/GetService"
@@ -116,6 +134,9 @@ const (
 	// PlatformServiceDeleteVolumeProcedure is the fully-qualified name of the PlatformService's
 	// DeleteVolume RPC.
 	PlatformServiceDeleteVolumeProcedure = "/platform.v1.PlatformService/DeleteVolume"
+	// PlatformServicePreviewVolumeDeletionProcedure is the fully-qualified name of the
+	// PlatformService's PreviewVolumeDeletion RPC.
+	PlatformServicePreviewVolumeDeletionProcedure = "/platform.v1.PlatformService/PreviewVolumeDeletion"
 	// PlatformServiceListVolumesProcedure is the fully-qualified name of the PlatformService's
 	// ListVolumes RPC.
 	PlatformServiceListVolumesProcedure = "/platform.v1.PlatformService/ListVolumes"
@@ -137,6 +158,9 @@ const (
 	// PlatformServiceDeleteDomainBindingProcedure is the fully-qualified name of the PlatformService's
 	// DeleteDomainBinding RPC.
 	PlatformServiceDeleteDomainBindingProcedure = "/platform.v1.PlatformService/DeleteDomainBinding"
+	// PlatformServiceRestoreDomainBindingProcedure is the fully-qualified name of the PlatformService's
+	// RestoreDomainBinding RPC.
+	PlatformServiceRestoreDomainBindingProcedure = "/platform.v1.PlatformService/RestoreDomainBinding"
 	// PlatformServiceGetServiceStatusProcedure is the fully-qualified name of the PlatformService's
 	// GetServiceStatus RPC.
 	PlatformServiceGetServiceStatusProcedure = "/platform.v1.PlatformService/GetServiceStatus"
@@ -181,8 +205,11 @@ const (
 // PlatformServiceClient is a client for the platform.v1.PlatformService service.
 type PlatformServiceClient interface {
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
-	ListProjects(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error)
+	ListProjects(context.Context, *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error)
 	GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error)
+	DeleteProject(context.Context, *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreProject(context.Context, *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error)
+	PreviewProjectDeletion(context.Context, *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListEnvironments(context.Context, *connect.Request[platformv1.ListEnvironmentsRequest]) (*connect.Response[platformv1.ListEnvironmentsResponse], error)
 	GetEnvironment(context.Context, *connect.Request[platformv1.GetEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	CreateEnvironment(context.Context, *connect.Request[platformv1.CreateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
@@ -190,6 +217,8 @@ type PlatformServiceClient interface {
 	RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	UpdateEnvironmentAutoDeploy(context.Context, *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error)
 	DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreEnvironment(context.Context, *connect.Request[platformv1.RestoreEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
+	PreviewEnvironmentDeletion(context.Context, *connect.Request[platformv1.PreviewEnvironmentDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error)
 	LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
 	InspectSource(context.Context, *connect.Request[platformv1.InspectSourceRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
@@ -199,6 +228,7 @@ type PlatformServiceClient interface {
 	ApplyDeploymentAction(context.Context, *connect.Request[platformv1.ApplyDeploymentActionRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	DiscardServiceChanges(context.Context, *connect.Request[platformv1.DiscardServiceChangesRequest]) (*connect.Response[platformv1.Service], error)
 	DeleteService(context.Context, *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreService(context.Context, *connect.Request[platformv1.RestoreServiceRequest]) (*connect.Response[platformv1.Service], error)
 	GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error)
 	ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error)
 	SealServiceSecret(context.Context, *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error)
@@ -206,6 +236,7 @@ type PlatformServiceClient interface {
 	ListServiceSecrets(context.Context, *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error)
 	CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
 	DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error)
+	PreviewVolumeDeletion(context.Context, *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error)
 	CreateDomainBinding(context.Context, *connect.Request[platformv1.CreateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
 	GenerateDomainBinding(context.Context, *connect.Request[platformv1.GenerateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
@@ -213,6 +244,7 @@ type PlatformServiceClient interface {
 	ListDomainBindings(context.Context, *connect.Request[platformv1.ListDomainBindingsRequest]) (*connect.Response[platformv1.ListDomainBindingsResponse], error)
 	UpdateDomainBinding(context.Context, *connect.Request[platformv1.UpdateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
 	DeleteDomainBinding(context.Context, *connect.Request[platformv1.DeleteDomainBindingRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreDomainBinding(context.Context, *connect.Request[platformv1.RestoreDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
 	GetServiceStatus(context.Context, *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ListServiceLogs(context.Context, *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error)
 	ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error)
@@ -236,7 +268,7 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("CreateProject")),
 			connect.WithClientOptions(opts...),
 		),
-		listProjects: connect.NewClient[emptypb.Empty, platformv1.ListProjectsResponse](
+		listProjects: connect.NewClient[platformv1.ListProjectsRequest, platformv1.ListProjectsResponse](
 			httpClient,
 			baseURL+PlatformServiceListProjectsProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("ListProjects")),
@@ -246,6 +278,24 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			httpClient,
 			baseURL+PlatformServiceGetProjectProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("GetProject")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteProject: connect.NewClient[platformv1.DeleteProjectRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceDeleteProjectProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("DeleteProject")),
+			connect.WithClientOptions(opts...),
+		),
+		restoreProject: connect.NewClient[platformv1.RestoreProjectRequest, platformv1.Project](
+			httpClient,
+			baseURL+PlatformServiceRestoreProjectProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RestoreProject")),
+			connect.WithClientOptions(opts...),
+		),
+		previewProjectDeletion: connect.NewClient[platformv1.PreviewProjectDeletionRequest, platformv1.DeletionPreview](
+			httpClient,
+			baseURL+PlatformServicePreviewProjectDeletionProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("PreviewProjectDeletion")),
 			connect.WithClientOptions(opts...),
 		),
 		listEnvironments: connect.NewClient[platformv1.ListEnvironmentsRequest, platformv1.ListEnvironmentsResponse](
@@ -288,6 +338,18 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			httpClient,
 			baseURL+PlatformServiceDeleteEnvironmentProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("DeleteEnvironment")),
+			connect.WithClientOptions(opts...),
+		),
+		restoreEnvironment: connect.NewClient[platformv1.RestoreEnvironmentRequest, platformv1.Environment](
+			httpClient,
+			baseURL+PlatformServiceRestoreEnvironmentProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RestoreEnvironment")),
+			connect.WithClientOptions(opts...),
+		),
+		previewEnvironmentDeletion: connect.NewClient[platformv1.PreviewEnvironmentDeletionRequest, platformv1.DeletionPreview](
+			httpClient,
+			baseURL+PlatformServicePreviewEnvironmentDeletionProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("PreviewEnvironmentDeletion")),
 			connect.WithClientOptions(opts...),
 		),
 		releaseEnvironment: connect.NewClient[platformv1.ReleaseEnvironmentRequest, platformv1.ReleaseEnvironmentResponse](
@@ -344,6 +406,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("DeleteService")),
 			connect.WithClientOptions(opts...),
 		),
+		restoreService: connect.NewClient[platformv1.RestoreServiceRequest, platformv1.Service](
+			httpClient,
+			baseURL+PlatformServiceRestoreServiceProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RestoreService")),
+			connect.WithClientOptions(opts...),
+		),
 		getService: connect.NewClient[platformv1.GetServiceRequest, platformv1.Service](
 			httpClient,
 			baseURL+PlatformServiceGetServiceProcedure,
@@ -384,6 +452,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			httpClient,
 			baseURL+PlatformServiceDeleteVolumeProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("DeleteVolume")),
+			connect.WithClientOptions(opts...),
+		),
+		previewVolumeDeletion: connect.NewClient[platformv1.PreviewVolumeDeletionRequest, platformv1.DeletionPreview](
+			httpClient,
+			baseURL+PlatformServicePreviewVolumeDeletionProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("PreviewVolumeDeletion")),
 			connect.WithClientOptions(opts...),
 		),
 		listVolumes: connect.NewClient[platformv1.ListVolumesRequest, platformv1.ListVolumesResponse](
@@ -428,6 +502,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("DeleteDomainBinding")),
 			connect.WithClientOptions(opts...),
 		),
+		restoreDomainBinding: connect.NewClient[platformv1.RestoreDomainBindingRequest, platformv1.DomainBinding](
+			httpClient,
+			baseURL+PlatformServiceRestoreDomainBindingProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RestoreDomainBinding")),
+			connect.WithClientOptions(opts...),
+		),
 		getServiceStatus: connect.NewClient[platformv1.GetServiceStatusRequest, platformv1.ServiceStatus](
 			httpClient,
 			baseURL+PlatformServiceGetServiceStatusProcedure,
@@ -458,8 +538,11 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 // platformServiceClient implements PlatformServiceClient.
 type platformServiceClient struct {
 	createProject               *connect.Client[platformv1.CreateProjectRequest, platformv1.Project]
-	listProjects                *connect.Client[emptypb.Empty, platformv1.ListProjectsResponse]
+	listProjects                *connect.Client[platformv1.ListProjectsRequest, platformv1.ListProjectsResponse]
 	getProject                  *connect.Client[platformv1.GetProjectRequest, platformv1.Project]
+	deleteProject               *connect.Client[platformv1.DeleteProjectRequest, emptypb.Empty]
+	restoreProject              *connect.Client[platformv1.RestoreProjectRequest, platformv1.Project]
+	previewProjectDeletion      *connect.Client[platformv1.PreviewProjectDeletionRequest, platformv1.DeletionPreview]
 	listEnvironments            *connect.Client[platformv1.ListEnvironmentsRequest, platformv1.ListEnvironmentsResponse]
 	getEnvironment              *connect.Client[platformv1.GetEnvironmentRequest, platformv1.Environment]
 	createEnvironment           *connect.Client[platformv1.CreateEnvironmentRequest, platformv1.Environment]
@@ -467,6 +550,8 @@ type platformServiceClient struct {
 	renameEnvironment           *connect.Client[platformv1.RenameEnvironmentRequest, platformv1.Environment]
 	updateEnvironmentAutoDeploy *connect.Client[platformv1.UpdateEnvironmentAutoDeployRequest, platformv1.Environment]
 	deleteEnvironment           *connect.Client[platformv1.DeleteEnvironmentRequest, emptypb.Empty]
+	restoreEnvironment          *connect.Client[platformv1.RestoreEnvironmentRequest, platformv1.Environment]
+	previewEnvironmentDeletion  *connect.Client[platformv1.PreviewEnvironmentDeletionRequest, platformv1.DeletionPreview]
 	releaseEnvironment          *connect.Client[platformv1.ReleaseEnvironmentRequest, platformv1.ReleaseEnvironmentResponse]
 	linkGitHubRepository        *connect.Client[platformv1.LinkGitHubRepositoryRequest, platformv1.InspectSourceResponse]
 	inspectSource               *connect.Client[platformv1.InspectSourceRequest, platformv1.InspectSourceResponse]
@@ -476,6 +561,7 @@ type platformServiceClient struct {
 	applyDeploymentAction       *connect.Client[platformv1.ApplyDeploymentActionRequest, platformv1.ServiceStatus]
 	discardServiceChanges       *connect.Client[platformv1.DiscardServiceChangesRequest, platformv1.Service]
 	deleteService               *connect.Client[platformv1.DeleteServiceRequest, emptypb.Empty]
+	restoreService              *connect.Client[platformv1.RestoreServiceRequest, platformv1.Service]
 	getService                  *connect.Client[platformv1.GetServiceRequest, platformv1.Service]
 	listServices                *connect.Client[platformv1.ListServicesRequest, platformv1.ListServicesResponse]
 	sealServiceSecret           *connect.Client[platformv1.SealServiceSecretRequest, platformv1.SealServiceSecretResponse]
@@ -483,6 +569,7 @@ type platformServiceClient struct {
 	listServiceSecrets          *connect.Client[platformv1.ListServiceSecretsRequest, platformv1.ListServiceSecretsResponse]
 	createVolume                *connect.Client[platformv1.CreateVolumeRequest, platformv1.Volume]
 	deleteVolume                *connect.Client[platformv1.DeleteVolumeRequest, emptypb.Empty]
+	previewVolumeDeletion       *connect.Client[platformv1.PreviewVolumeDeletionRequest, platformv1.DeletionPreview]
 	listVolumes                 *connect.Client[platformv1.ListVolumesRequest, platformv1.ListVolumesResponse]
 	createDomainBinding         *connect.Client[platformv1.CreateDomainBindingRequest, platformv1.DomainBinding]
 	generateDomainBinding       *connect.Client[platformv1.GenerateDomainBindingRequest, platformv1.DomainBinding]
@@ -490,6 +577,7 @@ type platformServiceClient struct {
 	listDomainBindings          *connect.Client[platformv1.ListDomainBindingsRequest, platformv1.ListDomainBindingsResponse]
 	updateDomainBinding         *connect.Client[platformv1.UpdateDomainBindingRequest, platformv1.DomainBinding]
 	deleteDomainBinding         *connect.Client[platformv1.DeleteDomainBindingRequest, emptypb.Empty]
+	restoreDomainBinding        *connect.Client[platformv1.RestoreDomainBindingRequest, platformv1.DomainBinding]
 	getServiceStatus            *connect.Client[platformv1.GetServiceStatusRequest, platformv1.ServiceStatus]
 	listServiceLogs             *connect.Client[platformv1.ListServiceLogsRequest, platformv1.ListServiceLogsResponse]
 	listServiceDeployments      *connect.Client[platformv1.ListServiceDeploymentsRequest, platformv1.ListServiceDeploymentsResponse]
@@ -502,13 +590,28 @@ func (c *platformServiceClient) CreateProject(ctx context.Context, req *connect.
 }
 
 // ListProjects calls platform.v1.PlatformService.ListProjects.
-func (c *platformServiceClient) ListProjects(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error) {
+func (c *platformServiceClient) ListProjects(ctx context.Context, req *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error) {
 	return c.listProjects.CallUnary(ctx, req)
 }
 
 // GetProject calls platform.v1.PlatformService.GetProject.
 func (c *platformServiceClient) GetProject(ctx context.Context, req *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return c.getProject.CallUnary(ctx, req)
+}
+
+// DeleteProject calls platform.v1.PlatformService.DeleteProject.
+func (c *platformServiceClient) DeleteProject(ctx context.Context, req *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.deleteProject.CallUnary(ctx, req)
+}
+
+// RestoreProject calls platform.v1.PlatformService.RestoreProject.
+func (c *platformServiceClient) RestoreProject(ctx context.Context, req *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error) {
+	return c.restoreProject.CallUnary(ctx, req)
+}
+
+// PreviewProjectDeletion calls platform.v1.PlatformService.PreviewProjectDeletion.
+func (c *platformServiceClient) PreviewProjectDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	return c.previewProjectDeletion.CallUnary(ctx, req)
 }
 
 // ListEnvironments calls platform.v1.PlatformService.ListEnvironments.
@@ -544,6 +647,16 @@ func (c *platformServiceClient) UpdateEnvironmentAutoDeploy(ctx context.Context,
 // DeleteEnvironment calls platform.v1.PlatformService.DeleteEnvironment.
 func (c *platformServiceClient) DeleteEnvironment(ctx context.Context, req *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteEnvironment.CallUnary(ctx, req)
+}
+
+// RestoreEnvironment calls platform.v1.PlatformService.RestoreEnvironment.
+func (c *platformServiceClient) RestoreEnvironment(ctx context.Context, req *connect.Request[platformv1.RestoreEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
+	return c.restoreEnvironment.CallUnary(ctx, req)
+}
+
+// PreviewEnvironmentDeletion calls platform.v1.PlatformService.PreviewEnvironmentDeletion.
+func (c *platformServiceClient) PreviewEnvironmentDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewEnvironmentDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	return c.previewEnvironmentDeletion.CallUnary(ctx, req)
 }
 
 // ReleaseEnvironment calls platform.v1.PlatformService.ReleaseEnvironment.
@@ -591,6 +704,11 @@ func (c *platformServiceClient) DeleteService(ctx context.Context, req *connect.
 	return c.deleteService.CallUnary(ctx, req)
 }
 
+// RestoreService calls platform.v1.PlatformService.RestoreService.
+func (c *platformServiceClient) RestoreService(ctx context.Context, req *connect.Request[platformv1.RestoreServiceRequest]) (*connect.Response[platformv1.Service], error) {
+	return c.restoreService.CallUnary(ctx, req)
+}
+
 // GetService calls platform.v1.PlatformService.GetService.
 func (c *platformServiceClient) GetService(ctx context.Context, req *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error) {
 	return c.getService.CallUnary(ctx, req)
@@ -624,6 +742,11 @@ func (c *platformServiceClient) CreateVolume(ctx context.Context, req *connect.R
 // DeleteVolume calls platform.v1.PlatformService.DeleteVolume.
 func (c *platformServiceClient) DeleteVolume(ctx context.Context, req *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteVolume.CallUnary(ctx, req)
+}
+
+// PreviewVolumeDeletion calls platform.v1.PlatformService.PreviewVolumeDeletion.
+func (c *platformServiceClient) PreviewVolumeDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	return c.previewVolumeDeletion.CallUnary(ctx, req)
 }
 
 // ListVolumes calls platform.v1.PlatformService.ListVolumes.
@@ -661,6 +784,11 @@ func (c *platformServiceClient) DeleteDomainBinding(ctx context.Context, req *co
 	return c.deleteDomainBinding.CallUnary(ctx, req)
 }
 
+// RestoreDomainBinding calls platform.v1.PlatformService.RestoreDomainBinding.
+func (c *platformServiceClient) RestoreDomainBinding(ctx context.Context, req *connect.Request[platformv1.RestoreDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
+	return c.restoreDomainBinding.CallUnary(ctx, req)
+}
+
 // GetServiceStatus calls platform.v1.PlatformService.GetServiceStatus.
 func (c *platformServiceClient) GetServiceStatus(ctx context.Context, req *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error) {
 	return c.getServiceStatus.CallUnary(ctx, req)
@@ -684,8 +812,11 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, req *connect.Req
 // PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
-	ListProjects(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error)
+	ListProjects(context.Context, *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error)
 	GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error)
+	DeleteProject(context.Context, *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreProject(context.Context, *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error)
+	PreviewProjectDeletion(context.Context, *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListEnvironments(context.Context, *connect.Request[platformv1.ListEnvironmentsRequest]) (*connect.Response[platformv1.ListEnvironmentsResponse], error)
 	GetEnvironment(context.Context, *connect.Request[platformv1.GetEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	CreateEnvironment(context.Context, *connect.Request[platformv1.CreateEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
@@ -693,6 +824,8 @@ type PlatformServiceHandler interface {
 	RenameEnvironment(context.Context, *connect.Request[platformv1.RenameEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
 	UpdateEnvironmentAutoDeploy(context.Context, *connect.Request[platformv1.UpdateEnvironmentAutoDeployRequest]) (*connect.Response[platformv1.Environment], error)
 	DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreEnvironment(context.Context, *connect.Request[platformv1.RestoreEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
+	PreviewEnvironmentDeletion(context.Context, *connect.Request[platformv1.PreviewEnvironmentDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error)
 	LinkGitHubRepository(context.Context, *connect.Request[platformv1.LinkGitHubRepositoryRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
 	InspectSource(context.Context, *connect.Request[platformv1.InspectSourceRequest]) (*connect.Response[platformv1.InspectSourceResponse], error)
@@ -702,6 +835,7 @@ type PlatformServiceHandler interface {
 	ApplyDeploymentAction(context.Context, *connect.Request[platformv1.ApplyDeploymentActionRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	DiscardServiceChanges(context.Context, *connect.Request[platformv1.DiscardServiceChangesRequest]) (*connect.Response[platformv1.Service], error)
 	DeleteService(context.Context, *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreService(context.Context, *connect.Request[platformv1.RestoreServiceRequest]) (*connect.Response[platformv1.Service], error)
 	GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error)
 	ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error)
 	SealServiceSecret(context.Context, *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error)
@@ -709,6 +843,7 @@ type PlatformServiceHandler interface {
 	ListServiceSecrets(context.Context, *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error)
 	CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
 	DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error)
+	PreviewVolumeDeletion(context.Context, *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error)
 	CreateDomainBinding(context.Context, *connect.Request[platformv1.CreateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
 	GenerateDomainBinding(context.Context, *connect.Request[platformv1.GenerateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
@@ -716,6 +851,7 @@ type PlatformServiceHandler interface {
 	ListDomainBindings(context.Context, *connect.Request[platformv1.ListDomainBindingsRequest]) (*connect.Response[platformv1.ListDomainBindingsResponse], error)
 	UpdateDomainBinding(context.Context, *connect.Request[platformv1.UpdateDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
 	DeleteDomainBinding(context.Context, *connect.Request[platformv1.DeleteDomainBindingRequest]) (*connect.Response[emptypb.Empty], error)
+	RestoreDomainBinding(context.Context, *connect.Request[platformv1.RestoreDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error)
 	GetServiceStatus(context.Context, *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ListServiceLogs(context.Context, *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error)
 	ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error)
@@ -745,6 +881,24 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		PlatformServiceGetProjectProcedure,
 		svc.GetProject,
 		connect.WithSchema(platformServiceMethods.ByName("GetProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceDeleteProjectHandler := connect.NewUnaryHandler(
+		PlatformServiceDeleteProjectProcedure,
+		svc.DeleteProject,
+		connect.WithSchema(platformServiceMethods.ByName("DeleteProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceRestoreProjectHandler := connect.NewUnaryHandler(
+		PlatformServiceRestoreProjectProcedure,
+		svc.RestoreProject,
+		connect.WithSchema(platformServiceMethods.ByName("RestoreProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServicePreviewProjectDeletionHandler := connect.NewUnaryHandler(
+		PlatformServicePreviewProjectDeletionProcedure,
+		svc.PreviewProjectDeletion,
+		connect.WithSchema(platformServiceMethods.ByName("PreviewProjectDeletion")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServiceListEnvironmentsHandler := connect.NewUnaryHandler(
@@ -787,6 +941,18 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		PlatformServiceDeleteEnvironmentProcedure,
 		svc.DeleteEnvironment,
 		connect.WithSchema(platformServiceMethods.ByName("DeleteEnvironment")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceRestoreEnvironmentHandler := connect.NewUnaryHandler(
+		PlatformServiceRestoreEnvironmentProcedure,
+		svc.RestoreEnvironment,
+		connect.WithSchema(platformServiceMethods.ByName("RestoreEnvironment")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServicePreviewEnvironmentDeletionHandler := connect.NewUnaryHandler(
+		PlatformServicePreviewEnvironmentDeletionProcedure,
+		svc.PreviewEnvironmentDeletion,
+		connect.WithSchema(platformServiceMethods.ByName("PreviewEnvironmentDeletion")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServiceReleaseEnvironmentHandler := connect.NewUnaryHandler(
@@ -843,6 +1009,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("DeleteService")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceRestoreServiceHandler := connect.NewUnaryHandler(
+		PlatformServiceRestoreServiceProcedure,
+		svc.RestoreService,
+		connect.WithSchema(platformServiceMethods.ByName("RestoreService")),
+		connect.WithHandlerOptions(opts...),
+	)
 	platformServiceGetServiceHandler := connect.NewUnaryHandler(
 		PlatformServiceGetServiceProcedure,
 		svc.GetService,
@@ -883,6 +1055,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		PlatformServiceDeleteVolumeProcedure,
 		svc.DeleteVolume,
 		connect.WithSchema(platformServiceMethods.ByName("DeleteVolume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServicePreviewVolumeDeletionHandler := connect.NewUnaryHandler(
+		PlatformServicePreviewVolumeDeletionProcedure,
+		svc.PreviewVolumeDeletion,
+		connect.WithSchema(platformServiceMethods.ByName("PreviewVolumeDeletion")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServiceListVolumesHandler := connect.NewUnaryHandler(
@@ -927,6 +1105,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("DeleteDomainBinding")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceRestoreDomainBindingHandler := connect.NewUnaryHandler(
+		PlatformServiceRestoreDomainBindingProcedure,
+		svc.RestoreDomainBinding,
+		connect.WithSchema(platformServiceMethods.ByName("RestoreDomainBinding")),
+		connect.WithHandlerOptions(opts...),
+	)
 	platformServiceGetServiceStatusHandler := connect.NewUnaryHandler(
 		PlatformServiceGetServiceStatusProcedure,
 		svc.GetServiceStatus,
@@ -959,6 +1143,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceListProjectsHandler.ServeHTTP(w, r)
 		case PlatformServiceGetProjectProcedure:
 			platformServiceGetProjectHandler.ServeHTTP(w, r)
+		case PlatformServiceDeleteProjectProcedure:
+			platformServiceDeleteProjectHandler.ServeHTTP(w, r)
+		case PlatformServiceRestoreProjectProcedure:
+			platformServiceRestoreProjectHandler.ServeHTTP(w, r)
+		case PlatformServicePreviewProjectDeletionProcedure:
+			platformServicePreviewProjectDeletionHandler.ServeHTTP(w, r)
 		case PlatformServiceListEnvironmentsProcedure:
 			platformServiceListEnvironmentsHandler.ServeHTTP(w, r)
 		case PlatformServiceGetEnvironmentProcedure:
@@ -973,6 +1163,10 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceUpdateEnvironmentAutoDeployHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteEnvironmentProcedure:
 			platformServiceDeleteEnvironmentHandler.ServeHTTP(w, r)
+		case PlatformServiceRestoreEnvironmentProcedure:
+			platformServiceRestoreEnvironmentHandler.ServeHTTP(w, r)
+		case PlatformServicePreviewEnvironmentDeletionProcedure:
+			platformServicePreviewEnvironmentDeletionHandler.ServeHTTP(w, r)
 		case PlatformServiceReleaseEnvironmentProcedure:
 			platformServiceReleaseEnvironmentHandler.ServeHTTP(w, r)
 		case PlatformServiceLinkGitHubRepositoryProcedure:
@@ -991,6 +1185,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceDiscardServiceChangesHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteServiceProcedure:
 			platformServiceDeleteServiceHandler.ServeHTTP(w, r)
+		case PlatformServiceRestoreServiceProcedure:
+			platformServiceRestoreServiceHandler.ServeHTTP(w, r)
 		case PlatformServiceGetServiceProcedure:
 			platformServiceGetServiceHandler.ServeHTTP(w, r)
 		case PlatformServiceListServicesProcedure:
@@ -1005,6 +1201,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceCreateVolumeHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteVolumeProcedure:
 			platformServiceDeleteVolumeHandler.ServeHTTP(w, r)
+		case PlatformServicePreviewVolumeDeletionProcedure:
+			platformServicePreviewVolumeDeletionHandler.ServeHTTP(w, r)
 		case PlatformServiceListVolumesProcedure:
 			platformServiceListVolumesHandler.ServeHTTP(w, r)
 		case PlatformServiceCreateDomainBindingProcedure:
@@ -1019,6 +1217,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceUpdateDomainBindingHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteDomainBindingProcedure:
 			platformServiceDeleteDomainBindingHandler.ServeHTTP(w, r)
+		case PlatformServiceRestoreDomainBindingProcedure:
+			platformServiceRestoreDomainBindingHandler.ServeHTTP(w, r)
 		case PlatformServiceGetServiceStatusProcedure:
 			platformServiceGetServiceStatusHandler.ServeHTTP(w, r)
 		case PlatformServiceListServiceLogsProcedure:
@@ -1040,12 +1240,24 @@ func (UnimplementedPlatformServiceHandler) CreateProject(context.Context, *conne
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CreateProject is not implemented"))
 }
 
-func (UnimplementedPlatformServiceHandler) ListProjects(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error) {
+func (UnimplementedPlatformServiceHandler) ListProjects(context.Context, *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListProjects is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetProject is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) DeleteProject(context.Context, *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteProject is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RestoreProject(context.Context, *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RestoreProject is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) PreviewProjectDeletion(context.Context, *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.PreviewProjectDeletion is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) ListEnvironments(context.Context, *connect.Request[platformv1.ListEnvironmentsRequest]) (*connect.Response[platformv1.ListEnvironmentsResponse], error) {
@@ -1074,6 +1286,14 @@ func (UnimplementedPlatformServiceHandler) UpdateEnvironmentAutoDeploy(context.C
 
 func (UnimplementedPlatformServiceHandler) DeleteEnvironment(context.Context, *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteEnvironment is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RestoreEnvironment(context.Context, *connect.Request[platformv1.RestoreEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RestoreEnvironment is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) PreviewEnvironmentDeletion(context.Context, *connect.Request[platformv1.PreviewEnvironmentDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.PreviewEnvironmentDeletion is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) ReleaseEnvironment(context.Context, *connect.Request[platformv1.ReleaseEnvironmentRequest]) (*connect.Response[platformv1.ReleaseEnvironmentResponse], error) {
@@ -1112,6 +1332,10 @@ func (UnimplementedPlatformServiceHandler) DeleteService(context.Context, *conne
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteService is not implemented"))
 }
 
+func (UnimplementedPlatformServiceHandler) RestoreService(context.Context, *connect.Request[platformv1.RestoreServiceRequest]) (*connect.Response[platformv1.Service], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RestoreService is not implemented"))
+}
+
 func (UnimplementedPlatformServiceHandler) GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetService is not implemented"))
 }
@@ -1140,6 +1364,10 @@ func (UnimplementedPlatformServiceHandler) DeleteVolume(context.Context, *connec
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteVolume is not implemented"))
 }
 
+func (UnimplementedPlatformServiceHandler) PreviewVolumeDeletion(context.Context, *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.PreviewVolumeDeletion is not implemented"))
+}
+
 func (UnimplementedPlatformServiceHandler) ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListVolumes is not implemented"))
 }
@@ -1166,6 +1394,10 @@ func (UnimplementedPlatformServiceHandler) UpdateDomainBinding(context.Context, 
 
 func (UnimplementedPlatformServiceHandler) DeleteDomainBinding(context.Context, *connect.Request[platformv1.DeleteDomainBindingRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteDomainBinding is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RestoreDomainBinding(context.Context, *connect.Request[platformv1.RestoreDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RestoreDomainBinding is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) GetServiceStatus(context.Context, *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error) {

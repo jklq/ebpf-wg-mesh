@@ -75,7 +75,7 @@ func TestEnvironmentAutoDeployDefaultsAndAuthorization(t *testing.T) {
 	if _, err := store.catalog.updateEnvironmentAutoDeploy(ctx, testUser("viewer"), staging.ID, true); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("viewer updated auto-deploy: %v", err)
 	}
-	environments, err := store.catalog.listEnvironments(ctx, testUser("viewer"), project.ID)
+	environments, err := store.catalog.listEnvironments(ctx, testUser("viewer"), project.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}

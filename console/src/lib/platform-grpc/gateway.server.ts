@@ -38,6 +38,7 @@ import {
 	toLinkGitHubRepositoryRequest,
 	toListDomainBindingsRequest,
 	toListEnvironmentsRequest,
+	toListProjectsRequest,
 	toListServiceDeploymentsRequest,
 	toListServiceLogsRequest,
 	toListServicesRequest,
@@ -117,8 +118,12 @@ export function createPlatformGateway(
 		async listProjects(user) {
 			try {
 				return toProjects(
-					(await platform.listProjects(toEmptyRequest(), callOptions(user)))
-						.projects,
+					(
+						await platform.listProjects(
+							toListProjectsRequest(),
+							callOptions(user),
+						)
+					).projects,
 				);
 			} catch (cause) {
 				throw toPlatformGatewayError("ListProjects", cause);

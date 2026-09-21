@@ -271,7 +271,7 @@ func setupSourceServiceForDeployment(t *testing.T) (*persistence, context.Contex
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -302,7 +302,7 @@ func setupDirectImageServiceForDeployment(t *testing.T) (*persistence, context.C
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

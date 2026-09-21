@@ -194,7 +194,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	_ = recvDesiredState(t, liveStream)
 
 	store := first.server.store
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
