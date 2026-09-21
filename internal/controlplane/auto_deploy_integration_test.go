@@ -113,8 +113,8 @@ func TestGitHubPushQueuesBuildWhenAutoDeployOn(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
@@ -187,8 +187,8 @@ func TestGitHubPushRecordsRevisionWithoutBuildWhenAutoDeployOff(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
@@ -292,8 +292,8 @@ func TestGitHubStaleBindingHoldsBuildWhenAutoDeployOff(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 

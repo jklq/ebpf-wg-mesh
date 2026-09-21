@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 21
+const currentSchemaVersion = 22
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -513,29 +513,28 @@ var currentSchema = []string{
 			UNIQUE (provider, provider_repository_external_id, commit_sha)
 		)`,
 	`CREATE INDEX idx_source_snapshots_created ON source_snapshots(created_at, id)`,
-	`CREATE TABLE source_work_items (
+	`CREATE TABLE durable_work_items (
 			id STRING PRIMARY KEY,
 			kind STRING NOT NULL,
-			state STRING NOT NULL,
-			processor_id STRING NOT NULL DEFAULT '',
-			idempotency_key STRING NOT NULL UNIQUE,
-			service_id STRING NOT NULL DEFAULT '',
-			spec_revision INT8 NOT NULL DEFAULT 0,
-			provider STRING NOT NULL DEFAULT '',
-			provider_repository_external_id STRING NOT NULL DEFAULT '',
-			provider_scope_external_id STRING NOT NULL DEFAULT '',
-			tracked_ref STRING NOT NULL DEFAULT '',
-			commit_sha STRING NOT NULL DEFAULT '',
-			commit_message STRING NOT NULL DEFAULT '',
-			commit_author STRING NOT NULL DEFAULT '',
+			dedup_key STRING NOT NULL UNIQUE,
+			resource_type STRING NOT NULL DEFAULT '',
+			resource_id STRING NOT NULL DEFAULT '',
+			state STRING NOT NULL CHECK (state IN ('pending', 'leased', 'succeeded', 'failed', 'dead')),
+			attempt_count INT8 NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+			attempt_limit INT8 NOT NULL CHECK (attempt_limit > 0),
+			owner_id STRING NOT NULL DEFAULT '',
+			owner_epoch INT8 NOT NULL DEFAULT 0 CHECK (owner_epoch >= 0),
+			lease_expires_at TIMESTAMPTZ NULL,
 			last_error STRING NOT NULL DEFAULT '',
-			attempt_count INT8 NOT NULL DEFAULT 0,
 			available_at TIMESTAMPTZ NOT NULL,
+			payload JSONB NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
+			updated_at TIMESTAMPTZ NOT NULL,
+			completed_at TIMESTAMPTZ NULL
 		)`,
-	`CREATE INDEX idx_source_work_items_state ON source_work_items(state, available_at ASC, created_at ASC, id)`,
-	`CREATE INDEX idx_source_work_items_recovery ON source_work_items(state, updated_at ASC, id)`,
+	`CREATE INDEX idx_durable_work_items_claim ON durable_work_items(state, available_at ASC, created_at ASC, id)`,
+	`CREATE INDEX idx_durable_work_items_kind ON durable_work_items(kind, state, available_at ASC, id)`,
+	`CREATE INDEX idx_durable_work_items_resource ON durable_work_items(resource_type, resource_id, state)`,
 	`ALTER TABLE service_delivery_status ADD CONSTRAINT fk_service_delivery_status_latest_build
 			FOREIGN KEY (latest_build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
 	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_source_revision

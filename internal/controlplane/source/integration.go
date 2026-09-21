@@ -27,11 +27,6 @@ type Store interface {
 	RecoverGitHubWebhookDeliveries(context.Context, time.Duration) error
 	ListActiveGitHubInstallationIDs(context.Context) ([]int64, error)
 
-	ClaimNextSourceWorkItem(context.Context, string) (SourceWorkItemRecord, error)
-	CompleteSourceWorkItem(context.Context, string, string) error
-	ReleaseSourceWorkItem(context.Context, string, string, error, time.Duration) error
-	RecoverSourceWorkItems(context.Context, time.Duration) error
-	EnqueueSourceWorkItem(context.Context, SourceWorkItemRecord) (bool, error)
 	GitHubInstallationByID(context.Context, int64) (GitHubInstallationRecord, error)
 	SourceBindingsForProviderScope(context.Context, string, string) ([]SourceBindingRecord, error)
 	SourceBindingsForGitHubRepositoryAndRef(context.Context, string, string) ([]SourceBindingRecord, error)

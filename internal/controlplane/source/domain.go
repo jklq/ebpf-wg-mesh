@@ -59,28 +59,6 @@ type SourceSnapshotRecord struct {
 	UpdatedAt                    time.Time
 }
 
-type SourceWorkItemRecord struct {
-	ID                           string
-	Kind                         string
-	State                        string
-	ProcessorID                  string
-	IdempotencyKey               string
-	ServiceID                    string
-	SpecRevision                 int64
-	Provider                     string
-	ProviderRepositoryExternalID string
-	ProviderScopeExternalID      string
-	TrackedRef                   string
-	CommitSHA                    string
-	CommitMessage                string
-	CommitAuthor                 string
-	LastError                    string
-	AttemptCount                 int64
-	AvailableAt                  time.Time
-	CreatedAt                    time.Time
-	UpdatedAt                    time.Time
-}
-
 const (
 	SourceAccessStateAvailable            = "available"
 	SourceAccessStateInstallationRequired = "installation_required"
@@ -90,10 +68,16 @@ const (
 	SourceWorkKindSourceSpecChanged     = "source_spec_changed"
 	SourceWorkKindProviderAccessChanged = "provider_access_changed"
 	SourceWorkKindRevisionObserved      = "revision_observed"
-
-	SourceWorkStatePending    = "pending"
-	SourceWorkStateProcessing = "processing"
 )
+
+// SourceWorkKinds lists every durable-work kind the source layer enqueues.
+// Claims are restricted to these kinds so other queues sharing the table
+// are never picked up by the source reconciler.
+var SourceWorkKinds = []string{
+	SourceWorkKindSourceSpecChanged,
+	SourceWorkKindProviderAccessChanged,
+	SourceWorkKindRevisionObserved,
+}
 
 func CloneBuildRecipe(recipe *platformv1.BuildRecipe) *platformv1.BuildRecipe {
 	if recipe == nil {

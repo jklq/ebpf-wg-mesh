@@ -9,25 +9,29 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/controlplane/durablework"
 )
 
 var errGitHubWorkDeferred = errors.New("github work deferred")
 
+var errUnknownWorkKind = errors.New("unknown source work kind")
+
 type GitHubCoordinator struct {
 	store      Store
+	work       *durablework.Store
 	delivery   Delivery
 	catalog    *GitHubCatalog
 	client     *GitHubClient
 	staleAfter time.Duration
-	retryAfter time.Duration
 }
 
 type sourceWorkWakeup interface {
 	SourceWorkReady() <-chan struct{}
 }
 
-func NewGitHubCoordinator(store Store, delivery Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration) *GitHubCoordinator {
-	if store == nil || delivery == nil || catalog == nil || client == nil || !client.Enabled() {
+func NewGitHubCoordinator(store Store, work *durablework.Store, delivery Delivery, catalog *GitHubCatalog, client *GitHubClient, staleAfter time.Duration) *GitHubCoordinator {
+	if store == nil || work == nil || delivery == nil || catalog == nil || client == nil || !client.Enabled() {
 		return nil
 	}
 	if staleAfter <= 0 {
@@ -35,11 +39,11 @@ func NewGitHubCoordinator(store Store, delivery Delivery, catalog *GitHubCatalog
 	}
 	return &GitHubCoordinator{
 		store:      store,
+		work:       work,
 		delivery:   delivery,
 		catalog:    catalog,
 		client:     client,
 		staleAfter: staleAfter,
-		retryAfter: 5 * time.Second,
 	}
 }
 
@@ -63,20 +67,20 @@ func (c *GitHubCoordinator) Enabled() bool {
 	return c != nil && c.store != nil && c.catalog != nil && c.client != nil
 }
 
-func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, processorID string) (SourceWorkItemRecord, error) {
-	return c.store.ClaimNextSourceWorkItem(ctx, processorID)
+func (c *GitHubCoordinator) ClaimNextWorkItem(ctx context.Context, ownerID string) (durablework.Record, error) {
+	return c.work.Claim(ctx, ownerID, WorkLeaseTTL, SourceWorkKinds...)
 }
 
-func (c *GitHubCoordinator) CompleteWorkItem(ctx context.Context, id, processorID string) error {
-	return c.store.CompleteSourceWorkItem(ctx, id, processorID)
+func (c *GitHubCoordinator) CompleteWorkItem(ctx context.Context, rec durablework.Record) error {
+	return c.work.Complete(ctx, rec)
 }
 
-func (c *GitHubCoordinator) ReleaseWorkItem(ctx context.Context, id, processorID string, processErr error, retryAfter time.Duration) error {
-	return c.store.ReleaseSourceWorkItem(ctx, id, processorID, processErr, retryAfter)
-}
-
-func (c *GitHubCoordinator) RecoverWorkItems(ctx context.Context, staleAfter time.Duration) error {
-	return c.store.RecoverSourceWorkItems(ctx, staleAfter)
+// FailWorkItem dispositions a claimed record after a failed attempt.
+// Retryable failures requeue with jittered backoff and dead-letter when the
+// attempt limit is reached; non-retryable failures (poison payloads,
+// unknown kinds) move the record to failed at once.
+func (c *GitHubCoordinator) FailWorkItem(ctx context.Context, rec durablework.Record, processErr error, retryable bool) error {
+	return c.work.Fail(ctx, rec, processErr, durablework.FailOptions{Retryable: retryable})
 }
 
 func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, installationID int64) error {
@@ -86,12 +90,7 @@ func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, inst
 	if installationID <= 0 {
 		return errors.New("installation id is required")
 	}
-	inserted, err := c.store.EnqueueSourceWorkItem(ctx, SourceWorkItemRecord{
-		Kind:                    SourceWorkKindProviderAccessChanged,
-		IdempotencyKey:          fmt.Sprintf("%s:github:%d", SourceWorkKindProviderAccessChanged, installationID),
-		Provider:                "github",
-		ProviderScopeExternalID: ScopeExternalID(installationID),
-	})
+	inserted, err := c.work.Enqueue(ctx, ProviderAccessChangedParams(installationID))
 	if err != nil {
 		return err
 	}
@@ -113,16 +112,7 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	if repositoryExternalID == "" || trackedRef == "" || commitSHA == "" {
 		return errors.New("repository id, tracked ref, and commit sha are required")
 	}
-	inserted, err := c.store.EnqueueSourceWorkItem(ctx, SourceWorkItemRecord{
-		Kind:                         SourceWorkKindRevisionObserved,
-		IdempotencyKey:               fmt.Sprintf("%s:github:%s:%s:%s", SourceWorkKindRevisionObserved, repositoryExternalID, trackedRef, commitSHA),
-		Provider:                     "github",
-		ProviderRepositoryExternalID: repositoryExternalID,
-		TrackedRef:                   trackedRef,
-		CommitSHA:                    commitSHA,
-		CommitMessage:                strings.TrimSpace(commitMessage),
-		CommitAuthor:                 strings.TrimSpace(commitAuthor),
-	})
+	inserted, err := c.work.Enqueue(ctx, RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, commitMessage, commitAuthor))
 	if err != nil {
 		return err
 	}
@@ -134,16 +124,16 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	return nil
 }
 
-func (c *GitHubCoordinator) processWorkItem(ctx context.Context, rec SourceWorkItemRecord) error {
+func (c *GitHubCoordinator) processWorkItem(ctx context.Context, rec durablework.Record, payload WorkPayload) error {
 	switch rec.Kind {
 	case SourceWorkKindProviderAccessChanged:
-		return c.handleProviderAccessChanged(ctx, rec.ProviderScopeExternalID)
+		return c.handleProviderAccessChanged(ctx, payload.ProviderScopeExternalID)
 	case SourceWorkKindSourceSpecChanged:
-		return c.syncServiceSource(ctx, rec.ServiceID, rec.SpecRevision)
+		return c.syncServiceSource(ctx, payload.ServiceID, payload.SpecRevision)
 	case SourceWorkKindRevisionObserved:
-		return c.handleRevisionObserved(ctx, rec)
+		return c.handleRevisionObserved(ctx, payload)
 	default:
-		return nil
+		return fmt.Errorf("%w: %q", errUnknownWorkKind, rec.Kind)
 	}
 }
 
@@ -160,11 +150,7 @@ func (c *GitHubCoordinator) handleProviderAccessChanged(ctx context.Context, pro
 		return err
 	}
 	for _, binding := range bindings {
-		if _, err := c.store.EnqueueSourceWorkItem(ctx, SourceWorkItemRecord{
-			Kind:           SourceWorkKindSourceSpecChanged,
-			IdempotencyKey: fmt.Sprintf("%s:%s", SourceWorkKindSourceSpecChanged, binding.ServiceID),
-			ServiceID:      binding.ServiceID,
-		}); err != nil {
+		if _, err := c.work.Enqueue(ctx, SourceResyncParams(binding.ServiceID)); err != nil {
 			return err
 		}
 	}
@@ -271,38 +257,34 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0)
 }
 
-func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, rec SourceWorkItemRecord) error {
-	bindings, err := c.store.SourceBindingsForGitHubRepositoryAndRef(ctx, rec.ProviderRepositoryExternalID, rec.TrackedRef)
+func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload WorkPayload) error {
+	bindings, err := c.store.SourceBindingsForGitHubRepositoryAndRef(ctx, payload.ProviderRepositoryExternalID, payload.TrackedRef)
 	if err != nil {
 		return err
 	}
 	if len(bindings) == 0 {
-		slog.InfoContext(ctx, "github revision had no bound services", "repository_external_id", rec.ProviderRepositoryExternalID, "tracked_ref", rec.TrackedRef, "commit_sha", rec.CommitSHA)
+		slog.InfoContext(ctx, "github revision had no bound services", "repository_external_id", payload.ProviderRepositoryExternalID, "tracked_ref", payload.TrackedRef, "commit_sha", payload.CommitSHA)
 		return nil
 	}
 	for _, binding := range bindings {
 		if time.Now().UTC().After(binding.FreshUntil) {
-			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
+			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
 			if binding.AccessState == SourceAccessStateAvailable {
-				if _, err := c.recordBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor); err != nil {
+				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor); err != nil {
 					return err
 				}
 			}
-			if _, err := c.store.EnqueueSourceWorkItem(ctx, SourceWorkItemRecord{
-				Kind:           SourceWorkKindSourceSpecChanged,
-				IdempotencyKey: fmt.Sprintf("%s:%s:%d", SourceWorkKindSourceSpecChanged, binding.ServiceID, time.Now().UTC().UnixNano()),
-				ServiceID:      binding.ServiceID,
-			}); err != nil {
+			if _, err := c.work.Enqueue(ctx, SourceSpecChangedParams(binding.ServiceID, 0, true)); err != nil {
 				return err
 			}
 			continue
 		}
 		if binding.AccessState != SourceAccessStateAvailable {
-			slog.InfoContext(ctx, "github source binding unavailable", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA, "access_state", binding.AccessState)
+			slog.InfoContext(ctx, "github source binding unavailable", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "access_state", binding.AccessState)
 			continue
 		}
-		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", rec.CommitSHA)
-		if err := c.observeBoundRevision(ctx, binding, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, true); err != nil {
+		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
+		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, true); err != nil {
 			return err
 		}
 	}

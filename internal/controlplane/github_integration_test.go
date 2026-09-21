@@ -97,7 +97,7 @@ func bootstrapProjectAndAgent(t *testing.T, store *persistence, ctx context.Cont
 func countSourceWorkItems(t *testing.T, store *persistence, ctx context.Context, kind string) int {
 	t.Helper()
 	var count int
-	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM source_work_items WHERE kind = $1`, kind).Scan(&count); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM durable_work_items WHERE kind = $1 AND state IN ('pending', 'leased')`, kind).Scan(&count); err != nil {
 		t.Fatalf("count source work items: %v", err)
 	}
 	return count

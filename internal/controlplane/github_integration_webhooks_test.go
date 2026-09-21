@@ -8,7 +8,9 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/durablework"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -98,7 +100,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 		t.Fatalf("LinkGitHubRepository: %v", err)
 	}
 	branchHitsBeforeMutations := server.branchHeadHits()
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM durable_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
 
@@ -123,7 +125,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 		t.Fatalf("expected source update to remain staged until deployment, got %d queued items", got)
 	}
 
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM source_work_items`); err != nil {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM durable_work_items`); err != nil {
 		t.Fatalf("clear source work items: %v", err)
 	}
 	statusResp, err := service.ReleaseEnvironment(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ReleaseEnvironmentRequest{
@@ -156,8 +158,8 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -197,13 +199,8 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 		t.Fatalf("expected synced build commit author to be persisted, got %+v", status.LatestBuild)
 	}
 
-	if _, err := store.source.EnqueueSourceWorkItem(ctx, source.SourceWorkItemRecord{
-		Kind:           source.SourceWorkKindSourceSpecChanged,
-		IdempotencyKey: fmt.Sprintf("%s:%s:%d", source.SourceWorkKindSourceSpecChanged, service.ID, service.SpecRevision),
-		ServiceID:      service.ID,
-		SpecRevision:   service.SpecRevision,
-	}); err != nil {
-		t.Fatalf("EnqueueSourceWorkItem(sync retry): %v", err)
+	if _, err := store.source.Work().Enqueue(ctx, source.SourceSpecChangedParams(service.ID, service.SpecRevision, false)); err != nil {
+		t.Fatalf("Enqueue(sync retry): %v", err)
 	}
 	for i := 0; i < 3; i++ {
 		processed, err := reconciler.ProcessNext(ctx)
@@ -233,8 +230,8 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -307,7 +304,7 @@ func TestPushAndInstallationWebhooksOnlyQueueCoordinatorWork(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
@@ -358,7 +355,7 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
@@ -381,8 +378,8 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 
 	var commitMessage, commitAuthor string
 	if err := store.db.QueryRowContext(ctx,
-		`SELECT commit_message, commit_author
-		   FROM source_work_items
+		`SELECT payload->>'commit_message', payload->>'commit_author'
+		   FROM durable_work_items
 		  WHERE kind = $1
 		  ORDER BY created_at DESC
 		  LIMIT 1`,
@@ -429,7 +426,7 @@ func TestGitHubClientListInstallationRepositoriesPaginates(t *testing.T) {
 	}
 }
 
-func TestGitHubReconcilerBootstrapRequeuesStaleWork(t *testing.T) {
+func TestGitHubWorkLeaseExpiryAllowsTakeover(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
@@ -439,41 +436,60 @@ func TestGitHubReconcilerBootstrapRequeuesStaleWork(t *testing.T) {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	coordinator := NewGitHubCoordinator(store.source, testDelivery(store).Delivery, catalog, client, time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute, time.Minute)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
 	ctx := context.Background()
 
-	if _, err := store.source.EnqueueSourceWorkItem(ctx, source.SourceWorkItemRecord{
-		Kind:                    source.SourceWorkKindProviderAccessChanged,
-		IdempotencyKey:          "bootstrap-refresh-7",
-		Provider:                "github",
-		ProviderScopeExternalID: source.ScopeExternalID(7),
-	}); err != nil {
-		t.Fatalf("EnqueueSourceWorkItem: %v", err)
+	if _, err := store.source.Work().Enqueue(ctx, source.ProviderAccessChangedParams(7)); err != nil {
+		t.Fatalf("Enqueue: %v", err)
 	}
-	claimed, err := claimNextSourceWorkItem(ctx, store, "processor-1")
+	claimed, err := coordinator.ClaimNextWorkItem(ctx, "processor-1")
 	if err != nil {
-		t.Fatalf("claimNextSourceWorkItem: %v", err)
+		t.Fatalf("ClaimNextWorkItem: %v", err)
 	}
 	if claimed.ID == "" {
 		t.Fatal("expected claimed work item")
 	}
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE source_work_items SET updated_at = $1 WHERE id = $2`,
-		time.Now().UTC().Add(-2*time.Minute), claimed.ID,
-	); err != nil {
-		t.Fatalf("age source work item: %v", err)
+	payload, err := source.DecodeWorkPayload(claimed.Payload)
+	if err != nil {
+		t.Fatalf("DecodeWorkPayload: %v", err)
+	}
+	if payload.ProviderScopeExternalID != source.ScopeExternalID(7) {
+		t.Fatalf("claimed payload scope = %q, want %q", payload.ProviderScopeExternalID, source.ScopeExternalID(7))
 	}
 
+	// Bootstrap must leave live leases alone: no recovery scan requeues
+	// source work anymore.
 	if err := reconciler.Bootstrap(ctx); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	requeued, err := claimNextSourceWorkItem(ctx, store, "processor-2")
-	if err != nil {
-		t.Fatalf("claimNextSourceWorkItem(requeued): %v", err)
+	if live, err := coordinator.ClaimNextWorkItem(ctx, "processor-2"); err != nil {
+		t.Fatalf("ClaimNextWorkItem(live lease): %v", err)
+	} else if live.ID != "" {
+		t.Fatal("live lease was handed to a second owner")
 	}
-	if requeued.ID == "" {
-		t.Fatal("expected stale in-flight work to be requeued")
+
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE durable_work_items SET lease_expires_at = statement_timestamp() - INTERVAL '1 minute' WHERE id = $1`,
+		claimed.ID,
+	); err != nil {
+		t.Fatalf("expire source work lease: %v", err)
+	}
+	taken, err := coordinator.ClaimNextWorkItem(ctx, "processor-2")
+	if err != nil {
+		t.Fatalf("ClaimNextWorkItem(takeover): %v", err)
+	}
+	if taken.ID != claimed.ID {
+		t.Fatalf("takeover claimed %q, want %q", taken.ID, claimed.ID)
+	}
+	if taken.OwnerEpoch != claimed.OwnerEpoch+1 || taken.OwnerID != "processor-2" {
+		t.Fatalf("takeover owner = %s epoch %d, want processor-2 epoch %d", taken.OwnerID, taken.OwnerEpoch, claimed.OwnerEpoch+1)
+	}
+	if err := coordinator.CompleteWorkItem(ctx, claimed); !errors.Is(err, durablework.ErrLeaseLost) {
+		t.Fatalf("stale owner complete = %v, want ErrLeaseLost", err)
+	}
+	if err := coordinator.CompleteWorkItem(ctx, taken); err != nil {
+		t.Fatalf("current owner complete: %v", err)
 	}
 }
 
@@ -494,11 +510,15 @@ func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty, err := store.source.ClaimNextSourceWorkItem(ctx, "empty-worker"); err != nil || empty.ID != "" {
+	work := store.source.Work()
+	if empty, err := work.Claim(ctx, "empty-worker", time.Minute, source.SourceWorkKinds...); err != nil || empty.ID != "" {
 		t.Fatalf("empty claim = (%+v, %v)", empty, err)
 	}
-	inserted, err := store.source.EnqueueSourceWorkItem(ctx, source.SourceWorkItemRecord{
-		Kind: source.SourceWorkKindProviderAccessChanged, IdempotencyKey: "atomic-claim", Provider: "github",
+	inserted, err := work.Enqueue(ctx, durablework.EnqueueParams{
+		Kind:         source.SourceWorkKindProviderAccessChanged,
+		DedupKey:     "atomic-claim",
+		ResourceType: "github_installation",
+		ResourceID:   "7",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -508,14 +528,14 @@ func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
 	}
 	start := make(chan struct{})
 	type claimResult struct {
-		record source.SourceWorkItemRecord
+		record durablework.Record
 		err    error
 	}
 	results := make(chan claimResult, 2)
 	for _, worker := range []string{"worker-a", "worker-b"} {
 		go func() {
 			<-start
-			rec, err := store.source.ClaimNextSourceWorkItem(ctx, worker)
+			rec, err := work.Claim(ctx, worker, time.Minute, source.SourceWorkKinds...)
 			results <- claimResult{record: rec, err: err}
 		}()
 	}
@@ -531,12 +551,13 @@ func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
 		}
 	}
 	if claimed != 1 {
-		var state, processorID string
+		var state, ownerID string
+		var ownerEpoch int64
 		var availableAt, databaseNow time.Time
-		if err := store.db.QueryRowContext(ctx, `SELECT state, processor_id, available_at, statement_timestamp() FROM source_work_items WHERE idempotency_key = 'atomic-claim'`).Scan(&state, &processorID, &availableAt, &databaseNow); err != nil {
+		if err := store.db.QueryRowContext(ctx, `SELECT state, owner_id, owner_epoch, available_at, statement_timestamp() FROM durable_work_items WHERE dedup_key = 'atomic-claim'`).Scan(&state, &ownerID, &ownerEpoch, &availableAt, &databaseNow); err != nil {
 			t.Fatal(err)
 		}
-		t.Fatalf("claimed work %d times, want once; row state=%s processor=%s available_at=%s database_now=%s", claimed, state, processorID, availableAt, databaseNow)
+		t.Fatalf("claimed work %d times, want once; row state=%s owner=%s epoch=%d available_at=%s database_now=%s", claimed, state, ownerID, ownerEpoch, availableAt, databaseNow)
 	}
 	after, err := store.journal.Snapshot(ctx)
 	if err != nil {
