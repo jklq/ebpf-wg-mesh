@@ -323,6 +323,13 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		if deletion != nil && !deletion.Inherited {
 			return nil
 		}
+		// Capture before tombstoning: the live-binding check requires a
+		// live service row, so it must run before the tombstone lands.
+		bindings, err := s.hasLiveDomainBindingsQuerier(ctx, tx, scope.ID())
+		if err != nil {
+			return err
+		}
+		hasBindings = bindings
 		now := time.Now().UTC()
 		tombstoned, err := s.tombstoneServiceTx(ctx, tx, scope.ID(), scope.UserID(), now)
 		if err != nil {
@@ -346,8 +353,7 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
 			return err
 		}
-		hasBindings, err = s.hasLiveDomainBindingsQuerier(ctx, tx, scope.ID())
-		return err
+		return nil
 	})
 	if err != nil {
 		return err

@@ -83,7 +83,7 @@ func (s *CatalogOperations) DeleteProject(ctx context.Context, req *platformv1.D
 		if errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost) {
 			return nil, err
 		}
-		if errors.Is(err, deliverycore.ErrConfirmationMismatch) || errors.Is(err, deliverycore.ErrManagedProjectProtected) {
+		if errors.Is(err, deliverycore.ErrConfirmationMismatch) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, writeAccessError("delete project", err)

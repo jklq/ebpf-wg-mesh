@@ -23,8 +23,8 @@ import (
 // and garbage collection physically deletes expired tombstones.
 
 // lockProjectTx locks a user project row and loads it with its deletion
-// state. Managed projects resolve through the same row; callers that must
-// refuse them check the kind.
+// state. Managed projects do not resolve here: the kind filter keeps them
+// out, and authorization already denied them above.
 func (s *catalogPersistence) lockProjectTx(ctx context.Context, tx *sql.Tx, scope authz.Project) (deliverycore.ProjectRecord, error) {
 	row := tx.QueryRowContext(ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
@@ -272,9 +272,8 @@ func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User,
 		if rec.Deletion != nil {
 			return nil
 		}
-		if rec.Kind == deliverycore.ProjectKindManaged {
-			return deliverycore.ErrManagedProjectProtected
-		}
+		// Managed projects never reach this point: authorization admits
+		// user projects only, and the row lock below filters by kind.
 		if err := deliverycore.CheckDeletionConfirmation(rec.Name, confirmation); err != nil {
 			return err
 		}

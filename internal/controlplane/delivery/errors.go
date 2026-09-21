@@ -25,7 +25,6 @@ var (
 	ErrDomainDeleted            = errors.New("domain binding is deleted")
 	ErrConfirmationMismatch     = errors.New("confirmation name does not match the current resource name")
 	ErrVolumeNotEmpty           = errors.New("volume may still hold data")
-	ErrManagedProjectProtected  = errors.New("managed project cannot be deleted")
 	ErrAncestorDeleted          = errors.New("cannot restore under a deleted parent; restore the parent first")
 	ErrServiceAlreadyExists     = errors.New("service already exists")
 	ErrEnvironmentAlreadyExists = errors.New("environment already exists")

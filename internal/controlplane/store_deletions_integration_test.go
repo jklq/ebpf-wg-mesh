@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -220,9 +221,16 @@ func TestDeletionServiceWithdrawsWorkloadsAndRestores(t *testing.T) {
 	if err != nil || len(before.GetServices()) != 1 {
 		t.Fatalf("desired state before delete: %#v: %v", before.GetServices(), err)
 	}
-
-	if err := deleteService(ctx, store, "owner", service.ID); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("owner"), "web.example.test", service.ID, 8080); err != nil {
 		t.Fatal(err)
+	}
+
+	ingress := &countingIngress{}
+	if err := newTestDelivery(store, nil, ingress, nil).DeleteService(ctx, testUser("owner"), service.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ingress.requests.Load() != 1 {
+		t.Fatalf("service delete with live bindings synced ingress %d times, want 1", ingress.requests.Load())
 	}
 	if err := deleteService(ctx, store, "owner", service.ID); err != nil {
 		t.Fatalf("repeat delete service: %v", err)
@@ -664,7 +672,9 @@ func TestDeletionManagedProjectCannotBeDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.deleteProject(ctx, testUser("owner"), managed.ID, managed.Name); err == nil {
-		t.Fatal("deleted a managed project")
+	// Managed projects are refused by authorization, which admits user
+	// projects only.
+	if _, err := store.catalog.deleteProject(ctx, testUser("owner"), managed.ID, managed.Name); !errors.Is(err, authz.ErrDenied) {
+		t.Fatalf("delete managed project: %v", err)
 	}
 }
