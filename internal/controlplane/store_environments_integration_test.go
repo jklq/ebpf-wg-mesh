@@ -26,8 +26,8 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), production.ID); !errors.Is(err, errProductionEnvironment) {
-		t.Fatalf("delete production: %v", err)
+	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), production.ID, ""); !errors.Is(err, deliverycore.ErrConfirmationMismatch) {
+		t.Fatalf("delete production without confirmation: %v", err)
 	}
 	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
 	if err != nil {
@@ -50,7 +50,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if _, err := store.catalog.createEnvironment(ctx, testUser("viewer"), project.ID, "Viewer Sandbox"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("viewer mutated project environments: %v", err)
 	}
-	if environments, err := store.catalog.listEnvironments(ctx, testUser("viewer"), project.ID); err != nil || len(environments) != 3 {
+	if environments, err := store.catalog.listEnvironments(ctx, testUser("viewer"), project.ID, false); err != nil || len(environments) != 3 {
 		t.Fatalf("viewer could not read project environments: %#v: %v", environments, err)
 	}
 
@@ -64,7 +64,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if _, err := store.createStagedServiceForTest(ctx, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", nil)); err != nil {
 		t.Fatal(err)
 	}
-	services, err := store.reads.ListServices(ctx, testUser("owner"), staging.ID)
+	services, err := store.reads.ListServices(ctx, testUser("owner"), staging.ID, false)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("list staging services: %#v: %v", services, err)
 	}
@@ -114,11 +114,11 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	volumes, err := store.catalog.listVolumes(ctx, testUser("owner"), duplicate.ID)
+	volumes, err := store.catalog.listVolumes(ctx, testUser("owner"), duplicate.ID, false)
 	if err != nil || len(volumes) != 1 || volumes[0].ID == volume.ID {
 		t.Fatalf("duplicated volumes: %#v: %v", volumes, err)
 	}
-	services, err := store.reads.ListServices(ctx, testUser("owner"), duplicate.ID)
+	services, err := store.reads.ListServices(ctx, testUser("owner"), duplicate.ID, false)
 	if err != nil || len(services) != 1 {
 		t.Fatalf("duplicated services: %#v: %v", services, err)
 	}
@@ -147,7 +147,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	variableCopies, err := store.reads.ListServices(ctx, testUser("owner"), withVariables.ID)
+	variableCopies, err := store.reads.ListServices(ctx, testUser("owner"), withVariables.ID, false)
 	if err != nil || len(variableCopies) != 1 || variableCopies[0].Spec.GetRuntime().GetEnv()["SECRET"] != "production" {
 		t.Fatalf("explicit variable copy failed: %#v: %v", variableCopies, err)
 	}

@@ -18,7 +18,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *testing.T) {

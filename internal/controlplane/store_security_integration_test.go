@@ -25,18 +25,18 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("EnsureBootstrap: %v", err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
 	if len(projects) != 2 {
 		t.Fatalf("expected two projects, got %d", len(projects))
 	}
-	environmentsOne, err := store.catalog.listEnvironments(ctx, testUser("user-1"), projects[0].ID)
+	environmentsOne, err := store.catalog.listEnvironments(ctx, testUser("user-1"), projects[0].ID, false)
 	if err != nil || len(environmentsOne) != 1 {
 		t.Fatalf("list first project environments: %#v: %v", environmentsOne, err)
 	}
-	environmentsTwo, err := store.catalog.listEnvironments(ctx, testUser("user-1"), projects[1].ID)
+	environmentsTwo, err := store.catalog.listEnvironments(ctx, testUser("user-1"), projects[1].ID, false)
 	if err != nil || len(environmentsTwo) != 1 {
 		t.Fatalf("list second project environments: %#v: %v", environmentsTwo, err)
 	}
@@ -218,7 +218,7 @@ func TestProjectCreationCreatesExactlyOneProductionEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createProject: %v", err)
 	}
-	environments, err := store.catalog.listEnvironments(ctx, testUser("user-1"), project.ID)
+	environments, err := store.catalog.listEnvironments(ctx, testUser("user-1"), project.ID, false)
 	if err != nil {
 		t.Fatalf("listEnvironments: %v", err)
 	}

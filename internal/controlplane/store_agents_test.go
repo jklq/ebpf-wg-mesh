@@ -106,7 +106,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 				}); err != nil {
 					t.Fatal(err)
 				}
-				projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+				projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 				if err != nil || len(projects) != 1 {
 					t.Fatalf("listProjects: projects=%d err=%v", len(projects), err)
 				}
@@ -279,7 +279,7 @@ func TestDesiredStateDistributesCrossNodeWorkloadIdentities(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
