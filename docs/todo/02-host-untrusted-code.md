@@ -114,12 +114,12 @@ Depends on: 1.6 so Railpack and Dockerfile builds both emit the artifact record.
 
 Design-partner minimum. Mutable tags must never be the runtime identity of what is scheduled.
 
-Built-image deployments already validate and persist a digest-pinned runtime reference, and deployment actions reuse that reference. The remaining contract is the immutable artifact record, direct-image tag resolution, architecture selection, and retention.
+Built-image deployments already validate and persist a digest-pinned runtime reference, and deployment actions reuse that reference. The remaining contract is the immutable artifact record, direct-image tag resolution, skipped rebuilds of an already-built source, and retention.
 
 Prompt:
 
 ```text
-Preserve the existing digest-pinned build completion and deployment-action behavior, and create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, image manifest digest, target architecture, build actor, and timestamps. Make that artifact, rather than an unstructured image string on the deployment, the source of runtime identity. Direct-image deploys must resolve a tag to a digest at deploy time and store the same artifact shape; mutable tags remain user input only. Preserve exact artifacts needed for rollback according to retention policy. Test tag mutation after resolve (the stored digest still runs) and multi-arch selection against 1.10. Do not add SBOM generation, image signing, or vulnerability-policy gates in this item.
+Preserve the existing digest-pinned build completion and deployment-action behavior, and create an immutable artifact record for every successful build containing source snapshot digest, commit SHA, build recipe and builder version, image manifest digest, build actor, and timestamps. Make that artifact, rather than an unstructured image string on the deployment, the source of runtime identity. Direct-image deploys must resolve a tag to a digest at deploy time and store the same artifact shape; mutable tags remain user input only. When the same source has already produced an image, skip the build and deploy that image (with the new environment’s variables). Preserve exact artifacts needed for rollback according to retention policy. Test tag mutation after resolve (the stored digest still runs). Do not add SBOM generation, image signing, vulnerability-policy gates, or multi-arch selection in this item.
 ```
 
 ## 2.7a xDS control plane and Caddy cutover
@@ -255,10 +255,10 @@ Was: part of 5.5, split out of 3.8
 Status: open
 Depends on: 1.1 so enforcement covers both families. Relates to 2.11, which governs same-environment identity.
 
-Design-partner minimum. This is what stops a hostile container from reaching the platform itself. It is not the customer-facing egress product — that is 3.8, and it can wait.
+Design-partner minimum. This is what stops a hostile container from reaching the platform itself.
 
 Prompt:
 
 ```text
-Make the platform's own attack surface unreachable from a customer container, independently of any customer-facing egress feature. Regardless of workload configuration, deny workload traffic to cloud metadata addresses, host and management networks, control-plane and agent administrative endpoints, registry credential endpoints, and every other tenant's overlay prefixes. Enforce close to the workload on both overlay families, fail closed on agent restart, and cover attempts that route through mapped, translated, or tunneled addresses. Same-environment private traffic continues to be governed by workload identity (2.11) and is not treated as external egress. Denials must be diagnosable by an operator without leaking destination data across tenants. Customer-configurable egress allowlists, egress gateways, SMTP policy, and bandwidth accounting are 3.8 and are explicitly out of scope here. Test metadata-address access, host-network access, cross-tenant overlay access, agent restart, and bypass through an alternate address family.
+Make the platform's own attack surface unreachable from a customer container. Regardless of workload configuration, deny workload traffic to cloud metadata addresses, host and management networks, control-plane and agent administrative endpoints, registry credential endpoints, and every other tenant's overlay prefixes. Enforce close to the workload on both overlay families, fail closed on agent restart, and cover attempts that route through mapped, translated, or tunneled addresses. Same-environment private traffic continues to be governed by workload identity (2.11) and is not treated as external egress. Denials must be diagnosable by an operator without leaking destination data across tenants. Test metadata-address access, host-network access, cross-tenant overlay access, agent restart, and bypass through an alternate address family.
 ```

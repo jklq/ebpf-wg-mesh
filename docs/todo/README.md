@@ -25,7 +25,7 @@ Files are slices of that queue, not sequential gates. Category is a tag, not a m
 - CockroachDB is the authoritative control-plane store. High-frequency probe ticks, logs, metrics samples, and queue coordination do not become product-journal commands. The product journal boots from a consistent read of the normalized tables and retains a bounded replay tail; it does not serialize the complete product state into a checkpoint row. Command receipts have bounded retention: one hour for internal commit resolution and seven days for caller-provided idempotency.
 - The control plane is authoritative for placement; an agent is authoritative for supervising work already assigned to it. Agents durably retain accepted allocation state and continue supervision through control-plane loss. Steady-state delivery is bounded per-node start, update, and stop diffs, plus a reconnect reconcile of “what I am running” against “what this node should run.” The current complete per-node snapshot is a safe foundation for that cutover, not the target wire or recovery format.
 - Policy is fail-closed and identity-based. An agent receives a pool deny plus exact allows for environments it currently hosts (including remote allocations in those environments). It does not receive a cluster-wide identity catalog. Ingress proxies receive the backends they route, not the mesh catalog.
-- The platform's own surface is unreachable from a customer container regardless of configuration: metadata addresses, host and management networks, control-plane and agent administration, registry credentials, and other tenants' overlays. That is a platform invariant (2.15), not a customer-configurable egress feature (3.8), and no customer rule may relax it.
+- The platform's own surface is unreachable from a customer container regardless of configuration: metadata addresses, host and management networks, control-plane and agent administration, registry credentials, and other tenants' overlays. That is a platform invariant (2.15), and no customer rule may relax it.
 - WireGuard is the overlay transport and eBPF is the identity policy. There is no full mesh. Peers exist only between nodes that share an environment and between those nodes and the Envoy instances that publish their services. Unused peers are removed.
 - containerd remains the workload runtime.
 - Envoy is the ingress data plane. The control plane serves a versioned xDS snapshot; Envoy ACK/NACK is the apply protocol. Do not keep Caddy as a production ingress. Do not implement Envoy, a CDN, or an edge network in this repository.
@@ -81,11 +81,9 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 
 | # | Item | Size | File |
 | --- | --- | --- | --- |
-| 1.3 | Continuous readiness and liveness (1.2) | M | [01](01-running-service.md#13-continuous-readiness-and-liveness) |
 | 1.8 | Safe deletion (0.3) | M | [01](01-running-service.md#18-safe-deletion) |
-| 1.10 | Builder and agent architecture matching | S | [01](01-running-service.md#110-builder-and-agent-architecture-matching) |
 
-1.1, 1.4, 1.5, 1.6, 1.7, 1.9, and 1.11 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), [landed.md](landed.md#15-truthful-time-and-status), [landed.md](landed.md#16-railpack-as-the-default-builder), [landed.md](landed.md#17-auto-deploy-onoff-per-environment), [landed.md](landed.md#19-credentials-out-of-process-arguments), and [landed.md](landed.md#111-bounded-ephemeral-disk). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-versioned-secrets).
+1.1, 1.4, 1.5, 1.6, 1.7, 1.9, and 1.11 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), [landed.md](landed.md#15-truthful-time-and-status), [landed.md](landed.md#16-railpack-as-the-default-builder), [landed.md](landed.md#17-auto-deploy-onoff-per-environment), [landed.md](landed.md#19-credentials-out-of-process-arguments), and [landed.md](landed.md#111-bounded-ephemeral-disk). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-sealed-secrets).
 
 ### Then: host untrusted code without a shared disk
 
@@ -123,7 +121,6 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | 3.5 | Workload and platform metrics (3.1) | L | [03](03-operate-multi-tenant.md#35-workload-and-platform-metrics) |
 | 3.6 | Service and environment observability views (3.2) | L | [03](03-operate-multi-tenant.md#36-service-and-environment-observability-views) |
 | 3.7 | Explicit HTTP exposure (5.4) | M | [03](03-operate-multi-tenant.md#37-explicit-http-exposure) |
-| 3.8 | Egress policy (5.5) | M | [03](03-operate-multi-tenant.md#38-egress-policy) |
 | 3.9 | Monitors, notifications, webhooks (3.4) | L | [03](03-operate-multi-tenant.md#39-monitors-notifications-and-webhooks) |
 | 3.10 | Operator control room (3.5) | M | [03](03-operate-multi-tenant.md#310-operator-control-room) |
 | 3.11 | Platform backup and restore (2.5) | L | [03](03-operate-multi-tenant.md#311-platform-backup-and-restore) |
@@ -145,7 +142,7 @@ Do not postpone 1.x or 2.x for these.
 | 4.1 | Repository configuration as code (8.3) | M | [04](04-developer-surface.md#41-repository-configuration-as-code) |
 | 4.2 | Reference variables (8.7) | L | [04](04-developer-surface.md#42-reference-variables) |
 | 4.3 | Monorepo watch paths (8.5) | M | [04](04-developer-surface.md#43-monorepo-watch-paths) |
-| 4.4 | Pre-deploy jobs and environment deploy DAG (8.6) | L | [04](04-developer-surface.md#44-pre-deploy-jobs-and-environment-deploy-dag) |
+| 4.4 | Pre-deploy jobs (8.6) | M | [04](04-developer-surface.md#44-pre-deploy-jobs) |
 | 4.5 | Pull-request environments (8.4) | L | [04](04-developer-surface.md#45-pull-request-environments) |
 
 ### Charge and govern
@@ -155,12 +152,10 @@ Do not postpone 1.x or 2.x for these.
 | 5.1 | VictoriaMetrics billing meter (6.5) | L | [05](05-commercial.md#51-victoriametrics-billing-meter) |
 | 5.2 | Plans, credits, and spend controls (6.6) | XL | [05](05-commercial.md#52-plans-credits-and-spend-controls) |
 | 5.3 | Fair-use and abuse safeguards (6.7) | L | [05](05-commercial.md#53-fair-use-and-abuse-safeguards) |
-| 5.4 | Account export, retention, and closure (6.8) | L | [05](05-commercial.md#54-account-export-retention-and-closure) |
-| 5.5 | Operator and support access (6.9) | M | [05](05-commercial.md#55-operator-and-support-access) |
+| 5.4 | Account retention and closure (6.8) | L | [05](05-commercial.md#54-account-retention-and-closure) |
 | 7.1 | Security checks in CI (9.5) | M | [07](07-ga-proof.md#71-security-checks-in-ci) |
 | 7.2 | SLOs and incident response (9.6) | L | [07](07-ga-proof.md#72-slos-and-incident-response) |
 | 7.3 | Version skew and cutover (9.7) | M | [07](07-ga-proof.md#73-version-skew-and-cutover) |
-| 7.4 | Support boundaries and readiness checks (9.8) | M | [07](07-ga-proof.md#74-support-boundaries-and-readiness-checks) |
 
 ### Last: stateful production
 
@@ -169,6 +164,5 @@ Do not postpone 1.x or 2.x for these.
 | 6.1 | Volume provider contract (7.1) | L | [06](06-stateful.md#61-volume-provider-contract) |
 | 6.2 | Attachment, mount paths, and resize (7.2) | L | [06](06-stateful.md#62-attachment-mount-paths-and-resize) |
 | 6.3 | Volume snapshots, backups, and restores (7.3) | L | [06](06-stateful.md#63-volume-snapshots-backups-and-restores) |
-| 6.4 | Fenced stateful failover (7.4) | L | [06](06-stateful.md#64-fenced-stateful-failover) |
 | 6.5 | Storage monitoring and safety rails (7.5) | M | [06](06-stateful.md#65-storage-monitoring-and-safety-rails) |
 | 7.5 | Continuous backup and disaster-recovery drills (9.4) | L | [07](07-ga-proof.md#75-continuous-backup-and-disaster-recovery-drills) |
