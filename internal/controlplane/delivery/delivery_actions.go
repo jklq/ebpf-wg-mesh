@@ -363,13 +363,15 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if target.BuildID != "" {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3
-			  WHERE id = $4 AND state IN ($5, $6)`,
-			BuildStateCancelled, "cancelled by user", now, target.BuildID, BuildStateQueued, BuildStateRunning,
+			  WHERE id = $4 AND state = $5`,
+			BuildStateCancelled, "cancelled by user", now, target.BuildID, BuildStateQueued,
 		); err != nil {
 			return "", err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE builder_workers SET current_build_id = '', updated_at = $1 WHERE current_build_id = $2`, now, target.BuildID,
+			`UPDATE build_runs SET cancel_requested_at = $1, cancel_requested_by = $2
+			  WHERE id = $3 AND state = $4 AND cancel_requested_at IS NULL`,
+			now, userID, target.BuildID, BuildStateRunning,
 		); err != nil {
 			return "", err
 		}

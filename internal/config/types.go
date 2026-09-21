@@ -143,6 +143,11 @@ type RegistryConfig struct {
 
 type ControlPlaneBuilderConfig struct {
 	HeartbeatTimeoutSeconds int
+	MaxAttempts             int
+	MaxConcurrentGlobal     int
+	MaxConcurrentPerProject int
+	BuildTimeoutSeconds     int
+	MaxQueueAgeSeconds      int
 }
 
 type ControlPlaneFailoverConfig struct {

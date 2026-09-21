@@ -12,19 +12,17 @@ import (
 type GitHubReconciler struct {
 	store             Store
 	coordinator       *GitHubCoordinator
-	buildStaleAfter   time.Duration
 	webhookStaleAfter time.Duration
 	workerID          string
 }
 
-func NewGitHubReconciler(store Store, coordinator *GitHubCoordinator, buildStaleAfter, webhookStaleAfter time.Duration) *GitHubReconciler {
+func NewGitHubReconciler(store Store, coordinator *GitHubCoordinator, webhookStaleAfter time.Duration) *GitHubReconciler {
 	if store == nil || coordinator == nil || !coordinator.Enabled() {
 		return nil
 	}
 	return &GitHubReconciler{
 		store:             store,
 		coordinator:       coordinator,
-		buildStaleAfter:   buildStaleAfter,
 		webhookStaleAfter: webhookStaleAfter,
 		workerID:          "github-reconciler-" + uuid.NewString(),
 	}
@@ -34,7 +32,7 @@ func (r *GitHubReconciler) Bootstrap(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	if err := r.coordinator.delivery.RecoverExpiredBuilds(ctx, r.buildStaleAfter); err != nil {
+	if err := r.coordinator.delivery.RecoverExpiredBuilds(ctx); err != nil {
 		return err
 	}
 	if err := r.store.RecoverGitHubWebhookDeliveries(ctx, r.webhookStaleAfter); err != nil {

@@ -142,6 +142,21 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
 		cfg.Builder.HeartbeatTimeoutSeconds = 120
 	}
+	if cfg.Builder.MaxAttempts <= 0 {
+		cfg.Builder.MaxAttempts = 3
+	}
+	if cfg.Builder.MaxConcurrentGlobal <= 0 {
+		cfg.Builder.MaxConcurrentGlobal = 20
+	}
+	if cfg.Builder.MaxConcurrentPerProject <= 0 {
+		cfg.Builder.MaxConcurrentPerProject = 5
+	}
+	if cfg.Builder.BuildTimeoutSeconds <= 0 {
+		cfg.Builder.BuildTimeoutSeconds = 1800
+	}
+	if cfg.Builder.MaxQueueAgeSeconds <= 0 {
+		cfg.Builder.MaxQueueAgeSeconds = 7200
+	}
 	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
 		cfg.Failover.ReconcileIntervalSeconds = 60
 	}

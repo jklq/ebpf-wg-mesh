@@ -65,6 +65,7 @@ const (
 	PlatformService_ListServiceLogs_FullMethodName             = "/platform.v1.PlatformService/ListServiceLogs"
 	PlatformService_ListServiceDeployments_FullMethodName      = "/platform.v1.PlatformService/ListServiceDeployments"
 	PlatformService_ListAgents_FullMethodName                  = "/platform.v1.PlatformService/ListAgents"
+	PlatformService_ListBuildAttempts_FullMethodName           = "/platform.v1.PlatformService/ListBuildAttempts"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -116,6 +117,7 @@ type PlatformServiceClient interface {
 	ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(ctx context.Context, in *ListServiceDeploymentsRequest, opts ...grpc.CallOption) (*ListServiceDeploymentsResponse, error)
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
+	ListBuildAttempts(ctx context.Context, in *ListBuildAttemptsRequest, opts ...grpc.CallOption) (*ListBuildAttemptsResponse, error)
 }
 
 type platformServiceClient struct {
@@ -576,6 +578,16 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empt
 	return out, nil
 }
 
+func (c *platformServiceClient) ListBuildAttempts(ctx context.Context, in *ListBuildAttemptsRequest, opts ...grpc.CallOption) (*ListBuildAttemptsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBuildAttemptsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListBuildAttempts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PlatformServiceServer is the server API for PlatformService service.
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
@@ -625,6 +637,7 @@ type PlatformServiceServer interface {
 	ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error)
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
+	ListBuildAttempts(context.Context, *ListBuildAttemptsRequest) (*ListBuildAttemptsResponse, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
@@ -769,6 +782,9 @@ func (UnimplementedPlatformServiceServer) ListServiceDeployments(context.Context
 }
 func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListBuildAttempts(context.Context, *ListBuildAttemptsRequest) (*ListBuildAttemptsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBuildAttempts not implemented")
 }
 func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
 func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
@@ -1601,6 +1617,24 @@ func _PlatformService_ListAgents_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListBuildAttempts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBuildAttemptsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListBuildAttempts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListBuildAttempts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListBuildAttempts(ctx, req.(*ListBuildAttemptsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1787,6 +1821,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAgents",
 			Handler:    _PlatformService_ListAgents_Handler,
+		},
+		{
+			MethodName: "ListBuildAttempts",
+			Handler:    _PlatformService_ListBuildAttempts_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -2052,11 +2090,15 @@ var BuilderService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	OpsService_IngestGitHubWebhook_FullMethodName = "/platform.v1.OpsService/IngestGitHubWebhook"
-	OpsService_ListFleet_FullMethodName           = "/platform.v1.OpsService/ListFleet"
-	OpsService_CreateAgent_FullMethodName         = "/platform.v1.OpsService/CreateAgent"
-	OpsService_UpdateAgent_FullMethodName         = "/platform.v1.OpsService/UpdateAgent"
-	OpsService_SetAgentLifecycle_FullMethodName   = "/platform.v1.OpsService/SetAgentLifecycle"
+	OpsService_IngestGitHubWebhook_FullMethodName     = "/platform.v1.OpsService/IngestGitHubWebhook"
+	OpsService_ListFleet_FullMethodName               = "/platform.v1.OpsService/ListFleet"
+	OpsService_CreateAgent_FullMethodName             = "/platform.v1.OpsService/CreateAgent"
+	OpsService_UpdateAgent_FullMethodName             = "/platform.v1.OpsService/UpdateAgent"
+	OpsService_SetAgentLifecycle_FullMethodName       = "/platform.v1.OpsService/SetAgentLifecycle"
+	OpsService_ListBuilders_FullMethodName            = "/platform.v1.OpsService/ListBuilders"
+	OpsService_SetBuilderDrain_FullMethodName         = "/platform.v1.OpsService/SetBuilderDrain"
+	OpsService_GetBuildScheduler_FullMethodName       = "/platform.v1.OpsService/GetBuildScheduler"
+	OpsService_SetBuildSchedulerPaused_FullMethodName = "/platform.v1.OpsService/SetBuildSchedulerPaused"
 )
 
 // OpsServiceClient is the client API for OpsService service.
@@ -2068,6 +2110,10 @@ type OpsServiceClient interface {
 	CreateAgent(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*AgentEnrollment, error)
 	UpdateAgent(ctx context.Context, in *UpdateAgentRequest, opts ...grpc.CallOption) (*Agent, error)
 	SetAgentLifecycle(ctx context.Context, in *SetAgentLifecycleRequest, opts ...grpc.CallOption) (*Agent, error)
+	ListBuilders(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListBuildersResponse, error)
+	SetBuilderDrain(ctx context.Context, in *SetBuilderDrainRequest, opts ...grpc.CallOption) (*BuilderWorker, error)
+	GetBuildScheduler(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BuildSchedulerState, error)
+	SetBuildSchedulerPaused(ctx context.Context, in *SetBuildSchedulerPausedRequest, opts ...grpc.CallOption) (*BuildSchedulerState, error)
 }
 
 type opsServiceClient struct {
@@ -2128,6 +2174,46 @@ func (c *opsServiceClient) SetAgentLifecycle(ctx context.Context, in *SetAgentLi
 	return out, nil
 }
 
+func (c *opsServiceClient) ListBuilders(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListBuildersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBuildersResponse)
+	err := c.cc.Invoke(ctx, OpsService_ListBuilders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) SetBuilderDrain(ctx context.Context, in *SetBuilderDrainRequest, opts ...grpc.CallOption) (*BuilderWorker, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BuilderWorker)
+	err := c.cc.Invoke(ctx, OpsService_SetBuilderDrain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) GetBuildScheduler(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BuildSchedulerState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BuildSchedulerState)
+	err := c.cc.Invoke(ctx, OpsService_GetBuildScheduler_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) SetBuildSchedulerPaused(ctx context.Context, in *SetBuildSchedulerPausedRequest, opts ...grpc.CallOption) (*BuildSchedulerState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BuildSchedulerState)
+	err := c.cc.Invoke(ctx, OpsService_SetBuildSchedulerPaused_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OpsServiceServer is the server API for OpsService service.
 // All implementations must embed UnimplementedOpsServiceServer
 // for forward compatibility.
@@ -2137,6 +2223,10 @@ type OpsServiceServer interface {
 	CreateAgent(context.Context, *CreateAgentRequest) (*AgentEnrollment, error)
 	UpdateAgent(context.Context, *UpdateAgentRequest) (*Agent, error)
 	SetAgentLifecycle(context.Context, *SetAgentLifecycleRequest) (*Agent, error)
+	ListBuilders(context.Context, *emptypb.Empty) (*ListBuildersResponse, error)
+	SetBuilderDrain(context.Context, *SetBuilderDrainRequest) (*BuilderWorker, error)
+	GetBuildScheduler(context.Context, *emptypb.Empty) (*BuildSchedulerState, error)
+	SetBuildSchedulerPaused(context.Context, *SetBuildSchedulerPausedRequest) (*BuildSchedulerState, error)
 	mustEmbedUnimplementedOpsServiceServer()
 }
 
@@ -2161,6 +2251,18 @@ func (UnimplementedOpsServiceServer) UpdateAgent(context.Context, *UpdateAgentRe
 }
 func (UnimplementedOpsServiceServer) SetAgentLifecycle(context.Context, *SetAgentLifecycleRequest) (*Agent, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetAgentLifecycle not implemented")
+}
+func (UnimplementedOpsServiceServer) ListBuilders(context.Context, *emptypb.Empty) (*ListBuildersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBuilders not implemented")
+}
+func (UnimplementedOpsServiceServer) SetBuilderDrain(context.Context, *SetBuilderDrainRequest) (*BuilderWorker, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetBuilderDrain not implemented")
+}
+func (UnimplementedOpsServiceServer) GetBuildScheduler(context.Context, *emptypb.Empty) (*BuildSchedulerState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBuildScheduler not implemented")
+}
+func (UnimplementedOpsServiceServer) SetBuildSchedulerPaused(context.Context, *SetBuildSchedulerPausedRequest) (*BuildSchedulerState, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetBuildSchedulerPaused not implemented")
 }
 func (UnimplementedOpsServiceServer) mustEmbedUnimplementedOpsServiceServer() {}
 func (UnimplementedOpsServiceServer) testEmbeddedByValue()                    {}
@@ -2273,6 +2375,78 @@ func _OpsService_SetAgentLifecycle_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OpsService_ListBuilders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).ListBuilders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_ListBuilders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).ListBuilders(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_SetBuilderDrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetBuilderDrainRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).SetBuilderDrain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_SetBuilderDrain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).SetBuilderDrain(ctx, req.(*SetBuilderDrainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_GetBuildScheduler_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).GetBuildScheduler(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_GetBuildScheduler_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).GetBuildScheduler(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_SetBuildSchedulerPaused_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetBuildSchedulerPausedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).SetBuildSchedulerPaused(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_SetBuildSchedulerPaused_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).SetBuildSchedulerPaused(ctx, req.(*SetBuildSchedulerPausedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OpsService_ServiceDesc is the grpc.ServiceDesc for OpsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2299,6 +2473,22 @@ var OpsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetAgentLifecycle",
 			Handler:    _OpsService_SetAgentLifecycle_Handler,
+		},
+		{
+			MethodName: "ListBuilders",
+			Handler:    _OpsService_ListBuilders_Handler,
+		},
+		{
+			MethodName: "SetBuilderDrain",
+			Handler:    _OpsService_SetBuilderDrain_Handler,
+		},
+		{
+			MethodName: "GetBuildScheduler",
+			Handler:    _OpsService_GetBuildScheduler_Handler,
+		},
+		{
+			MethodName: "SetBuildSchedulerPaused",
+			Handler:    _OpsService_SetBuildSchedulerPaused_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

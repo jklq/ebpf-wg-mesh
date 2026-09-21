@@ -17,15 +17,30 @@ import (
 )
 
 type Delivery struct {
-	schedulerMu sync.Mutex
-	store       *persistence
-	live        *Live
-	notifier    PlatformNotifier
-	ingress     PlatformIngress
-	events      Events
-	logEmitter  *logs.LogEmitter
-	rolloutNow  func() time.Time
-	failoverNow func() time.Time
+	schedulerMu    sync.Mutex
+	store          *persistence
+	live           *Live
+	notifier       PlatformNotifier
+	ingress        PlatformIngress
+	events         Events
+	logEmitter     *logs.LogEmitter
+	rolloutNow     func() time.Time
+	failoverNow    func() time.Time
+	buildScheduler BuildSchedulerConfig
+}
+
+func (d *Delivery) BuildSchedulerConfig() BuildSchedulerConfig {
+	if d == nil {
+		return DefaultBuildSchedulerConfig()
+	}
+	return d.buildScheduler.WithDefaults()
+}
+
+func (d *Delivery) SetBuildSchedulerConfigForTest(cfg BuildSchedulerConfig) {
+	if d == nil {
+		return
+	}
+	d.buildScheduler = cfg.WithDefaults()
 }
 
 type ReleasedService struct {

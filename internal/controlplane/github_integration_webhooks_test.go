@@ -159,7 +159,7 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	}
 	catalog := NewGitHubCatalog(store.source, client)
 	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -231,7 +231,7 @@ func TestGitHubSyncSameRepositoryUsesEnvironmentSpecificTrackedRefs(t *testing.T
 	}
 	catalog := NewGitHubCatalog(store.source, client)
 	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -437,7 +437,7 @@ func TestGitHubWorkLeaseExpiryAllowsTakeover(t *testing.T) {
 	}
 	catalog := NewGitHubCatalog(store.source, client)
 	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
 	ctx := context.Background()
 
 	if _, err := store.source.Work().Enqueue(ctx, source.ProviderAccessChangedParams(7)); err != nil {

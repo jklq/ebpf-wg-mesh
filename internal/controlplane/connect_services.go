@@ -255,6 +255,11 @@ func (a connectPlatformService) ListAgents(ctx context.Context, req *connect.Req
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) ListBuildAttempts(ctx context.Context, req *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
+	result, err := a.service.ListBuildAttempts(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectOpsService) IngestGitHubWebhook(ctx context.Context, req *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
 	result, err := a.service.IngestGitHubWebhook(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
@@ -277,5 +282,25 @@ func (a connectOpsService) UpdateAgent(ctx context.Context, req *connect.Request
 
 func (a connectOpsService) SetAgentLifecycle(ctx context.Context, req *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error) {
 	result, err := a.service.SetAgentLifecycle(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectOpsService) ListBuilders(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListBuildersResponse], error) {
+	result, err := a.service.ListBuilders(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectOpsService) SetBuilderDrain(ctx context.Context, req *connect.Request[platformv1.SetBuilderDrainRequest]) (*connect.Response[platformv1.BuilderWorker], error) {
+	result, err := a.service.SetBuilderDrain(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectOpsService) GetBuildScheduler(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.BuildSchedulerState], error) {
+	result, err := a.service.GetBuildScheduler(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectOpsService) SetBuildSchedulerPaused(ctx context.Context, req *connect.Request[platformv1.SetBuildSchedulerPausedRequest]) (*connect.Response[platformv1.BuildSchedulerState], error) {
+	result, err := a.service.SetBuildSchedulerPaused(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
 }

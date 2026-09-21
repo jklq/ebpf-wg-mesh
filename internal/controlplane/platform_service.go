@@ -70,6 +70,7 @@ type platformDelivery interface {
 	SealServiceSecret(ctx context.Context, user authz.User, serviceID, name string, value []byte) (int64, error)
 	DeleteServiceSecret(ctx context.Context, user authz.User, serviceID, name string) error
 	ListServiceSecrets(ctx context.Context, user authz.User, serviceID string) ([]secretkeys.SecretMetadata, error)
+	BuildAttempts(ctx context.Context, user authz.User, serviceID, buildID string) ([]deliverycore.BuildAttemptRecord, error)
 	livePositionReader
 }
 

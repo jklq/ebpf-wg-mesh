@@ -12,7 +12,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
@@ -72,8 +71,8 @@ func desiredStateForAgent(ctx context.Context, store *persistence, agentID strin
 	return testDelivery(store).DesiredStateForAgent(ctx, agentID)
 }
 
-func claimNextBuild(ctx context.Context, store *persistence, builderID, builderName string, staleAfter time.Duration) (deliverycore.BuildRunRecord, error) {
-	return testDelivery(store).ClaimNextBuild(ctx, builderID, builderName, staleAfter)
+func claimNextBuild(ctx context.Context, store *persistence, builderID, builderName string) (deliverycore.BuildRunRecord, error) {
+	return testDelivery(store).ClaimNextBuild(ctx, builderID, builderName)
 }
 
 func chooseAgentForService(ctx context.Context, store *persistence, environmentID string, spec *platformv1.ServiceSpec) (string, error) {
@@ -102,7 +101,16 @@ func registerAgent(ctx context.Context, store *persistence, hello *agentv1.Agent
 }
 
 func completeBuildForTest(ctx context.Context, store *persistence, builderID, buildID string, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) error {
-	_, err := newTestDelivery(store, nil, nil, nil).CompleteBuild(ctx, builderID, buildID, state, commitSHA, imageDigest, failureReason)
+	build, err := store.reads.BuildByID(ctx, buildID)
+	if err != nil {
+		return err
+	}
+	_, err = newTestDelivery(store, nil, nil, nil).CompleteBuild(ctx, builderID, buildID, build.OwnerEpoch, state, commitSHA, imageDigest, failureReason)
+	return err
+}
+
+func completeBuildForTestWithEpoch(ctx context.Context, store *persistence, builderID, buildID string, epoch int64, state platformv1.BuildState, commitSHA, imageDigest, failureReason string) error {
+	_, err := newTestDelivery(store, nil, nil, nil).CompleteBuild(ctx, builderID, buildID, epoch, state, commitSHA, imageDigest, failureReason)
 	return err
 }
 

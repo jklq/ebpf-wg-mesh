@@ -114,7 +114,7 @@ func TestGitHubPushQueuesBuildWhenAutoDeployOn(t *testing.T) {
 	}
 	catalog := NewGitHubCatalog(store.source, client)
 	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
@@ -188,7 +188,7 @@ func TestGitHubPushRecordsRevisionWithoutBuildWhenAutoDeployOff(t *testing.T) {
 	}
 	catalog := NewGitHubCatalog(store.source, client)
 	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 
@@ -293,7 +293,7 @@ func TestGitHubStaleBindingHoldsBuildWhenAutoDeployOff(t *testing.T) {
 	}
 	catalog := NewGitHubCatalog(store.source, client)
 	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
-	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute, time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
 	processor := NewGitHubWebhookProcessor(store.source, coordinator)
 	ctx := context.Background()
 

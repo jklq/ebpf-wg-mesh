@@ -212,6 +212,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 		State:       platformv1.BuildState_BUILD_STATE_SUCCEEDED,
 		CommitSha:   "commit-1",
 		ImageDigest: lateDigest,
+		LeaseEpoch:  job1.GetLeaseEpoch(),
 	}); err != nil {
 		t.Fatalf("late CompleteBuild: %v", err)
 	}

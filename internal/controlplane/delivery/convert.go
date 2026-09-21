@@ -21,6 +21,9 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 		CommitMessage: rec.CommitMessage,
 		CommitAuthor:  rec.CommitAuthor,
 		Builder:       rec.BuildRecipe.GetBuilder(),
+		AttemptCount:  rec.AttemptCount,
+		AttemptLimit:  rec.AttemptLimit,
+		BuilderId:     rec.BuilderID,
 	}
 	if rec.StartedAt.Valid {
 		status.StartedAt = ts(rec.StartedAt.Time)
@@ -28,7 +31,50 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 	if rec.FinishedAt.Valid {
 		status.FinishedAt = ts(rec.FinishedAt.Time)
 	}
+	if rec.LeaseExpiresAt.Valid {
+		status.LeaseExpiresAt = ts(rec.LeaseExpiresAt.Time)
+	}
+	if rec.CancelRequestedAt.Valid {
+		status.CancelRequestedAt = ts(rec.CancelRequestedAt.Time)
+	}
 	return status
+}
+
+func ToProtoBuildAttempt(rec BuildAttemptRecord) *platformv1.BuildAttempt {
+	attempt := &platformv1.BuildAttempt{
+		AttemptNumber: rec.AttemptNumber,
+		BuilderId:     rec.BuilderID,
+		OwnerEpoch:    rec.OwnerEpoch,
+		StartedAt:     ts(rec.StartedAt),
+		Outcome:       rec.Outcome,
+		Detail:        rec.Detail,
+	}
+	if rec.FinishedAt.Valid {
+		attempt.FinishedAt = ts(rec.FinishedAt.Time)
+	}
+	return attempt
+}
+
+func ToProtoBuilderWorker(rec BuilderWorkerRecord) *platformv1.BuilderWorker {
+	return &platformv1.BuilderWorker{
+		Id:              rec.ID,
+		Name:            rec.Name,
+		CurrentBuildId:  rec.CurrentBuildID,
+		LastHeartbeatAt: ts(rec.LastHeartbeat),
+		Drained:         rec.Drained,
+		UpdatedAt:       ts(rec.UpdatedAt),
+	}
+}
+
+func ToProtoBuildSchedulerState(rec BuildSchedulerState) *platformv1.BuildSchedulerState {
+	return &platformv1.BuildSchedulerState{
+		Paused:                  rec.Paused,
+		RunningBuilds:           rec.RunningBuilds,
+		QueuedBuilds:            rec.QueuedBuilds,
+		MaxConcurrentGlobal:     int32(rec.MaxConcurrentGlobal),
+		MaxConcurrentPerProject: int32(rec.MaxConcurrentPerProject),
+		UpdatedAt:               ts(rec.UpdatedAt),
+	}
 }
 
 func toProtoBuildState(state string) platformv1.BuildState {

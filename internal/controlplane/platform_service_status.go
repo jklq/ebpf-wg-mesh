@@ -125,6 +125,25 @@ func (s *PlatformService) ListServiceDeployments(ctx context.Context, req *platf
 	return resp, nil
 }
 
+func (s *PlatformService) ListBuildAttempts(ctx context.Context, req *platformv1.ListBuildAttemptsRequest) (*platformv1.ListBuildAttemptsResponse, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetServiceId()) == "" || strings.TrimSpace(req.GetBuildId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "service_id and build_id are required")
+	}
+	attempts, err := s.delivery.BuildAttempts(ctx, user, req.GetServiceId(), req.GetBuildId())
+	if err != nil {
+		return nil, readAccessError("list build attempts", err)
+	}
+	resp := &platformv1.ListBuildAttemptsResponse{Attempts: make([]*platformv1.BuildAttempt, 0, len(attempts))}
+	for _, attempt := range attempts {
+		resp.Attempts = append(resp.Attempts, deliverycore.ToProtoBuildAttempt(attempt))
+	}
+	return resp, nil
+}
+
 // ListAgents is operator-only: non-operator callers get PermissionDenied. This
 // is a deliberate contract (fleet membership is operator surface); operator
 // gating also applies to OpsService fleet RPCs.

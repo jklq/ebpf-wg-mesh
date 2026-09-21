@@ -60,6 +60,9 @@ type Dependencies struct {
 	// DeletionGracePeriod is how long tombstones stay restorable before
 	// garbage collection destroys them. Zero selects DefaultDeletionGracePeriod.
 	DeletionGracePeriod time.Duration
+	// BuildScheduler tunes the lease-based build queue. Zero selects
+	// DefaultBuildSchedulerConfig.
+	BuildScheduler BuildSchedulerConfig
 }
 
 // DefaultDeletionGracePeriod keeps deleted resources restorable for a week.
@@ -104,7 +107,9 @@ func New(deps Dependencies) *Delivery {
 	if grace <= 0 {
 		grace = DefaultDeletionGracePeriod
 	}
+	scheduler := deps.BuildScheduler.WithDefaults()
 	return &Delivery{
+		buildScheduler: scheduler,
 		store: &persistence{
 			db:                       deps.DB,
 			mesh:                     deps.Mesh,

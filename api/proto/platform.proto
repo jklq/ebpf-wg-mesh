@@ -347,6 +347,36 @@ message BuildStatus {
   string commit_author = 10;
   repeated DeploymentStage stages = 11;
   BuilderKind builder = 12;
+  // Lease-based scheduler fields (2.5). attempt_count counts every claim
+  // including takeovers; attempt_limit bounds retries of transient worker
+  // loss. cancel_requested_at marks cooperative cancellation of a running
+  // build: the builder was asked to stop but has not finished yet.
+  int64 attempt_count = 13;
+  int64 attempt_limit = 14;
+  string builder_id = 15;
+  google.protobuf.Timestamp lease_expires_at = 16;
+  google.protobuf.Timestamp cancel_requested_at = 17;
+}
+
+message BuildAttempt {
+  int64 attempt_number = 1;
+  string builder_id = 2;
+  int64 owner_epoch = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp finished_at = 5;
+  // leased, succeeded, failed_terminal, worker_lost, cancelled, timed_out,
+  // superseded.
+  string outcome = 6;
+  string detail = 7;
+}
+
+message ListBuildAttemptsRequest {
+  string service_id = 1;
+  string build_id = 2;
+}
+
+message ListBuildAttemptsResponse {
+  repeated BuildAttempt attempts = 1;
 }
 
 enum ServiceUnappliedChangeAction {
@@ -957,6 +987,12 @@ message BuildJob {
   string registry_username = 8;
   string registry_password = 9;
   string environment_id = 10;
+  // Lease fencing (2.5). The builder must present lease_epoch on every
+  // heartbeat, log report, and completion; the control plane commits only
+  // by compare-and-swap on the current epoch.
+  int64 lease_epoch = 11;
+  google.protobuf.Timestamp lease_expires_at = 12;
+  google.protobuf.Timestamp deadline_at = 13;
 }
 
 message DownloadSourceSnapshotRequest {
@@ -974,12 +1010,14 @@ message SourceSnapshotChunk {
 message BuilderHeartbeatRequest {
   string builder_id = 1;
   string build_id = 2;
+  int64 lease_epoch = 3;
 }
 
 message ReportBuildLogsRequest {
   string builder_id = 1;
   string build_id = 2;
   repeated BuildLogLine lines = 3;
+  int64 lease_epoch = 4;
 }
 
 message BuildLogLine {
@@ -996,6 +1034,7 @@ message CompleteBuildRequest {
   string commit_sha = 4;
   string image_digest = 5;
   string failure_reason = 6;
+  int64 lease_epoch = 7;
 }
 
 message IngestGitHubWebhookRequest {
@@ -1064,6 +1103,38 @@ service PlatformService {
   rpc ListServiceLogs(ListServiceLogsRequest) returns (ListServiceLogsResponse);
   rpc ListServiceDeployments(ListServiceDeploymentsRequest) returns (ListServiceDeploymentsResponse);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
+  rpc ListBuildAttempts(ListBuildAttemptsRequest) returns (ListBuildAttemptsResponse);
+}
+
+message BuilderWorker {
+  string id = 1;
+  string name = 2;
+  string current_build_id = 3;
+  google.protobuf.Timestamp last_heartbeat_at = 4;
+  bool drained = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message ListBuildersResponse {
+  repeated BuilderWorker builders = 1;
+}
+
+message SetBuilderDrainRequest {
+  string builder_id = 1;
+  bool drained = 2;
+}
+
+message BuildSchedulerState {
+  bool paused = 1;
+  int64 running_builds = 2;
+  int64 queued_builds = 3;
+  int32 max_concurrent_global = 4;
+  int32 max_concurrent_per_project = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message SetBuildSchedulerPausedRequest {
+  bool paused = 1;
 }
 
 service BuilderService {
@@ -1080,4 +1151,8 @@ service OpsService {
   rpc CreateAgent(CreateAgentRequest) returns (AgentEnrollment);
   rpc UpdateAgent(UpdateAgentRequest) returns (Agent);
   rpc SetAgentLifecycle(SetAgentLifecycleRequest) returns (Agent);
+  rpc ListBuilders(google.protobuf.Empty) returns (ListBuildersResponse);
+  rpc SetBuilderDrain(SetBuilderDrainRequest) returns (BuilderWorker);
+  rpc GetBuildScheduler(google.protobuf.Empty) returns (BuildSchedulerState);
+  rpc SetBuildSchedulerPaused(SetBuildSchedulerPausedRequest) returns (BuildSchedulerState);
 }
