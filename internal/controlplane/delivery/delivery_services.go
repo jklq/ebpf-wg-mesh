@@ -334,7 +334,16 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		if err := quiesceServiceTx(ctx, s, tx, scope.ID(), scope.UserID()); err != nil {
 			return err
 		}
+		// Record before dropping assignments: the recorder captures the live
+		// assignment keys and the commit resolves their absence as removals.
 		if err := journal.RecordServiceRemoval(ctx, tx, scope.ID()); err != nil {
+			return err
+		}
+		// Assignments are placement records, not recoverable data: the
+		// deployment is Removed and the tombstoned service leaves desired
+		// state, so drop them here to keep durable rows consistent with
+		// the live view. Restore re-asserts the empty set.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
 			return err
 		}
 		hasBindings, err = s.hasLiveDomainBindingsQuerier(ctx, tx, scope.ID())
@@ -359,9 +368,9 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 }
 
 // RestoreService clears a service's own tombstone within the grace period.
-// Restored services keep their deployment history but lose their stale
-// assignments, which referenced the Removed deployment; a release resumes
-// work. Restoring under a tombstoned ancestor is refused: restore top-down.
+// Restored services keep their deployment history; their assignments were
+// dropped at delete time, so a release resumes work. Restoring under a
+// tombstoned ancestor is refused: restore top-down.
 func (d *Delivery) RestoreService(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
@@ -404,6 +413,8 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 			rec, err = s.serviceByIDQuerier(ctx, tx, scope)
 			return err
 		}
+		// Normally a no-op: delete dropped the assignments. Re-assert the
+		// empty set so a restore never resurrects stale placements.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
 			return err
 		}

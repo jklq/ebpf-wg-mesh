@@ -229,9 +229,10 @@ func (s *catalogPersistence) quiesceProjectServicesTx(ctx context.Context, tx *s
 	return nil
 }
 
-// dropEnvironmentAssignmentsTx deletes stale assignments for a restored
-// environment. Assignments reference the Removed deployment the delete left
-// behind; a release recreates them.
+// dropEnvironmentAssignmentsTx deletes the placement records of every service
+// in an environment. Assignments reference the Removed deployment a delete
+// leaves behind, so they are dropped at delete time and the restore-time call
+// re-asserts the empty set; a release recreates them.
 func dropEnvironmentAssignmentsTx(ctx context.Context, tx *sql.Tx, environmentID string) error {
 	_, err := tx.ExecContext(ctx,
 		`DELETE FROM allocation_assignments a USING services s
@@ -241,7 +242,9 @@ func dropEnvironmentAssignmentsTx(ctx context.Context, tx *sql.Tx, environmentID
 	return err
 }
 
-// dropProjectAssignmentsTx deletes stale assignments for a restored project.
+// dropProjectAssignmentsTx deletes the placement records of every service in
+// a project. Assignments are dropped at delete time and the restore-time call
+// re-asserts the empty set; a release recreates them.
 func dropProjectAssignmentsTx(ctx context.Context, tx *sql.Tx, projectID string) error {
 	_, err := tx.ExecContext(ctx,
 		`DELETE FROM allocation_assignments a USING services s, environments e
@@ -290,7 +293,12 @@ func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User,
 			return err
 		}
 		agentIDs, err = s.projectAgentIDsQuerier(ctx, tx, rec.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// Drop after the agent query: the notifier set is derived from the
+		// assignments being removed.
+		return dropProjectAssignmentsTx(ctx, tx, rec.ID)
 	})
 	return agentIDs, err
 }

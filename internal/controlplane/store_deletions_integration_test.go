@@ -231,6 +231,11 @@ func TestDeletionServiceWithdrawsWorkloadsAndRestores(t *testing.T) {
 	if err != nil || len(after.GetServices()) != 0 {
 		t.Fatalf("deleted service still desired: %#v: %v", after.GetServices(), err)
 	}
+	// Placements are dropped at delete time so durable rows stay consistent
+	// with the live view.
+	if count := assertLiveAllocationsMatchDurable(t, store, service.ID); count != 0 {
+		t.Fatalf("deleted service kept %d allocations", count)
+	}
 	if _, _, err := updateService(ctx, store, "owner", service.ID, "web-new", directImageServiceSpec("example.test/web:2", nil)); !errors.Is(err, deliverycore.ErrServiceDeleted) {
 		t.Fatalf("update deleted service: %v", err)
 	}
@@ -252,6 +257,55 @@ func TestDeletionServiceWithdrawsWorkloadsAndRestores(t *testing.T) {
 	}
 	if released.Deletion != nil {
 		t.Fatalf("released service still deleted: %#v", released.Deletion)
+	}
+}
+
+func TestDeletionEnvironmentDropsChildPlacements(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, _ := deletionFixture(t, store, "owner", "demo")
+	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := createService(ctx, store, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", nil), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := releaseEnvironmentForTest(ctx, store, "owner", staging.ID); err != nil {
+		t.Fatal(err)
+	}
+	if count := assertLiveAllocationsMatchDurable(t, store, service.ID); count != 1 {
+		t.Fatalf("allocations before delete = %d, want 1", count)
+	}
+
+	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), staging.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if count := assertLiveAllocationsMatchDurable(t, store, service.ID); count != 0 {
+		t.Fatalf("environment delete kept %d child allocations", count)
+	}
+	after, err := desiredStateForAgent(ctx, store, "node-1")
+	if err != nil || len(after.GetServices()) != 0 {
+		t.Fatalf("deleted environment still desired: %#v: %v", after.GetServices(), err)
+	}
+
+	if _, err := store.catalog.restoreEnvironment(ctx, testUser("owner"), staging.ID); err != nil {
+		t.Fatal(err)
+	}
+	// New work resumes after restore: update, then release.
+	if _, _, err := updateService(ctx, store, "owner", service.ID, "web", directImageServiceSpec("example.test/web:2", nil)); err != nil {
+		t.Fatalf("update after restore: %v", err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "owner", staging.ID, service.ID); err != nil {
+		t.Fatalf("release after restore: %v", err)
+	}
+	if count := assertLiveAllocationsMatchDurable(t, store, service.ID); count != 1 {
+		t.Fatalf("allocations after restore+release = %d, want 1", count)
 	}
 }
 

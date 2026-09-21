@@ -201,7 +201,12 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.U
 			return err
 		}
 		agentIDs, err = s.environmentAgentIDsQuerier(ctx, tx, rec.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// Drop after the agent query: the notifier set is derived from the
+		// assignments being removed.
+		return dropEnvironmentAssignmentsTx(ctx, tx, rec.ID)
 	})
 	return agentIDs, err
 }
