@@ -92,8 +92,8 @@ func TestGuestWorkspacePath(t *testing.T) {
 
 	root := t.TempDir()
 	for host, want := range map[string]string{
-		root:                        "/build",
-		filepath.Join(root, "repo"): "/build/repo",
+		root:                                "/build",
+		filepath.Join(root, "repo"):         "/build/repo",
 		filepath.Join(root, "s", "bk.sock"): "/build/s/bk.sock",
 	} {
 		got, err := guestWorkspacePath(root, host)

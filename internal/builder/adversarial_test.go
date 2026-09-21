@@ -46,9 +46,9 @@ type probeSpec struct {
 	// Files are fixtures written to the workspace root before the run.
 	Files map[string]string
 	// Env carries extra variables (identical values on both backends).
-	Env map[string]string
-	Limits ResourceLimits
-	Policy NetworkPolicy
+	Env     map[string]string
+	Limits  ResourceLimits
+	Policy  NetworkPolicy
 	Timeout time.Duration
 	// NprocHeadroom sizes the development backend's process limit
 	// above the machine's current UID-wide thread count (RLIMIT_NPROC
@@ -192,8 +192,8 @@ func nextProbeID() string {
 // sandbox must beat.
 type devProbeBackend struct{}
 
-func (devProbeBackend) name() string      { return "development" }
-func (devProbeBackend) isolating() bool   { return false }
+func (devProbeBackend) name() string    { return "development" }
+func (devProbeBackend) isolating() bool { return false }
 func (devProbeBackend) runProbe(ctx context.Context, t *testing.T, env *probeEnv, spec probeSpec) probeResult {
 	t.Helper()
 	for rel, content := range spec.Files {
