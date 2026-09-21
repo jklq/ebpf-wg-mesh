@@ -19,7 +19,7 @@ import (
 // keysSchemaVersion is the minimum control-plane schema version carrying the
 // envelope key tables. The operator CLI refuses to run against older
 // databases instead of failing mid-rotation.
-const keysSchemaVersion = 23
+const keysSchemaVersion = 24
 
 // RunKeys implements `controlplane keys`, the operator command surface for
 // envelope key lifecycle:
