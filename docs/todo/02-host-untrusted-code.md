@@ -65,10 +65,14 @@ Define a BuildExecutor interface that every build goes through, and make the cur
 ## 2.4b Hardened build isolation backend
 
 Was: 4.2 (split)
-Status: open
+Status: in review
 Depends on: 2.4a
 
 Design-partner minimum, and the largest item in this file. Do not read the queue as uniform units of work.
+
+Implemented: `hardened` production `BuildExecutor` behind the canonical 2.4a interface (`Execute`, `RecoverStaleWorkspaces`, `Name`, `Isolating() == true`). Every build step runs in a one-shot OCI sandbox via the narrow `SandboxBackend` seam (containerd backend on Linux; other platforms fail closed): private mount/PID/network/IPC/UTS/cgroup namespaces, zero capabilities, no-new-privileges, read-only rootfs, default seccomp with namespace manipulation denied, masked/readonly system paths, deny-all devices, and only the execution workspace (read-only snapshot nested in a writable root), an optional content-keyed cache dir, and rendered resolver files from the host. Hard cgroup resident-set/swap/PID caps plus CPU/file-size/process rlimits, overlay usage polling with kill, sized tmpfs, and post-hoc workspace accounting. Data-plane egress enforcement: loopback-only private netns when general egress is denied, else CNI attach to the operator's build network (exact-name selection, never the mesh) with denied-CIDR blackholes; no host-network fallback. Per-execution `buildkitd` with isolated root/socket joined to the execution netns and no insecure entitlements; the shared BuildKit address is ignored and `docker` binaries refused. Content-addressed cache mounts keyed purely by `ContentCacheKey` with mismatch refusal (`builder.cache.mode`, default `none`). Production refuses `executor=development` at validation and at `builder.New`; executor defaults by profile; startup contract prints `executor_hardened`. Adversarial suite (filesystem escape, host socket access, fork bomb, disk exhaustion, network denial, cross-project cache) runs as one shared case list against both executors with documented expectations; privileged sandbox proofs (true fork bomb, gateway /32 deny) run in the `linux-runtime` CI job.
+
+Remaining: operator visibility into executor/sandbox posture is deferred; see `docs/frontend-handoff/2.4b.md`. Content cache dirs accumulate under the builder work dir (operator prunes; no GC yet). Sandbox image (toolchain) and build CNI network are operator-provided with no in-repo defaults.
 
 Prompt:
 

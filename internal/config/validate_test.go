@@ -605,6 +605,26 @@ func TestFinalizeBuilderRejectsUnknownExecutor(t *testing.T) {
 	}
 }
 
+func TestFinalizeBuilderCacheMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	if err := FinalizeBuilder(&cfg); err != nil {
+		t.Fatalf("FinalizeBuilder: %v", err)
+	}
+	if cfg.Cache.Mode != "none" {
+		t.Fatalf("cache mode must default to none, got %q", cfg.Cache.Mode)
+	}
+	cfg.Cache.Mode = "content-addressed"
+	if err := FinalizeBuilder(&cfg); err != nil {
+		t.Fatalf("content-addressed mode must validate: %v", err)
+	}
+	cfg.Cache.Mode = "shared"
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "builder.cache.mode") {
+		t.Fatalf("expected cache mode error, got %v", err)
+	}
+}
+
 func TestFinalizeBuilderRejectsBadLimitsAndNetwork(t *testing.T) {
 	t.Parallel()
 
@@ -637,5 +657,90 @@ func TestBuilderStartupContractLabelsDevelopmentExecutor(t *testing.T) {
 	}
 	if !strings.Contains(contract, "executor_non_isolating") {
 		t.Fatalf("expected non-isolating label in contract %q", contract)
+	}
+}
+
+func TestBuilderStartupContractHardenedIsIsolating(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	cfg.Executor = "hardened"
+	contract := BuilderStartupContract(cfg).String()
+	if !strings.Contains(contract, "executor_hardened") {
+		t.Fatalf("expected executor selection in contract %q", contract)
+	}
+	if strings.Contains(contract, "executor_non_isolating") {
+		t.Fatalf("hardened executor must not be labeled non-isolating: %q", contract)
+	}
+}
+
+func TestFinalizeBuilderDefaultsExecutorByProfile(t *testing.T) {
+	t.Parallel()
+
+	dev := validBuilderConfigForTest()
+	if err := FinalizeBuilder(&dev); err != nil {
+		t.Fatalf("FinalizeBuilder development: %v", err)
+	}
+	if dev.Executor != "development" {
+		t.Fatalf("development must default to the development executor, got %q", dev.Executor)
+	}
+
+	prod := validBuilderConfigForTest()
+	prod.Profile = ProfileProduction
+	prod.Health.Listen = "127.0.0.1:18082"
+	prod.ControlPlane.Address = "controlplane.example.test:9443"
+	prod.ControlPlane.TLS.ServerName = "controlplane.example.test"
+	prod.Sandbox.Image = "registry.example.test/platform/build-sandbox:1"
+	if err := FinalizeBuilder(&prod); err != nil {
+		t.Fatalf("FinalizeBuilder production: %v", err)
+	}
+	if prod.Executor != "hardened" {
+		t.Fatalf("production must default to the hardened executor, got %q", prod.Executor)
+	}
+}
+
+func TestFinalizeBuilderProductionRefusesDevelopmentExecutor(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	cfg.Profile = ProfileProduction
+	cfg.Health.Listen = "127.0.0.1:18082"
+	cfg.ControlPlane.Address = "controlplane.example.test:9443"
+	cfg.ControlPlane.TLS.ServerName = "controlplane.example.test"
+	cfg.Executor = "development"
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "must not be development") {
+		t.Fatalf("expected development refusal in production, got %v", err)
+	}
+}
+
+func TestFinalizeBuilderHardenedRequiresSandbox(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	cfg.Executor = "hardened"
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "builder.sandbox.image") {
+		t.Fatalf("expected sandbox image error, got %v", err)
+	}
+
+	cfg.Sandbox.Image = "registry.example.test/platform/build-sandbox:1"
+	cfg.Sandbox.Backend = "microvm"
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "builder.sandbox.backend") {
+		t.Fatalf("expected sandbox backend error, got %v", err)
+	}
+
+	cfg.Sandbox.Backend = "containerd"
+	cfg.Sandbox.Nameservers = []string{"not-an-ip"}
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "builder.sandbox.nameservers") {
+		t.Fatalf("expected sandbox nameserver error, got %v", err)
+	}
+
+	cfg.Sandbox.Nameservers = []string{"10.0.0.53"}
+	if err := FinalizeBuilder(&cfg); err != nil {
+		t.Fatalf("FinalizeBuilder hardened: %v", err)
+	}
+	if cfg.Sandbox.Socket == "" || cfg.Sandbox.Namespace == "" || cfg.Sandbox.Runtime == "" ||
+		cfg.Sandbox.Snapshotter == "" || cfg.Sandbox.CNIPluginDir == "" || cfg.Sandbox.CNIConfDir == "" ||
+		cfg.Sandbox.CNINetwork == "" || cfg.Sandbox.BuildkitdBinary == "" {
+		t.Fatalf("expected sandbox defaults, got %+v", cfg.Sandbox)
 	}
 }
