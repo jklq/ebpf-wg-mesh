@@ -20,7 +20,7 @@ local -a test_cmd
 if (( $# > 0 )); then
 	test_cmd=("$@")
 else
-	test_cmd=(bash -c 'go test -count=1 -timeout 20m ./internal/agent && go test -count=1 -timeout 10m ./internal/firewall')
+	test_cmd=(bash -c 'go test -count=1 -timeout 20m ./internal/agent && go test -count=1 -timeout 10m ./internal/builder && go test -count=1 -timeout 10m ./internal/firewall')
 fi
 
 # Cache the module and build caches across runs; a cold run recompiles the world.
