@@ -37,6 +37,20 @@ message Project {
   google.protobuf.Timestamp created_at = 3;
   ProjectKind kind = 4;
   string system_key = 5;
+  DeletionState deletion = 6;
+}
+
+// DeletionState marks a tombstoned resource. It is absent while the resource
+// is live. Delete operations tombstone instead of destroying: the row keeps
+// serving reads, new work is refused, ingress and allocations are withdrawn,
+// and background garbage collection destroys the row after delete_expires_at.
+// When inherited is true the tombstone belongs to an ancestor
+// (project/environment/service) and the timestamps identify that tombstone.
+message DeletionState {
+  google.protobuf.Timestamp deleted_at = 1;
+  string deleted_by_user_id = 2;
+  google.protobuf.Timestamp delete_expires_at = 3;
+  bool inherited = 4;
 }
 
 enum EnvironmentKind {
@@ -54,6 +68,7 @@ message Environment {
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
   bool auto_deploy = 9;
+  DeletionState deletion = 10;
 }
 
 message HealthCheck {
@@ -374,6 +389,7 @@ message Service {
   string placement_message = 20;
   reserved 21;
   reserved "sandbox_profile_audit";
+  DeletionState deletion = 22;
 }
 
 enum DomainOwnershipState {
@@ -391,6 +407,7 @@ message DomainBinding {
   bool platform_generated = 6;
   DomainOwnershipState ownership_state = 7;
   string ownership_message = 8;
+  DeletionState deletion = 9;
 }
 
 message Volume {
@@ -399,6 +416,7 @@ message Volume {
   string name = 3;
   int64 size_bytes = 4;
   google.protobuf.Timestamp created_at = 5;
+  DeletionState deletion = 6;
 }
 
 enum AgentLifecycleState {
@@ -483,6 +501,10 @@ message CreateProjectRequest {
   string name = 1;
 }
 
+message ListProjectsRequest {
+  bool include_deleted = 1;
+}
+
 message ListProjectsResponse {
   repeated Project projects = 1;
 }
@@ -491,8 +513,60 @@ message GetProjectRequest {
   string project_id = 1;
 }
 
+message DeleteProjectRequest {
+  string project_id = 1;
+  // Must exactly match the project's current name.
+  string confirmation_name = 2;
+}
+
+message RestoreProjectRequest {
+  string project_id = 1;
+}
+
+message PreviewProjectDeletionRequest {
+  string project_id = 1;
+}
+
+// DeletionPreview reports the live dependents a delete would tombstone. Only
+// populated for the resource kind being previewed: project previews fill
+// environments, services, domains, and volumes; environment previews fill
+// services, domains, and volumes; volume previews fill services and domains.
+message DeletionPreview {
+  repeated DeletionPreviewEnvironment environments = 1;
+  repeated DeletionPreviewService services = 2;
+  repeated DeletionPreviewDomain domains = 3;
+  repeated DeletionPreviewVolume volumes = 4;
+}
+
+message DeletionPreviewEnvironment {
+  string id = 1;
+  string name = 2;
+  bool is_production = 3;
+}
+
+message DeletionPreviewService {
+  string id = 1;
+  string name = 2;
+  string environment_id = 3;
+  string environment_name = 4;
+}
+
+message DeletionPreviewDomain {
+  string hostname = 1;
+  string service_id = 2;
+  string service_name = 3;
+  bool platform_generated = 4;
+}
+
+message DeletionPreviewVolume {
+  string id = 1;
+  string name = 2;
+  string environment_id = 3;
+}
+
 message ListEnvironmentsRequest {
   string project_id = 1;
+  bool include_deleted = 2;
 }
 
 message ListEnvironmentsResponse {
@@ -525,6 +599,17 @@ message UpdateEnvironmentAutoDeployRequest {
 }
 
 message DeleteEnvironmentRequest {
+  string environment_id = 1;
+  // Required for production environments: must exactly match the
+  // environment's current name. Ignored for other environments.
+  string confirmation_name = 2;
+}
+
+message RestoreEnvironmentRequest {
+  string environment_id = 1;
+}
+
+message PreviewEnvironmentDeletionRequest {
   string environment_id = 1;
 }
 
@@ -626,6 +711,9 @@ message ListServiceSecretsResponse {
   repeated ServiceSecretMetadata secrets = 1;
 }
 
+message RestoreServiceRequest {
+  string service_id = 1;
+}
 message GetServiceRequest {
   string service_id = 1;
 }
@@ -634,6 +722,7 @@ message ListServicesRequest {
   string environment_id = 1;
   int64 wait_index = 2;
   int32 wait_timeout_seconds = 3;
+  bool include_deleted = 4;
 }
 
 message ListServicesResponse {
@@ -650,10 +739,19 @@ message CreateVolumeRequest {
 
 message DeleteVolumeRequest {
   string volume_id = 1;
+  // Must exactly match the volume's current name. Volumes are not
+  // recoverable: there is no restore, only a grace period before the
+  // garbage collector destroys the tombstone.
+  string confirmation_name = 2;
+}
+
+message PreviewVolumeDeletionRequest {
+  string volume_id = 1;
 }
 
 message ListVolumesRequest {
   string environment_id = 1;
+  bool include_deleted = 2;
 }
 
 message ListVolumesResponse {
@@ -696,6 +794,7 @@ message GetDomainBindingRequest {
 
 message ListDomainBindingsRequest {
   string service_id = 1;
+  bool include_deleted = 2;
 }
 
 message ListDomainBindingsResponse {
@@ -708,6 +807,10 @@ message UpdateDomainBindingRequest {
 }
 
 message DeleteDomainBindingRequest {
+  string hostname = 1;
+}
+
+message RestoreDomainBindingRequest {
   string hostname = 1;
 }
 
@@ -912,8 +1015,11 @@ message LinkGitHubRepositoryRequest {
 
 service PlatformService {
   rpc CreateProject(CreateProjectRequest) returns (Project);
-  rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc GetProject(GetProjectRequest) returns (Project);
+  rpc DeleteProject(DeleteProjectRequest) returns (google.protobuf.Empty);
+  rpc RestoreProject(RestoreProjectRequest) returns (Project);
+  rpc PreviewProjectDeletion(PreviewProjectDeletionRequest) returns (DeletionPreview);
   rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);
   rpc GetEnvironment(GetEnvironmentRequest) returns (Environment);
   rpc CreateEnvironment(CreateEnvironmentRequest) returns (Environment);
@@ -921,6 +1027,8 @@ service PlatformService {
   rpc RenameEnvironment(RenameEnvironmentRequest) returns (Environment);
   rpc UpdateEnvironmentAutoDeploy(UpdateEnvironmentAutoDeployRequest) returns (Environment);
   rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (google.protobuf.Empty);
+  rpc RestoreEnvironment(RestoreEnvironmentRequest) returns (Environment);
+  rpc PreviewEnvironmentDeletion(PreviewEnvironmentDeletionRequest) returns (DeletionPreview);
   rpc ReleaseEnvironment(ReleaseEnvironmentRequest) returns (ReleaseEnvironmentResponse);
   rpc LinkGitHubRepository(LinkGitHubRepositoryRequest) returns (InspectSourceResponse);
   rpc InspectSource(InspectSourceRequest) returns (InspectSourceResponse);
@@ -931,6 +1039,7 @@ service PlatformService {
   rpc ApplyDeploymentAction(ApplyDeploymentActionRequest) returns (ServiceStatus);
   rpc DiscardServiceChanges(DiscardServiceChangesRequest) returns (Service);
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
+  rpc RestoreService(RestoreServiceRequest) returns (Service);
   rpc GetService(GetServiceRequest) returns (Service);
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
 
@@ -940,6 +1049,7 @@ service PlatformService {
 
   rpc CreateVolume(CreateVolumeRequest) returns (Volume);
   rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty);
+  rpc PreviewVolumeDeletion(PreviewVolumeDeletionRequest) returns (DeletionPreview);
   rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
 
   rpc CreateDomainBinding(CreateDomainBindingRequest) returns (DomainBinding);
@@ -948,6 +1058,7 @@ service PlatformService {
   rpc ListDomainBindings(ListDomainBindingsRequest) returns (ListDomainBindingsResponse);
   rpc UpdateDomainBinding(UpdateDomainBindingRequest) returns (DomainBinding);
   rpc DeleteDomainBinding(DeleteDomainBindingRequest) returns (google.protobuf.Empty);
+  rpc RestoreDomainBinding(RestoreDomainBindingRequest) returns (DomainBinding);
 
   rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
   rpc ListServiceLogs(ListServiceLogsRequest) returns (ListServiceLogsResponse);

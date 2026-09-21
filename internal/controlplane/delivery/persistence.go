@@ -57,7 +57,13 @@ type Dependencies struct {
 	// implicit paths (public spec updates, deployment capture, desired
 	// merge) skip sealed handling.
 	Secrets *secretkeys.Service
+	// DeletionGracePeriod is how long tombstones stay restorable before
+	// garbage collection destroys them. Zero selects DefaultDeletionGracePeriod.
+	DeletionGracePeriod time.Duration
 }
+
+// DefaultDeletionGracePeriod keeps deleted resources restorable for a week.
+const DefaultDeletionGracePeriod = 7 * 24 * time.Hour
 
 type SourceStore interface {
 	SourceBindingByServiceIDQuerier(context.Context, source.Querier, string) (source.SourceBindingRecord, error)
@@ -68,6 +74,7 @@ type SourceStore interface {
 	UpsertSourceSnapshotTx(context.Context, *sql.Tx, source.SourceSnapshotRecord) (source.SourceSnapshotRecord, error)
 	ServiceHasUnbuiltSourceRevisionTx(context.Context, source.Querier, string) (bool, error)
 	ServicesWithUnbuiltSourceRevisionsTx(context.Context, source.Querier, string) ([]string, error)
+	DeletePendingServiceWorkTx(context.Context, *sql.Tx, string) error
 }
 
 type persistence struct {
@@ -81,6 +88,7 @@ type persistence struct {
 	mesh              config.ControlPlaneMeshConfig
 	live              *Live
 	reservedAgentIDs  []string
+	deletionGrace     time.Duration
 	withProductTx     Transaction
 	withObservationTx ObservationTransaction
 	readState         func(context.Context, func(*sql.Tx, journal.DurableState) error) error
@@ -92,12 +100,17 @@ func New(deps Dependencies) *Delivery {
 	if live == nil {
 		live = NewLive()
 	}
+	grace := deps.DeletionGracePeriod
+	if grace <= 0 {
+		grace = DefaultDeletionGracePeriod
+	}
 	return &Delivery{
 		store: &persistence{
 			db:                       deps.DB,
 			mesh:                     deps.Mesh,
 			live:                     live,
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
+			deletionGrace:            grace,
 			withProductTx:            deps.ProductTransaction,
 			withObservationTx:        deps.ObservationTransaction,
 			readState:                deps.ReadState,
@@ -134,10 +147,10 @@ type ReadModel interface {
 	// ListAgents requires platform-operator membership.
 	ListAgents(context.Context, authz.User) ([]AgentRecord, error)
 	ListServiceDeployments(context.Context, authz.User, string, int32) ([]DeploymentRecord, error)
-	ListDomainBindings(context.Context, authz.User, string) ([]DomainBindingRecord, error)
+	ListDomainBindings(context.Context, authz.User, string, bool) ([]DomainBindingRecord, error)
 	ServiceStatus(context.Context, authz.User, string) (ServiceRecord, []AllocationRecord, error)
 	EnvironmentByID(context.Context, authz.User, string) (EnvironmentRecord, error)
-	ListServices(context.Context, authz.User, string) ([]ServiceRecord, error)
+	ListServices(context.Context, authz.User, string, bool) ([]ServiceRecord, error)
 	ServiceByID(context.Context, authz.User, string) (ServiceRecord, error)
 	// AgentByID, AgentIDs, BuildByID, ServiceSnapshot, and
 	// ListAllocationsByServiceID are system reads without user

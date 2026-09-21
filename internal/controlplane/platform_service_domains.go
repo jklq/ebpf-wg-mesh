@@ -39,7 +39,7 @@ func (s *PlatformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) {
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create volume: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
@@ -65,11 +65,11 @@ func (s *PlatformService) DeleteVolume(ctx context.Context, req *platformv1.Dele
 	if strings.TrimSpace(req.GetVolumeId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
 	}
-	if err := s.store.deleteVolume(ctx, user, req.GetVolumeId()); err != nil {
+	if err := s.store.deleteVolume(ctx, user, req.GetVolumeId(), req.GetConfirmationName()); err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrVolumeInUse) {
+		if errors.Is(err, deliverycore.ErrVolumeInUse) || errors.Is(err, deliverycore.ErrVolumeNotEmpty) || errors.Is(err, deliverycore.ErrConfirmationMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "delete volume: %v", err)
 		}
 		return nil, writeAccessError("delete volume", err)
@@ -83,7 +83,7 @@ func (s *PlatformService) ListVolumes(ctx context.Context, req *platformv1.ListV
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listVolumes(ctx, user, req.GetEnvironmentId())
+	items, err := s.store.listVolumes(ctx, user, req.GetEnvironmentId(), req.GetIncludeDeleted())
 	if err != nil {
 		return nil, writeAccessError("list volumes", err)
 	}
@@ -141,7 +141,7 @@ func (s *PlatformService) ListDomainBindings(ctx context.Context, req *platformv
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.domains.ListDomainBindings(ctx, user, req.GetServiceId())
+	items, err := s.domains.ListDomainBindings(ctx, user, req.GetServiceId(), req.GetIncludeDeleted())
 	if err != nil {
 		return nil, writeAccessError("list domain bindings", err)
 	}
@@ -174,6 +174,24 @@ func (s *PlatformService) DeleteDomainBinding(ctx context.Context, req *platform
 		return nil, err
 	}
 	result, err := s.domains.DeleteDomainBinding(ctx, user, req)
+	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+		return nil, mapped
+	}
+	return result, err
+}
+
+func (s *PlatformService) RestoreDomainBinding(ctx context.Context, req *platformv1.RestoreDomainBindingRequest) (*platformv1.DomainBinding, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetHostname()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "hostname is required")
+	}
+	result, err := s.domains.RestoreDomainBinding(ctx, user, req.GetHostname())
 	if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 		return nil, mapped
 	}

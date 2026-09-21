@@ -15,14 +15,13 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 	t.Parallel()
 
 	store := &fakePlatformStore{
-		listProjectsFn: func(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error) {
+		listProjectsFn: func(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
 			if user.ID() != "user-1" {
 				t.Fatalf("unexpected user %q", user.ID())
 			}
@@ -36,7 +35,7 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 	}
 	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
 
-	resp, err := service.ListProjects(contextWithDelegatedUser("user-1", "user@example.com"), &emptypb.Empty{})
+	resp, err := service.ListProjects(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ListProjectsRequest{})
 	if err != nil {
 		t.Fatalf("ListProjects: %v", err)
 	}
@@ -186,7 +185,7 @@ func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
 	service := NewPlatformService(&fakePlatformStore{
-		listVolumesFn: func(ctx context.Context, _ authz.User, _ string) ([]deliverycore.VolumeRecord, error) {
+		listVolumesFn: func(ctx context.Context, _ authz.User, _ string, _ bool) ([]deliverycore.VolumeRecord, error) {
 			return []deliverycore.VolumeRecord{}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
@@ -320,7 +319,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "delete environment denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
-					deleteEnvironmentFn: func(context.Context, authz.User, string) ([]string, error) {
+					deleteEnvironmentFn: func(context.Context, authz.User, string, string) ([]string, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
@@ -334,7 +333,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "delete environment missing", fail: sql.ErrNoRows, want: codes.NotFound,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
-					deleteEnvironmentFn: func(context.Context, authz.User, string) ([]string, error) {
+					deleteEnvironmentFn: func(context.Context, authz.User, string, string) ([]string, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
@@ -450,7 +449,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "list volumes denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
-					listVolumesFn: func(context.Context, authz.User, string) ([]deliverycore.VolumeRecord, error) {
+					listVolumesFn: func(context.Context, authz.User, string, bool) ([]deliverycore.VolumeRecord, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
@@ -464,7 +463,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "list domain bindings denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
-					listDomainBindingsFn: func(context.Context, authz.User, string) ([]deliverycore.DomainBindingRecord, error) {
+					listDomainBindingsFn: func(context.Context, authz.User, string, bool) ([]deliverycore.DomainBindingRecord, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
@@ -478,7 +477,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "list environments denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
-					listEnvironmentsFn: func(context.Context, authz.User, string) ([]deliverycore.EnvironmentRecord, error) {
+					listEnvironmentsFn: func(context.Context, authz.User, string, bool) ([]deliverycore.EnvironmentRecord, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
@@ -562,7 +561,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "delete volume denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *PlatformService {
 				return NewPlatformService(&fakePlatformStore{
-					deleteVolumeFn: func(context.Context, authz.User, string) error { return fail },
+					deleteVolumeFn: func(context.Context, authz.User, string, string) error { return fail },
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
 			call: func(s *PlatformService) error {
@@ -600,7 +599,7 @@ func TestPlatformServiceRejectsBlankDelegatedUser(t *testing.T) {
 
 	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 	for _, id := range []string{"", "   "} {
-		_, err := service.ListProjects(contextWithDelegatedUser(id, ""), &emptypb.Empty{})
+		_, err := service.ListProjects(contextWithDelegatedUser(id, ""), &platformv1.ListProjectsRequest{})
 		if status.Code(err) != codes.Unauthenticated {
 			t.Fatalf("id %q: code = %v, want Unauthenticated (err: %v)", id, status.Code(err), err)
 		}

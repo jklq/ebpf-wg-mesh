@@ -25,23 +25,23 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				healthy = true
 			}
 			return deliverycore.ServiceRecord{
-				ID:               serviceID,
-				ProjectID:        "project-1",
-				AllocatedAgentID: "node-1",
-				CreatedAt:        now.Add(-10 * time.Minute),
-				Spec:             directImageServiceSpec("nginx:1.27", nil),
-				LatestBuild: &platformv1.BuildStatus{
-					BuildId: "build-1",
-				},
-			}, []deliverycore.AllocationRecord{{
-				ID:                       "alloc-status",
-				ServiceID:                serviceID,
-				AgentID:                  "node-1",
-				DesiredRolloutGeneration: 2,
-				AppliedRolloutGeneration: applied,
-				Healthy:                  healthy,
-				UpdatedAt:                now,
-			}}, nil
+					ID:               serviceID,
+					ProjectID:        "project-1",
+					AllocatedAgentID: "node-1",
+					CreatedAt:        now.Add(-10 * time.Minute),
+					Spec:             directImageServiceSpec("nginx:1.27", nil),
+					LatestBuild: &platformv1.BuildStatus{
+						BuildId: "build-1",
+					},
+				}, []deliverycore.AllocationRecord{{
+					ID:                       "alloc-status",
+					ServiceID:                serviceID,
+					AgentID:                  "node-1",
+					DesiredRolloutGeneration: 2,
+					AppliedRolloutGeneration: applied,
+					Healthy:                  healthy,
+					UpdatedAt:                now,
+				}}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 
@@ -64,7 +64,7 @@ func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
 
 	var allocationReads atomic.Int32
 	store := &fakePlatformStore{
-		listServicesFn: func(context.Context, authz.User, string) ([]deliverycore.ServiceRecord, error) {
+		listServicesFn: func(context.Context, authz.User, string, bool) ([]deliverycore.ServiceRecord, error) {
 			return []deliverycore.ServiceRecord{
 				{ID: "service-a", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
 				{ID: "service-b", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},

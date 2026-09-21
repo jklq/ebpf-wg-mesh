@@ -30,12 +30,13 @@ type Store interface {
 	CreatePlatformDomainBindingRecord(context.Context, authz.User, string, string, int32) (deliverycore.DomainBindingRecord, bool, error)
 	UpdateDomainBindingRecord(context.Context, authz.User, string, string, int32) (deliverycore.DomainBindingRecord, bool, error)
 	DeleteDomainBindingRecord(context.Context, authz.User, string) (bool, error)
+	RestoreDomainBindingRecord(context.Context, authz.User, string) (deliverycore.DomainBindingRecord, error)
 	DomainBindingByHostname(context.Context, authz.User, string) (deliverycore.DomainBindingRecord, error)
 	PlatformDomainBindingForService(context.Context, authz.User, string) (deliverycore.DomainBindingRecord, error)
 	ServiceByID(context.Context, authz.User, string) (deliverycore.ServiceRecord, error)
 	ListAllocationsByServiceID(context.Context, string) ([]deliverycore.AllocationRecord, error)
 	AgentIDs(context.Context) ([]string, error)
-	ListDomainBindings(context.Context, authz.User, string) ([]deliverycore.DomainBindingRecord, error)
+	ListDomainBindings(context.Context, authz.User, string, bool) ([]deliverycore.DomainBindingRecord, error)
 }
 
 func NewDomains(store Store, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, suffix string, resolver Resolver) *Domains {
@@ -50,8 +51,8 @@ func (s *Domains) GetDomainBinding(ctx context.Context, user authz.User, hostnam
 	return s.AnnotateDomainBinding(ctx, user, rec), nil
 }
 
-func (s *Domains) ListDomainBindings(ctx context.Context, user authz.User, serviceID string) ([]*platformv1.DomainBinding, error) {
-	records, err := s.store.ListDomainBindings(ctx, user, serviceID)
+func (s *Domains) ListDomainBindings(ctx context.Context, user authz.User, serviceID string, includeDeleted bool) ([]*platformv1.DomainBinding, error) {
+	records, err := s.store.ListDomainBindings(ctx, user, serviceID, includeDeleted)
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +95,9 @@ func (s *Domains) CreateDomainBinding(ctx context.Context, user authz.User, req 
 		}
 		if errors.Is(err, deliverycore.ErrDomainAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create domain binding: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrServiceDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "create domain binding: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrInvalidPort) {
 			return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
@@ -143,6 +147,9 @@ func (s *Domains) GenerateDomainBinding(ctx context.Context, user authz.User, re
 		if errors.Is(err, deliverycore.ErrDomainAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "generate domain binding: %v", err)
 		}
+		if errors.Is(err, deliverycore.ErrServiceDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "generate domain binding: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "generate domain binding: %v", err)
 	}
 	if changed {
@@ -179,6 +186,9 @@ func (s *Domains) UpdateDomainBinding(ctx context.Context, user authz.User, req 
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrServiceDeleted) || errors.Is(err, deliverycore.ErrDomainDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "update domain binding: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrInvalidPort) {
 			return nil, status.Errorf(codes.InvalidArgument, "target port: %v", err)
@@ -232,6 +242,28 @@ func (s *Domains) DeleteDomainBinding(ctx context.Context, user authz.User, req 
 		s.ingress.RequestSync()
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func (s *Domains) RestoreDomainBinding(ctx context.Context, user authz.User, hostname string) (*platformv1.DomainBinding, error) {
+	binding, err := s.store.RestoreDomainBindingRecord(ctx, user, hostname)
+	if err != nil {
+		if ownershipError(err) {
+			return nil, err
+		}
+		if errors.Is(err, authz.ErrDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "restore domain binding: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrAncestorDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "restore domain binding: %v", err)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "domain binding: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "restore domain binding: %v", err)
+	}
+	s.notifyServices(ctx, user, binding.ServiceID)
+	s.ingress.RequestSync()
+	return s.AnnotateDomainBinding(ctx, user, binding), nil
 }
 
 func ownershipError(err error) bool {

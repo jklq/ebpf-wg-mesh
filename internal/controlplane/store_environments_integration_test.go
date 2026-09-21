@@ -212,7 +212,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	node2Before = mustDesiredRevision(t, store, ctx, "node-2")
 	notifier := &recordingNotifier{}
 	ingress := &countingIngress{}
-	operations := NewEnvironmentOperations(store.platform(), notifier, ingress)
+	operations := NewCatalogOperations(store.platform(), notifier, ingress)
 	_, err = operations.DeleteEnvironment(contextWithDelegatedUser("owner", "owner@example.com"), &platformv1.DeleteEnvironmentRequest{EnvironmentId: staging.ID})
 	notifiedAgentIDs = notifier.agentIDs
 	if ingress.requests.Load() != 1 {

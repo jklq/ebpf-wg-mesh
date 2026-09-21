@@ -87,6 +87,9 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return result, err
 	}
+	if service.Deletion != nil {
+		return result, nil
+	}
 	pendingChanges, err := s.serviceHasUnappliedChangesQuerier(ctx, tx, service)
 	if err != nil {
 		return result, err

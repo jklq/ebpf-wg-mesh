@@ -3,9 +3,13 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
@@ -74,6 +78,10 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		) VALUES ($1, $2, $3, 1, $4, $5, $5)`,
 		rec.ID, rec.EnvironmentID, rec.Name, rec.DesiredReplicaCount, now,
 	); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ServiceRecord{}, s.serviceNameConflictErr(ctx, tx, environment.ID, rec.Name)
+		}
 		return ServiceRecord{}, err
 	}
 	journal.RecordService(ctx, rec.ID)
@@ -91,4 +99,21 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		return ServiceRecord{}, err
 	}
 	return rec, nil
+}
+
+// serviceNameConflictErr maps a service-name collision to a typed error.
+// Tombstoned rows reserve their names for the grace period; the error tells
+// the caller to restore or wait instead.
+func (s *persistence) serviceNameConflictErr(ctx context.Context, tx *sql.Tx, environmentID, name string) error {
+	existing, found, err := s.serviceByNameQuerier(ctx, tx, environmentID, name)
+	if err != nil || !found {
+		if err == nil {
+			err = fmt.Errorf("service %q already exists", name)
+		}
+		return fmt.Errorf("%w: %v", ErrServiceAlreadyExists, err)
+	}
+	if existing.Deletion != nil && !existing.Deletion.Inherited {
+		return fmt.Errorf("%w: %q was deleted; restore it or wait until %s", ErrServiceAlreadyExists, name, existing.Deletion.ExpiresAt.Format(time.RFC3339))
+	}
+	return fmt.Errorf("%w: %q", ErrServiceAlreadyExists, name)
 }

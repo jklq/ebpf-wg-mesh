@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"fmt"
 	"runtime"
@@ -21,8 +22,27 @@ type database struct {
 	db               *sql.DB
 	mesh             config.ControlPlaneMeshConfig
 	reservedAgentIDs []string
+	deletionGrace    time.Duration
 	journalOnce      sync.Once
 	journal          *journal.Store
+}
+
+// PersistenceOption customizes persistence construction.
+type PersistenceOption func(*database)
+
+// WithDeletionGracePeriod overrides how long tombstones stay restorable.
+// Zero selects deliverycore.DefaultDeletionGracePeriod.
+func WithDeletionGracePeriod(grace time.Duration) PersistenceOption {
+	return func(db *database) {
+		db.deletionGrace = grace
+	}
+}
+
+func (s *database) deletionGracePeriod() time.Duration {
+	if s == nil || s.deletionGrace <= 0 {
+		return deliverycore.DefaultDeletionGracePeriod
+	}
+	return s.deletionGrace
 }
 
 func (s *database) reserveAgents(agentIDs ...string) {
@@ -34,7 +54,7 @@ func (s *database) reserveAgents(agentIDs ...string) {
 	}
 }
 
-func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig) (*persistence, error) {
+func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig, opts ...PersistenceOption) (*persistence, error) {
 	normalizeDatabaseConfig(&dbCfg)
 	db, err := sql.Open("pgx", dbCfg.URL)
 	if err != nil {
@@ -48,7 +68,13 @@ func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMes
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	store := newPersistence(&database{db: db, mesh: meshCfg})
+	handle := &database{db: db, mesh: meshCfg}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(handle)
+		}
+	}
+	store := newPersistence(handle)
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err

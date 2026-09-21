@@ -7,7 +7,8 @@ import (
 func (s *persistence) projectByIDInternalQuerier(ctx context.Context, q ServiceQueryer, projectID string) (ProjectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
+		        deleted_at, deleted_by_user_id, delete_expires_at
 		   FROM projects
 		  WHERE id = $1`,
 		projectID,
@@ -18,13 +19,16 @@ func (s *persistence) projectByIDInternalQuerier(ctx context.Context, q ServiceQ
 func scanProjectRow(scanner interface{ Scan(...any) error }) (ProjectRecord, error) {
 	var rec ProjectRecord
 	var kind string
-	if err := scanner.Scan(&rec.ID, &rec.Name, &kind, &rec.SystemKey, &rec.CreatedAt); err != nil {
+	var tombstone Tombstone
+	targets := []any{&rec.ID, &rec.Name, &kind, &rec.SystemKey, &rec.CreatedAt}
+	if err := scanner.Scan(ScanTombstone(targets, &tombstone)...); err != nil {
 		return ProjectRecord{}, err
 	}
 	rec.Kind = ProjectKind(kind)
 	if rec.Kind == "" {
 		rec.Kind = ProjectKindUser
 	}
+	rec.Deletion = EffectiveDeletion(tombstone)
 	return rec, nil
 }
 

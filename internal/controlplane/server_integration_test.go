@@ -103,7 +103,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 		userAssertionHeader, signedLiveUserAssertion(t, "user-1"),
 	)
 
-	projects, err := client.ListProjects(delegatedCtx, &emptypb.Empty{})
+	projects, err := client.ListProjects(delegatedCtx, &platformv1.ListProjectsRequest{})
 	if err != nil {
 		t.Fatalf("ListProjects(before create): %v", err)
 	}
@@ -124,7 +124,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 		t.Fatalf("expected user project kind, got %s", created.GetKind())
 	}
 
-	projects, err = client.ListProjects(delegatedCtx, &emptypb.Empty{})
+	projects, err = client.ListProjects(delegatedCtx, &platformv1.ListProjectsRequest{})
 	if err != nil {
 		t.Fatalf("ListProjects(after create): %v", err)
 	}

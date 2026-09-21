@@ -33,6 +33,9 @@ func (d *Delivery) createScheduledService(ctx context.Context, scope authz.Envir
 		if err != nil {
 			return err
 		}
+		if environment.Deletion != nil {
+			return ErrEnvironmentDeleted
+		}
 		rec, err = s.createStagedServiceTx(ctx, tx, environment, name, spec, scope.UserID())
 		return err
 	})
@@ -85,6 +88,9 @@ func (d *Delivery) createServiceTxInternal(ctx context.Context, tx *sql.Tx, proj
 
 func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environment EnvironmentRecord, name string, spec *platformv1.ServiceSpec, agentID, actorUserID string) (ServiceRecord, error) {
 	s := d.store
+	if environment.Deletion != nil {
+		return ServiceRecord{}, ErrEnvironmentDeleted
+	}
 	if agentID == "" {
 		return ServiceRecord{}, errors.New("agent id required")
 	}
@@ -176,6 +182,15 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	s := d.store
 	current, err := s.serviceByIDQuerier(ctx, tx, scope)
 	if err != nil {
+		return ServiceRecord{}, false, false, err
+	}
+	// Lock and re-check: the optimistic revision guard below cannot see a
+	// concurrent tombstone, so deleted services must be fenced explicitly.
+	deletion, err := s.lockServiceDeletionTx(ctx, tx, current.ID)
+	if err != nil {
+		return ServiceRecord{}, false, false, err
+	}
+	if err := requireLiveService(deletion); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
 	nextName := strings.TrimSpace(name)
@@ -299,33 +314,31 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 	s := d.store
 	var hasBindings bool
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		service, err := s.serviceByIDQuerier(ctx, tx, scope)
+		// Lock first: the row lock serializes against concurrent deploys,
+		// which must observe the tombstone or win before it lands.
+		deletion, err := s.lockServiceDeletionTx(ctx, tx, scope.ID())
 		if err != nil {
 			return err
 		}
-		bindings, err := s.listDomainBindings(ctx, scope)
+		if deletion != nil && !deletion.Inherited {
+			return nil
+		}
+		now := time.Now().UTC()
+		tombstoned, err := s.tombstoneServiceTx(ctx, tx, scope.ID(), scope.UserID(), now)
 		if err != nil {
 			return err
 		}
-		hasBindings = len(bindings) > 0
-		if err := s.markCurrentDeploymentRemovedTx(ctx, tx, service.ID, deploymentActor{Kind: DeploymentCauseUser, ID: scope.UserID()}); err != nil {
+		if !tombstoned {
+			return nil
+		}
+		if err := quiesceServiceTx(ctx, s, tx, scope.ID(), scope.UserID()); err != nil {
 			return err
 		}
-		if err := journal.RecordServiceRemoval(ctx, tx, service.ID); err != nil {
+		if err := journal.RecordServiceRemoval(ctx, tx, scope.ID()); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM services WHERE id = $1`, service.ID)
-		if err != nil {
-			return err
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			return sql.ErrNoRows
-		}
-		return nil
+		hasBindings, err = s.hasLiveDomainBindingsQuerier(ctx, tx, scope.ID())
+		return err
 	})
 	if err != nil {
 		return err
@@ -345,6 +358,79 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 	return nil
 }
 
+// RestoreService clears a service's own tombstone within the grace period.
+// Restored services keep their deployment history but lose their stale
+// assignments, which referenced the Removed deployment; a release resumes
+// work. Restoring under a tombstoned ancestor is refused: restore top-down.
+func (d *Delivery) RestoreService(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, error) {
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
+	if err != nil {
+		return ServiceRecord{}, err
+	}
+	return d.restoreService(ctx, scope)
+}
+
+func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (ServiceRecord, error) {
+	s := d.store
+	var rec ServiceRecord
+	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		deletion, err := s.lockServiceDeletionTx(ctx, tx, scope.ID())
+		if err != nil {
+			return err
+		}
+		if deletion == nil {
+			rec, err = s.serviceByIDQuerier(ctx, tx, scope)
+			return err
+		}
+		if deletion.Inherited {
+			return ErrAncestorDeleted
+		}
+		result, err := tx.ExecContext(ctx,
+			`UPDATE services
+			    SET deleted_at = NULL,
+			        deleted_by_user_id = '',
+			        delete_expires_at = NULL
+			  WHERE id = $1 AND deleted_at IS NOT NULL`,
+			scope.ID(),
+		)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			rec, err = s.serviceByIDQuerier(ctx, tx, scope)
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
+			return err
+		}
+		if err := journal.RecordServiceRemoval(ctx, tx, scope.ID()); err != nil {
+			return err
+		}
+		rec, err = s.serviceByIDQuerier(ctx, tx, scope)
+		return err
+	})
+	if err != nil {
+		return ServiceRecord{}, err
+	}
+	if d.notifier != nil {
+		ids, listErr := s.agentIDs(ctx)
+		if listErr != nil {
+			return ServiceRecord{}, listErr
+		}
+		for _, agentID := range ids {
+			d.notifier.Notify(agentID)
+		}
+	}
+	if d.ingress != nil {
+		d.ingress.RequestSync()
+	}
+	return rec, nil
+}
+
 func (d *Delivery) DiscardServiceChanges(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (ServiceRecord, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
@@ -359,6 +445,13 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		current, err := s.serviceByIDQuerier(ctx, tx, scope)
 		if err != nil {
+			return err
+		}
+		deletion, err := s.lockServiceDeletionTx(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
+		if err := requireLiveService(deletion); err != nil {
 			return err
 		}
 		changes, deployed, err := s.loadServiceUnappliedChangesQuerier(ctx, tx, current.ID, current.Spec, current.RolloutGeneration)
@@ -493,7 +586,11 @@ func (d *Delivery) scaleServiceTx(ctx context.Context, tx *sql.Tx, scope authz.S
 		return ServiceRecord{}, nil, err
 	}
 	serviceID := scope.ID()
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE id = $1 FOR UPDATE`, serviceID).Scan(&serviceID); err != nil {
+	deletion, err := s.lockServiceDeletionTx(ctx, tx, serviceID)
+	if err != nil {
+		return ServiceRecord{}, nil, err
+	}
+	if err := requireLiveService(deletion); err != nil {
 		return ServiceRecord{}, nil, err
 	}
 	if err := validateVolumeReplicaCompatibility(current.Spec, desired); err != nil {
