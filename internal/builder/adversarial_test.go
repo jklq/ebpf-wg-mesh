@@ -130,8 +130,9 @@ func setupProbeEnv(t *testing.T) *probeEnv {
 		}
 	}
 	// The snapshot is read-only in both executors (chmod in the
-	// development executor, read-only bind in the sandbox), so the
-	// fixture matches either way.
+	// development executor plus a read-only bind for root,
+	// read-only bind in the sandbox), so the fixture matches either
+	// way.
 	if err := filepath.WalkDir(env.repo, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -144,7 +145,11 @@ func setupProbeEnv(t *testing.T) *probeEnv {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := remountSnapshotReadOnly(env.repo); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
+		unmountSnapshot(env.repo)
 		_ = filepath.WalkDir(env.repo, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
@@ -437,6 +442,17 @@ func adversarialForkBomb(t *testing.T, backend probeBackend) {
 	if backend.isolating() {
 		if firstAborted || secondAborted || firstN < spawns-5 || secondN < spawns-5 {
 			t.Fatalf("sandboxed probes must each spawn ~%d, got %d and %d", spawns, firstN, secondN)
+		}
+		return
+	}
+	if os.Geteuid() == 0 {
+		// Any uid 0 (real root or a user namespace) bypasses
+		// RLIMIT_NPROC — verified: a sub-baseline nproc limit still
+		// spawns freely — so as root the development backend has no
+		// fork budget at all, shared or otherwise. Both probes must
+		// spawn fully, which is the honest statement of that.
+		if firstAborted || secondAborted || firstN < spawns-5 || secondN < spawns-5 {
+			t.Fatalf("root development probes bypass the process budget: expected ~%d each, got %d and %d", spawns, firstN, secondN)
 		}
 		return
 	}

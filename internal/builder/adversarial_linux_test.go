@@ -128,10 +128,12 @@ func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 		t.Skipf("containerd is not reachable on %s: %v", socket, err)
 	}
 	_ = probe.Close()
+	namespace := fmt.Sprintf("builder-test-%d-%d", os.Getpid(), time.Now().UnixNano())
+	ensureSandboxProbeImage(t, socket, namespace)
 	workDir := t.TempDir()
 	backend, err := NewSandboxBackend(SandboxBackendConfig{
 		Socket:       socket,
-		Namespace:    fmt.Sprintf("builder-test-%d-%d", os.Getpid(), time.Now().UnixNano()),
+		Namespace:    namespace,
 		Image:        sandboxProbeImage,
 		Runtime:      "io.containerd.runc.v2",
 		Snapshotter:  "overlayfs",
@@ -141,9 +143,6 @@ func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 		WorkDir:      workDir,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "not present") {
-			t.Skipf("sandbox probe image %s is not present: %v", sandboxProbeImage, err)
-		}
 		t.Fatalf("NewSandboxBackend: %v", err)
 	}
 	t.Cleanup(func() {
@@ -160,6 +159,28 @@ func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 		}
 	})
 	return &sandboxProbeBackend{t: t, backend: backend, workDir: workDir}
+}
+
+// ensureSandboxProbeImage makes the probe image available in the
+// test's containerd namespace, pulling when it is missing. Image
+// metadata is namespaced (blobs are content-shared, so the pull is
+// cheap when CI already pulled into another namespace); a missing
+// image without a working pull skips instead of failing.
+func ensureSandboxProbeImage(t *testing.T, socket, namespace string) {
+	t.Helper()
+	client, err := containerd.New(socket)
+	if err != nil {
+		t.Skipf("containerd is not reachable on %s: %v", socket, err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(namespaces.WithNamespace(context.Background(), namespace), 5*time.Minute)
+	defer cancel()
+	if _, err := client.GetImage(ctx, sandboxProbeImage); err == nil {
+		return
+	}
+	if _, err := client.Pull(ctx, sandboxProbeImage, containerd.WithPullUnpack, containerd.WithPullSnapshotter("overlayfs")); err != nil {
+		t.Skipf("sandbox probe image %s is not available: %v", sandboxProbeImage, err)
+	}
 }
 
 func sandboxProbeLeftovers(t *testing.T, socket, namespace string) string {
@@ -263,6 +284,8 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 		_ = probe.Close()
 	}
 	pluginDir := cniPluginDirForTest(t)
+	namespace := fmt.Sprintf("builder-test-%d-%d", os.Getpid(), time.Now().UnixNano())
+	ensureSandboxProbeImage(t, socket, namespace)
 	confDir := t.TempDir()
 	conflist := `{
 	  "cniVersion": "1.0.0",
@@ -279,7 +302,7 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 	}
 	backend, err := NewSandboxBackend(SandboxBackendConfig{
 		Socket:       socket,
-		Namespace:    fmt.Sprintf("builder-test-%d-%d", os.Getpid(), time.Now().UnixNano()),
+		Namespace:    namespace,
 		Image:        sandboxProbeImage,
 		Runtime:      "io.containerd.runc.v2",
 		Snapshotter:  "overlayfs",
@@ -289,9 +312,6 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 		WorkDir:      t.TempDir(),
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "not present") {
-			t.Skipf("sandbox probe image %s is not present: %v", sandboxProbeImage, err)
-		}
 		t.Fatalf("NewSandboxBackend: %v", err)
 	}
 	defer func() {

@@ -199,9 +199,11 @@ func prepareExecutionWorkspace(workDir, buildID, executorName string, now func()
 }
 
 // destroyExecutionWorkspace removes the workspace and verifies its
-// removal. Write permission is restored first because the snapshot
-// directory is read-only by design.
+// removal. A root-owned read-only snapshot bind is detached first
+// (deletion through it would fail), then write permission is
+// restored because the snapshot directory is read-only by design.
 func destroyExecutionWorkspace(root string) error {
+	unmountSnapshot(filepath.Join(root, "repo"))
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -317,11 +319,21 @@ func materializeSnapshot(spec ExecutionSpec, repoDir string) error {
 	if err := makeSnapshotReadOnly(repoDir); err != nil {
 		return &buildFailureError{kind: failureKindFetch, err: err}
 	}
+	// After the permission verification: a read-only bind mount for
+	// root, for whom permission bits do not bind.
+	if err := remountSnapshotReadOnly(repoDir); err != nil {
+		return &buildFailureError{kind: failureKindFetch, err: err}
+	}
+	if err := verifySnapshotNotWritable(repoDir); err != nil {
+		return &buildFailureError{kind: failureKindFetch, err: err}
+	}
 	return nil
 }
 
 // makeSnapshotReadOnly removes write permission from the extracted
-// snapshot and verifies that it cannot be written to.
+// snapshot and verifies that it cannot be written to. Root bypasses
+// permission bits, so as root the verification happens after the
+// read-only bind mount instead (see materializeSnapshot).
 func makeSnapshotReadOnly(repoDir string) error {
 	if err := filepath.WalkDir(repoDir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -338,6 +350,16 @@ func makeSnapshotReadOnly(repoDir string) error {
 	}); err != nil {
 		return fmt.Errorf("make source snapshot read-only: %w", err)
 	}
+	if os.Geteuid() == 0 {
+		return nil
+	}
+	return verifySnapshotNotWritable(repoDir)
+}
+
+// verifySnapshotNotWritable proves the snapshot cannot be written
+// to. It runs after every enforcement layer (permissions for
+// non-root, plus the read-only bind mount for root).
+func verifySnapshotNotWritable(repoDir string) error {
 	probe, err := os.OpenFile(filepath.Join(repoDir, ".executor-write-probe"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err == nil {
 		_ = probe.Close()
