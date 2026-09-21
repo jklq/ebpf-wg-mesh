@@ -605,6 +605,26 @@ func TestFinalizeBuilderRejectsUnknownExecutor(t *testing.T) {
 	}
 }
 
+func TestFinalizeBuilderCacheMode(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	if err := FinalizeBuilder(&cfg); err != nil {
+		t.Fatalf("FinalizeBuilder: %v", err)
+	}
+	if cfg.Cache.Mode != "none" {
+		t.Fatalf("cache mode must default to none, got %q", cfg.Cache.Mode)
+	}
+	cfg.Cache.Mode = "content-addressed"
+	if err := FinalizeBuilder(&cfg); err != nil {
+		t.Fatalf("content-addressed mode must validate: %v", err)
+	}
+	cfg.Cache.Mode = "shared"
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "builder.cache.mode") {
+		t.Fatalf("expected cache mode error, got %v", err)
+	}
+}
+
 func TestFinalizeBuilderRejectsBadLimitsAndNetwork(t *testing.T) {
 	t.Parallel()
 
