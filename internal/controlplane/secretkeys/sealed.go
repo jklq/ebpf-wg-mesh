@@ -49,10 +49,18 @@ func NewSealedStore(db *sql.DB, deks *DEKStore) *SealedStore {
 	return &SealedStore{db: db, deks: deks}
 }
 
+// sealVersionAttempts bounds version-allocation retries when concurrent
+// seals race for the same (service, name).
+const sealVersionAttempts = 10
+
 // Seal appends a new sealed version for (serviceID, name) and returns its
 // version. Re-sealing a tombstoned name clears the tombstone: the name lives
 // again at a new version. Callers validate the name and its disjointness
 // from public environment keys before calling.
+//
+// Concurrent seals for one name race on max(version)+1; a loser that hits
+// the primary-key conflict recomputes and retries instead of surfacing a
+// raw duplicate-key error.
 func (s *SealedStore) Seal(ctx context.Context, q Querier, serviceID, environmentID, name string, plaintext []byte) (int64, error) {
 	if strings.TrimSpace(serviceID) == "" || strings.TrimSpace(environmentID) == "" || strings.TrimSpace(name) == "" {
 		return 0, errors.New("seal requires service id, environment id, and name")
@@ -65,25 +73,32 @@ func (s *SealedStore) Seal(ctx context.Context, q Querier, serviceID, environmen
 		if err != nil {
 			return err
 		}
-		var current sql.NullInt64
-		if err := tx.QueryRowContext(ctx,
-			`SELECT max(version) FROM service_secret_versions WHERE service_id = $1 AND name = $2`,
-			serviceID, name).Scan(&current); err != nil {
-			return fmt.Errorf("load sealed secret versions: %w", err)
-		}
-		version = 1
-		if current.Valid {
-			version = current.Int64 + 1
-		}
-		nonce, ciphertext, err := SealValue(dek, sealAAD(serviceID, name, version), plaintext)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO service_secret_versions(service_id, name, version, environment_id, dek_id, nonce, ciphertext, created_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			serviceID, name, version, environmentID, dekID, nonce, ciphertext, time.Now().UTC()); err != nil {
-			return fmt.Errorf("insert sealed secret version: %w", err)
+		for attempt := 0; ; attempt++ {
+			var current sql.NullInt64
+			if err := tx.QueryRowContext(ctx,
+				`SELECT max(version) FROM service_secret_versions WHERE service_id = $1 AND name = $2`,
+				serviceID, name).Scan(&current); err != nil {
+				return fmt.Errorf("load sealed secret versions: %w", err)
+			}
+			candidate := int64(1)
+			if current.Valid {
+				candidate = current.Int64 + 1
+			}
+			nonce, ciphertext, err := SealValue(dek, sealAAD(serviceID, name, candidate), plaintext)
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO service_secret_versions(service_id, name, version, environment_id, dek_id, nonce, ciphertext, created_at)
+				  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				serviceID, name, candidate, environmentID, dekID, nonce, ciphertext, time.Now().UTC())
+			if err == nil {
+				version = candidate
+				break
+			}
+			if !isUniqueViolation(err) || attempt+1 >= sealVersionAttempts {
+				return fmt.Errorf("insert sealed secret version: %w", err)
+			}
 		}
 		// Re-sealing resurrects a deleted name.
 		if _, err := tx.ExecContext(ctx,

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -394,6 +395,106 @@ func TestSealedSecretsRPCWiring(t *testing.T) {
 		t.Fatalf("oversize seal code = %v, want InvalidArgument", err)
 	} else if strings.Contains(err.Error(), oversize) {
 		t.Fatal("oversize value leaked into the error")
+	}
+}
+
+func TestSealedSecretsRollbackRejectsSealedNameConflict(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	userID := "owner"
+	project, err := store.catalog.createProject(ctx, testUser(userID), "sealed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, project.ID)
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	delivery := testDelivery(store)
+	service, err := createService(ctx, store, userID, environmentID, "web",
+		directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
+			Env: map[string]string{"MOVED": "public"},
+		}), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := func(spec *platformv1.ServiceSpec) deliverycore.DeploymentRecord {
+		t.Helper()
+		if _, _, err := updateService(ctx, store, userID, service.ID, service.Name, spec); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, environmentID, service.ID); err != nil {
+			t.Fatal(err)
+		}
+		completeActionRollout(t, store, service.ID)
+		return currentDeploymentForTest(t, store, ctx, service.ID)
+	}
+	// First release keeps MOVED public; the second drops it; then MOVED
+	// moves to sealed.
+	first := release(directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{
+		Env: map[string]string{"MOVED": "public"},
+	}))
+	release(directImageServiceSpec(pinnedImage("c"), nil))
+	if _, err := delivery.SealServiceSecret(ctx, testUser(userID), service.ID, "MOVED", []byte("sealed")); err != nil {
+		t.Fatal(err)
+	}
+	// Rolling back to the deployment whose spec still carries MOVED as
+	// public must fail closed: resurrecting it as public while the
+	// sealed value silently wins in desired state would lie to the
+	// operator about what is running.
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK, "rollback-1", ""); !errors.Is(err, deliverycore.ErrSealedNameConflict) {
+		t.Fatalf("rollback with sealed conflict = %v, want ErrSealedNameConflict", err)
+	}
+}
+
+func TestSealedSecretsConcurrentSealSameName(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	userID := "owner"
+	project, err := store.catalog.createProject(ctx, testUser(userID), "sealed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, project.ID)
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	delivery := testDelivery(store)
+	service, err := createService(ctx, store, userID, environmentID, "web",
+		directImageServiceSpec(pinnedImage("a"), nil), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Concurrent seals for one name race on max(version)+1; every caller
+	// must land a distinct version instead of one failing with a raw
+	// duplicate-key error.
+	const racers = 8
+	versions := make([]int64, racers)
+	errs := make([]error, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			version, err := delivery.SealServiceSecret(ctx, testUser(userID), service.ID, "TOKEN", []byte("racer"))
+			versions[i], errs[i] = version, err
+		}(i)
+	}
+	wg.Wait()
+	seen := map[int64]bool{}
+	for i := 0; i < racers; i++ {
+		if errs[i] != nil {
+			t.Fatalf("racer %d: %v", i, errs[i])
+		}
+		if versions[i] < 1 || versions[i] > racers || seen[versions[i]] {
+			t.Fatalf("versions = %v, want distinct 1..%d", versions, racers)
+		}
+		seen[versions[i]] = true
 	}
 }
 

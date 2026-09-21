@@ -248,6 +248,13 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 			return "", sql.ErrNoRows
 		}
 	}
+	// A restored spec must be disjoint from live sealed names, like any
+	// spec update: without this, rolling back to a deployment whose spec
+	// predates a sealed secret would resurrect the name as public while
+	// the sealed value silently wins in desired state.
+	if err := d.rejectSealedNameConflicts(ctx, tx, service.ID, target.ResolvedSpec.GetRuntime().GetEnv()); err != nil {
+		return "", err
+	}
 	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
 	if err != nil {
 		return "", err
@@ -505,6 +512,12 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	if err != nil {
 		return "", err
 	}
+	// Retried specs must be disjoint from live sealed names, like any
+	// spec update: a failed deployment may predate a sealed secret that
+	// now owns one of its public names.
+	if err := d.rejectSealedNameConflicts(ctx, tx, service.ID, target.ResolvedSpec.GetRuntime().GetEnv()); err != nil {
+		return "", err
+	}
 	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
 	if err != nil {
 		return "", err
@@ -560,6 +573,12 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 		return "", err
 	}
 	if err := validateVolumeReplicaCompatibility(target.ResolvedSpec, desiredReplicas); err != nil {
+		return "", err
+	}
+	// Retried specs must be disjoint from live sealed names, like any
+	// spec update: a failed deployment may predate a sealed secret that
+	// now owns one of its public names.
+	if err := d.rejectSealedNameConflicts(ctx, tx, service.ID, target.ResolvedSpec.GetRuntime().GetEnv()); err != nil {
 		return "", err
 	}
 	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
