@@ -87,28 +87,17 @@ func (c *GitHubClient) Enabled() bool {
 }
 
 func (c *GitHubClient) FetchArchive(ctx context.Context, owner, repo, ref string, installationID int64) ([]byte, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, c.apiPath("/repos/%s/%s/tarball/%s", owner, repo, strings.TrimSpace(ref)), nil)
+	body, size, err := c.FetchArchiveStream(ctx, owner, repo, ref, installationID)
 	if err != nil {
 		return nil, err
 	}
-	if installationID > 0 {
-		token, err := c.InstallationToken(ctx, installationID)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token.Token)
-	}
-	resp, err := c.client.Do(req)
+	defer body.Close()
+	archive, err := io.ReadAll(io.LimitReader(body, MaxArchiveCompressedBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
-	}
-	archive, err := io.ReadAll(io.LimitReader(resp.Body, MaxArchiveCompressedBytes+1))
-	if err != nil {
-		return nil, err
+	if size >= 0 && int64(len(archive)) != size {
+		return nil, errors.New("github source archive size changed while downloading")
 	}
 	if len(archive) > MaxArchiveCompressedBytes {
 		return nil, errors.New("github source archive exceeds compressed size limit")
@@ -117,6 +106,34 @@ func (c *GitHubClient) FetchArchive(ctx context.Context, owner, repo, ref string
 		return nil, err
 	}
 	return archive, nil
+}
+
+func (c *GitHubClient) FetchArchiveStream(ctx context.Context, owner, repo, ref string, installationID int64) (io.ReadCloser, int64, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, c.apiPath("/repos/%s/%s/tarball/%s", owner, repo, strings.TrimSpace(ref)), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if installationID > 0 {
+		token, err := c.InstallationToken(ctx, installationID)
+		if err != nil {
+			return nil, 0, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token.Token)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, 0, &GitHubAPIError{StatusCode: resp.StatusCode, Method: req.Method, Path: req.URL.Path}
+	}
+	size := resp.ContentLength
+	if size > MaxArchiveCompressedBytes {
+		resp.Body.Close()
+		return nil, 0, errors.New("github source archive exceeds compressed size limit")
+	}
+	return resp.Body, size, nil
 }
 
 func (c *GitHubClient) GetBranchHead(ctx context.Context, owner, repo, branch string, installationID int64) (string, error) {

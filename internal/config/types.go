@@ -150,9 +150,28 @@ type ControlPlaneFailoverConfig struct {
 	UnhealthyThresholdSeconds int
 }
 
+const (
+	SourceArchiveProviderFile = "file"
+	SourceArchiveProviderS3   = "s3"
+)
+
+type SourceArchiveS3Config struct {
+	Endpoint              string
+	Region                string
+	Bucket                string
+	Prefix                string
+	ServerSideEncryption  string
+	SSEKMSKeyID           string
+	CredentialsFile       string
+	RequestTimeoutSeconds int
+	MaxRetries            int
+}
+
 type SourceArchiveConfig struct {
+	Provider      string
 	Directory     string
 	RetentionDays int
+	S3            SourceArchiveS3Config
 }
 
 type ControlPlaneConfig struct {

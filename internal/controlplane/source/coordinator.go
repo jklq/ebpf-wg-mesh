@@ -335,11 +335,12 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
 	var pendingSnapshot SourceSnapshotRecord
 	if _, err := c.store.SourceSnapshotByRevisionID(ctx, revision.ID); errors.Is(err, sql.ErrNoRows) {
-		archive, err := c.client.FetchArchive(ctx, owner, repo, revision.CommitSHA, installationID)
+		stream, size, err := c.client.FetchArchiveStream(ctx, owner, repo, revision.CommitSHA, installationID)
 		if err != nil {
 			return err
 		}
-		digest, objectKey, err := c.store.StoreSourceArchive(ctx, archive)
+		digest, objectKey, storedSize, err := c.store.StoreSourceArchiveFromReader(ctx, stream, size)
+		_ = stream.Close()
 		if err != nil {
 			return err
 		}
@@ -350,7 +351,7 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 			CommitSHA:                    revision.CommitSHA,
 			Digest:                       digest,
 			ObjectKey:                    objectKey,
-			ArchiveSizeBytes:             int64(len(archive)),
+			ArchiveSizeBytes:             storedSize,
 			Ready:                        true,
 			FetchedAt:                    sql.NullTime{Time: time.Now().UTC(), Valid: true},
 		}

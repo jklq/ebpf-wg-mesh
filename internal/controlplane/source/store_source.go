@@ -282,6 +282,11 @@ func (s *SQLStore) UpsertSourceSnapshotTx(ctx context.Context, tx *sql.Tx, rec S
 	if rows == 0 {
 		return s.SourceSnapshotByRevisionIDTx(ctx, tx, rec.SourceRevisionID)
 	}
+	if rec.ObjectKey != "" && rec.Digest != "" && rec.ArchiveSizeBytes > 0 {
+		if err := upsertSourceArchiveObjectTx(ctx, tx, rec.ObjectKey, rec.Digest, rec.ArchiveSizeBytes); err != nil {
+			return SourceSnapshotRecord{}, err
+		}
+	}
 	return s.SourceSnapshotByRevisionIDTx(ctx, tx, rec.SourceRevisionID)
 }
 

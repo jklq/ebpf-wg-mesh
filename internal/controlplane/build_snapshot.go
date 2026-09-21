@@ -52,6 +52,10 @@ func (s *BuildOperations) OpenSourceSnapshot(ctx context.Context, snapshotID str
 			return SourceSnapshotMetadata{}, nil, status.Error(codes.ResourceExhausted, "source snapshot exceeds compressed size limit")
 		case errors.Is(err, source.ErrSnapshotCorrupt):
 			return SourceSnapshotMetadata{}, nil, status.Error(codes.DataLoss, "source snapshot digest is invalid")
+		case errors.Is(err, source.ErrSnapshotMissing):
+			return SourceSnapshotMetadata{}, nil, status.Error(codes.NotFound, "source snapshot object is missing")
+		case errors.Is(err, source.ErrSnapshotTransient):
+			return SourceSnapshotMetadata{}, nil, status.Error(codes.Unavailable, "source snapshot storage is temporarily unavailable")
 		case errors.Is(err, source.ErrSnapshotUnavailable):
 			return SourceSnapshotMetadata{}, nil, status.Error(codes.Internal, "source snapshot archive is unavailable")
 		default:
@@ -73,6 +77,12 @@ func (w snapshotReadWrapper) Read(p []byte) (int, error) {
 	}
 	if errors.Is(err, source.ErrSnapshotCorrupt) {
 		return n, status.Error(codes.DataLoss, err.Error())
+	}
+	if errors.Is(err, source.ErrSnapshotMissing) {
+		return n, status.Error(codes.NotFound, err.Error())
+	}
+	if errors.Is(err, source.ErrSnapshotTransient) {
+		return n, status.Error(codes.Unavailable, err.Error())
 	}
 	return n, status.Errorf(codes.Internal, "read source snapshot chunk: %v", err)
 }
