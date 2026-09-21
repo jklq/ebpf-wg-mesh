@@ -297,11 +297,34 @@ type BuilderConfig struct {
 	WorkDir                  string
 	PollIntervalSeconds      int
 	HeartbeatIntervalSeconds int
+	Executor                 string
 	BuildctlBinary           string
 	BuildkitAddress          string
 	RailpackBinary           string
 	RailpackFrontendImage    string
+	Limits                   BuilderLimitsConfig
+	Network                  BuilderNetworkConfig
 	CleanupWorkDir           bool
+}
+
+// BuilderLimitsConfig carries the explicit per-execution resource
+// limits every build receives as executor input.
+type BuilderLimitsConfig struct {
+	TimeoutSeconds    int
+	MemoryBytes       int64
+	CPUSeconds        int64
+	MaxFileBytes      int64
+	MaxProcesses      int64
+	MaxWorkspaceBytes int64
+}
+
+// BuilderNetworkConfig carries the restricted network policy every
+// build receives as executor input.
+type BuilderNetworkConfig struct {
+	// DenyGeneralEgress is inverted so the zero value preserves the
+	// current behavior of allowing dependency fetches during builds.
+	DenyGeneralEgress bool
+	DeniedCIDRs       []string
 }
 
 type MeshRuntimeConfig struct {
