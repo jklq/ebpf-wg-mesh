@@ -43,6 +43,8 @@ const (
 
 	sandboxNetnsDirName     = "netns"
 	sandboxDiskPollInterval = 2 * time.Second
+	sandboxKillTimeout      = 30 * time.Second
+	sandboxKillPollInterval = 200 * time.Millisecond
 )
 
 // containerdSandboxBackend is the Linux SandboxBackend: one-shot OCI
@@ -467,8 +469,7 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 	for {
 		select {
 		case <-ctx.Done():
-			_ = task.Kill(nctx, syscall.SIGKILL)
-			<-exitCh
+			b.killSandboxTask(task, containerID)
 			finishIO()
 			return ctx.Err()
 		case <-timer.C:
@@ -478,13 +479,12 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 				continue
 			}
 			if written > step.Limits.MaxWorkspaceBytes {
-				_ = task.Kill(nctx, syscall.SIGKILL)
-				<-exitCh
+				b.killSandboxTask(task, containerID)
 				finishIO()
 				return &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("sandbox wrote %d bytes, exceeding the %d byte limit", written, step.Limits.MaxWorkspaceBytes)}
 			}
 		case <-exitCh:
-			status, err := task.Status(nctx)
+			status, err := task.Status(b.namespaced(context.Background()))
 			finishIO()
 			if err != nil {
 				return fmt.Errorf("inspect sandbox task: %w", err)
@@ -493,6 +493,35 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 				return &SandboxStepError{Step: step.Name, ExitCode: int(status.ExitStatus), Tail: string(combined.Bytes())}
 			}
 			return nil
+		}
+	}
+}
+
+// killSandboxTask kills a sandbox task and waits for its exit with a
+// bound. The kill and the status checks run on a fresh context:
+// killing over the execution context after cancellation would fail
+// (a cancelled context fails the Kill RPC), and the wait channel of a
+// cancelled wait may never deliver, so an unbounded receive would
+// stall the worker past its timeout. Container removal stays in the
+// caller's deferred cleanup, which reaps the task either way.
+func (b *containerdSandboxBackend) killSandboxTask(task containerd.Task, containerID string) {
+	killCtx, killCancel := context.WithTimeout(context.Background(), sandboxKillTimeout)
+	defer killCancel()
+	_ = task.Kill(b.namespaced(killCtx), syscall.SIGKILL)
+	deadline := time.Now().Add(sandboxKillTimeout)
+	for {
+		status, err := task.Status(b.namespaced(killCtx))
+		if err == nil && status.Status != containerd.Running {
+			return
+		}
+		if time.Now().After(deadline) {
+			slog.Warn("sandbox task did not exit after SIGKILL; container removal will reap it", "container_id", containerID)
+			return
+		}
+		select {
+		case <-killCtx.Done():
+			return
+		case <-time.After(sandboxKillPollInterval):
 		}
 	}
 }
