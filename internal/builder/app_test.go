@@ -340,7 +340,7 @@ func TestScopedDockerConfigHoldsExactlyOneRepository(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	t.Setenv("DOCKER_CONFIG", "")
 
-	configDir, cleanup, err := scopedDockerConfig(t.TempDir(), "ghcr.io/acme/app:tag", "alice", "secret")
+	configDir, cleanup, err := scopedDockerConfig(t.TempDir(), "ghcr.io/acme/app:tag", "alice", "secret", true)
 	if err != nil {
 		t.Fatalf("scopedDockerConfig: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestScopedDockerConfigHoldsExactlyOneRepository(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(configDir, "contexts")); !os.IsNotExist(err) {
 		t.Fatalf("ambient docker contexts must not enter the build, lstat err=%v", err)
 	}
-	if _, _, err := scopedDockerConfig(t.TempDir(), "not-a-reference", "alice", "secret"); err == nil {
+	if _, _, err := scopedDockerConfig(t.TempDir(), "not-a-reference", "alice", "secret", true); err == nil {
 		t.Fatal("expected invalid push reference to fail")
 	}
 }
