@@ -290,7 +290,11 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET variable_versions_json = $1 WHERE id = $2`, variableVersionsJSON, dep.ID); err != nil {
+	sealedVersionsJSON, err := json.Marshal(target.SealedVersions)
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET variable_versions_json = $1, sealed_versions_json = $2 WHERE id = $3`, variableVersionsJSON, sealedVersionsJSON, dep.ID); err != nil {
 		return "", err
 	}
 	journal.RecordDeployment(ctx, dep.ID)

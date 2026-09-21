@@ -17,7 +17,7 @@ import (
 
 const deploymentSelectColumns = `id, service_id, spec_revision, rollout_generation, build_id, image_digest,
 	        state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
-	        is_current, requested_by_user_id, created_at, updated_at`
+	        sealed_versions_json, is_current, requested_by_user_id, created_at, updated_at`
 
 func (s *persistence) lockServiceTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	var id string
@@ -182,16 +182,19 @@ func (s *persistence) insertDeploymentTx(
 	}
 	rec.ResolvedSpec = resolvedSpec
 	rec.VariableVersions = deploymentVariableVersions(resolvedSpec, specRevision)
+	rec.SealedVersions = map[string]int64{}
 	if s.secrets != nil {
 		live, err := s.secrets.Sealed().CurrentVersions(ctx, tx, serviceID)
 		if err != nil {
 			return DeploymentRecord{}, err
 		}
-		for name, version := range live {
-			rec.VariableVersions[name] = version
-		}
+		rec.SealedVersions = live
 	}
 	variableVersionsJSON, err := json.Marshal(rec.VariableVersions)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	sealedVersionsJSON, err := json.Marshal(rec.SealedVersions)
 	if err != nil {
 		return DeploymentRecord{}, err
 	}
@@ -199,11 +202,11 @@ func (s *persistence) insertDeploymentTx(
 		`INSERT INTO deployments(
 			id, service_id, spec_revision, rollout_generation, build_id, image_digest,
 			state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
-			is_current, requested_by_user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, TRUE, $14, $15, $15)`,
+			sealed_versions_json, is_current, requested_by_user_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, TRUE, $15, $16, $16)`,
 		rec.ID, rec.ServiceID, rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ImageDigest,
 		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, resolvedSpecJSON, variableVersionsJSON,
-		rec.RequestedByUserID, rec.CreatedAt,
+		sealedVersionsJSON, rec.RequestedByUserID, rec.CreatedAt,
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
@@ -427,7 +430,7 @@ func (s *persistence) markCurrentDeploymentRemovedTx(ctx context.Context, tx *sq
 
 func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecord, error) {
 	var rec DeploymentRecord
-	var resolvedSpecJSON, variableVersionsJSON []byte
+	var resolvedSpecJSON, variableVersionsJSON, sealedVersionsJSON []byte
 	if err := scanner.Scan(
 		&rec.ID,
 		&rec.ServiceID,
@@ -442,6 +445,7 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 		&rec.Detail,
 		&resolvedSpecJSON,
 		&variableVersionsJSON,
+		&sealedVersionsJSON,
 		&rec.IsCurrent,
 		&rec.RequestedByUserID,
 		&rec.CreatedAt,
@@ -458,6 +462,12 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 	}
 	if rec.VariableVersions == nil {
 		rec.VariableVersions = map[string]int64{}
+	}
+	if err := json.Unmarshal(sealedVersionsJSON, &rec.SealedVersions); err != nil {
+		return DeploymentRecord{}, fmt.Errorf("decode deployment sealed versions: %w", err)
+	}
+	if rec.SealedVersions == nil {
+		rec.SealedVersions = map[string]int64{}
 	}
 	return rec, nil
 }

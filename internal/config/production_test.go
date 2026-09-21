@@ -135,18 +135,19 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		mustReject(t, FinalizeControlPlane(&cfg), "signing certificate and key files")
 	})
 
-	t.Run("file secret key provider", func(t *testing.T) {
+	t.Run("provisioned keyring allowed in production", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.SecretKeys.Provider = SecretKeysProviderFile
-		mustReject(t, FinalizeControlPlane(&cfg), "must be aws-kms in production")
+		if err := FinalizeControlPlane(&cfg); err != nil {
+			t.Fatalf("FinalizeControlPlane: %v", err)
+		}
 	})
 
-	t.Run("kms secret key provider without key", func(t *testing.T) {
+	t.Run("ephemeral keyring path", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.SecretKeys.KMS.KeyID = ""
-		mustReject(t, FinalizeControlPlane(&cfg), "kms.keyId is required")
+		cfg.SecretKeys.KeyringPath = "var/controlplane/secret-keys/keys.json"
+		mustReject(t, FinalizeControlPlane(&cfg), "secretKeys.keyringPath must not use ephemeral storage")
 	})
 	t.Run("unprotected remote caddy admin", func(t *testing.T) {
 		t.Parallel()
@@ -301,11 +302,7 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 			},
 		},
 		SecretKeys: SecretKeysConfig{
-			Provider: SecretKeysProviderAWSKMS,
-			KMS: SecretKeysKMSConfig{
-				Region: "us-east-1",
-				KeyID:  "arn:aws:kms:us-east-1:123456789012:key/test",
-			},
+			KeyringPath: "/etc/ebpf-wg-mesh/secret-keys/keys.json",
 		},
 		Ingress: IngressConfig{
 			PublicAddr: "platform.example.test",

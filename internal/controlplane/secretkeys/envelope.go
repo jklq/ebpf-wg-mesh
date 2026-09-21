@@ -18,6 +18,10 @@ const NonceSize = 12
 // MaxSealedValueSize caps a single sealed secret value at 64 KiB.
 const MaxSealedValueSize = 64 * 1024
 
+// ErrSealedValueTooLarge is returned when a sealed value exceeds
+// MaxSealedValueSize. It carries the limit, never the value.
+var ErrSealedValueTooLarge = errors.New("sealed value exceeds size limit")
+
 // GenerateDEK returns fresh random data-encryption key material.
 func GenerateDEK() ([DEKSize]byte, error) {
 	var dek [DEKSize]byte
@@ -61,7 +65,7 @@ func GenerateNonce() ([]byte, error) {
 // alongside the ciphertext; callers persist both.
 func SealValue(dek [DEKSize]byte, aad, plaintext []byte) (nonce, ciphertext []byte, err error) {
 	if len(plaintext) > MaxSealedValueSize {
-		return nil, nil, fmt.Errorf("sealed value exceeds %d bytes", MaxSealedValueSize)
+		return nil, nil, fmt.Errorf("%w: values are capped at %d bytes", ErrSealedValueTooLarge, MaxSealedValueSize)
 	}
 	sealed, err := sealWithNonce(dek[:], aad, plaintext, nil)
 	if err != nil {
@@ -90,7 +94,7 @@ func OpenValue(dek [DEKSize]byte, aad, nonce, ciphertext []byte) ([]byte, error)
 
 // sealWithNonce encrypts plaintext and prefixes the nonce when nonceOut is
 // nil (generating a fresh nonce) or uses the supplied buffer layout. It is
-// shared by sealed values and the file provider wrap format.
+// shared by sealed values and the keyring wrap format.
 func sealWithNonce(key, aad, plaintext, nonce []byte) ([]byte, error) {
 	aead, err := newCipher(key)
 	if err != nil {

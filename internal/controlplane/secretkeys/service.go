@@ -3,15 +3,15 @@ package secretkeys
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"strings"
-	"time"
 
 	"ebof-wg-mesh/internal/config"
 )
 
-// Service is the sealed-secret backend: provider, shared key registry,
-// per-environment DEKs, and sealed versions behind one handle.
+// Service is the sealed-secret backend: the in-process key manager, the
+// shared key registry, per-environment DEKs, and sealed versions behind one
+// handle.
 type Service struct {
 	provider Provider
 	registry *Registry
@@ -19,19 +19,45 @@ type Service struct {
 	sealed   *SealedStore
 }
 
+// Options configures Service.Open.
+type Options struct {
+	// AllowGenerate permits creating a missing keyring file and
+	// auto-activating its first key. Development only: production must
+	// provision the keyring explicitly and activate via the keys CLI, and
+	// Open fails closed when the active key or any recorded version's
+	// material is missing on this replica.
+	AllowGenerate bool
+}
+
 // Open builds the sealed-secret backend from control-plane configuration.
-// The file provider serves development; production must select aws-kms (see
-// config validation). Open ensures the installation's active key exists so
-// every replica converges on shared key state at startup.
-func Open(ctx context.Context, db *sql.DB, cfg config.SecretKeysConfig) (*Service, error) {
-	provider, err := OpenProvider(ctx, cfg)
+// With AllowGenerate (development) it ensures the installation's active key
+// exists so every replica converges on shared key state at startup.
+// Without it (production) it requires an explicitly activated key and
+// verifies this replica's keyring covers every recorded version.
+func Open(ctx context.Context, db *sql.DB, cfg config.SecretKeysConfig, opts Options) (*Service, error) {
+	provider, err := OpenProvider(cfg, opts)
 	if err != nil {
 		return nil, err
 	}
 	svc := New(db, provider)
-	if _, err := svc.registry.EnsureActiveKey(ctx); err != nil {
+	if opts.AllowGenerate {
+		if _, err := svc.registry.EnsureActiveKey(ctx); err != nil {
+			_ = provider.Close()
+			return nil, fmt.Errorf("ensure active envelope key: %w", err)
+		}
+		return svc, nil
+	}
+	if _, err := svc.registry.ActiveKey(ctx); err != nil {
 		_ = provider.Close()
-		return nil, fmt.Errorf("ensure active envelope key: %w", err)
+		if errors.Is(err, ErrActiveKeyRequired) {
+			return nil, fmt.Errorf("no active envelope key: provision the keyring file %s to every replica, then run `controlplane keys activate --key-id <version>`: %w",
+				cfg.KeyringPath, err)
+		}
+		return nil, fmt.Errorf("load active envelope key: %w", err)
+	}
+	if err := svc.registry.VerifyLocalCoverage(ctx); err != nil {
+		_ = provider.Close()
+		return nil, err
 	}
 	return svc, nil
 }
@@ -78,35 +104,22 @@ func (s *Service) DEKs() *DEKStore { return s.deks }
 // Sealed exposes sealed-secret reads and writes.
 func (s *Service) Sealed() *SealedStore { return s.sealed }
 
-// Ready reports whether the shared key state is readable. Replicas use it
-// for readiness: key state must be visible to every replica before serving.
+// Ready reports whether the shared key state is readable and this replica
+// holds every recorded version's material. Replicas use it for readiness:
+// key state must be complete on every replica before serving.
 func (s *Service) Ready(ctx context.Context) bool {
 	if s == nil || s.registry == nil {
 		return false
 	}
-	_, err := s.registry.ActiveKey(ctx)
-	return err == nil
+	if _, err := s.registry.ActiveKey(ctx); err != nil {
+		return false
+	}
+	return s.registry.VerifyLocalCoverage(ctx) == nil
 }
 
 // OpenProvider builds the configured wrap/unwrap backend without touching
-// key state. The operator CLI uses it to compose read-only commands that
-// must not provision keys as a side effect.
-func OpenProvider(ctx context.Context, cfg config.SecretKeysConfig) (Provider, error) {
-	switch strings.TrimSpace(cfg.Provider) {
-	case "", ProviderFile:
-		if strings.TrimSpace(cfg.File.Directory) == "" {
-			return nil, fmt.Errorf("secret file provider directory is required")
-		}
-		return NewFileProvider(cfg.File.Directory)
-	case ProviderAWSKMS:
-		return NewKMSProvider(ctx, KMSConfig{
-			Region:      cfg.KMS.Region,
-			Endpoint:    cfg.KMS.Endpoint,
-			KeyID:       cfg.KMS.KeyID,
-			Timeout:     time.Duration(cfg.KMS.TimeoutSeconds) * time.Second,
-			MaxAttempts: cfg.KMS.MaxAttempts,
-		})
-	default:
-		return nil, fmt.Errorf("unknown secret keys provider %q", cfg.Provider)
-	}
+// key state. The operator CLI uses it to compose commands that must not
+// provision keys as a side effect.
+func OpenProvider(cfg config.SecretKeysConfig, opts Options) (Provider, error) {
+	return NewKeyring(cfg.KeyringPath, KeyringOptions{AllowGenerate: opts.AllowGenerate})
 }

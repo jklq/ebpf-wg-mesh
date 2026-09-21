@@ -27,17 +27,8 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.StateDir = "var/controlplane"
 	}
 	applySourceArchiveDefaults(cfg)
-	if cfg.SecretKeys.Provider == "" {
-		cfg.SecretKeys.Provider = SecretKeysProviderFile
-	}
-	if cfg.SecretKeys.Provider == SecretKeysProviderFile && cfg.SecretKeys.File.Directory == "" {
-		cfg.SecretKeys.File.Directory = filepath.Join(cfg.StateDir, "secret-keys")
-	}
-	if cfg.SecretKeys.KMS.TimeoutSeconds <= 0 {
-		cfg.SecretKeys.KMS.TimeoutSeconds = 10
-	}
-	if cfg.SecretKeys.KMS.MaxAttempts <= 0 {
-		cfg.SecretKeys.KMS.MaxAttempts = 5
+	if cfg.SecretKeys.KeyringPath == "" {
+		cfg.SecretKeys.KeyringPath = filepath.Join(cfg.StateDir, "secret-keys", "keys.json")
 	}
 	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
 		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")

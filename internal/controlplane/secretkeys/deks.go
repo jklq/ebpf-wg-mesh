@@ -14,8 +14,15 @@ import (
 // DEKScopeKindEnvironment scopes a data-encryption key to one environment.
 // Environments are the platform's isolation scope for services, volumes, and
 // private connectivity, so a per-environment DEK bounds a key compromise to
-// one environment without multiplying KMS calls per service.
+// one environment.
 const DEKScopeKindEnvironment = "environment"
+
+// DEKWrapPurposeContext binds a wrapped DEK to its own row so wrapped bytes
+// copied to another DEK row do not unwrap.
+const DEKWrapPurposeContext = "dek-wrap/v1"
+
+// DEKWrapPurpose returns the wrap purpose binding a wrapped DEK to its row.
+func DEKWrapPurpose(dekID string) string { return DEKWrapPurposeContext + "/" + dekID }
 
 // DEKRecord describes one wrapped data-encryption key. Only the wrapped
 // bytes are persisted; plaintext DEKs live in process memory.
@@ -103,7 +110,7 @@ func (s *DEKStore) DEKByID(ctx context.Context, q Querier, dekID string) ([DEKSi
 		}
 		return zero, fmt.Errorf("load data-encryption key %s: %w", dekID, err)
 	}
-	raw, err := s.registry.Unwrap(ctx, wrappingKeyID, wrapped)
+	raw, err := s.registry.Unwrap(ctx, wrappingKeyID, DEKWrapPurpose(dekID), wrapped)
 	if err != nil {
 		return zero, err
 	}
@@ -151,11 +158,12 @@ func (s *DEKStore) ListDEKs(ctx context.Context) ([]DEKRecord, error) {
 // RewrapAll unwraps every DEK with its current wrapping key and re-wraps it
 // under the active key. DEK bytes are unchanged, so sealed values keep
 // decrypting and the memory cache stays valid; only the wrapping migrates.
-// It is idempotent and safe to re-run until it reports zero rewrapped.
+// It is idempotent and safe to re-run until it reports zero rewrapped: each
+// row commits independently, so an interrupted run resumes where it stopped.
 //
-// Run Rotate before RewrapAll, and re-run RewrapAll after any concurrent
-// rotation: a rotation that lands mid-rewrap leaves some rows on the newly
-// retired key, which still unwraps, and the next run converges them.
+// Run Activate before RewrapAll, and re-run RewrapAll after any concurrent
+// activation: an activation that lands mid-rewrap leaves some rows on the
+// newly retired key, which still unwraps, and the next run converges them.
 func (s *DEKStore) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 	active, err := s.registry.ActiveKey(ctx)
 	if err != nil {
@@ -188,15 +196,15 @@ func (s *DEKStore) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 		return 0, fmt.Errorf("list data-encryption keys to rewrap: %w", err)
 	}
 	for _, item := range work {
-		// Unwrap outside the write transaction: provider calls are slow
-		// external I/O. WrapWithActive reads the newest active key at
-		// call time, so a rotation that lands mid-rewrap converges this
-		// row onto the newest key instead of stranding it.
-		raw, err := s.registry.Unwrap(ctx, item.wrappingKeyID, item.wrapped)
+		// Unwrap outside the write transaction: provider calls must not
+		// hold database locks. WrapWithActive reads the newest active key
+		// at call time, so an activation that lands mid-rewrap converges
+		// this row onto the newest key instead of stranding it.
+		raw, err := s.registry.Unwrap(ctx, item.wrappingKeyID, DEKWrapPurpose(item.id), item.wrapped)
 		if err != nil {
 			return rewrapped, fmt.Errorf("rewrap data-encryption key %s: %w", item.id, err)
 		}
-		newKeyID, newWrapped, err := s.registry.WrapWithActive(ctx, raw)
+		newKeyID, newWrapped, err := s.registry.WrapWithActive(ctx, DEKWrapPurpose(item.id), raw)
 		if err != nil {
 			return rewrapped, fmt.Errorf("rewrap data-encryption key %s: %w", item.id, err)
 		}
@@ -209,6 +217,46 @@ func (s *DEKStore) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 		}
 	}
 	return rewrapped, nil
+}
+
+// VerifyAll probe-unwraps every wrapped DEK with the key its row records
+// and reports how many verified. It detects inconsistent replicas (same
+// version ID, different material) and corrupt rows before they wedge reads
+// or rewrap. Plaintext is discarded; only the count crosses this boundary.
+func (s *DEKStore) VerifyAll(ctx context.Context) (verified int, err error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, wrapping_key_id, wrapped_dek FROM envelope_data_keys`)
+	if err != nil {
+		return 0, fmt.Errorf("list data-encryption keys to verify: %w", err)
+	}
+	defer rows.Close()
+	type pending struct {
+		id            string
+		wrappingKeyID string
+		wrapped       []byte
+	}
+	var work []pending
+	for rows.Next() {
+		var item pending
+		if err := rows.Scan(&item.id, &item.wrappingKeyID, &item.wrapped); err != nil {
+			return 0, fmt.Errorf("scan data-encryption key to verify: %w", err)
+		}
+		work = append(work, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("list data-encryption keys to verify: %w", err)
+	}
+	for _, item := range work {
+		raw, err := s.registry.Unwrap(ctx, item.wrappingKeyID, DEKWrapPurpose(item.id), item.wrapped)
+		if err != nil {
+			return verified, fmt.Errorf("verify data-encryption key %s: %w", item.id, err)
+		}
+		if len(raw) != DEKSize {
+			return verified, fmt.Errorf("verify data-encryption key %s: invalid length", item.id)
+		}
+		verified++
+	}
+	return verified, nil
 }
 
 func (s *DEKStore) casWrapping(ctx context.Context, dekID, fromKeyID, toKeyID string, wrapped []byte) (bool, error) {
@@ -242,7 +290,7 @@ func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scop
 		scopeKind, scopeID).Scan(&id, &wrappingKeyID, &wrapped); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return zero, "", fmt.Errorf("load data-encryption key: %w", err)
 	} else if err == nil {
-		raw, err := s.registry.Unwrap(ctx, wrappingKeyID, wrapped)
+		raw, err := s.registry.Unwrap(ctx, wrappingKeyID, DEKWrapPurpose(id), wrapped)
 		if err != nil {
 			return zero, "", err
 		}
@@ -255,16 +303,17 @@ func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scop
 		return dek, id, nil
 	}
 	// No row: mint a candidate. The unique scope constraint elects one
-	// winner across racing replicas.
+	// winner across racing replicas. The candidate ID is generated before
+	// the wrap so the wrap binds to this row's purpose.
 	candidate, err := GenerateDEK()
 	if err != nil {
 		return zero, "", err
 	}
-	keyID, wrappedCandidate, err := s.registry.WrapWithActive(ctx, candidate[:])
+	candidateID, err := GenerateDEKID()
 	if err != nil {
 		return zero, "", err
 	}
-	candidateID, err := GenerateDEKID()
+	keyID, wrappedCandidate, err := s.registry.WrapWithActive(ctx, DEKWrapPurpose(candidateID), candidate[:])
 	if err != nil {
 		return zero, "", err
 	}

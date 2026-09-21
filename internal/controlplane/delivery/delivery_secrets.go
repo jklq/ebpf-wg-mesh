@@ -203,101 +203,45 @@ func (d *Delivery) resolveSealedEnv(ctx context.Context, state *agentv1.DesiredN
 	return nil
 }
 
-// deploymentSealedPins loads variable_versions_json for assignments'
-// deployments and returns the sealed-relevant pins per service. Public keys
-// are ignored here: only names with sealed versions participate. A
-// deployment that predates a sealed name simply has no pin for it, and the
-// name resolves to current.
+// deploymentSealedPins loads sealed_versions_json for assignments'
+// deployments and returns the sealed name-to-version pins per service. This
+// column carries sealed names only, captured at deploy time, so it never
+// confuses public spec revisions with sealed versions: a name that moves
+// between public and sealed cannot collide. A deployment that predates a
+// sealed name simply has no pin for it, and the name resolves to current.
 func (d *Delivery) deploymentSealedPins(ctx context.Context, deploymentIDs []string) (map[string]map[string]int64, error) {
 	out := map[string]map[string]int64{}
 	if len(deploymentIDs) == 0 {
 		return out, nil
 	}
 	rows, err := d.store.db.QueryContext(ctx,
-		`SELECT service_id, variable_versions_json FROM deployments WHERE id = ANY($1)`, deploymentIDs)
+		`SELECT service_id, sealed_versions_json FROM deployments WHERE id = ANY($1)`, deploymentIDs)
 	if err != nil {
-		return nil, fmt.Errorf("load deployment variable versions: %w", err)
+		return nil, fmt.Errorf("load deployment sealed versions: %w", err)
 	}
 	defer rows.Close()
-	type deploymentPin struct {
-		serviceID string
-		versions  map[string]int64
-	}
-	var pins []deploymentPin
-	services := map[string]bool{}
 	for rows.Next() {
 		var serviceID string
 		var raw []byte
 		if err := rows.Scan(&serviceID, &raw); err != nil {
-			return nil, fmt.Errorf("scan deployment variable versions: %w", err)
+			return nil, fmt.Errorf("scan deployment sealed versions: %w", err)
 		}
 		var versions map[string]int64
 		if err := json.Unmarshal(raw, &versions); err != nil {
-			return nil, fmt.Errorf("decode deployment variable versions: %w", err)
+			return nil, fmt.Errorf("decode deployment sealed versions: %w", err)
 		}
-		if len(versions) == 0 {
-			continue
-		}
-		pins = append(pins, deploymentPin{serviceID: serviceID, versions: versions})
-		services[serviceID] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("load deployment variable versions: %w", err)
-	}
-	// A pinned version is honored only when that exact sealed version
-	// exists. variable_versions also carries public keys mapped to spec
-	// revisions, and a name may have been public at deploy time and sealed
-	// later: without the existence check a stale spec revision would pin a
-	// nonexistent sealed version and wedge delivery.
-	history := map[string]map[string]map[int64]bool{}
-	for serviceID := range services {
-		known, err := sealedVersionSet(ctx, d.store.db, serviceID)
-		if err != nil {
-			return nil, err
-		}
-		history[serviceID] = known
-	}
-	for _, pin := range pins {
-		for name, version := range pin.versions {
+		for name, version := range versions {
 			if version <= 0 {
 				continue
 			}
-			if !history[pin.serviceID][name][version] {
-				continue
+			if out[serviceID] == nil {
+				out[serviceID] = map[string]int64{}
 			}
-			if out[pin.serviceID] == nil {
-				out[pin.serviceID] = map[string]int64{}
-			}
-			out[pin.serviceID][name] = version
+			out[serviceID][name] = version
 		}
-	}
-	return out, nil
-}
-
-// sealedVersionSet returns the existing (name, version) pairs for a service,
-// including tombstoned names: pinned deployment reads resolve captured
-// versions even after deletion.
-func sealedVersionSet(ctx context.Context, q secretkeys.Querier, serviceID string) (map[string]map[int64]bool, error) {
-	rows, err := q.QueryContext(ctx,
-		`SELECT name, version FROM service_secret_versions WHERE service_id = $1`, serviceID)
-	if err != nil {
-		return nil, fmt.Errorf("load sealed secret history: %w", err)
-	}
-	defer rows.Close()
-	out := map[string]map[int64]bool{}
-	for rows.Next() {
-		var name string
-		var version int64
-		if err := rows.Scan(&name, &version); err != nil {
-			return nil, fmt.Errorf("scan sealed secret history: %w", err)
-		}
-		if out[name] == nil {
-			out[name] = map[int64]bool{}
-		}
-		out[name][version] = true
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("load sealed secret history: %w", err)
+		return nil, fmt.Errorf("load deployment sealed versions: %w", err)
 	}
 	return out, nil
 }

@@ -10,7 +10,7 @@ Consequence while parked: [2.3a](landed.md#23a-secret-envelope-key-provider) lan
 
 Was: 2.4
 Status: open
-Depends on: none. May introduce envelope keys against the current file material; 2.3a later replaces the provider with KMS.
+Depends on: none. Envelope keys come from the 2.3a in-process keyring provider; there is no external KMS to adopt later.
 
 A real service cannot run without credentials that never appear in revision JSON, logs, or the console.
 

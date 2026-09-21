@@ -12,6 +12,9 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestSealedSecretsLifecycle(t *testing.T) {
@@ -187,8 +190,11 @@ func TestSealedSecretsRollbackRestoresPinned(t *testing.T) {
 	first := release(directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{
 		Env: map[string]string{"STAGE": "two"},
 	}))
-	if first.VariableVersions["TOKEN"] != 1 {
-		t.Fatalf("first deployment pins = %v", first.VariableVersions)
+	if first.SealedVersions["TOKEN"] != 1 {
+		t.Fatalf("first deployment pins = %v", first.SealedVersions)
+	}
+	if _, ok := first.VariableVersions["TOKEN"]; ok {
+		t.Fatalf("sealed pin leaked into public variable versions: %v", first.VariableVersions)
 	}
 
 	if _, err := delivery.SealServiceSecret(ctx, testUser(userID), service.ID, "TOKEN", []byte("v2-secret")); err != nil {
@@ -197,8 +203,8 @@ func TestSealedSecretsRollbackRestoresPinned(t *testing.T) {
 	second := release(directImageServiceSpec(pinnedImage("c"), &platformv1.ServiceRuntime{
 		Env: map[string]string{"STAGE": "three"},
 	}))
-	if second.VariableVersions["TOKEN"] != 2 {
-		t.Fatalf("second deployment pins = %v", second.VariableVersions)
+	if second.SealedVersions["TOKEN"] != 2 {
+		t.Fatalf("second deployment pins = %v", second.SealedVersions)
 	}
 	if got := desiredEnvForTest(t, store, ctx, "node-1", service.ID)["TOKEN"]; got != "v2-secret" {
 		t.Fatalf("desired before rollback TOKEN = %q", got)
@@ -210,8 +216,8 @@ func TestSealedSecretsRollbackRestoresPinned(t *testing.T) {
 	}
 	completeActionRollout(t, store, service.ID)
 	rolled := currentDeploymentForTest(t, store, ctx, service.ID)
-	if rolled.VariableVersions["TOKEN"] != 1 {
-		t.Fatalf("rolled deployment pins = %v", rolled.VariableVersions)
+	if rolled.SealedVersions["TOKEN"] != 1 {
+		t.Fatalf("rolled deployment pins = %v", rolled.SealedVersions)
 	}
 	if got := desiredEnvForTest(t, store, ctx, "node-1", service.ID)["TOKEN"]; got != "v1-secret" {
 		t.Fatalf("desired after rollback TOKEN = %q", got)
@@ -246,6 +252,7 @@ func TestSealedSecretsNoPlaintextAtRest(t *testing.T) {
 		`SELECT spec_json::STRING FROM service_revisions WHERE service_id = $1`,
 		`SELECT resolved_spec_json::STRING FROM deployments WHERE service_id = $1`,
 		`SELECT variable_versions_json::STRING FROM deployments WHERE service_id = $1`,
+		`SELECT sealed_versions_json::STRING FROM deployments WHERE service_id = $1`,
 		`SELECT encode(nonce, 'hex') || encode(ciphertext, 'hex') FROM service_secret_versions WHERE service_id = $1`,
 	}
 	global := []string{
@@ -377,6 +384,16 @@ func TestSealedSecretsRPCWiring(t *testing.T) {
 	}
 	if len(listed.GetSecrets()) != 0 {
 		t.Fatalf("rpc list after delete = %+v", listed.GetSecrets())
+	}
+	// Oversize values are caller errors, not internal failures, and the
+	// value never appears in the error.
+	oversize := strings.Repeat("S", secretkeys.MaxSealedValueSize+1)
+	if _, err := rpc.SealServiceSecret(userCtx, &platformv1.SealServiceSecretRequest{
+		ServiceId: service.ID, Name: "BIG", Value: oversize,
+	}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("oversize seal code = %v, want InvalidArgument", err)
+	} else if strings.Contains(err.Error(), oversize) {
+		t.Fatal("oversize value leaked into the error")
 	}
 }
 

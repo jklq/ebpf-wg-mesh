@@ -294,6 +294,7 @@ var currentSchema = []string{
 			detail STRING NOT NULL DEFAULT '',
 			resolved_spec_json JSONB NOT NULL,
 			variable_versions_json JSONB NOT NULL,
+			sealed_versions_json JSONB NOT NULL,
 			is_current BOOL NOT NULL DEFAULT FALSE,
 			requested_by_user_id STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -123,9 +124,9 @@ func openTestStore(t *testing.T) *persistence {
 		t.Fatalf("create source archive store: %v", err)
 	}
 	store.source.ConfigureSourceArchives(archiveStore)
-	// Each test gets an isolated file provider; the active key is
-	// provisioned after the reset wipes the shared database.
-	provider, err := secretkeys.NewFileProvider(t.TempDir())
+	// Each test gets an isolated development keyring; the active key is
+	// bootstrapped after the reset wipes the shared database.
+	provider, err := secretkeys.NewKeyring(filepath.Join(t.TempDir(), "keys.json"), secretkeys.KeyringOptions{AllowGenerate: true})
 	if err != nil {
 		t.Fatalf("create secret key provider: %v", err)
 	}

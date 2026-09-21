@@ -775,6 +775,10 @@ message DeploymentRecord {
   string image_digest = 12;
   repeated DeploymentActionRecord actions = 13;
   map<string, int64> variable_versions = 14;
+  // Sealed secret name to sealed version pins captured at deploy time.
+  // Kept separate from variable_versions (public env keys to spec revision)
+  // so a name that moves between public and sealed can never collide.
+  map<string, int64> sealed_versions = 15;
 }
 
 message ListServiceDeploymentsResponse {

@@ -44,6 +44,8 @@ func (s *PlatformService) SealServiceSecret(ctx context.Context, req *platformv1
 			return nil, status.Errorf(codes.FailedPrecondition, "seal secret: %v", err)
 		case errors.Is(err, deliverycore.ErrSealedSecretsUnavailable):
 			return nil, status.Errorf(codes.FailedPrecondition, "seal secret: %v", err)
+		case errors.Is(err, secretkeys.ErrSealedValueTooLarge):
+			return nil, status.Errorf(codes.InvalidArgument, "seal secret: %v", err)
 		}
 		return nil, writeAccessError("seal secret", err)
 	}

@@ -599,31 +599,8 @@ func validateS3BucketName(bucket string) error {
 }
 
 func validateSecretKeys(cfg SecretKeysConfig) error {
-	switch cfg.Provider {
-	case SecretKeysProviderFile:
-		if strings.TrimSpace(cfg.File.Directory) == "" {
-			return errors.New("controlplane.secretKeys.file.directory is required for the file provider")
-		}
-	case SecretKeysProviderAWSKMS:
-		if strings.TrimSpace(cfg.KMS.Region) == "" {
-			return errors.New("controlplane.secretKeys.kms.region is required for the aws-kms provider")
-		}
-		if strings.TrimSpace(cfg.KMS.KeyID) == "" {
-			return errors.New("controlplane.secretKeys.kms.keyId is required for the aws-kms provider")
-		}
-		if endpoint := strings.TrimSpace(cfg.KMS.Endpoint); endpoint != "" {
-			if err := validateAbsoluteURL("controlplane.secretKeys.kms.endpoint", endpoint); err != nil {
-				return err
-			}
-		}
-	default:
-		return fmt.Errorf("controlplane.secretKeys.provider must be %q or %q", SecretKeysProviderFile, SecretKeysProviderAWSKMS)
-	}
-	if cfg.KMS.TimeoutSeconds <= 0 {
-		return errors.New("controlplane.secretKeys.kms.timeoutSeconds must be greater than 0")
-	}
-	if cfg.KMS.MaxAttempts <= 0 {
-		return errors.New("controlplane.secretKeys.kms.maxAttempts must be greater than 0")
+	if strings.TrimSpace(cfg.KeyringPath) == "" {
+		return errors.New("controlplane.secretKeys.keyringPath is required")
 	}
 	return nil
 }

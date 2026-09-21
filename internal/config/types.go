@@ -174,28 +174,14 @@ type SourceArchiveConfig struct {
 	S3            SourceArchiveS3Config
 }
 
-// Secret key provider names for sealed service secrets.
-const (
-	SecretKeysProviderFile   = "file"
-	SecretKeysProviderAWSKMS = "aws-kms"
-)
-
-type SecretKeysFileConfig struct {
-	Directory string
-}
-
-type SecretKeysKMSConfig struct {
-	Region         string
-	Endpoint       string
-	KeyID          string
-	TimeoutSeconds int
-	MaxAttempts    int
-}
-
+// SecretKeysConfig points at the provisioned master-key ring for sealed
+// service secrets. The same file contents must reach every control-plane
+// replica; the database holds ciphertext and key-version metadata only.
 type SecretKeysConfig struct {
-	Provider string
-	File     SecretKeysFileConfig
-	KMS      SecretKeysKMSConfig
+	// KeyringPath is the access-restricted keyring file. Development
+	// defaults it under the state directory and bootstraps first-install
+	// keys; production requires the operator to provision it.
+	KeyringPath string
 }
 
 type ControlPlaneConfig struct {

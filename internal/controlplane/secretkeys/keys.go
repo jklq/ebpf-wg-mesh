@@ -36,7 +36,7 @@ type KeyRecord struct {
 }
 
 // Registry is the DB-backed envelope key inventory shared by every
-// control-plane replica. Exactly one key is active; rotation demotes the
+// control-plane replica. Exactly one key is active; activation demotes the
 // previous active key to retired, and rewrap (see DEKStore) migrates wrapped
 // DEKs onto the new active key.
 type Registry struct {
@@ -58,16 +58,28 @@ func (r *Registry) ProviderName() string {
 	return r.provider.Name()
 }
 
-// EnsureActiveKey returns the active key, provisioning the installation's
-// first key when none exists. Concurrent replicas race safely: the partial
-// unique index admits one active row, and losers re-read the winner.
+// EnsureActiveKey returns the active key, bootstrapping the installation's
+// first key when none exists and the provider generates its own material
+// (development keyring). Production providers fail closed here: provision
+// the keyring file to every replica and activate a version explicitly.
+// Concurrent replicas race safely: the partial unique index admits one
+// active row, and losers re-read the winner.
 func (r *Registry) EnsureActiveKey(ctx context.Context) (KeyRecord, error) {
 	if rec, err := r.ActiveKey(ctx); err == nil {
 		return rec, nil
 	} else if !errors.Is(err, ErrActiveKeyRequired) {
 		return KeyRecord{}, err
 	}
-	rec, err := r.insertActiveKey(ctx, "")
+	bootstrap, ok := r.provider.(BootstrapProvisioner)
+	if !ok {
+		return KeyRecord{}, fmt.Errorf("%w: activate a provisioned key version with `controlplane keys activate --key-id <version>`",
+			ErrActiveKeyRequired)
+	}
+	ref, err := bootstrap.EnsureBootstrapKey(ctx)
+	if err != nil {
+		return KeyRecord{}, err
+	}
+	rec, err := r.insertActiveRecord(ctx, ref)
 	if err == nil {
 		return rec, nil
 	}
@@ -78,13 +90,41 @@ func (r *Registry) EnsureActiveKey(ctx context.Context) (KeyRecord, error) {
 	return r.ActiveKey(ctx)
 }
 
-// Rotate introduces a new active key and retires the previous one. For the
-// file provider hint is ignored and fresh material is generated; for KMS,
-// hint must name the new KMS key (empty selects the configured default) and
-// is round-trip verified before anything is recorded. Callers run
-// DEKStore.RewrapAll after Rotate to migrate wrapped DEKs.
-func (r *Registry) Rotate(ctx context.Context, hint string) (KeyRecord, error) {
-	return r.insertActiveKey(ctx, hint)
+// Activate records an already-provisioned key version as the new active
+// key and retires the previous one. The version must already exist in this
+// replica's keyring file (provision it everywhere first); each version
+// activates once. Callers run DEKStore.RewrapAll after Activate to migrate
+// wrapped DEKs, and keep the retired version's material on every replica
+// until no wrapped DEK references it.
+func (r *Registry) Activate(ctx context.Context, version string) (KeyRecord, error) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return KeyRecord{}, errors.New("activate requires a key version: provision it with `controlplane keys provision` first")
+	}
+	var existing string
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT id FROM envelope_keys WHERE provider_ref = $1 LIMIT 1`, version).Scan(&existing); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return KeyRecord{}, fmt.Errorf("look up key version %s: %w", version, err)
+	} else if err == nil {
+		return KeyRecord{}, fmt.Errorf("%w: version %s is already recorded as envelope key %s",
+			ErrKeyVersionExists, version, existing)
+	}
+	// Provision outside the transaction: provider calls must not hold
+	// database locks. ProvisionKey verifies this replica holds the named
+	// material.
+	ref, err := r.provider.ProvisionKey(ctx, version)
+	if err != nil {
+		return KeyRecord{}, err
+	}
+	rec, err := r.insertActiveRecord(ctx, ref)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return KeyRecord{}, fmt.Errorf("%w: another activation won the race; run `controlplane keys list` to see the winner",
+				ErrConcurrentActivation)
+		}
+		return KeyRecord{}, err
+	}
+	return rec, nil
 }
 
 // ActiveKey returns the key new wraps use.
@@ -99,6 +139,38 @@ func (r *Registry) ActiveKey(ctx context.Context) (KeyRecord, error) {
 		return KeyRecord{}, fmt.Errorf("load active envelope key: %w", err)
 	}
 	return rec, nil
+}
+
+// VerifyLocalCoverage fails closed when this replica's provider lacks
+// material for any envelope key the database records. Every replica must
+// hold every recorded version until the version's row is deleted: retired
+// keys still unwrap live ciphertext, so a replica missing one cannot serve
+// reads or rewrap. Replicas start and report ready only when this passes.
+func (r *Registry) VerifyLocalCoverage(ctx context.Context) error {
+	checker, ok := r.provider.(MaterialChecker)
+	if !ok {
+		return nil
+	}
+	keys, err := r.ListKeys(ctx)
+	if err != nil {
+		return err
+	}
+	var missing []string
+	for _, key := range keys {
+		present, err := checker.HasKeyMaterial(ctx, key.ProviderRef)
+		if err != nil {
+			return fmt.Errorf("verify key material for envelope key %s (version %s): %w",
+				key.ID, key.ProviderRef, err)
+		}
+		if !present {
+			missing = append(missing, fmt.Sprintf("%s (version %s)", key.ID, key.ProviderRef))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w on this replica for envelope key(s): %s; copy the provisioned keyring file here before serving",
+			ErrProviderKeyNotFound, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // ListKeys returns every key, active first, newest first within a state.
@@ -150,7 +222,8 @@ func (r *Registry) WrappedCounts(ctx context.Context) (map[string]int64, error) 
 }
 
 // DeleteKey removes a retired key. It refuses the active key and any key
-// that still wraps data-encryption keys: rotate and rewrap first.
+// that still wraps data-encryption keys: activate and rewrap first, then
+// delete the row here before removing the version from the keyring files.
 func (r *Registry) DeleteKey(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -182,22 +255,23 @@ func (r *Registry) DeleteKey(ctx context.Context, id string) error {
 }
 
 // WrapWithActive wraps plaintext key material under the active key and
-// reports which key ID was used.
-func (r *Registry) WrapWithActive(ctx context.Context, plaintext []byte) (string, []byte, error) {
+// reports which key ID was used. purpose binds the wrap to the record it
+// protects and must be reconstructible at unwrap time.
+func (r *Registry) WrapWithActive(ctx context.Context, purpose string, plaintext []byte) (string, []byte, error) {
 	active, err := r.ActiveKey(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	wrapped, err := r.provider.Wrap(ctx, active.ProviderRef, plaintext)
+	wrapped, err := r.provider.Wrap(ctx, active.ProviderRef, purpose, plaintext)
 	if err != nil {
 		return "", nil, &UnwrapError{KeyID: active.ID, Reason: UnwrapReasonProviderUnavailable, Err: err}
 	}
 	return active.ID, wrapped, nil
 }
 
-// Unwrap unwraps wrapped material recorded under keyID and classifies
-// failures for operator diagnostics.
-func (r *Registry) Unwrap(ctx context.Context, keyID string, wrapped []byte) ([]byte, error) {
+// Unwrap unwraps wrapped material recorded under keyID and the same purpose
+// it was wrapped with, and classifies failures for operator diagnostics.
+func (r *Registry) Unwrap(ctx context.Context, keyID, purpose string, wrapped []byte) ([]byte, error) {
 	var ref string
 	if err := r.db.QueryRowContext(ctx, `SELECT provider_ref FROM envelope_keys WHERE id = $1`, keyID).Scan(&ref); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -205,7 +279,7 @@ func (r *Registry) Unwrap(ctx context.Context, keyID string, wrapped []byte) ([]
 		}
 		return nil, &UnwrapError{KeyID: keyID, Reason: UnwrapReasonProviderUnavailable, Err: err}
 	}
-	plaintext, err := r.provider.Unwrap(ctx, ref, wrapped)
+	plaintext, err := r.provider.Unwrap(ctx, ref, purpose, wrapped)
 	if err != nil {
 		return nil, &UnwrapError{KeyID: keyID, Reason: classifyUnwrapReason(err), Err: err}
 	}
@@ -223,14 +297,11 @@ func classifyUnwrapReason(err error) UnwrapFailureReason {
 	}
 }
 
-func (r *Registry) insertActiveKey(ctx context.Context, hint string) (KeyRecord, error) {
+// insertActiveRecord retires the previous active key and records ref as the
+// new active key in one transaction. ref must already be verified by
+// ProvisionKey or EnsureBootstrapKey: this only touches the database.
+func (r *Registry) insertActiveRecord(ctx context.Context, ref string) (KeyRecord, error) {
 	id, err := GenerateKeyID()
-	if err != nil {
-		return KeyRecord{}, err
-	}
-	// Provision outside the transaction: provider calls are slow external
-	// I/O and must not hold database locks.
-	ref, err := r.provider.ProvisionKey(ctx, hint)
 	if err != nil {
 		return KeyRecord{}, err
 	}

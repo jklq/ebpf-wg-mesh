@@ -78,7 +78,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if err != nil {
 		return nil, err
 	}
-	secrets, err := secretkeys.Open(ctx, store.db, cfg.SecretKeys)
+	secrets, err := secretkeys.Open(ctx, store.db, cfg.SecretKeys, secretkeys.Options{
+		// Production never generates missing keys: the keyring file is
+		// explicitly provisioned and Open fails closed without it.
+		AllowGenerate: !cfg.Profile.IsProduction(),
+	})
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("open sealed secrets: %w", err)
