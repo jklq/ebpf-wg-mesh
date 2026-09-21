@@ -243,6 +243,17 @@ func TestHardenedExecuteDockerfile(t *testing.T) {
 	if !strings.HasSuffix(call.sockPath, filepath.Join("build-1", "s", "bk.sock")) {
 		t.Fatalf("unexpected daemon socket %q", call.sockPath)
 	}
+	// Only the socket lives in the (sandbox-visible) workspace; the
+	// daemon root stays outside it so daemon state and disk use are
+	// neither visible to the build nor counted against its budget.
+	if want := filepath.Join(workDir, "bk", "build-1", "root"); call.rootDir != want {
+		t.Fatalf("daemon root = %q, want %q", call.rootDir, want)
+	}
+	for _, entry := range call.env {
+		if name, _, _ := strings.Cut(entry, "="); name == "HOME" && entry != "HOME="+call.rootDir {
+			t.Fatalf("daemon HOME must be its isolated root, got %q", entry)
+		}
+	}
 	if starter.proc.readyCalls != 1 || starter.proc.stops != 1 {
 		t.Fatalf("daemon must be awaited and stopped once, got %+v", starter.proc)
 	}
@@ -251,6 +262,9 @@ func TestHardenedExecuteDockerfile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "build-1")); !os.IsNotExist(err) {
 		t.Fatalf("workspace must be removed after execution, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "bk", "build-1")); !os.IsNotExist(err) {
+		t.Fatalf("daemon root must be removed after execution, stat err=%v", err)
 	}
 }
 
@@ -514,14 +528,21 @@ func TestHardenedRecoverStaleWorkspaces(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(deadRoot, executorOwnerMarker), []byte(marker), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	deadDaemon := filepath.Join(workDir, "bk", "build-dead")
+	if err := os.MkdirAll(deadDaemon, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deadDaemon, executorOwnerMarker), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	backend := &fakeSandboxBackend{reaped: 2}
 	executor := newHardenedExecutor(workDir, backend, "buildkitd", nil)
 	reclaimed, err := executor.RecoverStaleWorkspaces(context.Background())
 	if err != nil {
 		t.Fatalf("RecoverStaleWorkspaces: %v", err)
 	}
-	if reclaimed != 3 {
-		t.Fatalf("expected 3 reclaimed (1 workspace + 2 sandboxes), got %d", reclaimed)
+	if reclaimed != 4 {
+		t.Fatalf("expected 4 reclaimed (1 workspace + 1 daemon root + 2 sandboxes), got %d", reclaimed)
 	}
 	backend.reapErr = errors.New("backend down")
 	if _, err := executor.RecoverStaleWorkspaces(context.Background()); err == nil || !strings.Contains(err.Error(), "backend down") {

@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,91 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
+// prepareDaemonRoot creates the per-execution buildkitd root outside
+// the workspace with an owner marker, clearing any leftover from a
+// dead run first. It returns the root and the build's daemon
+// directory.
+func prepareDaemonRoot(workDir, buildID string, now func() time.Time) (root, buildDir string, err error) {
+	roots, err := safeChildPath(workDir, sandboxDaemonRootsDirName)
+	if err != nil {
+		return "", "", err
+	}
+	buildDir, err = safeChildPath(roots, buildID)
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.RemoveAll(buildDir); err != nil {
+		return "", "", fmt.Errorf("clear stale daemon root: %w", err)
+	}
+	root, err = safeChildPath(buildDir, "root")
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", "", fmt.Errorf("mkdir daemon root: %w", err)
+	}
+	owner := executorOwner{
+		Executor:  ExecutorHardened,
+		PID:       os.Getpid(),
+		BuildID:   buildID,
+		StartedAt: now().UTC(),
+	}
+	data, err := json.Marshal(owner)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal daemon root owner: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, executorOwnerMarker), data, 0o644); err != nil {
+		return "", "", fmt.Errorf("write daemon root owner: %w", err)
+	}
+	return root, buildDir, nil
+}
+
+// reapStaleDaemonRoots removes per-execution daemon roots whose owner
+// marker names a dead worker.
+func reapStaleDaemonRoots(workDir string) (int, error) {
+	roots, err := safeChildPath(workDir, sandboxDaemonRootsDirName)
+	if err != nil {
+		return 0, err
+	}
+	entries, err := os.ReadDir(roots)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("list daemon roots: %w", err)
+	}
+	var (
+		reclaimed int
+		failures  []string
+	)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(roots, entry.Name())
+		owner, ok, err := readExecutorOwner(filepath.Join(dir, executorOwnerMarker))
+		if err != nil || !ok {
+			if err != nil {
+				slog.Warn("read stale daemon root marker", "dir", dir, "error", err)
+			}
+			continue
+		}
+		if processAlive(owner.PID) {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			failures = append(failures, dir+": "+err.Error())
+			continue
+		}
+		reclaimed++
+		slog.Info("reclaimed stale daemon root", "dir", dir, "build_id", owner.BuildID)
+	}
+	if len(failures) > 0 {
+		return reclaimed, fmt.Errorf("reclaim stale daemon roots: %s", strings.Join(failures, "; "))
+	}
+	return reclaimed, nil
+}
+
 const (
 	// sandboxPathEnv is the fixed PATH inside build sandboxes. Build
 	// tool binaries resolve from the sandbox image, never the host.
@@ -22,10 +108,21 @@ const (
 	sandboxGuestScratch = "/build/scratch"
 	sandboxGuestTmp     = "/build/tmp"
 
-	// sandboxDaemonDirName is the workspace child holding the
-	// per-execution buildkitd socket and root. It stays short
-	// because Unix socket paths are limited to 108 bytes.
-	sandboxDaemonDirName = "s"
+	// sandboxSocketDirName is the workspace child holding the
+	// per-execution buildkitd socket. Only the socket lives in the
+	// workspace (the sandboxed buildctl client needs it there); the
+	// daemon root lives outside the workspace (see
+	// sandboxDaemonRootsDirName) so daemon state and disk use are
+	// neither visible to the hostile build nor counted against the
+	// execution's disk budget. The name stays short because Unix
+	// socket paths are limited to 108 bytes.
+	sandboxSocketDirName = "s"
+
+	// sandboxDaemonRootsDirName is the work-dir child holding
+	// per-execution buildkitd roots. Each build gets
+	// <workdir>/bk/<buildID>/ with an owner marker for stale
+	// recovery; the sandbox never mounts it.
+	sandboxDaemonRootsDirName = "bk"
 )
 
 // daemonProc is a started per-execution BuildKit daemon.
@@ -140,12 +237,26 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 		}
 	}()
 
-	daemonDir, err := safeChildPath(workspace.root, sandboxDaemonDirName)
+	socketDir, err := safeChildPath(workspace.root, sandboxSocketDirName)
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: err})
 	}
-	sockHost := filepath.Join(daemonDir, "bk.sock")
-	rootHost := filepath.Join(daemonDir, "root")
+	if err := os.MkdirAll(socketDir, 0o755); err != nil {
+		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("mkdir daemon socket dir: %w", err)})
+	}
+	daemonRoot, daemonBuildDir, err := prepareDaemonRoot(e.workDir, spec.BuildID, e.now)
+	if err != nil {
+		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: err})
+	}
+	if spec.Cleanup {
+		defer func() {
+			if err := os.RemoveAll(daemonBuildDir); err != nil {
+				slog.Warn("remove per-execution daemon root", "build_id", spec.BuildID, "error", err)
+			}
+		}()
+	}
+	sockHost := filepath.Join(socketDir, "bk.sock")
+	rootHost := daemonRoot
 	daemon, err := e.startDaemon(execCtx, sandboxNet.Path, e.buildkitdBinary, sockHost, rootHost,
 		[]string{"PATH=" + sandboxPathEnv, "HOME=" + rootHost, "TMPDIR=" + workspace.tmpDir})
 	if err != nil {
@@ -389,10 +500,11 @@ func (e *hardenedExecutor) sandboxEnv(dockerConfigGuest string) []string {
 	return env
 }
 
-// RecoverStaleWorkspaces reclaims workspaces and sandboxes left
-// behind by dead workers and verifies each removal.
+// RecoverStaleWorkspaces reclaims workspaces, daemon roots, and
+// sandboxes left behind by dead workers and verifies each removal.
 func (e *hardenedExecutor) RecoverStaleWorkspaces(ctx context.Context) (int, error) {
 	reclaimed, err := recoverStaleWorkspaces(e.workDir)
+	roots, rootsErr := reapStaleDaemonRoots(e.workDir)
 	reaped, backendErr := e.backend.ReapStale(ctx)
-	return reclaimed + reaped, errors.Join(err, backendErr)
+	return reclaimed + roots + reaped, errors.Join(err, rootsErr, backendErr)
 }
