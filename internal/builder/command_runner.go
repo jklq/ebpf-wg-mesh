@@ -200,27 +200,29 @@ func (r *truncatingLineReader) transform(src []byte) {
 }
 
 type buildLogReporter struct {
-	client    platformv1.BuilderServiceClient
-	builderID string
-	buildID   string
-	sequence  atomic.Uint64
-	ch        chan commandOutputLine
-	done      chan struct{}
-	closeOnce sync.Once
-	ctx       context.Context
+	client     platformv1.BuilderServiceClient
+	builderID  string
+	buildID    string
+	leaseEpoch int64
+	sequence   atomic.Uint64
+	ch         chan commandOutputLine
+	done       chan struct{}
+	closeOnce  sync.Once
+	ctx        context.Context
 }
 
-func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID string) *buildLogReporter {
+func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID string, leaseEpoch int64) *buildLogReporter {
 	if client == nil || buildID == "" {
 		return nil
 	}
 	reporter := &buildLogReporter{
-		client:    client,
-		builderID: builderID,
-		buildID:   buildID,
-		ch:        make(chan commandOutputLine, buildLogReporterBufferSize),
-		done:      make(chan struct{}),
-		ctx:       ctx,
+		client:     client,
+		builderID:  builderID,
+		buildID:    buildID,
+		leaseEpoch: leaseEpoch,
+		ch:         make(chan commandOutputLine, buildLogReporterBufferSize),
+		done:       make(chan struct{}),
+		ctx:        ctx,
 	}
 	go reporter.run()
 	return reporter
@@ -262,9 +264,10 @@ func (r *buildLogReporter) run() {
 			return
 		}
 		req := &platformv1.ReportBuildLogsRequest{
-			BuilderId: r.builderID,
-			BuildId:   r.buildID,
-			Lines:     batch,
+			BuilderId:  r.builderID,
+			BuildId:    r.buildID,
+			Lines:      batch,
+			LeaseEpoch: r.leaseEpoch,
 		}
 		if _, err := r.client.ReportBuildLogs(ctx, req); err != nil {
 			slog.WarnContext(ctx, "report build logs", "builder_id", r.builderID, "build_id", r.buildID, "line_count", len(batch), "error", err)

@@ -19,7 +19,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func timestamppbNew(t time.Time) *timestamppb.Timestamp {
+	return timestamppb.New(t.UTC())
+}
 
 type BuildOperations struct {
 	builds      *buildsPersistence
@@ -29,8 +34,7 @@ type BuildOperations struct {
 	registry    buildRegistry
 	credentials buildCredentials
 
-	emitter    *logs.LogEmitter
-	staleAfter time.Duration
+	emitter *logs.LogEmitter
 }
 
 type buildRegistry interface {
@@ -50,7 +54,7 @@ func WithBuilderLogEmitter(emitter *logs.LogEmitter) BuildOperationsOption {
 	}
 }
 
-func NewBuildOperations(builds *buildsPersistence, reads deliverycore.ReadModel, snapshots source.SnapshotService, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, staleAfter time.Duration, opts ...BuildOperationsOption) *BuildOperations {
+func NewBuildOperations(builds *buildsPersistence, reads deliverycore.ReadModel, snapshots source.SnapshotService, delivery *deliverycore.Delivery, registry buildRegistry, credentials buildCredentials, opts ...BuildOperationsOption) *BuildOperations {
 	service := &BuildOperations{
 		builds:      builds,
 		reads:       reads,
@@ -58,7 +62,6 @@ func NewBuildOperations(builds *buildsPersistence, reads deliverycore.ReadModel,
 		delivery:    delivery,
 		registry:    registry,
 		credentials: credentials,
-		staleAfter:  staleAfter,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -80,14 +83,14 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 	if s.builds == nil || s.reads == nil || s.delivery == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
-	build, err := s.delivery.ClaimNextBuild(ctx, builderID, req.GetBuilderName(), s.staleAfter)
+	build, err := s.delivery.ClaimNextBuild(ctx, builderID, req.GetBuilderName())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "claim build: %v", err)
 	}
 	if build.ID == "" {
 		return &platformv1.BuildJob{}, nil
 	}
-	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA)
+	slog.InfoContext(ctx, "build claimed", "build_id", build.ID, "builder_id", builderID, "builder_name", req.GetBuilderName(), "service_id", build.ServiceID, "project_id", build.ProjectID, "commit_sha", build.CommitSHA, "lease_epoch", build.OwnerEpoch)
 	service, err := s.reads.ServiceSnapshot(ctx, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build service: %v", err)
@@ -101,7 +104,7 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 		return nil, status.Errorf(codes.Internal, "resolve registry credentials: %v", err)
 	}
 	s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Builder %s claimed build for commit %s", builderID, shortSHA(build.CommitSHA))
-	return &platformv1.BuildJob{
+	job := &platformv1.BuildJob{
 		BuildId:               build.ID,
 		ServiceId:             service.ID,
 		ProjectId:             service.ProjectID,
@@ -112,7 +115,15 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 		RegistryPushReference: pushRef,
 		RegistryUsername:      registryUsername,
 		RegistryPassword:      registryPassword,
-	}, nil
+		LeaseEpoch:            build.OwnerEpoch,
+	}
+	if build.LeaseExpiresAt.Valid {
+		job.LeaseExpiresAt = timestamppbNew(build.LeaseExpiresAt.Time)
+	}
+	if build.DeadlineAt.Valid {
+		job.DeadlineAt = timestamppbNew(build.DeadlineAt.Time)
+	}
+	return job, nil
 }
 
 func (s *BuildOperations) ReportBuildHeartbeat(ctx context.Context, req *platformv1.BuilderHeartbeatRequest) (*emptypb.Empty, error) {
@@ -124,9 +135,12 @@ func (s *BuildOperations) ReportBuildHeartbeat(ctx context.Context, req *platfor
 	if err != nil {
 		return nil, err
 	}
-	if err := s.builds.recordBuilderHeartbeat(ctx, builderID, req.GetBuildId()); err != nil {
-		if errors.Is(err, deliverycore.ErrBuildNotOwned) {
+	if err := s.delivery.HeartbeatBuild(ctx, builderID, req.GetBuildId(), req.GetLeaseEpoch()); err != nil {
+		if errors.Is(err, deliverycore.ErrBuildNotOwned) || errors.Is(err, deliverycore.ErrBuildLeaseLost) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
+		}
+		if errors.Is(err, deliverycore.ErrBuildCancelled) {
+			return nil, status.Error(codes.Canceled, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "builder heartbeat: %v", err)
 	}
@@ -158,6 +172,9 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if build.State != deliverycore.BuildStateRunning || build.BuilderID != builderID {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
 	}
+	if build.OwnerEpoch != req.GetLeaseEpoch() {
+		return nil, status.Error(codes.PermissionDenied, deliverycore.ErrBuildLeaseLost.Error())
+	}
 	service, err := s.reads.ServiceSnapshot(ctx, build.ServiceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load service for log report: %v", err)
@@ -184,14 +201,17 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "load build before completion: %v", err)
 	}
-	if build.BuilderID != builderID {
-		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
-	}
 	if deliverycore.BuildStateTerminal(build.State) {
 		return &emptypb.Empty{}, nil
 	}
 	if build.State != deliverycore.BuildStateRunning {
 		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
+	}
+	if build.BuilderID != builderID {
+		return nil, status.Error(codes.PermissionDenied, "build is not assigned to this builder")
+	}
+	if build.OwnerEpoch != req.GetLeaseEpoch() {
+		return nil, status.Error(codes.PermissionDenied, deliverycore.ErrBuildLeaseLost.Error())
 	}
 	if req.GetCommitSha() != build.CommitSHA {
 		return nil, status.Error(codes.InvalidArgument, "commit_sha does not match the claimed build")
@@ -209,12 +229,12 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 			return nil, status.Errorf(codes.InvalidArgument, "image_digest: %v", err)
 		}
 	}
-	completion, err := s.delivery.CompleteBuild(ctx, builderID, req.GetBuildId(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason())
+	completion, err := s.delivery.CompleteBuild(ctx, builderID, req.GetBuildId(), req.GetLeaseEpoch(), req.GetState(), req.GetCommitSha(), req.GetImageDigest(), req.GetFailureReason())
 	if err != nil {
 		if errors.Is(err, deliverycore.ErrBuildCommitMismatch) {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
-		if errors.Is(err, deliverycore.ErrBuildNotOwned) {
+		if errors.Is(err, deliverycore.ErrBuildNotOwned) || errors.Is(err, deliverycore.ErrBuildLeaseLost) {
 			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "complete build: %v", err)
@@ -244,10 +264,14 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 			allocationAgentIDs = append(allocationAgentIDs, allocation.AgentID)
 		}
 	}
-	slog.InfoContext(ctx, "build completed", "build_id", req.GetBuildId(), "builder_id", builderID, "state", req.GetState().String(), "commit_sha", req.GetCommitSha(), "image_digest", req.GetImageDigest(), "failure_reason", req.GetFailureReason())
+	slog.InfoContext(ctx, "build completed", "build_id", req.GetBuildId(), "builder_id", builderID, "state", req.GetState().String(), "recorded_state", build.State, "commit_sha", req.GetCommitSha(), "image_digest", req.GetImageDigest(), "failure_reason", req.GetFailureReason())
 
 	switch req.GetState() {
 	case platformv1.BuildState_BUILD_STATE_SUCCEEDED:
+		if build.State == deliverycore.BuildStateSuperseded {
+			s.emitter.EmitBuild(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Build superseded by a newer commit")
+			break
+		}
 		s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Image build succeeded for commit %s (digest %s)", shortSHA(req.GetCommitSha()), shortDigest(req.GetImageDigest()))
 		target := strings.Join(allocationAgentIDs, ", ")
 		if target == "" {

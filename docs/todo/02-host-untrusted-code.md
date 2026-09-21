@@ -75,10 +75,14 @@ Add a production BuildExecutor backed by an operator-selected microVM or hardene
 ## 2.5 Build leases and cancellation
 
 Was: 4.3
-Status: open
+Status: in review
 Depends on: 2.1 if build claims move onto the shared durable-work package; otherwise keep the existing build-lease table and converge later.
 
 Weighted fairness and quota-driven admission moved to 3.19. There is no second tenant to be fair between yet.
+
+Implemented: the CockroachDB build queue is a durable lease-based scheduler on the existing `build_runs` table (owner epoch, lease expiry with heartbeat, attempt count/limit, cancel request, claim deadline). Claim, heartbeat, and completion are compare-and-swaps on (builder, epoch); superseded owners get `ErrBuildLeaseLost`. Cancellation of a queued build finishes it immediately; cancellation of a running build is cooperative and the late completion converges to cancelled without publishing an image or scheduling a rollout. Worker loss requeues with bounded retries; retry exhaustion, build timeout, and maximum queue age are terminal. Global and per-project concurrent-build caps (projects proxy for workspaces until 3.1), `build_attempts` history, `BuildStatus` lease/cancel progress fields, and operator drain/pause controls (`ListBuilders`/`SetBuilderDrain`, `GetBuildScheduler`/`SetBuildSchedulerPaused`) with Connect RPCs. Tests cover worker death and takeover, retry exhaustion, split-ownership fencing, late completion after cancellation, cap release on every terminal path, timeout, queue age, drain, and pause.
+
+Remaining: console surfaces for cancellation progress, attempt history, and the operator queue view; see `docs/frontend-handoff/2.5.md`.
 
 Prompt:
 

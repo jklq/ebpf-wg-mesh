@@ -173,6 +173,9 @@ const (
 	// PlatformServiceListAgentsProcedure is the fully-qualified name of the PlatformService's
 	// ListAgents RPC.
 	PlatformServiceListAgentsProcedure = "/platform.v1.PlatformService/ListAgents"
+	// PlatformServiceListBuildAttemptsProcedure is the fully-qualified name of the PlatformService's
+	// ListBuildAttempts RPC.
+	PlatformServiceListBuildAttemptsProcedure = "/platform.v1.PlatformService/ListBuildAttempts"
 	// BuilderServiceClaimBuildProcedure is the fully-qualified name of the BuilderService's ClaimBuild
 	// RPC.
 	BuilderServiceClaimBuildProcedure = "/platform.v1.BuilderService/ClaimBuild"
@@ -200,6 +203,17 @@ const (
 	// OpsServiceSetAgentLifecycleProcedure is the fully-qualified name of the OpsService's
 	// SetAgentLifecycle RPC.
 	OpsServiceSetAgentLifecycleProcedure = "/platform.v1.OpsService/SetAgentLifecycle"
+	// OpsServiceListBuildersProcedure is the fully-qualified name of the OpsService's ListBuilders RPC.
+	OpsServiceListBuildersProcedure = "/platform.v1.OpsService/ListBuilders"
+	// OpsServiceSetBuilderDrainProcedure is the fully-qualified name of the OpsService's
+	// SetBuilderDrain RPC.
+	OpsServiceSetBuilderDrainProcedure = "/platform.v1.OpsService/SetBuilderDrain"
+	// OpsServiceGetBuildSchedulerProcedure is the fully-qualified name of the OpsService's
+	// GetBuildScheduler RPC.
+	OpsServiceGetBuildSchedulerProcedure = "/platform.v1.OpsService/GetBuildScheduler"
+	// OpsServiceSetBuildSchedulerPausedProcedure is the fully-qualified name of the OpsService's
+	// SetBuildSchedulerPaused RPC.
+	OpsServiceSetBuildSchedulerPausedProcedure = "/platform.v1.OpsService/SetBuildSchedulerPaused"
 )
 
 // PlatformServiceClient is a client for the platform.v1.PlatformService service.
@@ -249,6 +263,7 @@ type PlatformServiceClient interface {
 	ListServiceLogs(context.Context, *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error)
 	ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error)
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
+	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
 }
 
 // NewPlatformServiceClient constructs a client for the platform.v1.PlatformService service. By
@@ -532,6 +547,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("ListAgents")),
 			connect.WithClientOptions(opts...),
 		),
+		listBuildAttempts: connect.NewClient[platformv1.ListBuildAttemptsRequest, platformv1.ListBuildAttemptsResponse](
+			httpClient,
+			baseURL+PlatformServiceListBuildAttemptsProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListBuildAttempts")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -582,6 +603,7 @@ type platformServiceClient struct {
 	listServiceLogs             *connect.Client[platformv1.ListServiceLogsRequest, platformv1.ListServiceLogsResponse]
 	listServiceDeployments      *connect.Client[platformv1.ListServiceDeploymentsRequest, platformv1.ListServiceDeploymentsResponse]
 	listAgents                  *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
+	listBuildAttempts           *connect.Client[platformv1.ListBuildAttemptsRequest, platformv1.ListBuildAttemptsResponse]
 }
 
 // CreateProject calls platform.v1.PlatformService.CreateProject.
@@ -809,6 +831,11 @@ func (c *platformServiceClient) ListAgents(ctx context.Context, req *connect.Req
 	return c.listAgents.CallUnary(ctx, req)
 }
 
+// ListBuildAttempts calls platform.v1.PlatformService.ListBuildAttempts.
+func (c *platformServiceClient) ListBuildAttempts(ctx context.Context, req *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
+	return c.listBuildAttempts.CallUnary(ctx, req)
+}
+
 // PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
@@ -856,6 +883,7 @@ type PlatformServiceHandler interface {
 	ListServiceLogs(context.Context, *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error)
 	ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error)
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
+	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
 }
 
 // NewPlatformServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1135,6 +1163,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("ListAgents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceListBuildAttemptsHandler := connect.NewUnaryHandler(
+		PlatformServiceListBuildAttemptsProcedure,
+		svc.ListBuildAttempts,
+		connect.WithSchema(platformServiceMethods.ByName("ListBuildAttempts")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/platform.v1.PlatformService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PlatformServiceCreateProjectProcedure:
@@ -1227,6 +1261,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceListServiceDeploymentsHandler.ServeHTTP(w, r)
 		case PlatformServiceListAgentsProcedure:
 			platformServiceListAgentsHandler.ServeHTTP(w, r)
+		case PlatformServiceListBuildAttemptsProcedure:
+			platformServiceListBuildAttemptsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1416,6 +1452,10 @@ func (UnimplementedPlatformServiceHandler) ListAgents(context.Context, *connect.
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListAgents is not implemented"))
 }
 
+func (UnimplementedPlatformServiceHandler) ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListBuildAttempts is not implemented"))
+}
+
 // BuilderServiceClient is a client for the platform.v1.BuilderService service.
 type BuilderServiceClient interface {
 	ClaimBuild(context.Context, *connect.Request[platformv1.ClaimBuildRequest]) (*connect.Response[platformv1.BuildJob], error)
@@ -1597,6 +1637,10 @@ type OpsServiceClient interface {
 	CreateAgent(context.Context, *connect.Request[platformv1.CreateAgentRequest]) (*connect.Response[platformv1.AgentEnrollment], error)
 	UpdateAgent(context.Context, *connect.Request[platformv1.UpdateAgentRequest]) (*connect.Response[platformv1.Agent], error)
 	SetAgentLifecycle(context.Context, *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error)
+	ListBuilders(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListBuildersResponse], error)
+	SetBuilderDrain(context.Context, *connect.Request[platformv1.SetBuilderDrainRequest]) (*connect.Response[platformv1.BuilderWorker], error)
+	GetBuildScheduler(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.BuildSchedulerState], error)
+	SetBuildSchedulerPaused(context.Context, *connect.Request[platformv1.SetBuildSchedulerPausedRequest]) (*connect.Response[platformv1.BuildSchedulerState], error)
 }
 
 // NewOpsServiceClient constructs a client for the platform.v1.OpsService service. By default, it
@@ -1640,16 +1684,44 @@ func NewOpsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(opsServiceMethods.ByName("SetAgentLifecycle")),
 			connect.WithClientOptions(opts...),
 		),
+		listBuilders: connect.NewClient[emptypb.Empty, platformv1.ListBuildersResponse](
+			httpClient,
+			baseURL+OpsServiceListBuildersProcedure,
+			connect.WithSchema(opsServiceMethods.ByName("ListBuilders")),
+			connect.WithClientOptions(opts...),
+		),
+		setBuilderDrain: connect.NewClient[platformv1.SetBuilderDrainRequest, platformv1.BuilderWorker](
+			httpClient,
+			baseURL+OpsServiceSetBuilderDrainProcedure,
+			connect.WithSchema(opsServiceMethods.ByName("SetBuilderDrain")),
+			connect.WithClientOptions(opts...),
+		),
+		getBuildScheduler: connect.NewClient[emptypb.Empty, platformv1.BuildSchedulerState](
+			httpClient,
+			baseURL+OpsServiceGetBuildSchedulerProcedure,
+			connect.WithSchema(opsServiceMethods.ByName("GetBuildScheduler")),
+			connect.WithClientOptions(opts...),
+		),
+		setBuildSchedulerPaused: connect.NewClient[platformv1.SetBuildSchedulerPausedRequest, platformv1.BuildSchedulerState](
+			httpClient,
+			baseURL+OpsServiceSetBuildSchedulerPausedProcedure,
+			connect.WithSchema(opsServiceMethods.ByName("SetBuildSchedulerPaused")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // opsServiceClient implements OpsServiceClient.
 type opsServiceClient struct {
-	ingestGitHubWebhook *connect.Client[platformv1.IngestGitHubWebhookRequest, emptypb.Empty]
-	listFleet           *connect.Client[emptypb.Empty, platformv1.Fleet]
-	createAgent         *connect.Client[platformv1.CreateAgentRequest, platformv1.AgentEnrollment]
-	updateAgent         *connect.Client[platformv1.UpdateAgentRequest, platformv1.Agent]
-	setAgentLifecycle   *connect.Client[platformv1.SetAgentLifecycleRequest, platformv1.Agent]
+	ingestGitHubWebhook     *connect.Client[platformv1.IngestGitHubWebhookRequest, emptypb.Empty]
+	listFleet               *connect.Client[emptypb.Empty, platformv1.Fleet]
+	createAgent             *connect.Client[platformv1.CreateAgentRequest, platformv1.AgentEnrollment]
+	updateAgent             *connect.Client[platformv1.UpdateAgentRequest, platformv1.Agent]
+	setAgentLifecycle       *connect.Client[platformv1.SetAgentLifecycleRequest, platformv1.Agent]
+	listBuilders            *connect.Client[emptypb.Empty, platformv1.ListBuildersResponse]
+	setBuilderDrain         *connect.Client[platformv1.SetBuilderDrainRequest, platformv1.BuilderWorker]
+	getBuildScheduler       *connect.Client[emptypb.Empty, platformv1.BuildSchedulerState]
+	setBuildSchedulerPaused *connect.Client[platformv1.SetBuildSchedulerPausedRequest, platformv1.BuildSchedulerState]
 }
 
 // IngestGitHubWebhook calls platform.v1.OpsService.IngestGitHubWebhook.
@@ -1677,6 +1749,26 @@ func (c *opsServiceClient) SetAgentLifecycle(ctx context.Context, req *connect.R
 	return c.setAgentLifecycle.CallUnary(ctx, req)
 }
 
+// ListBuilders calls platform.v1.OpsService.ListBuilders.
+func (c *opsServiceClient) ListBuilders(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListBuildersResponse], error) {
+	return c.listBuilders.CallUnary(ctx, req)
+}
+
+// SetBuilderDrain calls platform.v1.OpsService.SetBuilderDrain.
+func (c *opsServiceClient) SetBuilderDrain(ctx context.Context, req *connect.Request[platformv1.SetBuilderDrainRequest]) (*connect.Response[platformv1.BuilderWorker], error) {
+	return c.setBuilderDrain.CallUnary(ctx, req)
+}
+
+// GetBuildScheduler calls platform.v1.OpsService.GetBuildScheduler.
+func (c *opsServiceClient) GetBuildScheduler(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.BuildSchedulerState], error) {
+	return c.getBuildScheduler.CallUnary(ctx, req)
+}
+
+// SetBuildSchedulerPaused calls platform.v1.OpsService.SetBuildSchedulerPaused.
+func (c *opsServiceClient) SetBuildSchedulerPaused(ctx context.Context, req *connect.Request[platformv1.SetBuildSchedulerPausedRequest]) (*connect.Response[platformv1.BuildSchedulerState], error) {
+	return c.setBuildSchedulerPaused.CallUnary(ctx, req)
+}
+
 // OpsServiceHandler is an implementation of the platform.v1.OpsService service.
 type OpsServiceHandler interface {
 	IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error)
@@ -1684,6 +1776,10 @@ type OpsServiceHandler interface {
 	CreateAgent(context.Context, *connect.Request[platformv1.CreateAgentRequest]) (*connect.Response[platformv1.AgentEnrollment], error)
 	UpdateAgent(context.Context, *connect.Request[platformv1.UpdateAgentRequest]) (*connect.Response[platformv1.Agent], error)
 	SetAgentLifecycle(context.Context, *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error)
+	ListBuilders(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListBuildersResponse], error)
+	SetBuilderDrain(context.Context, *connect.Request[platformv1.SetBuilderDrainRequest]) (*connect.Response[platformv1.BuilderWorker], error)
+	GetBuildScheduler(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.BuildSchedulerState], error)
+	SetBuildSchedulerPaused(context.Context, *connect.Request[platformv1.SetBuildSchedulerPausedRequest]) (*connect.Response[platformv1.BuildSchedulerState], error)
 }
 
 // NewOpsServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -1723,6 +1819,30 @@ func NewOpsServiceHandler(svc OpsServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(opsServiceMethods.ByName("SetAgentLifecycle")),
 		connect.WithHandlerOptions(opts...),
 	)
+	opsServiceListBuildersHandler := connect.NewUnaryHandler(
+		OpsServiceListBuildersProcedure,
+		svc.ListBuilders,
+		connect.WithSchema(opsServiceMethods.ByName("ListBuilders")),
+		connect.WithHandlerOptions(opts...),
+	)
+	opsServiceSetBuilderDrainHandler := connect.NewUnaryHandler(
+		OpsServiceSetBuilderDrainProcedure,
+		svc.SetBuilderDrain,
+		connect.WithSchema(opsServiceMethods.ByName("SetBuilderDrain")),
+		connect.WithHandlerOptions(opts...),
+	)
+	opsServiceGetBuildSchedulerHandler := connect.NewUnaryHandler(
+		OpsServiceGetBuildSchedulerProcedure,
+		svc.GetBuildScheduler,
+		connect.WithSchema(opsServiceMethods.ByName("GetBuildScheduler")),
+		connect.WithHandlerOptions(opts...),
+	)
+	opsServiceSetBuildSchedulerPausedHandler := connect.NewUnaryHandler(
+		OpsServiceSetBuildSchedulerPausedProcedure,
+		svc.SetBuildSchedulerPaused,
+		connect.WithSchema(opsServiceMethods.ByName("SetBuildSchedulerPaused")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/platform.v1.OpsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case OpsServiceIngestGitHubWebhookProcedure:
@@ -1735,6 +1855,14 @@ func NewOpsServiceHandler(svc OpsServiceHandler, opts ...connect.HandlerOption) 
 			opsServiceUpdateAgentHandler.ServeHTTP(w, r)
 		case OpsServiceSetAgentLifecycleProcedure:
 			opsServiceSetAgentLifecycleHandler.ServeHTTP(w, r)
+		case OpsServiceListBuildersProcedure:
+			opsServiceListBuildersHandler.ServeHTTP(w, r)
+		case OpsServiceSetBuilderDrainProcedure:
+			opsServiceSetBuilderDrainHandler.ServeHTTP(w, r)
+		case OpsServiceGetBuildSchedulerProcedure:
+			opsServiceGetBuildSchedulerHandler.ServeHTTP(w, r)
+		case OpsServiceSetBuildSchedulerPausedProcedure:
+			opsServiceSetBuildSchedulerPausedHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1762,4 +1890,20 @@ func (UnimplementedOpsServiceHandler) UpdateAgent(context.Context, *connect.Requ
 
 func (UnimplementedOpsServiceHandler) SetAgentLifecycle(context.Context, *connect.Request[platformv1.SetAgentLifecycleRequest]) (*connect.Response[platformv1.Agent], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.SetAgentLifecycle is not implemented"))
+}
+
+func (UnimplementedOpsServiceHandler) ListBuilders(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListBuildersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.ListBuilders is not implemented"))
+}
+
+func (UnimplementedOpsServiceHandler) SetBuilderDrain(context.Context, *connect.Request[platformv1.SetBuilderDrainRequest]) (*connect.Response[platformv1.BuilderWorker], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.SetBuilderDrain is not implemented"))
+}
+
+func (UnimplementedOpsServiceHandler) GetBuildScheduler(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.BuildSchedulerState], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.GetBuildScheduler is not implemented"))
+}
+
+func (UnimplementedOpsServiceHandler) SetBuildSchedulerPaused(context.Context, *connect.Request[platformv1.SetBuildSchedulerPausedRequest]) (*connect.Response[platformv1.BuildSchedulerState], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.SetBuildSchedulerPaused is not implemented"))
 }

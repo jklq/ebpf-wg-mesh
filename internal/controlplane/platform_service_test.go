@@ -160,6 +160,10 @@ func (f *fakePlatformDelivery) ListServiceSecrets(ctx context.Context, user auth
 	return nil, nil
 }
 
+func (f *fakePlatformDelivery) BuildAttempts(ctx context.Context, user authz.User, serviceID, buildID string) ([]deliverycore.BuildAttemptRecord, error) {
+	return nil, nil
+}
+
 func (f *fakePlatformDelivery) LivePosition() deliverycore.LivePosition {
 	return deliverycore.LivePosition{}
 }
