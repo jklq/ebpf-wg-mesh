@@ -184,6 +184,9 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 		}
 		return err
 	}
+	if service.Deleted {
+		return nil
+	}
 	if specRevision > 0 && service.SpecRevision != specRevision {
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -60,12 +61,14 @@ func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time,
 }
 
 func listAllocationsForFailover(ctx context.Context, s *persistence, q ServiceQueryer, agentID string) ([]AllocationRecord, error) {
-	query := allocationSelectSQL
+	query := allocationSelectSQL + ` JOIN projects p ON p.id = e.project_id`
+	filters := []string{`s.deleted_at IS NULL`, `e.deleted_at IS NULL`, `p.deleted_at IS NULL`}
 	args := []any{}
 	if agentID != "" {
-		query += ` WHERE a.agent_id = $1`
+		filters = append([]string{`a.agent_id = $1`}, filters...)
 		args = append(args, agentID)
 	}
+	query += ` WHERE ` + strings.Join(filters, ` AND `)
 	query += ` ORDER BY s.created_at ASC, a.id ASC`
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {

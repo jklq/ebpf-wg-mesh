@@ -97,7 +97,12 @@ func (d *Delivery) applyDeploymentAction(
 		if err != nil {
 			return err
 		}
-		if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
+		// Re-check after locking: a deployment racing a delete must lose.
+		deletion, err := s.lockServiceDeletionTx(ctx, tx, service.ID)
+		if err != nil {
+			return err
+		}
+		if err := requireLiveService(deletion); err != nil {
 			return err
 		}
 

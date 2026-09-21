@@ -184,6 +184,14 @@ type SecretKeysConfig struct {
 	KeyringPath string
 }
 
+// DeletionConfig tunes safe deletion: user deletes tombstone resources for
+// the grace period (restorable), then background garbage collection destroys
+// expired tombstones on its interval.
+type DeletionConfig struct {
+	GracePeriodDays   int
+	GCIntervalSeconds int
+}
+
 type ControlPlaneConfig struct {
 	Profile          Profile
 	Health           HealthConfig
@@ -196,6 +204,7 @@ type ControlPlaneConfig struct {
 	StateDir         string
 	SourceArchives   SourceArchiveConfig
 	SecretKeys       SecretKeysConfig
+	Deletion         DeletionConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
 	Bootstrap        BootstrapConfig

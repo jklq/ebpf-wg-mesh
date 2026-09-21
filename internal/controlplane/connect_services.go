@@ -35,7 +35,7 @@ func (a connectPlatformService) CreateProject(ctx context.Context, req *connect.
 	return connect.NewResponse(result), toConnectError(err)
 }
 
-func (a connectPlatformService) ListProjects(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListProjectsResponse], error) {
+func (a connectPlatformService) ListProjects(ctx context.Context, req *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error) {
 	result, err := a.service.ListProjects(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
 }
@@ -77,6 +77,46 @@ func (a connectPlatformService) UpdateEnvironmentAutoDeploy(ctx context.Context,
 
 func (a connectPlatformService) DeleteEnvironment(ctx context.Context, req *connect.Request[platformv1.DeleteEnvironmentRequest]) (*connect.Response[emptypb.Empty], error) {
 	result, err := a.service.DeleteEnvironment(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RestoreEnvironment(ctx context.Context, req *connect.Request[platformv1.RestoreEnvironmentRequest]) (*connect.Response[platformv1.Environment], error) {
+	result, err := a.service.RestoreEnvironment(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) DeleteProject(ctx context.Context, req *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.DeleteProject(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RestoreProject(ctx context.Context, req *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error) {
+	result, err := a.service.RestoreProject(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) PreviewProjectDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	result, err := a.service.PreviewProjectDeletion(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) PreviewEnvironmentDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewEnvironmentDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	result, err := a.service.PreviewEnvironmentDeletion(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) PreviewVolumeDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
+	result, err := a.service.PreviewVolumeDeletion(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RestoreService(ctx context.Context, req *connect.Request[platformv1.RestoreServiceRequest]) (*connect.Response[platformv1.Service], error) {
+	result, err := a.service.RestoreService(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RestoreDomainBinding(ctx context.Context, req *connect.Request[platformv1.RestoreDomainBindingRequest]) (*connect.Response[platformv1.DomainBinding], error) {
+	result, err := a.service.RestoreDomainBinding(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
 }
 

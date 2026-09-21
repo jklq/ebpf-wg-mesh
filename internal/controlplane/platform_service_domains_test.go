@@ -249,7 +249,7 @@ func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-		listDomainBindingsFn: func(ctx context.Context, _ authz.User, serviceID string) ([]deliverycore.DomainBindingRecord, error) {
+		listDomainBindingsFn: func(ctx context.Context, _ authz.User, serviceID string, includeDeleted bool) ([]deliverycore.DomainBindingRecord, error) {
 			return []deliverycore.DomainBindingRecord{
 				{Hostname: "violet-7k3.platform.example", ProjectID: "project-1", ServiceID: serviceID, TargetPort: 8080, PlatformGenerated: true},
 				{Hostname: "web.example.com", ProjectID: "project-1", ServiceID: serviceID, TargetPort: 8080},

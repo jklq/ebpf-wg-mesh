@@ -34,7 +34,7 @@ func domainOperationFixture(t *testing.T, store *persistence, owner string) deli
 	return service
 }
 
-func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
+func TestDomainOperationsDeleteTombstonesGeneratedBindingAtomically(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	service := domainOperationFixture(t, store, "owner")
@@ -61,43 +61,37 @@ func TestDomainOperationsDeleteCommitsCleanupAtomically(t *testing.T) {
 	if _, err := operations.DeleteDomainBinding(ctx, user, &platformv1.DeleteDomainBindingRequest{Hostname: "one.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if bindings, err := store.reads.ListDomainBindings(ctx, testUser("owner"), service.ID); err != nil || len(bindings) != 2 {
+	if bindings, err := store.reads.ListDomainBindings(ctx, testUser("owner"), service.ID, false); err != nil || len(bindings) != 2 {
 		t.Fatalf("generated binding removed too early: %v, %v", bindings, err)
-	}
-	if _, err := store.db.ExecContext(ctx, `CREATE TABLE domain_delete_blocker (hostname TEXT PRIMARY KEY REFERENCES domain_bindings(hostname) ON DELETE RESTRICT)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO domain_delete_blocker VALUES ($1)`, generated.Hostname); err != nil {
-		t.Fatal(err)
 	}
 	before = ingress.requests.Load()
 	revision, err := store.events.currentGlobalRevision(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := operations.DeleteDomainBinding(ctx, user, &platformv1.DeleteDomainBindingRequest{Hostname: "two.example.com"}); err == nil {
-		t.Fatal("expected cleanup constraint failure")
-	}
-	if _, err := store.routing.DomainBindingByHostname(ctx, testUser("owner"), "two.example.com"); err != nil {
-		t.Fatalf("custom deletion escaped rollback: %v", err)
-	}
-	if ingress.requests.Load() != before {
-		t.Fatal("rolled-back deletion woke ingress")
-	}
-	if after, err := store.events.currentGlobalRevision(ctx); err != nil || after != revision {
-		t.Fatalf("rolled-back deletion advanced event: %d -> %d: %v", revision, after, err)
-	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM domain_delete_blocker`); err != nil {
-		t.Fatal(err)
-	}
+	// Deleting the last live custom binding also tombstones the generated
+	// binding in the same commit; nothing is physically destroyed.
 	if _, err := operations.DeleteDomainBinding(ctx, user, &platformv1.DeleteDomainBindingRequest{Hostname: "two.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if bindings, err := store.reads.ListDomainBindings(ctx, testUser("owner"), service.ID); err != nil || len(bindings) != 0 {
-		t.Fatalf("cleanup left bindings: %v, %v", bindings, err)
+	if bindings, err := store.reads.ListDomainBindings(ctx, testUser("owner"), service.ID, false); err != nil || len(bindings) != 0 {
+		t.Fatalf("delete left live bindings: %v, %v", bindings, err)
+	}
+	if bindings, err := store.reads.ListDomainBindings(ctx, testUser("owner"), service.ID, true); err != nil || len(bindings) != 3 {
+		t.Fatalf("tombstoned bindings not recoverable: %v, %v", bindings, err)
 	}
 	if ingress.requests.Load() != before+1 {
-		t.Fatal("committed cleanup did not wake ingress exactly once")
+		t.Fatal("committed delete did not wake ingress exactly once")
+	}
+	if after, err := store.events.currentGlobalRevision(ctx); err != nil || after == revision {
+		t.Fatalf("committed delete did not advance event: %d -> %d: %v", revision, after, err)
+	}
+	// Restoring the custom binding restores the generated one too.
+	if _, err := store.routing.RestoreDomainBindingRecord(ctx, testUser("owner"), "two.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if bindings, err := store.reads.ListDomainBindings(ctx, testUser("owner"), service.ID, false); err != nil || len(bindings) != 2 {
+		t.Fatalf("restore did not revive the generated binding: %v, %v", bindings, err)
 	}
 }
 

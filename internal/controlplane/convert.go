@@ -17,7 +17,50 @@ func toProtoProject(rec deliverycore.ProjectRecord) *platformv1.Project {
 		CreatedAt: ts(rec.CreatedAt),
 		Kind:      toProtoProjectKind(rec.Kind),
 		SystemKey: rec.SystemKey,
+		Deletion:  toProtoDeletion(rec.Deletion),
 	}
+}
+
+func toProtoDeletion(deletion *deliverycore.DeletionInfo) *platformv1.DeletionState {
+	if deletion == nil {
+		return nil
+	}
+	return &platformv1.DeletionState{
+		DeletedAt:       ts(deletion.DeletedAt),
+		DeletedByUserId: deletion.DeletedByUserID,
+		DeleteExpiresAt: ts(deletion.ExpiresAt),
+		Inherited:       deletion.Inherited,
+	}
+}
+
+func toProtoDeletionPreview(preview DeletionPreview) *platformv1.DeletionPreview {
+	out := &platformv1.DeletionPreview{
+		Environments: make([]*platformv1.DeletionPreviewEnvironment, 0, len(preview.Environments)),
+		Services:     make([]*platformv1.DeletionPreviewService, 0, len(preview.Services)),
+		Domains:      make([]*platformv1.DeletionPreviewDomain, 0, len(preview.Domains)),
+		Volumes:      make([]*platformv1.DeletionPreviewVolume, 0, len(preview.Volumes)),
+	}
+	for _, item := range preview.Environments {
+		out.Environments = append(out.Environments, &platformv1.DeletionPreviewEnvironment{
+			Id: item.ID, Name: item.Name, IsProduction: item.IsProduction,
+		})
+	}
+	for _, item := range preview.Services {
+		out.Services = append(out.Services, &platformv1.DeletionPreviewService{
+			Id: item.ID, Name: item.Name, EnvironmentId: item.EnvironmentID, EnvironmentName: item.EnvironmentName,
+		})
+	}
+	for _, item := range preview.Domains {
+		out.Domains = append(out.Domains, &platformv1.DeletionPreviewDomain{
+			Hostname: item.Hostname, ServiceId: item.ServiceID, ServiceName: item.ServiceName, PlatformGenerated: item.PlatformGenerated,
+		})
+	}
+	for _, item := range preview.Volumes {
+		out.Volumes = append(out.Volumes, &platformv1.DeletionPreviewVolume{
+			Id: item.ID, Name: item.Name, EnvironmentId: item.EnvironmentID,
+		})
+	}
+	return out
 }
 
 func toProtoProjectKind(kind deliverycore.ProjectKind) platformv1.ProjectKind {
@@ -40,6 +83,7 @@ func toProtoEnvironment(rec deliverycore.EnvironmentRecord) *platformv1.Environm
 		CopiedFromEnvironmentId: rec.CopiedFromEnvironmentID,
 		CreatedAt:               ts(rec.CreatedAt),
 		UpdatedAt:               ts(rec.UpdatedAt),
+		Deletion:                toProtoDeletion(rec.Deletion),
 	}
 }
 
@@ -65,6 +109,7 @@ func toProtoService(rec deliverycore.ServiceRecord) *platformv1.Service {
 		DesiredReplicaCount:     rec.DesiredReplicaCount,
 		ReadyReplicaCount:       rec.ReadyReplicaCount,
 		PlacementMessage:        rec.PlacementMessage,
+		Deletion:                toProtoDeletion(rec.Deletion),
 	}
 }
 
@@ -114,6 +159,7 @@ func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.Doma
 		PlatformGenerated: rec.PlatformGenerated,
 		CreatedAt:         ts(rec.CreatedAt),
 		UpdatedAt:         ts(rec.UpdatedAt),
+		Deletion:          toProtoDeletion(rec.Deletion),
 	}
 }
 
@@ -124,6 +170,7 @@ func toProtoVolume(rec deliverycore.VolumeRecord) *platformv1.Volume {
 		Name:          rec.Name,
 		SizeBytes:     rec.SizeBytes,
 		CreatedAt:     ts(rec.CreatedAt),
+		Deletion:      toProtoDeletion(rec.Deletion),
 	}
 }
 

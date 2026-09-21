@@ -24,7 +24,7 @@ func TestRecordStatusReportPersistsCrashLoopAndWithdrawsIngress(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestDeploymentActionsRestartAndExactRedeployResetObservation(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestDesiredStateCarriesPersistedRestartObservation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

@@ -323,7 +323,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.catalog.deleteVolume(ctx, testUser("owner"), volume.ID); err != nil {
+	if err := store.catalog.deleteVolume(ctx, testUser("owner"), volume.ID, "data"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("owner"), "first.example.test", serviceID, 8080); err != nil {
@@ -379,7 +379,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	if _, err := createScheduledService(ctx, store, "owner", staging.ID, "staged", directImageServiceSpec("example.test/web:1", nil)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), staging.ID); err != nil {
+	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), staging.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 }

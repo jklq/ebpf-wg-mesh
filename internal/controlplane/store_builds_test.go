@@ -37,7 +37,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestRepoBackedBuildRequiresPersistedSourceState(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -530,7 +530,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -734,7 +734,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -798,7 +798,7 @@ func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.S
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

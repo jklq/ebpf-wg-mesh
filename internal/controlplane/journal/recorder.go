@@ -148,6 +148,20 @@ func RecordEnvironmentRemoval(ctx context.Context, tx *sql.Tx, environmentID str
 	return nil
 }
 
+func RecordProjectRemoval(ctx context.Context, tx *sql.Tx, projectID string) error {
+	RecordProject(ctx, projectID)
+	environmentIDs, err := queryKeys(ctx, tx, `SELECT id::STRING FROM environments WHERE project_id = $1`, projectID)
+	if err != nil {
+		return err
+	}
+	for _, environmentID := range environmentIDs {
+		if err := RecordEnvironmentRemoval(ctx, tx, environmentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func recordQuery(ctx context.Context, tx *sql.Tx, table Table, query string, args ...any) error {
 	keys, err := queryKeys(ctx, tx, query, args...)
 	if err != nil {

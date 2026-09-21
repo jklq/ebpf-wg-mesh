@@ -12,8 +12,10 @@ import (
 )
 
 const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production, e.auto_deploy,
-	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
-	FROM environments e`
+	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at,
+	e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+	p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+	FROM environments e JOIN projects p ON p.id = e.project_id`
 
 func (s *persistence) environmentByID(ctx context.Context, scope authz.Environment) (EnvironmentRecord, error) {
 	return s.environmentByIDQuerier(ctx, s.db, scope)
@@ -30,8 +32,11 @@ func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRec
 	var rec EnvironmentRecord
 	var kind string
 	var networkIdentity int64
-	if err := scanner.Scan(&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction, &rec.AutoDeploy,
-		&networkIdentity, &rec.CopiedFromEnvironmentID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+	var self, project Tombstone
+	targets := []any{&rec.ID, &rec.ProjectID, &rec.Name, &kind, &rec.IsProduction, &rec.AutoDeploy,
+		&networkIdentity, &rec.CopiedFromEnvironmentID, &rec.CreatedAt, &rec.UpdatedAt}
+	targets = ScanTombstone(targets, &self)
+	if err := scanner.Scan(ScanTombstone(targets, &project)...); err != nil {
 		return EnvironmentRecord{}, err
 	}
 	if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
@@ -39,6 +44,7 @@ func scanEnvironmentRow(scanner interface{ Scan(...any) error }) (EnvironmentRec
 	}
 	rec.NetworkIdentity = uint32(networkIdentity)
 	rec.Kind = EnvironmentKind(kind)
+	rec.Deletion = EffectiveDeletion(self, project)
 	return rec, nil
 }
 
@@ -48,6 +54,9 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, scope authz.Envi
 		source, err := s.environmentByIDQuerier(ctx, tx, scope)
 		if err != nil {
 			return err
+		}
+		if source.Deletion != nil {
+			return ErrEnvironmentDeleted
 		}
 		duplicate, err = s.createEnvironmentQuerier(ctx, tx, source.ProjectID, name, false, source.ID)
 		if err != nil {

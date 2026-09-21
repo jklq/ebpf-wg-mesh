@@ -8,10 +8,15 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 )
 
-func (s *persistence) listServices(ctx context.Context, scope authz.Environment) ([]ServiceRecord, error) {
+func (s *persistence) listServices(ctx context.Context, scope authz.Environment, includeDeleted bool) ([]ServiceRecord, error) {
+	filter := `
+		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
+	if includeDeleted {
+		filter = ``
+	}
 	rows, err := s.db.QueryContext(ctx,
 		serviceSelectSQL+`
-		  WHERE s.environment_id = $1
+		  WHERE s.environment_id = $1`+filter+`
 		  ORDER BY s.created_at ASC`,
 		scope.ID(),
 	)
@@ -141,14 +146,19 @@ const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s
 		        COALESCE(ds.current_rollout_generation, 0),
 		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id AND a.rollout_state <> 'lost' ORDER BY CASE a.rollout_state WHEN 'serving' THEN 0 WHEN 'starting' THEN 1 ELSE 2 END, a.id LIMIT 1), ''),
 		        COALESCE(ds.current_resolved_image, ''), COALESCE(ds.last_successful_commit_sha, ''), COALESCE(ds.latest_build_id, ''),
-		        s.desired_replica_count, COALESCE(ds.placement_message, ''), s.created_at, GREATEST(s.updated_at, ds.updated_at)
+		        s.desired_replica_count, COALESCE(ds.placement_message, ''), s.created_at, GREATEST(s.updated_at, ds.updated_at),
+		        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
+		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
 		   FROM services s
 		   JOIN service_delivery_status ds ON ds.service_id = s.id
-		   JOIN environments e ON e.id = s.environment_id`
+		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id`
 
 func scanServiceRow(scanner interface{ Scan(...any) error }) (ServiceRecord, error) {
 	var rec ServiceRecord
-	if err := scanner.Scan(
+	var self, environment, project Tombstone
+	targets := []any{
 		&rec.ID,
 		&rec.EnvironmentID,
 		&rec.ProjectID,
@@ -163,13 +173,17 @@ func scanServiceRow(scanner interface{ Scan(...any) error }) (ServiceRecord, err
 		&rec.PlacementMessage,
 		&rec.CreatedAt,
 		&rec.UpdatedAt,
-	); err != nil {
+	}
+	targets = ScanTombstone(targets, &self)
+	targets = ScanTombstone(targets, &environment)
+	if err := scanner.Scan(ScanTombstone(targets, &project)...); err != nil {
 		return ServiceRecord{}, err
 	}
 	if rec.DesiredReplicaCount <= 0 {
 		rec.DesiredReplicaCount = DefaultDesiredReplicaCount
 	}
 	rec.LatestBuild = nil
+	rec.Deletion = EffectiveDeletion(self, environment, project)
 	return rec, nil
 }
 

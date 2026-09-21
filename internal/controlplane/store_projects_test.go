@@ -36,7 +36,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 		t.Fatalf("expected managed project kind, got %s", managed.Kind)
 	}
 
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -68,11 +68,11 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	firstProjects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	firstProjects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}
-	secondProjects, err := store.catalog.listProjects(ctx, testUser("user-2"))
+	secondProjects, err := store.catalog.listProjects(ctx, testUser("user-2"), false)
 	if err != nil {
 		t.Fatalf("listProjects(user-2): %v", err)
 	}
@@ -108,7 +108,7 @@ func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}

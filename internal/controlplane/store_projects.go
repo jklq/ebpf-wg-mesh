@@ -19,6 +19,9 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 		return "", err
 	}
 	if found {
+		if project.Deletion != nil {
+			return "", fmt.Errorf("%w: restore %q or wait until %s", deliverycore.ErrProjectDeleted, project.Name, project.Deletion.ExpiresAt.Format(time.RFC3339))
+		}
 		if _, err := s.ensureProductionEnvironmentQuerier(ctx, q, project.ID); err != nil {
 			return "", fmt.Errorf("ensure production environment: %w", err)
 		}
@@ -136,15 +139,20 @@ func (s *catalogPersistence) createProject(ctx context.Context, user authz.User,
 	return project, nil
 }
 
-func (s *catalogPersistence) listProjects(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error) {
+func (s *catalogPersistence) listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
+	filter := ` AND p.deleted_at IS NULL`
+	if includeDeleted {
+		filter = ``
+	}
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
+		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
 		   FROM projects p
 		   JOIN project_memberships m ON m.project_id = p.id
 		  WHERE m.user_id = $1
 		    AND m.role IN ('owner', 'editor', 'viewer')
-		    AND p.kind = $2
+		    AND p.kind = $2`+filter+`
 		  ORDER BY p.created_at ASC`,
 		user.ID(),
 		string(deliverycore.ProjectKindUser),
@@ -176,7 +184,8 @@ func (s *catalogPersistence) projectByID(ctx context.Context, user authz.User, p
 func (s *catalogPersistence) projectByScopeQuerier(ctx context.Context, q deliverycore.ServiceQueryer, scope authz.Project) (deliverycore.ProjectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at
+		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
 		   FROM projects p
 		  WHERE p.id = $1 AND p.kind = $2`,
 		scope.ID(),
@@ -188,7 +197,8 @@ func (s *catalogPersistence) projectByScopeQuerier(ctx context.Context, q delive
 func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q deliverycore.ServiceQueryer, systemKey string) (deliverycore.ProjectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
+		        deleted_at, deleted_by_user_id, delete_expires_at
 		   FROM projects
 		  WHERE system_key = $1`,
 		systemKey,
@@ -207,7 +217,8 @@ func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q de
 func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (deliverycore.ProjectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
+		        deleted_at, deleted_by_user_id, delete_expires_at
 		   FROM projects
 		  WHERE owner_user_id = $1 AND name = $2 AND kind = $3`,
 		userID,
@@ -228,7 +239,8 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 func (s *catalogPersistence) projectByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.ProjectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
-		`SELECT id, name, kind, COALESCE(system_key, ''), created_at
+		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
+		        deleted_at, deleted_by_user_id, delete_expires_at
 		   FROM projects
 		  WHERE id = $1`,
 		projectID,

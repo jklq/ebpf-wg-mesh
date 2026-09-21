@@ -79,6 +79,7 @@ type fakePlatformDelivery struct {
 	updateServiceFn          func(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
 	discardServiceChangesFn  func(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	deleteServiceFn          func(ctx context.Context, user authz.User, serviceID string) error
+	restoreServiceFn         func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
 	scaleServiceFn           func(ctx context.Context, user authz.User, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
 	liveAllocationsFn        func(environmentID string) (map[string][]deliverycore.AllocationRecord, error)
 	duplicateEnvironmentFn   func(ctx context.Context, user authz.User, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
@@ -133,6 +134,13 @@ func (f *fakePlatformDelivery) DeleteService(ctx context.Context, user authz.Use
 	return nil
 }
 
+func (f *fakePlatformDelivery) RestoreService(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error) {
+	if f.restoreServiceFn != nil {
+		return f.restoreServiceFn(ctx, user, serviceID)
+	}
+	return deliverycore.ServiceRecord{ID: serviceID}, nil
+}
+
 func (f *fakePlatformDelivery) ScaleService(ctx context.Context, user authz.User, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error) {
 	if f.scaleServiceFn != nil {
 		return f.scaleServiceFn(ctx, user, serviceID, desired)
@@ -158,36 +166,43 @@ func (f *fakePlatformDelivery) LivePosition() deliverycore.LivePosition {
 
 type fakePlatformStore struct {
 	createProjectFn                   func(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
-	listProjectsFn                    func(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error)
+	listProjectsFn                    func(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
 	projectByIDFn                     func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	serviceByIDFn                     func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
-	listServicesFn                    func(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ServiceRecord, error)
+	listServicesFn                    func(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolumeFn           func(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
-	listVolumesFn                     func(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.VolumeRecord, error)
-	deleteVolumeFn                    func(ctx context.Context, user authz.User, volumeID string) error
+	listVolumesFn                     func(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
+	deleteVolumeFn                    func(ctx context.Context, user authz.User, volumeID, confirmation string) error
 	createDomainBindingFn             func(ctx context.Context, user authz.User, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
 	createPlatformDomainBindingFn     func(ctx context.Context, user authz.User, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
 	platformDomainBindingForServiceFn func(ctx context.Context, user authz.User, serviceID string) (deliverycore.DomainBindingRecord, error)
 	updateDomainBindingFn             func(ctx context.Context, user authz.User, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error)
 	domainBindingByHostFn             func(ctx context.Context, user authz.User, hostname string) (deliverycore.DomainBindingRecord, error)
-	listDomainBindingsFn              func(ctx context.Context, user authz.User, serviceID string) ([]deliverycore.DomainBindingRecord, error)
+	listDomainBindingsFn              func(ctx context.Context, user authz.User, serviceID string, includeDeleted bool) ([]deliverycore.DomainBindingRecord, error)
 	deleteDomainBindingFn             func(ctx context.Context, user authz.User, hostname string) (bool, error)
 	serviceStatusFn                   func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
 	listServiceDeploymentsFn          func(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
 	listAllocationsByServiceIDFn      func(ctx context.Context, serviceID string) ([]deliverycore.AllocationRecord, error)
 	listAgentsFn                      func(ctx context.Context, user authz.User) ([]deliverycore.AgentRecord, error)
 	agentIDsFn                        func(context.Context) ([]string, error)
-	listEnvironmentsFn                func(ctx context.Context, user authz.User, projectID string) ([]deliverycore.EnvironmentRecord, error)
+	listEnvironmentsFn                func(ctx context.Context, user authz.User, projectID string, includeDeleted bool) ([]deliverycore.EnvironmentRecord, error)
 	environmentByIDFn                 func(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
 	createEnvironmentFn               func(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error)
 	renameEnvironmentFn               func(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error)
 	updateEnvironmentAutoDeployFn     func(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error)
-	deleteEnvironmentFn               func(ctx context.Context, user authz.User, environmentID string) ([]string, error)
+	deleteEnvironmentFn               func(ctx context.Context, user authz.User, environmentID, confirmation string) ([]string, error)
+	restoreEnvironmentFn              func(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
+	deleteProjectFn                   func(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error)
+	restoreProjectFn                  func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
+	previewProjectDeletionFn          func(ctx context.Context, user authz.User, projectID string) (DeletionPreview, error)
+	previewEnvironmentDeletionFn      func(ctx context.Context, user authz.User, environmentID string) (DeletionPreview, error)
+	previewVolumeDeletionFn           func(ctx context.Context, user authz.User, volumeID string) (DeletionPreview, error)
+	restoreDomainBindingFn            func(ctx context.Context, user authz.User, hostname string) (deliverycore.DomainBindingRecord, error)
 }
 
-func (f *fakePlatformStore) listEnvironments(ctx context.Context, user authz.User, projectID string) ([]deliverycore.EnvironmentRecord, error) {
+func (f *fakePlatformStore) listEnvironments(ctx context.Context, user authz.User, projectID string, includeDeleted bool) ([]deliverycore.EnvironmentRecord, error) {
 	if f.listEnvironmentsFn != nil {
-		return f.listEnvironmentsFn(ctx, user, projectID)
+		return f.listEnvironmentsFn(ctx, user, projectID, includeDeleted)
 	}
 	return nil, nil
 }
@@ -227,11 +242,18 @@ func (f *fakePlatformStore) updateEnvironmentAutoDeploy(ctx context.Context, use
 	return deliverycore.EnvironmentRecord{ID: environmentID, ProjectID: "project-1", Kind: deliverycore.EnvironmentKindPersistent, AutoDeploy: autoDeploy}, nil
 }
 
-func (f *fakePlatformStore) deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error) {
+func (f *fakePlatformStore) deleteEnvironment(ctx context.Context, user authz.User, environmentID, confirmation string) ([]string, error) {
 	if f.deleteEnvironmentFn != nil {
-		return f.deleteEnvironmentFn(ctx, user, environmentID)
+		return f.deleteEnvironmentFn(ctx, user, environmentID, confirmation)
 	}
 	return nil, nil
+}
+
+func (f *fakePlatformStore) restoreEnvironment(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	if f.restoreEnvironmentFn != nil {
+		return f.restoreEnvironmentFn(ctx, user, environmentID)
+	}
+	return deliverycore.EnvironmentRecord{ID: environmentID}, nil
 }
 
 func (f *fakePlatformStore) createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error) {
@@ -241,11 +263,46 @@ func (f *fakePlatformStore) createProject(ctx context.Context, user authz.User, 
 	return deliverycore.ProjectRecord{ID: "project-1", Name: name, Kind: deliverycore.ProjectKindUser, CreatedAt: time.Now().UTC()}, nil
 }
 
-func (f *fakePlatformStore) listProjects(ctx context.Context, user authz.User) ([]deliverycore.ProjectRecord, error) {
+func (f *fakePlatformStore) listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
 	if f.listProjectsFn != nil {
-		return f.listProjectsFn(ctx, user)
+		return f.listProjectsFn(ctx, user, includeDeleted)
 	}
 	return nil, nil
+}
+
+func (f *fakePlatformStore) deleteProject(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error) {
+	if f.deleteProjectFn != nil {
+		return f.deleteProjectFn(ctx, user, projectID, confirmation)
+	}
+	return nil, nil
+}
+
+func (f *fakePlatformStore) restoreProject(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error) {
+	if f.restoreProjectFn != nil {
+		return f.restoreProjectFn(ctx, user, projectID)
+	}
+	return deliverycore.ProjectRecord{ID: projectID}, nil
+}
+
+func (f *fakePlatformStore) previewProjectDeletion(ctx context.Context, user authz.User, projectID string) (DeletionPreview, error) {
+	if f.previewProjectDeletionFn != nil {
+		return f.previewProjectDeletionFn(ctx, user, projectID)
+	}
+	return DeletionPreview{}, nil
+}
+
+func (f *fakePlatformStore) previewEnvironmentDeletion(ctx context.Context, user authz.User, environmentID string) (DeletionPreview, error) {
+	if f.previewEnvironmentDeletionFn != nil {
+		return f.previewEnvironmentDeletionFn(ctx, user, environmentID)
+	}
+	return DeletionPreview{}, nil
+}
+
+func (f *fakePlatformStore) previewVolumeDeletion(ctx context.Context, user authz.User, volumeID string) (DeletionPreview, error) {
+	if f.previewVolumeDeletionFn != nil {
+		return f.previewVolumeDeletionFn(ctx, user, volumeID)
+	}
+	return DeletionPreview{}, nil
 }
 
 func (f *fakePlatformStore) projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error) {
@@ -262,9 +319,9 @@ func (f *fakePlatformStore) ServiceByID(ctx context.Context, user authz.User, se
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, nil
 }
 
-func (f *fakePlatformStore) ListServices(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ServiceRecord, error) {
+func (f *fakePlatformStore) ListServices(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error) {
 	if f.listServicesFn != nil {
-		return f.listServicesFn(ctx, user, environmentID)
+		return f.listServicesFn(ctx, user, environmentID, includeDeleted)
 	}
 	return nil, nil
 }
@@ -276,16 +333,16 @@ func (f *fakePlatformStore) createScheduledVolume(ctx context.Context, user auth
 	return deliverycore.VolumeRecord{ID: "volume-1", EnvironmentID: environmentID, Name: name, SizeBytes: sizeBytes}, nil
 }
 
-func (f *fakePlatformStore) listVolumes(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.VolumeRecord, error) {
+func (f *fakePlatformStore) listVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error) {
 	if f.listVolumesFn != nil {
-		return f.listVolumesFn(ctx, user, environmentID)
+		return f.listVolumesFn(ctx, user, environmentID, includeDeleted)
 	}
 	return nil, nil
 }
 
-func (f *fakePlatformStore) deleteVolume(ctx context.Context, user authz.User, volumeID string) error {
+func (f *fakePlatformStore) deleteVolume(ctx context.Context, user authz.User, volumeID, confirmation string) error {
 	if f.deleteVolumeFn != nil {
-		return f.deleteVolumeFn(ctx, user, volumeID)
+		return f.deleteVolumeFn(ctx, user, volumeID, confirmation)
 	}
 	return sql.ErrNoRows
 }
@@ -325,9 +382,9 @@ func (f *fakePlatformStore) DomainBindingByHostname(ctx context.Context, user au
 	return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: "service-1"}, nil
 }
 
-func (f *fakePlatformStore) ListDomainBindings(ctx context.Context, user authz.User, serviceID string) ([]deliverycore.DomainBindingRecord, error) {
+func (f *fakePlatformStore) ListDomainBindings(ctx context.Context, user authz.User, serviceID string, includeDeleted bool) ([]deliverycore.DomainBindingRecord, error) {
 	if f.listDomainBindingsFn != nil {
-		return f.listDomainBindingsFn(ctx, user, serviceID)
+		return f.listDomainBindingsFn(ctx, user, serviceID, includeDeleted)
 	}
 	return nil, nil
 }
@@ -337,6 +394,13 @@ func (f *fakePlatformStore) DeleteDomainBindingRecord(ctx context.Context, user 
 		return f.deleteDomainBindingFn(ctx, user, hostname)
 	}
 	return true, nil
+}
+
+func (f *fakePlatformStore) RestoreDomainBindingRecord(ctx context.Context, user authz.User, hostname string) (deliverycore.DomainBindingRecord, error) {
+	if f.restoreDomainBindingFn != nil {
+		return f.restoreDomainBindingFn(ctx, user, hostname)
+	}
+	return deliverycore.DomainBindingRecord{Hostname: hostname}, nil
 }
 
 func (f *fakePlatformStore) ServiceStatus(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {

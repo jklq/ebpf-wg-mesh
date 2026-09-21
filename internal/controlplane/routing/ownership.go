@@ -169,9 +169,19 @@ func NewPublicDNSResolver() *net.Resolver {
 }
 
 func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
+	var deletion *platformv1.DeletionState
+	if rec.Deletion != nil {
+		deletion = &platformv1.DeletionState{
+			DeletedAt:       deliverycore.ToProtoTimestamp(rec.Deletion.DeletedAt),
+			DeletedByUserId: rec.Deletion.DeletedByUserID,
+			DeleteExpiresAt: deliverycore.ToProtoTimestamp(rec.Deletion.ExpiresAt),
+			Inherited:       rec.Deletion.Inherited,
+		}
+	}
 	return &platformv1.DomainBinding{
 		Hostname: rec.Hostname, ServiceId: rec.ServiceID, TargetPort: rec.TargetPort,
 		PlatformGenerated: rec.PlatformGenerated,
 		CreatedAt:         deliverycore.ToProtoTimestamp(rec.CreatedAt), UpdatedAt: deliverycore.ToProtoTimestamp(rec.UpdatedAt),
+		Deletion: deletion,
 	}
 }

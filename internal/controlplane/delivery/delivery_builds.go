@@ -54,15 +54,23 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			return ErrBuildCommitMismatch
 		}
 		completed = build
+		deleted, err := s.serviceDeletionQuerier(ctx, tx, build.ServiceID)
+		if err != nil {
+			return err
+		}
 		dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, build.ServiceID, build.ID)
 		if err != nil {
 			return err
 		}
-		if ok && (deploymentStateTerminal(dep.State) || !dep.IsCurrent) {
+		if deleted != nil || ok && (deploymentStateTerminal(dep.State) || !dep.IsCurrent) {
+			reason := "cancelled; late builder completion ignored"
+			if deleted != nil {
+				reason = "cancelled; service deleted"
+			}
 			now := time.Now().UTC()
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3 WHERE id = $4 AND state = $5`,
-				BuildStateCancelled, "cancelled; late builder completion ignored", now, buildID, BuildStateRunning,
+				BuildStateCancelled, reason, now, buildID, BuildStateRunning,
 			); err != nil {
 				return err
 			}
@@ -333,6 +341,9 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return BuildRunRecord{}, err
 	}
+	if err := requireLiveService(service.Deletion); err != nil {
+		return BuildRunRecord{}, err
+	}
 	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
 		return BuildRunRecord{}, errSourceStateNotReady
 	}
@@ -455,9 +466,16 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 		}
 		row := tx.QueryRowContext(ctx,
 			`SELECT `+buildRunSelectColumns+`
-			   FROM build_runs
-			  WHERE state = $1
-			  ORDER BY queued_at ASC, id ASC
+			   FROM build_runs b
+			  WHERE b.state = $1
+			    AND NOT EXISTS (
+			        SELECT 1 FROM services s
+			         JOIN environments e ON e.id = s.environment_id
+			         JOIN projects p ON p.id = e.project_id
+			        WHERE s.id = b.service_id
+			          AND (s.deleted_at IS NOT NULL OR e.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL)
+			    )
+			  ORDER BY b.queued_at ASC, b.id ASC
 			  LIMIT 1`,
 			BuildStateQueued,
 		)
@@ -484,6 +502,20 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 			return err
 		}
 		if build.State != BuildStateQueued {
+			rec = BuildRunRecord{}
+			return nil
+		}
+		if deletion, err := s.serviceDeletionQuerier(ctx, tx, rec.ServiceID); err != nil {
+			return err
+		} else if deletion != nil {
+			// Tombstoned between enqueue and claim: cancel instead of
+			// handing a doomed build to a builder.
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3 WHERE id = $4 AND state = $5`,
+				BuildStateCancelled, "service deleted", now, rec.ID, BuildStateQueued,
+			); err != nil {
+				return err
+			}
 			rec = BuildRunRecord{}
 			return nil
 		}

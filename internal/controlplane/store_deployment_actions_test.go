@@ -354,12 +354,19 @@ func TestDeleteServiceAfterCancelledDeployment(t *testing.T) {
 	if err := deleteService(ctx, store, userID, service.ID); err != nil {
 		t.Fatalf("delete cancelled service: %v", err)
 	}
-	var remaining int
-	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM services WHERE id = $1`, service.ID).Scan(&remaining); err != nil {
-		t.Fatalf("count deleted service: %v", err)
+	var tombstoned int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM services WHERE id = $1 AND deleted_at IS NOT NULL`, service.ID).Scan(&tombstoned); err != nil {
+		t.Fatalf("count tombstoned service: %v", err)
 	}
-	if remaining != 0 {
-		t.Fatalf("cancelled service still exists: count=%d", remaining)
+	if tombstoned != 1 {
+		t.Fatalf("cancelled service was not tombstoned: count=%d", tombstoned)
+	}
+	var assignments int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM allocation_assignments WHERE service_id = $1`, service.ID).Scan(&assignments); err != nil {
+		t.Fatalf("count deleted service assignments: %v", err)
+	}
+	if assignments != 0 {
+		t.Fatalf("deleted service kept placements: count=%d", assignments)
 	}
 }
 
@@ -524,7 +531,7 @@ func setupPinnedImageServiceForDeployment(t *testing.T, image string) (*persiste
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

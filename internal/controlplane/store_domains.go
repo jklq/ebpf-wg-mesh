@@ -51,11 +51,19 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed = false
 		binding = deliverycore.DomainBindingRecord{}
+		if deleted, err := serviceEffectivelyDeletedTx(ctx, tx, service.ID()); err != nil {
+			return err
+		} else if deleted {
+			return deliverycore.ErrServiceDeleted
+		}
 		attemptHostname, attemptCreateOnly := hostname, createOnly
 		attemptPlatformGenerated := platformGenerated
 		if attemptPlatformGenerated {
 			existing, err := s.platformDomainBindingForServiceQuerier(ctx, tx, service)
 			if err == nil {
+				if existing.Deletion != nil {
+					return deliverycore.ErrDomainAlreadyExists
+				}
 				attemptHostname, attemptCreateOnly = existing.Hostname, false
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
@@ -63,16 +71,32 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 		}
 		now := time.Now().UTC()
 		var existing deliverycore.DomainBindingRecord
+		var self, svc, environment, project deliverycore.Tombstone
+		targets := []any{&existing.Hostname, &existing.ProjectID, &existing.EnvironmentID, &existing.ServiceID, &existing.TargetPort, &existing.PlatformGenerated, &existing.CreatedAt, &existing.UpdatedAt}
+		targets = deliverycore.ScanTombstone(targets, &self)
+		targets = deliverycore.ScanTombstone(targets, &svc)
+		targets = deliverycore.ScanTombstone(targets, &environment)
 		err := tx.QueryRowContext(ctx,
-			`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port, d.platform_generated, d.created_at, d.updated_at
+			`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port, d.platform_generated, d.created_at, d.updated_at,
+			        d.deleted_at, d.deleted_by_user_id, d.delete_expires_at,
+			        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
+			        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+			        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
 			   FROM domain_bindings d
 			   JOIN services s ON s.id = d.service_id
 			   JOIN environments e ON e.id = s.environment_id
+			   JOIN projects p ON p.id = e.project_id
 			  WHERE d.hostname = $1 AND e.project_id = $2`,
 			attemptHostname, service.ProjectID(),
-		).Scan(&existing.Hostname, &existing.ProjectID, &existing.EnvironmentID, &existing.ServiceID, &existing.TargetPort, &existing.PlatformGenerated, &existing.CreatedAt, &existing.UpdatedAt)
+		).Scan(deliverycore.ScanTombstone(targets, &project)...)
+		if err == nil {
+			existing.Deletion = deliverycore.EffectiveDeletion(self, svc, environment, project)
+		}
 		switch {
 		case err == nil:
+			if existing.Deletion != nil {
+				return deliverycore.ErrDomainAlreadyExists
+			}
 			if attemptCreateOnly {
 				return deliverycore.ErrDomainAlreadyExists
 			}
@@ -105,7 +129,8 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 			return err
 		}
 		if !attemptPlatformGenerated {
-			if _, err := s.platformDomainBindingForServiceQuerier(ctx, tx, service); errors.Is(err, sql.ErrNoRows) {
+			generated, err := s.platformDomainBindingForServiceQuerier(ctx, tx, service)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && generated.Deletion != nil {
 				return routing.ErrPlatformDomainNotGenerated
 			} else if err != nil {
 				return err
@@ -155,11 +180,20 @@ func (s *routingPersistence) updateDomainBinding(ctx context.Context, binding au
 		if err != nil {
 			return err
 		}
+		if existing.Deletion != nil {
+			return deliverycore.ErrDomainDeleted
+		}
+		if deleted, err := serviceEffectivelyDeletedTx(ctx, tx, service.ID()); err != nil {
+			return err
+		} else if deleted {
+			return deliverycore.ErrServiceDeleted
+		}
 		if existing.PlatformGenerated && existing.ServiceID != service.ID() {
 			return routing.ErrPlatformDomainReassignment
 		}
 		if !existing.PlatformGenerated && existing.ServiceID != service.ID() {
-			if _, err := s.platformDomainBindingForServiceQuerier(ctx, tx, service); errors.Is(err, sql.ErrNoRows) {
+			generated, err := s.platformDomainBindingForServiceQuerier(ctx, tx, service)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && generated.Deletion != nil {
 				return routing.ErrPlatformDomainNotGenerated
 			} else if err != nil {
 				return err
@@ -209,17 +243,28 @@ func (s *routingPersistence) DomainBindingByHostname(ctx context.Context, user a
 
 func (s *routingPersistence) domainBindingByScopeQuerier(ctx context.Context, q deliverycore.ServiceQueryer, scope authz.DomainBinding) (deliverycore.DomainBindingRecord, error) {
 	var binding deliverycore.DomainBindingRecord
+	var self, service, environment, project deliverycore.Tombstone
+	targets := []any{&binding.Hostname, &binding.ProjectID, &binding.EnvironmentID, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt}
+	targets = deliverycore.ScanTombstone(targets, &self)
+	targets = deliverycore.ScanTombstone(targets, &service)
+	targets = deliverycore.ScanTombstone(targets, &environment)
 	err := q.QueryRowContext(ctx,
 		`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port,
-		        d.platform_generated, d.created_at, d.updated_at
+		        d.platform_generated, d.created_at, d.updated_at,
+		        d.deleted_at, d.deleted_by_user_id, d.delete_expires_at,
+		        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
+		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
 		   FROM domain_bindings d JOIN services s ON s.id = d.service_id
 		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id
 		  WHERE d.hostname = $1 AND e.project_id = $2`,
 		scope.Hostname(), scope.ProjectID(),
-	).Scan(&binding.Hostname, &binding.ProjectID, &binding.EnvironmentID, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt)
+	).Scan(deliverycore.ScanTombstone(targets, &project)...)
 	if err != nil {
 		return deliverycore.DomainBindingRecord{}, err
 	}
+	binding.Deletion = deliverycore.EffectiveDeletion(self, service, environment, project)
 	return binding, nil
 }
 
@@ -233,17 +278,38 @@ func (s *routingPersistence) PlatformDomainBindingForService(ctx context.Context
 
 func (s *routingPersistence) platformDomainBindingForServiceQuerier(ctx context.Context, q deliverycore.ServiceQueryer, service authz.Service) (deliverycore.DomainBindingRecord, error) {
 	var binding deliverycore.DomainBindingRecord
+	var self, svc, environment, project deliverycore.Tombstone
+	targets := []any{&binding.Hostname, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt}
+	targets = deliverycore.ScanTombstone(targets, &self)
+	targets = deliverycore.ScanTombstone(targets, &svc)
+	targets = deliverycore.ScanTombstone(targets, &environment)
 	err := q.QueryRowContext(ctx,
-		`SELECT hostname, service_id, target_port, platform_generated, created_at, updated_at
+		`SELECT d.hostname, d.service_id, d.target_port, d.platform_generated, d.created_at, d.updated_at,
+		        d.deleted_at, d.deleted_by_user_id, d.delete_expires_at,
+		        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
+		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
 		   FROM domain_bindings d
-		  WHERE service_id = $1 AND platform_generated = TRUE`,
+		   JOIN services s ON s.id = d.service_id
+		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id
+		  WHERE d.service_id = $1 AND d.platform_generated = TRUE`,
 		service.ID(),
-	).Scan(&binding.Hostname, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt)
+	).Scan(deliverycore.ScanTombstone(targets, &project)...)
 	binding.ProjectID = service.ProjectID()
 	binding.EnvironmentID = service.EnvironmentID()
-	return binding, err
+	if err != nil {
+		return deliverycore.DomainBindingRecord{}, err
+	}
+	binding.Deletion = deliverycore.EffectiveDeletion(self, svc, environment, project)
+	return binding, nil
 }
 
+// DeleteDomainBindingRecord tombstones a binding instead of destroying it.
+// Repeats are idempotent and report no change. Deleting the last live
+// custom binding also tombstones the service's platform-generated binding,
+// preserving the invariant that generated bindings exist only while custom
+// bindings do; restoring a custom binding restores the generated one.
 func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user authz.User, hostname string) (bool, error) {
 	scope, err := s.authz.AuthorizeDomainBinding(ctx, user, hostname, authz.Write)
 	if err != nil {
@@ -252,29 +318,29 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 	var changed bool
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		changed = false
-		binding, err := s.domainBindingByScopeQuerier(ctx, tx, scope)
+		binding, err := s.lockDomainBindingTx(ctx, tx, scope)
 		if err != nil {
 			return err
 		}
+		if binding.Deletion != nil && !binding.Deletion.Inherited {
+			return nil
+		}
 		if binding.PlatformGenerated {
 			var hasCustom bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated)`, binding.ServiceID).Scan(&hasCustom); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated AND deleted_at IS NULL)`, binding.ServiceID).Scan(&hasCustom); err != nil {
 				return err
 			}
 			if hasCustom {
 				return routing.ErrPlatformDomainInUse
 			}
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE hostname = $1`, binding.Hostname)
+		now := time.Now().UTC()
+		tombstoned, err := s.tombstoneDomainBindingTx(ctx, tx, binding.Hostname, user.ID(), now)
 		if err != nil {
 			return err
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			return sql.ErrNoRows
+		if !tombstoned {
+			return nil
 		}
 		journal.RecordDomain(ctx, binding.Hostname, binding.ServiceID)
 		if !binding.PlatformGenerated {
@@ -282,11 +348,17 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 			if err != nil {
 				return err
 			}
-			for _, platformHostname := range generated {
-				journal.RecordDomain(ctx, platformHostname, binding.ServiceID)
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE service_id = $1 AND platform_generated AND NOT EXISTS (SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated)`, binding.ServiceID); err != nil {
+			var liveCustom bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM domain_bindings WHERE service_id = $1 AND NOT platform_generated AND deleted_at IS NULL)`, binding.ServiceID).Scan(&liveCustom); err != nil {
 				return err
+			}
+			if !liveCustom {
+				for _, platformHostname := range generated {
+					if _, err := s.tombstoneDomainBindingTx(ctx, tx, platformHostname, user.ID(), now); err != nil {
+						return err
+					}
+					journal.RecordDomain(ctx, platformHostname, binding.ServiceID)
+				}
 			}
 		}
 		changed = true
@@ -296,6 +368,120 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 		return false, err
 	}
 	return changed, nil
+}
+
+// RestoreDomainBindingRecord clears a binding's own tombstone within the
+// grace period. Restoring a custom binding also restores the service's
+// platform-generated binding, which cannot outlive the last custom binding.
+// Restoring under a tombstoned ancestor is refused: restore top-down.
+func (s *routingPersistence) RestoreDomainBindingRecord(ctx context.Context, user authz.User, hostname string) (deliverycore.DomainBindingRecord, error) {
+	scope, err := s.authz.AuthorizeDomainBinding(ctx, user, hostname, authz.Write)
+	if err != nil {
+		return deliverycore.DomainBindingRecord{}, err
+	}
+	var restored deliverycore.DomainBindingRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		binding, err := s.lockDomainBindingTx(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if binding.Deletion == nil {
+			restored = binding
+			return nil
+		}
+		if binding.Deletion.Inherited {
+			return deliverycore.ErrAncestorDeleted
+		}
+		cleared, err := s.clearDomainBindingTombstoneTx(ctx, tx, binding.Hostname)
+		if err != nil {
+			return err
+		}
+		if !cleared {
+			restored, err = s.domainBindingByScopeQuerier(ctx, tx, scope)
+			return err
+		}
+		journal.RecordDomain(ctx, binding.Hostname, binding.ServiceID)
+		if !binding.PlatformGenerated {
+			generated, err := queryGeneratedDomainHostnames(ctx, tx, binding.ServiceID)
+			if err != nil {
+				return err
+			}
+			for _, platformHostname := range generated {
+				if _, err := s.clearDomainBindingTombstoneTx(ctx, tx, platformHostname); err != nil {
+					return err
+				}
+				journal.RecordDomain(ctx, platformHostname, binding.ServiceID)
+			}
+		}
+		restored, err = s.domainBindingByScopeQuerier(ctx, tx, scope)
+		return err
+	})
+	return restored, err
+}
+
+func (s *routingPersistence) lockDomainBindingTx(ctx context.Context, tx *sql.Tx, scope authz.DomainBinding) (deliverycore.DomainBindingRecord, error) {
+	var binding deliverycore.DomainBindingRecord
+	var self, service, environment, project deliverycore.Tombstone
+	targets := []any{&binding.Hostname, &binding.ProjectID, &binding.EnvironmentID, &binding.ServiceID, &binding.TargetPort, &binding.PlatformGenerated, &binding.CreatedAt, &binding.UpdatedAt}
+	targets = deliverycore.ScanTombstone(targets, &self)
+	targets = deliverycore.ScanTombstone(targets, &service)
+	targets = deliverycore.ScanTombstone(targets, &environment)
+	err := tx.QueryRowContext(ctx,
+		`SELECT d.hostname, e.project_id, s.environment_id, d.service_id, d.target_port,
+		        d.platform_generated, d.created_at, d.updated_at,
+		        d.deleted_at, d.deleted_by_user_id, d.delete_expires_at,
+		        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
+		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		   FROM domain_bindings d JOIN services s ON s.id = d.service_id
+		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id
+		  WHERE d.hostname = $1 AND e.project_id = $2 FOR UPDATE OF d`,
+		scope.Hostname(), scope.ProjectID(),
+	).Scan(deliverycore.ScanTombstone(targets, &project)...)
+	if err != nil {
+		return deliverycore.DomainBindingRecord{}, err
+	}
+	binding.Deletion = deliverycore.EffectiveDeletion(self, service, environment, project)
+	return binding, nil
+}
+
+func (s *routingPersistence) tombstoneDomainBindingTx(ctx context.Context, tx *sql.Tx, hostname, userID string, now time.Time) (bool, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE domain_bindings
+		    SET deleted_at = $1,
+		        deleted_by_user_id = $2,
+		        delete_expires_at = $3
+		  WHERE hostname = $4 AND deleted_at IS NULL`,
+		now, userID, now.Add(s.deletionGracePeriod()), hostname,
+	)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *routingPersistence) clearDomainBindingTombstoneTx(ctx context.Context, tx *sql.Tx, hostname string) (bool, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE domain_bindings
+		    SET deleted_at = NULL,
+		        deleted_by_user_id = '',
+		        delete_expires_at = NULL
+		  WHERE hostname = $1 AND deleted_at IS NOT NULL`,
+		hostname,
+	)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 func (s *readsPersistence) allocationByServiceID(ctx context.Context, serviceID string) (deliverycore.AllocationRecord, error) {
@@ -321,6 +507,24 @@ func (s *routingPersistence) agentIDsForService(ctx context.Context, q deliveryc
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// serviceEffectivelyDeletedTx reports whether a service is tombstoned itself
+// or sits under a tombstoned environment or project.
+func serviceEffectivelyDeletedTx(ctx context.Context, tx *sql.Tx, serviceID string) (bool, error) {
+	var deleted bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT s.deleted_at IS NOT NULL OR e.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL
+		   FROM services s
+		   JOIN environments e ON e.id = s.environment_id
+		   JOIN projects p ON p.id = e.project_id
+		  WHERE s.id = $1`,
+		serviceID,
+	).Scan(&deleted)
+	if err != nil {
+		return false, err
+	}
+	return deleted, nil
 }
 
 func queryGeneratedDomainHostnames(ctx context.Context, tx *sql.Tx, serviceID string) ([]string, error) {

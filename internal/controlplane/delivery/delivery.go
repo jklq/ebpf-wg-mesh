@@ -94,12 +94,16 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 		if err != nil {
 			return err
 		}
+		if environment.Deletion != nil {
+			return ErrEnvironmentDeleted
+		}
 		rows, err := tx.QueryContext(ctx, `SELECT s.id
 			FROM services s
 			JOIN service_delivery_status ds ON ds.service_id = s.id
 			LEFT JOIN service_rollouts r
 			  ON r.service_id = s.id AND r.rollout_generation = ds.current_rollout_generation
 			WHERE s.environment_id = $1
+			  AND s.deleted_at IS NULL
 			  AND (ds.current_rollout_generation IS NULL OR r.spec_revision IS DISTINCT FROM s.current_spec_revision)
 			ORDER BY s.id FOR UPDATE OF s`, environment.ID)
 		if err != nil {
@@ -315,6 +319,16 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env
 
 	current, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, env, serviceID)
 	if err != nil {
+		return ServiceRecord{}, err
+	}
+	// The release enumeration locks live services only; lock and re-check so
+	// the unbuilt-revision backfill and concurrent deletes cannot slip a
+	// release past a tombstone.
+	locked, err := d.store.lockServiceDeletionTx(ctx, tx, current.ID)
+	if err != nil {
+		return ServiceRecord{}, err
+	}
+	if err := requireLiveService(locked); err != nil {
 		return ServiceRecord{}, err
 	}
 	if current.DesiredReplicaCount <= 0 {

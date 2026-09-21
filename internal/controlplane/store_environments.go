@@ -13,9 +13,8 @@ import (
 	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
-
-var errProductionEnvironment = errors.New("production environment cannot be deleted")
 
 func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
 	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
@@ -36,20 +35,54 @@ func (s *catalogPersistence) createEnvironment(ctx context.Context, user authz.U
 	}
 	var rec deliverycore.EnvironmentRecord
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		var err error
+		project, err := s.projectByIDInternalQuerier(ctx, tx, scope.ID())
+		if err != nil {
+			return err
+		}
+		if project.Deletion != nil {
+			return deliverycore.ErrProjectDeleted
+		}
 		rec, err = s.createEnvironmentQuerier(ctx, tx, scope.ID(), name, false, "")
-		return err
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return s.environmentNameConflictErr(ctx, tx, scope.ID(), name)
+			}
+			return err
+		}
+		return nil
 	})
 	return rec, err
 }
 
-func (s *catalogPersistence) listEnvironments(ctx context.Context, user authz.User, projectID string) ([]deliverycore.EnvironmentRecord, error) {
+// environmentNameConflictErr maps an environment-name collision to a typed
+// error. Tombstoned rows reserve their names for the grace period.
+func (s *catalogPersistence) environmentNameConflictErr(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string) error {
+	row := q.QueryRowContext(ctx, environmentSelect+`
+		 WHERE e.project_id = $1 AND e.name = $2`,
+		projectID, strings.TrimSpace(name))
+	existing, err := deliverycore.ScanEnvironmentRow(row)
+	if err != nil {
+		return fmt.Errorf("%w: %q", deliverycore.ErrEnvironmentAlreadyExists, strings.TrimSpace(name))
+	}
+	if existing.Deletion != nil && !existing.Deletion.Inherited {
+		return fmt.Errorf("%w: %q was deleted; restore it or wait until %s", deliverycore.ErrEnvironmentAlreadyExists, existing.Name, existing.Deletion.ExpiresAt.Format(time.RFC3339))
+	}
+	return fmt.Errorf("%w: %q", deliverycore.ErrEnvironmentAlreadyExists, existing.Name)
+}
+
+func (s *catalogPersistence) listEnvironments(ctx context.Context, user authz.User, projectID string, includeDeleted bool) ([]deliverycore.EnvironmentRecord, error) {
 	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Read)
 	if err != nil {
 		return nil, err
 	}
+	filter := `
+		 AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
+	if includeDeleted {
+		filter = ``
+	}
 	rows, err := s.db.QueryContext(ctx, environmentSelect+`
-		 WHERE e.project_id = $1
+		 WHERE e.project_id = $1`+filter+`
 		 ORDER BY e.is_production DESC, e.created_at ASC, e.id ASC`, scope.ID())
 	if err != nil {
 		return nil, err
@@ -86,6 +119,9 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.U
 		if err != nil {
 			return err
 		}
+		if current.Deletion != nil {
+			return deliverycore.ErrEnvironmentDeleted
+		}
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
 			return err
@@ -110,6 +146,9 @@ func (s *catalogPersistence) updateEnvironmentAutoDeploy(ctx context.Context, us
 		if err != nil {
 			return err
 		}
+		if current.Deletion != nil {
+			return deliverycore.ErrEnvironmentDeleted
+		}
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
 			return err
@@ -123,7 +162,11 @@ func (s *catalogPersistence) updateEnvironmentAutoDeploy(ctx context.Context, us
 	return rec, err
 }
 
-func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.User, environmentID string) ([]string, error) {
+// deleteEnvironment tombstones an environment and quiesces its services.
+// Production environments require a typed confirmation matching the current
+// name; the confirmation is only checked on the first delete, so repeats
+// stay idempotent.
+func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.User, environmentID, confirmation string) ([]string, error) {
 	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
 		return nil, err
@@ -131,49 +174,82 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.U
 	var agentIDs []string
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		agentIDs = nil
-		rec, err := s.environmentByScopeQuerier(ctx, tx, scope)
+		rec, err := s.lockEnvironmentTx(ctx, tx, scope)
 		if err != nil {
 			return err
+		}
+		if rec.Deletion != nil && !rec.Deletion.Inherited {
+			return nil
 		}
 		if rec.IsProduction {
-			return errProductionEnvironment
+			if err := deliverycore.CheckDeletionConfirmation(rec.Name, confirmation); err != nil {
+				return err
+			}
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT a.agent_id FROM allocations a
-			JOIN services s ON s.id = a.service_id WHERE s.environment_id = $1`, rec.ID)
+		now := time.Now().UTC()
+		tombstoned, err := s.tombstoneEnvironmentTx(ctx, tx, rec.ID, user.ID(), now)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			agentIDs = append(agentIDs, id)
+		if !tombstoned {
+			return nil
 		}
-		if err := rows.Close(); err != nil {
+		if err := s.quiesceEnvironmentServicesTx(ctx, tx, rec.ID, user.ID()); err != nil {
 			return err
 		}
 		if err := journal.RecordEnvironmentRemoval(ctx, tx, rec.ID); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM environments WHERE id = $1`, rec.ID)
+		agentIDs, err = s.environmentAgentIDsQuerier(ctx, tx, rec.ID)
 		if err != nil {
 			return err
 		}
-		if n, err := result.RowsAffected(); err != nil || n != 1 {
-			if err != nil {
-				return err
-			}
-			return sql.ErrNoRows
-		}
-		if len(agentIDs) == 0 {
-			return nil
-		}
-		agentIDs, err = s.agentIDsQuerier(ctx, tx)
-		return err
+		// Drop after the agent query: the notifier set is derived from the
+		// assignments being removed.
+		return dropEnvironmentAssignmentsTx(ctx, tx, rec.ID)
 	})
 	return agentIDs, err
+}
+
+// restoreEnvironment clears an environment's tombstone within the grace
+// period. Restoring under a tombstoned project is refused: restore top-down.
+// Independently tombstoned services keep their tombstones.
+func (s *catalogPersistence) restoreEnvironment(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	var rec deliverycore.EnvironmentRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.lockEnvironmentTx(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if current.Deletion == nil {
+			rec = current
+			return nil
+		}
+		if current.Deletion.Inherited {
+			return deliverycore.ErrAncestorDeleted
+		}
+		restored, err := s.clearEnvironmentTombstoneTx(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
+		if !restored {
+			rec, err = s.environmentByScopeQuerier(ctx, tx, scope)
+			return err
+		}
+		if err := dropEnvironmentAssignmentsTx(ctx, tx, current.ID); err != nil {
+			return err
+		}
+		if err := journal.RecordEnvironmentRemoval(ctx, tx, current.ID); err != nil {
+			return err
+		}
+		rec, err = s.environmentByScopeQuerier(ctx, tx, scope)
+		return err
+	})
+	return rec, err
 }
 
 func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string, production bool, copiedFrom string) (deliverycore.EnvironmentRecord, error) {
@@ -244,8 +320,10 @@ func (s *catalogPersistence) environmentByScopeQuerier(ctx context.Context, q de
 }
 
 const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production, e.auto_deploy,
-	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at
-	FROM environments e`
+	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at,
+	e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+	p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+	FROM environments e JOIN projects p ON p.id = e.project_id`
 
 func (s *catalogPersistence) agentIDsQuerier(ctx context.Context, q deliverycore.ServiceQueryer) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT id FROM agents ORDER BY created_at ASC`)

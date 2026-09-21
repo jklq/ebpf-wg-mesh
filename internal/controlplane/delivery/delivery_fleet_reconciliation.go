@@ -38,6 +38,9 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 			if err != nil {
 				return err
 			}
+			if service.Deletion != nil {
+				continue
+			}
 			if volumeName := ServiceVolumeName(service.Spec); volumeName != "" {
 				blocked[fmt.Sprintf("stateful allocation %s is fenced to volume %q until Stage 7 handoff is available", allocation.ID, volumeName)] = struct{}{}
 				continue
@@ -179,6 +182,9 @@ func (d *Delivery) ReconcileFleetCapacity(ctx context.Context) error {
 			service, err := s.serviceByIDInternalQuerier(ctx, tx, serviceID)
 			if err != nil {
 				return err
+			}
+			if service.Deletion != nil {
+				continue
 			}
 			before, err := s.listAllocationsByServiceIDQuerier(ctx, tx, serviceID, false)
 			if err != nil {

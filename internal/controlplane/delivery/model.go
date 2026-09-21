@@ -15,12 +15,70 @@ const (
 	ProjectKindManaged ProjectKind = "managed"
 )
 
+// Tombstone is the raw deletion marker stored on a resource row. A NULL
+// deleted_at means the row was never tombstoned.
+type Tombstone struct {
+	DeletedAt       sql.NullTime
+	DeletedByUserID string
+	ExpiresAt       sql.NullTime
+}
+
+// Active reports whether the tombstone is set.
+func (t Tombstone) Active() bool {
+	return t.DeletedAt.Valid
+}
+
+// DeletionInfo is the effective deletion state visible for a resource: its
+// own tombstone, or the nearest ancestor tombstone when Inherited is true.
+type DeletionInfo struct {
+	DeletedAt       time.Time
+	DeletedByUserID string
+	ExpiresAt       time.Time
+	Inherited       bool
+}
+
+// Expired reports whether the grace period ended at or before cutoff.
+func (d *DeletionInfo) Expired(cutoff time.Time) bool {
+	return d != nil && !d.ExpiresAt.After(cutoff)
+}
+
+// EffectiveDeletion resolves the deletion state from a resource's own
+// tombstone plus ancestor tombstones ordered nearest-first. The nearest
+// active tombstone wins; ancestors mark the result inherited.
+func EffectiveDeletion(self Tombstone, ancestors ...Tombstone) *DeletionInfo {
+	if self.Active() {
+		return &DeletionInfo{
+			DeletedAt:       self.DeletedAt.Time,
+			DeletedByUserID: self.DeletedByUserID,
+			ExpiresAt:       self.ExpiresAt.Time,
+		}
+	}
+	for _, ancestor := range ancestors {
+		if ancestor.Active() {
+			return &DeletionInfo{
+				DeletedAt:       ancestor.DeletedAt.Time,
+				DeletedByUserID: ancestor.DeletedByUserID,
+				ExpiresAt:       ancestor.ExpiresAt.Time,
+				Inherited:       true,
+			}
+		}
+	}
+	return nil
+}
+
+// ScanTombstone appends tombstone scan targets for one table. Columns must be
+// selected as deleted_at, deleted_by_user_id, delete_expires_at.
+func ScanTombstone(targets []any, tombstone *Tombstone) []any {
+	return append(targets, &tombstone.DeletedAt, &tombstone.DeletedByUserID, &tombstone.ExpiresAt)
+}
+
 type ProjectRecord struct {
 	ID        string
 	Name      string
 	Kind      ProjectKind
 	SystemKey string
 	CreatedAt time.Time
+	Deletion  *DeletionInfo
 }
 
 type EnvironmentKind string
@@ -38,6 +96,7 @@ type EnvironmentRecord struct {
 	CopiedFromEnvironmentID string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+	Deletion                *DeletionInfo
 }
 
 type VolumeRecord struct {
@@ -46,6 +105,7 @@ type VolumeRecord struct {
 	Name          string
 	SizeBytes     int64
 	CreatedAt     time.Time
+	Deletion      *DeletionInfo
 }
 
 type ServiceRecord struct {
@@ -70,6 +130,7 @@ type ServiceRecord struct {
 	PlacementMessage        string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+	Deletion                *DeletionInfo
 }
 
 type DomainBindingRecord struct {
@@ -81,6 +142,7 @@ type DomainBindingRecord struct {
 	PlatformGenerated bool
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+	Deletion          *DeletionInfo
 }
 
 type AgentRecord struct {

@@ -319,7 +319,7 @@ func TestSealedSecretsDuplicateEnvironmentExcludes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := store.reads.ListServices(ctx, testUser("owner"), duplicate.ID)
+	services, err := store.reads.ListServices(ctx, testUser("owner"), duplicate.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}

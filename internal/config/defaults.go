@@ -30,6 +30,12 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.SecretKeys.KeyringPath == "" {
 		cfg.SecretKeys.KeyringPath = filepath.Join(cfg.StateDir, "secret-keys", "keys.json")
 	}
+	if cfg.Deletion.GracePeriodDays <= 0 {
+		cfg.Deletion.GracePeriodDays = 7
+	}
+	if cfg.Deletion.GCIntervalSeconds <= 0 {
+		cfg.Deletion.GCIntervalSeconds = 60
+	}
 	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
 		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
 	}

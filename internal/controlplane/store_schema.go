@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 24
+const currentSchemaVersion = 25
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -62,8 +62,12 @@ var currentSchema = []string{
 			kind STRING NOT NULL,
 			system_key STRING NULL,
 			owner_user_id STRING NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL
+			created_at TIMESTAMPTZ NOT NULL,
+			deleted_at TIMESTAMPTZ NULL,
+			deleted_by_user_id STRING NOT NULL DEFAULT '',
+			delete_expires_at TIMESTAMPTZ NULL
 		)`,
+	`CREATE INDEX idx_projects_delete_expires ON projects(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE UNIQUE INDEX idx_projects_owner_name
 			ON projects(owner_user_id, name) WHERE kind = 'user'`,
 	`CREATE UNIQUE INDEX idx_projects_system_key
@@ -101,8 +105,12 @@ var currentSchema = []string{
 			copied_from_environment_id STRING NULL REFERENCES environments(id) ON DELETE SET NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
+			deleted_at TIMESTAMPTZ NULL,
+			deleted_by_user_id STRING NOT NULL DEFAULT '',
+			delete_expires_at TIMESTAMPTZ NULL,
 			UNIQUE (project_id, name)
 		)`,
+	`CREATE INDEX idx_environments_delete_expires ON environments(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE UNIQUE INDEX idx_environments_one_production
 			ON environments(project_id) WHERE is_production = TRUE`,
 	`CREATE INDEX idx_environments_project_created ON environments(project_id, created_at, id)`,
@@ -177,8 +185,12 @@ var currentSchema = []string{
 			name STRING NOT NULL CHECK (btrim(name) <> ''),
 			size_bytes INT8 NOT NULL CHECK (size_bytes > 0),
 			created_at TIMESTAMPTZ NOT NULL,
+			deleted_at TIMESTAMPTZ NULL,
+			deleted_by_user_id STRING NOT NULL DEFAULT '',
+			delete_expires_at TIMESTAMPTZ NULL,
 			UNIQUE (environment_id, name)
 		)`,
+	`CREATE INDEX idx_volumes_delete_expires ON volumes(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE INDEX idx_volumes_environment_created ON volumes(environment_id, created_at, id)`,
 	`CREATE TABLE services (
 			id STRING PRIMARY KEY,
@@ -188,8 +200,12 @@ var currentSchema = []string{
 			desired_replica_count INT8 NOT NULL DEFAULT 1,
 			created_at TIMESTAMPTZ NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL,
+			deleted_at TIMESTAMPTZ NULL,
+			deleted_by_user_id STRING NOT NULL DEFAULT '',
+			delete_expires_at TIMESTAMPTZ NULL,
 			UNIQUE (environment_id, name)
 		)`,
+	`CREATE INDEX idx_services_delete_expires ON services(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE INDEX idx_services_environment_created ON services(environment_id, created_at, id)`,
 	`CREATE TABLE service_revisions (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -213,8 +229,12 @@ var currentSchema = []string{
 			target_port INT8 NOT NULL DEFAULT 8080,
 			platform_generated BOOL NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
+			updated_at TIMESTAMPTZ NOT NULL,
+			deleted_at TIMESTAMPTZ NULL,
+			deleted_by_user_id STRING NOT NULL DEFAULT '',
+			delete_expires_at TIMESTAMPTZ NULL
 		)`,
+	`CREATE INDEX idx_domain_bindings_delete_expires ON domain_bindings(delete_expires_at, hostname) WHERE deleted_at IS NOT NULL`,
 	`CREATE INDEX idx_domain_bindings_service ON domain_bindings(service_id, hostname)`,
 	`CREATE UNIQUE INDEX idx_domain_bindings_generated_service
 			ON domain_bindings(service_id) WHERE platform_generated = TRUE`,
