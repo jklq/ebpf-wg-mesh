@@ -153,8 +153,10 @@ type ResourceLimits struct {
 	// MaxProcesses caps the number of processes a build child may
 	// fork (RLIMIT_NPROC).
 	MaxProcesses int64
-	// MaxWorkspaceBytes caps total executor-managed workspace bytes,
-	// accounted after the build.
+	// MaxWorkspaceBytes caps total build-attributable bytes,
+	// accounted after the build. The development executor counts
+	// the workspace; the hardened executor additionally counts
+	// the per-execution daemon root and content-cache growth.
 	MaxWorkspaceBytes int64
 }
 

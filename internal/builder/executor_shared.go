@@ -369,9 +369,9 @@ func verifySnapshotNotWritable(repoDir string) error {
 	return nil
 }
 
-// enforceWorkspaceDiskLimit accounts executor-managed workspace bytes
-// against the execution disk limit.
-func enforceWorkspaceDiskLimit(root string, maxBytes int64) error {
+// dirBytes sums apparent file sizes under root. It fails closed:
+// an unreadable tree is an accounting failure, not zero bytes.
+func dirBytes(root string) (int64, error) {
 	var total int64
 	if err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -387,6 +387,16 @@ func enforceWorkspaceDiskLimit(root string, maxBytes int64) error {
 		total += info.Size()
 		return nil
 	}); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// enforceWorkspaceDiskLimit accounts executor-managed workspace bytes
+// against the execution disk limit.
+func enforceWorkspaceDiskLimit(root string, maxBytes int64) error {
+	total, err := dirBytes(root)
+	if err != nil {
 		return fmt.Errorf("account build workspace bytes: %w", err)
 	}
 	if total > maxBytes {

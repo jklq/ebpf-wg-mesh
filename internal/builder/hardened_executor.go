@@ -213,6 +213,15 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 			return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("mkdir build cache dir: %w", err)})
 		}
 	}
+	// The content cache is shared across builds, so only its growth
+	// during this build is attributable to it. Measure before the
+	// daemon starts; the post-build check charges the delta.
+	var cacheBytesBefore int64
+	if cacheDir != "" {
+		if cacheBytesBefore, err = dirBytes(cacheDir); err != nil {
+			return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("account build cache bytes: %w", err)})
+		}
+	}
 	// No host tool mirroring: no host path may enter the sandbox
 	// through the config directory.
 	configDir, cleanup, err := scopedDockerConfig(workspace.scratchDir, spec.Push.Reference, spec.Push.Username, spec.Push.Password, false)
@@ -305,10 +314,43 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, err)
 	}
-	if err := enforceWorkspaceDiskLimit(workspace.root, spec.Limits.MaxWorkspaceBytes); err != nil {
+	if err := enforceHardenedDiskLimit(workspace.root, daemonBuildDir, cacheDir, cacheBytesBefore, spec.Limits.MaxWorkspaceBytes); err != nil {
 		return ExecutionResult{}, &buildFailureError{kind: failureKindBuild, err: err}
 	}
 	return ExecutionResult{ImageDigestRef: ref}, nil
+}
+
+// enforceHardenedDiskLimit accounts every byte attributable to the
+// build against the disk budget: the workspace, the per-execution
+// daemon root, and the content-cache growth during the build. The
+// daemon root is fully attributable (it is cleared before the build),
+// while only the cache delta is charged — pre-existing cache bytes
+// were written by earlier builds with identical content. Concurrent
+// builds sharing one cache key may each observe the shared growth;
+// that fails closed in the safe direction.
+func enforceHardenedDiskLimit(workspaceRoot, daemonBuildDir, cacheDir string, cacheBytesBefore, maxBytes int64) error {
+	total, err := dirBytes(workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("account build workspace bytes: %w", err)
+	}
+	daemonBytes, err := dirBytes(daemonBuildDir)
+	if err != nil {
+		return fmt.Errorf("account per-execution daemon bytes: %w", err)
+	}
+	total += daemonBytes
+	if cacheDir != "" {
+		cacheAfter, err := dirBytes(cacheDir)
+		if err != nil {
+			return fmt.Errorf("account build cache bytes: %w", err)
+		}
+		if delta := cacheAfter - cacheBytesBefore; delta > 0 {
+			total += delta
+		}
+	}
+	if total > maxBytes {
+		return fmt.Errorf("build used %d bytes (workspace, daemon, and cache growth), exceeding the %d byte limit", total, maxBytes)
+	}
+	return nil
 }
 
 // renderSandboxIdentity writes the resolver files bind-mounted into

@@ -590,3 +590,212 @@ func TestSandboxStepError(t *testing.T) {
 		t.Fatalf("unexpected step error %q", err)
 	}
 }
+
+// writeSizedFileForTest writes a file with exactly size bytes.
+func writeSizedFileForTest(t *testing.T, path string, size int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, make([]byte, size), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+// sparseFileForTest creates a sparse file with the given apparent
+// size without allocating its blocks.
+func sparseFileForTest(t *testing.T, path string, size int64) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatalf("Truncate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestEnforceHardenedDiskLimit(t *testing.T) {
+	t.Parallel()
+
+	setup := func(t *testing.T, workspace, daemon, cacheBefore, cacheAfter int) (ws, dd, cache string) {
+		t.Helper()
+		root := t.TempDir()
+		ws = filepath.Join(root, "ws")
+		dd = filepath.Join(root, "bk", "build-1")
+		cache = filepath.Join(root, "cache", "cache-sha256-x")
+		writeSizedFileForTest(t, filepath.Join(ws, "repo", "Dockerfile"), workspace)
+		writeSizedFileForTest(t, filepath.Join(dd, "root", "layer.bin"), daemon)
+		writeSizedFileForTest(t, filepath.Join(cache, "blob"), cacheBefore)
+		// Grow the cache to its post-build size: the pre-existing
+		// bytes stay, the delta is the build's own export.
+		if extra := cacheAfter - cacheBefore; extra > 0 {
+			writeSizedFileForTest(t, filepath.Join(cache, "export.bin"), extra)
+		}
+		return ws, dd, cache
+	}
+
+	tests := []struct {
+		name                   string
+		workspace, daemon      int
+		cacheBefore, cacheGrow int
+		maxBytes               int64
+		wantErr                string
+	}{
+		{name: "fits", workspace: 100, daemon: 100, cacheBefore: 5000, cacheGrow: 100, maxBytes: 1000},
+		{name: "daemon exceeds", workspace: 100, daemon: 901, maxBytes: 1000, wantErr: "exceeding the 1000 byte limit"},
+		{name: "cache growth exceeds", workspace: 100, daemon: 100, cacheBefore: 5000, cacheGrow: 801, maxBytes: 1000, wantErr: "exceeding the 1000 byte limit"},
+		{name: "pre-existing cache not charged", workspace: 100, daemon: 100, cacheBefore: 5000, maxBytes: 1000},
+		{name: "exact limit passes", workspace: 400, daemon: 600, maxBytes: 1000},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ws, dd, cache := setup(t, test.workspace, test.daemon, test.cacheBefore, test.cacheBefore+test.cacheGrow)
+			var before int64
+			if test.cacheBefore > 0 || test.cacheGrow > 0 {
+				// The pre-build measurement sees only the
+				// pre-existing bytes.
+				before = int64(test.cacheBefore)
+			} else {
+				cache = ""
+			}
+			err := enforceHardenedDiskLimit(ws, dd, cache, before, test.maxBytes)
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("enforceHardenedDiskLimit: %v", err)
+			}
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("expected %q, got %v", test.wantErr, err)
+				}
+			}
+		})
+	}
+
+	t.Run("missing daemon dir fails closed", func(t *testing.T) {
+		t.Parallel()
+		ws, dd, _ := setup(t, 10, 10, 0, 0)
+		if err := os.RemoveAll(dd); err != nil {
+			t.Fatalf("RemoveAll: %v", err)
+		}
+		if err := enforceHardenedDiskLimit(ws, dd, "", 0, 1000); err == nil ||
+			!strings.Contains(err.Error(), "account per-execution daemon bytes") {
+			t.Fatalf("expected daemon accounting error, got %v", err)
+		}
+	})
+
+	t.Run("missing cache dir fails closed", func(t *testing.T) {
+		t.Parallel()
+		ws, dd, cache := setup(t, 10, 10, 100, 100)
+		if err := os.RemoveAll(cache); err != nil {
+			t.Fatalf("RemoveAll: %v", err)
+		}
+		if err := enforceHardenedDiskLimit(ws, dd, cache, 100, 1000); err == nil ||
+			!strings.Contains(err.Error(), "account build cache bytes") {
+			t.Fatalf("expected cache accounting error, got %v", err)
+		}
+	})
+
+	t.Run("cache shrink is not credited", func(t *testing.T) {
+		t.Parallel()
+		// Operator pruning mid-build shrinks the cache; the build
+		// must not gain budget from bytes it never wrote.
+		ws, dd, cache := setup(t, 600, 500, 500, 500)
+		if err := os.Remove(filepath.Join(cache, "blob")); err != nil {
+			t.Fatalf("Remove: %v", err)
+		}
+		if err := enforceHardenedDiskLimit(ws, dd, cache, 500, 1000); err == nil {
+			t.Fatal("shrink must not offset workspace and daemon bytes")
+		}
+	})
+}
+
+func TestHardenedExecuteFailsWhenDaemonExceedsDiskLimit(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	backend := &fakeSandboxBackend{}
+	starter := &fakeDaemonStarter{}
+	executor := newHardenedExecutorForTest(workDir, backend, starter)
+	backend.runHook = emulateBuildctl(t, workDir, "build-1", "sha256:abc")
+	// The daemon writes layers outside the workspace; a hostile
+	// build's layers must still hit the disk budget.
+	executor.startDaemon = func(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error) {
+		sparseFileForTest(t, filepath.Join(rootDir, "worker", "layer.bin"), 2<<30)
+		return starter.start(ctx, netnsPath, binary, sockPath, rootDir, env)
+	}
+
+	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
+	if _, err := executor.Execute(context.Background(), spec); err == nil {
+		t.Fatal("daemon bytes over the budget must fail the build")
+	} else {
+		var failure *buildFailureError
+		if !errors.As(err, &failure) || failure.kind != failureKindBuild {
+			t.Fatalf("expected build failure, got %T %v", err, err)
+		}
+		if !strings.Contains(err.Error(), "exceeding the") {
+			t.Fatalf("expected disk-limit error, got %v", err)
+		}
+	}
+}
+
+func TestHardenedExecuteChargesCacheGrowth(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	backend := &fakeSandboxBackend{}
+	starter := &fakeDaemonStarter{}
+	executor := newHardenedExecutorForTest(workDir, backend, starter)
+	build := emulateBuildctl(t, workDir, "build-1", "sha256:abc")
+	backend.runHook = func(ctx context.Context, net SandboxNet, step SandboxStep) error {
+		for _, mount := range step.Mounts {
+			if mount.Dest == "/build/cache" {
+				sparseFileForTest(t, filepath.Join(mount.Source, "export.bin"), 2<<30)
+			}
+		}
+		return build(ctx, net, step)
+	}
+
+	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
+	spec.Cache = CachePolicy{
+		Mode: CacheModeContentAddressed,
+		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
+	}
+	if _, err := executor.Execute(context.Background(), spec); err == nil {
+		t.Fatal("cache growth over the budget must fail the build")
+	} else if !strings.Contains(err.Error(), "exceeding the") {
+		t.Fatalf("expected disk-limit error, got %v", err)
+	}
+}
+
+func TestHardenedExecuteIgnoresPreexistingCacheBytes(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	backend := &fakeSandboxBackend{}
+	starter := &fakeDaemonStarter{}
+	executor := newHardenedExecutorForTest(workDir, backend, starter)
+	backend.runHook = emulateBuildctl(t, workDir, "build-1", "sha256:abc")
+
+	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
+	spec.Cache = CachePolicy{
+		Mode: CacheModeContentAddressed,
+		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
+	}
+	// An earlier build with identical content filled the cache past
+	// this build's whole budget; none of it is attributable here.
+	dir, err := resolveExecutionCacheDir(workDir, spec)
+	if err != nil {
+		t.Fatalf("resolveExecutionCacheDir: %v", err)
+	}
+	sparseFileForTest(t, filepath.Join(dir, "blob"), 2<<30)
+	if _, err := executor.Execute(context.Background(), spec); err != nil {
+		t.Fatalf("pre-existing cache bytes must not fail the build: %v", err)
+	}
+}
