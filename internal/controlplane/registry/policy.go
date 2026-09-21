@@ -12,24 +12,30 @@ import (
 var registryPushActions = []string{"pull", "push"}
 
 type credentialMinter interface {
-	MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error)
+	MintCredential(ctx context.Context, subject, repository string, actions []string, expiresAt *time.Time) (string, string, error)
 }
 
 type Policy struct {
-	host            string
-	namespacePrefix string
-	credentialTTL   time.Duration
-	minter          credentialMinter
-	now             func() time.Time
+	host              string
+	namespacePrefix   string
+	credentialTTL     time.Duration
+	pullCredentialTTL time.Duration
+	minter            credentialMinter
+	now               func() time.Time
 }
 
 func NewPolicy(cfg config.RegistryConfig, minter credentialMinter) *Policy {
+	pullTTL := time.Duration(cfg.PullCredentialTTLSeconds) * time.Second
+	if pullTTL <= 0 {
+		pullTTL = 48 * time.Hour
+	}
 	return &Policy{
-		host:            strings.TrimSpace(cfg.Host),
-		namespacePrefix: trimRegistryPath(cfg.NamespacePrefix),
-		credentialTTL:   time.Duration(cfg.CredentialTTLSeconds) * time.Second,
-		minter:          minter,
-		now:             time.Now,
+		host:              strings.TrimSpace(cfg.Host),
+		namespacePrefix:   trimRegistryPath(cfg.NamespacePrefix),
+		credentialTTL:     time.Duration(cfg.CredentialTTLSeconds) * time.Second,
+		pullCredentialTTL: pullTTL,
+		minter:            minter,
+		now:               time.Now,
 	}
 }
 
@@ -60,7 +66,7 @@ func (p *Policy) RuntimeDigestRef(pushRef, digest string) string {
 	return base + "@" + digest
 }
 
-func (p *Policy) CredentialsForBuild(_ context.Context, projectID, buildID, pushRef string) (string, string, error) {
+func (p *Policy) CredentialsForBuild(ctx context.Context, projectID, buildID, pushRef string) (string, string, error) {
 	if !p.Enabled() || p.minter == nil {
 		return "", "", fmt.Errorf("embedded registry auth is not configured")
 	}
@@ -79,10 +85,10 @@ func (p *Policy) CredentialsForBuild(_ context.Context, projectID, buildID, push
 		return "", "", fmt.Errorf("assigned repository does not match project %q and build %q", projectID, buildID)
 	}
 	expiresAt := p.now().UTC().Add(p.credentialTTL)
-	return p.minter.MintCredential("build-"+buildID, repository, registryPushActions, &expiresAt)
+	return p.minter.MintCredential(ctx, "build-"+buildID, repository, registryPushActions, &expiresAt)
 }
 
-func (p *Policy) CredentialsForPull(subject, environmentID, serviceID, imageRef string) (string, string, error) {
+func (p *Policy) CredentialsForPull(ctx context.Context, subject, environmentID, serviceID, imageRef string) (string, string, error) {
 	if !p.Enabled() || p.minter == nil {
 		return "", "", nil
 	}
@@ -104,7 +110,12 @@ func (p *Policy) CredentialsForPull(subject, environmentID, serviceID, imageRef 
 	if len(segments) != 4 || segments[0] == "" || segments[1] != sanitizeRefSegment(environmentID) || segments[2] == "" || segments[3] != sanitizeRefSegment(serviceID) {
 		return "", "", fmt.Errorf("image repository does not match environment %q and service %q", environmentID, serviceID)
 	}
-	return p.minter.MintCredential("pull-"+subject, repository, []string{"pull"}, nil)
+	// Pull capabilities expire so registry rotation can retire: agents
+	// receive fresh credentials on every Sync stream, and sessions rotate
+	// at least every client-certificate lifetime, so the pull TTL must
+	// exceed it (enforced in config validation).
+	expiresAt := p.now().UTC().Add(p.pullCredentialTTL)
+	return p.minter.MintCredential(ctx, "pull-"+subject, repository, []string{"pull"}, &expiresAt)
 }
 
 func (p *Policy) repositoryForReference(ref string) (string, error) {

@@ -17,6 +17,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 )
 
 func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
@@ -32,7 +33,7 @@ func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
 		TokenService:         host,
 		CredentialTTLSeconds: 300,
 	}
-	auth, err := registry.NewAuth(cfg, t.TempDir())
+	auth, err := registry.NewAuth(context.Background(), cfg, signkeystest.New(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +48,15 @@ func TestManagedRegistryEnforcesEmbeddedTokenScope(t *testing.T) {
 		TokenRealm:     authServer.URL + tokenPath,
 		TokenService:   cfg.TokenService,
 		TokenIssuer:    cfg.TokenIssuer,
-		RootCertBundle: auth.CertificatePath(),
+		RootCertBundle: auth.BundlePath(),
 	}, ExecDockerRunner{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer registry.Close()
 
-	username, password, err := auth.MintCredential("test-agent", "mesh/project-1/build-1/service-1", []string{"pull"}, nil)
+	pullExpires := time.Now().UTC().Add(48 * time.Hour)
+	username, password, err := auth.MintCredential(context.Background(), "test-agent", "mesh/project-1/build-1/service-1", []string{"pull"}, &pullExpires)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -69,7 +69,7 @@ func (e *Enrollment) EnrollAgent(ctx context.Context, req *agentv1.EnrollRequest
 			return nil, status.Error(codes.Unauthenticated, "invalid bootstrap token")
 		}
 	}
-	resp, err := e.authority.Enroll(req)
+	resp, err := e.authority.Enroll(ctx, req)
 	if err != nil {
 		return nil, err
 	}

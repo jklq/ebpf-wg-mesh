@@ -2,6 +2,8 @@ package registry
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,8 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -20,7 +24,8 @@ func TestPolicyMintsExactBuildScopedCapability(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	cfg := testRegistryConfig()
-	auth, err := NewAuth(cfg, t.TempDir())
+	ctx := context.Background()
+	auth, err := NewAuth(ctx, cfg, signkeystest.New(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +40,7 @@ func TestPolicyMintsExactBuildScopedCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CredentialsForBuild: %v", err)
 	}
-	claims, err := auth.parseCapability(username, password)
+	claims, err := auth.parseCapability(ctx, username, password)
 	if err != nil {
 		t.Fatalf("parse capability: %v", err)
 	}
@@ -48,15 +53,51 @@ func TestPolicyMintsExactBuildScopedCapability(t *testing.T) {
 	}
 }
 
+func TestPolicyMintsExpiringPullCapability(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	cfg := testRegistryConfig()
+	ctx := context.Background()
+	auth, err := NewAuth(ctx, cfg, signkeystest.New(t), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.now = func() time.Time { return now }
+	policy := NewPolicy(cfg, auth)
+	policy.now = auth.now
+	username, password, err := policy.CredentialsForPull(ctx, "node-1", "environment-1", "service-1", "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1:git-deadbeef")
+	if err != nil {
+		t.Fatalf("CredentialsForPull: %v", err)
+	}
+	claims, err := auth.parseCapability(ctx, username, password)
+	if err != nil {
+		t.Fatalf("parse capability: %v", err)
+	}
+	// The default pull lifetime exceeds the default client-certificate
+	// lifetime so agents holding credentials across session rotations keep
+	// pulling, and stays bounded so registry rotation can retire.
+	if claims.ExpiresAt == nil || !claims.ExpiresAt.Time.Equal(now.Add(48*time.Hour)) {
+		t.Fatalf("unexpected pull expiry: %+v", claims.RegisteredClaims)
+	}
+}
+
 func TestAuthIntersectsRequestedScope(t *testing.T) {
 	t.Parallel()
 
 	cfg := testRegistryConfig()
-	auth, err := NewAuth(cfg, t.TempDir())
+	ctx := context.Background()
+	keys := signkeystest.New(t)
+	auth, err := NewAuth(ctx, cfg, keys, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	username, password, err := auth.MintCredential("agent-1", "mesh/project-1/build-1/service-1", []string{"pull"}, nil)
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	username, password, err := auth.MintCredential(ctx, "agent-1", "mesh/project-1/build-1/service-1", []string{"pull"}, &expiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := keys.Active(ctx, signkeys.ScopeRegistry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +119,7 @@ func TestAuthIntersectsRequestedScope(t *testing.T) {
 		}
 		claims := registryTokenClaims{}
 		parsed, err := jwt.ParseWithClaims(body.Token, &claims, func(*jwt.Token) (any, error) {
-			return &auth.key.PublicKey, nil
+			return &active.Key.PublicKey, nil
 		}, jwt.WithIssuer(cfg.TokenIssuer), jwt.WithAudience(cfg.TokenService))
 		if err != nil || !parsed.Valid {
 			t.Fatalf("parse registry token: %v", err)
@@ -101,13 +142,14 @@ func TestAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	cfg := testRegistryConfig()
-	auth, err := NewAuth(cfg, t.TempDir())
+	ctx := context.Background()
+	auth, err := NewAuth(ctx, cfg, signkeystest.New(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	auth.now = func() time.Time { return now }
 	expiresAt := now.Add(time.Minute)
-	username, password, err := auth.MintCredential("builder", "mesh/project/build/service", []string{"push"}, &expiresAt)
+	username, password, err := auth.MintCredential(ctx, "builder", "mesh/project/build/service", []string{"push"}, &expiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,28 +172,147 @@ func TestAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
 	}
 }
 
-func TestAuthPersistsSigningIdentity(t *testing.T) {
+// TestAuthSharesSigningIdentityAcrossReplicas proves two Auth components
+// over shared key state agree: a capability minted by one verifies on the
+// other, and both publish the same trust bundle for the registry.
+func TestAuthSharesSigningIdentityAcrossReplicas(t *testing.T) {
 	t.Parallel()
 
 	cfg := testRegistryConfig()
-	stateDir := t.TempDir()
-	first, err := NewAuth(cfg, stateDir)
+	ctx := context.Background()
+	keys := signkeystest.New(t)
+	first, err := NewAuth(ctx, cfg, keys, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	username, password, err := first.MintCredential("agent-1", "mesh/project/environment/build/service", []string{"pull"}, nil)
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	username, password, err := first.MintCredential(ctx, "agent-1", "mesh/project/environment/build/service", []string{"pull"}, &expiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewAuth(cfg, stateDir)
+	second, err := NewAuth(ctx, cfg, keys, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.parseCapability(username, password); err != nil {
-		t.Fatalf("credential did not survive auth component restart: %v", err)
+	if _, err := second.parseCapability(ctx, username, password); err != nil {
+		t.Fatalf("credential did not verify on the second replica: %v", err)
 	}
-	if !first.certificate.Equal(second.certificate) {
-		t.Fatal("registry signing certificate changed across restart")
+	firstBundle, err := keys.PublicBundle(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBundle, err := keys.PublicBundle(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstBundle) != string(secondBundle) {
+		t.Fatal("trust bundles differ across replicas")
+	}
+}
+
+// TestAuthRotationAcceptsBothGenerations walks a registry rotation: the
+// token endpoint exchanges capabilities signed by either key through the
+// overlap, minted tokens chain to the published bundle, and the retiring
+// key stops verifying after finish.
+func TestAuthRotationAcceptsBothGenerations(t *testing.T) {
+	t.Parallel()
+
+	cfg := testRegistryConfig()
+	ctx := context.Background()
+	keys := signkeystest.New(t)
+	auth, err := NewAuth(ctx, cfg, keys, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(48 * time.Hour)
+	usernameBefore, passwordBefore, err := auth.MintCredential(ctx, "agent-1", "mesh/project/environment/build/service", []string{"pull"}, &expiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys.Rotate(t, signkeys.ScopeRegistry)
+	usernameAfter, passwordAfter, err := auth.MintCredential(ctx, "agent-1", "mesh/project/environment/build/service", []string{"pull"}, &expiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange := func(username, password string) string {
+		t.Helper()
+		query := url.Values{"service": {cfg.TokenService}, "scope": {"repository:mesh/project/environment/build/service:pull"}}
+		req := httptest.NewRequest(http.MethodGet, TokenPath+"?"+query.Encode(), nil)
+		req.SetBasicAuth(username, password)
+		resp := httptest.NewRecorder()
+		auth.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("token response = %d: %s", resp.Code, resp.Body.String())
+		}
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Token
+	}
+	tokenBefore := exchange(usernameBefore, passwordBefore)
+	tokenAfter := exchange(usernameAfter, passwordAfter)
+
+	// Both tokens chain to the published overlap bundle the way the
+	// registry daemon verifies them: x5c against rootcertbundle.
+	bundle, err := keys.PublicBundle(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(bundle) {
+		t.Fatal("append trust bundle")
+	}
+	for name, raw := range map[string]string{"before": tokenBefore, "after": tokenAfter} {
+		parser := jwt.NewParser()
+		token, _, err := parser.ParseUnverified(raw, &registryTokenClaims{})
+		if err != nil {
+			t.Fatalf("parse token (%s): %v", name, err)
+		}
+		x5c, _ := token.Header["x5c"].([]any)
+		if len(x5c) != 1 {
+			t.Fatalf("token (%s) carries %d x5c certificates, want 1", name, len(x5c))
+		}
+		der, err := base64.StdEncoding.DecodeString(x5c[0].(string))
+		if err != nil {
+			t.Fatalf("decode x5c (%s): %v", name, err)
+		}
+		leaf, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatalf("parse x5c (%s): %v", name, err)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots}); err != nil {
+			t.Fatalf("verify token chain (%s): %v", name, err)
+		}
+		claims := registryTokenClaims{}
+		active, err := keys.Active(ctx, signkeys.ScopeRegistry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := jwt.ParseWithClaims(tokenAfter, &claims, func(*jwt.Token) (any, error) {
+			return &active.Key.PublicKey, nil
+		}, jwt.WithIssuer(cfg.TokenIssuer), jwt.WithAudience(cfg.TokenService))
+		if err != nil || !parsed.Valid {
+			t.Fatalf("post-rotation token is not signed by the active key: %v", err)
+		}
+	}
+
+	keys.Finish(t, signkeys.ScopeRegistry)
+	req := httptest.NewRequest(http.MethodGet, TokenPath+"?service="+url.QueryEscape(cfg.TokenService), nil)
+	req.SetBasicAuth(usernameBefore, passwordBefore)
+	resp := httptest.NewRecorder()
+	auth.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("retiring capability status = %d, want 401", resp.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, TokenPath+"?service="+url.QueryEscape(cfg.TokenService), nil)
+	req.SetBasicAuth(usernameAfter, passwordAfter)
+	resp = httptest.NewRecorder()
+	auth.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("active capability status = %d, want 200", resp.Code)
 	}
 }
 
@@ -159,7 +320,8 @@ func TestPolicyRejectsForeignAssignedRepository(t *testing.T) {
 	t.Parallel()
 
 	cfg := testRegistryConfig()
-	auth, err := NewAuth(cfg, t.TempDir())
+	ctx := context.Background()
+	auth, err := NewAuth(ctx, cfg, signkeystest.New(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

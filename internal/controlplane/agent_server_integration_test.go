@@ -44,7 +44,6 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 				ClientCertValidityHours: 24,
 			},
 		},
-		UserAssertions: config.UserAssertionConfig{HMACSecret: testUserAssertionSecret},
 		Database: config.DatabaseConfig{
 			URL:          createTestDatabase(t),
 			MaxOpenConns: 4,
@@ -82,7 +81,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 	waitForListener(t, server.InternalAddr())
 	waitForSingletonLease(t, server)
 
-	dashboardIdentity, err := server.EnsureDashboardClientIdentity("dashboard-test")
+	dashboardIdentity, err := server.EnsureDashboardClientIdentity(ctx, "dashboard-test")
 	if err != nil {
 		t.Fatalf("EnsureDashboardClientIdentity: %v", err)
 	}
@@ -150,6 +149,10 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 	sessionID := "agent-server-session"
+	clusterID, err := server.authority.ClusterIdentity(ctx)
+	if err != nil {
+		t.Fatalf("ClusterIdentity: %v", err)
+	}
 	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
 		AgentId:                 agentID,
 		Name:                    "E2E agent",
@@ -163,7 +166,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		SoftwareVersion:         "test",
 		SessionId:               sessionID,
 		SessionIncarnation:      1,
-		ClusterId:               server.authority.ClusterIdentity(), LocalStoreId: "test-store-" + agentID, InitializationState: "ready",
+		ClusterId:               clusterID, LocalStoreId: "test-store-" + agentID, InitializationState: "ready",
 	}}}); err != nil {
 		t.Fatalf("send hello: %v", err)
 	}
@@ -175,7 +178,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 	dashboardConn := newDashboardPlatformClientConn(t, server.InternalAddr(), dashboardIdentity)
 	defer dashboardConn.Close()
 	platformClient := platformv1.NewPlatformServiceClient(dashboardConn)
-	userCtx := metadata.AppendToOutgoingContext(ctx, userAssertionHeader, signedLiveUserAssertion(t, "e2e-user"))
+	userCtx := metadata.AppendToOutgoingContext(ctx, userAssertionHeader, signedLiveUserAssertion(t, server, "e2e-user"))
 	project, err := platformClient.CreateProject(userCtx, &platformv1.CreateProjectRequest{Name: "agent-sync-e2e"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)

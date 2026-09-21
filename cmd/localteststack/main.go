@@ -18,6 +18,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/testdb"
 	"ebof-wg-mesh/internal/testutil"
@@ -134,14 +135,6 @@ func main() {
 		}
 	}()
 	clickHouseURL := clickHouse.URL()
-	dashboardJWTSecret, err := randomSecret(32)
-	if err != nil {
-		log.Fatalf("generate dashboard JWT secret: %v", err)
-	}
-	userAssertionSecret, err := randomSecret(32)
-	if err != nil {
-		log.Fatalf("generate user assertion secret: %v", err)
-	}
 	githubTokenEncryptionKey, err := randomSecret(32)
 	if err != nil {
 		log.Fatalf("generate GitHub token encryption key: %v", err)
@@ -182,7 +175,6 @@ func main() {
 				ClientCertValidityHours: 24,
 			},
 		},
-		UserAssertions: config.UserAssertionConfig{HMACSecret: userAssertionSecret},
 		Database: config.DatabaseConfig{
 			URL: dbURL,
 		},
@@ -220,18 +212,16 @@ func main() {
 		},
 	}
 	consoleEnv := map[string]string{
-		"DASHBOARD_PROFILE":                            "development",
-		"DASHBOARD_DATABASE_URL":                       dbURL,
-		"DASHBOARD_DATABASE_SCHEMA":                    "dashboard_local_e2e",
-		"DASHBOARD_SESSION_COOKIE_NAME":                "dashboard_local_e2e_session",
-		"DASHBOARD_JWT_SECRET":                         dashboardJWTSecret,
-		"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": userAssertionSecret,
-		"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY":        githubTokenEncryptionKey,
-		"DASHBOARD_PUBLIC_BASE_URL":                    ingressURL[:len(ingressURL)-1],
-		"DASHBOARD_LOCAL_INGRESS_BASE_URL":             ingressURL[:len(ingressURL)-1],
-		"DASHBOARD_INGRESS_TARGET_HOST":                stackCfg.IngressHost,
-		"DASHBOARD_LOCAL_DOMAIN_SUFFIX":                stackCfg.LocalDomainSuffix,
-		"DASHBOARD_OPERATOR_GITHUB_LOGIN":              stackCfg.OperatorGitHubLogin,
+		"DASHBOARD_PROFILE":                     "development",
+		"DASHBOARD_DATABASE_URL":                dbURL,
+		"DASHBOARD_DATABASE_SCHEMA":             "dashboard_local_e2e",
+		"DASHBOARD_SESSION_COOKIE_NAME":         "dashboard_local_e2e_session",
+		"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": githubTokenEncryptionKey,
+		"DASHBOARD_PUBLIC_BASE_URL":             ingressURL[:len(ingressURL)-1],
+		"DASHBOARD_LOCAL_INGRESS_BASE_URL":      ingressURL[:len(ingressURL)-1],
+		"DASHBOARD_INGRESS_TARGET_HOST":         stackCfg.IngressHost,
+		"DASHBOARD_LOCAL_DOMAIN_SUFFIX":         stackCfg.LocalDomainSuffix,
+		"DASHBOARD_OPERATOR_GITHUB_LOGIN":       stackCfg.OperatorGitHubLogin,
 	}
 	productE2EEnabled := os.Getenv("LOCALTESTSTACK_PRODUCT_E2E") == "1"
 	if !stackCfg.EnablePublicTunnel {
@@ -378,6 +368,19 @@ func main() {
 		log.Fatalf("create controlplane server: %v", err)
 	}
 	defer server.Close()
+	// The control plane is the system of record for the secrets the console
+	// holds: development auto-generates them at boot, and the stack exports
+	// the active values here.
+	userAssertionSecret, err := signingSecret(ctx, server, signkeys.ScopeUserAssertion)
+	if err != nil {
+		log.Fatalf("export user assertion secret: %v", err)
+	}
+	dashboardJWTSecret, err := signingSecret(ctx, server, signkeys.ScopeDashboardSession)
+	if err != nil {
+		log.Fatalf("export dashboard JWT secret: %v", err)
+	}
+	consoleEnv["DASHBOARD_JWT_SECRET"] = dashboardJWTSecret
+	consoleEnv["DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET"] = userAssertionSecret
 
 	runErrCh := make(chan error, 1)
 	go func() {
@@ -430,7 +433,7 @@ func main() {
 		TokenRealm:     tokenRealm,
 		TokenService:   cfg.Registry.TokenService,
 		TokenIssuer:    cfg.Registry.TokenIssuer,
-		RootCertBundle: server.RegistryAuthCertificatePath(),
+		RootCertBundle: server.RegistryAuthBundlePath(),
 	}, localteststack.ExecDockerRunner{})
 	if err != nil {
 		log.Fatalf("start managed local registry: %v", err)
@@ -442,7 +445,7 @@ func main() {
 	}()
 	log.Printf("local registry ready: %s", managedRegistry.Host())
 
-	identity, err := server.EnsureDashboardClientIdentity("dashboard-local")
+	identity, err := server.EnsureDashboardClientIdentity(ctx, "dashboard-local")
 	if err != nil {
 		log.Fatalf("mint dashboard client identity: %v", err)
 	}

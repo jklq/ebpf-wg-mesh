@@ -18,6 +18,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
@@ -155,6 +156,20 @@ func openTestStore(t *testing.T) *persistence {
 	return store
 }
 
+// ensureTestSigningKeys builds the shared signing-key inventory over a test
+// store and ensures every scope, mirroring development server boot.
+func ensureTestSigningKeys(t *testing.T, store *persistence) *signkeys.Service {
+	t.Helper()
+	svc := signkeys.New(store.db, store.secrets.Registry())
+	ctx := context.Background()
+	for _, scope := range signkeys.AllScopes() {
+		if _, err := svc.EnsureActiveKey(ctx, scope, signkeys.EnsureOptions{}); err != nil {
+			t.Fatalf("ensure signing scope %s: %v", scope, err)
+		}
+	}
+	return svc
+}
+
 func sharedTestDatabase(t *testing.T) string {
 	t.Helper()
 
@@ -198,6 +213,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"service_secret_versions",
 		"service_revisions",
 		"services",
+		"platform_signing_keys",
 		"envelope_data_keys",
 		"envelope_keys",
 		"volumes",

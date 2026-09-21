@@ -2,11 +2,9 @@
 set -euo pipefail
 
 CONTROLPLANE_BIN=${CONTROLPLANE_BIN:-/opt/ebpf-wg-mesh/controlplane}
-INTERNAL_CLIENT_CERT_BIN=${INTERNAL_CLIENT_CERT_BIN:-/opt/ebpf-wg-mesh/internal-client-cert}
 STATE_DIR=${STATE_DIR:-/var/lib/ebpf-wg-mesh/controlplane}
 COCKROACH_VERSION=${COCKROACH_VERSION:-v26.1.0}
 AGENT_BOOTSTRAP_TOKENS=${AGENT_BOOTSTRAP_TOKENS:?AGENT_BOOTSTRAP_TOKENS must contain comma-separated agent_id=token bindings}
-USER_ASSERTION_SECRET=${USER_ASSERTION_SECRET:?USER_ASSERTION_SECRET must be at least 32 bytes}
 INTERNAL_LISTEN=${INTERNAL_LISTEN:-0.0.0.0:9443}
 PUBLIC_ADDR=${PUBLIC_ADDR:-platform.local}
 # vm-user is an operator: e2e probes call operator-only RPCs such as ListAgents.
@@ -56,7 +54,7 @@ Requires=ebpf-wg-mesh-cockroach.service
 
 [Service]
 Type=simple
-ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -replica-addresses "${REPLICA_ADDRESSES}" -advertise-addr "${ADVERTISE_ADDR}" -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -user-assertion-secret ${USER_ASSERTION_SECRET} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-admin-url ${INGRESS_ADMIN_URL} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
+ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -replica-addresses "${REPLICA_ADDRESSES}" -advertise-addr "${ADVERTISE_ADDR}" -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-admin-url ${INGRESS_ADMIN_URL} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
 Restart=always
 RestartSec=3
 
@@ -64,6 +62,6 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-chmod 0755 "${CONTROLPLANE_BIN}" "${INTERNAL_CLIENT_CERT_BIN}"
+chmod 0755 "${CONTROLPLANE_BIN}"
 systemctl daemon-reload
 systemctl enable --now ebpf-wg-mesh-cockroach.service "${SERVICE_NAME}.service"

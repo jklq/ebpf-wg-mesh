@@ -51,17 +51,37 @@ type DelegatedUser struct {
 }
 
 type InternalAuth struct {
-	dashboardCallerID   string
-	userAssertionSecret []byte
-	revocations         *CertificateRevocations
-	now                 func() time.Time
+	dashboardCallerID string
+	assertionSecrets  UserAssertionSecrets
+	revocations       *CertificateRevocations
+	now               func() time.Time
 }
 
-func NewInternalAuth(dashboardCallerID, userAssertionSecret string, revocations ...*CertificateRevocations) *InternalAuth {
+// UserAssertionSecrets loads the HMAC secrets user assertions verify
+// against: the active secret first, then the retiring secret while a
+// rotation overlaps. It runs on every authenticated RPC so replicas agree
+// without cache invalidation.
+type UserAssertionSecrets func(ctx context.Context) ([][]byte, error)
+
+// StaticUserAssertionSecrets verifies against fixed secrets. Tests use it;
+// the server loads from shared signing keys.
+func StaticUserAssertionSecrets(secrets ...string) UserAssertionSecrets {
+	return func(context.Context) ([][]byte, error) {
+		var out [][]byte
+		for _, secret := range secrets {
+			if secret != "" {
+				out = append(out, []byte(secret))
+			}
+		}
+		return out, nil
+	}
+}
+
+func NewInternalAuth(dashboardCallerID string, secrets UserAssertionSecrets, revocations ...*CertificateRevocations) *InternalAuth {
 	auth := &InternalAuth{
-		dashboardCallerID:   strings.TrimSpace(dashboardCallerID),
-		userAssertionSecret: []byte(userAssertionSecret),
-		now:                 time.Now,
+		dashboardCallerID: strings.TrimSpace(dashboardCallerID),
+		assertionSecrets:  secrets,
+		now:               time.Now,
 	}
 	if len(revocations) > 0 {
 		auth.revocations = revocations[0]
@@ -177,7 +197,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 		return nil, status.Error(codes.PermissionDenied, "dashboard client certificate common name is not allowed")
 	}
 
-	delegatedUser, delegated, err := a.delegatedUserFromAssertions(identity.assertions)
+	delegatedUser, delegated, err := a.delegatedUserFromAssertions(ctx, identity.assertions)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +324,7 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	}
 }
 
-func (a *InternalAuth) delegatedUserFromAssertions(assertions []string) (DelegatedUser, bool, error) {
+func (a *InternalAuth) delegatedUserFromAssertions(ctx context.Context, assertions []string) (DelegatedUser, bool, error) {
 	if len(assertions) == 0 {
 		return DelegatedUser{}, false, nil
 	}
@@ -312,11 +332,20 @@ func (a *InternalAuth) delegatedUserFromAssertions(assertions []string) (Delegat
 		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "exactly one user assertion is required")
 	}
 	assertion := assertions[0]
-	if assertion == "" || len(assertion) > maxUserAssertionLength || len(a.userAssertionSecret) == 0 {
+	if assertion == "" || len(assertion) > maxUserAssertionLength {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
+	}
+	if a.assertionSecrets == nil {
+		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
+	}
+	secrets, err := a.assertionSecrets(ctx)
+	if err != nil {
+		return DelegatedUser{}, false, status.Error(codes.Unavailable, "user assertion keys are unavailable")
+	}
+	if len(secrets) == 0 {
 		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
 	}
 
-	claims := jwt.RegisteredClaims{}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithIssuer(userAssertionIssuer),
@@ -326,20 +355,30 @@ func (a *InternalAuth) delegatedUserFromAssertions(assertions []string) (Delegat
 		jwt.WithLeeway(userAssertionClockSkew),
 		jwt.WithTimeFunc(a.now),
 	)
-	token, err := parser.ParseWithClaims(assertion, &claims, func(token *jwt.Token) (any, error) {
-		return a.userAssertionSecret, nil
-	})
-	if err != nil || !token.Valid || claims.ExpiresAt == nil || claims.IssuedAt == nil {
-		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
+	// Every secret gets a full parse: active first, then the retiring
+	// secret while a rotation overlaps. Signature failure under one key
+	// must not leak into the next attempt's claims.
+	for _, secret := range secrets {
+		if len(secret) == 0 {
+			continue
+		}
+		claims := jwt.RegisteredClaims{}
+		token, err := parser.ParseWithClaims(assertion, &claims, func(token *jwt.Token) (any, error) {
+			return secret, nil
+		})
+		if err != nil || !token.Valid || claims.ExpiresAt == nil || claims.IssuedAt == nil {
+			continue
+		}
+		if claims.ExpiresAt.Time.Before(claims.IssuedAt.Time) || claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time) > userAssertionMaxAge {
+			return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion lifetime")
+		}
+		userID := strings.TrimSpace(claims.Subject)
+		if userID == "" || userID != claims.Subject || len(userID) > 256 || strings.TrimSpace(claims.ID) == "" {
+			return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion claims")
+		}
+		return DelegatedUser{UserID: userID}, true, nil
 	}
-	if claims.ExpiresAt.Time.Before(claims.IssuedAt.Time) || claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time) > userAssertionMaxAge {
-		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion lifetime")
-	}
-	userID := strings.TrimSpace(claims.Subject)
-	if userID == "" || userID != claims.Subject || len(userID) > 256 || strings.TrimSpace(claims.ID) == "" {
-		return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion claims")
-	}
-	return DelegatedUser{UserID: userID}, true, nil
+	return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
 }
 
 type wrappedServerStream struct {

@@ -179,7 +179,7 @@ func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req
 	if !s.dashboardEnabled || s.dashboardTrustedAgentID == "" || caller.ID != s.dashboardTrustedAgentID {
 		return nil, status.Error(codes.PermissionDenied, "managed dashboard certificate requires the trusted agent")
 	}
-	resp, err := s.authority.IssueManagedDashboardCertificate(s.dashboardCallerID, req.GetCsrPem())
+	resp, err := s.authority.IssueManagedDashboardCertificate(ctx, s.dashboardCallerID, req.GetCsrPem())
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,14 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if err != nil {
 		return status.Errorf(codes.Internal, "read agent authority: %v", err)
 	}
-	if hello.GetClusterId() != s.authority.ClusterIdentity() {
+	// The active cluster identity flips at CA rotate-start; the retiring
+	// identity stays accepted so pre-renewal agents stay connected
+	// through the overlap.
+	trustedCluster, err := s.authority.VerifyClusterID(ctx, hello.GetClusterId())
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "verify cluster identity: %v", err)
+	}
+	if !trustedCluster {
 		return status.Error(codes.FailedPrecondition, "identity recovery required: cluster differs from authenticated authority")
 	}
 	switch hello.GetInitializationState() {
@@ -270,7 +277,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 
 	sendErr := make(chan error, 1)
 	go func() {
-		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), epoch, notifyCh, ownerChanged)
+		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, notifyCh, ownerChanged)
 	}()
 	s.notifier.Notify(hello.AgentId)
 
@@ -366,7 +373,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID string, epoch uint64, notifyCh, ownerChanged <-chan struct{}) error {
+func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, notifyCh, ownerChanged <-chan struct{}) error {
 	var lastCursor int64 = -1
 	var lastReplicas []string
 	for {
@@ -379,7 +386,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			if state.GetAuthorityEpoch() != epoch {
 				return nil, errors.New("snapshot authority changed; reconnect required")
 			}
-			if err := s.attachRegistryPullCredentials(agentID, state); err != nil {
+			if err := s.attachRegistryPullCredentials(ctx, agentID, state); err != nil {
 				return nil, err
 			}
 			state.ReplicaAddresses = append([]string(nil), s.replicaAddresses...)
@@ -393,7 +400,11 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 				return err
 			}
 			stampAgentCommand(state, sessionID, epoch, deadline)
-			state.ClusterId = s.authority.ClusterIdentity()
+			// Echo the hello's verified cluster identity so a CA rotation
+			// mid-stream does not invalidate the session. The authoritative
+			// identity is established at hello and enrollment; agents adopt
+			// the new identity on certificate renewal.
+			state.ClusterId = clusterID
 			return stream.Send(&agentv1.AgentServerMessage{
 				Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
 			})
@@ -531,12 +542,12 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 	}
 }
 
-func (s *AgentService) attachRegistryPullCredentials(agentID string, state *agentv1.DesiredNodeState) error {
+func (s *AgentService) attachRegistryPullCredentials(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) error {
 	if s == nil || s.registry == nil || !s.registry.Enabled() || state == nil {
 		return nil
 	}
 	for _, service := range state.GetServices() {
-		username, password, err := s.registry.CredentialsForPull(
+		username, password, err := s.registry.CredentialsForPull(ctx,
 			agentID+"-"+service.GetAllocationId(), service.GetEnvironmentId(), service.GetServiceId(), service.GetSpec().GetImage(),
 		)
 		if err != nil {

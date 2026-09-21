@@ -38,7 +38,7 @@ func TestCrashEvidenceSurvivesContainerRemoval(t *testing.T) {
 	defer streamCancel()
 	_ = recvDesiredState(t, stream)
 
-	userA := userContext(t, ctx, "user-a")
+	userA := userContext(t, cp, ctx, "user-a")
 	projects, err := cp.dashboard.ListProjects(userA, nil)
 	if err != nil || len(projects.GetProjects()) != 1 {
 		t.Fatalf("ListProjects: %+v %v", projects, err)
