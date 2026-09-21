@@ -644,4 +644,20 @@ var currentSchema = []string{
 			deleted_at TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY (service_id, name)
 		)`,
+	`CREATE TABLE platform_signing_keys (
+			id STRING PRIMARY KEY,
+			scope STRING NOT NULL CHECK (scope IN ('internal-ca', 'registry', 'user-assertion', 'dashboard-session')),
+			kid STRING NOT NULL UNIQUE,
+			state STRING NOT NULL CHECK (state IN ('active', 'retiring')),
+			key_type STRING NOT NULL CHECK (key_type IN ('ecdsa-p256', 'hmac-256')),
+			wrapping_key_id STRING NOT NULL REFERENCES envelope_keys(id),
+			wrapped_key BYTES NOT NULL,
+			public_pem STRING NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			retired_at TIMESTAMPTZ NULL
+		)`,
+	`CREATE UNIQUE INDEX idx_platform_signing_keys_scope_state
+			ON platform_signing_keys(scope, state)`,
+	`CREATE INDEX idx_platform_signing_keys_wrapping ON platform_signing_keys(wrapping_key_id)`,
 }

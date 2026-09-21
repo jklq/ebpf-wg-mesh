@@ -1,17 +1,11 @@
 package registry
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
+	"context"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +14,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -63,56 +58,86 @@ func (c registryTokenClaims) GetAudience() (jwt.ClaimStrings, error) {
 	return jwt.ClaimStrings{c.Audience}, nil
 }
 
+// Auth mints registry capabilities and exchanges them for short-lived
+// registry tokens. The signing key is shared signing-key state: every
+// replica signs with the active key and verifies capabilities against the
+// active plus retiring keys, so rotation never breaks pulls or pushes.
 type Auth struct {
-	issuer          string
-	service         string
-	credentialTTL   time.Duration
-	credentialAud   string
-	key             *ecdsa.PrivateKey
-	certificate     *x509.Certificate
-	certificatePath string
-	now             func() time.Time
+	issuer        string
+	service       string
+	credentialTTL time.Duration
+	credentialAud string
+	keys          signkeys.Provider
+	bundlePath    string
+	now           func() time.Time
 }
 
-func NewAuth(cfg config.RegistryConfig, stateDir string) (*Auth, error) {
+func NewAuth(ctx context.Context, cfg config.RegistryConfig, keys signkeys.Provider, stateDir string) (*Auth, error) {
 	if strings.TrimSpace(cfg.Host) == "" {
 		return nil, nil
 	}
-	var (
-		key      *ecdsa.PrivateKey
-		cert     *x509.Certificate
-		certPath string
-		err      error
-	)
-	if strings.TrimSpace(cfg.SigningCertFile) != "" || strings.TrimSpace(cfg.SigningKeyFile) != "" {
-		key, cert, certPath, err = loadRegistrySigningIdentityFiles(cfg.SigningKeyFile, cfg.SigningCertFile)
-	} else {
-		key, cert, certPath, err = loadOrCreateRegistrySigningIdentity(stateDir, cfg.TokenIssuer)
+	if keys == nil {
+		return nil, errors.New("registry auth requires a signing-key provider")
 	}
-	if err != nil {
+	bundlePath := filepath.Join(stateDir, "registry-auth", "signing-bundle.pem")
+	if err := writeTrustBundle(ctx, keys, bundlePath); err != nil {
 		return nil, err
 	}
 	return &Auth{
-		issuer:          cfg.TokenIssuer,
-		service:         cfg.TokenService,
-		credentialTTL:   time.Duration(cfg.CredentialTTLSeconds) * time.Second,
-		credentialAud:   cfg.TokenService + ":credentials",
-		key:             key,
-		certificate:     cert,
-		certificatePath: certPath,
-		now:             time.Now,
+		issuer:        cfg.TokenIssuer,
+		service:       cfg.TokenService,
+		credentialTTL: time.Duration(cfg.CredentialTTLSeconds) * time.Second,
+		credentialAud: cfg.TokenService + ":credentials",
+		keys:          keys,
+		bundlePath:    bundlePath,
+		now:           time.Now,
 	}, nil
 }
 
-func (a *Auth) CertificatePath() string {
+// writeTrustBundle publishes the registry trust bundle (active plus
+// retiring certificates) for the registry's rootcertbundle mount. The
+// bundle is public material; the state directory no longer holds the
+// signing key. Rotation refreshes it via `signing-keys export`; see the
+// runbook in docs/signing-keys.md.
+func writeTrustBundle(ctx context.Context, keys signkeys.Provider, bundlePath string) error {
+	bundle, err := keys.PublicBundle(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		return fmt.Errorf("load registry trust bundle: %w", err)
+	}
+	dir := filepath.Dir(bundlePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create registry auth directory: %w", err)
+	}
+	// Pre-2.3b file-based signer. The key is shared state now; a stale
+	// file must never be mistaken for authority.
+	for _, stale := range []string{"signing-key.pem", "signing-cert.pem"} {
+		_ = os.Remove(filepath.Join(dir, stale))
+	}
+	if err := os.WriteFile(bundlePath, bundle, 0o644); err != nil {
+		return fmt.Errorf("write registry trust bundle: %w", err)
+	}
+	return nil
+}
+
+// RefreshTrustBundle republishes the trust bundle after a rotation.
+func (a *Auth) RefreshTrustBundle(ctx context.Context) error {
+	if a == nil {
+		return nil
+	}
+	return writeTrustBundle(ctx, a.keys, a.bundlePath)
+}
+
+// BundlePath is the registry trust bundle file: the rootcertbundle the
+// registry daemon verifies token signatures against.
+func (a *Auth) BundlePath() string {
 	if a == nil {
 		return ""
 	}
-	return a.certificatePath
+	return a.bundlePath
 }
 
-func (a *Auth) MintCredential(subject, repository string, actions []string, expiresAt *time.Time) (string, string, error) {
-	if a == nil || a.key == nil {
+func (a *Auth) MintCredential(ctx context.Context, subject, repository string, actions []string, expiresAt *time.Time) (string, string, error) {
+	if a == nil || a.keys == nil {
 		return "", "", errors.New("registry auth is not configured")
 	}
 	repository = strings.Trim(strings.TrimSpace(repository), "/")
@@ -124,6 +149,13 @@ func (a *Auth) MintCredential(subject, repository string, actions []string, expi
 		return "", "", errors.New("registry actions must be unique pull and/or push values")
 	}
 	actions = normalizedActions
+	active, err := a.keys.Active(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		return "", "", fmt.Errorf("load active registry signing key: %w", err)
+	}
+	if active.Key == nil {
+		return "", "", errors.New("active registry signing key has no material")
+	}
 	username := sanitizeRefSegment(subject)
 	now := a.now().UTC()
 	claims := registryCapabilityClaims{
@@ -140,7 +172,9 @@ func (a *Auth) MintCredential(subject, repository string, actions []string, expi
 	if expiresAt != nil {
 		claims.ExpiresAt = jwt.NewNumericDate(expiresAt.UTC())
 	}
-	password, err := jwt.NewWithClaims(jwt.SigningMethodES256, claims).SignedString(a.key)
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token.Header["kid"] = active.Record.KID
+	password, err := token.SignedString(active.Key)
 	if err != nil {
 		return "", "", fmt.Errorf("sign registry credential: %w", err)
 	}
@@ -166,7 +200,7 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 		a.unauthorized(w)
 		return
 	}
-	capability, err := a.parseCapability(username, password)
+	capability, err := a.parseCapability(r.Context(), username, password)
 	if err != nil {
 		a.unauthorized(w)
 		return
@@ -180,6 +214,11 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access := intersectRegistryScopes(r.URL.Query()["scope"], capability.Access)
+	active, err := a.keys.Active(r.Context(), signkeys.ScopeRegistry)
+	if err != nil || active.Key == nil || active.Cert == nil {
+		http.Error(w, "mint registry token", http.StatusInternalServerError)
+		return
+	}
 	now := a.now().UTC()
 	claims := registryTokenClaims{
 		Issuer:    a.issuer,
@@ -192,8 +231,9 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 		Access:    access,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	token.Header["x5c"] = []string{base64.StdEncoding.EncodeToString(a.certificate.Raw)}
-	signed, err := token.SignedString(a.key)
+	token.Header["kid"] = active.Record.KID
+	token.Header["x5c"] = []string{base64.StdEncoding.EncodeToString(active.Cert.Raw)}
+	signed, err := token.SignedString(active.Key)
 	if err != nil {
 		http.Error(w, "mint registry token", http.StatusInternalServerError)
 		return
@@ -208,22 +248,35 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *Auth) parseCapability(username, raw string) (*registryCapabilityClaims, error) {
-	claims := &registryCapabilityClaims{}
-	token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
-		if token.Method != jwt.SigningMethodES256 {
-			return nil, errors.New("unexpected signing method")
+// parseCapability verifies a capability against the active key first, then
+// the retiring key while a rotation overlaps.
+func (a *Auth) parseCapability(ctx context.Context, username, raw string) (*registryCapabilityClaims, error) {
+	mats, err := a.keys.Verifying(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		return nil, err
+	}
+	for _, mat := range mats {
+		if mat.Key == nil {
+			continue
 		}
-		return &a.key.PublicKey, nil
-	}, jwt.WithIssuer(a.issuer), jwt.WithAudience(a.credentialAud), jwt.WithIssuedAt(), jwt.WithLeeway(5*time.Second), jwt.WithTimeFunc(a.now))
-	if err != nil || !token.Valid || claims.Subject != username || len(claims.Access) != 1 {
-		return nil, errors.New("invalid registry credential")
+		public := mat.Key.PublicKey
+		claims := &registryCapabilityClaims{}
+		token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
+			if token.Method != jwt.SigningMethodES256 {
+				return nil, errors.New("unexpected signing method")
+			}
+			return &public, nil
+		}, jwt.WithIssuer(a.issuer), jwt.WithAudience(a.credentialAud), jwt.WithIssuedAt(), jwt.WithLeeway(5*time.Second), jwt.WithTimeFunc(a.now))
+		if err != nil || !token.Valid || claims.Subject != username || len(claims.Access) != 1 {
+			continue
+		}
+		grant := claims.Access[0]
+		if grant.Type != "repository" || grant.Name == "" || strings.Contains(grant.Name, "*") || len(normalizedRegistryActions(grant.Actions)) != len(grant.Actions) {
+			return nil, errors.New("invalid registry credential scope")
+		}
+		return claims, nil
 	}
-	grant := claims.Access[0]
-	if grant.Type != "repository" || grant.Name == "" || strings.Contains(grant.Name, "*") || len(normalizedRegistryActions(grant.Actions)) != len(grant.Actions) {
-		return nil, errors.New("invalid registry credential scope")
-	}
-	return claims, nil
+	return nil, errors.New("invalid registry credential")
 }
 
 func (a *Auth) unauthorized(w http.ResponseWriter) {
@@ -271,111 +324,4 @@ func normalizedRegistryActions(actions []string) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-func loadRegistrySigningIdentityFiles(keyPath, certPath string) (*ecdsa.PrivateKey, *x509.Certificate, string, error) {
-	keyPath = strings.TrimSpace(keyPath)
-	certPath = strings.TrimSpace(certPath)
-	if keyPath == "" || certPath == "" {
-		return nil, nil, "", errors.New("registry signing certificate and key files are both required")
-	}
-	keyPEM, err := os.ReadFile(keyPath)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("read registry signing key: %w", err)
-	}
-	certPEM, err := os.ReadFile(certPath)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("read registry signing certificate: %w", err)
-	}
-	key, cert, err := parseRegistrySigningIdentity(keyPEM, certPEM)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	return key, cert, certPath, nil
-}
-
-func loadOrCreateRegistrySigningIdentity(stateDir, issuer string) (*ecdsa.PrivateKey, *x509.Certificate, string, error) {
-	dir := filepath.Join(stateDir, "registry-auth")
-	keyPath := filepath.Join(dir, "signing-key.pem")
-	certPath := filepath.Join(dir, "signing-cert.pem")
-	keyPEM, keyErr := os.ReadFile(keyPath)
-	certPEM, certErr := os.ReadFile(certPath)
-	if keyErr == nil && certErr == nil {
-		if err := os.Chmod(keyPath, 0o600); err != nil {
-			return nil, nil, "", fmt.Errorf("protect registry signing key: %w", err)
-		}
-		key, cert, err := parseRegistrySigningIdentity(keyPEM, certPEM)
-		return key, cert, certPath, err
-	}
-	if (keyErr == nil) != (certErr == nil) || keyErr != nil && !errors.Is(keyErr, os.ErrNotExist) || certErr != nil && !errors.Is(certErr, os.ErrNotExist) {
-		return nil, nil, "", fmt.Errorf("load registry signing identity: key=%v cert=%v", keyErr, certErr)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, nil, "", fmt.Errorf("create registry auth directory: %w", err)
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("generate registry signing key: %w", err)
-	}
-	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serial, err := rand.Int(rand.Reader, serialLimit)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("generate registry certificate serial: %w", err)
-	}
-	now := time.Now().UTC()
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: issuer + " registry token signer"},
-		NotBefore:             now.Add(-time.Minute),
-		NotAfter:              now.AddDate(10, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("create registry signing certificate: %w", err)
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("marshal registry signing key: %w", err)
-	}
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-		return nil, nil, "", fmt.Errorf("write registry signing key: %w", err)
-	}
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-		return nil, nil, "", fmt.Errorf("write registry signing certificate: %w", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	return key, cert, certPath, nil
-}
-
-func parseRegistrySigningIdentity(keyPEM, certPEM []byte) (*ecdsa.PrivateKey, *x509.Certificate, error) {
-	keyBlock, _ := pem.Decode(keyPEM)
-	certBlock, _ := pem.Decode(certPEM)
-	if keyBlock == nil || certBlock == nil {
-		return nil, nil, errors.New("invalid registry signing PEM")
-	}
-	parsedKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
-	if err != nil {
-		return nil, nil, err
-	}
-	key, ok := parsedKey.(*ecdsa.PrivateKey)
-	if !ok || key.Curve != elliptic.P256() {
-		return nil, nil, errors.New("registry signing key must be ECDSA P-256")
-	}
-	cert, err := x509.ParseCertificate(certBlock.Bytes)
-	if err != nil {
-		return nil, nil, err
-	}
-	publicKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
-	if !ok || !publicKey.Equal(&key.PublicKey) {
-		return nil, nil, errors.New("registry signing certificate does not match key")
-	}
-	return key, cert, nil
 }

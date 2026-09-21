@@ -13,6 +13,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 )
 
 type fakeEnrollmentStore struct {
@@ -38,14 +39,14 @@ func (s *fakeEnrollmentStore) RecordAgentCertificate(context.Context, string, st
 func TestEnrollAgentBindsBootstrapTokenToCSRPublicKey(t *testing.T) {
 	t.Parallel()
 
-	authority, err := NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"controlplane"},
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

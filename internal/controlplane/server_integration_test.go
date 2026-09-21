@@ -12,6 +12,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/testutil"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -37,7 +38,6 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 				ClientCertValidityHours: 24,
 			},
 		},
-		UserAssertions: config.UserAssertionConfig{HMACSecret: testUserAssertionSecret},
 		Database: config.DatabaseConfig{
 			URL:          createTestDatabase(t),
 			MaxOpenConns: 4,
@@ -88,7 +88,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	waitForListener(t, server.InternalAddr())
 	waitForSingletonLease(t, server)
 
-	identity, err := server.EnsureDashboardClientIdentity("dashboard-test")
+	identity, err := server.EnsureDashboardClientIdentity(ctx, "dashboard-test")
 	if err != nil {
 		t.Fatalf("EnsureDashboardClientIdentity: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	client := platformv1.NewPlatformServiceClient(conn)
 	delegatedCtx := metadata.AppendToOutgoingContext(
 		ctx,
-		userAssertionHeader, signedLiveUserAssertion(t, "user-1"),
+		userAssertionHeader, signedLiveUserAssertion(t, server, "user-1"),
 	)
 
 	projects, err := client.ListProjects(delegatedCtx, &platformv1.ListProjectsRequest{})
@@ -134,7 +134,16 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 	}
 }
 
-func signedLiveUserAssertion(t *testing.T, userID string) string {
+func signedLiveUserAssertion(t *testing.T, server *Server, userID string) string {
+	t.Helper()
+	secret, err := server.SigningKeys().ActiveSecret(context.Background(), signkeys.ScopeUserAssertion)
+	if err != nil {
+		t.Fatalf("export user assertion secret: %v", err)
+	}
+	return signedLiveUserAssertionWithSecret(t, secret, userID)
+}
+
+func signedLiveUserAssertionWithSecret(t *testing.T, secret []byte, userID string) string {
 	t.Helper()
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
@@ -145,7 +154,7 @@ func signedLiveUserAssertion(t *testing.T, userID string) string {
 		IssuedAt:  jwt.NewNumericDate(now),
 		ID:        "integration-assertion-1",
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testUserAssertionSecret))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
 	if err != nil {
 		t.Fatalf("sign user assertion: %v", err)
 	}

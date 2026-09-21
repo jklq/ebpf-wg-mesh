@@ -16,9 +16,8 @@ import (
 
 func buildBinaries(ctx context.Context, repoRoot string, binaries map[string]string) error {
 	builds := map[string]string{
-		"./cmd/controlplane":         binaries["controlplane"],
-		"./cmd/agent":                binaries["agent"],
-		"./cmd/internal-client-cert": binaries["internal-client-cert"],
+		"./cmd/controlplane": binaries["controlplane"],
+		"./cmd/agent":        binaries["agent"],
 	}
 	for pkg, output := range builds {
 		if err := runCommand(ctx, repoRoot, append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0"), "go", "build", "-o", output, pkg); err != nil {

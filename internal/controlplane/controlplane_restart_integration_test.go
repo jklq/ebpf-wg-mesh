@@ -47,7 +47,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 		t.Fatalf("initial agent id = %q", initial.GetAgentId())
 	}
 
-	userCtx := userContext(t, ctx, "restart-user")
+	userCtx := userContext(t, first, ctx, "restart-user")
 	project, err := first.dashboard.CreateProject(userCtx, &platformv1.CreateProjectRequest{Name: "restart-app"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
@@ -79,7 +79,7 @@ func TestControlPlaneRestartResyncsAgentFromStore(t *testing.T) {
 	first.stop()
 
 	second := startSystemControlPlane(t, opts)
-	if _, err := second.server.EnsureDashboardClientIdentity(systemTestDashboardID); err != nil {
+	if _, err := second.server.EnsureDashboardClientIdentity(ctx, systemTestDashboardID); err != nil {
 		t.Fatalf("PKI was not restored: %v", err)
 	}
 	restream, reCancel := openAgentSync(t, second.server, cert, hello)
@@ -342,7 +342,7 @@ func TestControlPlaneRestartBootsFromCompactedJournal(t *testing.T) {
 	stream, streamCancel := openAgentSync(t, first.server, cert, hello)
 	_ = recvDesiredState(t, stream)
 
-	userCtx := userContext(t, ctx, "compaction-user")
+	userCtx := userContext(t, first, ctx, "compaction-user")
 	project, err := first.dashboard.CreateProject(userCtx, &platformv1.CreateProjectRequest{Name: "compaction-app"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)

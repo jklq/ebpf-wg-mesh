@@ -82,7 +82,7 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 		t.Fatalf("send runtime batch: %v", err)
 	}
 
-	userA := userContext(t, ctx, "user-a")
+	userA := userContext(t, cp, ctx, "user-a")
 	var got *platformv1.ServiceLogLine
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 100 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		resp, err := cp.dashboard.ListServiceLogs(userA, &platformv1.ListServiceLogsRequest{ServiceId: svcA.ID})
@@ -104,7 +104,7 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 		t.Fatalf("runtime line metadata: %+v", got)
 	}
 
-	userB := userContext(t, ctx, "user-b")
+	userB := userContext(t, cp, ctx, "user-b")
 	respB, err := cp.dashboard.ListServiceLogs(userB, &platformv1.ListServiceLogsRequest{ServiceId: svcA.ID})
 	if status.Code(err) != codes.NotFound {
 		if err == nil {
@@ -148,7 +148,7 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	}
 
 	for _, userID := range []string{"user-a", "user-b"} {
-		resp, err := cp.dashboard.ListServiceLogs(userContext(t, ctx, userID), &platformv1.ListServiceLogsRequest{ServiceId: map[string]string{"user-a": svcA.ID, "user-b": svcB.ID}[userID]})
+		resp, err := cp.dashboard.ListServiceLogs(userContext(t, cp, ctx, userID), &platformv1.ListServiceLogsRequest{ServiceId: map[string]string{"user-a": svcA.ID, "user-b": svcB.ID}[userID]})
 		if err != nil {
 			t.Fatalf("ListServiceLogs(%s): %v", userID, err)
 		}
@@ -221,7 +221,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 		t.Fatalf("runtime batch: %v", err)
 	}
 
-	userA := userContext(t, ctx, "user-a")
+	userA := userContext(t, cp, ctx, "user-a")
 	var lines []*platformv1.ServiceLogLine
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second, Interval: 100 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		resp, err := cp.dashboard.ListServiceLogs(userA, &platformv1.ListServiceLogsRequest{ServiceId: service.ID})
@@ -248,7 +248,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 		}
 	}
 
-	_, err = cp.dashboard.ListServiceLogs(userContext(t, ctx, "user-b"), &platformv1.ListServiceLogsRequest{ServiceId: service.ID})
+	_, err = cp.dashboard.ListServiceLogs(userContext(t, cp, ctx, "user-b"), &platformv1.ListServiceLogsRequest{ServiceId: service.ID})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("membership bypass: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = disabled.dashboard.ListServiceLogs(userContext(t, ctx, "user-a"), &platformv1.ListServiceLogsRequest{ServiceId: disabledSvc.ID})
+	_, err = disabled.dashboard.ListServiceLogs(userContext(t, disabled, ctx, "user-a"), &platformv1.ListServiceLogsRequest{ServiceId: disabledSvc.ID})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("disabled log store returned %v, want FailedPrecondition", err)
 	}

@@ -26,7 +26,7 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 	}
 	stateDir := t.TempDir()
 	revocationPath := filepath.Join(stateDir, "revoked.txt")
-	authority, err := NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: stateDir,
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:                  []string{"controlplane"},
@@ -34,7 +34,7 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 			ClientCertValidityHours:      6,
 			RevokedClientCertSerialsFile: revocationPath,
 		}},
-	})
+	}, ensureTestSigningKeys(t, store))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

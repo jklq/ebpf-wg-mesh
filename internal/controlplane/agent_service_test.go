@@ -16,6 +16,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/codes"
@@ -215,7 +216,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 		TokenService:         "registry.example.test:5000",
 		CredentialTTLSeconds: 300,
 	}
-	auth, err := registry.NewAuth(cfg, t.TempDir())
+	auth, err := registry.NewAuth(context.Background(), cfg, signkeystest.New(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +225,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 		{AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)}},
 		{AllocationId: "allocation-2", ServiceId: "service-2", EnvironmentId: "environment-2", Spec: &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"}},
 	}}
-	if err := service.attachRegistryPullCredentials("agent-1", state); err != nil {
+	if err := service.attachRegistryPullCredentials(context.Background(), "agent-1", state); err != nil {
 		t.Fatal(err)
 	}
 	managed := state.Services[0]
@@ -242,7 +243,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 		t.Fatal("external direct image received platform registry credentials")
 	}
 	foreign := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{AllocationId: "allocation-3", EnvironmentId: "environment-2", ServiceId: "service-2", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("b", 64)}}}}
-	if err := service.attachRegistryPullCredentials("agent-1", foreign); err == nil {
+	if err := service.attachRegistryPullCredentials(context.Background(), "agent-1", foreign); err == nil {
 		t.Fatal("expected a sibling platform repository to be rejected")
 	}
 }

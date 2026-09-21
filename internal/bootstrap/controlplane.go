@@ -21,7 +21,6 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var dashboardEnv string
 	var dashboardContainerPort int
 	var githubPrivateKeyFile string
-	var userAssertionSecretFile string
 	var replicaAddresses string
 	var advertiseAddr string
 
@@ -36,8 +35,6 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.InternalGRPC.TLS.ServerCertValidityHours, "internal-server-cert-validity-hours", "CONTROLPLANE_INTERNAL_SERVER_CERT_VALIDITY_HOURS", 24*30, "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ClientCertValidityHours, "internal-client-cert-validity-hours", "CONTROLPLANE_INTERNAL_CLIENT_CERT_VALIDITY_HOURS", 24, "")
 	stringFlag(fs, &cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile, "internal-revoked-client-cert-serials-file", "CONTROLPLANE_INTERNAL_REVOKED_CLIENT_CERT_SERIALS_FILE", "", "one hexadecimal client certificate serial per line; defaults under the control-plane state directory")
-	stringFlag(fs, &cfg.UserAssertions.HMACSecret, "user-assertion-secret", "CONTROLPLANE_USER_ASSERTION_SECRET", "", "")
-	stringFlag(fs, &userAssertionSecretFile, "user-assertion-secret-file", "CONTROLPLANE_USER_ASSERTION_SECRET_FILE", "", "")
 	stringFlag(fs, &cfg.Database.URL, "db-url", "CONTROLPLANE_DB_URL", "", "")
 	stringFlag(fs, &cfg.Logs.ClickHouse.URL, "logs-clickhouse-url", "CONTROLPLANE_LOGS_CLICKHOUSE_URL", "", "")
 	intFlag(fs, &cfg.Logs.RetentionDays, "logs-retention-days", "CONTROLPLANE_LOGS_RETENTION_DAYS", 14, "")
@@ -94,9 +91,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.Registry.AuthListen, "registry-auth-listen", "CONTROLPLANE_REGISTRY_AUTH_LISTEN", "127.0.0.1:9444", "embedded registry token service listen address")
 	stringFlag(fs, &cfg.Registry.TokenIssuer, "registry-token-issuer", "CONTROLPLANE_REGISTRY_TOKEN_ISSUER", "ebpf-wg-mesh", "issuer configured on the registry token verifier")
 	stringFlag(fs, &cfg.Registry.TokenService, "registry-token-service", "CONTROLPLANE_REGISTRY_TOKEN_SERVICE", "", "registry token audience; defaults to registry-host")
-	stringFlag(fs, &cfg.Registry.SigningCertFile, "registry-signing-cert-file", "CONTROLPLANE_REGISTRY_SIGNING_CERT_FILE", "", "PEM certificate for the embedded registry token signer")
-	stringFlag(fs, &cfg.Registry.SigningKeyFile, "registry-signing-key-file", "CONTROLPLANE_REGISTRY_SIGNING_KEY_FILE", "", "PEM private key for the embedded registry token signer")
 	intFlag(fs, &cfg.Registry.CredentialTTLSeconds, "registry-credential-ttl-seconds", "CONTROLPLANE_REGISTRY_CREDENTIAL_TTL_SECONDS", 300, "")
+	intFlag(fs, &cfg.Registry.PullCredentialTTLSeconds, "registry-pull-credential-ttl-seconds", "CONTROLPLANE_REGISTRY_PULL_CREDENTIAL_TTL_SECONDS", 48*3600, "pull capability lifetime; must exceed the client certificate lifetime")
 	intFlag(fs, &cfg.Builder.HeartbeatTimeoutSeconds, "builder-heartbeat-timeout-seconds", "CONTROLPLANE_BUILDER_HEARTBEAT_TIMEOUT_SECONDS", 120, "")
 	intFlag(fs, &cfg.Builder.MaxAttempts, "builder-max-attempts", "CONTROLPLANE_BUILDER_MAX_ATTEMPTS", 3, "")
 	intFlag(fs, &cfg.Builder.MaxConcurrentGlobal, "builder-max-concurrent-global", "CONTROLPLANE_BUILDER_MAX_CONCURRENT_GLOBAL", 20, "")
@@ -123,16 +119,6 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 		return config.ControlPlaneConfig{}, err
 	}
 	cfg.Profile = normalized
-	if cfg.UserAssertions.HMACSecret != "" && userAssertionSecretFile != "" {
-		return config.ControlPlaneConfig{}, fmt.Errorf("only one of user assertion secret or secret file may be configured")
-	}
-	if userAssertionSecretFile != "" {
-		secret, err := os.ReadFile(userAssertionSecretFile)
-		if err != nil {
-			return config.ControlPlaneConfig{}, fmt.Errorf("read user assertion secret %s: %w", userAssertionSecretFile, err)
-		}
-		cfg.UserAssertions.HMACSecret = strings.TrimSpace(string(secret))
-	}
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
 	cfg.ReplicaAddresses = splitCommaList(replicaAddresses)
 	cfg.AdvertiseAddr = strings.TrimSpace(advertiseAddr)

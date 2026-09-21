@@ -3,7 +3,6 @@ set -euo pipefail
 
 CONTROLPLANE_BIN=${CONTROLPLANE_BIN:-/opt/ebpf-wg-mesh/controlplane}
 AGENT_BOOTSTRAP_TOKENS=${AGENT_BOOTSTRAP_TOKENS:?AGENT_BOOTSTRAP_TOKENS must contain comma-separated agent_id=token bindings}
-USER_ASSERTION_SECRET=${USER_ASSERTION_SECRET:?USER_ASSERTION_SECRET must be at least 32 bytes}
 
 state_dir=$(mktemp -d /tmp/ebpf-wg-mesh-replica-local-state.XXXXXX)
 trap 'rm -rf "${state_dir}"' EXIT
@@ -13,7 +12,6 @@ output=$(timeout 20s "${CONTROLPLANE_BIN}" \
   -profile development \
   -internal-listen 127.0.0.1:9555 \
   -agent-bootstrap-tokens "${AGENT_BOOTSTRAP_TOKENS}" \
-  -user-assertion-secret "${USER_ASSERTION_SECRET}" \
   -db-url 'postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable' \
   -state-dir "${state_dir}" \
   -ingress-public-addr platform.local \

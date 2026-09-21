@@ -117,10 +117,6 @@ type ManagedDashboardConfig struct {
 	DevUsers          []BootstrapUser
 }
 
-type UserAssertionConfig struct {
-	HMACSecret string
-}
-
 type GitHubAppConfig struct {
 	Enabled       bool
 	AppID         int64
@@ -131,14 +127,13 @@ type GitHubAppConfig struct {
 }
 
 type RegistryConfig struct {
-	Host                 string
-	NamespacePrefix      string
-	AuthListen           string
-	TokenIssuer          string
-	TokenService         string
-	CredentialTTLSeconds int
-	SigningCertFile      string
-	SigningKeyFile       string
+	Host                     string
+	NamespacePrefix          string
+	AuthListen               string
+	TokenIssuer              string
+	TokenService             string
+	CredentialTTLSeconds     int
+	PullCredentialTTLSeconds int
 }
 
 type ControlPlaneBuilderConfig struct {
@@ -203,7 +198,6 @@ type ControlPlaneConfig struct {
 	InternalGRPC     ListenerConfig
 	ReplicaAddresses []string
 	AdvertiseAddr    string
-	UserAssertions   UserAssertionConfig
 	Database         DatabaseConfig
 	Logs             LogCaptureConfig
 	StateDir         string

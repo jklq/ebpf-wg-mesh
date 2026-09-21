@@ -6,14 +6,11 @@ import (
 	"testing"
 )
 
-const testUserAssertionHMACSecret = "test-user-assertion-secret-at-least-32-bytes"
-
 func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Profile: ProfileDevelopment,
 		Database: DatabaseConfig{
 			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		},
@@ -57,9 +54,8 @@ func TestFinalizeControlPlaneRequiresAdvertiseAddrForMultipleReplicas(t *testing
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
-		Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Profile:  ProfileDevelopment,
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
@@ -82,9 +78,8 @@ func TestFinalizeControlPlaneRejectsNonLoopbackCaddyAdminWithoutOptIn(t *testing
 	t.Parallel()
 
 	base := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
-		Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Profile:  ProfileDevelopment,
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
@@ -107,8 +102,7 @@ func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Profile: ProfileDevelopment,
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
@@ -149,8 +143,7 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Profile: ProfileDevelopment,
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
@@ -360,8 +353,7 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Profile: ProfileDevelopment,
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{
@@ -505,8 +497,7 @@ func TestFinalizeControlPlaneDefaultsSourceArchiveProvider(t *testing.T) {
 
 func validControlPlaneConfigForRegistryTest() ControlPlaneConfig {
 	return ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
+		Profile: ProfileDevelopment,
 		InternalGRPC: ListenerConfig{
 			Listen: "127.0.0.1:9443",
 			TLS: ServerTLSConfig{

@@ -12,7 +12,6 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 
 	cfg, err := ControlPlane([]string{
 		"-profile", "development",
-		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
 		"-internal-server-names", "controlplane,controlplane-internal",
 		"-replica-addresses", "replica-a:9443,replica-b:9443",
 		"-advertise-addr", "replica-a:9443",
@@ -77,7 +76,6 @@ func TestControlPlaneBootstrapDefaultsToProductionAndRejectsLoopbackDatabase(t *
 	t.Parallel()
 
 	_, err := ControlPlane([]string{
-		"-user-assertion-secret", "production-user-assertion-secret-at-least-32",
 		"-internal-server-names", "controlplane.example.test",
 		"-agent-bootstrap-tokens", "node-a=token-a",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
@@ -98,7 +96,6 @@ func TestControlPlaneBootstrapParsesSourceArchiveS3Flags(t *testing.T) {
 
 	cfg, err := ControlPlane([]string{
 		"-profile", "development",
-		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
 		"-internal-server-names", "controlplane",
 		"-agent-bootstrap-tokens", "node-a=token-a",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",

@@ -63,7 +63,7 @@ func TestNonOwnerReadRedirectsToOwnerOverGRPC(t *testing.T) {
 		t.Fatalf("standby replica holds the singleton lease: held=%v err=%v", held, err)
 	}
 
-	identity, err := owner.server.EnsureDashboardClientIdentity(systemTestDashboardID)
+	identity, err := owner.server.EnsureDashboardClientIdentity(ctx, systemTestDashboardID)
 	if err != nil {
 		t.Fatalf("EnsureDashboardClientIdentity: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestNonOwnerReadRedirectsToOwnerOverGRPC(t *testing.T) {
 	redirectClient := platformv1.NewPlatformServiceClient(redirectConn{ClientConnInterface: standbyConn, peers: peers})
 	standbyRaw := platformv1.NewPlatformServiceClient(standbyConn)
 
-	delegatedCtx := metadata.AppendToOutgoingContext(ctx, userAssertionHeader, signedLiveUserAssertion(t, "user-1"))
+	delegatedCtx := metadata.AppendToOutgoingContext(ctx, userAssertionHeader, signedLiveUserAssertion(t, owner.server, "user-1"))
 	project, err := ownerClient.CreateProject(delegatedCtx, &platformv1.CreateProjectRequest{Name: "redirect-test"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)

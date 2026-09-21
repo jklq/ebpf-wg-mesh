@@ -29,10 +29,14 @@ Consolidate the duplicated control-plane work queues into one small CockroachDB-
 ## 2.3b Platform signing key lifecycle
 
 Was: 2.3 (split)
-Status: open
+Status: in review
 Depends on: [2.3a](landed.md#23a-secret-envelope-key-provider) for the provider contract.
 
 Not partner-visible. Every credential these keys sign is short-lived, so rotation is an overlap window, not a ceremony.
+
+Implemented: `internal/controlplane/signkeys` is the shared signing-key inventory over `platform_signing_keys`, with private material wrapped by the 2.3a envelope provider and read-through on every use so replicas agree mid-rotation. Four scopes (`internal-ca`, `registry`, `user-assertion`, `dashboard-session`) hold at most one active and one retiring key; every signer uses the active key and every verifier accepts both. `controlplane signing-keys` provides init, list, rotate-start, rotate-finish (overlap-floored per scope, concurrent-safe), export, check, and issue-client-cert; development auto-generates, production fails closed. The lifetime table and rotation runbook live in `docs/signing-keys.md`. Tests cover rotation across live agent sessions and renewal, registry token exchange, dashboard RPCs, replica restart, mid-rotation replica boot, concurrent init/rotate, and envelope rewrap/delete guards.
+
+Remaining: dashboard dual-secret session verification and the assertion-secret rollover procedure are deferred to `docs/frontend-handoff/2.3b.md`. No console key-management UI and no PlatformService RPC for key state; rotation stays CLI-only.
 
 Prompt:
 

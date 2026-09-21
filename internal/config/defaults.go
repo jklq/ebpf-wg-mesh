@@ -128,6 +128,9 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Registry.CredentialTTLSeconds <= 0 {
 		cfg.Registry.CredentialTTLSeconds = 300
 	}
+	if cfg.Registry.PullCredentialTTLSeconds <= 0 {
+		cfg.Registry.PullCredentialTTLSeconds = 48 * 3600
+	}
 	if cfg.Registry.Host != "" {
 		if cfg.Registry.AuthListen == "" {
 			cfg.Registry.AuthListen = "127.0.0.1:9444"
