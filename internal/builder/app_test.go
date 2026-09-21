@@ -177,7 +177,7 @@ func TestBuildLogReporterBatchesLinesWithIncreasingSequence(t *testing.T) {
 	t.Parallel()
 
 	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1")
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", 1)
 	now := time.Now().UTC()
 	for i := 0; i < buildLogBatchSize+1; i++ {
 		reporter.Report(context.Background(), commandOutputLine{
@@ -213,7 +213,7 @@ func TestBuildLogReporterFlushesRemainingLinesOnClose(t *testing.T) {
 	t.Parallel()
 
 	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1")
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", 1)
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stderr", Line: "two"})
 	reporter.Close()
@@ -234,7 +234,7 @@ func TestBuildLogReporterIgnoresReportErrors(t *testing.T) {
 		calls:     make(chan struct{}, 4),
 		reportErr: errors.New("boom"),
 	}
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1")
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", 1)
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
 	reporter.Close()
 
@@ -808,9 +808,10 @@ func cloneBuildLogRequestForTest(req *platformv1.ReportBuildLogsRequest) *platfo
 		return nil
 	}
 	clone := &platformv1.ReportBuildLogsRequest{
-		BuilderId: req.GetBuilderId(),
-		BuildId:   req.GetBuildId(),
-		Lines:     make([]*platformv1.BuildLogLine, 0, len(req.GetLines())),
+		BuilderId:  req.GetBuilderId(),
+		BuildId:    req.GetBuildId(),
+		Lines:      make([]*platformv1.BuildLogLine, 0, len(req.GetLines())),
+		LeaseEpoch: req.GetLeaseEpoch(),
 	}
 	for _, line := range req.GetLines() {
 		if line == nil {

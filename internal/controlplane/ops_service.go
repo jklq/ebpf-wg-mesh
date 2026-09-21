@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/source"
 
@@ -84,6 +86,75 @@ func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetA
 		}
 	}
 	return toProtoAgent(rec), nil
+}
+
+func (s *OpsService) ListBuilders(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListBuildersResponse, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	builders, err := s.delivery.ListBuilders(ctx, user)
+	if err != nil {
+		return nil, buildSchedulerStatusError("list builders", err)
+	}
+	resp := &platformv1.ListBuildersResponse{Builders: make([]*platformv1.BuilderWorker, 0, len(builders))}
+	for _, builder := range builders {
+		resp.Builders = append(resp.Builders, deliverycore.ToProtoBuilderWorker(builder))
+	}
+	return resp, nil
+}
+
+func (s *OpsService) SetBuilderDrain(ctx context.Context, req *platformv1.SetBuilderDrainRequest) (*platformv1.BuilderWorker, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetBuilderId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "builder_id is required")
+	}
+	rec, err := s.delivery.SetBuilderDrain(ctx, user, req.GetBuilderId(), req.GetDrained())
+	if err != nil {
+		return nil, buildSchedulerStatusError("set builder drain", err)
+	}
+	return deliverycore.ToProtoBuilderWorker(rec), nil
+}
+
+func (s *OpsService) GetBuildScheduler(ctx context.Context, _ *emptypb.Empty) (*platformv1.BuildSchedulerState, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.delivery.BuildSchedulerState(ctx, user)
+	if err != nil {
+		return nil, buildSchedulerStatusError("get build scheduler", err)
+	}
+	return deliverycore.ToProtoBuildSchedulerState(state), nil
+}
+
+func (s *OpsService) SetBuildSchedulerPaused(ctx context.Context, req *platformv1.SetBuildSchedulerPausedRequest) (*platformv1.BuildSchedulerState, error) {
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.delivery.SetBuildSchedulerPaused(ctx, user, req.GetPaused())
+	if err != nil {
+		return nil, buildSchedulerStatusError("set build scheduler paused", err)
+	}
+	return deliverycore.ToProtoBuildSchedulerState(state), nil
+}
+
+// buildSchedulerStatusError keeps authz denials distinct from missing rows:
+// denials wrap both authz.ErrDenied and sql.ErrNoRows, so check ErrDenied
+// first and report a genuinely unknown builder as NotFound.
+func buildSchedulerStatusError(operation string, err error) error {
+	switch {
+	case errors.Is(err, authz.ErrDenied):
+		return status.Errorf(codes.PermissionDenied, "%s: operator access required", operation)
+	case errors.Is(err, sql.ErrNoRows):
+		return status.Errorf(codes.NotFound, "%s: %v", operation, err)
+	default:
+		return status.Errorf(codes.Internal, "%s: %v", operation, err)
+	}
 }
 
 func fleetStatusError(operation string, err error) error {

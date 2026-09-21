@@ -24,7 +24,26 @@ var errSourceStateNotReady = errors.New("source state is not ready")
 
 var ErrBuildNotOwned = errors.New("build is not assigned to builder")
 
-const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, COALESCE(builder_id, ''), image_digest, failure_reason,
+var ErrBuildLeaseLost = errors.New("build lease lost: owner epoch is stale")
+
+var ErrBuildCancelled = errors.New("build cancellation was requested")
+
+const (
+	BuildAttemptLeased         = "leased"
+	BuildAttemptSucceeded      = "succeeded"
+	BuildAttemptFailedTerminal = "failed_terminal"
+	BuildAttemptWorkerLost     = "worker_lost"
+	BuildAttemptCancelled      = "cancelled"
+	BuildAttemptTimedOut       = "timed_out"
+	BuildAttemptSuperseded     = "superseded"
+)
+
+// Attempts record claims, so a build that expires in queue without ever being
+// claimed has no attempt rows; its build_runs row carries the terminal reason.
+
+const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, COALESCE(builder_id, ''), owner_epoch, lease_expires_at,
+		attempt_count, attempt_limit, cancel_requested_at, COALESCE(cancel_requested_by, ''), deadline_at, last_heartbeat_at,
+		image_digest, failure_reason,
 	        COALESCE(source_revision_id, ''), COALESCE(source_snapshot_id, ''), source_snapshot_digest, target_rollout_generation, build_recipe_json,
 	        queued_at, started_at, finished_at`
 

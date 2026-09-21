@@ -65,7 +65,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
-	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	claimed := claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
 	policy := registry.NewPolicy(config.RegistryConfig{
@@ -73,7 +73,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 		NamespacePrefix:      "platform",
 		CredentialTTLSeconds: 300,
 	}, nil)
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, policy, 0))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, policy))
 	imageRef := policy.RuntimeDigestRef(policy.PushRef(build.ProjectID, build.EnvironmentID, build.ID, build.ServiceID, build.CommitSHA), "sha256:"+strings.Repeat("1", 64))
 
 	_, err = builderService.CompleteBuild(
@@ -84,6 +84,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 			State:       platformv1.BuildState_BUILD_STATE_SUCCEEDED,
 			CommitSha:   "commit-1",
 			ImageDigest: imageRef,
+			LeaseEpoch:  claimed.OwnerEpoch,
 		},
 	)
 	if err != nil {
@@ -132,10 +133,10 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
-	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	claimed := claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	notifier := &recordingNotifier{}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), nil, nil, 0))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), nil, nil))
 
 	_, err = builderService.CompleteBuild(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
@@ -145,6 +146,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 			State:         platformv1.BuildState_BUILD_STATE_FAILED,
 			CommitSha:     "commit-1",
 			FailureReason: "build failed",
+			LeaseEpoch:    claimed.OwnerEpoch,
 		},
 	)
 	if err != nil {
@@ -192,16 +194,17 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
-	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	claimed := claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
 	observedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	_, err = builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
-			BuildId: build.ID,
+			BuildId:    build.ID,
+			LeaseEpoch: claimed.OwnerEpoch,
 			Lines: []*platformv1.BuildLogLine{
 				{
 					ObservedAt: timestamppb.New(observedAt),
@@ -284,25 +287,26 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
-	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	claimed := claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	disabledWriter := &recordingLogWriter{enabled: false}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0, WithBuilderLogEmitter(logs.NewLogEmitter(disabledWriter))))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(disabledWriter))))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
-			BuildId: build.ID,
-			Lines:   []*platformv1.BuildLogLine{{Line: "ignored"}},
+			BuildId:    build.ID,
+			LeaseEpoch: claimed.OwnerEpoch,
+			Lines:      []*platformv1.BuildLogLine{{Line: "ignored"}},
 		},
 	); err != nil {
 		t.Fatalf("ReportBuildLogs with disabled emitter: %v", err)
 	}
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService = NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
+	builderService = NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
-		&platformv1.ReportBuildLogsRequest{BuildId: build.ID},
+		&platformv1.ReportBuildLogsRequest{BuildId: build.ID, LeaseEpoch: claimed.OwnerEpoch},
 	); err != nil {
 		t.Fatalf("ReportBuildLogs: %v", err)
 	}

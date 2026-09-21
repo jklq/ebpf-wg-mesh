@@ -22,7 +22,7 @@ import (
 
 func cooperativeBuildCancel(err error) bool {
 	switch status.Code(err) {
-	case codes.PermissionDenied, codes.FailedPrecondition, codes.NotFound:
+	case codes.PermissionDenied, codes.FailedPrecondition, codes.NotFound, codes.Canceled:
 		return true
 	default:
 		return false

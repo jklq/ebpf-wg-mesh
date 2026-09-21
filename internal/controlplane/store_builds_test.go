@@ -15,15 +15,16 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-func claimBuildForTest(t *testing.T, store *persistence, ctx context.Context, builderID, expectedBuildID string) {
+func claimBuildForTest(t *testing.T, store *persistence, ctx context.Context, builderID, expectedBuildID string) deliverycore.BuildRunRecord {
 	t.Helper()
-	claimed, err := claimNextBuild(ctx, store, builderID, builderID, 0)
+	claimed, err := claimNextBuild(ctx, store, builderID, builderID)
 	if err != nil {
 		t.Fatalf("claimNextBuild: %v", err)
 	}
 	if claimed.ID != expectedBuildID {
 		t.Fatalf("expected build %q to be claimed, got %q", expectedBuildID, claimed.ID)
 	}
+	return claimed
 }
 
 func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
@@ -245,7 +246,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest(build1): %v", err)
 	}
-	claimed, err := claimNextBuild(ctx, store, "builder-1", "builder-1", 0)
+	claimed, err := claimNextBuild(ctx, store, "builder-1", "builder-1")
 	if err != nil {
 		t.Fatalf("claimNextBuild: %v", err)
 	}

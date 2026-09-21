@@ -197,12 +197,13 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 				return
 			case <-ticker.C:
 				_, err := a.client.ReportBuildHeartbeat(jobCtx, &platformv1.BuilderHeartbeatRequest{
-					BuilderId: a.cfg.ID,
-					BuildId:   job.GetBuildId(),
+					BuilderId:  a.cfg.ID,
+					BuildId:    job.GetBuildId(),
+					LeaseEpoch: job.GetLeaseEpoch(),
 				})
 				if err != nil {
 					slog.Warn("report builder heartbeat", "build_id", job.GetBuildId(), "error", err)
-					if code := status.Code(err); code == codes.PermissionDenied || code == codes.FailedPrecondition || code == codes.NotFound {
+					if code := status.Code(err); code == codes.PermissionDenied || code == codes.FailedPrecondition || code == codes.NotFound || code == codes.Canceled {
 						select {
 						case cancelledByControlPlane <- struct{}{}:
 						default:
@@ -231,6 +232,7 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 			State:         platformv1.BuildState_BUILD_STATE_FAILED,
 			CommitSha:     job.GetCommitSha(),
 			FailureReason: err.Error(),
+			LeaseEpoch:    job.GetLeaseEpoch(),
 		})
 		if completeErr != nil {
 			if cooperativeBuildCancel(completeErr) {
@@ -247,6 +249,7 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 		State:       platformv1.BuildState_BUILD_STATE_SUCCEEDED,
 		CommitSha:   job.GetCommitSha(),
 		ImageDigest: imageRef,
+		LeaseEpoch:  job.GetLeaseEpoch(),
 	}); err != nil {
 		if cooperativeBuildCancel(err) {
 			return nil
@@ -262,7 +265,7 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 		return "", err
 	}
 	defer os.Remove(archivePath)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId())
+	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetLeaseEpoch())
 	defer reporter.Close()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)

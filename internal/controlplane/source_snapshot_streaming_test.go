@@ -100,12 +100,12 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	stream := &recordingSourceSnapshotServerStream{
 		ctx: contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 	}
-	if err := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0)).DownloadSourceSnapshot(
+	if err := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil)).DownloadSourceSnapshot(
 		&platformv1.DownloadSourceSnapshotRequest{SnapshotId: snapshot.ID}, stream,
 	); err != nil {
 		t.Fatalf("DownloadSourceSnapshot: %v", err)
 	}
-	operations := NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, 0)
+	operations := NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil)
 	if _, _, err := operations.OpenSourceSnapshot(contextWithClientIdentity(serviceCallerBuilder, "builder-other"), snapshot.ID); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("unassigned builder: %v", err)
 	}

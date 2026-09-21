@@ -236,6 +236,9 @@ func resetTestStore(t *testing.T, store *persistence) {
 		`, store.mesh.WorkloadIPv4PoolCIDR, store.mesh.WorkloadIPv4NodePrefixBits); err != nil {
 			return fmt.Errorf("reset IPv4 prefix allocator: %w", err)
 		}
+		if _, err := tx.ExecContext(context.Background(), `UPDATE build_scheduler_control SET paused = FALSE`); err != nil {
+			return fmt.Errorf("reset build scheduler pause: %w", err)
+		}
 		return nil
 	}); err != nil {
 		t.Fatalf("reset test database: %v", err)

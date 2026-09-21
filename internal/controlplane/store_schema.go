@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 25
+const currentSchemaVersion = 26
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -372,8 +372,15 @@ var currentSchema = []string{
 			current_build_id STRING NOT NULL DEFAULT '',
 			last_heartbeat_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			drained BOOL NOT NULL DEFAULT FALSE
+		)`,
+	`CREATE TABLE build_scheduler_control (
+			id BOOL PRIMARY KEY,
+			paused BOOL NOT NULL DEFAULT FALSE,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
+	`INSERT INTO build_scheduler_control(id, paused, updated_at) VALUES (TRUE, FALSE, now())`,
 	`CREATE TABLE build_runs (
 			id STRING PRIMARY KEY,
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -382,6 +389,14 @@ var currentSchema = []string{
 			commit_author STRING NOT NULL DEFAULT '',
 			state STRING NOT NULL,
 			builder_id STRING NULL REFERENCES builder_workers(id) ON DELETE SET NULL,
+			owner_epoch INT8 NOT NULL DEFAULT 0,
+			lease_expires_at TIMESTAMPTZ NULL,
+			attempt_count INT8 NOT NULL DEFAULT 0,
+			attempt_limit INT8 NOT NULL DEFAULT 3,
+			cancel_requested_at TIMESTAMPTZ NULL,
+			cancel_requested_by STRING NOT NULL DEFAULT '',
+			deadline_at TIMESTAMPTZ NULL,
+			last_heartbeat_at TIMESTAMPTZ NULL,
 			image_digest STRING NOT NULL DEFAULT '',
 			failure_reason STRING NOT NULL DEFAULT '',
 			source_revision_id STRING NULL,
@@ -393,9 +408,23 @@ var currentSchema = []string{
 			started_at TIMESTAMPTZ NULL,
 			finished_at TIMESTAMPTZ NULL
 		)`,
+	`CREATE TABLE build_attempts (
+			id STRING PRIMARY KEY,
+			build_id STRING NOT NULL REFERENCES build_runs(id) ON DELETE CASCADE,
+			attempt_number INT8 NOT NULL,
+			builder_id STRING NOT NULL,
+			owner_epoch INT8 NOT NULL,
+			started_at TIMESTAMPTZ NOT NULL,
+			finished_at TIMESTAMPTZ NULL,
+			outcome STRING NOT NULL DEFAULT 'leased',
+			detail STRING NOT NULL DEFAULT '',
+			UNIQUE (build_id, attempt_number)
+		)`,
 	`CREATE INDEX idx_build_runs_service_queued ON build_runs(service_id, queued_at DESC, id)`,
 	`CREATE INDEX idx_build_runs_service_commit ON build_runs(service_id, commit_sha, queued_at DESC, id DESC)`,
 	`CREATE INDEX idx_build_runs_state_queued ON build_runs(state, queued_at ASC, id)`,
+	`CREATE INDEX idx_build_runs_running_lease ON build_runs(state, lease_expires_at, id) WHERE state = 'running'`,
+	`CREATE INDEX idx_build_attempts_build ON build_attempts(build_id, attempt_number)`,
 	`CREATE TABLE github_installations (
 			installation_id INT8 PRIMARY KEY,
 			account_login STRING NOT NULL,

@@ -55,7 +55,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	credentials := &retryBuildCredentials{}
 	notifier := &recordingNotifier{}
 	logWriter := &recordingLogWriter{enabled: true}
-	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, credentials, 0, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter)))
+	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, credentials, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter)))
 	builder := contextWithClientIdentity(serviceCallerBuilder, "builder-1")
 	claim := &platformv1.ClaimBuildRequest{BuilderId: "builder-1"}
 	if _, err := operations.ClaimBuild(builder, claim); err == nil {
@@ -69,7 +69,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 		t.Fatalf("claimed job lost builder choice: %+v", job.GetSource().GetBuildRecipe())
 	}
 	image := policy.RuntimeDigestRef(job.RegistryPushReference, "sha256:"+strings.Repeat("a", 64))
-	completion := &platformv1.CompleteBuildRequest{BuilderId: "builder-1", BuildId: build.ID, State: platformv1.BuildState_BUILD_STATE_SUCCEEDED, CommitSha: "wrong-commit", ImageDigest: image}
+	completion := &platformv1.CompleteBuildRequest{BuilderId: "builder-1", BuildId: build.ID, State: platformv1.BuildState_BUILD_STATE_SUCCEEDED, CommitSha: "wrong-commit", ImageDigest: image, LeaseEpoch: job.GetLeaseEpoch()}
 	if _, err := operations.CompleteBuild(builder, completion); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("mismatched commit accepted: %v", err)
 	}

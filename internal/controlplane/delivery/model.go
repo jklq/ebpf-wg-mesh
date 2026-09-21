@@ -267,6 +267,14 @@ type BuildRunRecord struct {
 	CommitAuthor            string
 	State                   string
 	BuilderID               string
+	OwnerEpoch              int64
+	LeaseExpiresAt          sql.NullTime
+	AttemptCount            int64
+	AttemptLimit            int64
+	CancelRequestedAt       sql.NullTime
+	CancelRequestedBy       string
+	DeadlineAt              sql.NullTime
+	LastHeartbeatAt         sql.NullTime
 	ImageDigest             string
 	FailureReason           string
 	SourceRevisionID        string
@@ -277,6 +285,36 @@ type BuildRunRecord struct {
 	QueuedAt                time.Time
 	StartedAt               sql.NullTime
 	FinishedAt              sql.NullTime
+}
+
+type BuildAttemptRecord struct {
+	ID            string
+	BuildID       string
+	AttemptNumber int64
+	BuilderID     string
+	OwnerEpoch    int64
+	StartedAt     time.Time
+	FinishedAt    sql.NullTime
+	Outcome       string
+	Detail        string
+}
+
+type BuilderWorkerRecord struct {
+	ID             string
+	Name           string
+	CurrentBuildID string
+	LastHeartbeat  time.Time
+	Drained        bool
+	UpdatedAt      time.Time
+}
+
+type BuildSchedulerState struct {
+	Paused                  bool
+	RunningBuilds           int64
+	QueuedBuilds            int64
+	MaxConcurrentGlobal     int
+	MaxConcurrentPerProject int
+	UpdatedAt               time.Time
 }
 
 type DeploymentRecord struct {

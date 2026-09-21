@@ -149,6 +149,21 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
 		return errors.New("controlplane.builder.heartbeatTimeoutSeconds must be greater than 0")
 	}
+	if cfg.Builder.MaxAttempts <= 0 {
+		return errors.New("controlplane.builder.maxAttempts must be greater than 0")
+	}
+	if cfg.Builder.MaxConcurrentGlobal <= 0 {
+		return errors.New("controlplane.builder.maxConcurrentGlobal must be greater than 0")
+	}
+	if cfg.Builder.MaxConcurrentPerProject <= 0 {
+		return errors.New("controlplane.builder.maxConcurrentPerProject must be greater than 0")
+	}
+	if cfg.Builder.BuildTimeoutSeconds <= 0 {
+		return errors.New("controlplane.builder.buildTimeoutSeconds must be greater than 0")
+	}
+	if cfg.Builder.MaxQueueAgeSeconds <= 0 {
+		return errors.New("controlplane.builder.maxQueueAgeSeconds must be greater than 0")
+	}
 	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
 		return errors.New("controlplane.failover.reconcileIntervalSeconds must be greater than 0")
 	}

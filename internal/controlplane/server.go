@@ -164,7 +164,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	ingress := routing.NewIngressSyncer(cfg.Ingress.AdminURL, store.routing, ingressOpts...)
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
-	delivery := newDelivery(store, notifier, ingress, platformEvents, logEmitter)
+	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
+	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
 	var githubClient *source.GitHubClient
 	var githubCatalog *source.GitHubCatalog
 	var githubCoordinator *source.GitHubCoordinator
@@ -178,7 +179,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		}
 		githubCatalog = source.NewGitHubCatalog(store.source, githubClient)
 		githubCoordinator = source.NewGitHubCoordinator(store.source, store.source.Work(), delivery, githubCatalog, githubClient, 5*time.Minute)
-		githubReconciler = source.NewGitHubReconciler(store.source, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute)
+		githubReconciler = source.NewGitHubReconciler(store.source, githubCoordinator, 5*time.Minute)
 		webhookProcessor = source.NewGitHubWebhookProcessor(store.source, githubCoordinator)
 		webhookHandler = source.NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
@@ -213,7 +214,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, policy, policy, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, WithBuilderLogEmitter(logEmitter))
+	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, policy, policy, WithBuilderLogEmitter(logEmitter))
 	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(buildOperations))
 	opsService := NewOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
 	platformv1.RegisterOpsServiceServer(internal, opsService)
@@ -435,8 +436,11 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 	if interval < time.Second {
 		interval = time.Second
 	}
+	if interval > 30*time.Second {
+		interval = 30 * time.Second
+	}
 	repair := func() {
-		if err := s.delivery.RecoverExpiredBuilds(ctx, s.buildStaleAfter); err != nil && ctx.Err() == nil {
+		if err := s.delivery.RecoverExpiredBuilds(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("expired build lease repair failed", "error", err)
 		}
 	}
