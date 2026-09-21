@@ -1,7 +1,6 @@
 package builder
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,52 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/railpack"
 )
 
 const railpackPlanFilename = "railpack-plan.json"
-
-func (a *App) invokeRailpackBuild(ctx context.Context, job *platformv1.BuildJob, workspace jobWorkspace, reporter *buildLogReporter) (string, error) {
-	recipe := job.GetSource().GetBuildRecipe()
-	appDir, err := resolveRepoPath(workspace.repoDir, recipe.GetContextDir(), true)
-	if err != nil {
-		return "", &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("context dir: %w", err)}
-	}
-	planDir, err := safeChildPath(workspace.root, "plan")
-	if err != nil {
-		return "", &buildFailureError{kind: failureKindBuild, err: err}
-	}
-	if err := os.MkdirAll(planDir, 0o755); err != nil {
-		return "", &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("mkdir railpack plan dir: %w", err)}
-	}
-	planPath := filepath.Join(planDir, railpackPlanFilename)
-
-	report := func(line commandOutputLine) {
-		reporter.Report(ctx, line)
-	}
-	planReq := railpackPlanCommand(a.cfg.RailpackBinary, appDir, planPath)
-	output, err := a.runner.Run(ctx, planReq, report)
-	if err != nil {
-		return "", railpackPlanFailure(appDir, recipe.GetContextDir(), planReq, err, output)
-	}
-	if info, err := os.Stat(planPath); err != nil || info.Size() == 0 {
-		return "", &buildFailureError{kind: failureKindBuild, err: errors.New("railpack plan succeeded but wrote no build plan")}
-	}
-
-	env, cleanup, err := dockerConfigEnv(workspace.root, job.GetRegistryPushReference(), job.GetRegistryUsername(), job.GetRegistryPassword())
-	if err != nil {
-		return "", &buildFailureError{kind: failureKindPush, err: err}
-	}
-	defer cleanup()
-
-	req := railpackBuildCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, a.cfg.RailpackFrontendImage, appDir, planDir, planPath, job.GetRegistryPushReference(), workspace.metadataFile, env)
-	output, err = a.runner.Run(ctx, req, report)
-	if err != nil {
-		return "", classifyBuildctlFailure(req, err, output)
-	}
-	return buildDigestRefFromMetadata(job.GetRegistryPushReference(), workspace.metadataFile)
-}
 
 func railpackPlanCommand(railpackBinary, appDir, planPath string) commandRequest {
 	return commandRequest{

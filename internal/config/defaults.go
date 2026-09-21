@@ -314,6 +314,34 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 	if cfg.RailpackFrontendImage == "" {
 		cfg.RailpackFrontendImage = "ghcr.io/railwayapp/railpack-frontend:latest"
 	}
+	if cfg.Executor == "" {
+		cfg.Executor = "development"
+	}
+	if cfg.Limits.TimeoutSeconds <= 0 {
+		cfg.Limits.TimeoutSeconds = 1800
+	}
+	if cfg.Limits.MemoryBytes <= 0 {
+		cfg.Limits.MemoryBytes = 8 << 30
+	}
+	if cfg.Limits.CPUSeconds <= 0 {
+		cfg.Limits.CPUSeconds = 3600
+	}
+	if cfg.Limits.MaxFileBytes <= 0 {
+		cfg.Limits.MaxFileBytes = 10 << 30
+	}
+	if cfg.Limits.MaxProcesses <= 0 {
+		cfg.Limits.MaxProcesses = 4096
+	}
+	if cfg.Limits.MaxWorkspaceBytes <= 0 {
+		cfg.Limits.MaxWorkspaceBytes = 20 << 30
+	}
+	if len(cfg.Network.DeniedCIDRs) == 0 {
+		cfg.Network.DeniedCIDRs = []string{
+			"169.254.169.254/32",
+			"100.100.100.200/32",
+			"fd00:ec2::254/128",
+		}
+	}
 }
 
 func FinalizeControlPlane(cfg *ControlPlaneConfig) error {
