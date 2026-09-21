@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
@@ -122,8 +124,18 @@ func openTestStore(t *testing.T) *persistence {
 		t.Fatalf("create source archive store: %v", err)
 	}
 	store.source.ConfigureSourceArchives(archiveStore)
+	// Each test gets an isolated development keyring; the active key is
+	// bootstrapped after the reset wipes the shared database.
+	provider, err := secretkeys.NewKeyring(filepath.Join(t.TempDir(), "keys.json"), secretkeys.KeyringOptions{AllowGenerate: true})
+	if err != nil {
+		t.Fatalf("create secret key provider: %v", err)
+	}
+	store.attachSecrets(secretkeys.New(store.db, provider))
 	delivery := newDelivery(store, nil, nil, nil, nil)
 	resetTestStore(t, store)
+	if _, err := store.secrets.Registry().EnsureActiveKey(context.Background()); err != nil {
+		t.Fatalf("ensure active envelope key: %v", err)
+	}
 	lease := NewLeaseManager(store.database, time.Minute, time.Millisecond)
 	leaseCtx, releaseLease, err := lease.hold(context.Background(), SingletonLeaseName)
 	if err != nil {
@@ -182,8 +194,12 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"service_rollouts",
 		"service_delivery_status",
 		"domain_bindings",
+		"service_secret_tombstones",
+		"service_secret_versions",
 		"service_revisions",
 		"services",
+		"envelope_data_keys",
+		"envelope_keys",
 		"volumes",
 		"project_memberships",
 		"environments",

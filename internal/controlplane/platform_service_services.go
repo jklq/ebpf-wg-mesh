@@ -187,7 +187,8 @@ func (s *PlatformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 			return nil, status.Errorf(codes.Aborted, "deployment action: %v", err)
 		case errors.Is(err, deliverycore.ErrDeploymentActionInvalid), errors.Is(err, deliverycore.ErrDeploymentStale),
 			errors.Is(err, deliverycore.ErrInvalidReplicaCount), errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported),
-			errors.Is(err, deliverycore.ErrRolloutInProgress), errors.Is(err, deliverycore.ErrVolumeRollingUnsupported):
+			errors.Is(err, deliverycore.ErrRolloutInProgress), errors.Is(err, deliverycore.ErrVolumeRollingUnsupported),
+			errors.Is(err, deliverycore.ErrSealedNameConflict):
 			return nil, status.Errorf(codes.FailedPrecondition, "deployment action: %v", err)
 		default:
 			return nil, status.Errorf(codes.Internal, "deployment action: %v", err)

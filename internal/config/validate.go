@@ -52,6 +52,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateSourceArchives(cfg.SourceArchives); err != nil {
 		return err
 	}
+	if err := validateSecretKeys(cfg.SecretKeys); err != nil {
+		return err
+	}
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
 	}
@@ -591,6 +594,13 @@ func validateS3BucketName(bucket string) error {
 	if strings.Contains(bucket, "..") || strings.HasPrefix(bucket, "-") || strings.HasSuffix(bucket, "-") ||
 		strings.HasPrefix(bucket, ".") || strings.HasSuffix(bucket, ".") {
 		return errors.New("controlplane.sourceArchives.s3.bucket is not a valid bucket name")
+	}
+	return nil
+}
+
+func validateSecretKeys(cfg SecretKeysConfig) error {
+	if strings.TrimSpace(cfg.KeyringPath) == "" {
+		return errors.New("controlplane.secretKeys.keyringPath is required")
 	}
 	return nil
 }

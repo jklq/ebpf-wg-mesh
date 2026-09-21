@@ -135,6 +135,21 @@ func (a connectPlatformService) ListServices(ctx context.Context, req *connect.R
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) SealServiceSecret(ctx context.Context, req *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error) {
+	result, err := a.service.SealServiceSecret(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) DeleteServiceSecret(ctx context.Context, req *connect.Request[platformv1.DeleteServiceSecretRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.DeleteServiceSecret(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) ListServiceSecrets(ctx context.Context, req *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error) {
+	result, err := a.service.ListServiceSecrets(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) CreateVolume(ctx context.Context, req *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
 	result, err := a.service.CreateVolume(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

@@ -30,6 +30,9 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionSourceArchives(cfg.SourceArchives); err != nil {
 		return err
 	}
+	if err := validateProductionDurablePath("controlplane.secretKeys.keyringPath", cfg.SecretKeys.KeyringPath); err != nil {
+		return err
+	}
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
 		return err
 	}
@@ -312,6 +315,10 @@ func dependencyClassForPath(raw string) string {
 		return DependencyEphemeral
 	}
 	return DependencyDurable
+}
+
+func dependencyClassForSecretKeys(cfg SecretKeysConfig) string {
+	return dependencyClassForPath(cfg.KeyringPath)
 }
 
 func dependencyClassForAdmin(cfg IngressConfig) string {

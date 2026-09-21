@@ -11,6 +11,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
@@ -137,6 +138,18 @@ func (f *fakePlatformDelivery) ScaleService(ctx context.Context, user authz.User
 		return f.scaleServiceFn(ctx, user, serviceID, desired)
 	}
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1"}, nil, 0, nil
+}
+
+func (f *fakePlatformDelivery) SealServiceSecret(ctx context.Context, user authz.User, serviceID, name string, value []byte) (int64, error) {
+	return 1, nil
+}
+
+func (f *fakePlatformDelivery) DeleteServiceSecret(ctx context.Context, user authz.User, serviceID, name string) error {
+	return nil
+}
+
+func (f *fakePlatformDelivery) ListServiceSecrets(ctx context.Context, user authz.User, serviceID string) ([]secretkeys.SecretMetadata, error) {
+	return nil, nil
 }
 
 func (f *fakePlatformDelivery) LivePosition() deliverycore.LivePosition {

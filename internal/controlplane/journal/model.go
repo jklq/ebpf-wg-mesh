@@ -87,6 +87,7 @@ type Deployment struct {
 	Detail               string          `json:"detail"`
 	ResolvedSpecJSON     json.RawMessage `json:"resolved_spec_json"`
 	VariableVersionsJSON json.RawMessage `json:"variable_versions_json"`
+	SealedVersionsJSON   json.RawMessage `json:"sealed_versions_json"`
 	IsCurrent            bool            `json:"is_current"`
 	RequestedByUserID    string          `json:"requested_by_user_id"`
 	CreatedAt            time.Time       `json:"created_at"`

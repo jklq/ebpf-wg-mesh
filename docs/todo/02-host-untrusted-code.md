@@ -26,25 +26,11 @@ Prompt:
 Consolidate the duplicated control-plane work queues into one small CockroachDB-backed durable-work package. It replaces github_work_items, source_work_items, and github_webhook_deliveries, and it is not a workflow DSL. A work record needs a stable kind and ID, a unique deduplication key, scoped resource identity, pending/leased/succeeded/failed/dead state, attempt count and limit, owner ID, an owner epoch that increments on every claim, lease expiry with heartbeat, sanitized last error, an available-at time, and timestamps. Enqueue in the same transaction as the product-state mutation that requires it. Claim, heartbeat, complete, and fail must each be a single compare-and-swap on owner and epoch, so a stalled owner cannot commit after takeover without a separate fencing protocol layered on top. Provide bounded retry with jitter, a terminal dead state inspectable by query, and one queue-lag gauge. Document, with one worked handler, the rule that a handler performing an external effect persists intent before the call and records the observed outcome after it — do not build a generic two-phase intent framework to enforce it. First merge is the package plus one caller, deleting that caller's bespoke table. Migrate the others only when you next touch them. Test multi-replica claim contention, worker death before and after an external-effect boundary, and a stalled owner attempting a late commit after takeover.
 ```
 
-## 2.3a Secret envelope key provider
-
-Was: 2.3 (split)
-Status: open
-Depends on: 1.2 if it lands first; otherwise this item is where secret ciphertext first gets a real key.
-
-Secrets are the only key material here whose ciphertext outlives the process. That is what justifies a provider contract.
-
-Prompt:
-
-```text
-Give secret material a real key provider so ciphertext is not protected by a key that exists only under CONTROLPLANE_STATE_DIR on one replica. Define one KeyProvider contract that wraps and unwraps data-encryption keys without exporting the root key into logs, database rows, process arguments, or error strings. Ship a local file provider for development and one production KMS provider; production must reject the file provider. Model key IDs and active/retired states, let new wraps use the active key while retired keys still unwrap, and make every control-plane replica see the same key state. Refuse to delete or disable a key while ciphertext wrapped by it still exists. Provide an operator command to introduce a new active key and to rewrap existing data-encryption keys onto it. Do not add an HSM or external-signer contract, a compromise-response program, or customer-facing key management in this item. Test rewrap across replicas, restart with a retired key still needed for unwrap, unwrap failure diagnostics, and refusal to delete a key with live ciphertext.
-```
-
 ## 2.3b Platform signing key lifecycle
 
 Was: 2.3 (split)
 Status: open
-Depends on: 2.3a for the provider contract.
+Depends on: [2.3a](landed.md#23a-secret-envelope-key-provider) for the provider contract.
 
 Not partner-visible. Every credential these keys sign is short-lived, so rotation is an overlap window, not a ceremony.
 

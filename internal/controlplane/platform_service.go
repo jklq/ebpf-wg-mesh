@@ -11,6 +11,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -65,6 +66,9 @@ type platformDelivery interface {
 	DeleteService(ctx context.Context, user authz.User, serviceID string) error
 	ScaleService(ctx context.Context, user authz.User, serviceID string, desired int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error)
 	LiveAllocationsByEnvironment(environmentID string) (map[string][]deliverycore.AllocationRecord, error)
+	SealServiceSecret(ctx context.Context, user authz.User, serviceID, name string, value []byte) (int64, error)
+	DeleteServiceSecret(ctx context.Context, user authz.User, serviceID, name string) error
+	ListServiceSecrets(ctx context.Context, user authz.User, serviceID string) ([]secretkeys.SecretMetadata, error)
 	livePositionReader
 }
 

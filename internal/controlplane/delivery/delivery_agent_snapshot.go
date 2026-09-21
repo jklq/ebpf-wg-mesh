@@ -11,11 +11,19 @@ import (
 )
 
 func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
-	_ = ctx
 	if d == nil || d.live == nil {
 		return nil, fmt.Errorf("live view is not available")
 	}
-	return d.live.DesiredStateForAgent(agentID, d.store.mesh)
+	state, err := d.live.DesiredStateForAgent(agentID, d.store.mesh)
+	if err != nil {
+		return nil, err
+	}
+	// Sealed values decrypt here, on the control plane, for exactly this
+	// agent's assignments. Agents receive runtime plaintext and never keys.
+	if err := d.resolveSealedEnv(ctx, state); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
 func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.DesiredVolume, error) {

@@ -174,6 +174,16 @@ type SourceArchiveConfig struct {
 	S3            SourceArchiveS3Config
 }
 
+// SecretKeysConfig points at the provisioned master-key ring for sealed
+// service secrets. The same file contents must reach every control-plane
+// replica; the database holds ciphertext and key-version metadata only.
+type SecretKeysConfig struct {
+	// KeyringPath is the access-restricted keyring file. Development
+	// defaults it under the state directory and bootstraps first-install
+	// keys; production requires the operator to provision it.
+	KeyringPath string
+}
+
 type ControlPlaneConfig struct {
 	Profile          Profile
 	Health           HealthConfig
@@ -185,6 +195,7 @@ type ControlPlaneConfig struct {
 	Logs             LogCaptureConfig
 	StateDir         string
 	SourceArchives   SourceArchiveConfig
+	SecretKeys       SecretKeysConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
 	Bootstrap        BootstrapConfig

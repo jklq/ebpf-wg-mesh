@@ -21,7 +21,7 @@ func TestSchemaRejectsCrossServiceReferences(t *testing.T) {
 			`INSERT INTO services(id, environment_id, name, current_spec_revision, desired_replica_count, created_at, updated_at) VALUES ('service-a', 'integrity-environment', 'a', 1, 1, $1, $1), ('service-b', 'integrity-environment', 'b', 1, 1, $1, $1)`,
 			`INSERT INTO service_delivery_status(service_id, updated_at) VALUES ('service-a', $1), ('service-b', $1)`,
 			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ('service-a', 1, '{}', $1), ('service-b', 1, '{}', $1)`,
-			`INSERT INTO deployments(id, service_id, spec_revision, state, cause_kind, reason_code, resolved_spec_json, variable_versions_json, created_at, updated_at) VALUES ('deployment-a', 'service-a', 1, 'staged', 'system', 'TEST', '{}', '{}', $1, $1), ('deployment-b', 'service-b', 1, 'staged', 'system', 'TEST', '{}', '{}', $1, $1)`,
+			`INSERT INTO deployments(id, service_id, spec_revision, state, cause_kind, reason_code, resolved_spec_json, variable_versions_json, sealed_versions_json, created_at, updated_at) VALUES ('deployment-a', 'service-a', 1, 'staged', 'system', 'TEST', '{}', '{}', '{}', $1, $1), ('deployment-b', 'service-b', 1, 'staged', 'system', 'TEST', '{}', '{}', '{}', $1, $1)`,
 			`INSERT INTO agent_registrations(id, name, region, failure_domain, created_at, updated_at) VALUES ('integrity-agent', 'integrity-agent', 'test', 'integrity-agent', $1, $1)`,
 			`INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at) VALUES ('integrity-agent', 'ready', $1)`,
 		}
