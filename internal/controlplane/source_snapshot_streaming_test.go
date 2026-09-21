@@ -120,11 +120,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE source_snapshots SET digest = $2 WHERE id = $1`, snapshot.ID, "sha256:"+string(bytes.Repeat([]byte("0"), 64))); err != nil {
 		t.Fatal(err)
 	}
-	_, reader, err = operations.OpenSourceSnapshot(stream.ctx, snapshot.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.ReadAll(reader); status.Code(err) != codes.DataLoss {
+	if _, _, err := operations.OpenSourceSnapshot(stream.ctx, snapshot.ID); status.Code(err) != codes.DataLoss {
 		t.Fatalf("corrupt digest: %v", err)
 	}
 	if len(stream.chunks) < 2 {

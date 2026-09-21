@@ -27,7 +27,7 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 			return err
 		}
 	}
-	if err := validateProductionDurablePath("controlplane.sourceArchives.directory", cfg.SourceArchives.Directory); err != nil {
+	if err := validateProductionSourceArchives(cfg.SourceArchives); err != nil {
 		return err
 	}
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
@@ -221,6 +221,23 @@ func validateProductionHTTPSURL(field, raw string) error {
 	return validateProductionPublicHost(field, parsed.Hostname())
 }
 
+func validateProductionSourceArchives(cfg SourceArchiveConfig) error {
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	if provider == "" {
+		provider = SourceArchiveProviderFile
+	}
+	if provider != SourceArchiveProviderS3 {
+		return errors.New("controlplane.sourceArchives.provider must be s3 in production; the filesystem provider is for development only")
+	}
+	if strings.TrimSpace(cfg.S3.Endpoint) == "" || strings.TrimSpace(cfg.S3.Region) == "" || strings.TrimSpace(cfg.S3.Bucket) == "" {
+		return errors.New("controlplane.sourceArchives.s3 endpoint, region, and bucket are required in production")
+	}
+	if err := validateProductionDurableTarget("controlplane.sourceArchives.s3.endpoint", cfg.S3.Endpoint); err != nil {
+		return err
+	}
+	return nil
+}
+
 func validateProductionDurablePath(field, raw string) error {
 	path := filepath.Clean(strings.TrimSpace(raw))
 	if path == "" || path == "." {
@@ -274,6 +291,17 @@ func dependencyClassForURL(raw string) string {
 		return DependencyLoopback
 	}
 	return DependencyDurable
+}
+
+func dependencyClassForSourceArchives(cfg SourceArchiveConfig) string {
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	if provider == "" {
+		provider = SourceArchiveProviderFile
+	}
+	if provider == SourceArchiveProviderS3 {
+		return dependencyClassForURL(strings.TrimSpace(cfg.S3.Endpoint))
+	}
+	return dependencyClassForPath(cfg.Directory)
 }
 
 func dependencyClassForPath(raw string) string {

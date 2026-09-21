@@ -1,6 +1,6 @@
 # 2 — Host untrusted code without a shared disk
 
-These items make the dogfood loop safe to offer a design partner. Control-plane replicas and failover-aware durable agents already exist; replicas still share node-local source and keys. Builds still run as a host process. Ingress is still one Caddy. Agents still get a full-cluster identity catalog over a full WireGuard mesh, and allocation delivery still uses complete per-node snapshots instead of bounded diffs.
+These items make the dogfood loop safe to offer a design partner. Control-plane replicas and failover-aware durable agents already exist; replicas still share node-local keys. Production source snapshots live in operator-provided S3-compatible object storage (2.2 is done; see [landed.md](landed.md#22-source-object-storage)). Builds still run as a host process. Ingress is still one Caddy. Agents still get a full-cluster identity catalog over a full WireGuard mesh, and allocation delivery still uses complete per-node snapshots instead of bounded diffs.
 
 Do not wait to empty this file before starting 3.x items that have no dependency here. Do wait to invite a second tenant’s source onto a shared builder until 2.4b exists.
 
@@ -24,20 +24,6 @@ Prompt:
 
 ```text
 Consolidate the duplicated control-plane work queues into one small CockroachDB-backed durable-work package. It replaces github_work_items, source_work_items, and github_webhook_deliveries, and it is not a workflow DSL. A work record needs a stable kind and ID, a unique deduplication key, scoped resource identity, pending/leased/succeeded/failed/dead state, attempt count and limit, owner ID, an owner epoch that increments on every claim, lease expiry with heartbeat, sanitized last error, an available-at time, and timestamps. Enqueue in the same transaction as the product-state mutation that requires it. Claim, heartbeat, complete, and fail must each be a single compare-and-swap on owner and epoch, so a stalled owner cannot commit after takeover without a separate fencing protocol layered on top. Provide bounded retry with jitter, a terminal dead state inspectable by query, and one queue-lag gauge. Document, with one worked handler, the rule that a handler performing an external effect persists intent before the call and records the observed outcome after it — do not build a generic two-phase intent framework to enforce it. First merge is the package plus one caller, deleting that caller's bespoke table. Migrate the others only when you next touch them. Test multi-replica claim contention, worker death before and after an external-effect boundary, and a stalled owner attempting a late commit after takeover.
-```
-
-## 2.2 Source object storage
-
-Was: 2.2
-Status: open
-Depends on: 1.8 for deletion grace. Production must stop requiring a shared filesystem of archives across control-plane replicas.
-
-Design-partner minimum.
-
-Prompt:
-
-```text
-Keep FileSourceArchiveStore for local development and add a production SourceArchiveStore backed by operator-provided S3-compatible object storage. Store content-addressed immutable archives by verified SHA-256 digest, stream uploads and downloads without loading the whole archive into memory, verify size and digest at both boundaries, and use conditional creation so duplicate snapshots converge safely. Persist object metadata and lifecycle state in CockroachDB, distinguish missing/corrupt/transient retrieval failures, and garbage-collect only objects that are unreferenced after the deletion grace period. Support configurable server-side encryption, endpoint, region, bucket, credential-file or workload-identity auth, timeouts, and bounded retries without logging credentials. Production mode must reject the filesystem provider. Add contract tests shared by file and S3-compatible implementations plus failure tests for partial upload, stale metadata, range reads, deletion races, and digest mismatch.
 ```
 
 ## 2.3a Secret envelope key provider

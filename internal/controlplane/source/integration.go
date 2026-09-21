@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ type Store interface {
 	UpsertSourceRevision(context.Context, SourceRevisionRecord) (SourceRevisionRecord, error)
 	SourceSnapshotByRevisionID(context.Context, string) (SourceSnapshotRecord, error)
 	StoreSourceArchive(context.Context, []byte) (string, string, error)
+	StoreSourceArchiveFromReader(context.Context, io.Reader, int64) (string, string, int64, error)
 }
 
 type Delivery interface {

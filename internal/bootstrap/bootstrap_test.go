@@ -82,11 +82,47 @@ func TestControlPlaneBootstrapDefaultsToProductionAndRejectsLoopbackDatabase(t *
 		"-agent-bootstrap-tokens", "node-a=token-a",
 		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
 		"-health-listen", "127.0.0.1:18080",
-		"-source-archives-dir", "/var/lib/ebpf-wg-mesh/controlplane/source-archives",
+		"-source-archives-provider", "s3",
+		"-source-archives-s3-endpoint", "https://s3.us-east-1.amazonaws.com",
+		"-source-archives-s3-region", "us-east-1",
+		"-source-archives-s3-bucket", "platform-source-archives",
 		"-ingress-public-addr", "platform.example.test",
 	})
 	if err == nil || !strings.Contains(err.Error(), "loopback host") {
 		t.Fatalf("expected production to reject loopback database, got %v", err)
+	}
+}
+
+func TestControlPlaneBootstrapParsesSourceArchiveS3Flags(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ControlPlane([]string{
+		"-profile", "development",
+		"-user-assertion-secret", "test-user-assertion-secret-at-least-32-bytes",
+		"-internal-server-names", "controlplane",
+		"-agent-bootstrap-tokens", "node-a=token-a",
+		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+		"-source-archives-provider", "s3",
+		"-source-archives-s3-endpoint", "https://s3.us-east-1.amazonaws.com",
+		"-source-archives-s3-region", "us-east-1",
+		"-source-archives-s3-bucket", "platform-source-archives",
+		"-source-archives-s3-prefix", "snapshots",
+		"-source-archives-s3-sse", "aws:kms",
+		"-source-archives-s3-kms-key-id", "key-1",
+		"-source-archives-s3-credentials-file", "/etc/ebpf-wg-mesh/s3-credentials.json",
+		"-source-archives-s3-request-timeout-seconds", "45",
+		"-source-archives-s3-max-retries", "5",
+	})
+	if err != nil {
+		t.Fatalf("ControlPlane: %v", err)
+	}
+	s3 := cfg.SourceArchives.S3
+	if cfg.SourceArchives.Provider != "s3" || s3.Endpoint != "https://s3.us-east-1.amazonaws.com" ||
+		s3.Region != "us-east-1" || s3.Bucket != "platform-source-archives" || s3.Prefix != "snapshots" ||
+		s3.ServerSideEncryption != "aws:kms" || s3.SSEKMSKeyID != "key-1" ||
+		s3.CredentialsFile != "/etc/ebpf-wg-mesh/s3-credentials.json" ||
+		s3.RequestTimeoutSeconds != 45 || s3.MaxRetries != 5 {
+		t.Fatalf("unexpected source archive config: %+v", cfg.SourceArchives)
 	}
 }
 

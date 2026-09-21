@@ -49,11 +49,8 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.StateDir == "" {
 		return errors.New("controlplane.stateDir is required")
 	}
-	if strings.TrimSpace(cfg.SourceArchives.Directory) == "" {
-		return errors.New("controlplane.sourceArchives.directory is required")
-	}
-	if cfg.SourceArchives.RetentionDays <= 0 {
-		return errors.New("controlplane.sourceArchives.retentionDays must be greater than 0")
+	if err := validateSourceArchives(cfg.SourceArchives); err != nil {
+		return err
 	}
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
@@ -509,6 +506,91 @@ func validateCaddyAdmin(cfg IngressConfig) error {
 	}
 	if !isLoopbackHost(host) {
 		return errors.New("controlplane.ingress.adminListen must bind loopback unless allowNonLoopbackAdmin is enabled")
+	}
+	return nil
+}
+
+func validateSourceArchives(cfg SourceArchiveConfig) error {
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	if provider == "" {
+		provider = SourceArchiveProviderFile
+	}
+	if cfg.RetentionDays <= 0 {
+		return errors.New("controlplane.sourceArchives.retentionDays must be greater than 0")
+	}
+	switch provider {
+	case SourceArchiveProviderFile:
+		if strings.TrimSpace(cfg.Directory) == "" {
+			return errors.New("controlplane.sourceArchives.directory is required")
+		}
+		if strings.TrimSpace(cfg.S3.Endpoint) != "" || strings.TrimSpace(cfg.S3.Region) != "" ||
+			strings.TrimSpace(cfg.S3.Bucket) != "" || strings.TrimSpace(cfg.S3.Prefix) != "" ||
+			strings.TrimSpace(cfg.S3.ServerSideEncryption) != "" || strings.TrimSpace(cfg.S3.SSEKMSKeyID) != "" ||
+			strings.TrimSpace(cfg.S3.CredentialsFile) != "" {
+			return errors.New("controlplane.sourceArchives.s3 fields require provider s3")
+		}
+		return nil
+	case SourceArchiveProviderS3:
+		if strings.TrimSpace(cfg.Directory) != "" {
+			return errors.New("controlplane.sourceArchives.directory must be empty when provider is s3")
+		}
+		return validateSourceArchiveS3(cfg.S3)
+	default:
+		return fmt.Errorf("controlplane.sourceArchives.provider must be %q or %q", SourceArchiveProviderFile, SourceArchiveProviderS3)
+	}
+}
+
+func validateSourceArchiveS3(cfg SourceArchiveS3Config) error {
+	if err := validateAbsoluteURL("controlplane.sourceArchives.s3.endpoint", cfg.Endpoint); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(cfg.Endpoint))
+	if err != nil {
+		return fmt.Errorf("controlplane.sourceArchives.s3.endpoint must be a valid absolute URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("controlplane.sourceArchives.s3.endpoint must use http or https")
+	}
+	if strings.TrimSpace(cfg.Region) == "" || strings.ContainsAny(strings.TrimSpace(cfg.Region), " \t\n/") {
+		return errors.New("controlplane.sourceArchives.s3.region is required")
+	}
+	if err := validateS3BucketName(cfg.Bucket); err != nil {
+		return err
+	}
+	if strings.HasPrefix(strings.TrimSpace(cfg.Prefix), "/") {
+		return errors.New("controlplane.sourceArchives.s3.prefix must not start with /")
+	}
+	switch strings.TrimSpace(cfg.ServerSideEncryption) {
+	case "", "AES256", "aws:kms":
+	default:
+		return errors.New("controlplane.sourceArchives.s3.serverSideEncryption must be empty, AES256, or aws:kms")
+	}
+	if strings.TrimSpace(cfg.ServerSideEncryption) == "AES256" && strings.TrimSpace(cfg.SSEKMSKeyID) != "" {
+		return errors.New("controlplane.sourceArchives.s3.kmsKeyId requires aws:kms encryption")
+	}
+	if cfg.RequestTimeoutSeconds < 1 || cfg.RequestTimeoutSeconds > 300 {
+		return errors.New("controlplane.sourceArchives.s3.requestTimeoutSeconds must be between 1 and 300")
+	}
+	if cfg.MaxRetries < 1 || cfg.MaxRetries > 10 {
+		return errors.New("controlplane.sourceArchives.s3.maxRetries must be between 1 and 10")
+	}
+	return nil
+}
+
+func validateS3BucketName(bucket string) error {
+	bucket = strings.TrimSpace(bucket)
+	if len(bucket) < 3 || len(bucket) > 63 {
+		return errors.New("controlplane.sourceArchives.s3.bucket must be 3-63 characters")
+	}
+	for _, r := range bucket {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			continue
+		}
+		return errors.New("controlplane.sourceArchives.s3.bucket must be lowercase letters, digits, hyphens, or dots")
+	}
+	if strings.Contains(bucket, "..") || strings.HasPrefix(bucket, "-") || strings.HasSuffix(bucket, "-") ||
+		strings.HasPrefix(bucket, ".") || strings.HasSuffix(bucket, ".") {
+		return errors.New("controlplane.sourceArchives.s3.bucket is not a valid bucket name")
 	}
 	return nil
 }

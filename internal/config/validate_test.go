@@ -420,6 +420,89 @@ func TestFinalizeControlPlaneRejectsLongLivedRegistryCredentials(t *testing.T) {
 	}
 }
 
+func TestFinalizeControlPlaneValidatesSourceArchiveS3(t *testing.T) {
+	t.Parallel()
+
+	base := func() ControlPlaneConfig {
+		cfg := validControlPlaneConfigForRegistryTest()
+		cfg.SourceArchives = SourceArchiveConfig{
+			Provider: SourceArchiveProviderS3,
+			S3: SourceArchiveS3Config{
+				Endpoint:              "https://s3.us-east-1.amazonaws.com",
+				Region:                "us-east-1",
+				Bucket:                "platform-source-archives",
+				RequestTimeoutSeconds: 30,
+				MaxRetries:            3,
+			},
+		}
+		return cfg
+	}
+	if err := FinalizeControlPlane(func() *ControlPlaneConfig { cfg := base(); return &cfg }()); err != nil {
+		t.Fatalf("valid S3 config rejected: %v", err)
+	}
+
+	cases := map[string]func(*ControlPlaneConfig){
+		"unknown provider":  func(cfg *ControlPlaneConfig) { cfg.SourceArchives.Provider = "gcs" },
+		"s3 with directory": func(cfg *ControlPlaneConfig) { cfg.SourceArchives.Directory = "/var/lib/archives" },
+		"file with s3 fields": func(cfg *ControlPlaneConfig) {
+			cfg.SourceArchives.Provider = SourceArchiveProviderFile
+			cfg.SourceArchives.Directory = "/var/lib/archives"
+		},
+		"missing endpoint":  func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.Endpoint = "" },
+		"relative endpoint": func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.Endpoint = "s3.us-east-1.amazonaws.com" },
+		"missing region":    func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.Region = "" },
+		"short bucket":      func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.Bucket = "ab" },
+		"uppercase bucket":  func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.Bucket = "Platform-Archives" },
+		"absolute prefix":   func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.Prefix = "/tenant" },
+		"unknown sse":       func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.ServerSideEncryption = "AES128" },
+		"kms key without kms": func(cfg *ControlPlaneConfig) {
+			cfg.SourceArchives.S3.ServerSideEncryption = "AES256"
+			cfg.SourceArchives.S3.SSEKMSKeyID = "key"
+		},
+		"timeout too large": func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.RequestTimeoutSeconds = 301 },
+		"retries too many":  func(cfg *ControlPlaneConfig) { cfg.SourceArchives.S3.MaxRetries = 11 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := base()
+			mutate(&cfg)
+			if err := FinalizeControlPlane(&cfg); err == nil {
+				t.Fatalf("expected %s to be rejected", name)
+			}
+		})
+	}
+}
+
+func TestFinalizeControlPlaneDefaultsSourceArchiveProvider(t *testing.T) {
+	t.Parallel()
+
+	cfg := validControlPlaneConfigForRegistryTest()
+	cfg.SourceArchives = SourceArchiveConfig{}
+	if err := FinalizeControlPlane(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SourceArchives.Provider != SourceArchiveProviderFile {
+		t.Fatalf("provider = %q, want file", cfg.SourceArchives.Provider)
+	}
+
+	cfg = validControlPlaneConfigForRegistryTest()
+	cfg.SourceArchives = SourceArchiveConfig{S3: SourceArchiveS3Config{
+		Endpoint: "https://s3.us-east-1.amazonaws.com",
+		Region:   "us-east-1",
+		Bucket:   "platform-source-archives",
+	}}
+	if err := FinalizeControlPlane(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SourceArchives.Provider != SourceArchiveProviderS3 {
+		t.Fatalf("provider = %q, want s3", cfg.SourceArchives.Provider)
+	}
+	if cfg.SourceArchives.S3.RequestTimeoutSeconds != 30 || cfg.SourceArchives.S3.MaxRetries != 3 {
+		t.Fatalf("s3 defaults = %+v", cfg.SourceArchives.S3)
+	}
+}
+
 func validControlPlaneConfigForRegistryTest() ControlPlaneConfig {
 	return ControlPlaneConfig{
 		Profile:        ProfileDevelopment,

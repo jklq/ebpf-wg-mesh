@@ -16,7 +16,11 @@ const (
 )
 
 func ValidateArchive(archiveTGZ []byte) error {
-	gzr, err := gzip.NewReader(bytes.NewReader(archiveTGZ))
+	return ValidateArchiveStream(bytes.NewReader(archiveTGZ))
+}
+
+func ValidateArchiveStream(archiveTGZ io.Reader) error {
+	gzr, err := gzip.NewReader(archiveTGZ)
 	if err != nil {
 		return fmt.Errorf("open source archive: %w", err)
 	}
