@@ -238,9 +238,11 @@ func TestSandboxTrueForkBombContained(t *testing.T) {
 	// external wait would abort the shell before the marker. The
 	// fork-failure noise in the output proves the bomb actually
 	// raged against the cap instead of fizzling on shell syntax.
+	// (Busybox sh rejects the classic :(){ :|:& };: spelling with
+	// "bad function name", hence the ordinary function name.)
 	bomb := backend.runProbe(ctx, t, setupProbeEnv(t), probeSpec{
 		Script: `
-			:(){ :|:& };:
+			bomb(){ bomb|bomb& };bomb
 			i=0
 			while [ "$i" -lt 500000 ]; do i=$((i+1)); done
 			echo "survived=yes"
