@@ -163,8 +163,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			return nil, err
 		}
 		githubCatalog = source.NewGitHubCatalog(store.source, githubClient)
-		githubCoordinator = source.NewGitHubCoordinator(store.source, delivery, githubCatalog, githubClient, 5*time.Minute)
-		githubReconciler = source.NewGitHubReconciler(store.source, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute, 5*time.Minute)
+		githubCoordinator = source.NewGitHubCoordinator(store.source, store.source.Work(), delivery, githubCatalog, githubClient, 5*time.Minute)
+		githubReconciler = source.NewGitHubReconciler(store.source, githubCoordinator, time.Duration(cfg.Builder.HeartbeatTimeoutSeconds)*time.Second, 5*time.Minute)
 		webhookProcessor = source.NewGitHubWebhookProcessor(store.source, githubCoordinator)
 		webhookHandler = source.NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
