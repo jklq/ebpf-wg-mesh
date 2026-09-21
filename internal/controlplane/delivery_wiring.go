@@ -19,6 +19,6 @@ func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNoti
 		ReadState:              store.readLiveState,
 		ReservedAgentIDs:       store.reservedAgentIDs,
 		Notifier:               notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
-		Authorizer: store.authorizer(),
+		Authorizer: store.authorizer(), Secrets: store.secrets,
 	}
 }

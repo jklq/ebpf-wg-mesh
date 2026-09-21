@@ -10,6 +10,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/durablework"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -51,6 +52,11 @@ type Dependencies struct {
 	Events                 Events
 	LogEmitter             *logs.LogEmitter
 	ReservedAgentIDs       []string
+	// Secrets is the sealed-secret backend. It is always wired in
+	// production; when nil, explicit sealed operations fail closed while
+	// implicit paths (public spec updates, deployment capture, desired
+	// merge) skip sealed handling.
+	Secrets *secretkeys.Service
 }
 
 type SourceStore interface {
@@ -78,6 +84,7 @@ type persistence struct {
 	withProductTx     Transaction
 	withObservationTx ObservationTransaction
 	readState         func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	secrets           *secretkeys.Service
 }
 
 func New(deps Dependencies) *Delivery {
@@ -99,6 +106,7 @@ func New(deps Dependencies) *Delivery {
 			enqueueSourceWorkItemTx:  deps.EnqueueSourceWork,
 			sourceStore:              deps.SourceStore,
 			authz:                    deps.Authorizer,
+			secrets:                  deps.Secrets,
 		},
 		live:       live,
 		notifier:   deps.Notifier,

@@ -204,6 +204,9 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if err := ValidateRollingStrategy(spec); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
+	if err := d.rejectSealedNameConflicts(ctx, tx, scope.ID(), spec.GetRuntime().GetEnv()); err != nil {
+		return ServiceRecord{}, false, false, err
+	}
 	nameChanged := nextName != current.Name
 	if sameServiceSpec(current.Spec, spec) {
 		if !nameChanged {

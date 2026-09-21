@@ -44,6 +44,7 @@ func TestFinalizeAcceptsValidMinimalProductionConfigs(t *testing.T) {
 		"features=ingress,registry_auth,source_storage,sandbox_production",
 		"database=durable",
 		"source_storage=durable",
+		"envelope_keys=durable",
 		"ingress_admin=loopback",
 	} {
 		if !strings.Contains(contract, part) {
@@ -132,6 +133,21 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.Registry.SigningCertFile = ""
 		cfg.Registry.SigningKeyFile = ""
 		mustReject(t, FinalizeControlPlane(&cfg), "signing certificate and key files")
+	})
+
+	t.Run("provisioned keyring allowed in production", func(t *testing.T) {
+		t.Parallel()
+		cfg := validMinimalProductionControlPlane(t)
+		if err := FinalizeControlPlane(&cfg); err != nil {
+			t.Fatalf("FinalizeControlPlane: %v", err)
+		}
+	})
+
+	t.Run("ephemeral keyring path", func(t *testing.T) {
+		t.Parallel()
+		cfg := validMinimalProductionControlPlane(t)
+		cfg.SecretKeys.KeyringPath = "var/controlplane/secret-keys/keys.json"
+		mustReject(t, FinalizeControlPlane(&cfg), "secretKeys.keyringPath must not use ephemeral storage")
 	})
 	t.Run("unprotected remote caddy admin", func(t *testing.T) {
 		t.Parallel()
@@ -284,6 +300,9 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 				RequestTimeoutSeconds: 30,
 				MaxRetries:            3,
 			},
+		},
+		SecretKeys: SecretKeysConfig{
+			KeyringPath: "/etc/ebpf-wg-mesh/secret-keys/keys.json",
 		},
 		Ingress: IngressConfig{
 			PublicAddr: "platform.example.test",

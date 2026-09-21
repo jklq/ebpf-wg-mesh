@@ -236,6 +236,7 @@ type DeploymentRecord struct {
 	Detail            string
 	ResolvedSpec      *platformv1.ServiceSpec
 	VariableVersions  map[string]int64
+	SealedVersions    map[string]int64
 	Transitions       []DeploymentTransitionRecord
 	Actions           []DeploymentActionRecord
 }

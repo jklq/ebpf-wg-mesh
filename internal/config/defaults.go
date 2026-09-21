@@ -27,6 +27,9 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.StateDir = "var/controlplane"
 	}
 	applySourceArchiveDefaults(cfg)
+	if cfg.SecretKeys.KeyringPath == "" {
+		cfg.SecretKeys.KeyringPath = filepath.Join(cfg.StateDir, "secret-keys", "keys.json")
+	}
 	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
 		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
 	}

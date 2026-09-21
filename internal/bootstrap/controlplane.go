@@ -54,6 +54,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.SourceArchives.S3.CredentialsFile, "source-archives-s3-credentials-file", "CONTROLPLANE_SOURCE_ARCHIVES_S3_CREDENTIALS_FILE", "", "JSON file with access_key_id/secret_access_key; empty uses workload identity or environment")
 	intFlag(fs, &cfg.SourceArchives.S3.RequestTimeoutSeconds, "source-archives-s3-request-timeout-seconds", "CONTROLPLANE_SOURCE_ARCHIVES_S3_REQUEST_TIMEOUT_SECONDS", 30, "")
 	intFlag(fs, &cfg.SourceArchives.S3.MaxRetries, "source-archives-s3-max-retries", "CONTROLPLANE_SOURCE_ARCHIVES_S3_MAX_RETRIES", 3, "")
+	stringFlag(fs, &cfg.SecretKeys.KeyringPath, "secret-keys-keyring", "CONTROLPLANE_SECRET_KEYS_KEYRING", "", "provisioned master-key ring file; same contents on every replica, defaults under the state directory")
 	stringFlag(fs, &cfg.Ingress.AdminURL, "ingress-admin-url", "CONTROLPLANE_INGRESS_ADMIN_URL", "http://127.0.0.1:2019/load", "")
 	stringFlag(fs, &cfg.Ingress.AdminListen, "ingress-admin-listen", "CONTROLPLANE_INGRESS_ADMIN_LISTEN", "127.0.0.1:2019", "")
 	boolFlag(fs, &cfg.Ingress.AllowNonLoopbackAdmin, "ingress-allow-non-loopback-admin", "CONTROLPLANE_INGRESS_ALLOW_NON_LOOPBACK_ADMIN", false, "")

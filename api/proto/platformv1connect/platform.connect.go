@@ -101,6 +101,15 @@ const (
 	// PlatformServiceListServicesProcedure is the fully-qualified name of the PlatformService's
 	// ListServices RPC.
 	PlatformServiceListServicesProcedure = "/platform.v1.PlatformService/ListServices"
+	// PlatformServiceSealServiceSecretProcedure is the fully-qualified name of the PlatformService's
+	// SealServiceSecret RPC.
+	PlatformServiceSealServiceSecretProcedure = "/platform.v1.PlatformService/SealServiceSecret"
+	// PlatformServiceDeleteServiceSecretProcedure is the fully-qualified name of the PlatformService's
+	// DeleteServiceSecret RPC.
+	PlatformServiceDeleteServiceSecretProcedure = "/platform.v1.PlatformService/DeleteServiceSecret"
+	// PlatformServiceListServiceSecretsProcedure is the fully-qualified name of the PlatformService's
+	// ListServiceSecrets RPC.
+	PlatformServiceListServiceSecretsProcedure = "/platform.v1.PlatformService/ListServiceSecrets"
 	// PlatformServiceCreateVolumeProcedure is the fully-qualified name of the PlatformService's
 	// CreateVolume RPC.
 	PlatformServiceCreateVolumeProcedure = "/platform.v1.PlatformService/CreateVolume"
@@ -192,6 +201,9 @@ type PlatformServiceClient interface {
 	DeleteService(context.Context, *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error)
 	GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error)
 	ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error)
+	SealServiceSecret(context.Context, *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error)
+	DeleteServiceSecret(context.Context, *connect.Request[platformv1.DeleteServiceSecretRequest]) (*connect.Response[emptypb.Empty], error)
+	ListServiceSecrets(context.Context, *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error)
 	CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
 	DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error)
 	ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error)
@@ -344,6 +356,24 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("ListServices")),
 			connect.WithClientOptions(opts...),
 		),
+		sealServiceSecret: connect.NewClient[platformv1.SealServiceSecretRequest, platformv1.SealServiceSecretResponse](
+			httpClient,
+			baseURL+PlatformServiceSealServiceSecretProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("SealServiceSecret")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteServiceSecret: connect.NewClient[platformv1.DeleteServiceSecretRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceDeleteServiceSecretProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("DeleteServiceSecret")),
+			connect.WithClientOptions(opts...),
+		),
+		listServiceSecrets: connect.NewClient[platformv1.ListServiceSecretsRequest, platformv1.ListServiceSecretsResponse](
+			httpClient,
+			baseURL+PlatformServiceListServiceSecretsProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListServiceSecrets")),
+			connect.WithClientOptions(opts...),
+		),
 		createVolume: connect.NewClient[platformv1.CreateVolumeRequest, platformv1.Volume](
 			httpClient,
 			baseURL+PlatformServiceCreateVolumeProcedure,
@@ -448,6 +478,9 @@ type platformServiceClient struct {
 	deleteService               *connect.Client[platformv1.DeleteServiceRequest, emptypb.Empty]
 	getService                  *connect.Client[platformv1.GetServiceRequest, platformv1.Service]
 	listServices                *connect.Client[platformv1.ListServicesRequest, platformv1.ListServicesResponse]
+	sealServiceSecret           *connect.Client[platformv1.SealServiceSecretRequest, platformv1.SealServiceSecretResponse]
+	deleteServiceSecret         *connect.Client[platformv1.DeleteServiceSecretRequest, emptypb.Empty]
+	listServiceSecrets          *connect.Client[platformv1.ListServiceSecretsRequest, platformv1.ListServiceSecretsResponse]
 	createVolume                *connect.Client[platformv1.CreateVolumeRequest, platformv1.Volume]
 	deleteVolume                *connect.Client[platformv1.DeleteVolumeRequest, emptypb.Empty]
 	listVolumes                 *connect.Client[platformv1.ListVolumesRequest, platformv1.ListVolumesResponse]
@@ -568,6 +601,21 @@ func (c *platformServiceClient) ListServices(ctx context.Context, req *connect.R
 	return c.listServices.CallUnary(ctx, req)
 }
 
+// SealServiceSecret calls platform.v1.PlatformService.SealServiceSecret.
+func (c *platformServiceClient) SealServiceSecret(ctx context.Context, req *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error) {
+	return c.sealServiceSecret.CallUnary(ctx, req)
+}
+
+// DeleteServiceSecret calls platform.v1.PlatformService.DeleteServiceSecret.
+func (c *platformServiceClient) DeleteServiceSecret(ctx context.Context, req *connect.Request[platformv1.DeleteServiceSecretRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.deleteServiceSecret.CallUnary(ctx, req)
+}
+
+// ListServiceSecrets calls platform.v1.PlatformService.ListServiceSecrets.
+func (c *platformServiceClient) ListServiceSecrets(ctx context.Context, req *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error) {
+	return c.listServiceSecrets.CallUnary(ctx, req)
+}
+
 // CreateVolume calls platform.v1.PlatformService.CreateVolume.
 func (c *platformServiceClient) CreateVolume(ctx context.Context, req *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
 	return c.createVolume.CallUnary(ctx, req)
@@ -656,6 +704,9 @@ type PlatformServiceHandler interface {
 	DeleteService(context.Context, *connect.Request[platformv1.DeleteServiceRequest]) (*connect.Response[emptypb.Empty], error)
 	GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error)
 	ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error)
+	SealServiceSecret(context.Context, *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error)
+	DeleteServiceSecret(context.Context, *connect.Request[platformv1.DeleteServiceSecretRequest]) (*connect.Response[emptypb.Empty], error)
+	ListServiceSecrets(context.Context, *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error)
 	CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
 	DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error)
 	ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error)
@@ -804,6 +855,24 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("ListServices")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceSealServiceSecretHandler := connect.NewUnaryHandler(
+		PlatformServiceSealServiceSecretProcedure,
+		svc.SealServiceSecret,
+		connect.WithSchema(platformServiceMethods.ByName("SealServiceSecret")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceDeleteServiceSecretHandler := connect.NewUnaryHandler(
+		PlatformServiceDeleteServiceSecretProcedure,
+		svc.DeleteServiceSecret,
+		connect.WithSchema(platformServiceMethods.ByName("DeleteServiceSecret")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceListServiceSecretsHandler := connect.NewUnaryHandler(
+		PlatformServiceListServiceSecretsProcedure,
+		svc.ListServiceSecrets,
+		connect.WithSchema(platformServiceMethods.ByName("ListServiceSecrets")),
+		connect.WithHandlerOptions(opts...),
+	)
 	platformServiceCreateVolumeHandler := connect.NewUnaryHandler(
 		PlatformServiceCreateVolumeProcedure,
 		svc.CreateVolume,
@@ -926,6 +995,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceGetServiceHandler.ServeHTTP(w, r)
 		case PlatformServiceListServicesProcedure:
 			platformServiceListServicesHandler.ServeHTTP(w, r)
+		case PlatformServiceSealServiceSecretProcedure:
+			platformServiceSealServiceSecretHandler.ServeHTTP(w, r)
+		case PlatformServiceDeleteServiceSecretProcedure:
+			platformServiceDeleteServiceSecretHandler.ServeHTTP(w, r)
+		case PlatformServiceListServiceSecretsProcedure:
+			platformServiceListServiceSecretsHandler.ServeHTTP(w, r)
 		case PlatformServiceCreateVolumeProcedure:
 			platformServiceCreateVolumeHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteVolumeProcedure:
@@ -1043,6 +1118,18 @@ func (UnimplementedPlatformServiceHandler) GetService(context.Context, *connect.
 
 func (UnimplementedPlatformServiceHandler) ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListServices is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) SealServiceSecret(context.Context, *connect.Request[platformv1.SealServiceSecretRequest]) (*connect.Response[platformv1.SealServiceSecretResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.SealServiceSecret is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) DeleteServiceSecret(context.Context, *connect.Request[platformv1.DeleteServiceSecretRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteServiceSecret is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) ListServiceSecrets(context.Context, *connect.Request[platformv1.ListServiceSecretsRequest]) (*connect.Response[platformv1.ListServiceSecretsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListServiceSecrets is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
