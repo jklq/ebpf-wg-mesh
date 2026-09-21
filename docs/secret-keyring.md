@@ -54,14 +54,15 @@ automatically on startup.
    `controlplane keys check --key-id kr-77ab...`
 4. `controlplane keys activate --key-id kr-77ab...` — new wraps use it;
    the previous key retires but still unwraps.
-5. `controlplane keys rewrap` until it reports zero. Each DEK row commits
-   independently, so an interrupted run (crash, restart, concurrent
-   activation) resumes where it stopped; re-run after any activation that
-   lands mid-rewrap.
-6. `controlplane keys list` shows per-key wrapped-DEK counts. When the
-   retired key's count is zero, `controlplane keys delete --key-id <old ID>`
-   removes its row. Deletion refuses the active key and any key with live
-   wrapped DEKs.
+5. `controlplane keys rewrap` until it reports zero. Each DEK and
+   signing-key row commits independently, so an interrupted run (crash,
+   restart, concurrent activation) resumes where it stopped; re-run
+   after any activation that lands mid-rewrap.
+6. `controlplane keys list` shows per-key wrapped-DEK and wrapped
+   signing-key counts. When the retired key's counts are zero,
+   `controlplane keys delete --key-id <old ID>` removes its row.
+   Deletion refuses the active key and any key with live wrapped DEKs
+   or signing keys.
 7. Only after the row is deleted, remove the old version from the keyring
    files (keep backups until the database backup that referenced it expires).
 
@@ -71,11 +72,13 @@ to re-list.
 
 ## Verification and failure modes
 
-- `controlplane keys list` — IDs, states, wrapped-DEK counts, and whether
-  this replica's file holds each version (`LOCAL`).
+- `controlplane keys list` — IDs, states, wrapped-DEK and wrapped
+  signing-key counts, and whether this replica's file holds each version
+  (`LOCAL`).
 - `controlplane keys check` — fails unless this replica holds every
-  recorded version and every wrapped DEK probe-unwraps. Run it on each
-  replica after provisioning and before activation.
+  recorded version and every wrapped DEK and signing key
+  probe-unwraps. Run it on each replica after provisioning and before
+  activation.
 - Unwrap failures classify without leaking material: `unknown-key` (no
   such registry row), `missing-provider-material` (version never
   provisioned here — copy the file), `corrupt-ciphertext` (tampered bytes,

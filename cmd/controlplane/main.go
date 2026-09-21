@@ -18,6 +18,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "signing-keys" {
+		if err := bootstrap.RunSigningKeys(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	bootstrap.Run(os.Args[1:], "control plane", bootstrap.ControlPlane, config.ControlPlaneStartupContract,
 		func(cfg config.ControlPlaneConfig) (*controlplane.Server, error) {
 			return controlplane.NewServer(context.Background(), cfg)

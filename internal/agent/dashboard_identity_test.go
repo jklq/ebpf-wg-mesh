@@ -14,6 +14,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -27,27 +28,27 @@ type testDashboardCertificateIssuer struct {
 	err       error
 }
 
-func (i *testDashboardCertificateIssuer) IssueManagedDashboardCertificate(_ context.Context, req *agentv1.ManagedDashboardCertificateRequest, _ ...grpc.CallOption) (*agentv1.EnrollResponse, error) {
+func (i *testDashboardCertificateIssuer) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest, _ ...grpc.CallOption) (*agentv1.EnrollResponse, error) {
 	i.calls++
 	i.request = req
 	if i.err != nil {
 		return nil, i.err
 	}
-	return i.authority.IssueManagedDashboardCertificate("dashboard-1", req.GetCsrPem())
+	return i.authority.IssueManagedDashboardCertificate(ctx, "dashboard-1", req.GetCsrPem())
 }
 
 func TestManagedDashboardIdentityIsCreatedLocallyAndReused(t *testing.T) {
 	t.Parallel()
 
 	secretsDir := t.TempDir()
-	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"controlplane"},
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -100,14 +101,14 @@ func TestManagedDashboardIdentityKeepsValidCertificateWhenRenewalFails(t *testin
 	t.Parallel()
 
 	secretsDir := t.TempDir()
-	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"controlplane"},
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 1,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

@@ -126,6 +126,18 @@ func randomSecret(byteLength int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(secret), nil
 }
 
+func signingSecret(ctx context.Context, server *controlplane.Server, scope string) (string, error) {
+	keys := server.SigningKeys()
+	if keys == nil {
+		return "", fmt.Errorf("signing keys are not initialized")
+	}
+	secret, err := keys.ActiveSecret(ctx, scope)
+	if err != nil {
+		return "", err
+	}
+	return string(secret), nil
+}
+
 func pickLoopbackPort() (int, error) {
 	listener, port, err := reservePort("127.0.0.1")
 	if err != nil {

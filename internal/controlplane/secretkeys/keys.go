@@ -222,8 +222,9 @@ func (r *Registry) WrappedCounts(ctx context.Context) (map[string]int64, error) 
 }
 
 // DeleteKey removes a retired key. It refuses the active key and any key
-// that still wraps data-encryption keys: activate and rewrap first, then
-// delete the row here before removing the version from the keyring files.
+// that still wraps data-encryption or signing keys: activate and rewrap
+// first, then delete the row here before removing the version from the
+// keyring files.
 func (r *Registry) DeleteKey(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -246,6 +247,13 @@ func (r *Registry) DeleteKey(ctx context.Context, id string) error {
 		}
 		if live > 0 {
 			return fmt.Errorf("%w: key %s still wraps %d data-encryption key(s)", ErrKeyHasLiveCiphertext, id, live)
+		}
+		var signing int64
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM platform_signing_keys WHERE wrapping_key_id = $1`, id).Scan(&signing); err != nil {
+			return fmt.Errorf("count wrapped signing keys for %s: %w", id, err)
+		}
+		if signing > 0 {
+			return fmt.Errorf("%w: key %s still wraps %d signing key(s)", ErrKeyHasLiveCiphertext, id, signing)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM envelope_keys WHERE id = $1`, id); err != nil {
 			return fmt.Errorf("delete envelope key %s: %w", id, err)

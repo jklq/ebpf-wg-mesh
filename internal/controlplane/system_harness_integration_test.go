@@ -66,7 +66,6 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 				ClientCertValidityHours: 24,
 			},
 		},
-		UserAssertions: config.UserAssertionConfig{HMACSecret: testUserAssertionSecret},
 		Database: config.DatabaseConfig{
 			URL:          deliverycore.FirstNonEmpty(opts.databaseURL, createTestDatabase(t)),
 			MaxOpenConns: 4,
@@ -109,7 +108,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 	}
 
 	if opts.withDashboard {
-		identity, err := server.EnsureDashboardClientIdentity(systemTestDashboardID)
+		identity, err := server.EnsureDashboardClientIdentity(ctx, systemTestDashboardID)
 		if err != nil {
 			t.Fatalf("EnsureDashboardClientIdentity: %v", err)
 		}
@@ -126,7 +125,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 			TokenRealm:     "http://" + server.RegistryAuthAddr() + registry.TokenPath,
 			TokenService:   cfg.Registry.TokenService,
 			TokenIssuer:    cfg.Registry.TokenIssuer,
-			RootCertBundle: server.RegistryAuthCertificatePath(),
+			RootCertBundle: server.RegistryAuthBundlePath(),
 		}, localteststack.ExecDockerRunner{})
 		if err != nil {
 			t.Fatalf("StartManagedRegistry: %v", err)
@@ -194,7 +193,7 @@ func startTestClickHouse(t *testing.T) string {
 
 func startTestBuilder(t *testing.T, server *Server, builderID string) *builder.App {
 	t.Helper()
-	identity, err := server.EnsureBuilderClientIdentity(builderID)
+	identity, err := server.EnsureBuilderClientIdentity(context.Background(), builderID)
 	if err != nil {
 		t.Fatalf("EnsureBuilderClientIdentity: %v", err)
 	}
@@ -262,7 +261,7 @@ func startTestBuilder(t *testing.T, server *Server, builderID string) *builder.A
 
 func dialBuilderClient(t *testing.T, server *Server, builderID string) platformv1.BuilderServiceClient {
 	t.Helper()
-	identity, err := server.EnsureBuilderClientIdentity(builderID)
+	identity, err := server.EnsureBuilderClientIdentity(context.Background(), builderID)
 	if err != nil {
 		t.Fatalf("EnsureBuilderClientIdentity: %v", err)
 	}
@@ -289,9 +288,9 @@ func dialBuilderClient(t *testing.T, server *Server, builderID string) platformv
 	return platformv1.NewBuilderServiceClient(conn)
 }
 
-func userContext(t *testing.T, ctx context.Context, userID string) context.Context {
+func userContext(t *testing.T, cp *systemControlPlane, ctx context.Context, userID string) context.Context {
 	t.Helper()
-	return metadata.AppendToOutgoingContext(ctx, userAssertionHeader, signedLiveUserAssertion(t, userID))
+	return metadata.AppendToOutgoingContext(ctx, userAssertionHeader, signedLiveUserAssertion(t, cp.server, userID))
 }
 
 func dockerfileMarkerArchive(marker string) []byte {
@@ -412,7 +411,7 @@ func localRegistryConfig(t *testing.T) config.RegistryConfig {
 
 func enrollAgentTLS(t *testing.T, server *Server, agentID, token string) tls.Certificate {
 	t.Helper()
-	identity, err := server.EnsureDashboardClientIdentity(systemTestDashboardID)
+	identity, err := server.EnsureDashboardClientIdentity(context.Background(), systemTestDashboardID)
 	if err != nil {
 		t.Fatalf("dashboard identity for CA: %v", err)
 	}
@@ -443,7 +442,7 @@ func enrollAgentTLS(t *testing.T, server *Server, agentID, token string) tls.Cer
 
 func openAgentSync(t *testing.T, server *Server, cert tls.Certificate, hello *agentv1.AgentHello) (agentv1.AgentControl_SyncClient, context.CancelFunc) {
 	t.Helper()
-	identity, err := server.EnsureDashboardClientIdentity(systemTestDashboardID)
+	identity, err := server.EnsureDashboardClientIdentity(context.Background(), systemTestDashboardID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +466,16 @@ func openAgentSync(t *testing.T, server *Server, cert tls.Certificate, hello *ag
 	if err := server.store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil {
 		t.Fatal(err)
 	}
-	hello.ClusterId = server.authority.ClusterIdentity()
+	// An explicit hello cluster id is preserved so rotation tests can
+	// speak as a pre-renewal agent; otherwise the current identity is used.
+	if strings.TrimSpace(hello.GetClusterId()) == "" {
+		clusterID, err := server.authority.ClusterIdentity(context.Background())
+		if err != nil {
+			cancel()
+			t.Fatalf("cluster identity: %v", err)
+		}
+		hello.ClusterId = clusterID
+	}
 	hello.LocalStoreId = "test-store-" + hello.GetAgentId()
 	hello.InitializationState = "ready"
 	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Hello{Hello: hello}}); err != nil {

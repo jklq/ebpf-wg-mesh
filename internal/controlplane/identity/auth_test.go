@@ -229,12 +229,46 @@ const testUserAssertionSecret = "test-control-plane-user-assertion-secret"
 var testAssertionNow = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 
 func newTestInternalAuth() *InternalAuth {
-	authz := NewInternalAuth("dashboard-1", testUserAssertionSecret)
+	authz := NewInternalAuth("dashboard-1", StaticUserAssertionSecrets(testUserAssertionSecret))
 	authz.now = func() time.Time { return testAssertionNow }
 	return authz
 }
 
+func TestInternalAuthAcceptsAssertionsFromActiveOrRetiringSecret(t *testing.T) {
+	t.Parallel()
+
+	const retiringSecret = "test-control-plane-user-assertion-retiring"
+	authz := NewInternalAuth("dashboard-1", StaticUserAssertionSecrets(testUserAssertionSecret, retiringSecret))
+	authz.now = func() time.Time { return testAssertionNow }
+	for name, secret := range map[string]string{"active": testUserAssertionSecret, "retiring": retiringSecret} {
+		name, secret := name, secret
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := contextWithClientIdentity(CallerDashboard, "dashboard-1")
+			ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
+				userAssertionHeader, signedUserAssertionWith(t, "user-1", secret, nil),
+			))
+			authorized, err := authz.authorizeGRPCContext(ctx, "/platform.v1.PlatformService/ListProjects")
+			if err != nil {
+				t.Fatalf("authorize with %s secret: %v", name, err)
+			}
+			user, err := DelegatedUserFromContext(authorized)
+			if err != nil {
+				t.Fatalf("DelegatedUserFromContext: %v", err)
+			}
+			if user.UserID != "user-1" {
+				t.Fatalf("unexpected delegated user ID %q", user.UserID)
+			}
+		})
+	}
+}
+
 func signedUserAssertion(t *testing.T, userID string, mutate func(*jwt.RegisteredClaims)) string {
+	t.Helper()
+	return signedUserAssertionWith(t, userID, testUserAssertionSecret, mutate)
+}
+
+func signedUserAssertionWith(t *testing.T, userID, secret string, mutate func(*jwt.RegisteredClaims)) string {
 	t.Helper()
 	claims := jwt.RegisteredClaims{
 		Issuer:    userAssertionIssuer,
@@ -247,7 +281,7 @@ func signedUserAssertion(t *testing.T, userID string, mutate func(*jwt.Registere
 	if mutate != nil {
 		mutate(&claims)
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testUserAssertionSecret))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 	if err != nil {
 		t.Fatalf("sign user assertion: %v", err)
 	}

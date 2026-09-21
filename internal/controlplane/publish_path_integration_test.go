@@ -101,7 +101,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 	}
 
 	desired := mustDesiredService(t, store, "node-1")
-	username, password, err := cp.server.registry.CredentialsForPull("node-1-"+desired.GetAllocationId(), desired.GetEnvironmentId(), desired.GetServiceId(), desiredImage)
+	username, password, err := cp.server.registry.CredentialsForPull(ctx, "node-1-"+desired.GetAllocationId(), desired.GetEnvironmentId(), desired.GetServiceId(), desiredImage)
 	if err != nil || username == "" {
 		t.Fatalf("CredentialsForPull: %q %q %v", username, password, err)
 	}
@@ -110,7 +110,8 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 		t.Fatalf("agent pull credential could not fetch digest: status %d", status)
 	}
 
-	otherUser, otherPass, err := cp.server.registryAuth.MintCredential("pull-other", "mesh/other-env/other-build/other-svc", []string{"pull"}, nil)
+	otherExpires := time.Now().UTC().Add(48 * time.Hour)
+	otherUser, otherPass, err := cp.server.registryAuth.MintCredential(ctx, "pull-other", "mesh/other-env/other-build/other-svc", []string{"pull"}, &otherExpires)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestConnectedPublishSnapshotBecomesDesiredDigest(t *testing.T) {
 		t.Fatalf("foreign credential status = %d, want 401", status)
 	}
 
-	userCtx := userContext(t, ctx, "user-1")
+	userCtx := userContext(t, cp, ctx, "user-1")
 	deployments, err := cp.dashboard.ListServiceDeployments(userCtx, &platformv1.ListServiceDeploymentsRequest{ServiceId: service.ID})
 	if err != nil {
 		t.Fatalf("ListServiceDeployments: %v", err)

@@ -20,6 +20,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"connectrpc.com/connect"
@@ -43,6 +44,8 @@ type publicationFence interface {
 type Server struct {
 	cfg             config.ControlPlaneConfig
 	store           *persistence
+	signKeys        *signkeys.Service
+	signingScopes   []string
 	delivery        *deliverycore.Delivery
 	logStore        *logs.LogStore
 	logEmitter      *logs.LogEmitter
@@ -89,6 +92,17 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, fmt.Errorf("open sealed secrets: %w", err)
 	}
 	store.attachSecrets(secrets)
+	signKeys, err := signkeys.Open(ctx, store.db, secrets, signkeys.Options{
+		// Production never generates missing keys: each scope is
+		// initialized explicitly via the signing-keys CLI, and Open fails
+		// closed without an active key.
+		AllowGenerate:   !cfg.Profile.IsProduction(),
+		RegistryEnabled: strings.TrimSpace(cfg.Registry.Host) != "",
+	})
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("open signing keys: %w", err)
+	}
 	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
 	leases.SetAdvertise(cfg.AdvertiseAddr)
 	archiveStore, err := source.NewSourceArchiveStore(cfg.SourceArchives)
@@ -126,11 +140,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	var registryAuth *registry.Auth
 	if err := store.withLeaseGuard(initializationCtx, func() error {
 		var err error
-		authority, err = identity.NewTLSAuthority(cfg)
+		authority, err = identity.NewTLSAuthority(initializationCtx, cfg, signKeys)
 		if err != nil {
 			return err
 		}
-		registryAuth, err = registry.NewAuth(cfg.Registry, cfg.StateDir)
+		registryAuth, err = registry.NewAuth(initializationCtx, cfg.Registry, signKeys, cfg.StateDir)
 		if err != nil {
 			return fmt.Errorf("initialize embedded registry auth: %w", err)
 		}
@@ -196,7 +210,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithPlatformEvents(platformEvents),
 		WithPlatformLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
 	)
-	internalAuth := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, cfg.UserAssertions.HMACSecret, authority.Revocations())
+	internalAuth := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, userAssertionSecrets(signKeys), authority.Revocations())
 	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
 	rollouts := NewRolloutReconciler(delivery, 2*time.Second)
 	failover := NewServiceFailoverReconciler(delivery,
@@ -241,9 +255,15 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		}
 	}
 
+	requiredSigningScopes := []string{signkeys.ScopeInternalCA, signkeys.ScopeUserAssertion}
+	if registryAuth != nil {
+		requiredSigningScopes = append(requiredSigningScopes, signkeys.ScopeRegistry)
+	}
 	server := &Server{
 		cfg:             cfg,
 		store:           store,
+		signKeys:        signKeys,
+		signingScopes:   requiredSigningScopes,
 		delivery:        delivery,
 		logStore:        logStore,
 		logEmitter:      logEmitter,
@@ -303,6 +323,9 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 	if s == nil || s.store == nil || s.store.secrets == nil || !s.store.secrets.Ready(ctx) {
 		failed = append(failed, "secret_keys")
 	}
+	if s == nil || s.signKeys == nil || !s.signKeys.Ready(ctx, s.signingScopes) {
+		failed = append(failed, "signing_keys")
+	}
 	if len(failed) > 0 {
 		return health.Report{Status: health.StatusNotReady, Failed: failed}
 	}
@@ -348,6 +371,9 @@ func (s *Server) Run(ctx context.Context) error {
 			errCh <- s.reconciler.Run(runCtx)
 		}()
 	}
+	// Per-replica, not singleton work: every replica re-issues its own
+	// server leaf after a CA rotation finishes.
+	go func() { s.serverCertificateRefreshLoop(runCtx); errCh <- nil }()
 	leaseDone := make(chan error, 1)
 	go func() {
 		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
@@ -460,6 +486,30 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 func (s *Server) deletionGC(ctx context.Context) error {
 	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
 	return gc.Run(ctx)
+}
+
+func (s *Server) serverCertificateRefreshLoop(ctx context.Context) {
+	refresh := func() {
+		if s.authority == nil {
+			return
+		}
+		refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := s.authority.RefreshServerCertificate(refreshCtx); err != nil && ctx.Err() == nil {
+			slog.Warn("server certificate refresh failed", "error", err)
+		}
+	}
+	refresh()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
 }
 
 func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
@@ -576,28 +626,57 @@ func (s *Server) RegistryAuthAddr() string {
 	return s.registryLn.Addr().String()
 }
 
-func (s *Server) RegistryAuthCertificatePath() string {
+func (s *Server) RegistryAuthBundlePath() string {
 	if s == nil || s.registryAuth == nil {
 		return ""
 	}
-	return s.registryAuth.CertificatePath()
+	return s.registryAuth.BundlePath()
 }
 
-func (s *Server) EnsureDashboardClientIdentity(id string) (identity.ClientIdentityMaterial, error) {
+// SigningKeys exposes the shared signing-key inventory for operator tooling
+// and provisioning flows (dashboard secret export).
+func (s *Server) SigningKeys() *signkeys.Service {
+	if s == nil {
+		return nil
+	}
+	return s.signKeys
+}
+
+func (s *Server) EnsureDashboardClientIdentity(ctx context.Context, id string) (identity.ClientIdentityMaterial, error) {
 	if s == nil || s.authority == nil {
 		return identity.ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
 	}
 	if allowedID := s.cfg.Dashboard.ServiceCallerID; allowedID == "" || id != allowedID {
 		return identity.ClientIdentityMaterial{}, fmt.Errorf("dashboard client identity %q is not allowed", id)
 	}
-	return s.authority.EnsureDashboardClientIdentity(id)
+	return s.authority.EnsureDashboardClientIdentity(ctx, id)
 }
 
-func (s *Server) EnsureBuilderClientIdentity(id string) (identity.ClientIdentityMaterial, error) {
+func (s *Server) EnsureBuilderClientIdentity(ctx context.Context, id string) (identity.ClientIdentityMaterial, error) {
 	if s == nil || s.authority == nil {
 		return identity.ClientIdentityMaterial{}, errors.New("controlplane authority is not initialized")
 	}
-	return s.authority.EnsureBuilderClientIdentity(id)
+	return s.authority.EnsureBuilderClientIdentity(ctx, id)
+}
+
+// userAssertionSecrets verifies dashboard user assertions against the
+// shared user-assertion key: active first, then the retiring key while a
+// rotation overlaps.
+func userAssertionSecrets(keys *signkeys.Service) identity.UserAssertionSecrets {
+	return func(ctx context.Context) ([][]byte, error) {
+		mats, err := keys.Verifying(ctx, signkeys.ScopeUserAssertion)
+		if err != nil {
+			return nil, err
+		}
+		var out [][]byte
+		for _, mat := range mats {
+			if mat.Record.KeyType != signkeys.KeyTypeHMAC256 {
+				return nil, errors.New("user-assertion signing key is not an HMAC secret")
+			}
+			out = append(out, append([]byte(nil), mat.Private...))
+		}
+		return out, nil
+	}
 }
 
 func (s *Server) HasHealthyAgent(ctx context.Context, agentID string) (bool, error) {

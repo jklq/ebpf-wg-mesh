@@ -95,10 +95,6 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		a.healthStop = shutdown
 	}
-	clusterID, err := a.persistedClusterIdentity()
-	if err != nil {
-		return err
-	}
 	store, err := openLocalStateStore(a.cfg.Runtime.DataDir, a.cfg.Node.ID)
 	if err != nil {
 		return fmt.Errorf("open local state: %w", err)
@@ -109,8 +105,10 @@ func (a *App) Run(ctx context.Context) error {
 		a.stateStore = nil
 		return fmt.Errorf("persist control-plane discovery seeds: %w", err)
 	}
+	// The pinned identity adopted at enrollment, empty before the first
+	// enrollment. It survives CA rotations; the bundle on disk does not.
 	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
-	if err := a.supervisor.Start(ctx, clusterID); err != nil {
+	if err := a.supervisor.Start(ctx, store.clusterIdentity()); err != nil {
 		_ = store.Close()
 		a.stateStore = nil
 		return fmt.Errorf("start workload supervision: %w", err)

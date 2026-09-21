@@ -10,13 +10,8 @@ import (
 	"strings"
 )
 
-const defaultUserAssertionHMACSecret = "test-user-assertion-secret-at-least-32-bytes"
-
 func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionTLSIdentity("controlplane.internalGrpc.tls.serverNames", cfg.InternalGRPC.TLS.ServerNames); err != nil {
-		return err
-	}
-	if err := validateProductionSecret("controlplane.userAssertions.hmacSecret", cfg.UserAssertions.HMACSecret); err != nil {
 		return err
 	}
 	if err := validateProductionDurableTarget("controlplane.database.url", cfg.Database.URL); err != nil {
@@ -54,9 +49,6 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Registry.Host != "" {
 		if err := validateProductionPublicHost("controlplane.registry.host", hostnameFromDialTarget(cfg.Registry.Host)); err != nil {
 			return err
-		}
-		if strings.TrimSpace(cfg.Registry.SigningCertFile) == "" || strings.TrimSpace(cfg.Registry.SigningKeyFile) == "" {
-			return errors.New("controlplane.registry signing certificate and key files are required in production")
 		}
 	}
 	return nil
@@ -162,13 +154,6 @@ func validateProductionTLSName(field, name string) error {
 	}
 	if strings.Contains(name, "*") {
 		return fmt.Errorf("%s must not use a wildcard identity in production", field)
-	}
-	return nil
-}
-
-func validateProductionSecret(field, value string) error {
-	if strings.TrimSpace(value) == "" || value == defaultUserAssertionHMACSecret {
-		return fmt.Errorf("%s must not use a default or generated secret in production", field)
 	}
 	return nil
 }

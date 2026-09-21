@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -35,14 +37,14 @@ func TestEnrollWalksPastStalledReplicaFollowsRedirectAndSkipsDeadOwner(t *testin
 		replicaRPCTimeout, replicaDialTimeout, deadOwnerCooldown = oldRPC, oldDial, oldCooldown
 	})
 
-	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"localhost"},
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -51,8 +53,8 @@ func TestEnrollWalksPastStalledReplicaFollowsRedirectAndSkipsDeadOwner(t *testin
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
-	healthyAddr := startEnrollServer(t, authority, func(_ context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
-		return authority.Enroll(req)
+	healthyAddr := startEnrollServer(t, authority, func(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
+		return authority.Enroll(ctx, req)
 	})
 	redirectAddr := startEnrollServer(t, authority, func(_ context.Context, _ *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
 		return nil, agentv1.LiveOwnerRedirect(stalledAddr)
@@ -63,7 +65,7 @@ func TestEnrollWalksPastStalledReplicaFollowsRedirectAndSkipsDeadOwner(t *testin
 		ControlPlane: config.ControlPlaneClientConfig{
 			Addresses: []string{redirectAddr, stalledAddr, healthyAddr},
 			TLS: config.ClientTLSConfig{
-				CAFile:         filepath.Join(authority.PKIDir(), "ca.crt"),
+				CAFile:         writeTrustBundleFile(t, authority),
 				ServerName:     "localhost",
 				BootstrapToken: "bootstrap-token",
 			},
@@ -107,14 +109,14 @@ func TestEnrollRecoversLiveOwnerAfterQuarantineCooldown(t *testing.T) {
 		replicaRPCTimeout, replicaDialTimeout, deadOwnerCooldown = oldRPC, oldDial, oldCooldown
 	})
 
-	authority, err := identity.NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"localhost"},
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -126,7 +128,7 @@ func TestEnrollRecoversLiveOwnerAfterQuarantineCooldown(t *testing.T) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}
-		return authority.Enroll(req)
+		return authority.Enroll(ctx, req)
 	})
 	standbyAddr := startEnrollServer(t, authority, func(_ context.Context, _ *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
 		return nil, agentv1.LiveOwnerRedirect(ownerAddr)
@@ -137,7 +139,7 @@ func TestEnrollRecoversLiveOwnerAfterQuarantineCooldown(t *testing.T) {
 		ControlPlane: config.ControlPlaneClientConfig{
 			Addresses: []string{ownerAddr, standbyAddr},
 			TLS: config.ClientTLSConfig{
-				CAFile:         filepath.Join(authority.PKIDir(), "ca.crt"),
+				CAFile:         writeTrustBundleFile(t, authority),
 				ServerName:     "localhost",
 				BootstrapToken: "bootstrap-token",
 			},
@@ -178,4 +180,17 @@ func startEnrollServer(t *testing.T, authority *identity.TLSAuthority, enroll fu
 		_ = ln.Close()
 	})
 	return ln.Addr().String()
+}
+
+func writeTrustBundleFile(t *testing.T, authority *identity.TLSAuthority) string {
+	t.Helper()
+	bundle, err := authority.TrustBundle(context.Background())
+	if err != nil {
+		t.Fatalf("TrustBundle: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(path, bundle, 0o644); err != nil {
+		t.Fatalf("write trust bundle: %v", err)
+	}
+	return path
 }

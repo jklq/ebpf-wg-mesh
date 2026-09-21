@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,6 +16,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -34,20 +36,22 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 			},
 		},
 	}
-	authority, err := NewTLSAuthority(cfg)
+	authority, err := NewTLSAuthority(context.Background(), cfg, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.StateDir, "pki", "ca.crt")); err != nil {
-		t.Fatalf("stat ca cert: %v", err)
+	// The CA is shared key state, not a file: only the replica-local
+	// server leaf lives under the state directory.
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "pki", "ca.crt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file-based CA must be gone, stat: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.StateDir, "pki", "server.crt")); err != nil {
 		t.Fatalf("stat server cert: %v", err)
 	}
 
 	csrPEM := mustCreateCSR(t, "agent-1")
-	resp, err := authority.Enroll(&agentv1.EnrollRequest{
+	resp, err := authority.Enroll(context.Background(), &agentv1.EnrollRequest{
 		AgentId:        "agent-1",
 		CsrPem:         string(csrPEM),
 		BootstrapToken: "bootstrap-token",
@@ -63,7 +67,7 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 		t.Fatalf("unexpected enrolled common name %q", cert.Subject.CommonName)
 	}
 
-	_, err = authority.Enroll(&agentv1.EnrollRequest{AgentId: "agent-2", CsrPem: string(csrPEM)})
+	_, err = authority.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-2", CsrPem: string(csrPEM)})
 	if got := status.Code(err); got != codes.InvalidArgument {
 		t.Fatalf("expected InvalidArgument for mismatched CSR, got %s", got)
 	}
@@ -72,14 +76,14 @@ func TestTLSAuthorityEnrollsAgentCertificates(t *testing.T) {
 func TestAgentServiceIssuesManagedDashboardCertificateOnlyToTrustedAgent(t *testing.T) {
 	t.Parallel()
 
-	authority, err := NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(),
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:             []string{"controlplane"},
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

@@ -1186,6 +1186,37 @@ func (s *localStateStore) requireClusterIdentity(clusterID string) error {
 	return errors.Join(err, recoveryErr)
 }
 
+// clusterIdentity returns the pinned cluster identity adopted at
+// enrollment, or empty before the first enrollment.
+func (s *localStateStore) clusterIdentity() string {
+	var id string
+	_ = s.db.View(func(tx *bbolt.Tx) error {
+		id = string(tx.Bucket(localMetaBucket).Get(clusterIdentityKey))
+		return nil
+	})
+	return id
+}
+
+// adoptClusterIdentity replaces the pinned cluster identity with the one a
+// certificate renewal observed. Renewal runs over a channel authenticated
+// by the pinned roots, so the new identity is trust-continuous; it still
+// refuses while the store needs identity recovery.
+func (s *localStateStore) adoptClusterIdentity(clusterID string) error {
+	if strings.TrimSpace(clusterID) == "" {
+		return errors.New("adopted cluster identity is empty")
+	}
+	var recoveryErr error
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		if reason := meta.Get(identityRecoveryKey); len(reason) != 0 {
+			recoveryErr = errors.New(string(reason))
+			return nil
+		}
+		return meta.Put(clusterIdentityKey, []byte(clusterID))
+	})
+	return errors.Join(err, recoveryErr)
+}
+
 func (s *localStateStore) observeAuthorityEpoch(epoch uint64) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)

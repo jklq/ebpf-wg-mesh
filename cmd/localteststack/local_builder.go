@@ -16,7 +16,7 @@ import (
 const localBuilderID = "localteststack-builder"
 
 func startLocalBuilder(ctx context.Context, stateDir string, controlPlaneAddr string, server *controlplane.Server) (*builder.App, <-chan error, error) {
-	identity, err := server.EnsureBuilderClientIdentity(localBuilderID)
+	identity, err := server.EnsureBuilderClientIdentity(ctx, localBuilderID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mint builder client identity: %w", err)
 	}

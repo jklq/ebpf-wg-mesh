@@ -12,14 +12,15 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // keysSchemaVersion is the minimum control-plane schema version carrying the
-// envelope key tables. The operator CLI refuses to run against older
-// databases instead of failing mid-rotation.
-const keysSchemaVersion = 24
+// envelope key and platform signing-key tables. The operator CLI refuses to
+// run against older databases instead of failing mid-rotation.
+const keysSchemaVersion = 26
 
 // RunKeys implements `controlplane keys`, the operator command surface for
 // envelope key lifecycle:
@@ -118,18 +119,19 @@ func runKeysCommand(command string, args []string) error {
 	}
 	defer provider.Close()
 	svc := secretkeys.New(db, provider)
+	signing := signkeys.New(db, svc.Registry())
 
 	switch command {
 	case "list":
-		return keysList(ctx, svc)
+		return keysList(ctx, svc, signing)
 	case "activate":
 		return keysActivate(ctx, svc, keyID)
 	case "rewrap":
-		return keysRewrap(ctx, svc)
+		return keysRewrap(ctx, svc, signing)
 	case "delete":
 		return keysDelete(ctx, svc, keyID)
 	case "check":
-		return keysCheck(ctx, svc, keyID)
+		return keysCheck(ctx, svc, signing, keyID)
 	default:
 		return keysUsageError()
 	}
@@ -154,12 +156,16 @@ func keysProvision(keysCfg config.SecretKeysConfig, keyID string) error {
 	return nil
 }
 
-func keysList(ctx context.Context, svc *secretkeys.Service) error {
+func keysList(ctx context.Context, svc *secretkeys.Service, signing *signkeys.Service) error {
 	keys, err := svc.Registry().ListKeys(ctx)
 	if err != nil {
 		return err
 	}
 	counts, err := svc.Registry().WrappedCounts(ctx)
+	if err != nil {
+		return err
+	}
+	signingCounts, err := signing.WrappingCounts(ctx)
 	if err != nil {
 		return err
 	}
@@ -179,14 +185,14 @@ func keysList(ctx context.Context, svc *secretkeys.Service) error {
 		fmt.Fprintln(os.Stdout, "no envelope keys")
 		return nil
 	}
-	fmt.Fprintln(os.Stdout, "ID\tSTATE\tWRAPPED DEKS\tLOCAL\tVERSION\tCREATED")
+	fmt.Fprintln(os.Stdout, "ID\tSTATE\tWRAPPED DEKS\tWRAPPED SIGNING KEYS\tLOCAL\tVERSION\tCREATED")
 	for _, key := range keys {
 		presence := "no"
 		if local[key.ProviderRef] {
 			presence = "yes"
 		}
-		fmt.Fprintf(os.Stdout, "%s\t%s\t%d\t%s\t%s\t%s\n",
-			key.ID, key.State, counts[key.ID], presence, key.ProviderRef, key.CreatedAt.Format(time.RFC3339))
+		fmt.Fprintf(os.Stdout, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+			key.ID, key.State, counts[key.ID], signingCounts[key.ID], presence, key.ProviderRef, key.CreatedAt.Format(time.RFC3339))
 	}
 	return nil
 }
@@ -201,12 +207,16 @@ func keysActivate(ctx context.Context, svc *secretkeys.Service, keyID string) er
 	return nil
 }
 
-func keysRewrap(ctx context.Context, svc *secretkeys.Service) error {
+func keysRewrap(ctx context.Context, svc *secretkeys.Service, signing *signkeys.Service) error {
 	rewrapped, err := svc.DEKs().RewrapAll(ctx)
 	if err != nil {
 		return fmt.Errorf("controlplane keys rewrap: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "rewrapped %d data-encryption key(s) onto the active key\n", rewrapped)
+	rewrappedSigning, err := signing.RewrapAll(ctx)
+	if err != nil {
+		return fmt.Errorf("controlplane keys rewrap: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "rewrapped %d data-encryption key(s) and %d signing key(s) onto the active key\n", rewrapped, rewrappedSigning)
 	return nil
 }
 
@@ -219,7 +229,7 @@ func keysDelete(ctx context.Context, svc *secretkeys.Service, keyID string) erro
 	return nil
 }
 
-func keysCheck(ctx context.Context, svc *secretkeys.Service, onlyVersion string) error {
+func keysCheck(ctx context.Context, svc *secretkeys.Service, signing *signkeys.Service, onlyVersion string) error {
 	if version := strings.TrimSpace(onlyVersion); version != "" {
 		checker, ok := svc.Provider().(secretkeys.MaterialChecker)
 		if !ok {
@@ -242,6 +252,10 @@ func keysCheck(ctx context.Context, svc *secretkeys.Service, onlyVersion string)
 	if err != nil {
 		return fmt.Errorf("controlplane keys check: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "this replica holds every recorded key version; verified %d wrapped data-encryption key(s)\n", verified)
+	verifiedSigning, err := signing.VerifyAll(ctx)
+	if err != nil {
+		return fmt.Errorf("controlplane keys check: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "this replica holds every recorded key version; verified %d wrapped data-encryption key(s) and %d signing key(s)\n", verified, verifiedSigning)
 	return nil
 }

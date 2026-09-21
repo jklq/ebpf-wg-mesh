@@ -26,8 +26,7 @@ import (
 )
 
 const (
-	vmUserID              = "vm-user"
-	vmUserAssertionSecret = "vm-user-assertion-secret-at-least-32-bytes"
+	vmUserID = "vm-user"
 	// Default controlplane dashboard ServiceCallerID; must match minted client cert CN.
 	vmDashboardCallerID = "dashboard"
 
@@ -51,6 +50,10 @@ var vmAgentBootstrapTokens = map[string]string{
 	"agent-a": "vm-bootstrap-token-agent-a",
 	"agent-b": "vm-bootstrap-token-agent-b",
 }
+
+// vmUserAssertionSecret is fetched from the control plane's shared signing
+// keys after boot; the development control plane generates it.
+var vmUserAssertionSecret string
 
 type hostInfo struct {
 	Role        string `json:"role"`
@@ -261,9 +264,8 @@ func main() {
 	}
 
 	binaries := map[string]string{
-		"controlplane":         filepath.Join(binDir, "controlplane"),
-		"agent":                filepath.Join(binDir, "agent"),
-		"internal-client-cert": filepath.Join(binDir, "internal-client-cert"),
+		"controlplane": filepath.Join(binDir, "controlplane"),
+		"agent":        filepath.Join(binDir, "agent"),
 	}
 	infof("building Linux binaries")
 	if err := buildBinaries(ctx, repoRoot, binaries); err != nil {
@@ -383,9 +385,6 @@ func main() {
 	if err := copyFile(ctx, sshKeyPath, binaries["controlplane"], controlplane.PublicIPv4, "/opt/ebpf-wg-mesh/controlplane"); err != nil {
 		failf("copy controlplane binary: %v", err)
 	}
-	if err := copyFile(ctx, sshKeyPath, binaries["internal-client-cert"], controlplane.PublicIPv4, "/opt/ebpf-wg-mesh/internal-client-cert"); err != nil {
-		failf("copy internal-client-cert binary: %v", err)
-	}
 	infof("installing ingress admin probe on %s", controlplane.Name)
 	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-ingress-probe.sh"), nil); err != nil {
 		failf("install ingress probe: %v", err)
@@ -403,7 +402,6 @@ func main() {
 	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-controlplane.sh"), map[string]string{
 		"PUBLIC_ADDR":            "platform.local",
 		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
-		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
 		"SERVICE_NAME":           primaryControlPlaneService,
 		"INTERNAL_LISTEN":        "0.0.0.0:" + primaryControlPlanePort,
 		"REPLICA_ADDRESSES":      controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
@@ -412,7 +410,7 @@ func main() {
 		failf("install primary controlplane replica: %v", err)
 	}
 	infof("waiting for primary controlplane readiness on %s", controlplane.Name)
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+primaryControlPlaneService+" && test -f /var/lib/ebpf-wg-mesh/controlplane/pki/ca.crt && ss -ltn '( sport = :"+primaryControlPlanePort+" )' | grep -q LISTEN"); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+primaryControlPlaneService+" && test -f /var/lib/ebpf-wg-mesh/controlplane/pki/server.crt && ss -ltn '( sport = :"+primaryControlPlanePort+" )' | grep -q LISTEN"); err != nil {
 		failf("wait for primary controlplane readiness: %v", err)
 	}
 	primaryLease, err := waitForSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4, "")
@@ -425,7 +423,6 @@ func main() {
 	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-controlplane.sh"), map[string]string{
 		"PUBLIC_ADDR":            "platform.local",
 		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
-		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
 		"SERVICE_NAME":           replicaControlPlaneService,
 		"INTERNAL_LISTEN":        "0.0.0.0:" + replicaControlPlanePort,
 		"REPLICA_ADDRESSES":      controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
@@ -445,7 +442,6 @@ func main() {
 	}
 	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/assert-local-storage-rejected.sh"), map[string]string{
 		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
-		"USER_ASSERTION_SECRET":  vmUserAssertionSecret,
 	}); err != nil {
 		failf("verify replica-local storage rejection: %v", err)
 	}
@@ -453,8 +449,21 @@ func main() {
 
 	caPath := filepath.Join(artifactRoot, "controlplane-ca.crt")
 	infof("fetching controlplane ca certificate")
-	if err := copyFromRemote(ctx, sshKeyPath, controlplane.PublicIPv4, "/var/lib/ebpf-wg-mesh/controlplane/pki/ca.crt", caPath); err != nil {
+	caPEM, err := exportSigningMaterial(ctx, sshKeyPath, controlplane.PublicIPv4, "internal-ca")
+	if err != nil {
 		failf("fetch controlplane ca: %v", err)
+	}
+	if err := os.WriteFile(caPath, caPEM, 0o644); err != nil {
+		failf("write controlplane ca: %v", err)
+	}
+	infof("fetching user assertion secret")
+	assertionSecret, err := exportSigningMaterial(ctx, sshKeyPath, controlplane.PublicIPv4, "user-assertion")
+	if err != nil {
+		failf("fetch user assertion secret: %v", err)
+	}
+	vmUserAssertionSecret = strings.TrimSpace(string(assertionSecret))
+	if vmUserAssertionSecret == "" {
+		failf("user assertion secret export is empty")
 	}
 
 	for key, host := range hosts {

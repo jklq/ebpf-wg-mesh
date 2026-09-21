@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -74,7 +75,7 @@ func TestInternalAuthRejectsRevokedCertificatesForEveryCallerClass(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewCertificateRevocations: %v", err)
 	}
-	authz := NewInternalAuth("dashboard-1", testUserAssertionSecret, revocations)
+	authz := NewInternalAuth("dashboard-1", StaticUserAssertionSecrets(testUserAssertionSecret), revocations)
 	tests := []struct {
 		class  CallerClass
 		id     string
@@ -102,7 +103,7 @@ func TestTLSHandshakeRejectsRevokedCertificateButAllowsCertificateFreeBootstrap(
 
 	stateDir := t.TempDir()
 	revocationPath := filepath.Join(stateDir, "revoked.txt")
-	authority, err := NewTLSAuthority(config.ControlPlaneConfig{
+	authority, err := NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: stateDir,
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
 			ServerNames:                  []string{"controlplane"},
@@ -110,11 +111,11 @@ func TestTLSHandshakeRejectsRevokedCertificateButAllowsCertificateFreeBootstrap(
 			ClientCertValidityHours:      6,
 			RevokedClientCertSerialsFile: revocationPath,
 		}},
-	})
+	}, signkeystest.New(t))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
-	material, err := authority.EnsureClientIdentity(CallerAgent, "node-1")
+	material, err := authority.EnsureClientIdentity(context.Background(), CallerAgent, "node-1")
 	if err != nil {
 		t.Fatalf("EnsureClientIdentity: %v", err)
 	}

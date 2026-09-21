@@ -145,7 +145,21 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 			return nil, errors.New("enroll client certificate: empty response")
 		}
 		if a.stateStore != nil {
-			if err := a.stateStore.requireClusterIdentity(clusterIdentity([]byte(resp.GetCaPem()))); err != nil {
+			// The server returns the CA bundle (active first, then the
+			// retiring CA through a rotation); the pinned identity is the
+			// active CA. Initial enrollment fails closed on mismatch;
+			// renewal runs over a channel authenticated by the pinned
+			// roots, so it adopts the rotated identity.
+			incoming, err := activeCAIdentity([]byte(resp.GetCaPem()))
+			if err != nil {
+				return nil, err
+			}
+			if current == nil {
+				if err := a.stateStore.requireClusterIdentity(incoming); err != nil {
+					return nil, err
+				}
+			}
+			if err := a.stateStore.adoptClusterIdentity(incoming); err != nil {
 				return nil, err
 			}
 			if err := a.stateStore.setReplicaAddresses(resp.GetReplicaAddresses()); err != nil {
@@ -163,13 +177,20 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 }
 
 func (a *App) enrollmentCredentials(current *clientTLSMaterial) (credentials.TransportCredentials, error) {
-	if current != nil && time.Now().UTC().Before(current.notAfter) {
-		return credentials.NewTLS(&tls.Config{
-			Certificates: []tls.Certificate{current.certificate},
-			RootCAs:      current.rootCAs,
-			ServerName:   a.cfg.ControlPlane.TLS.ServerName,
-			MinVersion:   tls.VersionTLS13,
-		}), nil
+	if current != nil {
+		// Enrolled roots are always fresher than the bootstrap file: every
+		// renewal persists the server's current bundle, so renewal after a
+		// CA rotation verifies against roots that include the new CA. The
+		// bootstrap file is only for the first enrollment.
+		config := &tls.Config{
+			RootCAs:    current.rootCAs,
+			ServerName: a.cfg.ControlPlane.TLS.ServerName,
+			MinVersion: tls.VersionTLS13,
+		}
+		if time.Now().UTC().Before(current.notAfter) {
+			config.Certificates = []tls.Certificate{current.certificate}
+		}
+		return credentials.NewTLS(config), nil
 	}
 	bootstrapCA, err := os.ReadFile(a.cfg.ControlPlane.TLS.CAFile)
 	if err != nil {
@@ -216,13 +237,44 @@ func (a *App) loadClientTLSMaterial() (*clientTLSMaterial, error) {
 		certificate:     cert,
 		rootCAs:         pool,
 		notAfter:        leaf.NotAfter,
-		clusterIdentity: clusterIdentity(caPEM),
+		clusterIdentity: a.pinnedClusterIdentity(caPEM),
 	}, nil
 }
 
-func clusterIdentity(caPEM []byte) string {
-	digest := sha256.Sum256(bytes.TrimSpace(caPEM))
-	return hex.EncodeToString(digest[:])
+// pinnedClusterIdentity is the cluster identity hello sends: the value
+// adopted at enrollment, which survives CA rotations that replace the
+// bundle on disk. Without a state store (tests), it derives from the
+// bundle's active CA.
+func (a *App) pinnedClusterIdentity(caPEM []byte) string {
+	if a.stateStore != nil {
+		if id := a.stateStore.clusterIdentity(); id != "" {
+			return id
+		}
+	}
+	id, err := activeCAIdentity(caPEM)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// activeCAIdentity hashes the bundle's first certificate — the active CA —
+// exactly as the control plane hashes it, so enrollment converges on the
+// same identity on both sides through a rotation.
+func activeCAIdentity(bundle []byte) (string, error) {
+	trimmed := bytes.TrimSpace(bundle)
+	if len(trimmed) == 0 {
+		return "", errors.New("enrolled CA bundle is empty")
+	}
+	block, rest := pem.Decode(trimmed)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", errors.New("enrolled CA bundle holds no certificate")
+	}
+	// The first block's bytes, hashed exactly as the server hashes the
+	// active CA it encoded first.
+	first := bytes.TrimSpace(trimmed[:len(trimmed)-len(rest)])
+	digest := sha256.Sum256(first)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func (a *App) loadOrCreateClientKey() (*ecdsa.PrivateKey, []byte, error) {
@@ -281,20 +333,6 @@ func (a *App) persistClientTLSMaterial(keyPEM, certPEM, caPEM []byte) error {
 
 func (a *App) clientTLSDir() string {
 	return filepath.Join(a.cfg.Runtime.DataDir, agentTLSDirName)
-}
-
-func (a *App) persistedClusterIdentity() (string, error) {
-	caPEM, err := os.ReadFile(filepath.Join(a.clientTLSDir(), agentCAFileName))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("read enrolled cluster identity: %w", err)
-	}
-	if len(bytes.TrimSpace(caPEM)) == 0 {
-		return "", errors.New("enrolled cluster identity is empty")
-	}
-	return clusterIdentity(caPEM), nil
 }
 
 func createCSR(agentID string, key *ecdsa.PrivateKey) ([]byte, error) {

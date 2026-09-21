@@ -16,13 +16,20 @@ func generateSSHKey(ctx context.Context, path string) error {
 	return runCommand(ctx, ".", os.Environ(), "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", path)
 }
 
+const (
+	vmControlPlaneDBURL    = "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"
+	vmControlPlaneStateDir = "/var/lib/ebpf-wg-mesh/controlplane"
+)
+
+func signingKeysCommand(subcommand string) string {
+	return fmt.Sprintf("/opt/ebpf-wg-mesh/controlplane signing-keys %s -db-url %s -state-dir %s",
+		subcommand, shellQuote(vmControlPlaneDBURL), shellQuote(vmControlPlaneStateDir))
+}
+
 func fetchClientIdentity(ctx context.Context, keyPath, host string) (clientIdentity, error) {
-	// Mint a dashboard mTLS client cert offline from the control-plane CA.
+	// Mint a dashboard mTLS client cert from the shared CA.
 	// CN must match the controlplane -dashboard-service-caller-id default ("dashboard").
-	remote := fmt.Sprintf(
-		"/opt/ebpf-wg-mesh/internal-client-cert -state-dir /var/lib/ebpf-wg-mesh/controlplane -caller-class dashboard -caller-id %s",
-		vmDashboardCallerID,
-	)
+	remote := signingKeysCommand(fmt.Sprintf("issue-client-cert -caller-class dashboard -caller-id %s", shellQuote(vmDashboardCallerID)))
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs(keyPath, host, remote)...)
 	output, err := cmd.Output()
 	if err != nil {
@@ -33,6 +40,12 @@ func fetchClientIdentity(ctx context.Context, keyPath, host string) (clientIdent
 		return clientIdentity{}, err
 	}
 	return identity, nil
+}
+
+// exportSigningMaterial fetches a trust bundle (ECDSA scopes) or active
+// secret (HMAC scopes) from the control plane's shared signing keys.
+func exportSigningMaterial(ctx context.Context, keyPath, host, scope string) ([]byte, error) {
+	return runRemoteCommand(ctx, keyPath, host, signingKeysCommand("export -scope "+shellQuote(scope)))
 }
 
 func runRemoteScript(ctx context.Context, keyPath, host, scriptPath string, env map[string]string) error {

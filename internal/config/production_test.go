@@ -121,18 +121,11 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.Registry.Host = "127.0.0.1:5000"
 		mustReject(t, FinalizeControlPlane(&cfg), "loopback host")
 	})
-	t.Run("default application secret", func(t *testing.T) {
+	t.Run("pull credential TTL must exceed client certificate lifetime", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.UserAssertions.HMACSecret = defaultUserAssertionHMACSecret
-		mustReject(t, FinalizeControlPlane(&cfg), "default or generated secret")
-	})
-	t.Run("generated registry signing identity", func(t *testing.T) {
-		t.Parallel()
-		cfg := validMinimalProductionControlPlane(t)
-		cfg.Registry.SigningCertFile = ""
-		cfg.Registry.SigningKeyFile = ""
-		mustReject(t, FinalizeControlPlane(&cfg), "signing certificate and key files")
+		cfg.Registry.PullCredentialTTLSeconds = 3600
+		mustReject(t, FinalizeControlPlane(&cfg), "pullCredentialTTLSeconds")
 	})
 
 	t.Run("provisioned keyring allowed in production", func(t *testing.T) {
@@ -226,9 +219,8 @@ func TestDevelopmentProfileAllowsLocalConveniences(t *testing.T) {
 	t.Parallel()
 
 	cfg := ControlPlaneConfig{
-		Profile:        ProfileDevelopment,
-		UserAssertions: UserAssertionConfig{HMACSecret: testUserAssertionHMACSecret},
-		Database:       DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Profile:  ProfileDevelopment,
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
@@ -275,9 +267,6 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 	return ControlPlaneConfig{
 		Profile: ProfileProduction,
 		Health:  HealthConfig{Listen: "127.0.0.1:18080"},
-		UserAssertions: UserAssertionConfig{
-			HMACSecret: "production-user-assertion-secret-at-least-32",
-		},
 		InternalGRPC: ListenerConfig{
 			Listen: "0.0.0.0:9443",
 			TLS: ServerTLSConfig{
@@ -308,9 +297,7 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 			PublicAddr: "platform.example.test",
 		},
 		Registry: RegistryConfig{
-			Host:            "registry.example.test",
-			SigningCertFile: "/etc/ebpf-wg-mesh/registry-auth.crt",
-			SigningKeyFile:  "/etc/ebpf-wg-mesh/registry-auth.key",
+			Host: "registry.example.test",
 		},
 	}
 }
