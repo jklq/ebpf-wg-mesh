@@ -233,13 +233,26 @@ func TestSandboxTrueForkBombContained(t *testing.T) {
 
 	limits := probeLimits()
 	limits.MaxProcesses = 64
+	// The wait after detonation is a builtin-only spin: once the
+	// bomb fills the PID budget, even sleep cannot fork, so any
+	// external wait would abort the shell before the marker. The
+	// fork-failure noise in the output proves the bomb actually
+	// raged against the cap instead of fizzling on shell syntax.
 	bomb := backend.runProbe(ctx, t, setupProbeEnv(t), probeSpec{
-		Script:  `:(){ :|:& };:; sleep 3; echo "survived=yes"`,
+		Script: `
+			:(){ :|:& };:
+			i=0
+			while [ "$i" -lt 500000 ]; do i=$((i+1)); done
+			echo "survived=yes"
+		`,
 		Limits:  limits,
 		Policy:  denyEgressPolicy(),
 		Timeout: time.Minute,
 	})
 	requireProbeMarker(t, backend, bomb.Output, "survived", "yes")
+	if !strings.Contains(bomb.Output, "fork") {
+		t.Fatalf("expected fork-cap evidence in bomb output (output:\n%s)", bomb.Output)
+	}
 
 	after := backend.runProbe(ctx, t, setupProbeEnv(t), probeSpec{
 		Script:  `echo "victim=$(cat repo/secret)"`,
