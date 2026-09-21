@@ -79,7 +79,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
 	leases.SetAdvertise(cfg.AdvertiseAddr)
-	archiveStore, err := source.NewFileArchiveStore(cfg.SourceArchives.Directory)
+	archiveStore, err := source.NewSourceArchiveStore(cfg.SourceArchives)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -88,9 +88,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
-	if err := verifySharedControlPlaneDirectory(ctx, store, "source-archives", cfg.SourceArchives.Directory); err != nil {
-		_ = store.Close()
-		return nil, err
+	if cfg.SourceArchives.Provider == config.SourceArchiveProviderFile {
+		if err := verifySharedControlPlaneDirectory(ctx, store, "source-archives", cfg.SourceArchives.Directory); err != nil {
+			_ = store.Close()
+			return nil, err
+		}
 	}
 	initializationCtx, releaseInitialization, err := leases.hold(ctx, "control-plane-initialization")
 	if err != nil {

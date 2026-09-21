@@ -70,7 +70,7 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 		Dependencies: []DependencyRef{
 			{Name: "database", Class: dependencyClassForURL(cfg.Database.URL)},
 			{Name: "logs", Class: dependencyClassForURL(cfg.Logs.ClickHouse.URL)},
-			{Name: "source_storage", Class: dependencyClassForPath(cfg.SourceArchives.Directory)},
+			{Name: "source_storage", Class: dependencyClassForSourceArchives(cfg.SourceArchives)},
 			{Name: "ingress_admin", Class: dependencyClassForAdmin(cfg.Ingress)},
 		},
 	}

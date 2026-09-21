@@ -141,17 +141,20 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.Ingress.AllowNonLoopbackAdmin = true
 		mustReject(t, FinalizeControlPlane(&cfg), "remote Caddy administration")
 	})
-	t.Run("ephemeral source storage", func(t *testing.T) {
+	t.Run("filesystem source storage", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.SourceArchives.Directory = filepath.Join(os.TempDir(), "source-archives")
-		mustReject(t, FinalizeControlPlane(&cfg), "ephemeral storage")
+		cfg.SourceArchives = SourceArchiveConfig{
+			Provider:  SourceArchiveProviderFile,
+			Directory: filepath.Join(os.TempDir(), "source-archives"),
+		}
+		mustReject(t, FinalizeControlPlane(&cfg), "filesystem provider")
 	})
-	t.Run("relative source storage", func(t *testing.T) {
+	t.Run("loopback source object storage", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.SourceArchives.Directory = "var/controlplane/source-archives"
-		mustReject(t, FinalizeControlPlane(&cfg), "ephemeral storage")
+		cfg.SourceArchives.S3.Endpoint = "http://127.0.0.1:9000"
+		mustReject(t, FinalizeControlPlane(&cfg), "loopback host")
 	})
 	t.Run("incomplete public url", func(t *testing.T) {
 		t.Parallel()
@@ -273,7 +276,14 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 		},
 		StateDir: "/var/lib/ebpf-wg-mesh/controlplane",
 		SourceArchives: SourceArchiveConfig{
-			Directory: "/var/lib/ebpf-wg-mesh/controlplane/source-archives",
+			Provider: SourceArchiveProviderS3,
+			S3: SourceArchiveS3Config{
+				Endpoint:              "https://s3.us-east-1.amazonaws.com",
+				Region:                "us-east-1",
+				Bucket:                "platform-source-archives",
+				RequestTimeoutSeconds: 30,
+				MaxRetries:            3,
+			},
 		},
 		Ingress: IngressConfig{
 			PublicAddr: "platform.example.test",

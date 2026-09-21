@@ -38,7 +38,7 @@ Single untrusted-workload sandbox, cgroup isolation, no customer-selectable priv
 
 ## Multi-replica control plane (2.1)
 
-Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases, a durable product-state journal and indexed live views. Agents persist replica discovery, follow live-owner redirects, quarantine a failed owner briefly, and reconnect after fenced takeover. Replicas still share node-local source archives and keys until [2.2](02-host-untrusted-code.md#22-source-object-storage), [2.3a](02-host-untrusted-code.md#23a-secret-envelope-key-provider), and [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
+Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases, a durable product-state journal and indexed live views. Agents persist replica discovery, follow live-owner redirects, quarantine a failed owner briefly, and reconnect after fenced takeover. Production source archives live in S3-compatible object storage since [2.2](#22-source-object-storage); replicas still share node-local keys until [2.3a](02-host-untrusted-code.md#23a-secret-envelope-key-provider) and [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
 
 ## Durable agent reconciliation foundation
 
@@ -133,4 +133,18 @@ Prompt:
 
 ```text
 Cap each allocation’s ephemeral writable overlay at 1 GiB by default using cgroup v2 I/O or filesystem quota on the production sandbox. When the cap is hit, the allocation must fail with a visible disk-full cause rather than filling the host. The cap is platform policy, not a customer API field, until a later quota item exists. Test that a workload writing past 1 GiB is stopped, that the host disk is not exhausted, and that the console/allocation status names disk exhaustion.
+```
+
+## 2.2 Source object storage
+
+Was: 2.2
+Status: done
+Depends on: 1.8 for deletion grace (objects are collected only when unreferenced and older than the retention grace; full tombstone lifecycle stays with 1.8).
+
+Design-partner minimum. Production control-plane replicas no longer share a filesystem of source archives.
+
+Prompt:
+
+```text
+Keep FileSourceArchiveStore for local development and add a production SourceArchiveStore backed by operator-provided S3-compatible object storage. Store content-addressed immutable archives by verified SHA-256 digest, stream uploads and downloads without loading the whole archive into memory, verify size and digest at both boundaries, and use conditional creation so duplicate snapshots converge safely. Persist object metadata and lifecycle state in CockroachDB, distinguish missing/corrupt/transient retrieval failures, and garbage-collect only objects that are unreferenced after the deletion grace period. Support configurable server-side encryption, endpoint, region, bucket, credential-file or workload-identity auth, timeouts, and bounded retries without logging credentials. Production mode must reject the filesystem provider. Add contract tests shared by file and S3-compatible implementations plus failure tests for partial upload, stale metadata, range reads, deletion races, and digest mismatch.
 ```

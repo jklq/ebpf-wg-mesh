@@ -26,12 +26,7 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.StateDir == "" {
 		cfg.StateDir = "var/controlplane"
 	}
-	if cfg.SourceArchives.Directory == "" {
-		cfg.SourceArchives.Directory = filepath.Join(cfg.StateDir, "source-archives")
-	}
-	if cfg.SourceArchives.RetentionDays <= 0 {
-		cfg.SourceArchives.RetentionDays = 30
-	}
+	applySourceArchiveDefaults(cfg)
 	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
 		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
 	}
@@ -169,6 +164,34 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	cfg.ReplicaAddresses = uniqueAddresses(append([]string{cfg.AdvertiseAddr}, cfg.ReplicaAddresses...))
 	if cfg.AdvertiseAddr == "" && len(cfg.ReplicaAddresses) == 1 {
 		cfg.AdvertiseAddr = cfg.ReplicaAddresses[0]
+	}
+}
+
+func applySourceArchiveDefaults(cfg *ControlPlaneConfig) {
+	cfg.SourceArchives.Provider = strings.ToLower(strings.TrimSpace(cfg.SourceArchives.Provider))
+	if cfg.SourceArchives.Provider == "" {
+		if strings.TrimSpace(cfg.SourceArchives.S3.Bucket) != "" ||
+			strings.TrimSpace(cfg.SourceArchives.S3.Endpoint) != "" ||
+			strings.TrimSpace(cfg.SourceArchives.S3.Region) != "" {
+			cfg.SourceArchives.Provider = SourceArchiveProviderS3
+		} else {
+			cfg.SourceArchives.Provider = SourceArchiveProviderFile
+		}
+	}
+	if cfg.SourceArchives.Provider == SourceArchiveProviderFile && cfg.SourceArchives.Directory == "" {
+		cfg.SourceArchives.Directory = filepath.Join(cfg.StateDir, "source-archives")
+	}
+	if cfg.SourceArchives.RetentionDays <= 0 {
+		cfg.SourceArchives.RetentionDays = 30
+	}
+	if cfg.SourceArchives.Provider == SourceArchiveProviderS3 {
+		cfg.SourceArchives.S3.ServerSideEncryption = strings.TrimSpace(cfg.SourceArchives.S3.ServerSideEncryption)
+		if cfg.SourceArchives.S3.RequestTimeoutSeconds <= 0 {
+			cfg.SourceArchives.S3.RequestTimeoutSeconds = 30
+		}
+		if cfg.SourceArchives.S3.MaxRetries <= 0 {
+			cfg.SourceArchives.S3.MaxRetries = 3
+		}
 	}
 }
 

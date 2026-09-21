@@ -90,7 +90,6 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | # | Item | Size | File |
 | --- | --- | --- | --- |
 | 2.1 | Durable-work package (2.7) | M | [02](02-host-untrusted-code.md#21-durable-work-package) |
-| ★ 2.2 | Source object storage (2.2) | M | [02](02-host-untrusted-code.md#22-source-object-storage) |
 | 2.3a | Secret envelope key provider (2.3) | M | [02](02-host-untrusted-code.md#23a-secret-envelope-key-provider) |
 | 2.3b | Platform signing key lifecycle (2.3) | M | [02](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle) |
 | ★ 2.4a | Build execution boundary (4.2) | M | [02](02-host-untrusted-code.md#24a-build-execution-boundary) |
@@ -107,6 +106,8 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | 2.13 | Production-like topology harness (9.1) | L | [02](02-host-untrusted-code.md#213-production-like-topology-harness) |
 | 2.14 | Core onboarding path (8.9) | M | [02](02-host-untrusted-code.md#214-core-onboarding-path) |
 | ★ 2.15 | Workload egress guardrails (5.5) | M | [02](02-host-untrusted-code.md#215-workload-egress-guardrails) |
+
+2.2 landed; see [landed.md](landed.md#22-source-object-storage).
 
 2.10–2.12 delete more code than they add and get harder the longer other code assumes the full snapshot and full mesh. They are not ★, but do not let them drift to the end.
 
