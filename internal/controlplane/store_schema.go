@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 22
+const currentSchemaVersion = 23
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment

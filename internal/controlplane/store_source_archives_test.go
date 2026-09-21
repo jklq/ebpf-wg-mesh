@@ -332,3 +332,163 @@ func TestOpenSnapshotArchiveMapsS3BackendFailures(t *testing.T) {
 		t.Fatalf("missing backend error = %v, want missing", err)
 	}
 }
+
+func TestPruneSourceArchivesHealsStrandedDeletingRows(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"))
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("list projects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-stranded-ref"); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-stranded-free"); err != nil {
+		t.Fatal(err)
+	}
+	var refSnapshotID, refKey, freeSnapshotID, freeKey string
+	if err := store.db.QueryRowContext(ctx, `SELECT id, object_key FROM source_snapshots WHERE commit_sha = 'commit-stranded-ref'`).Scan(&refSnapshotID, &refKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT id, object_key FROM source_snapshots WHERE commit_sha = 'commit-stranded-free'`).Scan(&freeSnapshotID, &freeKey); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	// Simulate a prune that crashed between the claim and the per-key
+	// collection: both rows sit in deleting state with old timestamps.
+	for _, key := range []string{refKey, freeKey} {
+		if _, err := store.db.ExecContext(ctx,
+			`UPDATE source_archive_objects SET state = 'deleting', updated_at = $1 WHERE object_key = $2`,
+			old, key,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The free snapshot expires so only its stranded row is collected; the
+	// referenced snapshot stays live so its claim must be restored.
+	if _, err := store.db.ExecContext(ctx, `UPDATE source_snapshots SET created_at = $1 WHERE id = $2`, old, freeSnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := store.source.PruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted objects = %d, want 1", deleted)
+	}
+	var refState string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM source_archive_objects WHERE object_key = $1`, refKey).Scan(&refState); err != nil {
+		t.Fatal(err)
+	}
+	if refState != source.ArchiveObjectStateReady {
+		t.Fatalf("referenced object state = %q, want %q", refState, source.ArchiveObjectStateReady)
+	}
+	if _, err := store.source.Archives().Stat(ctx, refKey); err != nil {
+		t.Fatalf("referenced object stat: %v", err)
+	}
+	var freeRows int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM source_archive_objects WHERE object_key = $1`, freeKey).Scan(&freeRows); err != nil {
+		t.Fatal(err)
+	}
+	if freeRows != 0 {
+		t.Fatalf("freed object rows = %d, want 0", freeRows)
+	}
+	if _, err := store.source.Archives().Stat(ctx, freeKey); !source.IsArchiveNotFound(err) {
+		t.Fatalf("freed object lookup error = %v, want archive not found", err)
+	}
+}
+
+type deleteHookArchiveStore struct {
+	source.ArchiveStore
+	onDelete func(ctx context.Context, key string) error
+}
+
+func (s deleteHookArchiveStore) Delete(ctx context.Context, key string) error {
+	return s.onDelete(ctx, key)
+}
+
+func TestPruneSourceArchivesSerializesRacingStoreBehindCollection(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	archive := []byte("racing-source-archive")
+	_, key, err := store.source.StoreSourceArchive(ctx, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	if _, err := store.db.ExecContext(ctx, `UPDATE source_archive_objects SET updated_at = $1 WHERE object_key = $2`, old, key); err != nil {
+		t.Fatal(err)
+	}
+	backend := store.source.Archives()
+	deleteStarted := make(chan struct{})
+	var deleteOnce sync.Once
+	store.source.ConfigureSourceArchives(deleteHookArchiveStore{
+		ArchiveStore: backend,
+		onDelete: func(ctx context.Context, deleteKey string) error {
+			deleteOnce.Do(func() { close(deleteStarted) })
+			// Hold the collection transaction open so the racing store
+			// must block on the row lock if the lock is held across the
+			// object delete, and completes immediately if it is not.
+			time.Sleep(500 * time.Millisecond)
+			return backend.Delete(ctx, deleteKey)
+		},
+	})
+	type storeResult struct {
+		elapsed time.Duration
+		err     error
+	}
+	racerDone := make(chan storeResult, 1)
+	go func() {
+		<-deleteStarted
+		start := time.Now()
+		_, _, err := store.source.StoreSourceArchive(ctx, archive)
+		racerDone <- storeResult{elapsed: time.Since(start), err: err}
+	}()
+	deleted, err := store.source.PruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted objects = %d, want 1", deleted)
+	}
+	var racer storeResult
+	select {
+	case racer = <-racerDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("racing store did not finish")
+	}
+	if racer.err != nil {
+		t.Fatalf("racing store: %v", racer.err)
+	}
+	// The racer started while collection held the row lock, so it must have
+	// waited out the 500ms delete hook before its upsert could proceed.
+	if racer.elapsed < 400*time.Millisecond {
+		t.Fatalf("racing store finished in %v, want it to block behind collection", racer.elapsed)
+	}
+	var state string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM source_archive_objects WHERE object_key = $1`, key).Scan(&state); err != nil {
+		t.Fatalf("object row lookup: %v", err)
+	}
+	if state != source.ArchiveObjectStateReady {
+		t.Fatalf("object state = %q, want %q", state, source.ArchiveObjectStateReady)
+	}
+	if _, err := backend.Stat(ctx, key); err != nil {
+		t.Fatalf("re-stored object stat: %v", err)
+	}
+}

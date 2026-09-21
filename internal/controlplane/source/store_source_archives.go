@@ -341,24 +341,80 @@ func (s *SQLStore) collectUnreferencedArchiveObjects(ctx context.Context, cutoff
 	}
 	collected := 0
 	for _, key := range claimed {
-		proceed, err := s.verifyArchiveObjectUnreferenced(ctx, key, cutoff)
+		done, err := s.collectClaimedArchiveObject(ctx, key, cutoff)
 		if err != nil {
 			return collected, err
 		}
-		if !proceed {
-			continue
-		}
-		if err := s.archives.Delete(ctx, key); err != nil {
-			_ = s.releaseArchiveObjectClaim(ctx, key)
-			return collected, fmt.Errorf("delete source archive object: %w", err)
-		}
-		deleted, err := s.deleteArchiveObjectRow(ctx, key, cutoff)
-		if err != nil {
-			return collected, err
-		}
-		if deleted {
+		if done {
 			collected++
 		}
+	}
+	return collected, nil
+}
+
+// collectClaimedArchiveObject deletes one claimed object. The row lock is held
+// across the object delete so a concurrent store of the same content-addressed
+// key blocks on its row upsert until this transaction commits: either the
+// store lands first and the guards below skip collection, or it lands after
+// and its Put follows our Delete. Deleting the object before the row is
+// confirmed would orphan a live snapshot when a re-store lands in between.
+// ArchiveStore Delete is idempotent in every backend, so re-running this
+// closure on a CockroachDB transaction retry is safe.
+func (s *SQLStore) collectClaimedArchiveObject(ctx context.Context, key string, cutoff time.Time) (bool, error) {
+	collected := false
+	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		collected = false
+		var state, digest string
+		var updatedAt time.Time
+		if err := tx.QueryRowContext(ctx,
+			`SELECT state, digest, updated_at FROM source_archive_objects WHERE object_key = $1 FOR UPDATE`,
+			key,
+		).Scan(&state, &digest, &updatedAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if state != ArchiveObjectStateDeleting || !updatedAt.Before(cutoff) {
+			return nil
+		}
+		var referenced int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM source_snapshots WHERE object_key = $1`,
+			key,
+		).Scan(&referenced); err != nil {
+			return err
+		}
+		var activeBuilds int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM build_runs
+			  WHERE source_snapshot_digest = $1 AND state IN ('queued', 'running')`,
+			digest,
+		).Scan(&activeBuilds); err != nil {
+			return err
+		}
+		if referenced > 0 || activeBuilds > 0 {
+			_, err := tx.ExecContext(ctx,
+				`UPDATE source_archive_objects SET state = $1 WHERE object_key = $2`,
+				ArchiveObjectStateReady, key,
+			)
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM source_archive_objects WHERE object_key = $1`,
+			key,
+		); err != nil {
+			return err
+		}
+		if err := s.archives.Delete(ctx, key); err != nil {
+			return fmt.Errorf("delete source archive object: %w", err)
+		}
+		collected = true
+		return nil
+	})
+	if err != nil {
+		_ = s.releaseArchiveObjectClaim(ctx, key)
+		return false, err
 	}
 	return collected, nil
 }
@@ -367,23 +423,34 @@ func (s *SQLStore) claimArchiveObjectsForCollection(ctx context.Context, cutoff 
 	var claimed []string
 	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		claimed = nil
+		// Rows already marked deleting are always re-claimed: a previous
+		// prune may have crashed or failed between the claim and the
+		// per-key collection, and only this claim can move a deleting row
+		// back to ready or finish collecting it. Collection re-verifies
+		// every guard under the row lock, so a concurrent collector or
+		// store cannot be harmed by the second claim.
 		rows, err := tx.QueryContext(ctx,
 			`SELECT o.object_key
 			   FROM source_archive_objects o
-			  WHERE o.state = $1
-			    AND o.updated_at < $2
-			    AND NOT EXISTS (
-			        SELECT 1 FROM source_snapshots ss WHERE ss.object_key = o.object_key
-			    )
-			    AND NOT EXISTS (
-			        SELECT 1 FROM build_runs b
-			         WHERE b.source_snapshot_digest = o.digest
-			           AND b.state IN ('queued', 'running')
+			  WHERE o.updated_at < $1
+			    AND (
+			        o.state = $2
+			        OR (
+			            o.state = $3
+			            AND NOT EXISTS (
+			                SELECT 1 FROM source_snapshots ss WHERE ss.object_key = o.object_key
+			            )
+			            AND NOT EXISTS (
+			                SELECT 1 FROM build_runs b
+			                 WHERE b.source_snapshot_digest = o.digest
+			                   AND b.state IN ('queued', 'running')
+			            )
+			        )
 			    )
 			  ORDER BY o.updated_at, o.object_key
 			  LIMIT 100
 			  FOR UPDATE OF o`,
-			ArchiveObjectStateReady, cutoff,
+			cutoff, ArchiveObjectStateDeleting, ArchiveObjectStateReady,
 		)
 		if err != nil {
 			return err
@@ -400,9 +467,11 @@ func (s *SQLStore) claimArchiveObjectsForCollection(ctx context.Context, cutoff 
 			return err
 		}
 		for _, key := range claimed {
+			// The SELECT ... FOR UPDATE above already holds the row lock,
+			// so the flip is unconditional.
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE source_archive_objects SET state = $1 WHERE object_key = $2 AND state = $3`,
-				ArchiveObjectStateDeleting, key, ArchiveObjectStateReady,
+				`UPDATE source_archive_objects SET state = $1 WHERE object_key = $2`,
+				ArchiveObjectStateDeleting, key,
 			); err != nil {
 				return err
 			}
@@ -410,46 +479,6 @@ func (s *SQLStore) claimArchiveObjectsForCollection(ctx context.Context, cutoff 
 		return nil
 	})
 	return claimed, err
-}
-
-func (s *SQLStore) verifyArchiveObjectUnreferenced(ctx context.Context, key string, cutoff time.Time) (bool, error) {
-	proceed := false
-	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		var state string
-		var updatedAt time.Time
-		if err := tx.QueryRowContext(ctx,
-			`SELECT state, updated_at FROM source_archive_objects WHERE object_key = $1`,
-			key,
-		).Scan(&state, &updatedAt); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				proceed = false
-				return nil
-			}
-			return err
-		}
-		if state != ArchiveObjectStateDeleting || !updatedAt.Before(cutoff) {
-			proceed = false
-			return nil
-		}
-		var referenced int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM source_snapshots WHERE object_key = $1`,
-			key,
-		).Scan(&referenced); err != nil {
-			return err
-		}
-		if referenced > 0 {
-			proceed = false
-			_, err := tx.ExecContext(ctx,
-				`UPDATE source_archive_objects SET state = $1 WHERE object_key = $2`,
-				ArchiveObjectStateReady, key,
-			)
-			return err
-		}
-		proceed = true
-		return nil
-	})
-	return proceed, err
 }
 
 func (s *SQLStore) releaseArchiveObjectClaim(ctx context.Context, key string) error {
@@ -460,37 +489,6 @@ func (s *SQLStore) releaseArchiveObjectClaim(ctx context.Context, key string) er
 		)
 		return err
 	})
-}
-
-func (s *SQLStore) deleteArchiveObjectRow(ctx context.Context, key string, cutoff time.Time) (bool, error) {
-	deleted := false
-	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx,
-			`DELETE FROM source_archive_objects o
-			  WHERE o.object_key = $1
-			    AND o.state = $2
-			    AND o.updated_at < $3
-			    AND NOT EXISTS (
-			        SELECT 1 FROM source_snapshots ss WHERE ss.object_key = o.object_key
-			    )
-			    AND NOT EXISTS (
-			        SELECT 1 FROM build_runs b
-			         WHERE b.source_snapshot_digest = o.digest
-			           AND b.state IN ('queued', 'running')
-			    )`,
-			key, ArchiveObjectStateDeleting, cutoff,
-		)
-		if err != nil {
-			return err
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		deleted = rows > 0
-		return nil
-	})
-	return deleted, err
 }
 
 func (s *SQLStore) SourceStorageReady() bool {
