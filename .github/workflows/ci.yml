@@ -120,6 +120,8 @@ jobs:
           sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
             "$(command -v go)" test -count=1 -timeout 10m -v ./internal/agent
           sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
+            "$(command -v go)" test -count=1 -timeout 10m -v ./internal/builder
+          sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
             "$(command -v go)" test -count=1 -timeout 10m -v ./internal/firewall
 
   go-integration:

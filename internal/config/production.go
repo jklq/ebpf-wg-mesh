@@ -73,6 +73,9 @@ func validateProductionAgent(cfg AgentConfig) error {
 }
 
 func validateProductionBuilder(cfg BuilderConfig) error {
+	if cfg.Executor == "development" {
+		return errors.New("builder.executor must not be development in production: the development executor does not isolate untrusted code")
+	}
 	if err := validateProductionTLSName("builder.controlPlane.tls.serverName", cfg.ControlPlane.TLS.ServerName); err != nil {
 		return err
 	}

@@ -92,6 +92,14 @@ func TestOSCommandRunnerEnforcesFileSizeLimit(t *testing.T) {
 func TestOSCommandRunnerEnforcesProcessLimit(t *testing.T) {
 	t.Parallel()
 
+	// Any uid 0 bypasses RLIMIT_NPROC (verified for real root and
+	// user namespaces alike), so the capped expectation only holds
+	// unprivileged. The privileged suite covers PID containment at
+	// the sandbox instead.
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses RLIMIT_NPROC: the limit under test cannot bind here")
+	}
+
 	limits := &ProcessLimits{MaxProcesses: 64}
 	req := limitHelperRequest("fork", limits, "HELPER_CHILDREN=128")
 	if _, err := (osCommandRunner{}).Run(context.Background(), req, nil); err == nil {

@@ -106,8 +106,8 @@ func BuilderStartupContract(cfg BuilderConfig) StartupContract {
 	}
 	features := []string{"builder", "executor_" + executor}
 	// The development executor establishes the build seam but does
-	// not isolate hostile code; 2.4b adds the hardened backend and
-	// makes production refuse this executor.
+	// not isolate hostile code. The hardened executor is the
+	// production backend; production refuses the development one.
 	if executor == "development" {
 		features = append(features, "executor_non_isolating")
 	}

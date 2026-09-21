@@ -355,8 +355,17 @@ func validateBuilder(cfg BuilderConfig) error {
 	if cfg.RailpackFrontendImage == "" {
 		return errors.New("builder.railpackFrontendImage is required")
 	}
-	if cfg.Executor != "development" {
-		return fmt.Errorf("builder.executor must be %q", "development")
+	switch cfg.Executor {
+	case "development", "hardened":
+	case "":
+		return errors.New("builder.executor is required")
+	default:
+		return fmt.Errorf("builder.executor must be %q or %q", "development", "hardened")
+	}
+	if cfg.Executor == "hardened" {
+		if err := validateBuilderSandbox(cfg.Sandbox); err != nil {
+			return err
+		}
 	}
 	if cfg.Limits.TimeoutSeconds <= 0 {
 		return errors.New("builder.limits.timeoutSeconds must be greater than 0")
@@ -381,8 +390,40 @@ func validateBuilder(cfg BuilderConfig) error {
 			return fmt.Errorf("builder.network.deniedCidrs must be valid CIDRs: %q", raw)
 		}
 	}
+	switch cfg.Cache.Mode {
+	case "", "none", "content-addressed":
+	default:
+		return fmt.Errorf("builder.cache.mode must be %q or %q", "none", "content-addressed")
+	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionBuilder(cfg)
+	}
+	return nil
+}
+
+func validateBuilderSandbox(cfg BuilderSandboxConfig) error {
+	if cfg.Backend != "containerd" {
+		return fmt.Errorf("builder.sandbox.backend must be %q", "containerd")
+	}
+	for field, value := range map[string]string{
+		"builder.sandbox.socket":          cfg.Socket,
+		"builder.sandbox.namespace":       cfg.Namespace,
+		"builder.sandbox.image":           cfg.Image,
+		"builder.sandbox.runtime":         cfg.Runtime,
+		"builder.sandbox.snapshotter":     cfg.Snapshotter,
+		"builder.sandbox.cniPluginDir":    cfg.CNIPluginDir,
+		"builder.sandbox.cniConfDir":      cfg.CNIConfDir,
+		"builder.sandbox.cniNetwork":      cfg.CNINetwork,
+		"builder.sandbox.buildkitdBinary": cfg.BuildkitdBinary,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required for the hardened executor", field)
+		}
+	}
+	for _, nameserver := range cfg.Nameservers {
+		if ip := net.ParseIP(strings.TrimSpace(nameserver)); ip == nil {
+			return fmt.Errorf("builder.sandbox.nameservers must be valid IPs: %q", nameserver)
+		}
 	}
 	return nil
 }

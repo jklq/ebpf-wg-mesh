@@ -9,10 +9,10 @@
 // completion, cancellation, and worker death (via RecoverStaleWorkspaces
 // on the next start).
 //
-// The development executor is the only implementation in this item. It
-// establishes the seam, the limits, and the credential scoping that the
-// hardened backend (2.4b) enforces; it does not isolate hostile code and
-// is labeled non-isolating in the builder startup contract.
+// The development executor establishes the seam, the limits, and the
+// credential scoping that the hardened backend enforces; it does not
+// isolate hostile code and is labeled non-isolating in the builder
+// startup contract. The hardened executor is the production backend.
 package builder
 
 import (
@@ -28,11 +28,16 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// ExecutorDevelopment is the only executor selection until 2.4b adds a
-// hardened backend. Production refuses unknown executors at config
-// validation time; 2.4b makes production refuse the development
-// executor as well.
+// ExecutorDevelopment runs builds as host child processes. It does not
+// isolate hostile code; production refuses it at config validation
+// time.
 const ExecutorDevelopment = "development"
+
+// ExecutorHardened runs every build step inside a one-shot OCI sandbox
+// with its own mount, PID, network, IPC, UTS, and cgroup namespaces,
+// a private network namespace with enforced egress policy, and a
+// per-execution BuildKit daemon. It is the production backend.
+const ExecutorHardened = "hardened"
 
 // ErrBuildTimeout reports a build that exceeded its executor time limit.
 var ErrBuildTimeout = errors.New("build timed out")
@@ -111,8 +116,10 @@ type PushCredentials struct {
 
 // BuildkitEndpoint is the BuildKit endpoint isolated to this execution.
 // The development executor receives the single configured endpoint
-// explicitly rather than reading it from ambient state; per-execution
-// isolation of the daemon itself is 2.4b work.
+// explicitly rather than reading it from ambient state. The hardened
+// executor ignores the shared address and starts a per-execution
+// daemon with an isolated root and socket instead, so sibling builds
+// share no daemon state.
 type BuildkitEndpoint struct {
 	Binary  string
 	Address string
@@ -132,10 +139,11 @@ type ResourceLimits struct {
 	// Timeout bounds total execution time including snapshot setup.
 	Timeout time.Duration
 	// MemoryBytes caps child-process virtual address space
-	// (RLIMIT_AS). Virtual, not resident: Go-based build tools
-	// reserve over a gigabyte at startup, so this needs generous
-	// headroom and bounds runaway reservation rather than
-	// containing RSS. Hard resident-set containment is 2.4b work.
+	// (RLIMIT_AS) under the development executor. Virtual, not
+	// resident: Go-based build tools reserve over a gigabyte at
+	// startup, so this needs generous headroom and bounds runaway
+	// reservation rather than containing RSS. The hardened executor
+	// additionally enforces it as a hard cgroup resident-set cap.
 	MemoryBytes int64
 	// CPUSeconds caps child-process CPU time (RLIMIT_CPU).
 	CPUSeconds int64
@@ -145,8 +153,10 @@ type ResourceLimits struct {
 	// MaxProcesses caps the number of processes a build child may
 	// fork (RLIMIT_NPROC).
 	MaxProcesses int64
-	// MaxWorkspaceBytes caps total executor-managed workspace bytes,
-	// accounted after the build.
+	// MaxWorkspaceBytes caps total build-attributable bytes,
+	// accounted after the build. The development executor counts
+	// the workspace; the hardened executor additionally counts
+	// the per-execution daemon root and content-cache growth.
 	MaxWorkspaceBytes int64
 }
 
@@ -210,8 +220,10 @@ func (l ResourceLimits) ProcessLimits() ProcessLimits {
 // execution, expressed as input rather than ambient host state. The
 // development executor validates the policy, scrubs ambient
 // network-shaping environment (proxy variables, docker contexts) from
-// build children, and honestly reports itself non-isolating; CIDR
-// enforcement at the build data plane is 2.4b work.
+// build children, and honestly reports itself non-isolating. The
+// hardened executor enforces the policy at the data plane: a private
+// network namespace that is loopback-only when general egress is
+// denied, or CNI-attached with denied-CIDR blackholes otherwise.
 type NetworkPolicy struct {
 	AllowGeneralEgress bool
 	DeniedCIDRs        []string

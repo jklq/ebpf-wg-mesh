@@ -339,6 +339,9 @@ func validMinimalProductionBuilder() BuilderConfig {
 			},
 		},
 		WorkDir: "/var/lib/ebpf-wg-mesh/builder",
+		Sandbox: BuilderSandboxConfig{
+			Image: "registry.example.test/platform/build-sandbox:1",
+		},
 	}
 }
 
