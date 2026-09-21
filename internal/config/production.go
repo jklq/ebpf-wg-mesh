@@ -30,6 +30,9 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionSourceArchives(cfg.SourceArchives); err != nil {
 		return err
 	}
+	if cfg.SecretKeys.Provider != SecretKeysProviderAWSKMS {
+		return errors.New("controlplane.secretKeys.provider must be aws-kms in production; the file provider cannot be shared across replicas")
+	}
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
 		return err
 	}
@@ -312,6 +315,13 @@ func dependencyClassForPath(raw string) string {
 		return DependencyEphemeral
 	}
 	return DependencyDurable
+}
+
+func dependencyClassForSecretKeys(cfg SecretKeysConfig) string {
+	if cfg.Provider == SecretKeysProviderAWSKMS {
+		return DependencyDurable
+	}
+	return dependencyClassForPath(cfg.File.Directory)
 }
 
 func dependencyClassForAdmin(cfg IngressConfig) string {

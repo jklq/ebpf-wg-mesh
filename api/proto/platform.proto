@@ -590,6 +590,42 @@ message DeleteServiceRequest {
   string service_id = 1;
 }
 
+// SealServiceSecretRequest writes one sealed secret value. The value is
+// write-only: it is sealed into ciphertext on write and never returned by
+// any read.
+message SealServiceSecretRequest {
+  string service_id = 1;
+  string name = 2;
+  string value = 3 [debug_redact = true];
+}
+
+message SealServiceSecretResponse {
+  string service_id = 1;
+  string name = 2;
+  int64 version = 3;
+}
+
+message DeleteServiceSecretRequest {
+  string service_id = 1;
+  string name = 2;
+}
+
+message ListServiceSecretsRequest {
+  string service_id = 1;
+}
+
+// ServiceSecretMetadata is the masked existence record for a sealed secret:
+// names and versions, never values.
+message ServiceSecretMetadata {
+  string name = 1;
+  int64 version = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+message ListServiceSecretsResponse {
+  repeated ServiceSecretMetadata secrets = 1;
+}
+
 message GetServiceRequest {
   string service_id = 1;
 }
@@ -893,6 +929,10 @@ service PlatformService {
   rpc DeleteService(DeleteServiceRequest) returns (google.protobuf.Empty);
   rpc GetService(GetServiceRequest) returns (Service);
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+
+  rpc SealServiceSecret(SealServiceSecretRequest) returns (SealServiceSecretResponse);
+  rpc DeleteServiceSecret(DeleteServiceSecretRequest) returns (google.protobuf.Empty);
+  rpc ListServiceSecrets(ListServiceSecretsRequest) returns (ListServiceSecretsResponse);
 
   rpc CreateVolume(CreateVolumeRequest) returns (Volume);
   rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty);

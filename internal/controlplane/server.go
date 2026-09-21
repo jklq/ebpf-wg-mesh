@@ -19,6 +19,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"connectrpc.com/connect"
@@ -77,6 +78,12 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if err != nil {
 		return nil, err
 	}
+	secrets, err := secretkeys.Open(ctx, store.db, cfg.SecretKeys)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("open sealed secrets: %w", err)
+	}
+	store.attachSecrets(secrets)
 	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
 	leases.SetAdvertise(cfg.AdvertiseAddr)
 	archiveStore, err := source.NewSourceArchiveStore(cfg.SourceArchives)
@@ -286,6 +293,9 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 	}
 	if s == nil || s.store == nil || !s.store.source.SourceStorageReady() {
 		failed = append(failed, "source_storage")
+	}
+	if s == nil || s.store == nil || s.store.secrets == nil || !s.store.secrets.Ready(ctx) {
+		failed = append(failed, "secret_keys")
 	}
 	if len(failed) > 0 {
 		return health.Report{Status: health.StatusNotReady, Failed: failed}
@@ -526,6 +536,9 @@ func (s *Server) Close() error {
 		_ = s.registryLn.Close()
 	}
 	if s.store != nil {
+		if s.store.secrets != nil {
+			errs = append(errs, s.store.secrets.Close())
+		}
 		errs = append(errs, s.store.Close())
 	}
 	if s.logStore != nil {

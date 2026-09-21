@@ -90,7 +90,6 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | # | Item | Size | File |
 | --- | --- | --- | --- |
 | 2.1 | Durable-work package (2.7) | M | [02](02-host-untrusted-code.md#21-durable-work-package) |
-| 2.3a | Secret envelope key provider (2.3) | M | [02](02-host-untrusted-code.md#23a-secret-envelope-key-provider) |
 | 2.3b | Platform signing key lifecycle (2.3) | M | [02](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle) |
 | ★ 2.4a | Build execution boundary (4.2) | M | [02](02-host-untrusted-code.md#24a-build-execution-boundary) |
 | ★ 2.4b | Hardened build isolation backend (4.2) | XL | [02](02-host-untrusted-code.md#24b-hardened-build-isolation-backend) |

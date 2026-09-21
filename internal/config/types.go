@@ -174,6 +174,30 @@ type SourceArchiveConfig struct {
 	S3            SourceArchiveS3Config
 }
 
+// Secret key provider names for sealed service secrets.
+const (
+	SecretKeysProviderFile   = "file"
+	SecretKeysProviderAWSKMS = "aws-kms"
+)
+
+type SecretKeysFileConfig struct {
+	Directory string
+}
+
+type SecretKeysKMSConfig struct {
+	Region         string
+	Endpoint       string
+	KeyID          string
+	TimeoutSeconds int
+	MaxAttempts    int
+}
+
+type SecretKeysConfig struct {
+	Provider string
+	File     SecretKeysFileConfig
+	KMS      SecretKeysKMSConfig
+}
+
 type ControlPlaneConfig struct {
 	Profile          Profile
 	Health           HealthConfig
@@ -185,6 +209,7 @@ type ControlPlaneConfig struct {
 	Logs             LogCaptureConfig
 	StateDir         string
 	SourceArchives   SourceArchiveConfig
+	SecretKeys       SecretKeysConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
 	Bootstrap        BootstrapConfig

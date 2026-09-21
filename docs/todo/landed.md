@@ -38,7 +38,7 @@ Single untrusted-workload sandbox, cgroup isolation, no customer-selectable priv
 
 ## Multi-replica control plane (2.1)
 
-Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases, a durable product-state journal and indexed live views. Agents persist replica discovery, follow live-owner redirects, quarantine a failed owner briefly, and reconnect after fenced takeover. Production source archives live in S3-compatible object storage since [2.2](#22-source-object-storage); replicas still share node-local keys until [2.3a](02-host-untrusted-code.md#23a-secret-envelope-key-provider) and [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
+Horizontally runnable `cmd/controlplane` with fenced CockroachDB leases, a durable product-state journal and indexed live views. Agents persist replica discovery, follow live-owner redirects, quarantine a failed owner briefly, and reconnect after fenced takeover. Production source archives live in S3-compatible object storage since [2.2](#22-source-object-storage); sealed-secret keys landed in [2.3a](#23a-secret-envelope-key-provider); replicas still share node-local signing keys until [2.3b](02-host-untrusted-code.md#23b-platform-signing-key-lifecycle).
 
 ## Durable agent reconciliation foundation
 
@@ -148,3 +148,19 @@ Prompt:
 ```text
 Keep FileSourceArchiveStore for local development and add a production SourceArchiveStore backed by operator-provided S3-compatible object storage. Store content-addressed immutable archives by verified SHA-256 digest, stream uploads and downloads without loading the whole archive into memory, verify size and digest at both boundaries, and use conditional creation so duplicate snapshots converge safely. Persist object metadata and lifecycle state in CockroachDB, distinguish missing/corrupt/transient retrieval failures, and garbage-collect only objects that are unreferenced after the deletion grace period. Support configurable server-side encryption, endpoint, region, bucket, credential-file or workload-identity auth, timeouts, and bounded retries without logging credentials. Production mode must reject the filesystem provider. Add contract tests shared by file and S3-compatible implementations plus failure tests for partial upload, stale metadata, range reads, deletion races, and digest mismatch.
 ```
+
+## 2.3a Secret envelope key provider
+
+Was: 2.3 (split)
+Status: done
+Depends on: 1.2 if it lands first; otherwise this item is where secret ciphertext first gets a real key. 1.2 stayed parked, so this item owns the envelope key and the sealed-secret backend; console seal/masked/delete UX remains deferred to [2.3a frontend handoff](../frontend-handoff/2.3a.md) and the future 1.2 unpark.
+
+Secrets are the only key material here whose ciphertext outlives the process. That is what justifies a provider contract.
+
+Prompt:
+
+```text
+Give secret material a real key provider so ciphertext is not protected by a key that exists only under CONTROLPLANE_STATE_DIR on one replica. Define one KeyProvider contract that wraps and unwraps data-encryption keys without exporting the root key into logs, database rows, process arguments, or error strings. Ship a local file provider for development and one production KMS provider; production must reject the file provider. Model key IDs and active/retired states, let new wraps use the active key while retired keys still unwrap, and make every control-plane replica see the same key state. Refuse to delete or disable a key while ciphertext wrapped by it still exists. Provide an operator command to introduce a new active key and to rewrap existing data-encryption keys onto it. Do not add an HSM or external-signer contract, a compromise-response program, or customer-facing key management in this item. Test rewrap across replicas, restart with a retired key still needed for unwrap, unwrap failure diagnostics, and refusal to delete a key with live ciphertext.
+```
+
+Landed as: `KeyProvider` contract (`internal/controlplane/secretkeys`) with a development file provider and an AWS KMS production provider; CockroachDB-backed key registry (single active key, retired keys unwrap) and per-environment DEKs; sealed service-secret versions with deployment pins and desired-state decryption on the control plane; `controlplane keys` operator CLI (list/rotate/rewrap/delete). There is no separate disable state: deleting a retired, unreferenced key is the removal path, and deletion of the active key or a key with live wrapped DEKs is refused.

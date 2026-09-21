@@ -5,6 +5,7 @@ import (
 
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -20,7 +21,15 @@ type persistence struct {
 	reads              *readsPersistence
 	routing            *routingPersistence
 	source             *source.SQLStore
+	secrets            *secretkeys.Service
 }
+
+// attachSecrets wires the sealed-secret backend. Production always attaches
+// before serving; delivery skips sealed handling while it is nil.
+func (p *persistence) attachSecrets(svc *secretkeys.Service) {
+	p.secrets = svc
+}
+
 type buildsPersistence struct {
 	*database
 }

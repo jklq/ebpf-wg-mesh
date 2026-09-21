@@ -554,4 +554,44 @@ var currentSchema = []string{
 			FOREIGN KEY (build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
 	`ALTER TABLE service_rollouts ADD CONSTRAINT fk_service_rollouts_target_allocation
 			FOREIGN KEY (target_allocation_id) REFERENCES allocation_assignments(id) ON DELETE SET NULL`,
+	`CREATE TABLE envelope_keys (
+			id STRING PRIMARY KEY,
+			provider STRING NOT NULL,
+			provider_ref STRING NOT NULL,
+			state STRING NOT NULL CHECK (state IN ('active', 'retired')),
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE UNIQUE INDEX idx_envelope_keys_single_active
+			ON envelope_keys(state) WHERE state = 'active'`,
+	`CREATE TABLE envelope_data_keys (
+			id STRING PRIMARY KEY,
+			scope_kind STRING NOT NULL,
+			scope_id STRING NOT NULL,
+			wrapping_key_id STRING NOT NULL REFERENCES envelope_keys(id),
+			wrapped_dek BYTES NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (scope_kind, scope_id)
+		)`,
+	`CREATE INDEX idx_envelope_data_keys_wrapping ON envelope_data_keys(wrapping_key_id)`,
+	`CREATE TABLE service_secret_versions (
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			name STRING NOT NULL CHECK (btrim(name) <> ''),
+			version INT8 NOT NULL CHECK (version > 0),
+			environment_id STRING NOT NULL,
+			dek_id STRING NOT NULL REFERENCES envelope_data_keys(id),
+			nonce BYTES NOT NULL,
+			ciphertext BYTES NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (service_id, name, version)
+		)`,
+	`CREATE INDEX idx_service_secret_versions_service
+			ON service_secret_versions(service_id, name, version DESC)`,
+	`CREATE TABLE service_secret_tombstones (
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			name STRING NOT NULL CHECK (btrim(name) <> ''),
+			deleted_at TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (service_id, name)
+		)`,
 }

@@ -44,6 +44,7 @@ func TestFinalizeAcceptsValidMinimalProductionConfigs(t *testing.T) {
 		"features=ingress,registry_auth,source_storage,sandbox_production",
 		"database=durable",
 		"source_storage=durable",
+		"envelope_keys=durable",
 		"ingress_admin=loopback",
 	} {
 		if !strings.Contains(contract, part) {
@@ -132,6 +133,20 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.Registry.SigningCertFile = ""
 		cfg.Registry.SigningKeyFile = ""
 		mustReject(t, FinalizeControlPlane(&cfg), "signing certificate and key files")
+	})
+
+	t.Run("file secret key provider", func(t *testing.T) {
+		t.Parallel()
+		cfg := validMinimalProductionControlPlane(t)
+		cfg.SecretKeys.Provider = SecretKeysProviderFile
+		mustReject(t, FinalizeControlPlane(&cfg), "must be aws-kms in production")
+	})
+
+	t.Run("kms secret key provider without key", func(t *testing.T) {
+		t.Parallel()
+		cfg := validMinimalProductionControlPlane(t)
+		cfg.SecretKeys.KMS.KeyID = ""
+		mustReject(t, FinalizeControlPlane(&cfg), "kms.keyId is required")
 	})
 	t.Run("unprotected remote caddy admin", func(t *testing.T) {
 		t.Parallel()
@@ -283,6 +298,13 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 				Bucket:                "platform-source-archives",
 				RequestTimeoutSeconds: 30,
 				MaxRetries:            3,
+			},
+		},
+		SecretKeys: SecretKeysConfig{
+			Provider: SecretKeysProviderAWSKMS,
+			KMS: SecretKeysKMSConfig{
+				Region: "us-east-1",
+				KeyID:  "arn:aws:kms:us-east-1:123456789012:key/test",
 			},
 		},
 		Ingress: IngressConfig{

@@ -182,6 +182,15 @@ func (s *persistence) insertDeploymentTx(
 	}
 	rec.ResolvedSpec = resolvedSpec
 	rec.VariableVersions = deploymentVariableVersions(resolvedSpec, specRevision)
+	if s.secrets != nil {
+		live, err := s.secrets.Sealed().CurrentVersions(ctx, tx, serviceID)
+		if err != nil {
+			return DeploymentRecord{}, err
+		}
+		for name, version := range live {
+			rec.VariableVersions[name] = version
+		}
+	}
 	variableVersionsJSON, err := json.Marshal(rec.VariableVersions)
 	if err != nil {
 		return DeploymentRecord{}, err
