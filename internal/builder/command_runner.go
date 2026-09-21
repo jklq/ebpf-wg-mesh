@@ -7,8 +7,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"os"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,9 +36,14 @@ type commandOutputLine struct {
 type osCommandRunner struct{}
 
 func (osCommandRunner) Run(ctx context.Context, req commandRequest, onLine func(commandOutputLine)) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, req.Binary, req.Args...)
+	cmd := newBuildCommand(ctx, req.Binary, req.Args)
 	cmd.Dir = req.Dir
-	cmd.Env = append(os.Environ(), req.Env...)
+	// Explicit environment only: a nil Env must not fall back to
+	// inheriting the builder process environment.
+	cmd.Env = req.Env
+	if cmd.Env == nil {
+		cmd.Env = []string{}
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -52,6 +55,13 @@ func (osCommandRunner) Run(ctx context.Context, req commandRequest, onLine func(
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
+	}
+	if req.Limits != nil {
+		if err := applyProcessLimits(cmd.Process.Pid, *req.Limits); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, err
+		}
 	}
 
 	var (
@@ -72,6 +82,11 @@ func (osCommandRunner) Run(ctx context.Context, req commandRequest, onLine func(
 
 	wg.Wait()
 	waitErr := cmd.Wait()
+	// Report cancellation as the context error so callers can
+	// distinguish a cancelled build from a failed one.
+	if ctx.Err() != nil {
+		return combined.Bytes(), ctx.Err()
+	}
 	return combined.Bytes(), waitErr
 }
 

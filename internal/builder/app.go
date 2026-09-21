@@ -39,8 +39,13 @@ const (
 type commandRequest struct {
 	Dir    string
 	Binary string
+	// Env is the child's complete environment. The runner never
+	// inherits the builder process environment: the executor supplies
+	// every variable explicitly so ambient host state cannot leak
+	// into a build.
 	Env    []string
 	Args   []string
+	Limits *ProcessLimits
 }
 
 type commandRunner interface {
@@ -66,23 +71,24 @@ func (e *buildFailureError) Unwrap() error {
 	return e.err
 }
 
-type jobWorkspace struct {
-	root         string
-	repoDir      string
-	metadataFile string
-}
-
 type App struct {
 	cfg        config.BuilderConfig
 	conn       *grpc.ClientConn
 	client     platformv1.BuilderServiceClient
-	runner     commandRunner
+	executor   BuildExecutor
 	healthStop func(context.Context) error
 }
 
 func New(cfg config.BuilderConfig) (*App, error) {
 	if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir builder work dir: %w", err)
+	}
+	executor, err := newExecutorForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Profile.IsProduction() && !executor.Isolating() {
+		slog.Warn("builder executor does not isolate untrusted code", "executor", executor.Name())
 	}
 	creds, err := loadTransportCredentials(cfg.ControlPlane.TLS)
 	if err != nil {
@@ -95,11 +101,23 @@ func New(cfg config.BuilderConfig) (*App, error) {
 		return nil, fmt.Errorf("dial control plane: %w", err)
 	}
 	return &App{
-		cfg:    cfg,
-		conn:   conn,
-		client: platformv1.NewBuilderServiceClient(conn),
-		runner: osCommandRunner{},
+		cfg:      cfg,
+		conn:     conn,
+		client:   platformv1.NewBuilderServiceClient(conn),
+		executor: executor,
 	}, nil
+}
+
+// newExecutorForConfig selects the build executor backend. Config
+// validation already rejects unknown executors; this fails closed
+// anyway.
+func newExecutorForConfig(cfg config.BuilderConfig) (BuildExecutor, error) {
+	switch cfg.Executor {
+	case "", ExecutorDevelopment:
+		return newDevelopmentExecutor(cfg.WorkDir, osCommandRunner{}, os.Getenv("PATH")), nil
+	default:
+		return nil, fmt.Errorf("unknown build executor %q", cfg.Executor)
+	}
 }
 
 func (a *App) Close() error {
@@ -123,6 +141,11 @@ func (a *App) readyReport(context.Context) health.Report {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if reclaimed, err := a.executor.RecoverStaleWorkspaces(ctx); err != nil {
+		return fmt.Errorf("recover stale build workspaces: %w", err)
+	} else if reclaimed > 0 {
+		slog.Info("reclaimed stale build workspaces", "count", reclaimed)
+	}
 	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
 		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
 		if err != nil {
@@ -234,36 +257,98 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 }
 
 func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (string, error) {
-	workspace, err := prepareWorkspace(a.cfg.WorkDir, job.GetBuildId())
+	archivePath, digest, err := a.downloadSourceSnapshot(ctx, job)
 	if err != nil {
-		return "", &buildFailureError{kind: failureKindFetch, err: err}
-	}
-	if a.cfg.CleanupWorkDir {
-		defer os.RemoveAll(workspace.root)
-	}
-	if err := a.materializeSourceSnapshot(ctx, job, workspace.repoDir); err != nil {
 		return "", err
 	}
-	return a.invokeBuild(ctx, job, workspace)
+	defer os.Remove(archivePath)
+	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId())
+	defer reporter.Close()
+	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
+	result, err := a.executor.Execute(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	return result.ImageDigestRef, nil
 }
 
-func (a *App) materializeSourceSnapshot(ctx context.Context, job *platformv1.BuildJob, repoDir string) error {
+func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob, archivePath, digest string, reporter *buildLogReporter) ExecutionSpec {
+	return ExecutionSpec{
+		BuildID:       job.GetBuildId(),
+		ServiceID:     job.GetServiceId(),
+		ProjectID:     job.GetProjectId(),
+		EnvironmentID: job.GetEnvironmentId(),
+		CommitSHA:     job.GetCommitSha(),
+
+		SnapshotArchivePath: archivePath,
+		SnapshotID:          job.GetSource().GetSourceSnapshotId(),
+		SnapshotDigest:      digest,
+
+		Recipe: job.GetSource().GetBuildRecipe(),
+
+		Push: PushCredentials{
+			Reference: job.GetRegistryPushReference(),
+			Username:  job.GetRegistryUsername(),
+			Password:  job.GetRegistryPassword(),
+		},
+		Buildkit: BuildkitEndpoint{
+			Binary:  a.cfg.BuildctlBinary,
+			Address: a.cfg.BuildkitAddress,
+		},
+		Railpack: RailpackToolchain{
+			Binary:        a.cfg.RailpackBinary,
+			FrontendImage: a.cfg.RailpackFrontendImage,
+		},
+		Limits: ResourceLimits{
+			Timeout:           time.Duration(a.cfg.Limits.TimeoutSeconds) * time.Second,
+			MemoryBytes:       a.cfg.Limits.MemoryBytes,
+			CPUSeconds:        a.cfg.Limits.CPUSeconds,
+			MaxFileBytes:      a.cfg.Limits.MaxFileBytes,
+			MaxProcesses:      a.cfg.Limits.MaxProcesses,
+			MaxWorkspaceBytes: a.cfg.Limits.MaxWorkspaceBytes,
+		},
+		Network: NetworkPolicy{
+			AllowGeneralEgress: !a.cfg.Network.DenyGeneralEgress,
+			DeniedCIDRs:        a.cfg.Network.DeniedCIDRs,
+		},
+		// The development executor exports no cache between
+		// executions; any BuildKit daemon-local caching is keyed by
+		// the daemon's content digests, never by project identity.
+		// 2.4b backends namespace cache exports via ContentCacheKey.
+		Cache:   CachePolicy{Mode: CacheModeNone},
+		Cleanup: a.cfg.CleanupWorkDir,
+		OnLog: func(line commandOutputLine) {
+			reporter.Report(ctx, line)
+		},
+	}
+}
+
+// downloadSourceSnapshot streams the verified snapshot archive into a
+// staging file and returns its path and verified digest. The caller
+// removes the file; the executor re-verifies the digest before
+// extracting.
+func (a *App) downloadSourceSnapshot(ctx context.Context, job *platformv1.BuildJob) (string, string, error) {
 	source := job.GetSource()
 	if source == nil || source.GetSourceSnapshotId() == "" {
-		return &buildFailureError{kind: failureKindFetch, err: errors.New("build job source snapshot is required")}
+		return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("build job source snapshot is required")}
 	}
 	stream, err := a.client.DownloadSourceSnapshot(ctx, &platformv1.DownloadSourceSnapshotRequest{
 		SnapshotId: source.GetSourceSnapshotId(),
 	})
 	if err != nil {
-		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("download source snapshot: %w", err)}
+		return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("download source snapshot: %w", err)}
 	}
-	archiveFile, err := os.CreateTemp(filepath.Dir(repoDir), ".source-snapshot-*.tgz")
+	archiveFile, err := os.CreateTemp("", ".source-snapshot-*.tgz")
 	if err != nil {
-		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("create source snapshot file: %w", err)}
+		return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("create source snapshot file: %w", err)}
 	}
 	archivePath := archiveFile.Name()
-	defer os.Remove(archivePath)
+	failed := true
+	defer func() {
+		if failed {
+			_ = os.Remove(archivePath)
+		}
+	}()
 
 	expectedSnapshotID := source.GetSourceSnapshotId()
 	expectedDigest := strings.TrimSpace(source.GetSourceSnapshotDigest())
@@ -278,106 +363,70 @@ func (a *App) materializeSourceSnapshot(ctx context.Context, job *platformv1.Bui
 		}
 		if recvErr != nil {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("receive source snapshot: %w", recvErr)}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("receive source snapshot: %w", recvErr)}
 		}
 		if chunk.GetSnapshotId() != expectedSnapshotID {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot id changed while streaming")}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot id changed while streaming")}
 		}
 		if totalSize < 0 {
 			totalSize = chunk.GetTotalSize()
 			streamDigest = strings.TrimSpace(chunk.GetDigest())
 			if totalSize <= 0 {
 				_ = archiveFile.Close()
-				return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot archive is empty")}
+				return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot archive is empty")}
 			}
 			if totalSize > maxSourceArchiveCompressedBytes {
 				_ = archiveFile.Close()
-				return &buildFailureError{kind: failureKindFetch, err: errors.New("snapshot archive exceeds compressed size limit")}
+				return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("snapshot archive exceeds compressed size limit")}
 			}
 			if !strings.HasPrefix(streamDigest, "sha256:") || len(streamDigest) != len("sha256:")+sha256.Size*2 {
 				_ = archiveFile.Close()
-				return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot digest is invalid")}
+				return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot digest is invalid")}
 			}
 		}
 		if chunk.GetTotalSize() != totalSize || chunk.GetOffset() != written || chunk.GetDigest() != streamDigest {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot chunk metadata is inconsistent")}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot chunk metadata is inconsistent")}
 		}
 		if len(chunk.GetData()) == 0 || len(chunk.GetData()) > maxSourceArchiveChunkBytes {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot chunk exceeds size limit")}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot chunk exceeds size limit")}
 		}
 		if written+int64(len(chunk.GetData())) > totalSize {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot stream exceeds declared size")}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot stream exceeds declared size")}
 		}
 		if expectedDigest != "" && chunk.GetDigest() != expectedDigest {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest mismatch: job=%s stream=%s", expectedDigest, chunk.GetDigest())}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest mismatch: job=%s stream=%s", expectedDigest, chunk.GetDigest())}
 		}
 		n, err := archiveFile.Write(chunk.GetData())
 		if err != nil {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("write source snapshot: %w", err)}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("write source snapshot: %w", err)}
 		}
 		if n != len(chunk.GetData()) {
 			_ = archiveFile.Close()
-			return &buildFailureError{kind: failureKindFetch, err: io.ErrShortWrite}
+			return "", "", &buildFailureError{kind: failureKindFetch, err: io.ErrShortWrite}
 		}
 		_, _ = hash.Write(chunk.GetData())
 		written += int64(len(chunk.GetData()))
 	}
 	if written == 0 || written != totalSize {
 		_ = archiveFile.Close()
-		return &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot stream ended before declared size")}
+		return "", "", &buildFailureError{kind: failureKindFetch, err: errors.New("source snapshot stream ended before declared size")}
 	}
 	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
 	if actualDigest != streamDigest {
 		_ = archiveFile.Close()
-		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest verification failed: expected=%s actual=%s", streamDigest, actualDigest)}
+		return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("snapshot digest verification failed: expected=%s actual=%s", streamDigest, actualDigest)}
 	}
 	if err := archiveFile.Close(); err != nil {
-		return &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("close source snapshot: %w", err)}
+		return "", "", &buildFailureError{kind: failureKindFetch, err: fmt.Errorf("close source snapshot: %w", err)}
 	}
-	if err := extractSourceSnapshotFile(repoDir, archivePath, written); err != nil {
-		return &buildFailureError{kind: failureKindFetch, err: err}
-	}
-	return nil
-}
-
-func (a *App) invokeBuild(ctx context.Context, job *platformv1.BuildJob, workspace jobWorkspace) (string, error) {
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId())
-	defer reporter.Close()
-	switch job.GetSource().GetBuildRecipe().GetBuilder() {
-	case platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE:
-		return a.invokeDockerfileBuild(ctx, job, workspace, reporter)
-	case platformv1.BuilderKind_BUILDER_KIND_RAILPACK:
-		return a.invokeRailpackBuild(ctx, job, workspace, reporter)
-	default:
-		return "", &buildFailureError{kind: failureKindBuild, err: errors.New("build recipe builder is required: railpack or dockerfile")}
-	}
-}
-
-func (a *App) invokeDockerfileBuild(ctx context.Context, job *platformv1.BuildJob, workspace jobWorkspace, reporter *buildLogReporter) (string, error) {
-	contextDir, dockerfilePath, err := validateBuildInputs(workspace.repoDir, job.GetSource().GetBuildRecipe())
-	if err != nil {
-		return "", &buildFailureError{kind: failureKindBuild, err: err}
-	}
-	env, cleanup, err := dockerConfigEnv(workspace.root, job.GetRegistryPushReference(), job.GetRegistryUsername(), job.GetRegistryPassword())
-	if err != nil {
-		return "", &buildFailureError{kind: failureKindPush, err: err}
-	}
-	defer cleanup()
-
-	req := buildCommand(a.cfg.BuildctlBinary, a.cfg.BuildkitAddress, contextDir, workspace.repoDir, dockerfilePath, job.GetRegistryPushReference(), workspace.metadataFile, env)
-	output, err := a.runner.Run(ctx, req, func(line commandOutputLine) {
-		reporter.Report(ctx, line)
-	})
-	if err != nil {
-		return "", classifyBuildctlFailure(req, err, output)
-	}
-	return buildDigestRefFromMetadata(job.GetRegistryPushReference(), workspace.metadataFile)
+	failed = false
+	return archivePath, streamDigest, nil
 }
 
 func buildDigestRefFromMetadata(pushRef, metadataFile string) (string, error) {

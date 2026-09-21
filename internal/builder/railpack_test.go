@@ -84,30 +84,27 @@ func TestRailpackBuildctlCommandUsesGatewayFrontend(t *testing.T) {
 	}
 }
 
-func TestInvokeBuildRejectsUnspecifiedBuilder(t *testing.T) {
+func TestExecuteRejectsUnspecifiedBuilder(t *testing.T) {
 	t.Parallel()
 
-	app := &App{cfg: config.BuilderConfig{ID: "builder-1"}}
-	_, err := app.invokeBuild(context.Background(), &platformv1.BuildJob{
-		Source: &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{}},
-	}, jobWorkspace{})
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/package.json": `{"scripts":{"start":"node server.js"}}`,
+	})
+	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{})
+	executor := newDevelopmentExecutor(t.TempDir(), &scriptedCommandRunner{}, "/usr/bin:/bin")
+	_, err := executor.Execute(context.Background(), spec)
 	if err == nil || !strings.Contains(err.Error(), "builder is required") {
 		t.Fatalf("expected builder-required error, got %v", err)
 	}
 }
 
-func TestInvokeRailpackBuildPlansThenBuilds(t *testing.T) {
+func TestExecuteRailpackPlansThenBuilds(t *testing.T) {
 	t.Parallel()
 
-	workDir := t.TempDir()
-	workspace, err := prepareWorkspace(workDir, "build-1")
-	if err != nil {
-		t.Fatalf("prepareWorkspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace.repoDir, "package.json"), []byte(`{"scripts":{"start":"node server.js"}}`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/package.json": `{"scripts":{"start":"node server.js"}}`,
+		"repo/server.js":    "console.log(1)\n",
+	})
 	runner := &scriptedCommandRunner{
 		handle: func(req commandRequest) ([]byte, error) {
 			switch req.Binary {
@@ -134,25 +131,16 @@ func TestInvokeRailpackBuildPlansThenBuilds(t *testing.T) {
 			}
 		},
 	}
-	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
-	app := &App{
-		cfg:    config.BuilderConfig{ID: "builder-1", RailpackBinary: "railpack", BuildctlBinary: "buildctl", BuildkitAddress: "unix:///run/buildkit/buildkitd.sock", RailpackFrontendImage: "ghcr.io/railwayapp/railpack-frontend:latest"},
-		client: client,
-		runner: runner,
-	}
-	job := &platformv1.BuildJob{
-		BuildId:               "build-1",
-		Source:                &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
-		RegistryPushReference: "registry.example.test/platform/service:build-1",
-		RegistryUsername:      "alice",
-		RegistryPassword:      "secret",
-	}
-	ref, err := app.invokeBuild(context.Background(), job, workspace)
+	var logged []commandOutputLine
+	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."})
+	spec.OnLog = func(line commandOutputLine) { logged = append(logged, line) }
+	executor := newDevelopmentExecutor(t.TempDir(), runner, "/usr/bin:/bin")
+	result, err := executor.Execute(context.Background(), spec)
 	if err != nil {
-		t.Fatalf("invokeBuild: %v", err)
+		t.Fatalf("Execute: %v", err)
 	}
-	if ref != "registry.example.test/platform/service@sha256:abc" {
-		t.Fatalf("unexpected digest ref %q", ref)
+	if result.ImageDigestRef != "registry.example.test/project-1/env-1/build/service@sha256:abc" {
+		t.Fatalf("unexpected digest ref %q", result.ImageDigestRef)
 	}
 	requests := runner.Requests()
 	if len(requests) != 2 {
@@ -164,8 +152,8 @@ func TestInvokeRailpackBuildPlansThenBuilds(t *testing.T) {
 	if !slicesContains(requests[1].Args, "gateway.v0") {
 		t.Fatalf("expected gateway frontend, got %#v", requests[1].Args)
 	}
-	if len(client.ReportRequests()) == 0 {
-		t.Fatal("expected build logs to be reported")
+	if len(logged) == 0 {
+		t.Fatal("expected build output to be streamed")
 	}
 }
 
@@ -205,18 +193,12 @@ func TestRailpackBuildCommandUsesBuildxFrontendSyntaxWhenDockerBinarySelected(t 
 	}
 }
 
-func TestInvokeRailpackBuildBuildsWithDockerBinary(t *testing.T) {
+func TestExecuteRailpackBuildsWithDockerBinary(t *testing.T) {
 	t.Parallel()
 
-	workDir := t.TempDir()
-	workspace, err := prepareWorkspace(workDir, "build-1")
-	if err != nil {
-		t.Fatalf("prepareWorkspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace.repoDir, "package.json"), []byte(`{"scripts":{"start":"node server.js"}}`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/package.json": `{"scripts":{"start":"node server.js"}}`,
+	})
 	runner := &scriptedCommandRunner{
 		handle: func(req commandRequest) ([]byte, error) {
 			switch req.Binary {
@@ -243,22 +225,16 @@ func TestInvokeRailpackBuildBuildsWithDockerBinary(t *testing.T) {
 			}
 		},
 	}
-	app := &App{
-		cfg:    config.BuilderConfig{ID: "builder-1", RailpackBinary: "railpack", BuildctlBinary: "docker", BuildkitAddress: "docker-buildx", RailpackFrontendImage: "ghcr.io/railwayapp/railpack-frontend:latest"},
-		client: &recordingBuilderServiceClient{calls: make(chan struct{}, 8)},
-		runner: runner,
-	}
-	ref, err := app.invokeBuild(context.Background(), &platformv1.BuildJob{
-		Source:                &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
-		RegistryPushReference: "registry.example.test/platform/service:build-1",
-		RegistryUsername:      "alice",
-		RegistryPassword:      "secret",
-	}, workspace)
+	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."})
+	spec.Buildkit.Binary = "docker"
+	spec.Buildkit.Address = "docker-buildx"
+	executor := newDevelopmentExecutor(t.TempDir(), runner, "/usr/bin:/bin")
+	result, err := executor.Execute(context.Background(), spec)
 	if err != nil {
-		t.Fatalf("invokeBuild: %v", err)
+		t.Fatalf("Execute: %v", err)
 	}
-	if ref != "registry.example.test/platform/service@sha256:abc" {
-		t.Fatalf("unexpected digest ref %q", ref)
+	if result.ImageDigestRef != "registry.example.test/project-1/env-1/build/service@sha256:abc" {
+		t.Fatalf("unexpected digest ref %q", result.ImageDigestRef)
 	}
 	requests := runner.Requests()
 	if len(requests) != 2 {
@@ -272,27 +248,17 @@ func TestInvokeRailpackBuildBuildsWithDockerBinary(t *testing.T) {
 	}
 }
 
-func TestInvokeRailpackBuildEnrichesMissingStartCommand(t *testing.T) {
+func TestExecuteRailpackEnrichesMissingStartCommand(t *testing.T) {
 	t.Parallel()
 
-	workDir := t.TempDir()
-	workspace, err := prepareWorkspace(workDir, "build-1")
-	if err != nil {
-		t.Fatalf("prepareWorkspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace.repoDir, "package.json"), []byte(`{"scripts":{"build":"tsc"}}`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	app := &App{
-		cfg: config.BuilderConfig{ID: "builder-1", RailpackBinary: "railpack", BuildctlBinary: "buildctl"},
-		runner: &scriptedCommandRunner{handle: func(commandRequest) ([]byte, error) {
-			return []byte("no start command found\n"), errors.New("exit status 1")
-		}},
-	}
-	_, err = app.invokeBuild(context.Background(), &platformv1.BuildJob{
-		Source: &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
-	}, workspace)
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/package.json": `{"scripts":{"build":"tsc"}}`,
+	})
+	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."})
+	executor := newDevelopmentExecutor(t.TempDir(), &scriptedCommandRunner{handle: func(commandRequest) ([]byte, error) {
+		return []byte("no start command found\n"), errors.New("exit status 1")
+	}}, "/usr/bin:/bin")
+	_, err := executor.Execute(context.Background(), spec)
 	if err == nil {
 		t.Fatal("expected plan failure, got nil")
 	}
@@ -303,27 +269,17 @@ func TestInvokeRailpackBuildEnrichesMissingStartCommand(t *testing.T) {
 	}
 }
 
-func TestInvokeRailpackBuildEnrichesEmptySource(t *testing.T) {
+func TestExecuteRailpackEnrichesEmptySource(t *testing.T) {
 	t.Parallel()
 
-	workDir := t.TempDir()
-	workspace, err := prepareWorkspace(workDir, "build-1")
-	if err != nil {
-		t.Fatalf("prepareWorkspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace.repoDir, "README.md"), []byte("# hi\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	app := &App{
-		cfg: config.BuilderConfig{ID: "builder-1", RailpackBinary: "railpack", BuildctlBinary: "buildctl"},
-		runner: &scriptedCommandRunner{handle: func(commandRequest) ([]byte, error) {
-			return []byte("no providers found\n"), errors.New("exit status 1")
-		}},
-	}
-	_, err = app.invokeBuild(context.Background(), &platformv1.BuildJob{
-		Source: &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
-	}, workspace)
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/README.md": "# hi\n",
+	})
+	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."})
+	executor := newDevelopmentExecutor(t.TempDir(), &scriptedCommandRunner{handle: func(commandRequest) ([]byte, error) {
+		return []byte("no providers found\n"), errors.New("exit status 1")
+	}}, "/usr/bin:/bin")
+	_, err := executor.Execute(context.Background(), spec)
 	if err == nil {
 		t.Fatal("expected plan failure, got nil")
 	}
@@ -334,23 +290,18 @@ func TestInvokeRailpackBuildEnrichesEmptySource(t *testing.T) {
 	}
 }
 
-func TestInvokeRailpackBuildReportsMissingBinary(t *testing.T) {
+func TestExecuteRailpackReportsMissingBinary(t *testing.T) {
 	t.Parallel()
 
-	workDir := t.TempDir()
-	workspace, err := prepareWorkspace(workDir, "build-1")
-	if err != nil {
-		t.Fatalf("prepareWorkspace: %v", err)
-	}
-	app := &App{
-		cfg: config.BuilderConfig{ID: "builder-1", RailpackBinary: "railpack-missing", BuildctlBinary: "buildctl"},
-		runner: &scriptedCommandRunner{handle: func(req commandRequest) ([]byte, error) {
-			return nil, &exec.Error{Name: req.Binary, Err: exec.ErrNotFound}
-		}},
-	}
-	_, err = app.invokeBuild(context.Background(), &platformv1.BuildJob{
-		Source: &platformv1.BuildJobSource{BuildRecipe: &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."}},
-	}, workspace)
+	archive := makeSnapshotArchive(t, map[string]string{
+		"repo/package.json": `{"scripts":{"start":"node server.js"}}`,
+	})
+	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."})
+	spec.Railpack.Binary = "railpack-missing"
+	executor := newDevelopmentExecutor(t.TempDir(), &scriptedCommandRunner{handle: func(req commandRequest) ([]byte, error) {
+		return nil, &exec.Error{Name: req.Binary, Err: exec.ErrNotFound}
+	}}, "/usr/bin:/bin")
+	_, err := executor.Execute(context.Background(), spec)
 	if err == nil || !strings.Contains(err.Error(), "railpack executable not found") {
 		t.Fatalf("expected missing binary error, got %v", err)
 	}
@@ -399,10 +350,12 @@ func TestBuildAndPushRailpackUsesSnapshotWorkspaceAndDigest(t *testing.T) {
 			}
 		},
 	}
+	workDir := t.TempDir()
+	t.Cleanup(func() { _ = destroyExecutionWorkspace(filepath.Join(workDir, "build-9")) })
 	app := &App{
-		cfg:    config.BuilderConfig{ID: "builder-1", WorkDir: t.TempDir(), RailpackBinary: "railpack", BuildctlBinary: "buildctl", BuildkitAddress: "unix:///run/buildkit/buildkitd.sock", RailpackFrontendImage: "ghcr.io/railwayapp/railpack-frontend:latest", CleanupWorkDir: false},
-		client: &recordingBuilderServiceClient{downloadChunks: chunks},
-		runner: runner,
+		cfg:      testBuilderConfig("builder-1", workDir),
+		client:   &recordingBuilderServiceClient{downloadChunks: chunks, calls: make(chan struct{}, 8)},
+		executor: newDevelopmentExecutor(workDir, runner, "/usr/bin:/bin"),
 	}
 	ref, err := app.buildAndPush(context.Background(), &platformv1.BuildJob{
 		BuildId: "build-9",
@@ -412,6 +365,8 @@ func TestBuildAndPushRailpackUsesSnapshotWorkspaceAndDigest(t *testing.T) {
 			BuildRecipe:          &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."},
 		},
 		RegistryPushReference: "registry.example.test/platform/service:build-9",
+		RegistryUsername:      "alice",
+		RegistryPassword:      "secret",
 	})
 	if err != nil {
 		t.Fatalf("buildAndPush: %v", err)
@@ -427,6 +382,34 @@ func TestBuildAndPushRailpackUsesSnapshotWorkspaceAndDigest(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(planDir, "server.js"))
 	if err != nil || string(body) != "console.log(1)\n" {
 		t.Fatalf("expected plan step to run in the snapshot workspace, read %q (%v)", string(body), err)
+	}
+}
+
+func testBuilderConfig(id, workDir string) config.BuilderConfig {
+	return config.BuilderConfig{
+		ID:                       id,
+		Name:                     id,
+		WorkDir:                  workDir,
+		BuildctlBinary:           "buildctl",
+		BuildkitAddress:          "unix:///run/buildkit/buildkitd.sock",
+		RailpackBinary:           "railpack",
+		RailpackFrontendImage:    "ghcr.io/railwayapp/railpack-frontend:latest",
+		Limits:                   testBuilderLimitsConfig(),
+		Network:                  config.BuilderNetworkConfig{DeniedCIDRs: []string{"169.254.169.254/32"}},
+		CleanupWorkDir:           false,
+		PollIntervalSeconds:      1,
+		HeartbeatIntervalSeconds: 1,
+	}
+}
+
+func testBuilderLimitsConfig() config.BuilderLimitsConfig {
+	return config.BuilderLimitsConfig{
+		TimeoutSeconds:    60,
+		MemoryBytes:       1 << 30,
+		CPUSeconds:        60,
+		MaxFileBytes:      1 << 30,
+		MaxProcesses:      512,
+		MaxWorkspaceBytes: 1 << 30,
 	}
 }
 

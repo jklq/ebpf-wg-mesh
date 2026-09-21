@@ -100,7 +100,17 @@ func AgentStartupContract(cfg AgentConfig) StartupContract {
 }
 
 func BuilderStartupContract(cfg BuilderConfig) StartupContract {
-	features := []string{"builder"}
+	executor := strings.TrimSpace(cfg.Executor)
+	if executor == "" {
+		executor = "development"
+	}
+	features := []string{"builder", "executor_" + executor}
+	// The development executor establishes the build seam but does
+	// not isolate hostile code; 2.4b adds the hardened backend and
+	// makes production refuse this executor.
+	if executor == "development" {
+		features = append(features, "executor_non_isolating")
+	}
 	if cfg.CleanupWorkDir {
 		features = append(features, "cleanup_work_dir")
 	}

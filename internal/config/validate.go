@@ -337,6 +337,32 @@ func validateBuilder(cfg BuilderConfig) error {
 	if cfg.RailpackFrontendImage == "" {
 		return errors.New("builder.railpackFrontendImage is required")
 	}
+	if cfg.Executor != "development" {
+		return fmt.Errorf("builder.executor must be %q", "development")
+	}
+	if cfg.Limits.TimeoutSeconds <= 0 {
+		return errors.New("builder.limits.timeoutSeconds must be greater than 0")
+	}
+	if cfg.Limits.MemoryBytes <= 0 {
+		return errors.New("builder.limits.memoryBytes must be greater than 0")
+	}
+	if cfg.Limits.CPUSeconds <= 0 {
+		return errors.New("builder.limits.cpuSeconds must be greater than 0")
+	}
+	if cfg.Limits.MaxFileBytes <= 0 {
+		return errors.New("builder.limits.maxFileBytes must be greater than 0")
+	}
+	if cfg.Limits.MaxProcesses <= 0 {
+		return errors.New("builder.limits.maxProcesses must be greater than 0")
+	}
+	if cfg.Limits.MaxWorkspaceBytes <= 0 {
+		return errors.New("builder.limits.maxWorkspaceBytes must be greater than 0")
+	}
+	for _, raw := range cfg.Network.DeniedCIDRs {
+		if _, _, err := net.ParseCIDR(strings.TrimSpace(raw)); err != nil {
+			return fmt.Errorf("builder.network.deniedCidrs must be valid CIDRs: %q", raw)
+		}
+	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionBuilder(cfg)
 	}

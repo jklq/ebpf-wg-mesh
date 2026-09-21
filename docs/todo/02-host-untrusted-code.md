@@ -43,10 +43,14 @@ Stop generating the internal CA, registry token signer, user-assertion verifier 
 ## 2.4a Build execution boundary
 
 Was: 4.2 (split)
-Status: open
+Status: in review
 Depends on: 2.2 so the executor reads a verified snapshot rather than a builder-local checkout.
 
 Design-partner minimum. This item creates the seam and the policy; 2.4b makes the boundary real.
+
+Implemented: `BuildExecutor` interface (`Execute`, `RecoverStaleWorkspaces`, `Name`, `Isolating`) with the development executor as the only implementation. Every build receives an explicit `ExecutionSpec`: re-verified read-only source snapshot, isolated writable workspace (repo/scratch/tmp/plan), BuildKit endpoint, push credentials scoped to exactly one repository, CPU/memory/disk/PID/time limits, restricted network policy, and a content-addressed cache policy (mode `none` today; `ContentCacheKey` derives keys purely from snapshot digest, recipe, and toolchain). Build children get an explicit environment (no ambient inheritance; no proxy vars, no docker contexts), prlimit-backed process limits and process-group cancellation on Linux, and a per-execution docker config holding exactly one auth entry. Workspaces carry an owner marker, are destroyed and verified on completion/cancellation/timeout, and stale markers from dead workers are reclaimed at startup. Builder config, flags, and env vars carry executor/limits/network with defaults and validation; the startup contract prints `executor_development` plus `executor_non_isolating`, and production logs a non-isolation warning. Tests cover limit enforcement (CPU/memory/file-size/process-count/disk/timeout), credential scope, timeout, cancellation with process-tree kill, cleanup after worker death, snapshot tampering, and ambient-environment scrubbing.
+
+Remaining: the hardened backend itself is 2.4b (production still warns rather than refuses the development executor; network CIDRs are validated inputs, not data-plane enforcement; the BuildKit daemon stays shared host state). Operator visibility into executor selection is deferred; see `docs/frontend-handoff/2.4a.md`.
 
 Prompt:
 

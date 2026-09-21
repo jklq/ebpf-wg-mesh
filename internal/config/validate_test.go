@@ -575,4 +575,76 @@ func TestFinalizeBuilderAppliesDefaults(t *testing.T) {
 	if cfg.PollIntervalSeconds <= 0 || cfg.HeartbeatIntervalSeconds <= 0 {
 		t.Fatalf("expected positive intervals, got poll=%d heartbeat=%d", cfg.PollIntervalSeconds, cfg.HeartbeatIntervalSeconds)
 	}
+	if cfg.Executor != "development" {
+		t.Fatalf("unexpected executor %q", cfg.Executor)
+	}
+	if cfg.Limits.TimeoutSeconds <= 0 || cfg.Limits.MemoryBytes <= 0 || cfg.Limits.CPUSeconds <= 0 ||
+		cfg.Limits.MaxFileBytes <= 0 || cfg.Limits.MaxProcesses <= 0 || cfg.Limits.MaxWorkspaceBytes <= 0 {
+		t.Fatalf("expected positive execution limits, got %+v", cfg.Limits)
+	}
+	if len(cfg.Network.DeniedCIDRs) == 0 {
+		t.Fatal("expected default denied egress CIDRs")
+	}
+}
+
+func validBuilderConfigForTest() BuilderConfig {
+	return BuilderConfig{
+		Profile: ProfileDevelopment,
+		ID:      "builder-1",
+		Name:    "builder-1",
+		ControlPlane: BuilderControlPlaneConfig{
+			Address: "127.0.0.1:9443",
+			TLS: InternalClientTLSConfig{
+				CAFile:     "ca.crt",
+				CertFile:   "client.crt",
+				KeyFile:    "client.key",
+				ServerName: "controlplane",
+			},
+		},
+	}
+}
+
+func TestFinalizeBuilderRejectsUnknownExecutor(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	cfg.Executor = "microvm"
+	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "builder.executor") {
+		t.Fatalf("expected executor error, got %v", err)
+	}
+}
+
+func TestFinalizeBuilderRejectsBadLimitsAndNetwork(t *testing.T) {
+	t.Parallel()
+
+	// Defaults fill unset limits, so validate an explicitly cleared
+	// limit directly.
+	cfg := validBuilderConfigForTest()
+	if err := FinalizeBuilder(&cfg); err != nil {
+		t.Fatalf("FinalizeBuilder: %v", err)
+	}
+	cfg.Limits.MaxProcesses = 0
+	if err := validateBuilder(cfg); err == nil || !strings.Contains(err.Error(), "maxProcesses") {
+		t.Fatalf("expected maxProcesses error, got %v", err)
+	}
+
+	bad := validBuilderConfigForTest()
+	bad.Network.DeniedCIDRs = []string{"not-a-cidr"}
+	if err := FinalizeBuilder(&bad); err == nil || !strings.Contains(err.Error(), "deniedCidrs") {
+		t.Fatalf("expected deniedCidrs error, got %v", err)
+	}
+}
+
+func TestBuilderStartupContractLabelsDevelopmentExecutor(t *testing.T) {
+	t.Parallel()
+
+	cfg := validBuilderConfigForTest()
+	cfg.Executor = "development"
+	contract := BuilderStartupContract(cfg).String()
+	if !strings.Contains(contract, "executor_development") {
+		t.Fatalf("expected executor selection in contract %q", contract)
+	}
+	if !strings.Contains(contract, "executor_non_isolating") {
+		t.Fatalf("expected non-isolating label in contract %q", contract)
+	}
 }

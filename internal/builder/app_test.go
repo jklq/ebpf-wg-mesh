@@ -12,9 +12,11 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -310,7 +312,7 @@ func TestValidateBuildInputsUsesResolvedRepoRootForDockerfileRelativePath(t *tes
 	}
 }
 
-func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing.T) {
+func TestScopedDockerConfigHoldsExactlyOneRepository(t *testing.T) {
 	homeDir := t.TempDir()
 	baseConfigDir := filepath.Join(homeDir, ".docker")
 	for _, name := range []string{"cli-plugins", "buildx", "contexts"} {
@@ -318,35 +320,31 @@ func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing
 			t.Fatalf("MkdirAll(%s): %v", name, err)
 		}
 	}
-	baseConfig := map[string]any{
+	rogueConfig := map[string]any{
 		"credsStore": "desktop",
 		"credHelpers": map[string]any{
 			"example.com": "example-helper",
 			"ghcr.io":     "stale-target-helper",
 		},
 		"auths": map[string]any{
-			"example.com": map[string]any{"auth": "existing"},
+			"example.com": map[string]any{"auth": "rogue"},
 		},
 	}
-	baseConfigJSON, err := json.Marshal(baseConfig)
+	rogueConfigJSON, err := json.Marshal(rogueConfig)
 	if err != nil {
-		t.Fatalf("Marshal(baseConfig): %v", err)
+		t.Fatalf("Marshal(rogueConfig): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(baseConfigDir, "config.json"), baseConfigJSON, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(baseConfigDir, "config.json"), rogueConfigJSON, 0o600); err != nil {
 		t.Fatalf("WriteFile(config.json): %v", err)
 	}
 	t.Setenv("HOME", homeDir)
 	t.Setenv("DOCKER_CONFIG", "")
 
-	env, cleanup, err := dockerConfigEnv(t.TempDir(), "ghcr.io/acme/app:tag", "alice", "secret")
+	configDir, cleanup, err := scopedDockerConfig(t.TempDir(), "ghcr.io/acme/app:tag", "alice", "secret")
 	if err != nil {
-		t.Fatalf("dockerConfigEnv: %v", err)
+		t.Fatalf("scopedDockerConfig: %v", err)
 	}
 	defer cleanup()
-	if len(env) != 1 || !strings.HasPrefix(env[0], "DOCKER_CONFIG=") {
-		t.Fatalf("unexpected env %v", env)
-	}
-	configDir := strings.TrimPrefix(env[0], "DOCKER_CONFIG=")
 	data, err := os.ReadFile(filepath.Join(configDir, "config.json"))
 	if err != nil {
 		t.Fatalf("ReadFile(config.json): %v", err)
@@ -355,22 +353,15 @@ func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatalf("Unmarshal(config.json): %v", err)
 	}
-	if got := config["credsStore"]; got != "desktop" {
-		t.Fatalf("unexpected credsStore %v", got)
-	}
-	credentialHelpers, ok := config["credHelpers"].(map[string]any)
-	if !ok {
-		t.Fatalf("credHelpers missing or wrong type: %#v", config["credHelpers"])
-	}
-	if got := credentialHelpers["ghcr.io"]; got != "" {
-		t.Fatalf("target registry helper must be disabled, got %v", got)
-	}
-	if got := credentialHelpers["example.com"]; got != "example-helper" {
-		t.Fatalf("existing registry helper was not preserved, got %v", got)
+	if _, ok := config["credsStore"]; ok {
+		t.Fatalf("ambient credential store must not enter the build: %#v", config["credsStore"])
 	}
 	auths, ok := config["auths"].(map[string]any)
 	if !ok {
 		t.Fatalf("auths missing or wrong type: %#v", config["auths"])
+	}
+	if len(auths) != 1 {
+		t.Fatalf("expected exactly one auth entry, got %#v", auths)
 	}
 	entry, ok := auths["ghcr.io"].(map[string]any)
 	if !ok {
@@ -380,10 +371,14 @@ func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing
 	if got := entry["auth"]; got != wantAuth {
 		t.Fatalf("unexpected auth %v", got)
 	}
-	if _, ok := auths["example.com"]; !ok {
-		t.Fatalf("expected existing auths to be preserved: %#v", auths)
+	credentialHelpers, ok := config["credHelpers"].(map[string]any)
+	if !ok {
+		t.Fatalf("credHelpers missing or wrong type: %#v", config["credHelpers"])
 	}
-	for _, name := range []string{"cli-plugins", "buildx", "contexts"} {
+	if len(credentialHelpers) != 1 || credentialHelpers["ghcr.io"] != "" {
+		t.Fatalf("only the target registry helper may be pinned, got %#v", credentialHelpers)
+	}
+	for _, name := range []string{"cli-plugins", "buildx"} {
 		target, err := os.Readlink(filepath.Join(configDir, name))
 		if err != nil {
 			t.Fatalf("Readlink(%s): %v", name, err)
@@ -391,6 +386,12 @@ func TestDockerConfigEnvMergesBaseConfigAndPreservesDockerSupportDirs(t *testing
 		if target != filepath.Join(baseConfigDir, name) {
 			t.Fatalf("unexpected %s link target %q", name, target)
 		}
+	}
+	if _, err := os.Lstat(filepath.Join(configDir, "contexts")); !os.IsNotExist(err) {
+		t.Fatalf("ambient docker contexts must not enter the build, lstat err=%v", err)
+	}
+	if _, _, err := scopedDockerConfig(t.TempDir(), "not-a-reference", "alice", "secret"); err == nil {
+		t.Fatal("expected invalid push reference to fail")
 	}
 }
 
@@ -417,7 +418,7 @@ func TestExtractSourceSnapshotStripsArchiveRoot(t *testing.T) {
 	}
 }
 
-func TestMaterializeSourceSnapshotStreamsAndVerifiesArchive(t *testing.T) {
+func TestDownloadSourceSnapshotStreamsAndVerifiesArchive(t *testing.T) {
 	t.Parallel()
 
 	archive := makeSnapshotArchive(t, map[string]string{
@@ -438,28 +439,28 @@ func TestMaterializeSourceSnapshotStreamsAndVerifiesArchive(t *testing.T) {
 		})
 		offset = end
 	}
-	repoDir := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	app := &App{client: &recordingBuilderServiceClient{downloadChunks: chunks}}
-	err := app.materializeSourceSnapshot(context.Background(), &platformv1.BuildJob{Source: &platformv1.BuildJobSource{
+	archivePath, gotDigest, err := app.downloadSourceSnapshot(context.Background(), &platformv1.BuildJob{Source: &platformv1.BuildJobSource{
 		SourceSnapshotId:     "snapshot-1",
 		SourceSnapshotDigest: digestString,
-	}}, repoDir)
+	}})
 	if err != nil {
-		t.Fatalf("materializeSourceSnapshot: %v", err)
+		t.Fatalf("downloadSourceSnapshot: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(repoDir, "app", "main.go"))
+	defer os.Remove(archivePath)
+	if gotDigest != digestString {
+		t.Fatalf("unexpected verified digest %q", gotDigest)
+	}
+	staged, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != "package main\n" {
-		t.Fatalf("unexpected reconstructed source: %q", body)
+	if !bytes.Equal(staged, archive) {
+		t.Fatal("staged archive does not match streamed bytes")
 	}
 }
 
-func TestMaterializeSourceSnapshotRejectsDigestMismatch(t *testing.T) {
+func TestDownloadSourceSnapshotRejectsDigestMismatch(t *testing.T) {
 	t.Parallel()
 
 	archive := makeSnapshotArchive(t, map[string]string{"repo/Dockerfile": "FROM scratch\n"})
@@ -470,13 +471,9 @@ func TestMaterializeSourceSnapshotRejectsDigestMismatch(t *testing.T) {
 		TotalSize:  int64(len(archive)),
 		Data:       archive,
 	}}}}
-	repoDir := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	err := app.materializeSourceSnapshot(context.Background(), &platformv1.BuildJob{Source: &platformv1.BuildJobSource{
+	_, _, err := app.downloadSourceSnapshot(context.Background(), &platformv1.BuildJob{Source: &platformv1.BuildJobSource{
 		SourceSnapshotId: "snapshot-1",
-	}}, repoDir)
+	}})
 	if err == nil || !strings.Contains(err.Error(), "digest verification failed") {
 		t.Fatalf("expected digest verification failure, got %v", err)
 	}
@@ -639,6 +636,72 @@ func TestCommandRunnerHelperProcess(t *testing.T) {
 	case "exit75":
 		_, _ = os.Stderr.WriteString("temporary failure in name resolution\n")
 		os.Exit(75)
+	case "spin":
+		for {
+		}
+	case "alloc":
+		megabytes, _ := strconv.Atoi(os.Getenv("HELPER_MB"))
+		if megabytes <= 0 {
+			os.Exit(2)
+		}
+		slab := make([]byte, megabytes<<20)
+		for i := 0; i < len(slab); i += 1 << 20 {
+			slab[i] = 1
+		}
+		_, _ = os.Stdout.WriteString("allocated\n")
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	case "bigfile":
+		size, _ := strconv.Atoi(os.Getenv("HELPER_BYTES"))
+		path := os.Getenv("HELPER_FILE")
+		if size <= 0 || path == "" {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(path, make([]byte, size), 0o644); err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		os.Exit(0)
+	case "fork":
+		children, _ := strconv.Atoi(os.Getenv("HELPER_CHILDREN"))
+		if children <= 0 {
+			os.Exit(2)
+		}
+		var procs []*os.Process
+		failed := false
+		for i := 0; i < children; i++ {
+			cmd := exec.Command("sleep", "30")
+			if err := cmd.Start(); err != nil {
+				failed = true
+				break
+			}
+			procs = append(procs, cmd.Process)
+		}
+		for _, proc := range procs {
+			_ = proc.Kill()
+			_, _ = proc.Wait()
+		}
+		if failed {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	case "spawn":
+		pidFile := os.Getenv("HELPER_PIDFILE")
+		if pidFile == "" {
+			os.Exit(2)
+		}
+		cmd := exec.Command("sleep", "60")
+		if err := cmd.Start(); err != nil {
+			os.Exit(1)
+		}
+		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+			os.Exit(1)
+		}
+		_ = cmd.Wait()
+		os.Exit(0)
+	case "sleep":
+		time.Sleep(60 * time.Second)
+		os.Exit(0)
 	default:
 		os.Exit(2)
 	}

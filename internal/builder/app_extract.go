@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,34 +27,6 @@ func cooperativeBuildCancel(err error) bool {
 	default:
 		return false
 	}
-}
-
-func prepareWorkspace(workDir, buildID string) (jobWorkspace, error) {
-	root, err := safeChildPath(workDir, buildID)
-	if err != nil {
-		return jobWorkspace{}, err
-	}
-	repoDir, err := safeChildPath(root, "repo")
-	if err != nil {
-		return jobWorkspace{}, err
-	}
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
-		return jobWorkspace{}, fmt.Errorf("mkdir repo dir: %w", err)
-	}
-	return jobWorkspace{
-		root:         root,
-		repoDir:      repoDir,
-		metadataFile: filepath.Join(root, "metadata.json"),
-	}, nil
-}
-
-func extractSourceSnapshotFile(repoDir, archivePath string, compressedSize int64) error {
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return fmt.Errorf("open snapshot archive file: %w", err)
-	}
-	defer file.Close()
-	return extractSourceSnapshotReader(repoDir, file, compressedSize)
 }
 
 func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSize int64) error {
@@ -211,33 +182,6 @@ func formatBuildCommandError(req commandRequest, err error, output []byte) error
 	return fmt.Errorf("%s: %s", message, tail)
 }
 
-func dockerConfigEnv(workDir, pushRef, username, password string) ([]string, func(), error) {
-	if strings.TrimSpace(pushRef) == "" || strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
-		return nil, func() {}, nil
-	}
-	host, _, _ := strings.Cut(pushRef, "/")
-	dir, err := os.MkdirTemp(workDir, "docker-config-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("create docker config dir: %w", err)
-	}
-	baseDir := dockerDefaultConfigDir()
-	if err := mirrorDockerConfigSupport(baseDir, dir); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
-	configJSON, err := mergedDockerConfigJSON(baseDir, host, auth)
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), configJSON, 0o600); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	return []string{"DOCKER_CONFIG=" + dir}, func() { _ = os.RemoveAll(dir) }, nil
-}
-
 func dockerDefaultConfigDir() string {
 	if dir := strings.TrimSpace(os.Getenv("DOCKER_CONFIG")); dir != "" {
 		return dir
@@ -247,15 +191,6 @@ func dockerDefaultConfigDir() string {
 		return ""
 	}
 	return filepath.Join(home, ".docker")
-}
-
-func mirrorDockerConfigSupport(srcDir, dstDir string) error {
-	for _, name := range []string{"cli-plugins", "buildx", "contexts"} {
-		if err := symlinkIfExists(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func symlinkIfExists(src, dst string) error {
@@ -272,40 +207,6 @@ func symlinkIfExists(src, dst string) error {
 		return fmt.Errorf("symlink %s -> %s: %w", dst, src, err)
 	}
 	return nil
-}
-
-func mergedDockerConfigJSON(baseDir, host, auth string) ([]byte, error) {
-	config := map[string]any{}
-	if strings.TrimSpace(baseDir) != "" {
-		data, err := os.ReadFile(filepath.Join(baseDir, "config.json"))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("read base docker config: %w", err)
-		}
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, &config); err != nil {
-				return nil, fmt.Errorf("parse base docker config: %w", err)
-			}
-		}
-	}
-	auths, ok := config["auths"].(map[string]any)
-	if !ok || auths == nil {
-		auths = map[string]any{}
-	}
-	entry, ok := auths[host].(map[string]any)
-	if !ok || entry == nil {
-		entry = map[string]any{}
-	}
-	entry["auth"] = auth
-	auths[host] = entry
-	config["auths"] = auths
-
-	credentialHelpers, ok := config["credHelpers"].(map[string]any)
-	if !ok || credentialHelpers == nil {
-		credentialHelpers = map[string]any{}
-	}
-	credentialHelpers[host] = ""
-	config["credHelpers"] = credentialHelpers
-	return json.Marshal(config)
 }
 
 func runtimeDigestRef(pushRef, digest string) string {
