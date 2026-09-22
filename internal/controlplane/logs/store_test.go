@@ -37,10 +37,15 @@ func TestLogStoreSchemaUsesReplacingMergeTreeAndRowTTL(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS service_log_gaps",
 		"ENGINE = ReplacingMergeTree(ingested_at)",
 		"gap_id String",
+		"expires_at DateTime",
+		"TTL expires_at",
 	} {
 		if !strings.Contains(gaps, want) {
 			t.Fatalf("service_log_gaps schema missing %q:\n%s", want, gaps)
 		}
+	}
+	if strings.Contains(gaps, "INTERVAL 90 DAY") {
+		t.Fatalf("service_log_gaps must expire by project retention, not a fixed TTL:\n%s", gaps)
 	}
 }
 
@@ -122,6 +127,53 @@ func TestConvertAgentBatchTrimsOversizedBatches(t *testing.T) {
 	}
 	if len(gaps) != 1 || gaps[0].DroppedCount != 10 || gaps[0].Reason != logpipeline.ReasonIngestOverflow {
 		t.Fatalf("trimmed tail not counted as gap: %+v", gaps)
+	}
+	if gaps[0].ServiceID != "svc-1" || gaps[0].AllocationID != "alloc-1" {
+		t.Fatalf("trimmed tail gap lost its attribution: %+v", gaps[0])
+	}
+}
+
+func TestConvertAgentBatchTrimmedTailAggregatesPerService(t *testing.T) {
+	t.Parallel()
+
+	entries := make([]*agentv1.LogEntry, 0, maxEntriesPerBatch+12)
+	for i := 0; i < maxEntriesPerBatch; i++ {
+		entries = append(entries, &agentv1.LogEntry{
+			EnvironmentId: "env-1",
+			ServiceId:     "svc-1",
+			AllocationId:  "alloc-1",
+			Line:          "line",
+		})
+	}
+	for i := 0; i < 7; i++ {
+		entries = append(entries, &agentv1.LogEntry{
+			EnvironmentId: "env-1",
+			ServiceId:     "svc-1",
+			AllocationId:  "alloc-1",
+			Line:          "line",
+		})
+	}
+	for i := 0; i < 5; i++ {
+		entries = append(entries, &agentv1.LogEntry{
+			EnvironmentId: "env-1",
+			ServiceId:     "svc-2",
+			AllocationId:  "alloc-2",
+			Line:          "line",
+		})
+	}
+	_, gaps := convertAgentBatch("agent-1", &agentv1.LogBatch{AgentId: "agent-1", Entries: entries})
+	counts := make(map[string]uint64)
+	for _, gap := range gaps {
+		counts[gap.ServiceID] = gap.DroppedCount
+		if gap.Reason != logpipeline.ReasonIngestOverflow {
+			t.Fatalf("unexpected gap reason: %+v", gap)
+		}
+	}
+	if counts["svc-1"] != 7 || counts["svc-2"] != 5 {
+		t.Fatalf("trimmed tail not attributed per service: %v", counts)
+	}
+	if len(counts) != 2 {
+		t.Fatalf("unexpected gap services: %v", counts)
 	}
 }
 

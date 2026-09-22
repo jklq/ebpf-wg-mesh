@@ -386,6 +386,37 @@ func TestDurableLogsRetentionAndSafeDeletion(t *testing.T) {
 		t.Fatalf("row expires_at = %v, want ~%v", expiresAt, wantExpiry)
 	}
 
+	// Gap rows follow the same project retention as lines.
+	sendDurableBatch(t, stream, agentID, nil,
+		&platformv1.LogDropSummary{
+			ServiceId:    svcA.ID,
+			AllocationId: allocA,
+			LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
+			Stream:       "stdout",
+			DroppedCount: 2,
+			Reason:       logpipeline.ReasonRateLimited,
+			WindowStart:  timestamppb.New(now.Add(-time.Minute)),
+			WindowEnd:    timestamppb.New(now),
+		},
+	)
+	var gapExpires time.Time
+	var gapProjectID string
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second, Interval: 200 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+		err := chdb.QueryRowContext(ctx, `SELECT expires_at, project_id FROM service_log_gaps FINAL WHERE service_id = ? AND dropped_count = 2`, svcA.ID).Scan(&gapExpires, &gapProjectID)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return err == nil, err
+	}); err != nil {
+		t.Fatalf("query gap expiry: %v", err)
+	}
+	if gapProjectID != projA.ID {
+		t.Fatalf("gap project = %q, want %q", gapProjectID, projA.ID)
+	}
+	if gapExpires.Before(wantExpiry.Add(-10*time.Minute)) || gapExpires.After(wantExpiry.Add(10*time.Minute)) {
+		t.Fatalf("gap expires_at = %v, want ~%v", gapExpires, wantExpiry)
+	}
+
 	// Tenant B's logs must survive tenant A's deletion.
 	keepMarker := "keep-marker-" + now.Format("150405")
 	sendDurableBatch(t, stream, agentID, []*agentv1.LogEntry{
@@ -534,4 +565,139 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 	if before != 1 || during != 1 {
 		t.Fatalf("after outage: before=%d during=%d, want 1 each", before, during)
 	}
+}
+
+func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
+	clickhouseURL := startTestClickHouse(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	const (
+		agentID = "scoping-agent"
+		token   = "scoping-bootstrap"
+	)
+	cp := startSystemControlPlane(t, systemControlPlaneOptions{
+		clickhouseURL: clickhouseURL,
+		bootstrap: config.BootstrapConfig{Users: []config.BootstrapUser{
+			{ID: "user-a", Email: "a@example.com", Projects: []string{"proj-a"}},
+			{ID: "user-b", Email: "b@example.com", Projects: []string{"proj-b"}},
+		}},
+		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}},
+		withDashboard:   true,
+	})
+	cert := enrollAgentTLS(t, cp.server, agentID, token)
+	stream, streamCancel := openAgentSync(t, cp.server, cert, agentHello(agentID))
+	defer streamCancel()
+	_ = recvDesiredState(t, stream)
+
+	store := cp.server.store
+	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	if err != nil || len(projectsA) != 1 {
+		t.Fatalf("projects A: %v", err)
+	}
+	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), false)
+	if err != nil || len(projectsB) != 1 {
+		t.Fatalf("projects B: %v", err)
+	}
+	svcA, err := createService(ctx, store, "user-a", productionEnvironmentID(t, store, projectsA[0].ID), "web-a", serviceSpec(), agentID)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	svcB, err := createService(ctx, store, "user-b", productionEnvironmentID(t, store, projectsB[0].ID), "web-b", serviceSpec(), agentID)
+	if err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	allocA := allocationIDForService(t, store, svcA.ID)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// A drop summary without producer metadata (the restart case)
+	// derives its service from the allocation owner and still lands
+	// as an explicit gap.
+	sendDurableBatch(t, stream, agentID, nil,
+		&platformv1.LogDropSummary{
+			AllocationId: allocA,
+			LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
+			Stream:       "stdout",
+			DroppedCount: 9,
+			Reason:       logpipeline.ReasonCorruptSpool,
+			WindowStart:  timestamppb.New(now.Add(-time.Minute)),
+			WindowEnd:    timestamppb.New(now),
+		},
+	)
+	userCtx := userContext(t, cp, ctx, "user-a")
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second, Interval: 200 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+		resp, err := cp.dashboard.ListServiceLogs(userCtx, &platformv1.ListServiceLogsRequest{ServiceId: svcA.ID})
+		if err != nil {
+			return false, err
+		}
+		for _, gap := range resp.GetGaps() {
+			if gap.GetDroppedCount() == 9 && gap.GetReason() == logpipeline.ReasonCorruptSpool && gap.GetAllocationId() == allocA {
+				return true, nil
+			}
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf("ownerless drop summary did not derive its service: %v", err)
+	}
+	respB, err := cp.dashboard.ListServiceLogs(userContext(t, cp, ctx, "user-b"), &platformv1.ListServiceLogsRequest{ServiceId: svcB.ID})
+	if err != nil {
+		t.Fatalf("list B: %v", err)
+	}
+	if len(respB.GetGaps()) != 0 {
+		t.Fatalf("drop derivation leaked %d gaps to another tenant: %+v", len(respB.GetGaps()), respB.GetGaps())
+	}
+
+	// A drop summary claiming another tenant's service on this
+	// agent's allocation is rejected, never written anywhere.
+	spoof := &agentv1.LogBatch{
+		AgentId: agentID,
+		Drops: []*platformv1.LogDropSummary{{
+			ServiceId:    svcB.ID,
+			AllocationId: allocA,
+			DroppedCount: 9,
+			Reason:       logpipeline.ReasonSpoolOverflow,
+			WindowStart:  timestamppb.New(now),
+			WindowEnd:    timestamppb.New(now),
+		}},
+	}
+	if err := store.fleet.validateAgentLogBatch(ctx, agentID, spoof); err == nil {
+		t.Fatal("mismatched drop claim must reject the batch")
+	}
+
+	// A batch referencing an allocation this agent does not own is
+	// rejected outright.
+	foreign := &agentv1.LogBatch{
+		AgentId: agentID,
+		Drops: []*platformv1.LogDropSummary{{
+			ServiceId:    svcA.ID,
+			AllocationId: "alloc-never-assigned",
+			DroppedCount: 3,
+			Reason:       logpipeline.ReasonRateLimited,
+			WindowStart:  timestamppb.New(now),
+			WindowEnd:    timestamppb.New(now),
+		}},
+	}
+	if err := store.fleet.validateAgentLogBatch(ctx, agentID, foreign); err == nil {
+		t.Fatal("foreign allocation must reject the batch")
+	}
+
+	// Drop reports without an allocation cannot be attributed and
+	// never become gap rows.
+	unattributable := &agentv1.LogBatch{
+		AgentId: agentID,
+		Drops: []*platformv1.LogDropSummary{{
+			ServiceId:    svcA.ID,
+			DroppedCount: 4,
+			Reason:       logpipeline.ReasonRateLimited,
+			WindowStart:  timestamppb.New(now),
+			WindowEnd:    timestamppb.New(now),
+		}},
+	}
+	if err := store.fleet.validateAgentLogBatch(ctx, agentID, unattributable); err != nil {
+		t.Fatalf("unattributable drops must scope away, not error: %v", err)
+	}
+	if len(unattributable.GetDrops()) != 0 {
+		t.Fatalf("unattributable drops survived scoping: %+v", unattributable.GetDrops())
+	}
+	_ = svcB
 }

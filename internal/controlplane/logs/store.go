@@ -121,7 +121,9 @@ type LogLineInput struct {
 	Line              string
 }
 
-// GapInput is one persisted drop window.
+// GapInput is one persisted drop window. ProjectID and ExpiresAt are
+// normally resolved from the service's retention policy; callers
+// override them only when they already know the tenant.
 type GapInput struct {
 	ProjectID    string
 	ServiceID    string
@@ -134,6 +136,7 @@ type GapInput struct {
 	DroppedCount uint64
 	Reason       string
 	Reporter     string
+	ExpiresAt    time.Time
 }
 
 func logStoreSchema() []string {
@@ -175,11 +178,12 @@ TTL expires_at`,
 	reason LowCardinality(String),
 	reporter LowCardinality(String),
 	gap_id String,
-	ingested_at DateTime64(9, 'UTC')
+	ingested_at DateTime64(9, 'UTC'),
+	expires_at DateTime
 ) ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMM(window_start)
 ORDER BY (service_id, gap_id)
-TTL toDateTime(window_start) + INTERVAL 90 DAY`,
+TTL expires_at`,
 	}
 }
 
@@ -280,12 +284,13 @@ func (s *LogStore) ensureSchema(ctx context.Context) error {
 	return nil
 }
 
-// WriteAgentBatch converts one validated agent batch into durable
-// line and gap inputs. Ownership validation stays with the caller;
-// this method enforces size caps, truncates defensively, resolves
-// tenant retention, and persists both lines and producer drop
-// reports. Batches larger than maxEntriesPerBatch are trimmed with
-// the tail counted as an ingest gap.
+// WriteAgentBatch converts one agent batch already scoped onto its
+// allocation owners into durable line and gap inputs. Ownership
+// scoping stays with the caller; this method enforces size caps,
+// truncates defensively, resolves tenant retention, and persists
+// both lines and producer drop reports. Batches larger than
+// maxEntriesPerBatch are trimmed with the tail counted as ingest
+// gaps per affected service and allocation.
 func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	if !s.Enabled() || batch == nil {
 		return nil
@@ -299,13 +304,13 @@ func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *a
 	return s.WriteGaps(ctx, gaps)
 }
 
-// convertAgentBatch maps one validated agent batch onto durable line
-// and gap inputs. Ownership validation stays with the caller.
+// convertAgentBatch maps one scoped agent batch onto durable line
+// and gap inputs. Ownership scoping stays with the caller.
 func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput, []GapInput) {
 	entries := batch.GetEntries()
-	var trimmed uint64
+	var trimmed []*agentv1.LogEntry
 	if len(entries) > maxEntriesPerBatch {
-		trimmed = uint64(len(entries) - maxEntriesPerBatch)
+		trimmed = entries[maxEntriesPerBatch:]
 		entries = entries[:maxEntriesPerBatch]
 	}
 	inputs := make([]LogLineInput, 0, len(entries))
@@ -339,17 +344,32 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 		})
 	}
 	gaps := dropSummariesToGaps(batch.GetDrops(), agentID)
-	if trimmed > 0 {
-		serviceID := ""
-		if len(inputs) > 0 {
-			serviceID = inputs[0].ServiceID
+	// The trimmed tail keeps its own attribution: each affected
+	// service and allocation gets its own gap, never a single gap
+	// pinned to the first entry.
+	now := time.Now().UTC()
+	type trimKey struct{ serviceID, allocationID, logType, stream string }
+	trimmedCounts := make(map[trimKey]uint64)
+	for _, entry := range trimmed {
+		if entry == nil || strings.TrimSpace(entry.GetServiceId()) == "" {
+			continue
 		}
-		now := time.Now().UTC()
+		trimmedCounts[trimKey{
+			serviceID:    entry.GetServiceId(),
+			allocationID: entry.GetAllocationId(),
+			logType:      string(logTypeFromProto(entry.GetLogType())),
+			stream:       normalizeLogStream(entry.GetStream()),
+		}]++
+	}
+	for key, count := range trimmedCounts {
 		gaps = append(gaps, GapInput{
-			ServiceID:    serviceID,
+			ServiceID:    key.serviceID,
+			AllocationID: key.allocationID,
+			LogType:      LogType(key.logType),
+			Stream:       key.stream,
 			WindowStart:  now,
 			WindowEnd:    now,
-			DroppedCount: trimmed,
+			DroppedCount: count,
 			Reason:       logpipeline.ReasonIngestOverflow,
 			Reporter:     agentID,
 		})
@@ -484,7 +504,7 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 		}
 	}
 	values := make([]string, 0, len(gaps))
-	args := make([]any, 0, len(gaps)*13)
+	args := make([]any, 0, len(gaps)*14)
 	for _, gap := range gaps {
 		if gap.ServiceID == "" || gap.DroppedCount == 0 {
 			continue
@@ -498,13 +518,20 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 			windowEnd = windowStart
 		}
 		projectID := strings.TrimSpace(gap.ProjectID)
-		if projectID == "" {
-			if policy, ok := resolved[gap.ServiceID]; ok {
+		expiresAt := gap.ExpiresAt
+		if policy, ok := resolved[gap.ServiceID]; ok {
+			if projectID == "" {
 				projectID = policy.ProjectID
 			}
+			if expiresAt.IsZero() {
+				expiresAt = now.AddDate(0, 0, clampRetentionDays(policy.RetentionDays, s.defaultRetentionDays))
+			}
+		}
+		if expiresAt.IsZero() {
+			expiresAt = now.AddDate(0, 0, clampRetentionDays(0, s.defaultRetentionDays))
 		}
 		logType := normalizeLogType(gap.LogType)
-		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		args = append(args,
 			gap.ServiceID,
 			projectID,
@@ -519,6 +546,7 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 			normalizeReporter(gap.Reporter),
 			gapIdentity(gap.ServiceID, gap.AllocationID, gap.BuildID, string(logType), gap.Stream, gap.Reason, gap.Reporter, windowStart, windowEnd, gap.DroppedCount),
 			now,
+			expiresAt.UTC(),
 		)
 	}
 	if len(values) == 0 {
@@ -537,7 +565,8 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 	reason,
 	reporter,
 	gap_id,
-	ingested_at
+	ingested_at,
+	expires_at
 ) VALUES ` + strings.Join(values, ",")
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("insert clickhouse log gaps: %w", err)
