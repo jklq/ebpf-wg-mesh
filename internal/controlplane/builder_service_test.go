@@ -197,7 +197,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	claimed := claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(writer, nil))))
 	observedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 
 	_, err = builderService.ReportBuildLogs(
@@ -290,7 +290,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	claimed := claimBuildForTest(t, store, ctx, "builder-1", build.ID)
 
 	disabledWriter := &recordingLogWriter{enabled: false}
-	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(disabledWriter))))
+	builderService := NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(disabledWriter, nil))))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{
@@ -303,7 +303,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	}
 
 	writer := &recordingLogWriter{enabled: true}
-	builderService = NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(writer))))
+	builderService = NewBuilderService(NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil, WithBuilderLogEmitter(logs.NewLogEmitter(writer, nil))))
 	if _, err := builderService.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{BuildId: build.ID, LeaseEpoch: claimed.OwnerEpoch},
