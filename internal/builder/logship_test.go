@@ -261,3 +261,49 @@ func TestBuildLogShipConfigZeroRateDisablesLimiting(t *testing.T) {
 		}
 	}
 }
+
+// Close must report limiter and overflow drops even when every line
+// was dropped and the spool holds no records: the drain loop flushes
+// (collecting drop summaries) before ever consulting drained().
+func TestBuildLogReporterCloseReportsDropsWithEmptySpool(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
+	cfg, _ := testBuildLogShipConfig(t, "build-1")
+	cfg.FlushInterval = time.Hour // only the close path may report
+	cfg.RatePerSec = 0.001
+	cfg.Burst = 1
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 3, cfg)
+	if reporter == nil {
+		t.Fatal("expected reporter")
+	}
+	// Consume the single burst token so every line below is denied.
+	if !reporter.limiter.Allow("build-1") {
+		t.Fatal("expected one burst token")
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		reporter.Report(context.Background(), commandOutputLine{
+			ObservedAt: now.Add(time.Duration(i) * time.Millisecond),
+			Stream:     "stdout",
+			Line:       "line",
+		})
+	}
+	reporter.Close()
+
+	var dropped uint64
+	for _, req := range client.ReportRequests() {
+		for _, summary := range req.GetDrops() {
+			if summary.GetReason() != logpipeline.ReasonRateLimited {
+				t.Fatalf("unexpected drop reason %q", summary.GetReason())
+			}
+			if summary.GetBuildId() != "build-1" {
+				t.Fatalf("drop summary misattributed: %+v", summary)
+			}
+			dropped += summary.GetDroppedCount()
+		}
+	}
+	if dropped != 5 {
+		t.Fatalf("close reported %d dropped lines, want 5", dropped)
+	}
+}

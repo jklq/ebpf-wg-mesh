@@ -177,8 +177,11 @@ func (r *buildLogReporter) countOverflow(stream string, count uint64) {
 }
 
 // Close stops shipping, makes a best-effort final flush, and removes
-// the attempt spool when fully drained. Anything left behind is
-// deleted by startup garbage collection.
+// the attempt spool when fully drained. The final flush always runs
+// at least once — it collects limiter and overflow drops first — so
+// an attempt whose lines were all dropped still reports its drop
+// summaries before the spool directory goes away. Anything left
+// behind is deleted by startup garbage collection.
 func (r *buildLogReporter) Close() {
 	if r == nil {
 		return
@@ -230,8 +233,15 @@ func (r *buildLogReporter) run() {
 	for {
 		select {
 		case <-r.stop:
-			for !r.orphaned.Load() && !r.drained() {
+			// Always flush at least once: flush collects limiter and
+			// overflow drops first, so rate-limited or overflowed
+			// attempts with an empty spool still report their drops
+			// instead of draining away unreported.
+			for !r.orphaned.Load() && !r.abandoned.Load() {
 				r.flush()
+				if r.drained() {
+					return
+				}
 				time.Sleep(buildLogFinalDrainInterval)
 			}
 			return
