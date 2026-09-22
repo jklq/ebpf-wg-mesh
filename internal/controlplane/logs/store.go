@@ -381,6 +381,30 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 	return inputs, gaps
 }
 
+// attribution resolves a row's tenant attribution and expiry. A row
+// that carries neither explicit attribution nor a resolver entry is
+// refused when the store resolves retention: it would land without a
+// project ID — invisible to the deletion purge — under the platform
+// default TTL instead of the project's own retention, outliving a
+// short project policy after its service or project was hard-deleted.
+func (s *LogStore) attribution(projectID string, expiresAt time.Time, serviceID string, resolved map[string]ProjectRetention, now time.Time) (string, time.Time, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if policy, ok := resolved[serviceID]; ok {
+		if projectID == "" {
+			projectID = policy.ProjectID
+		}
+		if expiresAt.IsZero() {
+			expiresAt = now.AddDate(0, 0, clampRetentionDays(policy.RetentionDays, s.defaultRetentionDays))
+		}
+	} else if s.resolve != nil && projectID == "" {
+		return "", time.Time{}, false
+	}
+	if expiresAt.IsZero() {
+		expiresAt = now.AddDate(0, 0, clampRetentionDays(0, s.defaultRetentionDays))
+	}
+	return projectID, expiresAt.UTC(), true
+}
+
 func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) error {
 	if !s.Enabled() || len(inputs) == 0 {
 		return nil
@@ -392,6 +416,7 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	}
 	values := make([]string, 0, len(inputs))
 	args := make([]any, 0, len(inputs)*19)
+	refused := 0
 	for _, in := range inputs {
 		if strings.TrimSpace(in.ServiceID) == "" {
 			continue
@@ -406,18 +431,10 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 		if id == "" {
 			id = logpipeline.SyntheticLineID()
 		}
-		projectID := strings.TrimSpace(in.ProjectID)
-		expiresAt := in.ExpiresAt
-		if policy, ok := resolved[in.ServiceID]; ok {
-			if projectID == "" {
-				projectID = policy.ProjectID
-			}
-			if expiresAt.IsZero() {
-				expiresAt = now.AddDate(0, 0, clampRetentionDays(policy.RetentionDays, s.defaultRetentionDays))
-			}
-		}
-		if expiresAt.IsZero() {
-			expiresAt = now.AddDate(0, 0, clampRetentionDays(0, s.defaultRetentionDays))
+		projectID, expiresAt, ok := s.attribution(in.ProjectID, in.ExpiresAt, in.ServiceID, resolved, now)
+		if !ok {
+			refused++
+			continue
 		}
 		attrs := logpipeline.NormalizeAttributes(in.Attributes)
 		if attrs == nil {
@@ -449,6 +466,9 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 			attrs,
 			truncatedFlag,
 		)
+	}
+	if refused > 0 {
+		slog.Warn("log rows refused: service no longer resolves to a project", "refused", refused)
 	}
 	if len(values) == 0 {
 		return nil
@@ -509,6 +529,7 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 	}
 	values := make([]string, 0, len(gaps))
 	args := make([]any, 0, len(gaps)*14)
+	refused := 0
 	for _, gap := range gaps {
 		if gap.ServiceID == "" || gap.DroppedCount == 0 {
 			continue
@@ -521,18 +542,10 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 		if windowEnd.IsZero() || windowEnd.Before(windowStart) {
 			windowEnd = windowStart
 		}
-		projectID := strings.TrimSpace(gap.ProjectID)
-		expiresAt := gap.ExpiresAt
-		if policy, ok := resolved[gap.ServiceID]; ok {
-			if projectID == "" {
-				projectID = policy.ProjectID
-			}
-			if expiresAt.IsZero() {
-				expiresAt = now.AddDate(0, 0, clampRetentionDays(policy.RetentionDays, s.defaultRetentionDays))
-			}
-		}
-		if expiresAt.IsZero() {
-			expiresAt = now.AddDate(0, 0, clampRetentionDays(0, s.defaultRetentionDays))
+		projectID, expiresAt, ok := s.attribution(gap.ProjectID, gap.ExpiresAt, gap.ServiceID, resolved, now)
+		if !ok {
+			refused++
+			continue
 		}
 		logType := normalizeLogType(gap.LogType)
 		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -552,6 +565,9 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 			now,
 			expiresAt.UTC(),
 		)
+	}
+	if refused > 0 {
+		slog.Warn("log gap rows refused: service no longer resolves to a project", "refused", refused)
 	}
 	if len(values) == 0 {
 		return nil

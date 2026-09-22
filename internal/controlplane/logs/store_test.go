@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -224,5 +225,47 @@ func TestClampRetentionDays(t *testing.T) {
 	}
 	if got := clampRetentionDays(0, 0); got != 14 {
 		t.Fatalf("zero default not floored: %d", got)
+	}
+}
+
+func TestAttributionRefusesUnresolvableServices(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	resolved := map[string]ProjectRetention{
+		"svc-1": {ProjectID: "proj-1", RetentionDays: 7},
+	}
+	s := &LogStore{
+		resolve: func(_ context.Context, _ []string) (map[string]ProjectRetention, error) {
+			return resolved, nil
+		},
+		defaultRetentionDays: 30,
+	}
+
+	projectID, expiresAt, ok := s.attribution("", time.Time{}, "svc-1", resolved, now)
+	if !ok || projectID != "proj-1" {
+		t.Fatalf("resolvable service misattributed: %q %v %v", projectID, expiresAt, ok)
+	}
+	if want := now.AddDate(0, 0, 7); !expiresAt.Equal(want) {
+		t.Fatalf("project retention ignored: %v vs %v", expiresAt, want)
+	}
+
+	// A service that no longer resolves writes no attributable row:
+	// it would evade the deletion purge under the platform default
+	// TTL after the project is hard-deleted.
+	if _, _, ok := s.attribution("", time.Time{}, "svc-gone", resolved, now); ok {
+		t.Fatal("unattributable row must be refused")
+	}
+
+	// Explicitly attributed rows survive resolution loss.
+	projectID, _, ok = s.attribution("proj-2", time.Time{}, "svc-gone", resolved, now)
+	if !ok || projectID != "proj-2" {
+		t.Fatalf("explicit attribution must be honored: %q %v", projectID, ok)
+	}
+
+	// A store without a resolver is a single-tenant setup: the
+	// platform default applies.
+	silent := &LogStore{defaultRetentionDays: 30}
+	if _, _, ok := silent.attribution("", time.Time{}, "svc-gone", nil, now); !ok {
+		t.Fatal("resolver-less stores keep the platform default")
 	}
 }
