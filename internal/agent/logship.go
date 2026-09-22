@@ -16,7 +16,6 @@ import (
 	"ebof-wg-mesh/internal/logpipeline"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -64,7 +63,9 @@ type logShipStats struct {
 // stable IDs and collapse server-side. Every shed line is counted
 // per allocation and reported as an explicit read gap; pending
 // drop summaries persist next to the spool so shutdown and restart
-// keep the accounting.
+// keep the accounting, and coalesce by identity so a sustained
+// outage holds one entry per identity instead of one per flush
+// interval.
 type logShipper struct {
 	agentID  string
 	spoolDir string
@@ -79,7 +80,7 @@ type logShipper struct {
 	send     func(*agentv1.AgentClientMessage) error
 	meta     map[string]allocMeta
 	overflow map[string]uint64
-	pending  []*platformv1.LogDropSummary
+	pending  *logpipeline.DropSet
 
 	accepted atomic.Uint64
 	limited  atomic.Uint64
@@ -117,6 +118,7 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 	pending, err := loadPendingDrops(cfg.SpoolDir)
 	if err != nil {
 		slog.Warn("load pending log drop summaries", "agent_id", agentID, "error", err)
+		pending = logpipeline.NewDropSet()
 	}
 	return &logShipper{
 		agentID:       agentID,
@@ -272,9 +274,13 @@ func (s *logShipper) flush() {
 		return
 	}
 	s.mu.Lock()
-	pending := s.pending
+	taken := s.pending.Take()
 	s.mu.Unlock()
-	if len(records) == 0 && len(pending) == 0 {
+	var dropped uint64
+	for _, summary := range taken {
+		dropped += summary.GetDroppedCount()
+	}
+	if len(records) == 0 && len(taken) == 0 {
 		return
 	}
 	entries := make([]*agentv1.LogEntry, 0, len(records))
@@ -287,34 +293,39 @@ func (s *logShipper) flush() {
 		}
 		entries = append(entries, &entry)
 	}
-	var dropped uint64
-	for _, summary := range pending {
-		dropped += summary.GetDroppedCount()
-	}
 	err = send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_LogBatch{
 			LogBatch: &agentv1.LogBatch{
 				AgentId:      s.agentID,
 				Entries:      entries,
 				DroppedLines: dropped,
-				Drops:        pending,
+				Drops:        taken,
 			},
 		},
 	})
 	if err != nil {
 		slog.Warn("send container log batch failed", "agent_id", s.agentID, "error", err)
+		s.restorePending(taken)
 		return
 	}
 	if err := s.spool.Commit(cursor); err != nil {
 		slog.Warn("commit log spool", "agent_id", s.agentID, "error", err)
+		s.restorePending(taken)
 		return
 	}
 	s.mu.Lock()
-	if len(pending) > 0 && len(s.pending) >= len(pending) {
-		s.pending = append([]*platformv1.LogDropSummary(nil), s.pending[len(pending):]...)
-	}
 	s.persistPendingLocked()
 	s.mu.Unlock()
+}
+
+// restorePending merges unsent summaries back into the pending set
+// so a failed send keeps its accounting; coalescing folds them into
+// newer windows for the same identity.
+func (s *logShipper) restorePending(taken []*platformv1.LogDropSummary) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pending.Restore(taken)
+	s.persistPendingLocked()
 }
 
 // persistedDrop is the durable form of one pending drop summary.
@@ -331,10 +342,10 @@ type persistedDrop struct {
 
 // loadPendingDrops reads drop summaries persisted by an earlier
 // process so shutdown-time accounting reports after the restart.
-func loadPendingDrops(dir string) ([]*platformv1.LogDropSummary, error) {
+func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, pendingDropsFile))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return logpipeline.NewDropSet(), nil
 	}
 	if err != nil {
 		return nil, err
@@ -343,18 +354,15 @@ func loadPendingDrops(dir string) ([]*platformv1.LogDropSummary, error) {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, err
 	}
-	pending := make([]*platformv1.LogDropSummary, 0, len(rows))
+	pending := logpipeline.NewDropSet()
 	for _, row := range rows {
-		pending = append(pending, &platformv1.LogDropSummary{
-			ServiceId:    row.ServiceID,
-			AllocationId: row.AllocationID,
+		pending.Add(logpipeline.DropKey{
+			ServiceID:    row.ServiceID,
+			AllocationID: row.AllocationID,
 			LogType:      platformv1.ServiceLogType(row.LogType),
 			Stream:       row.Stream,
-			DroppedCount: row.DroppedCount,
 			Reason:       row.Reason,
-			WindowStart:  timestamppb.New(row.WindowStart),
-			WindowEnd:    timestamppb.New(row.WindowEnd),
-		})
+		}, row.DroppedCount, row.WindowStart, row.WindowEnd)
 	}
 	return pending, nil
 }
@@ -363,8 +371,9 @@ func loadPendingDrops(dir string) ([]*platformv1.LogDropSummary, error) {
 // the spool. The snapshot is advisory: retried summaries collapse
 // server-side by gap identity, so a stale copy only re-reports.
 func (s *logShipper) persistPendingLocked() {
-	rows := make([]persistedDrop, 0, len(s.pending))
-	for _, summary := range s.pending {
+	summaries := s.pending.Summaries()
+	rows := make([]persistedDrop, 0, len(summaries))
+	for _, summary := range summaries {
 		rows = append(rows, persistedDrop{
 			ServiceID:    summary.GetServiceId(),
 			AllocationID: summary.GetAllocationId(),
@@ -405,8 +414,10 @@ func (s *logShipper) persistPendingLocked() {
 }
 
 // collectDrops drains limiter, spool, and overflow counters into the
-// pending gap summaries reported with the next batch, then durably
-// snapshots them so shutdown or crash keeps the accounting.
+// pending gap summaries reported with the next batch, coalescing by
+// identity so repeated collections during an outage cannot grow the
+// pending set, then durably snapshots them so shutdown or crash
+// keeps the accounting.
 func (s *logShipper) collectDrops(now time.Time) {
 	windowStart := now.Add(-s.flushInterval)
 	limited := s.limiter.DrainDrops()
@@ -421,46 +432,36 @@ func (s *logShipper) collectDrops(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key, count := range limited {
-		if summary := s.summaryLocked(key, count, logpipeline.ReasonRateLimited, windowStart, now); summary != nil {
-			s.pending = append(s.pending, summary)
-		}
+		s.notePendingLocked(key, count, logpipeline.ReasonRateLimited, windowStart, now)
 	}
 	for key, count := range evicted {
-		if summary := s.summaryLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now); summary != nil {
-			s.pending = append(s.pending, summary)
-		}
+		s.notePendingLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
 	}
 	for key, count := range corrupt {
-		if summary := s.summaryLocked(key, count, logpipeline.ReasonCorruptSpool, windowStart, now); summary != nil {
-			s.pending = append(s.pending, summary)
-		}
+		s.notePendingLocked(key, count, logpipeline.ReasonCorruptSpool, windowStart, now)
 	}
 	for key, count := range overflow {
-		if summary := s.summaryLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now); summary != nil {
-			s.pending = append(s.pending, summary)
-		}
+		s.notePendingLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
 	}
 	s.persistPendingLocked()
 }
 
-// summaryLocked attributes one drop count to its allocation. The
-// service ID is advisory: the control plane derives authoritative
-// service attribution from the allocation owner, so counts surface
-// even when local metadata is gone after a restart. Counts without
-// a recoverable key cannot appear in reads and stay in the shipper
+// notePendingLocked attributes one drop count to its allocation and
+// coalesces it into the pending entry for that identity. The service
+// ID is advisory: the control plane derives authoritative service
+// attribution from the allocation owner, so counts surface even when
+// local metadata is gone after a restart. Counts without a
+// recoverable key cannot appear in reads and stay in the shipper
 // counters only.
-func (s *logShipper) summaryLocked(key string, count uint64, reason string, windowStart, windowEnd time.Time) *platformv1.LogDropSummary {
+func (s *logShipper) notePendingLocked(key string, count uint64, reason string, windowStart, windowEnd time.Time) {
 	if key == "" {
-		return nil
+		return
 	}
 	meta := s.meta[key]
-	return &platformv1.LogDropSummary{
-		ServiceId:    meta.serviceID,
-		AllocationId: key,
+	s.pending.Add(logpipeline.DropKey{
+		ServiceID:    meta.serviceID,
+		AllocationID: key,
 		LogType:      meta.logType,
-		DroppedCount: count,
 		Reason:       reason,
-		WindowStart:  timestamppb.New(windowStart),
-		WindowEnd:    timestamppb.New(windowEnd),
-	}
+	}, count, windowStart, windowEnd)
 }

@@ -74,7 +74,7 @@ type buildLogReporter struct {
 	abandoned atomic.Bool
 
 	mu       sync.Mutex
-	pending  []*platformv1.LogDropSummary
+	pending  *logpipeline.DropSet
 	overflow map[string]uint64
 }
 
@@ -123,6 +123,7 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		ctx:           ctx,
 		stop:          make(chan struct{}),
 		done:          make(chan struct{}),
+		pending:       logpipeline.NewDropSet(),
 		overflow:      make(map[string]uint64),
 	}
 	go reporter.run()
@@ -205,7 +206,7 @@ func (r *buildLogReporter) cleanup() {
 		_ = r.spool.Close()
 	}
 	r.mu.Lock()
-	pending += int64(len(r.pending))
+	pending += int64(r.pending.Len())
 	r.mu.Unlock()
 	if r.orphaned.Load() {
 		slog.Warn("build log reporter orphaned by lease loss; attempt output is incomplete",
@@ -260,7 +261,7 @@ func (r *buildLogReporter) drained() bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.pending) == 0
+	return r.pending.Len() == 0
 }
 
 func (r *buildLogReporter) flush() {
@@ -275,9 +276,9 @@ func (r *buildLogReporter) flush() {
 		return
 	}
 	r.mu.Lock()
-	pending := r.pending
+	taken := r.pending.Take()
 	r.mu.Unlock()
-	if len(records) == 0 && len(pending) == 0 {
+	if len(records) == 0 && len(taken) == 0 {
 		return
 	}
 	lines := make([]*platformv1.BuildLogLine, 0, len(records))
@@ -291,7 +292,7 @@ func (r *buildLogReporter) flush() {
 		lines = append(lines, &line)
 	}
 	var dropped uint64
-	for _, summary := range pending {
+	for _, summary := range taken {
 		dropped += summary.GetDroppedCount()
 	}
 	reportCtx, cancel := context.WithTimeout(r.ctx, r.reportTimeout)
@@ -302,9 +303,10 @@ func (r *buildLogReporter) flush() {
 		Lines:        lines,
 		LeaseEpoch:   r.leaseEpoch,
 		DroppedLines: dropped,
-		Drops:        pending,
+		Drops:        taken,
 	})
 	if err != nil {
+		r.restorePending(taken)
 		if status.Code(err) == codes.PermissionDenied {
 			r.orphaned.Store(true)
 			slog.Warn("build log reporter orphaned by lease loss", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
@@ -316,15 +318,24 @@ func (r *buildLogReporter) flush() {
 	}
 	if err := r.spool.Commit(cursor); err != nil {
 		slog.Warn("commit build log spool", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+		r.restorePending(taken)
 		return
 	}
-	r.mu.Lock()
-	if len(pending) > 0 && len(r.pending) >= len(pending) {
-		r.pending = append([]*platformv1.LogDropSummary(nil), r.pending[len(pending):]...)
-	}
-	r.mu.Unlock()
 }
 
+// restorePending merges unsent summaries back into the pending set
+// so a failed report keeps its accounting; coalescing folds them
+// into newer windows for the same identity.
+func (r *buildLogReporter) restorePending(taken []*platformv1.LogDropSummary) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pending.Restore(taken)
+}
+
+// collectDrops drains limiter, spool, and overflow counters into the
+// pending gap summaries reported with the next batch, coalescing by
+// identity so repeated collections during an outage cannot grow the
+// pending set.
 func (r *buildLogReporter) collectDrops(now time.Time) {
 	windowStart := now.Add(-r.flushInterval)
 	limited := r.limiter.DrainDrops()
@@ -339,30 +350,30 @@ func (r *buildLogReporter) collectDrops(now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, count := range limited {
-		r.pending = append(r.pending, r.summary("", count, logpipeline.ReasonRateLimited, windowStart, now))
+		r.notePendingLocked("", count, logpipeline.ReasonRateLimited, windowStart, now)
 	}
 	for stream, count := range evicted {
-		r.pending = append(r.pending, r.summary(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now))
+		r.notePendingLocked(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
 	}
 	for stream, count := range corrupt {
-		r.pending = append(r.pending, r.summary(stream, count, logpipeline.ReasonCorruptSpool, windowStart, now))
+		r.notePendingLocked(stream, count, logpipeline.ReasonCorruptSpool, windowStart, now)
 	}
 	for stream, count := range overflow {
-		r.pending = append(r.pending, r.summary(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now))
+		r.notePendingLocked(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
 	}
 }
 
-func (r *buildLogReporter) summary(stream string, count uint64, reason string, windowStart, windowEnd time.Time) *platformv1.LogDropSummary {
-	return &platformv1.LogDropSummary{
-		ServiceId:    r.serviceID,
-		BuildId:      r.buildID,
-		LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD,
-		Stream:       stream,
-		DroppedCount: count,
-		Reason:       reason,
-		WindowStart:  timestamppb.New(windowStart),
-		WindowEnd:    timestamppb.New(windowEnd),
-	}
+// notePendingLocked coalesces one drop window into the pending entry
+// for its identity: one entry per (stream, reason) however long the
+// outage lasts.
+func (r *buildLogReporter) notePendingLocked(stream string, count uint64, reason string, windowStart, windowEnd time.Time) {
+	r.pending.Add(logpipeline.DropKey{
+		ServiceID: r.serviceID,
+		BuildID:   r.buildID,
+		LogType:   platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD,
+		Stream:    stream,
+		Reason:    reason,
+	}, count, windowStart, windowEnd)
 }
 
 // sanitizeBuildSpoolName maps a build ID onto a safe single path

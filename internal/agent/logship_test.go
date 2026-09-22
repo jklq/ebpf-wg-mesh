@@ -398,3 +398,75 @@ func TestLogShipConfigFromAgentZeroRateDisablesLimiting(t *testing.T) {
 		}
 	}
 }
+
+// A control-plane outage must not grow the pending drop summaries
+// without bound: every failed flush cycle folds its drops into one
+// coalesced summary per identity, and one successful send carries
+// the whole accumulated accounting.
+func TestLogShipperCoalescesPendingDropSummariesAcrossOutage(t *testing.T) {
+	t.Parallel()
+
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      t.TempDir(),
+		RatePerSec:    0.001,
+		Burst:         1,
+		BatchSize:     10,
+		FlushInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	defer shipper.Close()
+	sender := &recordingSender{fail: errors.New("control plane down")}
+	shipper.Attach(sender.send)
+	// Consume the single burst token so every line below is denied.
+	if !shipper.limiter.Allow("alloc-1") {
+		t.Fatal("expected one burst token")
+	}
+	base := time.Now().UTC()
+	var seq uint64
+	for round := 0; round < 20; round++ {
+		for i := 0; i < 5; i++ {
+			seq++
+			shipper.AppendLog(testEntry("alloc-1", "svc-1", "flood", seq))
+		}
+		shipper.collectDrops(base.Add(time.Duration(round) * time.Second))
+		shipper.flush() // Send fails; the summaries must fold back.
+	}
+	shipper.mu.Lock()
+	summaries := shipper.pending.Summaries()
+	shipper.mu.Unlock()
+	if len(summaries) != 1 {
+		t.Fatalf("pending drop summaries not coalesced: %d entries after 20 outage rounds", len(summaries))
+	}
+	summary := summaries[0]
+	if summary.GetDroppedCount() != 100 || summary.GetReason() != logpipeline.ReasonRateLimited {
+		t.Fatalf("coalesced summary wrong: %+v", summary)
+	}
+	if summary.GetAllocationId() != "alloc-1" || summary.GetServiceId() != "svc-1" {
+		t.Fatalf("coalesced summary misattributed: %+v", summary)
+	}
+	if summary.GetWindowStart().AsTime().After(base) || summary.GetWindowEnd().AsTime().Before(base.Add(19*time.Second)) {
+		t.Fatalf("coalesced window does not span the outage: %+v", summary)
+	}
+
+	// Once the outage ends, one batch carries the whole accounting.
+	sender.mu.Lock()
+	sender.fail = nil
+	sender.mu.Unlock()
+	shipper.flush()
+	shipper.mu.Lock()
+	left := shipper.pending.Summaries()
+	shipper.mu.Unlock()
+	if len(left) != 0 {
+		t.Fatalf("sent summaries not cleared: %+v", left)
+	}
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.batches) != 1 {
+		t.Fatalf("expected 1 recovered batch, got %d", len(sender.batches))
+	}
+	if got := sender.batches[0].GetDroppedLines(); got != 100 {
+		t.Fatalf("recovered batch dropped %d lines, want 100", got)
+	}
+}

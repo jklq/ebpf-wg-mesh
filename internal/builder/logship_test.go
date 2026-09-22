@@ -323,3 +323,74 @@ func TestBuildLogReporterCloseReportsDropsWithEmptySpool(t *testing.T) {
 		t.Fatalf("close reported %d dropped lines, want 5", dropped)
 	}
 }
+
+// A control-plane outage must not grow the pending drop summaries
+// without bound: every failed flush cycle folds its drops into one
+// coalesced summary per identity, and one successful report carries
+// the whole accumulated accounting.
+func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{
+		calls:         make(chan struct{}, 64),
+		failRemaining: 1000,
+		failErr:       errors.New("control plane down"),
+	}
+	cfg, _ := testBuildLogShipConfig(t, "build-1")
+	cfg.RatePerSec = 0.001
+	cfg.Burst = 1
+	cfg.FlushInterval = time.Hour // Only the manual flushes below report.
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	// Consume the single burst token so every line below is denied.
+	if !reporter.limiter.Allow("build-1") {
+		t.Fatal("expected one burst token")
+	}
+	base := time.Now().UTC()
+	for round := 0; round < 20; round++ {
+		for i := 0; i < 5; i++ {
+			reporter.Report(context.Background(), commandOutputLine{ObservedAt: base, Stream: "stdout", Line: "flood"})
+		}
+		reporter.collectDrops(base.Add(time.Duration(round) * time.Second))
+		reporter.flush() // Report fails; the summaries must fold back.
+	}
+	reporter.mu.Lock()
+	summaries := reporter.pending.Summaries()
+	reporter.mu.Unlock()
+	if len(summaries) != 1 {
+		t.Fatalf("pending drop summaries not coalesced: %d entries after 20 outage rounds", len(summaries))
+	}
+	summary := summaries[0]
+	if summary.GetDroppedCount() != 100 || summary.GetReason() != logpipeline.ReasonRateLimited {
+		t.Fatalf("coalesced summary wrong: %+v", summary)
+	}
+	if summary.GetBuildId() != "build-1" || summary.GetServiceId() != "svc-1" {
+		t.Fatalf("coalesced summary misattributed: %+v", summary)
+	}
+	if summary.GetWindowStart().AsTime().After(base) || summary.GetWindowEnd().AsTime().Before(base.Add(19*time.Second)) {
+		t.Fatalf("coalesced window does not span the outage: %+v", summary)
+	}
+
+	// Once the outage ends, one report carries the whole accounting.
+	client.mu.Lock()
+	client.failRemaining = 0
+	client.mu.Unlock()
+	reporter.flush()
+	reporter.mu.Lock()
+	left := reporter.pending.Summaries()
+	reporter.mu.Unlock()
+	if len(left) != 0 {
+		t.Fatalf("reported summaries not cleared: %+v", left)
+	}
+	reporter.Close()
+
+	// Failed attempts re-report their restored summaries
+	// (at-least-once), so only the final recovered request carries
+	// the complete accounting exactly once.
+	requests := client.ReportRequests()
+	if len(requests) < 2 {
+		t.Fatalf("expected outage attempts plus a recovery, got %d requests", len(requests))
+	}
+	if recovered := requests[len(requests)-1].GetDroppedLines(); recovered != 100 {
+		t.Fatalf("recovered report carried %d dropped lines, want 100", recovered)
+	}
+}
