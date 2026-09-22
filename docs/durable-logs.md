@@ -34,7 +34,11 @@ backlog item 3.6; the read API contract for them is in
   observation after a reconnect — or a duplicated status report —
   collapses into one event row under the same (observed_at, line_id)
   dedup that serves log retries; `allocation.crash_loop` fires once
-  per restart window per allocation, not once per report. Conditions
+  per restart window per allocation, not once per report. Build
+  lifecycle events derive identity and observed_at from the build,
+  lease attempt, and recorded event time the same way: a retried
+  claim or completion report collapses into one `build.started` or
+  `build.finished` row. Conditions
   without restart timestamps cannot anchor an onset and fall back to
   a per-emission identity.
 

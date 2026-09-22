@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -89,17 +90,29 @@ func (e *LogEmitter) EmitBuildf(ctx context.Context, scope ServiceScope, buildID
 	e.EmitBuild(ctx, scope, buildID, stage, fmt.Sprintf(format, args...))
 }
 
-// EmitEvent writes one structured platform-event line. Attributes
-// describe the known event; the human-readable line stays exact. The
-// pipeline never derives events or attributes from customer output.
-func (e *LogEmitter) EmitEvent(ctx context.Context, scope ServiceScope, logType LogType, buildID, event, line string, attrs map[string]string) {
+// EmitEvent writes one structured platform-event line. Identity and
+// observed_at derive from the caller's content-stable facts — event
+// name, build, lease attempt, and the recorded event time — so a
+// retried claim or report collapses into one event row instead of
+// duplicating (the log table keys on service, observed_at, and
+// line_id). Wall-clock report times must not be among the facts.
+// Attributes describe the known event; the human-readable line stays
+// exact. The pipeline never derives events or attributes from
+// customer output.
+func (e *LogEmitter) EmitEvent(ctx context.Context, scope ServiceScope, logType LogType, buildID string, leaseEpoch int64, at time.Time, event, line string, attrs map[string]string) {
 	stage := StageDeploy
 	if logType == LogTypeBuild {
 		stage = StageBuild
 	}
+	at = at.UTC()
 	e.emit(ctx, LogLineInput{
-		ID:                logpipeline.SyntheticLineID(),
-		ObservedAt:        time.Now().UTC(),
+		ID: logpipeline.StableEventID(
+			event,
+			buildID,
+			strconv.FormatInt(leaseEpoch, 10),
+			at.Format(time.RFC3339Nano),
+		),
+		ObservedAt:        at,
 		EnvironmentID:     scope.EnvironmentID,
 		ServiceID:         scope.ServiceID,
 		AllocationID:      scope.AllocationID,
@@ -183,11 +196,10 @@ func (e *LogEmitter) emit(_ context.Context, in LogLineInput) {
 	if !e.Enabled() {
 		return
 	}
-	if e.async != nil {
+	if e.async != nil && e.async.EnqueueLines([]LogLineInput{in}) {
 		// Queue the event like an agent batch: retry across backend
 		// outages, shed with gap accounting past the queue cap, and
 		// drain at shutdown instead of dying with the request.
-		e.async.EnqueueLines([]LogLineInput{in})
 		return
 	}
 	if err := e.store.WriteLogLines(context.Background(), []LogLineInput{in}); err != nil {
