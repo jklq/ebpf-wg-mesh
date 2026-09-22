@@ -109,12 +109,14 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 		return nil, err
 	}
 	// Direct-image tags resolve outside the product transaction: registry
-	// calls must never hold product locks. A spec racing the pre-read
-	// retries with a fresh map.
+	// calls must never hold product locks. Only the services this release
+	// selects are resolved, so an unchanged service's stale tag cannot
+	// block unrelated pending changes. A spec racing the pre-read retries
+	// with a fresh map.
 	var services []ReleasedService
 	var errRelease error
 	for attempt := 0; attempt < 3; attempt++ {
-		inputs, err := d.store.directImageInputs(ctx, scope)
+		inputs, err := d.store.pendingDirectImageInputs(ctx, scope)
 		if err != nil {
 			return nil, err
 		}

@@ -285,6 +285,70 @@ func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
 	}
 }
 
+// TestReleaseEnvironmentSkipsUnchangedDirectImageTags proves one
+// service's stale or unavailable tag cannot block releasing unrelated
+// pending changes: only the services a release selects resolve tags.
+func TestReleaseEnvironmentSkipsUnchangedDirectImageTags(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, projects[0].ID)
+
+	resolver := &registry.StaticResolver{Tags: map[string]string{
+		"example.test/a:1": testDigest("a"),
+		"example.test/b:1": testDigest("b"),
+	}}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+
+	serviceA, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-a",
+		directImageServiceSpec("example.test/a:1", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}), "node-1")
+	if err != nil {
+		t.Fatalf("CreateService svc-a: %v", err)
+	}
+	serviceB, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-b",
+		directImageServiceSpec("example.test/b:1", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})}), "node-1")
+	if err != nil {
+		t.Fatalf("CreateService svc-b: %v", err)
+	}
+
+	// svc-a's image disappears from the registry while svc-b has pending
+	// changes. The release must never resolve svc-a's unchanged tag.
+	delete(resolver.Tags, "example.test/a:1")
+	if _, _, err := updateService(ctx, store, "user-1", serviceB.ID, "", directImageServiceSpec("example.test/b:1", &platformv1.ServiceRuntime{
+		Ports: runtimePortsFromInts([]int32{8081}), Env: map[string]string{"STAGE": "two"},
+	})); err != nil {
+		t.Fatalf("updateService svc-b: %v", err)
+	}
+	if _, err := delivery.ReleaseEnvironment(ctx, testUser("user-1"), environmentID); err != nil {
+		t.Fatalf("ReleaseEnvironment: an unchanged service's unavailable tag blocked the release: %v", err)
+	}
+
+	pinnedA := testPinnedRef("example.test/a", "a")
+	if got := currentDeploymentForTest(t, store, ctx, serviceA.ID).ImageDigest; got != pinnedA {
+		t.Fatalf("svc-a image = %q, want untouched %q", got, pinnedA)
+	}
+	artifactsA, err := delivery.ListServiceArtifacts(ctx, testUser("user-1"), serviceA.ID, 10)
+	if err != nil || len(artifactsA) != 1 || artifactsA[0].ImageRef != pinnedA {
+		t.Fatalf("svc-a artifacts = %v, %v", artifactsA, err)
+	}
+	if got := currentDeploymentForTest(t, store, ctx, serviceB.ID).ImageDigest; got != testPinnedRef("example.test/b", "b") {
+		t.Fatalf("svc-b image = %q, want %q", got, testPinnedRef("example.test/b", "b"))
+	}
+}
+
 func seedArtifactForRetentionTest(t *testing.T, store *persistence, ctx context.Context, serviceID, id, nibble string, created time.Time) {
 	t.Helper()
 	digest := testDigest(nibble)
