@@ -201,6 +201,19 @@ type BuildArtifactConfig struct {
 	KeepRecent    int
 }
 
+// DirectImageConfig governs how user-supplied direct-image references are
+// resolved against external registries.
+type DirectImageConfig struct {
+	// AllowedPrivateRegistryHosts lists registry hosts (host[:port]) the
+	// control plane may resolve direct images from even when they live on
+	// loopback, private, link-local, or otherwise prohibited networks:
+	// internal registries the operator has declared reachable and
+	// trusted. Every other registry host must be a public destination, so
+	// a project writer cannot point the control plane at internal
+	// services.
+	AllowedPrivateRegistryHosts []string
+}
+
 type ControlPlaneConfig struct {
 	Profile          Profile
 	Health           HealthConfig
@@ -214,6 +227,7 @@ type ControlPlaneConfig struct {
 	SecretKeys       SecretKeysConfig
 	Deletion         DeletionConfig
 	BuildArtifacts   BuildArtifactConfig
+	DirectImages     DirectImageConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
 	Bootstrap        BootstrapConfig

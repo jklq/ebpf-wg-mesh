@@ -15,10 +15,11 @@ import (
 // The realm is attacker-controlled input — anyone can pick the registry
 // host in an image reference — so it is confined to the registry's own
 // site and may not reach loopback or private destinations unless the
-// registry itself lives there. Without this, a malicious registry could
-// make the control plane probe internal services and echo any response
-// back as a "token".
-func tokenRealmURL(ctx context.Context, realm, registryHost string) (*url.URL, error) {
+// registry itself lives there (or the operator has allowlisted it as an
+// internal registry the control plane may reach). Without this, a
+// malicious registry could make the control plane probe internal services
+// and echo any response back as a "token".
+func tokenRealmURL(ctx context.Context, realm, registryHost string, allowedPrivateHosts []string) (*url.URL, error) {
 	tokenURL, err := url.Parse(realm)
 	if err != nil || !tokenURL.IsAbs() || (tokenURL.Scheme != "https" && tokenURL.Scheme != "http") {
 		return nil, fmt.Errorf("registry auth realm %q is not a valid token URL", realm)
@@ -40,7 +41,8 @@ func tokenRealmURL(ctx context.Context, realm, registryHost string) (*url.URL, e
 	if !sameRegistrySite(realmHost, endpointHost) && !sameRegistrySite(realmHost, repositoryHost) {
 		return nil, fmt.Errorf("registry auth realm %q is outside the registry's site", realm)
 	}
-	if !strings.EqualFold(realmHost, endpointHost) && !strings.EqualFold(realmHost, repositoryHost) {
+	if !strings.EqualFold(realmHost, endpointHost) && !strings.EqualFold(realmHost, repositoryHost) &&
+		!registryHostAllowed(registryHost, allowedPrivateHosts) && !registryHostAllowed(endpoint, allowedPrivateHosts) {
 		prohibited, err := prohibitedDestination(ctx, realmHost)
 		if err != nil {
 			return nil, fmt.Errorf("registry auth realm %q cannot be verified: %w", realm, err)
@@ -50,6 +52,42 @@ func tokenRealmURL(ctx context.Context, realm, registryHost string) (*url.URL, e
 		}
 	}
 	return tokenURL, nil
+}
+
+// permittedRegistryDestination requires that the control plane may send
+// registry traffic to registryHost: it is on the operator's direct-image
+// registry allowlist (an internal registry declared reachable and
+// trusted), or it is a public destination. The registry host is
+// user-controlled input — anyone can pick the registry host in an image
+// reference — so an unlisted host at or resolving to loopback, private,
+// link-local, or other prohibited ranges is refused: a project writer must
+// not be able to point the control plane at internal services. Resolution
+// failures fail closed.
+func permittedRegistryDestination(ctx context.Context, registryHost string, allowedPrivateHosts []string) error {
+	endpoint := registryEndpoint(registryHost)
+	if registryHostAllowed(registryHost, allowedPrivateHosts) || registryHostAllowed(endpoint, allowedPrivateHosts) {
+		return nil
+	}
+	prohibited, err := prohibitedDestination(ctx, hostnameOf(endpoint))
+	if err != nil {
+		return fmt.Errorf("registry host %q cannot be verified: %w", registryHost, err)
+	}
+	if prohibited {
+		return fmt.Errorf("registry host %q resolves to a prohibited private destination; list it in CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES if the control plane should reach it", registryHost)
+	}
+	return nil
+}
+
+// registryHostAllowed reports whether hostport is on the operator's
+// direct-image registry allowlist (exact host[:port] match).
+func registryHostAllowed(hostport string, allowedPrivateHosts []string) bool {
+	hostport = strings.TrimSpace(hostport)
+	for _, allowed := range allowedPrivateHosts {
+		if strings.EqualFold(strings.TrimSpace(allowed), hostport) {
+			return true
+		}
+	}
+	return false
 }
 
 func hostnameOf(hostport string) string {

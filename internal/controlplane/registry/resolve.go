@@ -58,14 +58,22 @@ const manifestAcceptTypes = "application/vnd.docker.distribution.manifest.v2+jso
 // canonical endpoint directly (redirects are a blob-CDN concern, and this
 // resolver never fetches blobs), so refusal fails closed without breaking
 // legitimate resolution.
+//
+// The registry host itself is user-controlled input too, so it must be a
+// public destination unless the operator allowlisted it as an internal
+// registry the control plane may reach (see permittedRegistryDestination).
 type HTTPResolver struct {
 	client *http.Client
+	// allowedPrivateHosts are registry hosts (host[:port]) the operator
+	// declared reachable even on loopback, private, or link-local
+	// networks.
+	allowedPrivateHosts []string
 }
 
 // NewHTTPResolver builds a registry resolver over client, or a default
 // 15-second client when nil. The client is copied so the resolver can
 // enforce its no-redirect policy without touching the caller's client.
-func NewHTTPResolver(client *http.Client) *HTTPResolver {
+func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPResolver {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
@@ -73,7 +81,7 @@ func NewHTTPResolver(client *http.Client) *HTTPResolver {
 	owned.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("registry redirect refused")
 	}
-	return &HTTPResolver{client: &owned}
+	return &HTTPResolver{client: &owned, allowedPrivateHosts: allowedPrivateHosts}
 }
 
 func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, error) {
@@ -85,6 +93,9 @@ func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, 
 		return ResolvedImage{Repository: parsed.Repository, ManifestDigest: parsed.Digest, Ref: parsed.PinnedRef()}, nil
 	}
 	host, path, _ := strings.Cut(parsed.Repository, "/")
+	if err := permittedRegistryDestination(ctx, host, r.allowedPrivateHosts); err != nil {
+		return ResolvedImage{}, err
+	}
 	manifestURL := manifestURLFor(parsed.Repository, parsed.Tag)
 	digest, err := r.manifestDigest(ctx, manifestURL, "")
 	if unauthorizedScopeError(err) {
@@ -260,7 +271,7 @@ func parseAuthChallenge(params string) bearerChallengeValues {
 // traffic the fetch follows no redirects (see NewHTTPResolver): one
 // compromised hop must not walk the control plane toward internal URLs.
 func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChallengeValues, registryHost, repository string) (string, error) {
-	tokenURL, err := tokenRealmURL(ctx, challenge.realm, registryHost)
+	tokenURL, err := tokenRealmURL(ctx, challenge.realm, registryHost, r.allowedPrivateHosts)
 	if err != nil {
 		return "", err
 	}
