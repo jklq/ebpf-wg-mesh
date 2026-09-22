@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,10 +192,18 @@ func TestRuntimeEventReconcileLoop(t *testing.T) {
 
 type syncFuncServer struct {
 	agentv1.UnimplementedAgentControlServer
-	sync func(agentv1.AgentControl_SyncServer) error
+	sync  func(agentv1.AgentControl_SyncServer) error
+	issue func(context.Context, *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error)
 }
 
 func (s *syncFuncServer) Sync(stream agentv1.AgentControl_SyncServer) error { return s.sync(stream) }
+
+func (s *syncFuncServer) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+	if s.issue == nil {
+		return nil, errors.New("no managed dashboard certificate issuer")
+	}
+	return s.issue(ctx, req)
+}
 
 func newTestTLSAuthority(t *testing.T) *identity.TLSAuthority {
 	t.Helper()
@@ -212,8 +223,13 @@ func newTestTLSAuthority(t *testing.T) *identity.TLSAuthority {
 
 func startSyncServer(t *testing.T, authority *identity.TLSAuthority, handler func(agentv1.AgentControl_SyncServer) error) string {
 	t.Helper()
+	return startSyncServerIssuing(t, authority, handler, nil)
+}
+
+func startSyncServerIssuing(t *testing.T, authority *identity.TLSAuthority, handler func(agentv1.AgentControl_SyncServer) error, issue func(context.Context, *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error)) string {
+	t.Helper()
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(authority.HTTPConfig())))
-	agentv1.RegisterAgentControlServer(server, &syncFuncServer{sync: handler})
+	agentv1.RegisterAgentControlServer(server, &syncFuncServer{sync: handler, issue: issue})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -251,7 +267,7 @@ func newSyncSessionApp(t *testing.T, authority *identity.TLSAuthority) (*App, cr
 				},
 			},
 			Mesh:    config.MeshConfig{WireGuard: config.WireGuard{InterfaceName: "wg0", PrivateKey: privateKey}},
-			Runtime: config.RuntimeConfig{DataDir: t.TempDir()},
+			Runtime: config.RuntimeConfig{DataDir: t.TempDir(), ManagedDashboardSecretsDir: t.TempDir()},
 		},
 	}
 	creds, certNotAfter, clusterIdentity, err := app.clientCredentials(context.Background())
@@ -650,5 +666,121 @@ func TestSyncSessionHoldsReportThroughMidBatchPause(t *testing.T) {
 	case <-sessionDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionDiffEnsuresDashboardIdentityBeforeReconcile(t *testing.T) {
+	t.Parallel()
+
+	// A diff can introduce the managed dashboard allocation. The runtime
+	// mounts the secrets directory when it starts the dashboard, so the
+	// managed dashboard identity must be refreshed before reconciliation
+	// runs. The checkpoint path already did this; the diff path queued
+	// reconciliation directly and let the dashboard start without its
+	// certificate until the periodic renewal path ran.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	issued := make(chan struct{}, 4)
+	var clusterIdentity string
+	syncAddr := startSyncServerIssuing(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		dashboard := testDiffService("dashboard-1", 1, 1)
+		dashboard.Spec.Runtime.Env = map[string]string{managedDashboardSecretMarker: managedDashboardSecretValue}
+		diff := &agentv1.AllocationDiff{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			BaseRevision: 5, TargetRevision: 6, Starts: []*agentv1.DesiredService{dashboard},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	}, func(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+		select {
+		case issued <- struct{}{}:
+		default:
+		}
+		return authority.IssueManagedDashboardCertificate(ctx, "dashboard-test", req.GetCsrPem())
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+	secretsDir := app.cfg.Runtime.ManagedDashboardSecretsDir
+	runtime := app.supervisor.runtime.(*supervisorTestRuntime)
+
+	var mu sync.Mutex
+	dashboardReconciles, reconcilesWithoutIdentity := 0, 0
+	runtime.setOnReconcile(func(state *agentv1.DesiredNodeState) {
+		if !hasManagedDashboardService(state) {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		dashboardReconciles++
+		if _, err := os.Stat(filepath.Join(secretsDir, managedDashboardCertFileName)); err != nil {
+			reconcilesWithoutIdentity++
+		}
+	})
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	// The post-batch status report follows the diff's reconcile, so by the
+	// time it arrives the dashboard allocation has been reconciled at least
+	// once.
+	sawReport := false
+	deadline := time.After(10 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			if msg.GetStatusReport() != nil {
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for status report after the dashboard diff")
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+
+	select {
+	case <-issued:
+	default:
+		t.Fatal("managed dashboard identity was not issued for the diff-introduced dashboard")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if dashboardReconciles == 0 {
+		t.Fatal("dashboard allocation was never reconciled")
+	}
+	if reconcilesWithoutIdentity != 0 {
+		t.Fatalf("%d of %d dashboard reconciles ran without the certificate present", reconcilesWithoutIdentity, dashboardReconciles)
+	}
+	if _, err := os.Stat(filepath.Join(secretsDir, managedDashboardCertFileName)); err != nil {
+		t.Fatalf("managed dashboard certificate missing after session: %v", err)
 	}
 }

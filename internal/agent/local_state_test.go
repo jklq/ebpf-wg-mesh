@@ -414,10 +414,12 @@ func TestLocalStateTracksDrainPhaseThroughObservation(t *testing.T) {
 }
 
 type supervisorTestRuntime struct {
-	mu        sync.Mutex
-	inventory []RuntimeResource
-	calls     int
-	cleanup   []bool
+	mu                sync.Mutex
+	inventory         []RuntimeResource
+	calls             int
+	cleanup           []bool
+	onReconcile       func(*agentv1.DesiredNodeState)
+	dashboardRestarts int
 }
 
 func (r *supervisorTestRuntime) DiscoverRuntimeResources(context.Context) ([]RuntimeResource, error) {
@@ -429,6 +431,9 @@ func (r *supervisorTestRuntime) ReconcileWithCleanup(_ context.Context, state *a
 	defer r.mu.Unlock()
 	r.calls++
 	r.cleanup = append(r.cleanup, cleanup)
+	if r.onReconcile != nil {
+		r.onReconcile(state)
+	}
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
 	for _, service := range state.GetServices() {
 		report.Services = append(report.Services, &agentv1.ServiceCondition{
@@ -442,6 +447,19 @@ func (r *supervisorTestRuntime) ReconcileWithCleanup(_ context.Context, state *a
 }
 
 func (*supervisorTestRuntime) Close() error { return nil }
+
+func (r *supervisorTestRuntime) RestartManagedDashboard(context.Context, *agentv1.DesiredNodeState) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dashboardRestarts++
+	return nil
+}
+
+func (r *supervisorTestRuntime) setOnReconcile(fn func(*agentv1.DesiredNodeState)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onReconcile = fn
+}
 
 func TestSupervisorRestoresAndReconcilesWithoutControlPlane(t *testing.T) {
 	t.Parallel()

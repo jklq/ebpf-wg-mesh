@@ -409,6 +409,23 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		}
 		authorityConfirmed = true
 	}
+	// reconcileAcceptedAllocations runs after a checkpoint or diff is accepted
+	// and acknowledged. The managed dashboard identity must be in place before
+	// reconciliation lets the runtime mount the secrets directory and start
+	// the dashboard, so a diff that introduces or moves that allocation
+	// refreshes the identity first, exactly like a checkpoint.
+	reconcileAcceptedAllocations := func() error {
+		desired, err := a.stateStore.desiredState()
+		if err != nil {
+			return fmt.Errorf("load desired state for dashboard identity: %w", err)
+		}
+		if err := a.refreshManagedDashboardIdentity(sessionCtx, client, desired); err != nil {
+			a.supervisor.ReconcileAcceptedDesired()
+			return err
+		}
+		a.supervisor.ReconcileAcceptedDesired()
+		return nil
+	}
 	// Reports are published at stream-quiet points and never inside an open
 	// batch: mid-batch the persisted report trails the accepted diffs, and an
 	// intermediate inventory is rejected by the control plane against its
@@ -528,13 +545,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if err := sendAck(); err != nil {
 					return err
 				}
-				if desired, err := a.stateStore.desiredState(); err != nil {
-					return fmt.Errorf("load desired state for dashboard identity: %w", err)
-				} else if err := a.refreshManagedDashboardIdentity(sessionCtx, client, desired); err != nil {
-					a.supervisor.ReconcileAcceptedDesired()
+				if err := reconcileAcceptedAllocations(); err != nil {
 					return err
 				}
-				a.supervisor.ReconcileAcceptedDesired()
 				slog.Info("accepted checkpoint", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
 				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_AllocationDiff:
@@ -549,7 +562,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if err := sendAck(); err != nil {
 					return err
 				}
-				a.supervisor.ReconcileAcceptedDesired()
+				if err := reconcileAcceptedAllocations(); err != nil {
+					return err
+				}
 				slog.Info("accepted diff", "agent_id", a.cfg.Node.ID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
 				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_NodeConfigUpdate:

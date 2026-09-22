@@ -60,7 +60,17 @@ restart. Allocation cursors must not decrease; a diff whose base does not
 equal the accepted cursor needs a checkpoint. Duplicate checkpoints and diffs
 are accepted idempotently. Checkpoints and diffs must not carry registry
 credentials on the wire; credentials arrive in `PullCredentialSet` and are
-merged only for the runtime.
+merged only for the runtime. A checkpoint or diff that changes allocations
+refreshes the managed dashboard identity before reconciliation lets the
+runtime mount the secrets directory and start the dashboard.
+
+The observation overlay of each service — internal hosts and restart
+observations — rebuilds from live control-plane observations (health,
+sessions) and may change at the same reconciliation cursor. The hello echoes
+the accepted observation overlay version (a content hash both sides compute
+from service content); a ready reconnect whose version trails the control
+plane's receives a repair checkpoint at the same cursor, and the agent
+accepts the overlay as live-derived content like node configuration.
 
 Acceptance uses two local transactions for checkpoints, diffs, and node
 config. First the complete candidate is durably staged. Staging changes
