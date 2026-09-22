@@ -215,14 +215,27 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 	base := t.TempDir()
 	stale := filepath.Join(base, "old-build")
 	fresh := filepath.Join(base, "new-build")
+	active := filepath.Join(base, "long-build")
 	if err := os.MkdirAll(stale, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(fresh, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(active, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	ancient := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(stale, ancient, ancient); err != nil {
+		t.Fatal(err)
+	}
+	// A long-running attempt keeps writing to its segment file without
+	// touching the directory entry: staleness must follow the newest
+	// write, not the directory mtime.
+	if err := os.WriteFile(filepath.Join(active, "seg-0000000000.log"), []byte("output"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(active, ancient, ancient); err != nil {
 		t.Fatal(err)
 	}
 	reclaimed, err := gcStaleBuildLogSpools(base, staleBuildLogSpoolMaxAge)
@@ -237,6 +250,9 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Fatalf("fresh spool wrongly collected: %v", err)
+	}
+	if _, err := os.Stat(active); err != nil {
+		t.Fatalf("actively written spool wrongly collected despite old directory mtime: %v", err)
 	}
 	if got, err := gcStaleBuildLogSpools(filepath.Join(base, "missing"), staleBuildLogSpoolMaxAge); err != nil || got != 0 {
 		t.Fatalf("missing base must be a no-op: %d %v", got, err)

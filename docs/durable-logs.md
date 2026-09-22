@@ -72,8 +72,10 @@ damaged frame's key (frames whose key bytes are gone stay in the
 process counters only). Drop summaries carry the allocation as their
 identity; the service is derived from the allocation owner at ingest.
 Build spools are removed on clean completion and leftovers are
-garbage-collected at startup; a retried attempt re-emits its own
-output from scratch. Close always flushes once before deciding the
+garbage-collected at startup once 24 hours pass without a write
+(staleness follows the newest write in the spool, so a long-running
+attempt keeps its unshipped output); a retried attempt re-emits its
+own output from scratch. Close always flushes once before deciding the
 attempt drained, so limiter and overflow drops report even when the
 spool holds no records.
 

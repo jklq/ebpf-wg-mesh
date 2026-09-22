@@ -396,7 +396,9 @@ func buildLogSpoolDir(baseDir, buildID string) string {
 // gcStaleBuildLogSpools deletes per-attempt spool directories with
 // no writes in the last maxAge. Attempts are short-lived and a
 // retried build re-emits its own output, so leftovers are always
-// safe to delete.
+// safe to delete. Staleness follows the newest write inside the
+// spool, not the directory entry: appends touch the active segment
+// file while a long-running attempt's directory mtime stays old.
 func gcStaleBuildLogSpools(baseDir string, maxAge time.Duration) (int, error) {
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -412,11 +414,8 @@ func gcStaleBuildLogSpools(baseDir string, maxAge time.Duration) (int, error) {
 			continue
 		}
 		path := filepath.Join(baseDir, entry.Name())
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(cutoff) {
+		lastWrite, ok := spoolLastWrite(path)
+		if !ok || lastWrite.After(cutoff) {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
@@ -425,4 +424,29 @@ func gcStaleBuildLogSpools(baseDir string, maxAge time.Duration) (int, error) {
 		reclaimed++
 	}
 	return reclaimed, nil
+}
+
+// spoolLastWrite reports the newest modification time across a spool
+// directory and its files. It reports false when the directory
+// cannot be inspected, so callers leave it alone.
+func spoolLastWrite(dir string) (time.Time, bool) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	newest := info.ModTime()
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, file := range files {
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	return newest, true
 }
