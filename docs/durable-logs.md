@@ -62,7 +62,10 @@ Container output funnels through a per-allocation token bucket
 spool (agent default 256 MiB under the runtime data dir; builders use a
 per-attempt spool under the work dir, default 64 MiB). A ship loop
 forwards batches with retry and exponential backoff; the spool cursor
-commits only after acceptance. Committed sealed segments stay for
+commits only after acceptance. A read batch pins its segments against
+overflow eviction until it commits or is released: a delivered batch
+is never evicted mid-send, which would report a false gap and fail the
+commit. Committed sealed segments stay for
 the replay window after their newest record: acknowledgement is
 queue admission on the control plane, so the retained copy is what
 reconnect replay re-sends when the backend acknowledged but did not
@@ -96,7 +99,12 @@ own output from scratch and never re-opens the previous attempt's
 spool — attempt spools are keyed by build ID and lease epoch. Close
 always flushes once before deciding the
 attempt drained, so limiter and overflow drops report even when the
-spool holds no records.
+spool holds no records. A build never completes successfully with
+its transcript undelivered: if the backend never accepts the attempt's
+output within the close timeout, the reporter reports abandonment and
+the build fails — the abandoned spool is garbage-collected and the
+output would be lost, while a failed build is retried and re-emits
+its output from scratch.
 
 ## Control-plane ingest
 
@@ -120,7 +128,9 @@ loudly accounted — and the producer's retained replay window
 re-sends it on reconnect. Only a hard kill or an
 expired grace loses the unflushed remainder, and every leftover line
 and gap count lands in the loud shutdown accounting rather than
-vanishing (producers
+vanishing — including counts shed while the drain was retrying, which
+are folded into the accounted loss instead of waiting for an owed
+window that will never attach (producers
 additionally replay their unshipped spool window on reconnect).
 Platform events (build/deploy lifecycle, crash loops) ride the same
 bounded queue: retry across outages, shed with gap accounting, drain
@@ -154,7 +164,12 @@ set the policy via `UpdateProjectLogRetention`; rows written before a
 policy change keep their original expiry. When the deletion GC
 collects an expired project tombstone it purges that project's lines
 and gaps synchronously (`PurgeProjectLogs`); per-row TTL expiry is the
-backstop if the purge is lost. Reads are authorized per service before
+backstop if the purge is lost. Rows that carry neither explicit
+attribution nor a resolver entry are refused at write time and
+counted loudly: after a service or project is hard-deleted, late
+flushes must not write unattributable rows under the platform default
+TTL that the deletion purge cannot find and a short project policy
+would not bound. Reads are authorized per service before
 querying, so tenant isolation follows the existing project membership.
 
 ## Configuration
