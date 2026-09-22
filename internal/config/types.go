@@ -77,11 +77,10 @@ type BootstrapUser struct {
 }
 
 type IngressConfig struct {
-	AdminURL                 string
-	AdminListen              string
-	AllowNonLoopbackAdmin    bool
+	// XDSListen is the address the control plane serves the xDS
+	// management API on for Envoy instances.
+	XDSListen                string
 	ListenAddrs              []string
-	DisableAutomaticHTTPS    bool
 	StaticRoutes             []StaticIngressRouteConfig
 	PublicAddr               string
 	ControlPlaneHTTPUpstream string

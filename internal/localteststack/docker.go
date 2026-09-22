@@ -181,6 +181,17 @@ func isDockerActiveEndpointsError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "active endpoints")
 }
 
+func removeContainer(ctx context.Context, runner DockerRunner, name string) error {
+	if runner == nil {
+		runner = ExecDockerRunner{}
+	}
+	_, err := runner.Run(ctx, "rm", "--force", name)
+	if isDockerMissingObjectError(err) {
+		return nil
+	}
+	return err
+}
+
 func isDockerMissingObjectError(err error) bool {
 	if err == nil {
 		return false

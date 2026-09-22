@@ -2,7 +2,6 @@ package localteststack
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestStartManagedIngressRunsCaddyWithNativeJSONConfig(t *testing.T) {
+func TestStartManagedIngressRunsEnvoyWithBootstrapConfig(t *testing.T) {
 	t.Parallel()
 
 	adminListener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -21,7 +20,7 @@ func TestStartManagedIngressRunsCaddyWithNativeJSONConfig(t *testing.T) {
 	adminPort := adminListener.Addr().(*net.TCPAddr).Port
 	adminServer := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/config/" {
+			if r.URL.Path != "/ready" {
 				http.NotFound(w, r)
 				return
 			}
@@ -42,15 +41,18 @@ func TestStartManagedIngressRunsCaddyWithNativeJSONConfig(t *testing.T) {
 	publicPort := publicListener.Addr().(*net.TCPAddr).Port
 	_ = publicListener.Close()
 
+	stateDir := t.TempDir()
 	runner := &fakeIngressDockerRunner{}
 	managed, err := StartManagedIngress(context.Background(), LocalIngressConfig{
-		StateDir:      t.TempDir(),
+		StateDir:      stateDir,
 		DockerNetwork: "mesh-local",
-		ContainerName: "localteststack-caddy-test",
+		ContainerName: "localteststack-envoy-test",
+		NodeID:        "localteststack-envoy-test",
+		XDSServerAddr: "host.docker.internal:18000",
 		PublicHost:    "platform.localtest.me",
 		PublicPort:    publicPort,
 		AdminPort:     adminPort,
-		Image:         "caddy:2",
+		Image:         "envoyproxy/envoy:v1.36-latest",
 	}, runner)
 	if err != nil {
 		t.Fatalf("StartManagedIngress: %v", err)
@@ -63,45 +65,50 @@ func TestStartManagedIngressRunsCaddyWithNativeJSONConfig(t *testing.T) {
 	if len(runArgs) == 0 {
 		t.Fatal("expected docker run command")
 	}
-	if !containsSequence(runArgs, []string{"caddy", "run", "--config", "/etc/caddy/local.json"}) {
-		t.Fatalf("expected caddy run command, got %v", runArgs)
+	if !containsSequence(runArgs, []string{"envoy", "--config-path", "/etc/envoy/envoy.yaml"}) {
+		t.Fatalf("expected envoy bootstrap command, got %v", runArgs)
 	}
-	if containsArg(runArgs, "--adapter") || containsArg(runArgs, "json") {
-		t.Fatalf("expected native JSON config without adapter flag, got %v", runArgs)
+	if !containsSequence(runArgs, []string{"--volume", stateDir + "/envoy-bootstrap.yaml:/etc/envoy/envoy.yaml:ro"}) &&
+		!containsVolumeMount(runArgs, "envoy-bootstrap.yaml", "/etc/envoy/envoy.yaml:ro") {
+		t.Fatalf("expected bootstrap volume mount, got %v", runArgs)
+	}
+
+	raw, err := os.ReadFile(stateDir + "/envoy-bootstrap.yaml")
+	if err != nil {
+		t.Fatalf("ReadFile bootstrap: %v", err)
+	}
+	for _, want := range []string{
+		"id: localteststack-envoy-test",
+		"address: host.docker.internal",
+		"port_value: 18000",
+		"cluster_name: xds_cluster",
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("bootstrap missing %q:\n%s", want, raw)
+		}
+	}
+
+	for _, cfg := range []LocalIngressConfig{
+		{StateDir: stateDir, DockerNetwork: "mesh-local", ContainerName: "x", NodeID: "", XDSServerAddr: "h:1", PublicHost: "h", PublicPort: 1},
+		{StateDir: stateDir, DockerNetwork: "mesh-local", ContainerName: "x", NodeID: "n", XDSServerAddr: "", PublicHost: "h", PublicPort: 1},
+	} {
+		if _, err := StartManagedIngress(context.Background(), cfg, runner); err == nil {
+			t.Fatalf("config %+v: expected validation error", cfg)
+		}
 	}
 }
 
-func TestWriteLocalIngressBootstrapConfigRespondsUnavailableUntilSynced(t *testing.T) {
-	t.Parallel()
-
-	path, err := writeLocalIngressBootstrapConfig(LocalIngressConfig{
-		StateDir:   t.TempDir(),
-		PublicPort: 8080,
-	})
-	if err != nil {
-		t.Fatalf("writeLocalIngressBootstrapConfig: %v", err)
+func containsVolumeMount(args []string, volumeSuffix, containerPath string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "--volume" {
+			continue
+		}
+		mount := args[i+1]
+		if strings.HasSuffix(mount, "/"+volumeSuffix+":"+containerPath) || strings.HasSuffix(mount, volumeSuffix+":"+containerPath) {
+			return true
+		}
 	}
-
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-
-	routes := payload["apps"].(map[string]any)["http"].(map[string]any)["servers"].(map[string]any)["srv0"].(map[string]any)["routes"].([]any)
-	if len(routes) != 1 {
-		t.Fatalf("expected one bootstrap route, got %d", len(routes))
-	}
-	handle := routes[0].(map[string]any)["handle"].([]any)[0].(map[string]any)
-	if got := handle["handler"]; got != "static_response" {
-		t.Fatalf("expected static_response handler, got %v", got)
-	}
-	if got := handle["status_code"]; got != float64(503) {
-		t.Fatalf("expected 503 bootstrap status, got %v", got)
-	}
+	return false
 }
 
 type fakeIngressDockerRunner struct {
@@ -136,15 +143,6 @@ func (f *fakeIngressDockerRunner) firstCommand(name string) []string {
 		}
 	}
 	return nil
-}
-
-func containsArg(args []string, want string) bool {
-	for _, arg := range args {
-		if arg == want {
-			return true
-		}
-	}
-	return false
 }
 
 func containsSequence(args []string, want []string) bool {

@@ -117,10 +117,14 @@ Preserve the existing digest-pinned build completion and deployment-action behav
 ## 2.7a xDS control plane and Caddy cutover
 
 Was: 5.2 (split)
-Status: open
+Status: in review
 Depends on: none. One Caddy is currently a product outage and the wrong apply protocol.
 
 Design-partner minimum.
+
+Implemented: `internal/controlplane/xds` is the xDS authority. `Build` derives LDS/CDS/EDS/RDS deterministically from CockroachDB-backed healthy backends plus static routes; the version is the hex SHA-256 of the canonical inputs, so replicas racing to compute it produce identical bytes and converge on one publication-row winner via compare-and-swap under the singleton lease guard. The publication row carries the canonical inputs, and every replica runs a follow loop that rebuilds and serves the durable publication from its own xDS socket, so the xDS endpoint is shared: an Envoy whose replica dies or is replaced reaches the current snapshot through any remaining replica's address (`RenderBootstrap` emits one xDS cluster endpoint per configured address). Snapshots are consistency-checked before serving, so a rollout never publishes partially. Only ready, non-draining `serving` allocations are routed (multiple replicas per service); draining flips the allocation out of EDS while the container still exists, and the rolling reconciler waits for real ingress convergence before drain: subscriber apply state is durable (`xds_node_observations`, upserted per replica, retained across disconnects), and a withdrawn allocation keeps running until every known Envoy has fully applied the current snapshot. The ADS server tracks per-node applied versions and NACKs, seeds (re)connecting nodes with the current snapshot, and retains last-known-good on NACK. Caddy is removed from the production path, localteststack (now `envoyproxy/envoy:v1.36-latest` with an ADS-only bootstrap), and the VM harness (now an `xds-probe` subscribing to both replicas). One-time proof against real Envoy v1.36: subscribe, ACK on all four types with zero NACKs, traffic routed for bare and host:port Host forms, unknown hosts 404. Tests cover snapshot determinism (plus a golden version), input round-trip rebuilds, NACK retention, delayed apply, restart resubscribe, split-ownership convergence with byte-identical service, lease-free follower serving, draining removal before shutdown, publication-row CAS, node-observation retention, and the drain gate on unapplied withdrawals.
+
+Remaining: SDS is served but empty until 2.8 pushes certificates (Envoy serves plaintext until then). The xDS transport is plaintext without client auth and must be network-isolated until mTLS lands with the fleet work. A rollout waits for every known Envoy to apply; an Envoy that never returns keeps retaining its withdrawn allocations until 2.7b adds a configured availability policy (fleet tracking, per-instance health, and config diff also stay 2.7b). No console ingress-status UI and no status RPC; see `docs/frontend-handoff/2.7a.md`.
 
 Prompt:
 

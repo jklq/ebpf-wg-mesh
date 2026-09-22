@@ -21,6 +21,10 @@ type countingFailoverIngress struct {
 
 func (*countingFailoverIngress) Sync(context.Context) error { return nil }
 
+func (*countingFailoverIngress) Converged(context.Context) (bool, error) {
+	return true, nil
+}
+
 func (i *countingFailoverIngress) RequestSync() {
 	i.requests.Add(1)
 }

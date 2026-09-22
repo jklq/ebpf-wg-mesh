@@ -30,19 +30,30 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 		}
 	}
 
+	convergedForDrain := true
 	if len(waitingForIngress) > 0 {
 		if d.ingress != nil {
 			if err := d.ingress.Sync(ctx); err != nil {
 				return fmt.Errorf("converge ingress before drain: %w", err)
 			}
-		}
-		for _, serviceID := range waitingForIngress {
-			confirmed, err := d.confirmRolloutIngressConverged(ctx, serviceID, now)
+			converged, err := d.ingress.Converged(ctx)
 			if err != nil {
-				return fmt.Errorf("confirm ingress convergence for service %s: %w", serviceID, err)
+				return fmt.Errorf("check ingress convergence before drain: %w", err)
 			}
-			changed = changed || confirmed.Changed
+			convergedForDrain = converged
 		}
+		if convergedForDrain {
+			for _, serviceID := range waitingForIngress {
+				confirmed, err := d.confirmRolloutIngressConverged(ctx, serviceID, now)
+				if err != nil {
+					return fmt.Errorf("confirm ingress convergence for service %s: %w", serviceID, err)
+				}
+				changed = changed || confirmed.Changed
+			}
+		}
+		// Not converged: subscribers have not applied the withdrawal yet.
+		// Retain the old allocations (stale ingress may still route to
+		// them) and retry confirmation on the next cycle.
 	}
 
 	if changed {

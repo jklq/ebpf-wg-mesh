@@ -5,7 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/xds"
 	"errors"
 	"strings"
 	"sync"
@@ -235,12 +235,19 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 	if len(backends) != 1 {
 		t.Fatalf("expected only the ready replica in ingress, got %+v", backends)
 	}
-	syncer := routing.NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
-	cfg, err := syncer.Render(ctx)
-	if err != nil {
-		t.Fatal(err)
+	renderEDS := func() int {
+		t.Helper()
+		current, err := store.routing.HealthyIngressBackends(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap, err := xds.Build(xds.BuildInput{Backends: current, ListenAddrs: []string{":8080"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return edsEndpointCount(t, snap)
 	}
-	if got := len(cfg.Apps.HTTP.Servers["srv0"].Routes[0].Handle[0].Upstreams); got != 1 {
+	if got := renderEDS(); got != 1 {
 		t.Fatalf("expected 1 ingress upstream, got %d", got)
 	}
 
@@ -250,11 +257,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatalf("promote second ready replica: %v", err)
 	}
-	cfg, err = syncer.Render(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := len(cfg.Apps.HTTP.Servers["srv0"].Routes[0].Handle[0].Upstreams); got != 2 {
+	if got := renderEDS(); got != 2 {
 		t.Fatalf("expected traffic to be distributed across 2 ready replicas, got %d", got)
 	}
 

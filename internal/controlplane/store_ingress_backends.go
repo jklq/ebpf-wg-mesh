@@ -9,7 +9,7 @@ import (
 
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
-	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/restartpolicy"
 )
 
@@ -19,7 +19,7 @@ type ingressLiveReader interface {
 	OverlayAllocation(deliverycore.AllocationRecord) deliverycore.AllocationRecord
 }
 
-func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]routing.Backend, error) {
+func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]xds.Backend, error) {
 	_ = ctx
 	live := s.live
 	if live == nil || !live.Publishing() {
@@ -28,7 +28,7 @@ func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]rout
 	return healthyIngressBackends(live.Durable(), live), nil
 }
 
-func healthyIngressBackends(durable journal.DurableState, live ingressLiveReader) []routing.Backend {
+func healthyIngressBackends(durable journal.DurableState, live ingressLiveReader) []xds.Backend {
 	type row struct {
 		hostname, allocationID, ipv4, ipv6 string
 		port                               int32
@@ -63,14 +63,14 @@ func healthyIngressBackends(durable journal.DurableState, live ingressLiveReader
 		}
 		return strings.Compare(a.allocationID, b.allocationID)
 	})
-	var backends []routing.Backend
+	var backends []xds.Backend
 	for _, item := range rows {
 		if slices.Contains(item.ipv4Ports, item.port) && net.ParseIP(item.ipv4) != nil {
-			backends = append(backends, routing.Backend{
+			backends = append(backends, xds.Backend{
 				Domain: item.hostname, Upstream: net.JoinHostPort(item.ipv4, strconv.Itoa(int(item.port))), AllocationID: item.allocationID,
 			})
 		} else if slices.Contains(item.ipv6Ports, item.port) && net.ParseIP(item.ipv6) != nil {
-			backends = append(backends, routing.Backend{
+			backends = append(backends, xds.Backend{
 				Domain: item.hostname, Upstream: net.JoinHostPort(item.ipv6, strconv.Itoa(int(item.port))), AllocationID: item.allocationID,
 			})
 		}

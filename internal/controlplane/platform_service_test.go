@@ -62,11 +62,19 @@ func (noopIngress) Sync(ctx context.Context) error { return nil }
 
 func (noopIngress) RequestSync() {}
 
+func (noopIngress) Converged(ctx context.Context) (bool, error) {
+	return true, nil
+}
+
 type countingIngress struct {
 	requests atomic.Int32
 }
 
 func (c *countingIngress) Sync(ctx context.Context) error { return nil }
+
+func (c *countingIngress) Converged(ctx context.Context) (bool, error) {
+	return true, nil
+}
 
 func (c *countingIngress) RequestSync() {
 	c.requests.Add(1)

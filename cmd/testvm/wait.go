@@ -180,9 +180,9 @@ func waitForAgents(ctx context.Context, userCtx context.Context, client platform
 func dumpRemoteDiagnostics(ctx context.Context, sshKeyPath string, host hostInfo) {
 	cmd := strings.Join([]string{
 		"echo '=== systemctl ==='",
-		"systemctl status ebpf-wg-mesh-agent ebpf-wg-mesh-controlplane ebpf-wg-mesh-controlplane-replica ebpf-wg-mesh-ingress-probe --no-pager || true",
+		"systemctl status ebpf-wg-mesh-agent ebpf-wg-mesh-controlplane ebpf-wg-mesh-controlplane-replica ebpf-wg-mesh-xds-probe --no-pager || true",
 		"echo '=== journal (agent/controlplane, last 80) ==='",
-		"journalctl -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-controlplane-replica -u ebpf-wg-mesh-ingress-probe --no-pager -n 80 || true",
+		"journalctl -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-controlplane-replica -u ebpf-wg-mesh-xds-probe --no-pager -n 80 || true",
 		"echo '=== connectivity ==='",
 		"ip -brief addr || true",
 		"ss -ltn | head -40 || true",

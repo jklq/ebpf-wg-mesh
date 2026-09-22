@@ -31,10 +31,9 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
 		return err
 	}
-	if cfg.Ingress.DisableAutomaticHTTPS {
-		return errors.New("controlplane.ingress.disableAutomaticHTTPS leaves public certificates incomplete in production")
-	}
-	if err := validateProductionCaddyAdmin(cfg.Ingress); err != nil {
+	// TLS termination arrives with the domain/certificate lifecycle (2.8),
+	// which pushes materials over SDS. Until then Envoy serves plaintext.
+	if err := validateProductionXDSListen(cfg.Ingress); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.Health.Listen) == "" {
@@ -123,19 +122,23 @@ func insecureDashboardCookieEnv(env map[string]string) bool {
 	return publicBase != "" && !strings.HasPrefix(strings.ToLower(publicBase), "https://")
 }
 
-func validateProductionCaddyAdmin(cfg IngressConfig) error {
-	adminURL, err := url.Parse(cfg.AdminURL)
+func validateProductionXDSListen(cfg IngressConfig) error {
+	host, _, err := net.SplitHostPort(cfg.XDSListen)
 	if err != nil {
-		return fmt.Errorf("controlplane.ingress.adminUrl must be a valid absolute URL: %w", err)
+		return fmt.Errorf("controlplane.ingress.xdsListen must be host:port: %w", err)
 	}
-	host, _, err := net.SplitHostPort(cfg.AdminListen)
-	if err != nil {
-		return fmt.Errorf("controlplane.ingress.adminListen must be host:port: %w", err)
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return errors.New("controlplane.ingress.xdsListen must bind an explicit host in production")
 	}
-	if isLoopbackHost(adminURL.Hostname()) && isLoopbackHost(host) {
-		return nil
+	// The xDS transport is plaintext and unauthenticated until the fleet
+	// work adds mTLS: a wildcard bind would put the management API on every
+	// interface, where any reachable client can register node observations
+	// and block rollouts. Bind the isolated network explicitly.
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return errors.New("controlplane.ingress.xdsListen must not bind a wildcard address in production; the xDS transport is unauthenticated until mTLS")
 	}
-	return errors.New("controlplane.ingress remote Caddy administration is not allowed in production")
+	return nil
 }
 
 func validateProductionTLSIdentity(field string, names []string) error {
@@ -310,18 +313,11 @@ func dependencyClassForSecretKeys(cfg SecretKeysConfig) string {
 }
 
 func dependencyClassForAdmin(cfg IngressConfig) string {
-	adminURL, err := url.Parse(cfg.AdminURL)
+	host, _, err := net.SplitHostPort(cfg.XDSListen)
 	if err != nil {
 		return DependencyUnset
 	}
-	host, _, err := net.SplitHostPort(cfg.AdminListen)
-	if err != nil {
-		if isLoopbackHost(adminURL.Hostname()) {
-			return DependencyLoopback
-		}
-		return DependencyRemote
-	}
-	if isLoopbackHost(adminURL.Hostname()) && isLoopbackHost(host) {
+	if isLoopbackHost(host) {
 		return DependencyLoopback
 	}
 	return DependencyRemote
