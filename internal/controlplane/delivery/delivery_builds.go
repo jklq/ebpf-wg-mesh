@@ -468,11 +468,34 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 	return rec, err
 }
 
+// errSourceRevisionSuperseded reports an enqueue request for a revision that
+// is no longer the binding's latest observed commit. Such requests create no
+// work at all.
+var errSourceRevisionSuperseded = errors.New("source revision superseded by a newer observed revision")
+
+// supersedeQueuedBuildsTx retires still-queued builds so only the newest
+// request proceeds to build or deploy.
+func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE build_runs
+		    SET state = $2,
+		        finished_at = $3,
+		        failure_reason = $4
+		  WHERE service_id = $1
+		    AND state = $5`,
+		serviceID, BuildStateSuperseded, now, "superseded by newer queued build", BuildStateQueued,
+	)
+	return err
+}
+
 // enqueueBuildFromSourceStateTx queues a build for verified source state, or
 // skips the build when the same source already produced an image: the
 // existing artifact rolls out with the service's current spec instead of
-// rebuilding. Reuse returns an empty build, the scheduled deployment, and
-// reused=true.
+// rebuilding. Reuse is only served for the binding's latest observed
+// revision; a redelivered or retried older revision is refused with
+// errSourceRevisionSuperseded before it can regress the rollout or supersede
+// queued newer work. Reuse returns an empty build, the scheduled deployment,
+// and reused=true.
 func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, DeploymentRecord, bool, error) {
 	s := d.store
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
@@ -496,21 +519,26 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	}
 
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE build_runs
-		    SET state = $2,
-		        finished_at = $3,
-		        failure_reason = $4
-		  WHERE service_id = $1
-		    AND state = $5`,
-		service.ID, BuildStateSuperseded, now, "superseded by newer queued build", BuildStateQueued,
-	); err != nil {
+	artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe)
+	if err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-
-	if artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe); err != nil {
+	if ok {
+		// Reuse deploys an image, so it only serves the binding's latest
+		// observed revision: a redelivered or retried older revision must
+		// never regress the rollout or supersede queued newer work.
+		latest, err := s.sourceStore.LatestSourceRevisionByBindingIDTx(ctx, tx, revision.SourceBindingID)
+		if err != nil {
+			return BuildRunRecord{}, DeploymentRecord{}, false, err
+		}
+		if latest.ID != revision.ID {
+			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
+		}
+	}
+	if err := supersedeQueuedBuildsTx(ctx, tx, service.ID, now); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
-	} else if ok {
+	}
+	if ok {
 		dep, err := d.reuseBuildArtifactTx(ctx, tx, service, revision, artifact, actor, now)
 		if err != nil {
 			return BuildRunRecord{}, DeploymentRecord{}, false, err

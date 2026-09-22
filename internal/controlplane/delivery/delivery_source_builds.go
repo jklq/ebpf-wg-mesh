@@ -36,6 +36,13 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 		}
 		var dep DeploymentRecord
 		build, dep, reused, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook})
+		if errors.Is(err, errSourceRevisionSuperseded) {
+			// A late webhook or retried older revision creates no work:
+			// the binding has moved on to a newer commit. Deliberate
+			// redeploys of old images go through deployment actions.
+			result = source.QueuedBuild{Superseded: true}
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -47,6 +54,9 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 	})
 	if err != nil {
 		return source.QueuedBuild{}, err
+	}
+	if result.Superseded {
+		return result, nil
 	}
 	scope := logs.ServiceScope{
 		EnvironmentID:     service.EnvironmentID,
