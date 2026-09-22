@@ -254,25 +254,20 @@ func waitForSingletonLease(ctx context.Context, keyPath, host, previousHolder st
 	return current, err
 }
 
-func ingressRequestCount(ctx context.Context, keyPath, host string) (int64, error) {
-	output, err := runRemoteCommand(ctx, keyPath, host, "test -f /var/lib/ebpf-wg-mesh/xds-probe/requests.log && wc -l < /var/lib/ebpf-wg-mesh/xds-probe/requests.log")
-	if err != nil {
-		return 0, err
-	}
-	fields := strings.Fields(string(output))
-	for index := len(fields) - 1; index >= 0; index-- {
-		count, parseErr := strconv.ParseInt(fields[index], 10, 64)
-		if parseErr == nil {
-			return count, nil
-		}
-	}
-	return 0, fmt.Errorf("parse ingress request count %q", strings.TrimSpace(string(output)))
-}
-
-func waitForIngressTakeover(ctx context.Context, keyPath, host string, previousCount int64, hostname string) error {
+// waitForIngressTakeover waits until the probe's snapshot proves the ingress
+// publication survived the singleton takeover. The stopped primary's endpoint
+// must no longer contribute anything to latest.json — the probe drops an
+// endpoint's contribution when its subscription dies, so this pins the
+// snapshot as post-disconnect evidence — while the hostname stays advertised,
+// which then can only come from the surviving replica's live subscription.
+// Deliberately no response-count condition: a healthy takeover republishes
+// identical content, whose content-addressed version is unchanged and
+// suppressed from re-publication, so the follower never sends a fresh
+// response and counting responses would wait forever.
+func waitForIngressTakeover(ctx context.Context, keyPath, host, hostname, stoppedProbeAddr string) error {
 	command := fmt.Sprintf(
-		"test $(wc -l < /var/lib/ebpf-wg-mesh/xds-probe/requests.log) -gt %d && grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json",
-		previousCount,
+		"! grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json && grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json",
+		shellQuote(stoppedProbeAddr),
 		shellQuote(hostname),
 	)
 	return waitForRemoteCommand(ctx, keyPath, host, command)

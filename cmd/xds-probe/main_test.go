@@ -209,8 +209,10 @@ func TestProbeDropsWithdrawnResources(t *testing.T) {
 }
 
 // TestProbeDropsResourcesOfDisconnectedEndpoints pins the takeover evidence
-// semantics: an endpoint whose subscription dies must stop contributing, so a
-// presence check cannot pass on data only a dead endpoint ever advertised.
+// semantics: an endpoint whose subscription dies must stop contributing —
+// resources and versions alike — so a presence check cannot pass on data only
+// a dead endpoint ever advertised, and the harness can prove snapshot contents
+// are post-disconnect by requiring the dead endpoint's address to be absent.
 func TestProbeDropsResourcesOfDisconnectedEndpoints(t *testing.T) {
 	t.Parallel()
 
@@ -234,7 +236,7 @@ func TestProbeDropsResourcesOfDisconnectedEndpoints(t *testing.T) {
 
 	waitForSnapshot(t, dir, probeSnapshot{Hostnames: []string{"a.example.com", "b.example.com"}})
 	stopA()
-	waitForSnapshotWithout(t, dir, "a.example.com", "10.0.0.10:8080")
+	waitForSnapshotWithout(t, dir, "a.example.com", "10.0.0.10:8080", addrA)
 	waitForSnapshot(t, dir, probeSnapshot{Hostnames: []string{"b.example.com"}, Endpoints: []string{"10.0.0.11:8080"}})
 }
 

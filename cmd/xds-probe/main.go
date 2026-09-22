@@ -1,11 +1,11 @@
 // Command xds-probe subscribes to control-plane xDS endpoints the way an
 // Envoy instance would and records what it observes for the VM harness:
-// every response is appended to requests.log and the union of the hostnames
-// and endpoints each reachable endpoint currently advertises lands in
-// latest.json. SotW responses carry the complete resource set for their type,
-// so a withdrawal replaces the endpoint's set instead of accumulating; an
-// endpoint whose subscription drops stops contributing entirely, and versions
-// are kept per endpoint as last-seen diagnostics.
+// every response is appended to requests.log and latest.json holds the union
+// of the hostnames and endpoints each reachable endpoint currently
+// advertises. State-of-the-world responses carry the complete resource set
+// for their type, so a withdrawal replaces the endpoint's set instead of
+// accumulating; an endpoint whose subscription drops stops contributing
+// entirely, so nothing in latest.json is backed only by a dead endpoint.
 package main
 
 import (
@@ -190,11 +190,12 @@ func (p *probe) observe(addr string, resp *discoveryv3.DiscoveryResponse) {
 	p.mu.Unlock()
 }
 
-// forget drops an endpoint's resource sets when its subscription ends and
-// recomputes the snapshot. A disconnected endpoint can neither confirm nor
-// withdraw anything, so its last response must not keep presenting withdrawn
-// resources as published (which would let presence checks pass on stale data).
-// Versions stay behind as last-seen diagnostics.
+// forget drops everything an endpoint contributed when its subscription
+// ends and recomputes the snapshot. A disconnected endpoint can neither
+// confirm nor withdraw anything, so its last response must not keep
+// presenting withdrawn resources as published (which would let presence
+// checks pass on stale data): its absence from the snapshot is also what
+// lets the harness prove snapshot contents are post-disconnect evidence.
 func (p *probe) forget(addr string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -202,6 +203,7 @@ func (p *probe) forget(addr string) {
 		return
 	}
 	delete(p.resources, addr)
+	delete(p.versions, addr)
 	if err := writeLatest(filepath.Join(p.cfg.dir, "latest.json"), p.snapshotLocked()); err != nil {
 		log.Printf("xds-probe %s: write latest.json: %v", addr, err)
 	}

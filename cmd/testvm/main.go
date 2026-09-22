@@ -530,11 +530,6 @@ func main() {
 			_ = collectArtifacts(ctx, repoRoot, artifactRoot, sshKeyPath, hosts)
 			failf("run cross-replica notification scenario: %v", err)
 		}
-		ingressRequestsBeforeTakeover, err := ingressRequestCount(ctx, sshKeyPath, controlplane.PublicIPv4)
-		if err != nil {
-			failf("read ingress request count before takeover: %v", err)
-		}
-
 		infof("stopping primary controlplane to force singleton takeover")
 		if _, err := runRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl stop "+primaryControlPlaneService); err != nil {
 			failf("stop primary controlplane: %v", err)
@@ -549,10 +544,10 @@ func main() {
 		if replicaLease.Token <= primaryLease.Token {
 			failf("singleton fencing token did not advance on takeover: before=%d after=%d", primaryLease.Token, replicaLease.Token)
 		}
-		if err := waitForIngressTakeover(ctx, sshKeyPath, controlplane.PublicIPv4, ingressRequestsBeforeTakeover, fixture.Hostname); err != nil {
+		if err := waitForIngressTakeover(ctx, sshKeyPath, controlplane.PublicIPv4, fixture.Hostname, "127.0.0.1:"+primaryXDSPort); err != nil {
 			failf("wait for ingress convergence after takeover: %v", err)
 		}
-		infof("second controlplane took singleton lease holder=%s token=%d and republished xds", replicaLease.Holder, replicaLease.Token)
+		infof("second controlplane took singleton lease holder=%s token=%d and serves the xds publication", replicaLease.Holder, replicaLease.Token)
 
 		if err := cleanupCrossReplicaFixture(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, fixture); err != nil {
 			failf("clean up cross-replica fixture: %v", err)
