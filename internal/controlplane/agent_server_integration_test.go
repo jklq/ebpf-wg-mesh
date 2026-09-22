@@ -166,7 +166,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		SoftwareVersion:         "test",
 		SessionId:               sessionID,
 		SessionIncarnation:      1,
-		ClusterId:               clusterID, LocalStoreId: "test-store-" + agentID, InitializationState: "ready",
+		ClusterId:               clusterID, LocalStoreId: "test-store-" + agentID, InitializationState: "uninitialized",
 	}}}); err != nil {
 		t.Fatalf("send hello: %v", err)
 	}
@@ -290,26 +290,43 @@ func mustDecodePEMBlock(t *testing.T, raw, blockType string) []byte {
 
 func recvDesiredState(t *testing.T, stream agentv1.AgentControl_SyncClient) *agentv1.DesiredNodeState {
 	t.Helper()
-	type result struct {
-		message *agentv1.AgentServerMessage
-		err     error
-	}
-	resultCh := make(chan result, 1)
-	go func() {
-		message, err := stream.Recv()
-		resultCh <- result{message: message, err: err}
-	}()
-	select {
-	case received := <-resultCh:
-		if received.err != nil {
-			t.Fatalf("receive desired state: %v", received.err)
+	// 2.10: batches may interleave node config, credentials, and replicas
+	// around allocation checkpoints and diffs. Skip non-allocation payloads
+	// and synthesize a checkpoint view from diff starts/updates for assertions.
+	deadline := time.After(10 * time.Second)
+	for {
+		type result struct {
+			message *agentv1.AgentServerMessage
+			err     error
 		}
-		if received.message.GetDesiredState() == nil {
-			t.Fatalf("expected desired state, got %+v", received.message)
+		resultCh := make(chan result, 1)
+		go func() {
+			message, err := stream.Recv()
+			resultCh <- result{message: message, err: err}
+		}()
+		select {
+		case received := <-resultCh:
+			if received.err != nil {
+				t.Fatalf("receive desired state: %v", received.err)
+			}
+			if checkpoint := received.message.GetDesiredState(); checkpoint != nil {
+				return checkpoint
+			}
+			if diff := received.message.GetAllocationDiff(); diff != nil {
+				synthesized := &agentv1.DesiredNodeState{
+					AgentId:              diff.GetAgentId(),
+					AuthorityEpoch:       diff.GetAuthorityEpoch(),
+					ReconciliationCursor: diff.GetTargetRevision(),
+				}
+				synthesized.Services = append(synthesized.Services, diff.GetStarts()...)
+				synthesized.Services = append(synthesized.Services, diff.GetUpdates()...)
+				return synthesized
+			}
+			// Skip node config, credentials, and replica messages.
+			continue
+		case <-deadline:
+			t.Fatal("timeout waiting for desired state")
+			return nil
 		}
-		return received.message.GetDesiredState()
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for desired state")
-		return nil
 	}
 }
