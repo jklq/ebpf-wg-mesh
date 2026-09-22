@@ -380,6 +380,35 @@ func TestLimiterUnlimitedWhenRateIsZero(t *testing.T) {
 	}
 }
 
+func TestLimiterRecyclesKeysPastTheCap(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	l := newLimiter(1, 1, 2, func() time.Time { return now })
+
+	if !l.Allow("a") {
+		t.Fatal("first key denied")
+	}
+	now = now.Add(time.Second)
+	if !l.Allow("b") {
+		t.Fatal("second key denied")
+	}
+	now = now.Add(time.Second)
+	// Cap reached: a new key must recycle the least recently used
+	// bucket instead of being rejected for the rest of the process.
+	if !l.Allow("c") {
+		t.Fatal("new key permanently rejected past the key cap")
+	}
+	if l.Keys() > 2 {
+		t.Fatalf("key table must stay bounded, got %d", l.Keys())
+	}
+	now = now.Add(time.Second)
+	// The evicted key returns with a fresh bucket instead of being
+	// permanently rejected.
+	if !l.Allow("a") {
+		t.Fatal("recycled key permanently rejected")
+	}
+}
+
 func TestCursorRoundTrip(t *testing.T) {
 	t.Parallel()
 	ts := time.Date(2026, 9, 1, 12, 30, 0, 123, time.UTC)

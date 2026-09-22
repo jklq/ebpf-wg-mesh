@@ -8,7 +8,9 @@ import (
 // Limiter is a per-key token bucket. Agents use one key per
 // allocation, builders one key per build, and the control plane one
 // key per allocation as an ingest guard. Drops are counted per key
-// so producers can persist them as explicit read gaps.
+// so producers can persist them as explicit read gaps. The key table
+// is bounded and recycles its least recently used bucket, so a
+// long-lived process never permanently rejects a new key.
 type Limiter struct {
 	ratePerSec float64
 	burst      float64
@@ -62,9 +64,8 @@ func (l *Limiter) Allow(key string) bool {
 	defer l.mu.Unlock()
 	bucket, ok := l.buckets[key]
 	if !ok {
-		if len(l.buckets) >= l.maxKeys {
-			l.dropped[key]++
-			return false
+		for len(l.buckets) >= l.maxKeys {
+			l.evictOldestLocked()
 		}
 		bucket = &tokenBucket{tokens: l.burst, updated: now}
 		l.buckets[key] = bucket
@@ -83,6 +84,24 @@ func (l *Limiter) Allow(key string) bool {
 	}
 	bucket.tokens--
 	return true
+}
+
+// evictOldestLocked recycles the least recently used bucket so a key
+// is never permanently rejected just because the process outlived the
+// key cap. Evicted keys return to a full burst, which for a producer
+// guard is the right failure direction.
+func (l *Limiter) evictOldestLocked() {
+	var victim string
+	var oldest time.Time
+	first := true
+	for key, bucket := range l.buckets {
+		if first || bucket.updated.Before(oldest) {
+			victim, oldest, first = key, bucket.updated, false
+		}
+	}
+	if victim != "" {
+		delete(l.buckets, victim)
+	}
 }
 
 // DroppedSince returns the denied count for key without clearing it.
