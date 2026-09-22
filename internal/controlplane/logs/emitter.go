@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -206,9 +207,8 @@ const (
 	StagePostDeploy     = "post-deploy"
 )
 
-var synthSequenceCounter uint64
+var synthSequenceCounter atomic.Uint64
 
 func NextSequence() uint64 {
-	synthSequenceCounter++
-	return synthSequenceCounter
+	return synthSequenceCounter.Add(1)
 }
