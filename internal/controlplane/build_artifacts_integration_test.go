@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -347,6 +348,117 @@ func TestReleaseEnvironmentSkipsUnchangedDirectImageTags(t *testing.T) {
 	if got := currentDeploymentForTest(t, store, ctx, serviceB.ID).ImageDigest; got != testPinnedRef("example.test/b", "b") {
 		t.Fatalf("svc-b image = %q, want %q", got, testPinnedRef("example.test/b", "b"))
 	}
+}
+
+// TestReleaseEnvironmentResolvesOutsideSchedulerLock proves a slow or
+// unreachable registry cannot stall scheduler-serialized mutations:
+// tag resolution runs outside the scheduler lock and only the release
+// transaction serializes with other scheduler work.
+func TestReleaseEnvironmentResolvesOutsideSchedulerLock(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, projects[0].ID)
+
+	const slowTag = "example.test/slow:1"
+	resolver := &blockingTagResolver{
+		StaticResolver: registry.StaticResolver{Tags: map[string]string{
+			"example.test/a:1": testDigest("a"),
+			"example.test/b:1": testDigest("b"),
+			slowTag:            testDigest("c"),
+		}},
+		block:   slowTag,
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+
+	serviceB, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-b",
+		directImageServiceSpec("example.test/b:1", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})}), "node-1")
+	if err != nil {
+		t.Fatalf("CreateService svc-b: %v", err)
+	}
+	// The pending change deploys the blocking tag, so the release
+	// resolves it and hangs in the "registry".
+	if _, _, err := updateService(ctx, store, "user-1", serviceB.ID, "", directImageServiceSpec(slowTag, &platformv1.ServiceRuntime{
+		Ports: runtimePortsFromInts([]int32{8081}), Env: map[string]string{"STAGE": "two"},
+	})); err != nil {
+		t.Fatalf("updateService svc-b: %v", err)
+	}
+
+	releaseErr := make(chan error, 1)
+	go func() {
+		_, err := delivery.ReleaseEnvironment(ctx, testUser("user-1"), environmentID)
+		releaseErr <- err
+	}()
+	select {
+	case <-resolver.entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("release never reached the registry")
+	}
+
+	// While the registry is slow, scheduler-serialized mutations still
+	// run: creating another service must not wait for the resolver.
+	created := make(chan error, 1)
+	go func() {
+		_, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-a",
+			directImageServiceSpec("example.test/a:1", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}), "node-1")
+		created <- err
+	}()
+	select {
+	case err := <-created:
+		if err != nil {
+			close(resolver.unblock)
+			t.Fatalf("concurrent CreateService: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(resolver.unblock)
+		t.Fatal("scheduler mutation stalled behind registry resolution")
+	}
+	close(resolver.unblock)
+
+	if err := <-releaseErr; err != nil {
+		t.Fatalf("ReleaseEnvironment: %v", err)
+	}
+	pinned := testPinnedRef("example.test/slow", "c")
+	if got := currentDeploymentForTest(t, store, ctx, serviceB.ID).ImageDigest; got != pinned {
+		t.Fatalf("svc-b image = %q, want pinned %q", got, pinned)
+	}
+}
+
+// blockingTagResolver hangs on one tag until released, simulating a slow
+// or unreachable registry during resolution.
+type blockingTagResolver struct {
+	registry.StaticResolver
+	block   string
+	entered chan struct{}
+	unblock chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingTagResolver) Resolve(ctx context.Context, ref string) (registry.ResolvedImage, error) {
+	if strings.TrimSpace(ref) == r.block {
+		r.once.Do(func() { close(r.entered) })
+		select {
+		case <-r.unblock:
+		case <-ctx.Done():
+			return registry.ResolvedImage{}, ctx.Err()
+		}
+	}
+	return r.StaticResolver.Resolve(ctx, ref)
 }
 
 // TestLateWebhookRevisionDoesNotRegressDeployedImage proves an out-of-order
