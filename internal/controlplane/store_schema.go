@@ -446,9 +446,9 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE INDEX idx_build_artifacts_service_reuse ON build_artifacts(service_id, reuse_key) WHERE reuse_key <> ''`,
-	`CREATE UNIQUE INDEX idx_build_artifacts_service_ref ON build_artifacts(service_id, image_ref)`,
+	`CREATE UNIQUE INDEX idx_build_artifacts_service_direct_ref ON build_artifacts(service_id, image_ref) WHERE kind = 'direct_image'`,
 	`CREATE INDEX idx_build_artifacts_service_created ON build_artifacts(service_id, created_at DESC, id)`,
-	`CREATE INDEX idx_build_artifacts_build ON build_artifacts(build_id, id) WHERE build_id IS NOT NULL`,
+	`CREATE UNIQUE INDEX idx_build_artifacts_build ON build_artifacts(build_id) WHERE build_id IS NOT NULL`,
 	`CREATE TABLE github_installations (
 			installation_id INT8 PRIMARY KEY,
 			account_login STRING NOT NULL,

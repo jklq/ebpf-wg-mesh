@@ -495,3 +495,67 @@ func TestPruneBuildArtifactsKeepsRollbackMaterial(t *testing.T) {
 		}
 	}
 }
+
+// TestRepeatedBuildsOfSameImageKeepOwnProvenance: when a later build of a
+// different revision reports the same manifest digest, each successful
+// build keeps its own artifact row so provenance (commit, build, actor)
+// stays with the build that produced the image instead of collapsing into
+// the first artifact recorded for that image.
+func TestRepeatedBuildsOfSameImageKeepOwnProvenance(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-1: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	image := testPinnedRef("registry.example.test/platform/web", "9")
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image, ""); err != nil {
+		t.Fatalf("completeBuild commit-1: %v", err)
+	}
+	build2, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-2: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
+	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", image, ""); err != nil {
+		t.Fatalf("completeBuild commit-2: %v", err)
+	}
+
+	artifacts, err := testDelivery(store).ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil {
+		t.Fatalf("ListServiceArtifacts: %v", err)
+	}
+	byBuild := map[string]deliverycore.BuildArtifactRecord{}
+	for _, artifact := range artifacts {
+		byBuild[artifact.BuildID] = artifact
+	}
+	if len(artifacts) != 2 || len(byBuild) != 2 {
+		t.Fatalf("artifacts = %+v, want one artifact per successful build", artifacts)
+	}
+	first, second := byBuild[build1.ID], byBuild[build2.ID]
+	if first.ID == second.ID {
+		t.Fatalf("both builds share artifact %s, want distinct rows", first.ID)
+	}
+	if first.ImageRef != image || second.ImageRef != image {
+		t.Fatalf("artifact images = (%q, %q), want %q", first.ImageRef, second.ImageRef, image)
+	}
+	if first.CommitSHA != "commit-1" || second.CommitSHA != "commit-2" {
+		t.Fatalf("artifact provenance = (%q, %q), want (commit-1, commit-2)", first.CommitSHA, second.CommitSHA)
+	}
+	completed, err := store.reads.BuildByID(ctx, build2.ID)
+	if err != nil {
+		t.Fatalf("BuildByID: %v", err)
+	}
+	if completed.ArtifactID != second.ID {
+		t.Fatalf("second build artifact = %q, want its own artifact %q (not the earlier %q)", completed.ArtifactID, second.ID, first.ID)
+	}
+}

@@ -146,7 +146,7 @@ func (d *Delivery) directImageArtifactTx(ctx context.Context, tx *sql.Tx, servic
 	if pre.keepStored || pre.resolved.Ref == "" || pre.input != strings.TrimSpace(input) {
 		return BuildArtifactRecord{}, errDirectImageChanged
 	}
-	return d.store.insertBuildArtifactTx(ctx, tx, insertArtifactParams{
+	return d.store.insertDirectImageArtifactTx(ctx, tx, insertArtifactParams{
 		ServiceID:           serviceID,
 		Kind:                BuildArtifactDirectImage,
 		ImageRepository:     pre.resolved.Repository,
