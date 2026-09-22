@@ -598,6 +598,7 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 		return false, fmt.Errorf("decode desired candidate: %w", err)
 	}
 	clean, _ := splitDesiredCredentials(incoming)
+	canonicalizeDesiredState(clean)
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(clean)
 	if err != nil {
 		return false, fmt.Errorf("encode desired state: %w", err)
@@ -875,6 +876,7 @@ func applyDiffToState(previous *agentv1.DesiredNodeState, diff *agentv1.Allocati
 	for _, v := range volumes {
 		merged.Volumes = append(merged.Volumes, v)
 	}
+	canonicalizeDesiredState(merged)
 	return merged, nil
 }
 
@@ -1418,6 +1420,20 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 	return result, err
 }
 
+// canonicalizeDesiredState orders service and volume lists by their stable
+// IDs. Desired configuration is a set; wire order is not semantic. Checkpoints
+// arrive in control-plane assignment order while diff application merges via
+// maps, so every stored and compared form is canonicalized to keep equality
+// and repair comparisons order-independent.
+func canonicalizeDesiredState(state *agentv1.DesiredNodeState) {
+	sort.Slice(state.GetServices(), func(i, j int) bool {
+		return state.GetServices()[i].GetAllocationId() < state.GetServices()[j].GetAllocationId()
+	})
+	sort.Slice(state.GetVolumes(), func(i, j int) bool {
+		return state.GetVolumes()[i].GetVolumeId() < state.GetVolumes()[j].GetVolumeId()
+	})
+}
+
 func splitDesiredCredentials(state *agentv1.DesiredNodeState) (*agentv1.DesiredNodeState, map[string]pullCredential) {
 	clean := proto.Clone(state).(*agentv1.DesiredNodeState)
 	credentials := make(map[string]pullCredential)
@@ -1442,6 +1458,10 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
 	// NodeConfigVersion is derived from NodeConfig; compare content, not hash.
 	left.NodeConfigVersion, right.NodeConfigVersion = "", ""
+	// Configuration is a set of allocations and volumes; wire order is not
+	// semantic (checkpoints follow assignment order, diff merges do not).
+	canonicalizeDesiredState(left)
+	canonicalizeDesiredState(right)
 	return proto.Equal(left, right)
 }
 

@@ -127,6 +127,85 @@ func TestAcceptDiffRejectsGapAndStaleEpoch(t *testing.T) {
 	}
 }
 
+func TestDesiredConfigurationEqualIgnoresListOrder(t *testing.T) {
+	t.Parallel()
+	// Checkpoints arrive in control-plane assignment order while diff
+	// application merges through maps; equality must treat the desired
+	// configuration as a set of allocations and volumes.
+	left := testDesiredState(1, 5, "alloc-b", "alloc-a")
+	right := testDesiredState(1, 5, "alloc-a", "alloc-b")
+	if !desiredConfigurationEqual(left, right) {
+		t.Fatal("equal configurations in different wire order compare unequal")
+	}
+	right.Services[0].DesiredSpecRevision = 2
+	if desiredConfigurationEqual(left, right) {
+		t.Fatal("mutated configuration compares equal")
+	}
+}
+
+func TestApplyDiffToStateCanonicalizesListOrder(t *testing.T) {
+	t.Parallel()
+	previous := testDesiredState(1, 5, "alloc-c", "alloc-b", "alloc-a")
+	previous.Volumes = []*agentv1.DesiredVolume{
+		{VolumeId: "volume-2", EnvironmentId: "env-1", Name: "b", SizeBytes: 2},
+		{VolumeId: "volume-1", EnvironmentId: "env-1", Name: "a", SizeBytes: 1},
+		{VolumeId: "volume-9", EnvironmentId: "env-1", Name: "gone", SizeBytes: 9},
+	}
+	diff := testDiff(5, 6,
+		[]*agentv1.DesiredService{testDiffService("alloc-d", 1, 1)}, nil, []string{"alloc-a"})
+	diff.VolumeStops = []string{"volume-9"}
+	diff.VolumeStarts = []*agentv1.DesiredVolume{{VolumeId: "volume-0", EnvironmentId: "env-1", Name: "zero", SizeBytes: 3}}
+	merged, err := applyDiffToState(previous, diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantServices := []string{"alloc-b", "alloc-c", "alloc-d"}
+	if len(merged.GetServices()) != len(wantServices) {
+		t.Fatalf("merged services = %d, want %d", len(merged.GetServices()), len(wantServices))
+	}
+	for i, svc := range merged.GetServices() {
+		if svc.GetAllocationId() != wantServices[i] {
+			t.Fatalf("merged services[%d] = %q, want canonical order %v", i, svc.GetAllocationId(), wantServices)
+		}
+	}
+	wantVolumes := []string{"volume-0", "volume-1", "volume-2"}
+	if len(merged.GetVolumes()) != len(wantVolumes) {
+		t.Fatalf("merged volumes = %d, want %d", len(merged.GetVolumes()), len(wantVolumes))
+	}
+	for i, vol := range merged.GetVolumes() {
+		if vol.GetVolumeId() != wantVolumes[i] {
+			t.Fatalf("merged volumes[%d] = %q, want canonical order %v", i, vol.GetVolumeId(), wantVolumes)
+		}
+	}
+}
+
+func TestRepairCheckpointAfterDiffsAcceptsAnyWireOrder(t *testing.T) {
+	t.Parallel()
+	store := openTestLocalState(t)
+	if err := store.prepareStartup("cluster-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 5, "alloc-c", "alloc-b", "alloc-a")); err != nil {
+		t.Fatal(err)
+	}
+	diff := testDiff(5, 6, []*agentv1.DesiredService{testDiffService("alloc-d", 1, 1)}, nil, []string{"alloc-a"})
+	if _, err := store.acceptAllocationDiff("cluster-a", "test-session", diff); err != nil {
+		t.Fatal(err)
+	}
+	// A repair checkpoint at the same epoch and cursor carries the equivalent
+	// configuration in control-plane assignment order. It must be accepted
+	// idempotently instead of tripping the same-cursor mutation guard and
+	// closing the sync session.
+	repair := testDesiredState(1, 6, "alloc-d", "alloc-c", "alloc-b")
+	changed, err := store.acceptDesired("cluster-a", "test-session", repair)
+	if err != nil {
+		t.Fatalf("repair checkpoint after diffs: %v", err)
+	}
+	if changed {
+		t.Fatal("equivalent repair checkpoint reported a configuration change")
+	}
+}
+
 func TestDiffRequiresCheckpointBaseline(t *testing.T) {
 	t.Parallel()
 	store := openTestLocalState(t)
