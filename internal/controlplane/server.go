@@ -190,7 +190,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
 	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
-	delivery.SetImageResolver(registry.NewHTTPResolver(nil))
+	delivery.SetImageResolver(registry.NewHTTPResolver(nil, cfg.DirectImages.AllowedPrivateRegistryHosts))
 	var githubClient *source.GitHubClient
 	var githubCatalog *source.GitHubCatalog
 	var githubCoordinator *source.GitHubCoordinator

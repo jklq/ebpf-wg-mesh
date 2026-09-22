@@ -16,7 +16,7 @@ func TestHTTPResolverPinnedRefSkipsNetwork(t *testing.T) {
 	resolver := NewHTTPResolver(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Error("pinned reference must not touch the network")
 		return nil, errors.New("network used")
-	})})
+	})}, nil)
 	got, err := resolver.Resolve(context.Background(), "example.test/web@"+digest)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -43,7 +43,7 @@ func TestHTTPResolverResolvesTag(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	resolver := NewHTTPResolver(server.Client())
+	resolver := NewHTTPResolver(server.Client(), []string{strings.TrimPrefix(server.URL, "http://")})
 	got, err := resolver.Resolve(context.Background(), strings.TrimPrefix(server.URL, "http://")+"/demo/echo:1.27")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -81,7 +81,7 @@ func TestHTTPResolverFollowsBearerChallenge(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	resolver := NewHTTPResolver(server.Client())
+	resolver := NewHTTPResolver(server.Client(), []string{strings.TrimPrefix(server.URL, "http://")})
 	got, err := resolver.Resolve(context.Background(), strings.TrimPrefix(server.URL, "http://")+"/demo/echo")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -99,7 +99,7 @@ func TestHTTPResolverNotFound(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	resolver := NewHTTPResolver(server.Client())
+	resolver := NewHTTPResolver(server.Client(), []string{strings.TrimPrefix(server.URL, "http://")})
 	_, err := resolver.Resolve(context.Background(), strings.TrimPrefix(server.URL, "http://")+"/demo/echo:nope")
 	if !errors.Is(err, ErrImageNotFound) {
 		t.Fatalf("Resolve error = %v, want ErrImageNotFound", err)
@@ -115,7 +115,7 @@ func TestHTTPResolverRejectsCredentialedRegistry(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	resolver := NewHTTPResolver(server.Client())
+	resolver := NewHTTPResolver(server.Client(), []string{strings.TrimPrefix(server.URL, "http://")})
 	_, err := resolver.Resolve(context.Background(), strings.TrimPrefix(server.URL, "http://")+"/demo/echo:latest")
 	if err == nil || !strings.Contains(err.Error(), "publicly pullable") {
 		t.Fatalf("Resolve error = %v, want publicly-pullable guidance", err)
@@ -160,7 +160,7 @@ func TestHTTPResolverRefusesManifestRedirects(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			resolver := NewHTTPResolver(server.Client())
+			resolver := NewHTTPResolver(server.Client(), []string{strings.TrimPrefix(server.URL, "http://")})
 			_, err := resolver.Resolve(context.Background(), strings.TrimPrefix(server.URL, "http://")+"/demo/echo:latest")
 			if err == nil || !strings.Contains(err.Error(), "redirect refused") {
 				t.Fatalf("Resolve = %v, want redirect refusal", err)
@@ -169,6 +169,62 @@ func TestHTTPResolverRefusesManifestRedirects(t *testing.T) {
 				t.Fatal("manifest redirect reached the internal destination")
 			}
 		})
+	}
+}
+
+// TestHTTPResolverRefusesProhibitedRegistryDestination proves the registry
+// host itself is defended: a project writer must not be able to point
+// direct-image resolution at an internal address. The registry host is
+// user-controlled input, so an unlisted loopback, private, or link-local
+// destination is refused before any request leaves the control plane.
+func TestHTTPResolverRefusesProhibitedRegistryDestination(t *testing.T) {
+	probed := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		probed = true
+	}))
+	t.Cleanup(server.Close)
+
+	for name, host := range map[string]string{
+		"loopback literal":  strings.TrimPrefix(server.URL, "http://"),
+		"metadata literal":  "169.254.169.254",
+		"private literal":   "10.1.2.3:5000",
+		"localhost name":    "localhost:5000",
+		"private resolving": "registry.internal.test",
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubLookup(t, "10.9.8.7")
+			resolver := NewHTTPResolver(server.Client(), nil)
+			_, err := resolver.Resolve(context.Background(), host+"/demo/echo:latest")
+			if err == nil || !strings.Contains(err.Error(), "prohibited private destination") {
+				t.Fatalf("Resolve = %v, want prohibited private destination", err)
+			}
+		})
+	}
+	if probed {
+		t.Fatal("prohibited registry host was contacted")
+	}
+}
+
+// TestHTTPResolverAllowsOperatorApprovedPrivateRegistry proves the escape
+// hatch: an operator-declared internal registry resolves normally.
+func TestHTTPResolverAllowsOperatorApprovedPrivateRegistry(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Docker-Content-Digest", digest)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	resolver := NewHTTPResolver(server.Client(), []string{host})
+	got, err := resolver.Resolve(context.Background(), host+"/demo/echo:latest")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.ManifestDigest != digest {
+		t.Fatalf("Resolve digest = %q, want %q", got.ManifestDigest, digest)
 	}
 }
 
