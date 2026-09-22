@@ -155,4 +155,8 @@ type QueuedBuild struct {
 	// Reused reports that no builder work was queued: the source already
 	// produced an image and it was scheduled directly.
 	Reused bool
+	// Superseded reports that the revision is not the binding's latest
+	// observed commit and no work was created: an out-of-order or
+	// redelivered revision must never regress the rollout.
+	Superseded bool
 }

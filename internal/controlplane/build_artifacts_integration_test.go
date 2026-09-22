@@ -349,6 +349,77 @@ func TestReleaseEnvironmentSkipsUnchangedDirectImageTags(t *testing.T) {
 	}
 }
 
+// TestLateWebhookRevisionDoesNotRegressDeployedImage proves an out-of-order
+// or redelivered older revision can neither overwrite a newer deployment's
+// artifact and rollout nor supersede the newer revision's queued build.
+func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-1: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	image1 := testPinnedRef("registry.example.test/platform/web", "1")
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image1, ""); err != nil {
+		t.Fatalf("completeBuild commit-1: %v", err)
+	}
+
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	build2, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-2: %v", err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	// A redelivered older revision must not supersede the newer build
+	// that is still queued.
+	redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{})
+	if err != nil || !redelivered.Superseded || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
+		t.Fatalf("redelivered older revision = %+v, %v, want superseded no-op", redelivered, err)
+	}
+	if build, err := store.reads.BuildByID(ctx, build2.ID); err != nil || build.State != deliverycore.BuildStateQueued {
+		t.Fatalf("newer build = %+v, %v, want queued", build, err)
+	}
+
+	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
+	image2 := testPinnedRef("registry.example.test/platform/web", "2")
+	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", image2, ""); err != nil {
+		t.Fatalf("completeBuild commit-2: %v", err)
+	}
+
+	// After commit-2 is deployed, its reuse of commit-1's image must not
+	// roll the service back.
+	redelivered, err = testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{})
+	if err != nil || !redelivered.Superseded {
+		t.Fatalf("redelivered older revision after deploy = %+v, %v, want superseded no-op", redelivered, err)
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != image2 {
+		t.Fatalf("late revision regressed the deployment image to %q, want %q", got, image2)
+	}
+	artifacts, err := testDelivery(store).ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil || len(artifacts) != 2 {
+		t.Fatalf("artifacts = %v, %v; want exactly the two built images", artifacts, err)
+	}
+	var buildCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&buildCount); err != nil {
+		t.Fatal(err)
+	}
+	if buildCount != 2 {
+		t.Fatalf("build_runs rows = %d, want 2 (no work for the late revision)", buildCount)
+	}
+}
+
 func seedArtifactForRetentionTest(t *testing.T, store *persistence, ctx context.Context, serviceID, id, nibble string, created time.Time) {
 	t.Helper()
 	digest := testDigest(nibble)

@@ -522,6 +522,9 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
 	_, dep, reused, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: DeploymentCauseUser, ID: userID})
+	if errors.Is(err, errSourceRevisionSuperseded) {
+		return "", fmt.Errorf("%w: the deployment's source revision is superseded by a newer one", ErrDeploymentActionInvalid)
+	}
 	if err != nil {
 		return "", err
 	}

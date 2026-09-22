@@ -366,6 +366,10 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 	if err != nil {
 		return err
 	}
+	if queued.Superseded {
+		slog.InfoContext(ctx, "github revision superseded by newer observed commit; skipping", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
+		return nil
+	}
 	if queued.Reused {
 		slog.InfoContext(ctx, "github build reused existing image", "service_id", binding.ServiceID, "build_id", queued.BuildID, "deployment_id", queued.DeploymentID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
 		return nil
