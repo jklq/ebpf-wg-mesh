@@ -2,6 +2,8 @@ package registry
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -72,9 +74,10 @@ func TestTokenRealmURLBlocksPrivateResolution(t *testing.T) {
 }
 
 // TestTokenRealmURLAllowsAllowlistedPrivateSibling proves the operator
-// escape hatch end to end: an allowlisted internal registry may keep its
-// token realm on a private sibling host, while the same sibling is
-// refused without the allowlist entry.
+// escape hatch: an allowlisted internal registry may keep its token realm
+// on a private sibling host (the realm authority is marked trusted so the
+// dial guard lets the request through), while the same sibling is refused
+// without the allowlist entry.
 func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 	stubLookup(t, "10.1.2.3")
 	ctx := context.Background()
@@ -82,8 +85,122 @@ func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 		!strings.Contains(err.Error(), "prohibited private destination") {
 		t.Fatalf("tokenRealmURL accepted unlisted private sibling: %v", err)
 	}
-	if _, err := tokenRealmURL(ctx, "https://auth.internal.test/token", "registry.internal.test:5000", []string{"registry.internal.test:5000"}); err != nil {
+	realm, err := tokenRealmURL(ctx, "https://auth.internal.test/token", "registry.internal.test:5000", []string{"registry.internal.test:5000"})
+	if err != nil {
 		t.Fatalf("tokenRealmURL rejected allowlisted private sibling: %v", err)
+	}
+	if !realm.trustedAuthority {
+		t.Fatal("allowlisted private sibling realm is not marked trusted for dialing")
+	}
+	stubLookup(t, "203.0.113.10")
+	untrusted, err := tokenRealmURL(ctx, "https://auth.ghcr.io/token", "ghcr.io", nil)
+	if err != nil {
+		t.Fatalf("tokenRealmURL rejected public sibling realm: %v", err)
+	}
+	if untrusted.trustedAuthority {
+		t.Fatal("realm of an unlisted registry must not be trusted for dialing")
+	}
+}
+
+// TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm is the
+// request-level regression for the dial guard rejecting what the realm
+// check accepts: an allowlisted internal registry whose Bearer realm
+// lives on a private sibling host must resolve end to end, while the
+// same registry without the allowlist entry never sees a request.
+func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
+	stubLookup(t, "10.1.2.3")
+	digest := "sha256:" + strings.Repeat("7a", 32)
+	tokenHits := 0
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"sibling-token"}`))
+	}))
+	t.Cleanup(tokenServer.Close)
+	tokenPort := portOf(t, tokenServer.URL)
+	manifestHits := 0
+	var registryServer *httptest.Server
+	registryServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		manifestHits++
+		if r.Header.Get("Authorization") == "Bearer sibling-token" {
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="https://auth.internal.test:`+tokenPort+`/token",service="test"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(registryServer.Close)
+	registryPort := portOf(t, registryServer.URL)
+
+	// The fake authorities share the internal.test site with the stub
+	// resolver's private answer; the transport's dial maps them onto the
+	// real test servers so the flow runs with real connections while the
+	// dial guard still makes every routing decision. TLS verification is
+	// not under test here.
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: fakeHostDial(map[string]string{
+			"registry.internal.test:" + registryPort: stripScheme(t, registryServer.URL),
+			"auth.internal.test:" + tokenPort:        stripScheme(t, tokenServer.URL),
+		}),
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only local servers
+	}}
+	ref := "registry.internal.test:" + registryPort + "/demo/echo:latest"
+
+	resolver := NewHTTPResolver(client, []string{"registry.internal.test:" + registryPort})
+	got, err := resolver.Resolve(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.ManifestDigest != digest {
+		t.Fatalf("Resolve digest = %q, want %q", got.ManifestDigest, digest)
+	}
+	// One challenged HEAD and one authorized HEAD.
+	if manifestHits != 2 || tokenHits != 1 {
+		t.Fatalf("manifest hits = %d, token hits = %d, want the sibling realm fetched", manifestHits, tokenHits)
+	}
+
+	unlisted := NewHTTPResolver(client, nil)
+	if _, err := unlisted.Resolve(context.Background(), ref); err == nil ||
+		!strings.Contains(err.Error(), "prohibited private destination") {
+		t.Fatalf("Resolve without allowlist = %v, want prohibited private destination", err)
+	}
+	if manifestHits != 2 || tokenHits != 1 {
+		t.Fatalf("manifest hits = %d, token hits = %d, want no traffic without the allowlist entry", manifestHits, tokenHits)
+	}
+}
+
+func portOf(t *testing.T, serverURL string) string {
+	t.Helper()
+	_, port, err := net.SplitHostPort(stripScheme(t, serverURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func stripScheme(t *testing.T, serverURL string) string {
+	t.Helper()
+	for _, scheme := range []string{"https://", "http://"} {
+		if rest, ok := strings.CutPrefix(serverURL, scheme); ok {
+			return rest
+		}
+	}
+	t.Fatalf("server URL %q has no scheme", serverURL)
+	return ""
+}
+
+// fakeHostDial maps fake host:port authorities onto real local test
+// servers so tests exercise the resolver's dial decisions with real
+// connections while names stay under the test's control.
+func fakeHostDial(mapping map[string]string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		target, ok := mapping[addr]
+		if !ok {
+			return nil, fmt.Errorf("unexpected dial to %s", addr)
+		}
+		return dialer.DialContext(ctx, network, target)
 	}
 }
 

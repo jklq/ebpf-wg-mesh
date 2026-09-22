@@ -67,9 +67,16 @@ const manifestAcceptTypes = "application/vnd.docker.distribution.manifest.v2+jso
 // check with a public address and the later connection with a private one —
 // would swap the address after validation, so the resolver's transport
 // re-validates at every dial and connects to the approved address directly
-// (see approvedDialTransport).
+// (see approvedDialTransport). The one exception is a validated token-realm
+// authority of an operator-allowlisted registry: the operator declared
+// that registry reachable and trusted, so its auth sibling dials as
+// declared (see clientForTrustedRealm).
 type HTTPResolver struct {
 	client *http.Client
+	// baseTransport is the caller's transport before the dial guard was
+	// wrapped around it. Clients for trusted realms are guarded over the
+	// same base with a different approved-host set.
+	baseTransport http.RoundTripper
 	// allowedPrivateHosts are registry hosts (host[:port]) the operator
 	// declared reachable even on loopback, private, or link-local
 	// networks.
@@ -91,7 +98,21 @@ func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPRes
 		return errors.New("registry redirect refused")
 	}
 	owned.Transport = approvedDialTransport(client.Transport, allowedPrivateHosts)
-	return &HTTPResolver{client: &owned, allowedPrivateHosts: allowedPrivateHosts}
+	return &HTTPResolver{client: &owned, baseTransport: client.Transport, allowedPrivateHosts: allowedPrivateHosts}
+}
+
+// clientForTrustedRealm returns a client for one request to a validated
+// token-realm authority of an operator-allowlisted registry (see
+// tokenRealm): the same no-redirect policy and dial guard, with exactly
+// the realm's authority added to the dialer's approved hosts for this
+// client only, so its private auth host is reachable while every other
+// destination keeps the guard. The caller closes idle connections when
+// the one request is done.
+func (r *HTTPResolver) clientForTrustedRealm(authority string) *http.Client {
+	approved := append(append([]string(nil), r.allowedPrivateHosts...), authority)
+	clone := *r.client
+	clone.Transport = approvedDialTransport(r.baseTransport, approved)
+	return &clone
 }
 
 // approvedDialTransport returns base's transport with a dialer that
@@ -348,11 +369,20 @@ func parseAuthChallenge(params string) bearerChallengeValues {
 // issued the challenge first (see tokenRealmURL), and like all registry
 // traffic the fetch follows no redirects (see NewHTTPResolver): one
 // compromised hop must not walk the control plane toward internal URLs.
+// A realm on a private sibling of an operator-allowlisted registry is
+// fetched through that registry's approved-realm client (see
+// tokenRealm); every other realm keeps the dial guard unchanged.
 func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChallengeValues, registryHost, repository string) (string, error) {
-	tokenURL, err := tokenRealmURL(ctx, challenge.realm, registryHost, r.allowedPrivateHosts)
+	realm, err := tokenRealmURL(ctx, challenge.realm, registryHost, r.allowedPrivateHosts)
 	if err != nil {
 		return "", err
 	}
+	client := r.client
+	if realm.trustedAuthority {
+		client = r.clientForTrustedRealm(realm.url.Host)
+		defer client.CloseIdleConnections()
+	}
+	tokenURL := realm.url
 	query := tokenURL.Query()
 	if challenge.service != "" {
 		query.Set("service", challenge.service)
@@ -364,7 +394,7 @@ func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChall
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
 	req.Header.Set("User-Agent", "ebpf-wg-mesh-deploy-by-digest/1")
-	resp, err := r.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
