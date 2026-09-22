@@ -691,7 +691,12 @@ func (s *Spool) removeSegmentLocked(seg segmentInfo) {
 	path := s.segmentPath(seg.id)
 	_ = os.Remove(path)
 	_ = syncDir(s.dir)
-	s.segments = s.segments[1:]
+	for i := range s.segments {
+		if s.segments[i].id == seg.id {
+			s.segments = append(s.segments[:i], s.segments[i+1:]...)
+			break
+		}
+	}
 	s.records -= seg.records
 	s.bytes -= seg.size
 	if s.cursor.Segment == seg.id {
