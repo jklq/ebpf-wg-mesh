@@ -583,3 +583,19 @@ func TestAsyncIngesterShedProducerGapsKeepSummaryIdentity(t *testing.T) {
 	}
 	t.Fatalf("shed producer gap lost its identity: %+v", store.gaps)
 }
+
+// The ingest guard surfaces its rate-limited lines as gaps itself, so
+// it must drain the limiter's denied map: allocation churn cannot
+// grow process memory without a bound.
+func TestAsyncIngesterKeepsLimiterDeniedMapBounded(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 64, RatePerSec: 1, Burst: 1})
+	for i := 0; i < 50; i++ {
+		ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", fmt.Sprintf("alloc-%d", i), 5))
+	}
+	if got := ingester.limiter.DrainDrops(); len(got) != 0 {
+		t.Fatalf("ingest guard retained %d denied keys without a bound", len(got))
+	}
+}

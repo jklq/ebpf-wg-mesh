@@ -239,6 +239,10 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 		})
 		a.shedLines.Add(count)
 	}
+	// The ingest guard surfaces its rate-limited lines as gaps above,
+	// so the limiter's own denied map is redundant here: drain it so
+	// allocation churn cannot grow it without a bound.
+	a.limiter.DrainDrops()
 	if !a.enqueue(pendingFlush{lines: kept, gaps: gaps}) {
 		a.rejectFlush(kept, gaps)
 		return false
