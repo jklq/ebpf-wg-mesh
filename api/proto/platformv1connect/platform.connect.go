@@ -170,6 +170,9 @@ const (
 	// PlatformServiceListServiceDeploymentsProcedure is the fully-qualified name of the
 	// PlatformService's ListServiceDeployments RPC.
 	PlatformServiceListServiceDeploymentsProcedure = "/platform.v1.PlatformService/ListServiceDeployments"
+	// PlatformServiceListServiceArtifactsProcedure is the fully-qualified name of the PlatformService's
+	// ListServiceArtifacts RPC.
+	PlatformServiceListServiceArtifactsProcedure = "/platform.v1.PlatformService/ListServiceArtifacts"
 	// PlatformServiceListAgentsProcedure is the fully-qualified name of the PlatformService's
 	// ListAgents RPC.
 	PlatformServiceListAgentsProcedure = "/platform.v1.PlatformService/ListAgents"
@@ -262,6 +265,7 @@ type PlatformServiceClient interface {
 	GetServiceStatus(context.Context, *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ListServiceLogs(context.Context, *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error)
 	ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error)
+	ListServiceArtifacts(context.Context, *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error)
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
 }
@@ -541,6 +545,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("ListServiceDeployments")),
 			connect.WithClientOptions(opts...),
 		),
+		listServiceArtifacts: connect.NewClient[platformv1.ListServiceArtifactsRequest, platformv1.ListServiceArtifactsResponse](
+			httpClient,
+			baseURL+PlatformServiceListServiceArtifactsProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListServiceArtifacts")),
+			connect.WithClientOptions(opts...),
+		),
 		listAgents: connect.NewClient[emptypb.Empty, platformv1.ListAgentsResponse](
 			httpClient,
 			baseURL+PlatformServiceListAgentsProcedure,
@@ -602,6 +612,7 @@ type platformServiceClient struct {
 	getServiceStatus            *connect.Client[platformv1.GetServiceStatusRequest, platformv1.ServiceStatus]
 	listServiceLogs             *connect.Client[platformv1.ListServiceLogsRequest, platformv1.ListServiceLogsResponse]
 	listServiceDeployments      *connect.Client[platformv1.ListServiceDeploymentsRequest, platformv1.ListServiceDeploymentsResponse]
+	listServiceArtifacts        *connect.Client[platformv1.ListServiceArtifactsRequest, platformv1.ListServiceArtifactsResponse]
 	listAgents                  *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
 	listBuildAttempts           *connect.Client[platformv1.ListBuildAttemptsRequest, platformv1.ListBuildAttemptsResponse]
 }
@@ -826,6 +837,11 @@ func (c *platformServiceClient) ListServiceDeployments(ctx context.Context, req 
 	return c.listServiceDeployments.CallUnary(ctx, req)
 }
 
+// ListServiceArtifacts calls platform.v1.PlatformService.ListServiceArtifacts.
+func (c *platformServiceClient) ListServiceArtifacts(ctx context.Context, req *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error) {
+	return c.listServiceArtifacts.CallUnary(ctx, req)
+}
+
 // ListAgents calls platform.v1.PlatformService.ListAgents.
 func (c *platformServiceClient) ListAgents(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error) {
 	return c.listAgents.CallUnary(ctx, req)
@@ -882,6 +898,7 @@ type PlatformServiceHandler interface {
 	GetServiceStatus(context.Context, *connect.Request[platformv1.GetServiceStatusRequest]) (*connect.Response[platformv1.ServiceStatus], error)
 	ListServiceLogs(context.Context, *connect.Request[platformv1.ListServiceLogsRequest]) (*connect.Response[platformv1.ListServiceLogsResponse], error)
 	ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error)
+	ListServiceArtifacts(context.Context, *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error)
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
 }
@@ -1157,6 +1174,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("ListServiceDeployments")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceListServiceArtifactsHandler := connect.NewUnaryHandler(
+		PlatformServiceListServiceArtifactsProcedure,
+		svc.ListServiceArtifacts,
+		connect.WithSchema(platformServiceMethods.ByName("ListServiceArtifacts")),
+		connect.WithHandlerOptions(opts...),
+	)
 	platformServiceListAgentsHandler := connect.NewUnaryHandler(
 		PlatformServiceListAgentsProcedure,
 		svc.ListAgents,
@@ -1259,6 +1282,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceListServiceLogsHandler.ServeHTTP(w, r)
 		case PlatformServiceListServiceDeploymentsProcedure:
 			platformServiceListServiceDeploymentsHandler.ServeHTTP(w, r)
+		case PlatformServiceListServiceArtifactsProcedure:
+			platformServiceListServiceArtifactsHandler.ServeHTTP(w, r)
 		case PlatformServiceListAgentsProcedure:
 			platformServiceListAgentsHandler.ServeHTTP(w, r)
 		case PlatformServiceListBuildAttemptsProcedure:
@@ -1446,6 +1471,10 @@ func (UnimplementedPlatformServiceHandler) ListServiceLogs(context.Context, *con
 
 func (UnimplementedPlatformServiceHandler) ListServiceDeployments(context.Context, *connect.Request[platformv1.ListServiceDeploymentsRequest]) (*connect.Response[platformv1.ListServiceDeploymentsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListServiceDeployments is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) ListServiceArtifacts(context.Context, *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListServiceArtifacts is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error) {
