@@ -52,11 +52,15 @@ func (d *Delivery) CreateService(ctx context.Context, user authz.User, environme
 	if err != nil {
 		return ServiceRecord{}, err
 	}
+	pre, err := d.preResolveDirectImage(ctx, spec)
+	if err != nil {
+		return ServiceRecord{}, err
+	}
 	s := d.store
 	var rec ServiceRecord
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		rec, err = d.createServiceTx(ctx, tx, scope, name, spec, agentID)
+		rec, err = d.createServiceTx(ctx, tx, scope, name, spec, agentID, pre)
 		return err
 	})
 	if err != nil {
@@ -65,15 +69,15 @@ func (d *Delivery) CreateService(ctx context.Context, user authz.User, environme
 	return rec, nil
 }
 
-func (d *Delivery) createServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Environment, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
+func (d *Delivery) createServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Environment, name string, spec *platformv1.ServiceSpec, agentID string, pre resolvedDirectImage) (ServiceRecord, error) {
 	environment, err := d.store.environmentByIDQuerier(ctx, tx, scope)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return d.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, scope.UserID())
+	return d.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, scope.UserID(), pre)
 }
 
-func (d *Delivery) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
+func (d *Delivery) createServiceTxInternal(ctx context.Context, tx *sql.Tx, projectID, name string, spec *platformv1.ServiceSpec, agentID string, pre resolvedDirectImage) (ServiceRecord, error) {
 	s := d.store
 	if _, err := s.projectByIDInternalQuerier(ctx, tx, projectID); err != nil {
 		return ServiceRecord{}, err
@@ -83,10 +87,10 @@ func (d *Delivery) createServiceTxInternal(ctx context.Context, tx *sql.Tx, proj
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return d.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, "system")
+	return d.createDeployedServiceTx(ctx, tx, environment, name, spec, agentID, "system", pre)
 }
 
-func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environment EnvironmentRecord, name string, spec *platformv1.ServiceSpec, agentID, actorUserID string) (ServiceRecord, error) {
+func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, environment EnvironmentRecord, name string, spec *platformv1.ServiceSpec, agentID, actorUserID string, pre resolvedDirectImage) (ServiceRecord, error) {
 	s := d.store
 	if environment.Deletion != nil {
 		return ServiceRecord{}, ErrEnvironmentDeleted
@@ -116,10 +120,21 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 		return ServiceRecord{}, err
 	}
 	now := rec.CreatedAt
+	actor := deploymentActor{Kind: DeploymentCauseSystem}
+	if strings.TrimSpace(actorUserID) != "" && actorUserID != "system" {
+		actor = deploymentActor{Kind: DeploymentCauseUser, ID: actorUserID}
+	}
+	if image := directImageRef(rec.Spec); image != "" {
+		artifact, err := d.directImageArtifactTx(ctx, tx, rec.ID, image, pre, actor, now)
+		if err != nil {
+			return ServiceRecord{}, err
+		}
+		rec.ResolvedArtifactID = artifact.ID
+		rec.ResolvedImage = artifact.ImageRef
+	}
 	rec.RolloutGeneration = 1
-	rec.ResolvedImage = directImageRef(spec)
 	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
-		SET current_rollout_generation = 1, current_resolved_image = NULLIF($1, '') WHERE service_id = $2`, rec.ResolvedImage, rec.ID); err != nil {
+		SET current_rollout_generation = 1, current_artifact_id = NULLIF($1, '') WHERE service_id = $2`, rec.ResolvedArtifactID, rec.ID); err != nil {
 		return ServiceRecord{}, err
 	}
 	journal.RecordService(ctx, rec.ID)
@@ -134,7 +149,7 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 		reasonCode = reasonServiceStaged
 		detail = "Service created; waiting for source build"
 	}
-	dep, err := s.insertDeploymentTx(ctx, tx, rec.ID, initialState, deploymentActor{Kind: DeploymentCauseSystem}, reasonCode, detail, rec.SpecRevision, 1, "", rec.ResolvedImage, "", now)
+	dep, err := s.insertDeploymentTx(ctx, tx, rec.ID, initialState, deploymentActor{Kind: DeploymentCauseSystem}, reasonCode, detail, rec.SpecRevision, 1, "", rec.ResolvedArtifactID, "", now)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
@@ -536,7 +551,6 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 		} else {
 			rec.SourceSummary = BuildSourceSummary(nextSpec)
 		}
-		rec.ResolvedImage = directImageRef(nextSpec)
 		return nil
 	})
 	if err != nil {

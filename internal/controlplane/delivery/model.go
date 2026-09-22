@@ -119,18 +119,21 @@ type ServiceRecord struct {
 	RolloutGeneration       int64
 	AllocatedAgentID        string
 	LastSuccessfulCommitSHA string
-	ResolvedImage           string
-	LatestBuildID           string
-	LatestBuild             *platformv1.BuildStatus
-	LatestDeployment        *DeploymentRecord
-	PendingChanges          bool
-	UnappliedChanges        []*platformv1.ServiceUnappliedChange
-	DesiredReplicaCount     int32
-	ReadyReplicaCount       int32
-	PlacementMessage        string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	Deletion                *DeletionInfo
+	// ResolvedArtifactID is the runtime identity; ResolvedImage is its
+	// pinned display form, always equal to the artifact's image ref.
+	ResolvedArtifactID  string
+	ResolvedImage       string
+	LatestBuildID       string
+	LatestBuild         *platformv1.BuildStatus
+	LatestDeployment    *DeploymentRecord
+	PendingChanges      bool
+	UnappliedChanges    []*platformv1.ServiceUnappliedChange
+	DesiredReplicaCount int32
+	ReadyReplicaCount   int32
+	PlacementMessage    string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	Deletion            *DeletionInfo
 }
 
 type DomainBindingRecord struct {
@@ -275,11 +278,15 @@ type BuildRunRecord struct {
 	CancelRequestedBy       string
 	DeadlineAt              sql.NullTime
 	LastHeartbeatAt         sql.NullTime
+	ArtifactID              string
 	ImageDigest             string
+	Artifact                *BuildArtifactRecord
 	FailureReason           string
 	SourceRevisionID        string
 	SourceSnapshotID        string
 	SourceSnapshotDigest    string
+	BuildActorKind          string
+	BuildActorID            string
 	TargetRolloutGeneration int64
 	BuildRecipe             *platformv1.BuildRecipe
 	QueuedAt                time.Time
@@ -325,20 +332,24 @@ type DeploymentRecord struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	Build             *BuildRunRecord
+	Artifact          *BuildArtifactRecord
 	IsCurrent         bool
 	RequestedByUserID string
 	BuildID           string
-	ImageDigest       string
-	State             string
-	CauseKind         string
-	CauseID           string
-	ReasonCode        string
-	Detail            string
-	ResolvedSpec      *platformv1.ServiceSpec
-	VariableVersions  map[string]int64
-	SealedVersions    map[string]int64
-	Transitions       []DeploymentTransitionRecord
-	Actions           []DeploymentActionRecord
+	// ArtifactID is the runtime identity; ImageDigest mirrors the
+	// artifact's pinned image ref for display.
+	ArtifactID       string
+	ImageDigest      string
+	State            string
+	CauseKind        string
+	CauseID          string
+	ReasonCode       string
+	Detail           string
+	ResolvedSpec     *platformv1.ServiceSpec
+	VariableVersions map[string]int64
+	SealedVersions   map[string]int64
+	Transitions      []DeploymentTransitionRecord
+	Actions          []DeploymentActionRecord
 }
 
 type DeploymentActionRecord struct {
@@ -363,6 +374,7 @@ type DeploymentTransitionRecord struct {
 	ReasonCode        string
 	Detail            string
 	SpecRevision      int64
+	ArtifactID        string
 	ImageDigest       string
 	RolloutGeneration int64
 	OccurredAt        time.Time

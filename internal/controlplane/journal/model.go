@@ -20,6 +20,7 @@ type ServiceIntent struct {
 	Name                     string    `json:"name"`
 	CurrentSpecRevision      int64     `json:"current_spec_revision"`
 	CurrentRolloutGeneration int64     `json:"current_rollout_generation"`
+	CurrentArtifactID        string    `json:"current_artifact_id"`
 	CurrentResolvedImage     string    `json:"current_resolved_image"`
 	LastSuccessfulCommitSHA  string    `json:"last_successful_commit_sha"`
 	LatestBuildID            string    `json:"latest_build_id"`
@@ -65,6 +66,7 @@ type Rollout struct {
 	State               string          `json:"state"`
 	StrategyJSON        json.RawMessage `json:"strategy_json"`
 	DesiredReplicaCount int64           `json:"desired_replica_count"`
+	ArtifactID          string          `json:"artifact_id"`
 	ImageDigest         string          `json:"image_digest"`
 	FailureReason       string          `json:"failure_reason"`
 	TargetAllocationID  string          `json:"target_allocation_id"`
@@ -79,6 +81,7 @@ type Deployment struct {
 	SpecRevision         int64           `json:"spec_revision"`
 	RolloutGeneration    int64           `json:"rollout_generation"`
 	BuildID              string          `json:"build_id"`
+	ArtifactID           string          `json:"artifact_id"`
 	ImageDigest          string          `json:"image_digest"`
 	State                string          `json:"state"`
 	CauseKind            string          `json:"cause_kind"`

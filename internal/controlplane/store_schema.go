@@ -217,7 +217,7 @@ var currentSchema = []string{
 	`CREATE TABLE service_delivery_status (
 			service_id STRING PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
 			current_rollout_generation INT8 NULL,
-			current_resolved_image STRING NULL,
+			current_artifact_id STRING NULL,
 			last_successful_commit_sha STRING NULL,
 			latest_build_id STRING NULL,
 			placement_message STRING NULL,
@@ -289,7 +289,7 @@ var currentSchema = []string{
 			state STRING NOT NULL,
 			strategy_json JSONB NOT NULL,
 			desired_replica_count INT8 NOT NULL,
-			image_digest STRING NOT NULL DEFAULT '',
+			artifact_id STRING NULL,
 			failure_reason STRING NOT NULL DEFAULT '',
 			target_allocation_id STRING NULL,
 			completed_at TIMESTAMPTZ NULL,
@@ -306,7 +306,7 @@ var currentSchema = []string{
 			spec_revision INT8 NOT NULL,
 			rollout_generation INT8 NOT NULL DEFAULT 0,
 			build_id STRING NOT NULL DEFAULT '',
-			image_digest STRING NOT NULL DEFAULT '',
+			artifact_id STRING NULL,
 			state STRING NOT NULL,
 			cause_kind STRING NOT NULL,
 			cause_id STRING NOT NULL DEFAULT '',
@@ -343,7 +343,7 @@ var currentSchema = []string{
 			reason_code STRING NOT NULL,
 			detail STRING NOT NULL DEFAULT '',
 			spec_revision INT8 NOT NULL,
-			image_digest STRING NOT NULL DEFAULT '',
+			artifact_id STRING NULL,
 			rollout_generation INT8 NOT NULL DEFAULT 0,
 			occurred_at TIMESTAMPTZ NOT NULL
 		)`,
@@ -397,12 +397,14 @@ var currentSchema = []string{
 			cancel_requested_by STRING NOT NULL DEFAULT '',
 			deadline_at TIMESTAMPTZ NULL,
 			last_heartbeat_at TIMESTAMPTZ NULL,
-			image_digest STRING NOT NULL DEFAULT '',
+			artifact_id STRING NULL,
 			failure_reason STRING NOT NULL DEFAULT '',
 			source_revision_id STRING NULL,
 			source_snapshot_id STRING NULL,
 			source_snapshot_digest STRING NOT NULL DEFAULT '',
 			build_recipe_json JSONB NOT NULL DEFAULT '{}',
+			build_actor_kind STRING NOT NULL DEFAULT '',
+			build_actor_id STRING NOT NULL DEFAULT '',
 			target_rollout_generation INT8 NOT NULL DEFAULT 0,
 			queued_at TIMESTAMPTZ NOT NULL,
 			started_at TIMESTAMPTZ NULL,
@@ -425,6 +427,28 @@ var currentSchema = []string{
 	`CREATE INDEX idx_build_runs_state_queued ON build_runs(state, queued_at ASC, id)`,
 	`CREATE INDEX idx_build_runs_running_lease ON build_runs(state, lease_expires_at, id) WHERE state = 'running'`,
 	`CREATE INDEX idx_build_attempts_build ON build_attempts(build_id, attempt_number)`,
+	`CREATE TABLE build_artifacts (
+			id STRING PRIMARY KEY,
+			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			build_id STRING NULL REFERENCES build_runs(id) ON DELETE SET NULL,
+			kind STRING NOT NULL CHECK (kind IN ('build', 'direct_image')),
+			source_snapshot_digest STRING NOT NULL DEFAULT '',
+			commit_sha STRING NOT NULL DEFAULT '',
+			build_recipe_json JSONB NOT NULL DEFAULT '{}',
+			builder_version STRING NOT NULL DEFAULT '',
+			image_repository STRING NOT NULL,
+			image_manifest_digest STRING NOT NULL CHECK (image_manifest_digest LIKE 'sha256:%'),
+			image_ref STRING NOT NULL,
+			source_image_ref STRING NOT NULL DEFAULT '',
+			reuse_key STRING NOT NULL DEFAULT '',
+			build_actor_kind STRING NOT NULL DEFAULT '',
+			build_actor_id STRING NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_build_artifacts_service_reuse ON build_artifacts(service_id, reuse_key) WHERE reuse_key <> ''`,
+	`CREATE UNIQUE INDEX idx_build_artifacts_service_ref ON build_artifacts(service_id, image_ref)`,
+	`CREATE INDEX idx_build_artifacts_service_created ON build_artifacts(service_id, created_at DESC, id)`,
+	`CREATE INDEX idx_build_artifacts_build ON build_artifacts(build_id, id) WHERE build_id IS NOT NULL`,
 	`CREATE TABLE github_installations (
 			installation_id INT8 PRIMARY KEY,
 			account_login STRING NOT NULL,
@@ -604,6 +628,16 @@ var currentSchema = []string{
 			FOREIGN KEY (build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
 	`ALTER TABLE service_rollouts ADD CONSTRAINT fk_service_rollouts_target_allocation
 			FOREIGN KEY (target_allocation_id) REFERENCES allocation_assignments(id) ON DELETE SET NULL`,
+	`ALTER TABLE deployments ADD CONSTRAINT fk_deployments_artifact
+			FOREIGN KEY (artifact_id) REFERENCES build_artifacts(id) ON DELETE RESTRICT`,
+	`ALTER TABLE deployment_transitions ADD CONSTRAINT fk_deployment_transitions_artifact
+			FOREIGN KEY (artifact_id) REFERENCES build_artifacts(id) ON DELETE RESTRICT`,
+	`ALTER TABLE service_rollouts ADD CONSTRAINT fk_service_rollouts_artifact
+			FOREIGN KEY (artifact_id) REFERENCES build_artifacts(id) ON DELETE RESTRICT`,
+	`ALTER TABLE service_delivery_status ADD CONSTRAINT fk_service_delivery_status_artifact
+			FOREIGN KEY (current_artifact_id) REFERENCES build_artifacts(id) ON DELETE RESTRICT`,
+	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_artifact
+			FOREIGN KEY (artifact_id) REFERENCES build_artifacts(id) ON DELETE SET NULL`,
 	`CREATE TABLE envelope_keys (
 			id STRING PRIMARY KEY,
 			provider STRING NOT NULL,

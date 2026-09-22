@@ -19,9 +19,13 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
 	s := d.store
+	pre, err := d.preResolveDirectImage(ctx, spec)
+	if err != nil {
+		return ServiceRecord{}, nil, err
+	}
 	var rec ServiceRecord
 	var affectedAgentIDs []string
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		trustedAgentID = strings.TrimSpace(trustedAgentID)
 		if trustedAgentID == "" {
 			return errors.New("trusted agent id required for managed service")
@@ -57,7 +61,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 			return err
 		}
 		if !found {
-			rec, err = d.createServiceTxInternal(ctx, tx, projectID, name, spec, trustedAgentID)
+			rec, err = d.createServiceTxInternal(ctx, tx, projectID, name, spec, trustedAgentID, pre)
 			affectedAgentIDs = []string{trustedAgentID}
 			return err
 		}
@@ -84,6 +88,14 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 			return nil
 		}
 		now := time.Now().UTC()
+		artifactID := current.ResolvedArtifactID
+		if image := strings.TrimSpace(directImageRef(spec)); image != "" {
+			artifact, err := d.directImageArtifactTx(ctx, tx, current.ID, image, pre, deploymentActor{Kind: DeploymentCauseSystem}, now)
+			if err != nil {
+				return err
+			}
+			artifactID = artifact.ID
+		}
 		nextSpecRevision := current.SpecRevision + 1
 		nextRolloutGeneration := current.RolloutGeneration + 1
 		desiredReplicas := specReplicaCount(spec, current.DesiredReplicaCount)
@@ -124,8 +136,8 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
-			SET current_rollout_generation = $1, current_resolved_image = NULLIF($2, ''), updated_at = $3
-			WHERE service_id = $4`, nextRolloutGeneration, directImageRef(spec), now, current.ID); err != nil {
+			SET current_rollout_generation = $1, current_artifact_id = NULLIF($2, ''), updated_at = $3
+			WHERE service_id = $4`, nextRolloutGeneration, artifactID, now, current.ID); err != nil {
 			return err
 		}
 		journal.RecordService(ctx, current.ID)
@@ -143,7 +155,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {
 			return err
 		}
-		deployment, err := s.insertDeploymentTx(ctx, tx, current.ID, DeploymentStateScheduling, deploymentActor{Kind: DeploymentCauseSystem}, reasonManagedSync, "Managed service synchronized", nextSpecRevision, nextRolloutGeneration, "", directImageRef(spec), "", now)
+		deployment, err := s.insertDeploymentTx(ctx, tx, current.ID, DeploymentStateScheduling, deploymentActor{Kind: DeploymentCauseSystem}, reasonManagedSync, "Managed service synchronized", nextSpecRevision, nextRolloutGeneration, "", artifactID, "", now)
 		if err != nil {
 			return err
 		}
@@ -152,7 +164,8 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 		rec.SpecRevision = nextSpecRevision
 		rec.RolloutGeneration = nextRolloutGeneration
 		rec.AllocatedAgentID = trustedAgentID
-		rec.ResolvedImage = directImageRef(spec)
+		rec.ResolvedArtifactID = artifactID
+		rec.ResolvedImage = deployment.ImageDigest
 		rec.DesiredReplicaCount = desiredReplicas
 		rec.UpdatedAt = now
 		if placementChanged {

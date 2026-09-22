@@ -75,10 +75,10 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := completeBuildForTest(ctx, store, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:999", ""); !errors.Is(err, deliverycore.ErrBuildNotOwned) {
+	if err := completeBuildForTest(ctx, store, "builder-2", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/evil@sha256:9999999999999999999999999999999999999999999999999999999999999999", ""); !errors.Is(err, deliverycore.ErrBuildNotOwned) {
 		t.Fatalf("expected foreign builder completion to be rejected, got %v", err)
 	}
-	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
@@ -86,7 +86,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServiceByID(after build): %v", err)
 	}
-	if current.ResolvedImage != "registry.example.test/platform/web@sha256:111" {
+	if current.ResolvedImage != "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111" {
 		t.Fatalf("expected resolved image to be updated, got %q", current.ResolvedImage)
 	}
 	if current.LastSuccessfulCommitSHA != "commit-1" {
@@ -103,7 +103,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if len(state.GetServices()) != 1 {
 		t.Fatalf("expected resolved repo-backed service in desired state, got %d", len(state.GetServices()))
 	}
-	if got := state.GetServices()[0].GetSpec().GetImage(); got != "registry.example.test/platform/web@sha256:111" {
+	if got := state.GetServices()[0].GetSpec().GetImage(); got != "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111" {
 		t.Fatalf("expected resolved desired image digest, got %q", got)
 	}
 
@@ -133,7 +133,7 @@ func TestRepoBackedServiceSkipsDesiredStateUntilBuildSucceeds(t *testing.T) {
 	if current.DesiredReplicaCount != 2 {
 		t.Fatalf("live desired replica count = %d, want 2", current.DesiredReplicaCount)
 	}
-	if current.ResolvedImage != "registry.example.test/platform/web@sha256:111" {
+	if current.ResolvedImage != "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111" {
 		t.Fatalf("replica deploy changed resolved image to %q", current.ResolvedImage)
 	}
 }
@@ -177,7 +177,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(first): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", firstBuild.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", firstBuild.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", firstBuild.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild(first): %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestFailedBuildPreservesLastGoodResolvedImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
-	if current.ResolvedImage != "registry.example.test/platform/web@sha256:111" {
+	if current.ResolvedImage != "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111" {
 		t.Fatalf("expected failed build to preserve last good image, got %q", current.ResolvedImage)
 	}
 	if current.RolloutGeneration != 1 {
@@ -261,7 +261,7 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest(build2): %v", err)
 	}
-	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 
@@ -274,14 +274,14 @@ func TestOlderRunningBuildCannotOverwriteNewerSuccessfulResolution(t *testing.T)
 	}
 
 	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:2222222222222222222222222222222222222222222222222222222222222222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
 	current, err = store.reads.ServiceByID(ctx, testUser("user-1"), service.ID)
 	if err != nil {
 		t.Fatalf("ServiceByID(after new success): %v", err)
 	}
-	if current.ResolvedImage != "registry.example.test/platform/web@sha256:222" {
+	if current.ResolvedImage != "registry.example.test/platform/web@sha256:2222222222222222222222222222222222222222222222222222222222222222" {
 		t.Fatalf("expected newer successful build to win, got %q", current.ResolvedImage)
 	}
 }
@@ -300,7 +300,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(build1): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 	assertRolloutState(t, store, service.ID, 1, "in_progress", "")
@@ -313,7 +313,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(build2): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build2.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:222", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build2.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-2", "registry.example.test/platform/web@sha256:2222222222222222222222222222222222222222222222222222222222222222", ""); err != nil {
 		t.Fatalf("completeBuild(build2): %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestSuccessfulBuildSupersedesInProgressRollout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serviceByID: %v", err)
 	}
-	if current.RolloutGeneration != 2 || current.ResolvedImage != "registry.example.test/platform/web@sha256:222" {
+	if current.RolloutGeneration != 2 || current.ResolvedImage != "registry.example.test/platform/web@sha256:2222222222222222222222222222222222222222222222222222222222222222" {
 		t.Fatalf("latest build was not scheduled: generation=%d image=%q", current.RolloutGeneration, current.ResolvedImage)
 	}
 	if old := allocationForGeneration(t, store, service.ID, 1); len(old) != 0 {
@@ -358,7 +358,7 @@ func TestSupersededDeploymentDoesNotBlockRolloutFinalization(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest(build1): %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild(build1): %v", err)
 	}
 	target := allocationForGeneration(t, store, service.ID, 1)
@@ -560,7 +560,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 
@@ -618,7 +618,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 		t.Fatalf("enqueueBuildForTest: %v", err)
 	}
 	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
-	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/repo-web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx,

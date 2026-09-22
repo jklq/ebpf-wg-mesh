@@ -191,6 +191,16 @@ type DeletionConfig struct {
 	GCIntervalSeconds int
 }
 
+// BuildArtifactConfig tunes deploy-by-digest artifact retention. Artifacts
+// referenced by a deployment, deployment transition, rollout, or the current
+// pointer are rollback material and survive any age. Only artifacts nothing
+// references age out past RetentionDays, beyond the newest KeepRecent per
+// service.
+type BuildArtifactConfig struct {
+	RetentionDays int
+	KeepRecent    int
+}
+
 type ControlPlaneConfig struct {
 	Profile          Profile
 	Health           HealthConfig
@@ -203,6 +213,7 @@ type ControlPlaneConfig struct {
 	SourceArchives   SourceArchiveConfig
 	SecretKeys       SecretKeysConfig
 	Deletion         DeletionConfig
+	BuildArtifacts   BuildArtifactConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
 	Bootstrap        BootstrapConfig
