@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -202,6 +203,52 @@ func TestHTTPResolverRefusesProhibitedRegistryDestination(t *testing.T) {
 	}
 	if probed {
 		t.Fatal("prohibited registry host was contacted")
+	}
+}
+
+// TestHTTPResolverRefusesRebindingBetweenCheckAndDial proves DNS rebinding
+// cannot bridge the destination check and the connection: a registry host
+// that answers the request-time check with a public address and the later
+// lookup with a private one must not have the control plane probe internal
+// services. The transport re-validates the address at every dial and
+// pins the approved one, so the rebinding answer is refused before any
+// connection is made.
+func TestHTTPResolverRefusesRebindingBetweenCheckAndDial(t *testing.T) {
+	probed := false
+	internal := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		probed = true
+	}))
+	t.Cleanup(internal.Close)
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(internal.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A rebinding resolver: the request-time check sees a public answer,
+	// the dial-time lookup sees the private one the attacker controls —
+	// pointed at the internal service's port so a second unvalidated
+	// resolution would land on it.
+	lookups := 0
+	original := lookupIPAddr
+	lookupIPAddr = func(context.Context, string) ([]net.IPAddr, error) {
+		lookups++
+		if lookups == 1 {
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+	t.Cleanup(func() { lookupIPAddr = original })
+
+	resolver := NewHTTPResolver(nil, nil)
+	_, err = resolver.Resolve(context.Background(), "rebind.example.test:"+port+"/demo/echo:latest")
+	if err == nil || !strings.Contains(err.Error(), "prohibited private destination") {
+		t.Fatalf("Resolve = %v, want dial-time prohibited private destination", err)
+	}
+	if lookups < 2 {
+		t.Fatalf("lookups = %d, want the dial to re-validate against a fresh resolution", lookups)
+	}
+	if probed {
+		t.Fatal("rebinding registry host reached the internal service")
 	}
 }
 

@@ -107,8 +107,8 @@ func TestAnonymousTokenRefusesRedirects(t *testing.T) {
 		http.Redirect(w, r, "https://evil.example/steal", http.StatusFound)
 	}))
 	defer server.Close()
-	resolver := NewHTTPResolver(server.Client(), nil)
 	host := strings.TrimPrefix(server.URL, "http://")
+	resolver := NewHTTPResolver(server.Client(), []string{host})
 	_, err := resolver.anonymousToken(context.Background(), bearerChallengeValues{realm: server.URL + "/token"}, host, "demo/echo")
 	if err == nil || !strings.Contains(err.Error(), "redirect refused") {
 		t.Fatalf("anonymousToken = %v, want redirect refusal", err)
