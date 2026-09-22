@@ -356,6 +356,45 @@ message BuildStatus {
   string builder_id = 15;
   google.protobuf.Timestamp lease_expires_at = 16;
   google.protobuf.Timestamp cancel_requested_at = 17;
+  // Immutable runtime identity of the built image (2.6); absent until the
+  // build succeeds.
+  BuildArtifact artifact = 18;
+}
+
+// BuildArtifact is the immutable deploy-by-digest record: the source of
+// runtime identity for a deployment. Rows are insert-only; a mutable tag
+// appears only as source_image_ref (user input) and never runs.
+message BuildArtifact {
+  string id = 1;
+  string service_id = 2;
+  // Build that produced this artifact; absent for direct_image artifacts.
+  string build_id = 3;
+  // "build" or "direct_image".
+  string kind = 4;
+  string source_snapshot_digest = 5;
+  string commit_sha = 6;
+  BuildRecipe build_recipe = 7;
+  string builder_version = 8;
+  string image_repository = 9;
+  string image_manifest_digest = 10;
+  // Digest-pinned runtime reference (repository@manifest digest). This is
+  // what runs.
+  string image_ref = 11;
+  // The user's original image input when it was not digest-pinned
+  // (direct_image artifacts).
+  string source_image_ref = 12;
+  string build_actor_kind = 13;
+  string build_actor_id = 14;
+  google.protobuf.Timestamp created_at = 15;
+}
+
+message ListServiceArtifactsRequest {
+  string service_id = 1;
+  int32 limit = 2;
+}
+
+message ListServiceArtifactsResponse {
+  repeated BuildArtifact artifacts = 1;
 }
 
 message BuildAttempt {
@@ -912,6 +951,8 @@ message DeploymentRecord {
   // Kept separate from variable_versions (public env keys to spec revision)
   // so a name that moves between public and sealed can never collide.
   map<string, int64> sealed_versions = 15;
+  // Immutable deploy-by-digest identity of the image this deployment runs.
+  BuildArtifact artifact = 16;
 }
 
 message ListServiceDeploymentsResponse {
@@ -1102,6 +1143,7 @@ service PlatformService {
   rpc GetServiceStatus(GetServiceStatusRequest) returns (ServiceStatus);
   rpc ListServiceLogs(ListServiceLogsRequest) returns (ListServiceLogsResponse);
   rpc ListServiceDeployments(ListServiceDeploymentsRequest) returns (ListServiceDeploymentsResponse);
+  rpc ListServiceArtifacts(ListServiceArtifactsRequest) returns (ListServiceArtifactsResponse);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
   rpc ListBuildAttempts(ListBuildAttemptsRequest) returns (ListBuildAttemptsResponse);
 }

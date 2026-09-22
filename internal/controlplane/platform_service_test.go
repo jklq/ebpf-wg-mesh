@@ -172,6 +172,10 @@ func (f *fakePlatformDelivery) BuildAttempts(ctx context.Context, user authz.Use
 	return nil, nil
 }
 
+func (f *fakePlatformDelivery) ListServiceArtifacts(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.BuildArtifactRecord, error) {
+	return nil, nil
+}
+
 func (f *fakePlatformDelivery) LivePosition() deliverycore.LivePosition {
 	return deliverycore.LivePosition{}
 }
