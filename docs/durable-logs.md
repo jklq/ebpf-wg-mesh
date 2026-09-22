@@ -37,9 +37,11 @@ producers commit their spool cursor only after the batch is accepted,
 so a reconnect or a retry can resend lines. `service_logs` is a
 `ReplacingMergeTree(ingested_at)` keyed by `(service_id, observed_at,
 line_id)` and reads use `FINAL`, so resends collapse into one row
-instead of duplicating. On session attach an agent replays a bounded
-recent window (default 5 minutes) from its spool; lines the backend
-already durably wrote deduplicate by identity.
+instead of duplicating. On session attach an agent rewinds a bounded
+recent window (default 5 minutes) to re-send records the backend may
+not have durably ingested; records after the durable cursor were
+never accepted and always replay, however old. Retried lines
+deduplicate by identity.
 
 ## Producer pipelines (agents and builders)
 
@@ -54,10 +56,16 @@ latency and, past the spool cap, dropped lines.
 
 Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted
-as an explicit gap row. Spool segments lost to crash corruption are
-counted the same way. Build spools are removed on clean completion and
-leftovers are garbage-collected at startup; a retried attempt re-emits
-its own output from scratch.
+as an explicit gap row. Shutdown drains the counters into pending
+drop summaries persisted next to the spool, so they report after the
+restart. Spool records lost to crash corruption are counted the same
+way with reason `corrupt_spool`, attributed best-effort from the
+damaged frame's key (frames whose key bytes are gone stay in the
+process counters only). Drop summaries carry the allocation as their
+identity; the service is derived from the allocation owner at ingest.
+Build spools are removed on clean completion and leftovers are
+garbage-collected at startup; a retried attempt re-emits its own
+output from scratch.
 
 ## Control-plane ingest
 
@@ -65,9 +73,10 @@ Batches enter a bounded in-memory queue (default 512 batches) behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
 buggy or hostile agent cannot starve ClickHouse. The flush loop retries
 with backoff across a backend outage; only process shutdown drops the
-backlog (producers then replay their window). Queue overflow sheds
-whole batches with owed gap rows so the loss still surfaces in reads.
-Batches over 2000 entries are trimmed with the tail counted as a gap.
+backlog (producers then replay their unshipped spool). Queue overflow
+sheds whole batches with owed gap rows so the loss still surfaces in
+reads. Batches over 2000 entries are trimmed with the tail counted as
+ingest gaps per affected service and allocation.
 Ingest is per replica: each replica flushes the agent streams it
 terminates, and the agent Sync loop never waits on ClickHouse.
 
@@ -79,11 +88,15 @@ A gap row records `allocation_id`/`build_id`, log type, stream, window,
 derives from the window contents so retried reports collapse instead of
 double counting. Reads return the gaps overlapping the queried range
 alongside lines, and every shed point counts drops — a dropped window
-is always an explicit gap, never silently closed.
+is always an explicit gap, never silently closed. Gap attribution is
+derived from the allocation (or build) owner, never from producer
+claims: a claimed service that does not own the allocation rejects
+the batch, an empty claim is filled from the owner, and reports with
+no allocation cannot be attributed and never become gap rows.
 
 ## Retention and safe deletion
 
-Each row carries `expires_at` from the owning project's
+Each line and gap row carries `expires_at` from the owning project's
 `log_retention_days` (1..90; 0 means the platform default, 14 days)
 resolved at write time, enforced by ClickHouse row TTL. Projects can
 set the policy via `UpdateProjectLogRetention`; rows written before a
