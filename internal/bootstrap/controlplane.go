@@ -56,7 +56,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.Deletion.GracePeriodDays, "deletion-grace-period-days", "CONTROLPLANE_DELETION_GRACE_PERIOD_DAYS", 7, "how long deleted resources stay restorable")
 	intFlag(fs, &cfg.Deletion.GCIntervalSeconds, "deletion-gc-interval-seconds", "CONTROLPLANE_DELETION_GC_INTERVAL_SECONDS", 60, "how often expired tombstones are garbage-collected")
 	intFlag(fs, &cfg.BuildArtifacts.RetentionDays, "build-artifacts-retention-days", "CONTROLPLANE_BUILD_ARTIFACTS_RETENTION_DAYS", 30, "how long unreferenced build artifacts are retained")
-	intFlag(fs, &cfg.BuildArtifacts.KeepRecent, "build-artifacts-keep-recent", "CONTROLPLANE_BUILD_ARTIFACTS_KEEP_RECENT", 20, "newest unreferenced build artifacts kept per service regardless of age")
+	intFlag(fs, &cfg.BuildArtifacts.KeepRecent, "build-artifacts-keep-recent", "CONTROLPLANE_BUILD_ARTIFACTS_KEEP_RECENT", 20, "aged-out unreferenced build artifacts kept per service regardless of age; artifacts inside the retention window are never pruned")
 	stringFlag(fs, &directImageAllowedPrivateRegistries, "direct-image-allowed-private-registries", "CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES", "", "comma-separated registry hosts (host[:port]) the control plane may resolve direct images from even on private networks")
 	stringFlag(fs, &cfg.Ingress.XDSListen, "ingress-xds-listen", "CONTROLPLANE_INGRESS_XDS_LISTEN", "127.0.0.1:18000", "xDS management API listen address for Envoy instances")
 	stringFlag(fs, &cfg.Ingress.PublicAddr, "ingress-public-addr", "CONTROLPLANE_INGRESS_PUBLIC_ADDR", "platform.local", "")
