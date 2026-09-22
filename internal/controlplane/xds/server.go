@@ -22,19 +22,15 @@ import (
 	"google.golang.org/grpc"
 )
 
-// NodeStatus is the ACK/NACK accounting for one connected Envoy.
 type NodeStatus struct {
-	// Applied maps xDS type URLs to the version the node ACKed.
-	Applied map[string]string
-	// NACKs counts rejected responses; LastNACK carries the latest message.
+	Applied  map[string]string
 	NACKs    int64
 	LastNACK string
 }
 
-// FullyApplied reports whether this node ACKed version across every
-// required type (see Snapshot.RequiredTypes). A node mid-apply, holding an
-// older version, or holding a rejected response for any type is not fully
-// applied: it may still route to endpoints the current version withdrew.
+// FullyApplied reports whether this node ACKed version across every required
+// type. A node mid-apply, holding an older version, or holding a rejection
+// for any type is not fully applied.
 func (n NodeStatus) FullyApplied(version string, required []string) bool {
 	for _, typeURL := range required {
 		if n.Applied[typeURL] != version {
@@ -44,24 +40,18 @@ func (n NodeStatus) FullyApplied(version string, required []string) bool {
 	return true
 }
 
-// Status is a point-in-time view of the served snapshot and its adoption.
 type Status struct {
-	Version     string
-	Hash        string
-	Counts      Counts
-	PublishedAt time.Time
-	HasSnapshot bool
-	// RequiredTypes are the types a node must ACK to count as fully
-	// applied at this version.
+	Version       string
+	Counts        Counts
+	PublishedAt   time.Time
+	HasSnapshot   bool
 	RequiredTypes []string
 	Nodes         map[string]NodeStatus
 }
 
 // Server is the xDS management server. It serves the latest published
-// snapshot over ADS (plus per-type SotW) from an in-memory snapshot cache,
-// tracks per-node ACK/NACK, and retains the last-known-good snapshot across
-// NACKs, restarts, and reconnects: unknown nodes are seeded with the current
-// snapshot on first contact, and a NACK only records the rejection.
+// snapshot over ADS (plus per-type SotW), tracks per-node ACK/NACK, and
+// retains the last-known-good snapshot across NACKs and reconnects.
 type Server struct {
 	cache cachev3.SnapshotCache
 	xds   serverv3.Server
@@ -69,15 +59,9 @@ type Server struct {
 	mu        sync.Mutex
 	current   *Snapshot
 	published time.Time
-	// streams maps stream IDs to node IDs so a node stays registered while
-	// any of its streams (ADS multiplexes types on one; SotW uses several)
-	// is open. It also attributes Envoy's node-less follow-up requests.
-	streams map[int64]string
-	// streamCtxs carries each stream's gRPC context so first-contact work
-	// (durable registration, pre-serve refresh) is cancelled when the
-	// client disconnects instead of outliving it against a stalled backend.
+	streams   map[int64]string
 	streamCtxs map[int64]context.Context
-	nodes      map[string]*nodeState
+	nodes     map[string]*nodeState
 
 	nodeStore    NodeStore
 	firstContact func(context.Context) error
@@ -90,14 +74,12 @@ type nodeState struct {
 	lastNACK string
 	// registered marks that durable registration and the pre-serve
 	// refresh have succeeded for this node. Every request retries them
-	// until then: a failed first attempt must not leave later requests
-	// served untracked or stale.
+	// until then.
 	registered bool
 }
 
 // NewServer builds an xDS server with no snapshot published yet. Streams
-// opened before the first Publish block until a snapshot exists, which is
-// what lets a fresh Envoy converge after control-plane restart.
+// opened before the first Publish block until a snapshot exists.
 func NewServer(ctx context.Context) *Server {
 	s := &Server{
 		streams:    make(map[int64]string),
@@ -128,11 +110,8 @@ func (s *Server) SetNodeStore(store NodeStore) {
 	s.nodeStore = store
 }
 
-// SetFirstContactHook installs the refresh that runs at first contact,
-// after durable registration and before the request is answered: a fresh
-// subscriber must never receive content older than the durable
-// publication, or it could hold routes to withdrawn endpoints that the
-// drain barrier then misses.
+// SetFirstContactHook installs the refresh that runs at first contact, after
+// durable registration and before the request is answered.
 func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	if s == nil {
 		return
@@ -140,7 +119,6 @@ func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	s.firstContact = hook
 }
 
-// GRPCServer returns a gRPC server with every xDS service registered.
 func (s *Server) GRPCServer() *grpc.Server {
 	grpcServer := grpc.NewServer()
 	discoveryv3.RegisterAggregatedDiscoveryServiceServer(grpcServer, s.xds)
@@ -172,14 +150,12 @@ func (s *Server) Publish(ctx context.Context, snapshot *Snapshot) {
 	}
 }
 
-// Status copies the current publication and adoption state.
 func (s *Server) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := Status{Nodes: make(map[string]NodeStatus, len(s.nodes))}
 	if s.current != nil {
 		status.Version = s.current.Version
-		status.Hash = s.current.Hash
 		status.Counts = s.current.Counts
 		status.PublishedAt = s.published
 		status.HasSnapshot = true
@@ -199,9 +175,6 @@ func (s *Server) Status() Status {
 	return status
 }
 
-// onStreamOpen captures the stream's gRPC context, which the transport
-// cancels the moment the client disconnects — including while a request
-// callback is still blocked in first-contact work.
 func (s *Server) onStreamOpen(ctx context.Context, streamID int64, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -217,16 +190,11 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 	s.mu.Lock()
 	ctx := s.streamCtxs[streamID]
 	if nodeID == "" {
-		// Envoy sends node only on the first request of a stream: attribute
-		// node-less ACKs and NACKs to the node that opened this stream
-		// instead of dropping the standard apply path.
+		// Envoy sends node only on the first request of a stream.
 		nodeID = s.streams[streamID]
 	}
 	s.mu.Unlock()
 	if ctx == nil {
-		// Every stream request belongs to a stream opened through
-		// onStreamOpen; without that stream context, first-contact work
-		// could not be cancelled on disconnect. Fail closed.
 		return fmt.Errorf("xds request on untracked stream %d", streamID)
 	}
 	if nodeID == "" {
@@ -249,13 +217,8 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 }
 
 // atFirstContact durably registers a subscriber and refreshes from the
-// durable publication before the request is answered. Both steps run
-// before any config can reach the subscriber — registration first, so the
-// drain barrier cannot miss it; refresh second, so it cannot receive
-// content older than the row and hold routes the barrier believes gone.
-// They repeat on every request until they succeed once: concurrent first
-// contacts and failed attempts must not leave a request served untracked
-// or stale. Failure fails the request closed.
+// durable publication before the request is answered. Both steps repeat on
+// every request until they succeed once. Failure fails the request closed.
 func (s *Server) atFirstContact(ctx context.Context, nodeID string) error {
 	s.mu.Lock()
 	state := s.nodes[nodeID]
@@ -293,8 +256,6 @@ func (s *Server) observe(ctx context.Context, streamID int64, nodeID, typeURL, v
 		state = &nodeState{applied: make(map[string]string)}
 		s.nodes[nodeID] = state
 		if s.current != nil {
-			// A (re)connecting Envoy converges immediately on the current
-			// snapshot instead of waiting for the next publication.
 			if err := s.cache.SetSnapshot(ctx, nodeID, s.current.CacheSnapshot()); err != nil {
 				slog.Warn("xds seed snapshot failed", "node", nodeID, "error", err)
 			}
@@ -307,9 +268,7 @@ func (s *Server) observe(ctx context.Context, streamID int64, nodeID, typeURL, v
 		}
 	}
 	if errDetail != nil {
-		// NACK: record the rejection and keep serving the published
-		// snapshot. Envoy retains its own last-known-good; the server must
-		// not withdraw or roll back on a client it cannot parse for.
+		// NACK: record the rejection and keep serving the published snapshot.
 		state.nacks++
 		state.lastNACK = errDetail.GetMessage()
 		if typeURL != "" {
@@ -321,7 +280,6 @@ func (s *Server) observe(ctx context.Context, streamID int64, nodeID, typeURL, v
 	if typeURL != "" && version != "" && s.current != nil && version == s.current.Version {
 		state.applied[typeURL] = version
 	}
-
 }
 
 func (s *Server) onStreamClosed(streamID int64, node *corev3.Node) {
@@ -349,9 +307,6 @@ func (s *Server) onStreamClosed(streamID int64, node *corev3.Node) {
 	if state.streams > 0 {
 		return
 	}
-	// Fully disconnected: drop adoption tracking and the cached snapshot so
-	// node churn cannot grow memory without bound. A reconnecting node is
-	// re-seeded from the current snapshot on its first request.
 	delete(s.nodes, nodeID)
 	s.cache.ClearSnapshot(nodeID)
 }

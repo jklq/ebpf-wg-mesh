@@ -11,21 +11,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Client is a minimal ADS subscriber: enough to converge on the published
-// snapshot, ACK/NACK it, and observe versions. Tests and the VM harness
-// probe use it; Envoy itself speaks the same protocol.
 type Client struct {
 	nodeID string
 	conn   *grpc.ClientConn
 	stream discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesClient
-	// sent marks that the stream has carried its first request: node only
-	// travels on the first request of a stream, like Envoy.
-	sent bool
+	sent   bool
 }
 
-// Dial opens an ADS stream to addr as nodeID. Callers may pass dial options
-// (for example a bufconn dialer in tests); without transport credentials the
-// client defaults to plaintext.
 func Dial(ctx context.Context, addr, nodeID string, opts ...grpc.DialOption) (*Client, error) {
 	opts = append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, opts...)
 	conn, err := grpc.NewClient(addr, opts...)
@@ -42,8 +34,7 @@ func Dial(ctx context.Context, addr, nodeID string, opts ...grpc.DialOption) (*C
 
 // Request sends one DiscoveryRequest. A nil errDetail ACKs version; a
 // non-nil one NACKs with Envoy semantics (version stays at the last ACKed).
-// Like Envoy, node travels only on the first request of the stream: the
-// harness must exercise the standard node-less ACK/NACK path.
+// Envoy sends node only on the first request of a stream.
 func (c *Client) Request(typeURL, version, nonce string, errDetail *rpcstatus.Status) error {
 	var node *corev3.Node
 	if !c.sent {
@@ -62,7 +53,6 @@ func (c *Client) Request(typeURL, version, nonce string, errDetail *rpcstatus.St
 	return nil
 }
 
-// Subscribe requests typeURL from scratch and returns the first response.
 func (c *Client) Subscribe(ctx context.Context, typeURL string) (*discoveryv3.DiscoveryResponse, error) {
 	if err := c.Request(typeURL, "", "", nil); err != nil {
 		return nil, err
@@ -70,12 +60,6 @@ func (c *Client) Subscribe(ctx context.Context, typeURL string) (*discoveryv3.Di
 	return c.RecvContext(ctx)
 }
 
-// Recv blocks for the next response on the stream.
-func (c *Client) Recv() (*discoveryv3.DiscoveryResponse, error) {
-	return c.stream.Recv()
-}
-
-// RecvContext blocks for the next response until ctx ends.
 func (c *Client) RecvContext(ctx context.Context) (*discoveryv3.DiscoveryResponse, error) {
 	type result struct {
 		resp *discoveryv3.DiscoveryResponse
@@ -94,11 +78,6 @@ func (c *Client) RecvContext(ctx context.Context) (*discoveryv3.DiscoveryRespons
 	}
 }
 
-// CloseSend half-closes the stream; Close tears the connection down.
 func (c *Client) CloseSend() error { return c.stream.CloseSend() }
 
-// Close releases the connection.
 func (c *Client) Close() error { return c.conn.Close() }
-
-// NodeID reports the subscribed identity.
-func (c *Client) NodeID() string { return c.nodeID }

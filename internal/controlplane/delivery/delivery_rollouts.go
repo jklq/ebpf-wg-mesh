@@ -51,9 +51,6 @@ func (d *Delivery) ReconcileRollouts(ctx context.Context) error {
 				changed = changed || confirmed.Changed
 			}
 		}
-		// Not converged: subscribers have not applied the withdrawal yet.
-		// Retain the old allocations (stale ingress may still route to
-		// them) and retry confirmation on the next cycle.
 	}
 
 	if changed {
