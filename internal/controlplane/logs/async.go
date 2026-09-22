@@ -98,6 +98,10 @@ type owedGapKey struct {
 	stream       string
 	reason       string
 	reporter     string
+	// summaryID is the producer's stable summary identity. Shed
+	// producer gaps keep it so a replay replaces the same gap row
+	// instead of double-counting the loss.
+	summaryID string
 }
 
 type owedGap struct {
@@ -144,6 +148,7 @@ func (a *AsyncIngester) noteOwedLocked(key owedGapKey, count uint64, start, end 
 	fold := key
 	fold.allocationID = ""
 	fold.buildID = ""
+	fold.summaryID = ""
 	if owed, ok := a.owedFold[fold]; ok {
 		owed.add(count, start, end)
 		return
@@ -472,6 +477,7 @@ func (a *AsyncIngester) shedFlushLocked(flush pendingFlush) {
 			stream:       normalizeLogStream(gap.Stream),
 			reason:       logpipeline.NormalizeDropReason(gap.Reason),
 			reporter:     normalizeReporter(gap.Reporter),
+			summaryID:    gap.SummaryID,
 		}
 		a.noteOwedLocked(key, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
 	}
@@ -515,6 +521,7 @@ func (a *AsyncIngester) attachOwedLocked(flush *pendingFlush) {
 				DroppedCount: owed.droppedCount,
 				Reason:       key.reason,
 				Reporter:     key.reporter,
+				SummaryID:    key.summaryID,
 			})
 			delete(owedMap, key)
 		}

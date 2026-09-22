@@ -537,3 +537,49 @@ func TestAsyncIngesterAccountsAbandonedBacklogWhenGraceExpires(t *testing.T) {
 		t.Fatalf("outage must not report flushed lines: %+v", stats)
 	}
 }
+
+// A shed flush keeps producer gap identity: the owed row must carry
+// the summary's stable ID so a replayed summary replaces the same
+// gap row instead of double-counting the loss.
+func TestAsyncIngesterShedProducerGapsKeepSummaryIdentity(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 1})
+
+	batch := testAgentBatch("svc-1", "alloc-2", 2)
+	batch.Drops = []*platformv1.LogDropSummary{{
+		ServiceId:    "svc-1",
+		AllocationId: "alloc-2",
+		LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
+		DroppedCount: 3,
+		Reason:       logpipeline.ReasonRateLimited,
+		WindowStart:  timestamppb.New(time.Now().UTC()),
+		WindowEnd:    timestamppb.New(time.Now().UTC()),
+		SummaryId:    "sid-9",
+	}}
+	if !ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) {
+		t.Fatal("first batch must be admitted")
+	}
+	if !ingester.EnqueueAgentBatch("agent-1", batch) {
+		t.Fatal("second batch must be accepted with shed gaps")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ingester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for _, gap := range store.gaps {
+		if gap.SummaryID == "sid-9" {
+			if gap.DroppedCount != 3 {
+				t.Fatalf("shed producer gap lost counts: %+v", gap)
+			}
+			return
+		}
+	}
+	t.Fatalf("shed producer gap lost its identity: %+v", store.gaps)
+}
