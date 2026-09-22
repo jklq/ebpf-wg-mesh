@@ -472,6 +472,13 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 // is current against the binding's observed history. No work is created.
 var errSourceRevisionSuperseded = errors.New("source revision superseded by a newer observed revision")
 
+// errSourceRevisionPredecessorPending refuses a build request whose push
+// transition names a predecessor this binding has not observed yet: the
+// successor arrived before its predecessor's webhook was processed. It is
+// not stale — just early — so the work layer requeues it instead of
+// dropping it.
+var errSourceRevisionPredecessorPending = errors.New("source revision predecessor not observed yet")
+
 // supersedeQueuedBuildsTx retires still-queued builds so only the newest
 // request proceeds to build or deploy.
 func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) error {
@@ -534,6 +541,18 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	if !transition.ProvesCurrent(revision.CommitSHA, head) {
+		if transition.PreviousCommit != "" {
+			if _, err := s.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, revision.SourceBindingID, transition.PreviousCommit); errors.Is(err, sql.ErrNoRows) {
+				// The push transition names a predecessor this binding
+				// has not observed yet: the successor's webhook beat its
+				// predecessor's. Not stale — just early. Requeue instead
+				// of dropping, so the build lands once the predecessor
+				// advances the head.
+				return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionPredecessorPending
+			} else if err != nil {
+				return BuildRunRecord{}, DeploymentRecord{}, false, err
+			}
+		}
 		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
 	}
 	if head != revision.CommitSHA {
