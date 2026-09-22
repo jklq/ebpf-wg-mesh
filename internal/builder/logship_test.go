@@ -37,7 +37,10 @@ func TestBuildLogReporterShipsBatchesWithStableIdentities(t *testing.T) {
 
 	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
 	cfg, spoolDir := testBuildLogShipConfig(t, "build-1")
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 3, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 3, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	if reporter == nil {
 		t.Fatal("expected reporter")
 	}
@@ -86,7 +89,10 @@ func TestBuildLogReporterFlushesRemainingLinesOnClose(t *testing.T) {
 	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
 	cfg, _ := testBuildLogShipConfig(t, "build-1")
 	cfg.FlushInterval = time.Hour // Close must drain without waiting for a tick.
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stderr", Line: "two"})
 	reporter.Close()
@@ -109,7 +115,10 @@ func TestBuildLogReporterRetriesAcrossOutage(t *testing.T) {
 		failErr:       errors.New("boom"),
 	}
 	cfg, _ := testBuildLogShipConfig(t, "build-1")
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "durable"})
 	reporter.Close()
 
@@ -138,7 +147,10 @@ func TestBuildLogReporterOrphansOnLeaseLoss(t *testing.T) {
 		reportErr: status.Error(codes.PermissionDenied, "build lease lost"),
 	}
 	cfg, spoolDir := testBuildLogShipConfig(t, "build-1")
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
 	reporter.Close()
 
@@ -163,7 +175,10 @@ func TestBuildLogReporterRateLimitsWithGapSummaries(t *testing.T) {
 	cfg.RatePerSec = 1
 	cfg.Burst = 1
 	cfg.FlushInterval = time.Hour
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	for i := 0; i < 5; i++ {
 		reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "flood"})
 	}
@@ -194,7 +209,10 @@ func TestBuildLogReporterTruncatesOversizedLines(t *testing.T) {
 	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
 	cfg, _ := testBuildLogShipConfig(t, "build-1")
 	cfg.FlushInterval = time.Hour
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	huge := make([]byte, logpipeline.MaxLogLineBytes+100)
 	for i := range huge {
 		huge[i] = 'y'
@@ -301,7 +319,10 @@ func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
 	cfg, _ := testBuildLogShipConfig(t, "build-1")
 	cfg.SpoolDir = buildLogSpoolDir(base, "build-1", 2)
 	cfg.FlushInterval = time.Hour
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 2, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 2, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "fresh"})
 	reporter.Close()
 
@@ -353,7 +374,10 @@ func TestBuildLogReporterCloseReportsDropsWithEmptySpool(t *testing.T) {
 	cfg.FlushInterval = time.Hour // only the close path may report
 	cfg.RatePerSec = 0.001
 	cfg.Burst = 1
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 3, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 3, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	if reporter == nil {
 		t.Fatal("expected reporter")
 	}
@@ -404,7 +428,10 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 	cfg.RatePerSec = 0.001
 	cfg.Burst = 1
 	cfg.FlushInterval = time.Hour // Only the manual flushes below report.
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	// Consume the single burst token so every line below is denied.
 	if !reporter.limiter.Allow("build-1") {
 		t.Fatal("expected one burst token")
@@ -468,7 +495,10 @@ func TestBuildLogReporterCloseReportsAbandonedDelivery(t *testing.T) {
 	}
 	cfg, spoolDir := testBuildLogShipConfig(t, "build-1")
 	cfg.CloseTimeout = 50 * time.Millisecond
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
 
 	// The output is never accepted: completing the build anyway
@@ -485,5 +515,24 @@ func TestBuildLogReporterCloseReportsAbandonedDelivery(t *testing.T) {
 	var nilReporter *buildLogReporter
 	if err := nilReporter.Close(); err != nil {
 		t.Fatalf("nil reporter close: %v", err)
+	}
+}
+
+func TestNewBuildLogReporterRefusesBrokenSpoolDir(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
+	cfg, _ := testBuildLogShipConfig(t, "build-1")
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+	cfg.SpoolDir = filepath.Join(blocker, "spool") // parent is a file: open must fail
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err == nil {
+		t.Fatal("spool-open failure must propagate: a build cannot complete without its transcript path")
+	}
+	if reporter != nil {
+		t.Fatal("no reporter without a spool")
 	}
 }

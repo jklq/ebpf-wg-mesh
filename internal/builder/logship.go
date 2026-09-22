@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -80,16 +81,15 @@ type buildLogReporter struct {
 	overflow map[string]uint64
 }
 
-func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID, serviceID string, leaseEpoch int64, cfg buildLogShipConfig) *buildLogReporter {
+func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID, serviceID string, leaseEpoch int64, cfg buildLogShipConfig) (*buildLogReporter, error) {
 	if client == nil || buildID == "" {
-		return nil
+		return nil, errors.New("build log reporter requires a client and a build ID")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if cfg.SpoolDir == "" {
-		slog.Warn("build log spool directory is required; build output will not ship", "builder_id", builderID, "build_id", buildID)
-		return nil
+		return nil, errors.New("build log spool directory is required; refusing to run a build whose output cannot ship")
 	}
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = defaultBuildLogBatchSize
@@ -106,8 +106,7 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		SyncWrites: true,
 	})
 	if err != nil {
-		slog.Warn("open build log spool; build output will not ship", "builder_id", builderID, "build_id", buildID, "error", err)
-		return nil
+		return nil, fmt.Errorf("open build log spool: %w", err)
 	}
 	reporter := &buildLogReporter{
 		client:        client,
@@ -129,7 +128,7 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		overflow:      make(map[string]uint64),
 	}
 	go reporter.run()
-	return reporter
+	return reporter, nil
 }
 
 // Report rate-limits and spools one build output line. It never

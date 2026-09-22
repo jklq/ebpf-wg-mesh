@@ -318,7 +318,12 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 		return "", err
 	}
 	defer os.Remove(archivePath)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
+	reporter, err := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
+	if err != nil {
+		// Without a log pipeline the attempt's transcript would be
+		// lost, so the build must not run and complete without it.
+		return "", err
+	}
 	defer func() { _ = reporter.Close() }()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
