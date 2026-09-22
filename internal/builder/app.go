@@ -319,10 +319,17 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 	}
 	defer os.Remove(archivePath)
 	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
-	defer reporter.Close()
+	defer func() { _ = reporter.Close() }()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
 	if err != nil {
+		return "", err
+	}
+	// The transcript is part of the build's durable record: refuse to
+	// complete successfully with the logs undelivered — the abandoned
+	// spool is garbage-collected and the output would be lost. A
+	// failed build is retried and re-emits its output from scratch.
+	if err := reporter.Close(); err != nil {
 		return "", err
 	}
 	return result.ImageDigestRef, nil

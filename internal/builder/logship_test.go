@@ -458,3 +458,32 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 		t.Fatalf("recovered report carried %d dropped lines, want 100", recovered)
 	}
 }
+
+func TestBuildLogReporterCloseReportsAbandonedDelivery(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{
+		calls:     make(chan struct{}, 4),
+		reportErr: errors.New("ingest down"),
+	}
+	cfg, spoolDir := testBuildLogShipConfig(t, "build-1")
+	cfg.CloseTimeout = 50 * time.Millisecond
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
+
+	// The output is never accepted: completing the build anyway
+	// would garbage-collect the transcript and lose it.
+	if err := reporter.Close(); err == nil {
+		t.Fatal("Close must report abandoned delivery")
+	}
+	if _, err := os.Stat(spoolDir); err != nil {
+		t.Fatalf("abandoned spool must stay behind for garbage collection: %v", err)
+	}
+	if err := reporter.Close(); err == nil {
+		t.Fatal("abandonment must persist across Close calls")
+	}
+	var nilReporter *buildLogReporter
+	if err := nilReporter.Close(); err != nil {
+		t.Fatalf("nil reporter close: %v", err)
+	}
+}

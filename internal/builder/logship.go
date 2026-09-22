@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -184,9 +185,16 @@ func (r *buildLogReporter) countOverflow(stream string, count uint64) {
 // an attempt whose lines were all dropped still reports its drop
 // summaries before the spool directory goes away. Anything left
 // behind is deleted by startup garbage collection.
-func (r *buildLogReporter) Close() {
+//
+// Close reports an error when the backend never accepted the
+// attempt's output within the close timeout. A build must not
+// complete successfully with its transcript undelivered: the
+// abandoned spool is garbage-collected and the output would be lost,
+// while a failed build is retried and re-emits its output from
+// scratch.
+func (r *buildLogReporter) Close() error {
 	if r == nil {
-		return
+		return nil
 	}
 	r.closeOnce.Do(func() {
 		close(r.stop)
@@ -198,6 +206,10 @@ func (r *buildLogReporter) Close() {
 		}
 		r.cleanup()
 	})
+	if r.abandoned.Load() && !r.orphaned.Load() {
+		return fmt.Errorf("build log delivery abandoned: attempt output for build %s was not accepted within %s", r.buildID, r.closeTimeout)
+	}
+	return nil
 }
 
 func (r *buildLogReporter) cleanup() {
