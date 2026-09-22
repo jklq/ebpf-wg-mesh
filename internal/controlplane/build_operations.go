@@ -103,7 +103,9 @@ func (s *BuildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "resolve registry credentials: %v", err)
 	}
-	s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Builder %s claimed build for commit %s", builderID, shortSHA(build.CommitSHA))
+	s.emitter.EmitEvent(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, logs.LogTypeBuild, build.ID, logs.EventBuildStarted,
+		fmt.Sprintf("Builder %s claimed build for commit %s", builderID, shortSHA(build.CommitSHA)),
+		map[string]string{"builder_id": builderID, "commit_sha": build.CommitSHA})
 	job := &platformv1.BuildJob{
 		BuildId:               build.ID,
 		ServiceId:             service.ID,
@@ -159,7 +161,7 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	if strings.TrimSpace(req.GetBuildId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "build id is required")
 	}
-	if len(req.GetLines()) == 0 {
+	if len(req.GetLines()) == 0 && len(req.GetDrops()) == 0 {
 		return &emptypb.Empty{}, nil
 	}
 	build, err := s.reads.BuildByID(ctx, req.GetBuildId())
@@ -184,6 +186,9 @@ func (s *BuildOperations) ReportBuildLogs(ctx context.Context, req *platformv1.R
 	}
 	if err := s.emitter.EmitBuildLines(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, builderID, req.GetLines()); err != nil {
 		return nil, status.Errorf(codes.Internal, "persist build logs: %v", err)
+	}
+	if err := s.emitter.EmitBuildDrops(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, builderID, req.GetDrops()); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist build log gaps: %v", err)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -266,28 +271,35 @@ func (s *BuildOperations) CompleteBuild(ctx context.Context, req *platformv1.Com
 	}
 	slog.InfoContext(ctx, "build completed", "build_id", req.GetBuildId(), "builder_id", builderID, "state", req.GetState().String(), "recorded_state", build.State, "commit_sha", req.GetCommitSha(), "image_digest", req.GetImageDigest(), "failure_reason", req.GetFailureReason())
 
+	scope := logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}
 	switch req.GetState() {
 	case platformv1.BuildState_BUILD_STATE_SUCCEEDED:
 		if build.State == deliverycore.BuildStateSuperseded {
-			s.emitter.EmitBuild(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Build superseded by a newer commit")
+			s.emitter.EmitEvent(ctx, scope, logs.LogTypeBuild, build.ID, logs.EventBuildFinished, "Build superseded by a newer commit", map[string]string{"outcome": "superseded"})
 			break
 		}
-		s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Image build succeeded for commit %s (digest %s)", shortSHA(req.GetCommitSha()), shortDigest(req.GetImageDigest()))
+		s.emitter.EmitEvent(ctx, scope, logs.LogTypeBuild, build.ID, logs.EventBuildFinished,
+			fmt.Sprintf("Image build succeeded for commit %s (digest %s)", shortSHA(req.GetCommitSha()), shortDigest(req.GetImageDigest())),
+			map[string]string{"outcome": "succeeded", "commit_sha": req.GetCommitSha(), "image_digest": req.GetImageDigest()})
 		target := strings.Join(allocationAgentIDs, ", ")
 		if target == "" {
 			target = "pending placement"
 		}
 		if completion.RolloutScheduled {
-			s.emitter.EmitDeployf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration, AgentID: service.AllocatedAgentID}, "", req.GetBuildId(), logs.StageDeploy, "Scheduling rollout to agent %s", target)
+			s.emitter.EmitEvent(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration, AgentID: service.AllocatedAgentID}, logs.LogTypeDeploy, req.GetBuildId(), logs.EventDeployStarted,
+				fmt.Sprintf("Scheduling rollout to agent %s", target),
+				map[string]string{"target_agents": target})
 		}
 	case platformv1.BuildState_BUILD_STATE_FAILED:
 		reason := strings.TrimSpace(req.GetFailureReason())
 		if reason == "" {
 			reason = "no reason provided"
 		}
-		s.emitter.EmitBuildf(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Image build failed: %s", reason)
+		s.emitter.EmitEvent(ctx, scope, logs.LogTypeBuild, build.ID, logs.EventBuildFinished,
+			fmt.Sprintf("Image build failed: %s", reason),
+			map[string]string{"outcome": "failed", "reason": reason})
 	case platformv1.BuildState_BUILD_STATE_SUPERSEDED:
-		s.emitter.EmitBuild(ctx, logs.ServiceScope{EnvironmentID: service.EnvironmentID, ServiceID: service.ID, RolloutGeneration: service.RolloutGeneration}, build.ID, logs.StageBuild, "Build superseded by a newer commit")
+		s.emitter.EmitEvent(ctx, scope, logs.LogTypeBuild, build.ID, logs.EventBuildFinished, "Build superseded by a newer commit", map[string]string{"outcome": "superseded"})
 	}
 
 	return &emptypb.Empty{}, nil

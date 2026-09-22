@@ -17,6 +17,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/restartpolicy"
 
@@ -30,6 +31,7 @@ type AgentService struct {
 	store                   *fleetPersistence
 	delivery                agentDelivery
 	logStore                *logs.LogStore
+	logIngester             *logs.AsyncIngester
 	notifier                *Notifier
 	authority               *identity.TLSAuthority
 	enrollment              *identity.Enrollment
@@ -108,6 +110,15 @@ type agentDelivery interface {
 func WithAgentRegistry(policy *registry.Policy) AgentServiceOption {
 	return func(service *AgentService) {
 		service.registry = policy
+	}
+}
+
+// WithLogIngester routes agent log batches through the async ingest
+// queue so a ClickHouse outage cannot stall the Sync loop. Without
+// it, batches write synchronously (used by focused tests).
+func WithLogIngester(ingester *logs.AsyncIngester) AgentServiceOption {
+	return func(service *AgentService) {
+		service.logIngester = ingester
 	}
 }
 
@@ -383,7 +394,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if err := s.store.validateAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
 				return status.Errorf(codes.PermissionDenied, "log batch ownership: %v", err)
 			}
-			if s.logStore != nil {
+			if s.logIngester != nil {
+				s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch)
+			} else if s.logStore != nil {
 				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
 					return status.Errorf(codes.Internal, "log batch: %v", err)
 				}
@@ -680,6 +693,7 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 			"message", message,
 		)
 		lines = append(lines, logs.LogLineInput{
+			ID:                logpipeline.SyntheticLineID(),
 			ObservedAt:        time.Now().UTC(),
 			EnvironmentID:     alloc.EnvironmentID,
 			ServiceID:         cond.GetServiceId(),
@@ -688,6 +702,8 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 			Stream:            "combined",
 			LogType:           logs.LogTypeDeploy,
 			Stage:             "restart",
+			Event:             logs.EventCrashLoop,
+			Attributes:        map[string]string{"phase": cond.GetPhase()},
 			RolloutGeneration: cond.GetDesiredRolloutGeneration(),
 			Sequence:          logs.NextSequence(),
 			Line:              message,

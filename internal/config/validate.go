@@ -32,6 +32,15 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Logs.RetentionDays <= 0 {
 		return errors.New("controlplane.logs.retentionDays must be greater than 0")
 	}
+	if cfg.Logs.IngestQueueFlushes < 0 {
+		return errors.New("controlplane.logs.ingestQueueFlushes must be non-negative")
+	}
+	if cfg.Logs.IngestRatePerSec < 0 {
+		return errors.New("controlplane.logs.ingestRatePerSec must be non-negative")
+	}
+	if cfg.Logs.IngestBurst < 0 {
+		return errors.New("controlplane.logs.ingestBurst must be non-negative")
+	}
 	if cfg.Logs.ClickHouse.URL != "" {
 		if err := validateAbsoluteURL("controlplane.logs.clickhouse.url", cfg.Logs.ClickHouse.URL); err != nil {
 			return err
@@ -228,6 +237,24 @@ func validateAgent(cfg AgentConfig) error {
 	if cfg.Node.Resources.AdvertisedMemoryMebibytes() <= 0 {
 		return errors.New("agent.node.resources.reservedMemoryMebibytes must be less than memoryMebibytes")
 	}
+	if cfg.Logs.SpoolMaxBytes < 0 {
+		return errors.New("agent.logs.spoolMaxBytes must be non-negative")
+	}
+	if cfg.Logs.RatePerSec < 0 {
+		return errors.New("agent.logs.ratePerSec must be non-negative")
+	}
+	if cfg.Logs.Burst < 0 {
+		return errors.New("agent.logs.burst must be non-negative")
+	}
+	if cfg.Logs.FlushBatchSize < 0 {
+		return errors.New("agent.logs.flushBatchSize must be non-negative")
+	}
+	if cfg.Logs.FlushIntervalSeconds < 0 {
+		return errors.New("agent.logs.flushIntervalSeconds must be non-negative")
+	}
+	if cfg.Logs.ReplayWindowSeconds < 0 {
+		return errors.New("agent.logs.replayWindowSeconds must be non-negative")
+	}
 	if len(cfg.ControlPlane.Addresses) == 0 {
 		return errors.New("agent.controlPlane.addresses is required")
 	}
@@ -342,6 +369,21 @@ func validateBuilder(cfg BuilderConfig) error {
 	}
 	if cfg.HeartbeatIntervalSeconds <= 0 {
 		return errors.New("builder.heartbeatIntervalSeconds must be greater than 0")
+	}
+	if cfg.Logs.SpoolMaxBytes < 0 {
+		return errors.New("builder.logs.spoolMaxBytes must be non-negative")
+	}
+	if cfg.Logs.RatePerSec < 0 {
+		return errors.New("builder.logs.ratePerSec must be non-negative")
+	}
+	if cfg.Logs.Burst < 0 {
+		return errors.New("builder.logs.burst must be non-negative")
+	}
+	if cfg.Logs.FlushBatchSize < 0 {
+		return errors.New("builder.logs.flushBatchSize must be non-negative")
+	}
+	if cfg.Logs.FlushIntervalSeconds < 0 {
+		return errors.New("builder.logs.flushIntervalSeconds must be non-negative")
 	}
 	if cfg.BuildctlBinary == "" {
 		return errors.New("builder.buildctlBinary is required")

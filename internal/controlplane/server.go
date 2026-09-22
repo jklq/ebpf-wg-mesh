@@ -49,6 +49,7 @@ type Server struct {
 	delivery        *deliverycore.Delivery
 	logStore        *logs.LogStore
 	logEmitter      *logs.LogEmitter
+	logIngester     *logs.AsyncIngester
 	notifier        *Notifier
 	authority       *identity.TLSAuthority
 	internalGRPC    *grpc.Server
@@ -161,7 +162,15 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
+	if logStore != nil {
+		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
+	}
 	logEmitter := logs.NewLogEmitter(logStore)
+	logIngester := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
+		QueueFlushes: cfg.Logs.IngestQueueFlushes,
+		RatePerSec:   float64(cfg.Logs.IngestRatePerSec),
+		Burst:        cfg.Logs.IngestBurst,
+	})
 	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)
 	staticRoutes := make([]xds.StaticRoute, 0, len(cfg.Ingress.StaticRoutes))
@@ -236,6 +245,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithAgentRegistry(policy),
 		WithReplicaAddresses(cfg.ReplicaAddresses),
 		WithLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
+		WithLogIngester(logIngester),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, policy, policy, WithBuilderLogEmitter(logEmitter))
@@ -284,6 +294,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		delivery:        delivery,
 		logStore:        logStore,
 		logEmitter:      logEmitter,
+		logIngester:     logIngester,
 		notifier:        notifier,
 		authority:       authority,
 		internalGRPC:    internal,
@@ -401,6 +412,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Follow(runCtx) }()
 	}
+	// Per-replica as well: every replica ingests the agent streams it
+	// terminates.
+	if s.logIngester != nil {
+		go func() { errCh <- s.logIngester.Run(runCtx) }()
+	}
 	leaseDone := make(chan error, 1)
 	go func() {
 		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
@@ -512,6 +528,11 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 
 func (s *Server) deletionGC(ctx context.Context) error {
 	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
+	if s.logStore != nil {
+		gc.SetLogPurgeHook(func(ctx context.Context, projectID string) error {
+			return s.logStore.PurgeProjectLogs(ctx, projectID)
+		})
+	}
 	return gc.Run(ctx)
 }
 

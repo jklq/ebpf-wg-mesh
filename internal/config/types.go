@@ -63,6 +63,14 @@ type ClickHouseConfig struct {
 type LogCaptureConfig struct {
 	ClickHouse    ClickHouseConfig
 	RetentionDays int
+	// IngestQueueFlushes caps queued agent batches in the
+	// control-plane ingest queue. Past the cap whole batches shed
+	// with explicit gap rows.
+	IngestQueueFlushes int
+	// IngestRatePerSec and IngestBurst bound the per-allocation
+	// ingest guard, which sits above agent-side limits.
+	IngestRatePerSec int
+	IngestBurst      int
 }
 
 type BootstrapConfig struct {
@@ -279,6 +287,28 @@ type AgentConfig struct {
 	Runtime      RuntimeConfig
 	Containerd   ContainerdConfig
 	Mesh         MeshConfig
+	Logs         AgentLogShippingConfig
+}
+
+// AgentLogShippingConfig bounds the agent's durable log pipeline.
+// Zero values select documented defaults.
+type AgentLogShippingConfig struct {
+	// SpoolMaxBytes caps the disk spool under the runtime data dir.
+	// Past the cap the oldest unshipped lines shed with explicit gap
+	// rows. Defaults to 256 MiB.
+	SpoolMaxBytes int64
+	// RatePerSec and Burst bound accepted lines per allocation per
+	// second. Past the limit lines shed with explicit gap rows.
+	// Defaults to 200/s with bursts of 1000.
+	RatePerSec int
+	Burst      int
+	// FlushBatchSize and FlushIntervalSeconds pace Sync stream
+	// batches. Defaults to 100 lines and 1 second.
+	FlushBatchSize       int
+	FlushIntervalSeconds int
+	// ReplayWindowSeconds bounds the spool replay after a
+	// reconnect. Defaults to 300.
+	ReplayWindowSeconds int
 }
 
 type BuilderControlPlaneConfig struct {
@@ -295,6 +325,7 @@ type BuilderConfig struct {
 	WorkDir                  string
 	PollIntervalSeconds      int
 	HeartbeatIntervalSeconds int
+	Logs                     BuilderLogShippingConfig
 	Executor                 string
 	BuildctlBinary           string
 	BuildkitAddress          string
@@ -305,6 +336,22 @@ type BuilderConfig struct {
 	Cache                    BuilderCacheConfig
 	Sandbox                  BuilderSandboxConfig
 	CleanupWorkDir           bool
+}
+
+// BuilderLogShippingConfig bounds the builder's durable build-log
+// pipeline. Zero values select documented defaults.
+type BuilderLogShippingConfig struct {
+	// SpoolMaxBytes caps the per-attempt disk spool under the
+	// builder work dir. Defaults to 64 MiB.
+	SpoolMaxBytes int64
+	// RatePerSec and Burst bound accepted lines per build per
+	// second. Defaults to 200/s with bursts of 1000.
+	RatePerSec int
+	Burst      int
+	// FlushBatchSize and FlushIntervalSeconds pace ReportBuildLogs
+	// calls. Defaults to 100 lines and 1 second.
+	FlushBatchSize       int
+	FlushIntervalSeconds int
 }
 
 // BuilderLimitsConfig carries the explicit per-execution resource
