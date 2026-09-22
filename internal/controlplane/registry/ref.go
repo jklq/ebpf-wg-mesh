@@ -48,9 +48,10 @@ func (r ParsedReference) Familiar() string {
 
 // ParseReference normalizes an image reference the way the Docker/OCI
 // tooling does: an absent host becomes docker.io, a bare Docker Hub name
-// gains the library/ prefix, and a missing tag becomes latest. Pinned
-// references must carry a full sha256 manifest digest; anything else is
-// rejected so a malformed digest can never become runtime identity.
+// gains the library/ prefix, a missing tag becomes latest, and whitespace
+// around a digest is normalized away. Pinned references must carry a full
+// sha256 manifest digest; anything else is rejected so a malformed digest
+// can never become runtime identity.
 func ParseReference(ref string) (ParsedReference, error) {
 	trimmed := strings.TrimSpace(ref)
 	if trimmed == "" {
@@ -63,8 +64,11 @@ func ParseReference(ref string) (ParsedReference, error) {
 	repository := trimmed
 	var digest string
 	if at := strings.LastIndexByte(trimmed, '@'); at >= 0 {
-		repository = trimmed[:at]
-		digest = trimmed[at+1:]
+		// Whitespace around the digest is normalized away so a pasted
+		// "repo@ sha256:..." can never smuggle interior whitespace into
+		// the stored runtime identity.
+		repository = strings.TrimSpace(trimmed[:at])
+		digest = strings.TrimSpace(trimmed[at+1:])
 		if repository == "" {
 			return ParsedReference{}, fmt.Errorf("image reference %q has no repository", ref)
 		}
@@ -110,7 +114,10 @@ func SplitPinnedReference(ref string) (repository, digest string, err error) {
 	if at <= 0 || at == len(trimmed)-1 {
 		return "", "", fmt.Errorf("image reference %q is not digest-pinned", ref)
 	}
-	repository, digest = trimmed[:at], trimmed[at+1:]
+	repository, digest = strings.TrimSpace(trimmed[:at]), strings.TrimSpace(trimmed[at+1:])
+	if repository == "" || digest == "" {
+		return "", "", fmt.Errorf("image reference %q is not digest-pinned", ref)
+	}
 	if err := ValidateManifestDigest(digest); err != nil {
 		return "", "", fmt.Errorf("image reference %q: %w", ref, err)
 	}
