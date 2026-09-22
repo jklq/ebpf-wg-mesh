@@ -317,9 +317,14 @@ func recvDesiredState(t *testing.T, stream agentv1.AgentControl_SyncClient) *age
 					AgentId:              diff.GetAgentId(),
 					AuthorityEpoch:       diff.GetAuthorityEpoch(),
 					ReconciliationCursor: diff.GetTargetRevision(),
+					// Identity and fencing fields echo exactly as on the wire so
+					// assertions cover the diff path, not just checkpoints.
+					ClusterId:   diff.GetClusterId(),
+					GeneratedAt: diff.GetGeneratedAt(),
 				}
 				synthesized.Services = append(synthesized.Services, diff.GetStarts()...)
 				synthesized.Services = append(synthesized.Services, diff.GetUpdates()...)
+				synthesized.Volumes = append(synthesized.Volumes, diff.GetVolumeStarts()...)
 				return synthesized
 			}
 			// Skip node config, credentials, and replica messages.
