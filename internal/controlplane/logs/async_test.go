@@ -599,3 +599,63 @@ func TestAsyncIngesterKeepsLimiterDeniedMapBounded(t *testing.T) {
 		t.Fatalf("ingest guard retained %d denied keys without a bound", len(got))
 	}
 }
+
+// blockingFlushStore blocks the first write until released, then
+// fails every write — a backend outage whose first attempt spans
+// concurrent enqueues.
+type blockingFlushStore struct {
+	mu      sync.Mutex
+	flushes int
+	blocked chan struct{}
+	release chan struct{}
+	lines   []LogLineInput
+	gaps    []GapInput
+}
+
+func (b *blockingFlushStore) Enabled() bool { return true }
+
+func (b *blockingFlushStore) WriteLogLines(_ context.Context, inputs []LogLineInput) error {
+	b.mu.Lock()
+	b.flushes++
+	first := b.flushes == 1
+	b.mu.Unlock()
+	if first {
+		close(b.blocked)
+		<-b.release
+	}
+	return errors.New("ingest down")
+}
+
+func (b *blockingFlushStore) WriteGaps(_ context.Context, gaps []GapInput) error {
+	return errors.New("ingest down")
+}
+
+func TestDrainShutdownAccountsOwedShedDuringDrain(t *testing.T) {
+	store := &blockingFlushStore{blocked: make(chan struct{}), release: make(chan struct{})}
+	a := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 1, ShutdownGrace: 250 * time.Millisecond})
+	// The first batch queues; the drain dequeues it and blocks in
+	// the failing store.
+	if !a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) {
+		t.Fatal("expected the batch to queue")
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.drainShutdown(context.Background(), pendingFlush{})
+	}()
+	<-store.blocked
+	// While the drain retries, the queue refills and the third
+	// batch sheds into owed counts.
+	_ = a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-2", "alloc-2", 1))
+	_ = a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-3", "alloc-3", 1))
+	close(store.release)
+	<-done
+
+	// The grace expired: the whole backlog — queued, in flight, and
+	// shed owed — must surface as accounted loss instead of
+	// vanishing without a gap.
+	stats := a.Stats()
+	if stats.GapsLost != 3 {
+		t.Fatalf("grace expiry must account the full backlog, got %+v", stats)
+	}
+}

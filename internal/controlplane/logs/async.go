@@ -396,6 +396,10 @@ func (a *AsyncIngester) drainShutdown(ctx context.Context, inFlight pendingFlush
 			if !sealed {
 				remaining = append(remaining, a.sealAdmission()...)
 			}
+			// Gap counts shed while the drain was retrying are still
+			// owed; fold them into the accounted loss so they surface
+			// as gaps instead of vanishing.
+			a.attachOwed(&flush)
 			a.accountDrainedLoss(append([]pendingFlush{flush}, remaining...))
 			return
 		}
