@@ -8,9 +8,12 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
@@ -666,6 +669,63 @@ func normalizeReplicaAddresses(addresses []string) []string {
 	return result
 }
 
+// crashLoopEventLine builds the platform event for one crash-loop
+// observation. Its identity and observed_at derive from
+// content-stable facts (allocation, rollout generation, restart
+// window), so an agent resending the same observation after a
+// reconnect — or a duplicated status report — collapses into one
+// event row via the log store's (observed_at, line_id) dedup instead
+// of accumulating duplicates.
+func crashLoopEventLine(agentID, environmentID string, cond *agentv1.ServiceCondition) logs.LogLineInput {
+	restart := cond.GetRestart()
+	var onset time.Time
+	for _, ts := range []*timestamppb.Timestamp{
+		restart.GetWindowStartedAt(),
+		restart.GetStartedAt(),
+		restart.GetLastRestartAt(),
+	} {
+		if ts != nil && !ts.AsTime().IsZero() {
+			onset = ts.AsTime().UTC()
+			break
+		}
+	}
+	if onset.IsZero() {
+		// Synthetic conditions without restart timestamps cannot
+		// anchor an onset; the event stays retry-stable but
+		// re-observations may duplicate.
+		onset = time.Now().UTC()
+	}
+	message := cond.GetMessage()
+	if message == "" {
+		message = restart.GetMessage()
+	}
+	if message == "" {
+		message = "allocation entered crash loop; authorized restart or new rollout required"
+	}
+	return logs.LogLineInput{
+		ID: logpipeline.StableEventID(
+			logs.EventCrashLoop,
+			agentID,
+			cond.GetAllocationId(),
+			strconv.FormatInt(cond.GetDesiredRolloutGeneration(), 10),
+			onset.Format(time.RFC3339Nano),
+		),
+		ObservedAt:        onset,
+		EnvironmentID:     environmentID,
+		ServiceID:         cond.GetServiceId(),
+		AllocationID:      cond.GetAllocationId(),
+		AgentID:           agentID,
+		Stream:            "combined",
+		LogType:           logs.LogTypeDeploy,
+		Stage:             "restart",
+		Event:             logs.EventCrashLoop,
+		Attributes:        map[string]string{"phase": cond.GetPhase()},
+		RolloutGeneration: cond.GetDesiredRolloutGeneration(),
+		Sequence:          logs.NextSequence(),
+		Line:              message,
+	}
+}
+
 func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, report *agentv1.StatusReport) {
 	if s == nil || report == nil || s.logStore == nil || !s.logStore.Enabled() {
 		return
@@ -679,35 +739,13 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 		if err != nil {
 			continue
 		}
-		message := cond.GetMessage()
-		if message == "" {
-			message = cond.GetRestart().GetMessage()
-		}
-		if message == "" {
-			message = "allocation entered crash loop; authorized restart or new rollout required"
-		}
 		slog.Warn("allocation entered crash loop",
 			"agent_id", agentID,
 			"service_id", cond.GetServiceId(),
 			"allocation_id", cond.GetAllocationId(),
-			"message", message,
+			"message", cond.GetMessage(),
 		)
-		lines = append(lines, logs.LogLineInput{
-			ID:                logpipeline.SyntheticLineID(),
-			ObservedAt:        time.Now().UTC(),
-			EnvironmentID:     alloc.EnvironmentID,
-			ServiceID:         cond.GetServiceId(),
-			AllocationID:      cond.GetAllocationId(),
-			AgentID:           agentID,
-			Stream:            "combined",
-			LogType:           logs.LogTypeDeploy,
-			Stage:             "restart",
-			Event:             logs.EventCrashLoop,
-			Attributes:        map[string]string{"phase": cond.GetPhase()},
-			RolloutGeneration: cond.GetDesiredRolloutGeneration(),
-			Sequence:          logs.NextSequence(),
-			Line:              message,
-		})
+		lines = append(lines, crashLoopEventLine(agentID, alloc.EnvironmentID, cond))
 	}
 	if len(lines) == 0 {
 		return

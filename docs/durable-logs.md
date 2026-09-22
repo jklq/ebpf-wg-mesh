@@ -23,12 +23,20 @@ backlog item 3.6; the read API contract for them is in
   | --- | --- | --- |
   | `ag:` | agent | agent, boot, allocation, stream, sequence |
   | `bd:` | builder | builder, build, lease epoch, sequence |
-  | `sy:` | control plane | random per line |
+  | `sy:` | control plane | content-stable event facts |
 
   The agent boot ID lets sequence counters restart at 1 per process
   without colliding. The builder lease epoch scopes a build attempt:
   a retried report reuses its IDs while a retried attempt writes under
-  a new epoch.
+  a new epoch. Synthetic event IDs derive from the content-stable
+  facts of the observation (ownership, rollout generation, restart
+  window) instead of wall clock, so an agent resending the same
+  observation after a reconnect — or a duplicated status report —
+  collapses into one event row under the same (observed_at, line_id)
+  dedup that serves log retries; `allocation.crash_loop` fires once
+  per restart window per allocation, not once per report. Conditions
+  without restart timestamps cannot anchor an onset and fall back to
+  a per-emission identity.
 
 ## Ordering and duplicate handling
 
@@ -75,7 +83,8 @@ buggy or hostile agent cannot starve ClickHouse. The flush loop retries
 with backoff across a backend outage; only process shutdown drops the
 backlog (producers then replay their unshipped spool). Queue overflow
 sheds whole batches with owed gap rows so the loss still surfaces in
-reads. Batches over 2000 entries are trimmed with the tail counted as
+reads; past the owed-gap key cap shed windows fold into service-level
+aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as
 ingest gaps per affected service and allocation.
 Ingest is per replica: each replica flushes the agent streams it
 terminates, and the agent Sync loop never waits on ClickHouse.

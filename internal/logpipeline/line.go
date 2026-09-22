@@ -2,6 +2,7 @@ package logpipeline
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -65,9 +66,25 @@ func BuilderLineID(builderID, buildID string, leaseEpoch int64, seq uint64) stri
 	return fmt.Sprintf("bd:%s:%s:%d:%d", builderID, buildID, leaseEpoch, seq)
 }
 
+// StableEventID derives the identity of a platform-emitted event
+// from its content-stable facts (ownership, rollout generation,
+// observation window), so re-observed or re-sent state collapses to
+// one event row instead of duplicating. Facts that differ between
+// genuine events (a new restart window, a new rollout) must be part
+// of the parts; wall-clock report times must not.
+func StableEventID(parts ...string) string {
+	h := sha256.New()
+	for _, part := range parts {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	return "sy:" + hex.EncodeToString(h.Sum(nil)[:16])
+}
+
 // SyntheticLineID returns a random identity for a control-plane
-// synthetic line. The emitter assigns it when constructing the line
-// input so ingest retries reuse it.
+// synthetic line when no content-stable facts exist to derive one
+// from. The emitter assigns it when constructing the line input so
+// ingest retries reuse it.
 func SyntheticLineID() string {
 	var raw [16]byte
 	_, _ = rand.Read(raw[:])

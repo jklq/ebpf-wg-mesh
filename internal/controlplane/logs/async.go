@@ -72,6 +72,7 @@ type AsyncIngester struct {
 
 	mu          sync.Mutex
 	owed        map[owedGapKey]*owedGap
+	owedFold    map[owedGapKey]*owedGap
 	lastFlush   time.Time
 	lastError   string
 	lastErrorAt time.Time
@@ -99,6 +100,56 @@ type owedGap struct {
 	windowEnd    time.Time
 }
 
+// add folds one shed window into the entry.
+func (o *owedGap) add(count uint64, start, end time.Time) {
+	if o.droppedCount == 0 {
+		o.windowStart, o.windowEnd = start, end
+		if o.windowStart.IsZero() {
+			o.windowStart = end
+		}
+	}
+	o.droppedCount += count
+	if !start.IsZero() && start.Before(o.windowStart) {
+		o.windowStart = start
+	}
+	if end.After(o.windowEnd) {
+		o.windowEnd = end
+	}
+}
+
+// noteOwedLocked records one shed window under its detailed key.
+// Once the detailed map is full, the window folds into a
+// service-level aggregate gap (no allocation or build detail) so the
+// loss still surfaces in reads instead of vanishing past the key
+// cap. Only when the aggregate map is exhausted too does the count
+// stay in the GapsLost counter.
+func (a *AsyncIngester) noteOwedLocked(key owedGapKey, count uint64, start, end time.Time) {
+	if owed, ok := a.owed[key]; ok {
+		owed.add(count, start, end)
+		return
+	}
+	if len(a.owed) < maxIngestOwedGaps {
+		owed := &owedGap{key: key}
+		owed.add(count, start, end)
+		a.owed[key] = owed
+		return
+	}
+	fold := key
+	fold.allocationID = ""
+	fold.buildID = ""
+	if owed, ok := a.owedFold[fold]; ok {
+		owed.add(count, start, end)
+		return
+	}
+	if len(a.owedFold) >= maxIngestOwedGaps {
+		a.gapsLost.Add(count)
+		return
+	}
+	owed := &owedGap{key: fold}
+	owed.add(count, start, end)
+	a.owedFold[fold] = owed
+}
+
 // NewAsyncIngester builds the ingest queue. A nil or disabled store
 // makes Enqueue a no-op and Run return immediately.
 func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester {
@@ -115,11 +166,12 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 		burst = defaultIngestBurst
 	}
 	return &AsyncIngester{
-		store:   store,
-		queue:   make(chan pendingFlush, queueFlushes),
-		limiter: logpipeline.NewLimiter(rate, burst),
-		backoff: &logpipeline.Backoff{},
-		owed:    make(map[owedGapKey]*owedGap),
+		store:    store,
+		queue:    make(chan pendingFlush, queueFlushes),
+		limiter:  logpipeline.NewLimiter(rate, burst),
+		backoff:  &logpipeline.Backoff{},
+		owed:     make(map[owedGapKey]*owedGap),
+		owedFold: make(map[owedGapKey]*owedGap),
 	}
 }
 
@@ -218,7 +270,7 @@ func (a *AsyncIngester) Stats() IngesterStats {
 		QueuedFlushes: len(a.queue),
 		AcceptedLines: a.acceptedLines.Load(),
 		ShedLines:     a.shedLines.Load(),
-		OwedGaps:      len(a.owed),
+		OwedGaps:      len(a.owed) + len(a.owedFold),
 		GapsLost:      a.gapsLost.Load(),
 		FlushedLines:  a.flushedLines.Load(),
 		LastFlush:     a.lastFlush,
@@ -247,17 +299,7 @@ func (a *AsyncIngester) shedFlush(flush pendingFlush) {
 	}
 	for key, count := range counts {
 		a.shedLines.Add(count)
-		owed, ok := a.owed[key]
-		if !ok {
-			if len(a.owed) >= maxIngestOwedGaps {
-				a.gapsLost.Add(count)
-				continue
-			}
-			owed = &owedGap{key: key, windowStart: now, windowEnd: now}
-			a.owed[key] = owed
-		}
-		owed.droppedCount += count
-		owed.windowEnd = now
+		a.noteOwedLocked(key, count, now, now)
 	}
 	// Producer gap reports inside a shed flush are owed too; without
 	// them the producer's own drops would vanish silently.
@@ -274,22 +316,7 @@ func (a *AsyncIngester) shedFlush(flush pendingFlush) {
 			reason:       logpipeline.NormalizeDropReason(gap.Reason),
 			reporter:     normalizeReporter(gap.Reporter),
 		}
-		owed, ok := a.owed[key]
-		if !ok {
-			if len(a.owed) >= maxIngestOwedGaps {
-				a.gapsLost.Add(gap.DroppedCount)
-				continue
-			}
-			owed = &owedGap{key: key, windowStart: gap.WindowStart, windowEnd: gap.WindowEnd}
-			a.owed[key] = owed
-		}
-		owed.droppedCount += gap.DroppedCount
-		if !gap.WindowStart.IsZero() && gap.WindowStart.Before(owed.windowStart) {
-			owed.windowStart = gap.WindowStart
-		}
-		if gap.WindowEnd.After(owed.windowEnd) {
-			owed.windowEnd = gap.WindowEnd
-		}
+		a.noteOwedLocked(key, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
 	}
 }
 
@@ -311,23 +338,25 @@ func (a *AsyncIngester) coalesce(flush *pendingFlush) {
 func (a *AsyncIngester) attachOwed(flush *pendingFlush) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(a.owed) == 0 {
+	if len(a.owed) == 0 && len(a.owedFold) == 0 {
 		return
 	}
-	for key, owed := range a.owed {
-		flush.gaps = append(flush.gaps, GapInput{
-			ServiceID:    key.serviceID,
-			AllocationID: key.allocationID,
-			BuildID:      key.buildID,
-			LogType:      LogType(key.logType),
-			Stream:       key.stream,
-			WindowStart:  owed.windowStart,
-			WindowEnd:    owed.windowEnd,
-			DroppedCount: owed.droppedCount,
-			Reason:       key.reason,
-			Reporter:     key.reporter,
-		})
-		delete(a.owed, key)
+	for _, owedMap := range []map[owedGapKey]*owedGap{a.owed, a.owedFold} {
+		for key, owed := range owedMap {
+			flush.gaps = append(flush.gaps, GapInput{
+				ServiceID:    key.serviceID,
+				AllocationID: key.allocationID,
+				BuildID:      key.buildID,
+				LogType:      LogType(key.logType),
+				Stream:       key.stream,
+				WindowStart:  owed.windowStart,
+				WindowEnd:    owed.windowEnd,
+				DroppedCount: owed.droppedCount,
+				Reason:       key.reason,
+				Reporter:     key.reporter,
+			})
+			delete(owedMap, key)
+		}
 	}
 }
 

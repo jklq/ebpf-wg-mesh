@@ -439,3 +439,21 @@ func TestNormalizeAttributes(t *testing.T) {
 		t.Fatal("unknown reason must map to ingest_overflow")
 	}
 }
+
+func TestStableEventID(t *testing.T) {
+	t.Parallel()
+	a := StableEventID("allocation.crash_loop", "agent-1", "alloc-1", "7", "2026-09-22T01:02:03Z")
+	b := StableEventID("allocation.crash_loop", "agent-1", "alloc-1", "7", "2026-09-22T01:02:03Z")
+	if a != b {
+		t.Fatalf("identical facts produced different IDs: %q vs %q", a, b)
+	}
+	if len(a) < 4 || a[:3] != "sy:" {
+		t.Fatalf("event ID %q must keep the sy: prefix", a)
+	}
+	if StableEventID("allocation.crash_loop", "agent-1", "alloc-2", "7", "2026-09-22T01:02:03Z") == a {
+		t.Fatal("different allocation must produce a different ID")
+	}
+	if StableEventID("allocation.crash_loop", "agent-1", "alloc-1", "7", "2026-09-22T03:00:00Z") == a {
+		t.Fatal("different observation window must produce a different ID")
+	}
+}

@@ -3,6 +3,7 @@ package logs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -227,5 +228,75 @@ func TestAsyncIngesterRunBlocksUntilContextEndsWhenDisabled(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("disabled Run did not exit after cancel")
+	}
+}
+
+// Past the detailed key cap, shed windows fold into service-level
+// aggregate gaps instead of vanishing: reads must surface every shed
+// line even when the overload explodes the distinct-key count.
+func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
+	t.Parallel()
+
+	// No Run loop: the queue fills and stays full.
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 1})
+
+	services := []string{"svc-a", "svc-b", "svc-c"}
+	foldKeys := maxIngestOwedGaps
+	totalKeys := foldKeys + 50
+	expectedFold := map[string]uint64{}
+	for i := 0; i < totalKeys+1; i++ {
+		service := services[i%len(services)]
+		ingester.EnqueueAgentBatch("agent-1", testAgentBatch(service, fmt.Sprintf("alloc-%05d", i), 2))
+		// i == 0 fills the queue; sheds start at i == 1, so the
+		// (foldKeys+1)-th and later shed keys fold.
+		if i > foldKeys {
+			expectedFold[service] += 2
+		}
+	}
+
+	stats := ingester.Stats()
+	if stats.ShedLines != uint64(totalKeys*2) {
+		t.Fatalf("shed %d lines, want %d", stats.ShedLines, totalKeys*2)
+	}
+	if stats.GapsLost != 0 {
+		t.Fatalf("gaps lost = %d, want 0: overflow must fold into service aggregates", stats.GapsLost)
+	}
+	if stats.OwedGaps != foldKeys+len(expectedFold) {
+		t.Fatalf("owed %d gaps, want %d detailed + %d folded", stats.OwedGaps, foldKeys, len(expectedFold))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = ingester.Run(ctx) }()
+	waitForIngest(t, ingester, 2)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var detailed, folded int
+	var total uint64
+	gotFold := map[string]uint64{}
+	for _, gap := range store.gaps {
+		total += gap.DroppedCount
+		if gap.AllocationID == "" {
+			folded++
+			gotFold[gap.ServiceID] += gap.DroppedCount
+			continue
+		}
+		detailed++
+	}
+	if total != uint64(totalKeys*2) {
+		t.Fatalf("gap rows account for %d dropped lines, want %d", total, totalKeys*2)
+	}
+	if detailed != foldKeys {
+		t.Fatalf("flushed %d detailed gap rows, want %d", detailed, foldKeys)
+	}
+	if folded != len(expectedFold) {
+		t.Fatalf("flushed %d folded aggregate gap rows, want %d", folded, len(expectedFold))
+	}
+	for service, want := range expectedFold {
+		if gotFold[service] != want {
+			t.Fatalf("folded gap for %s covers %d lines, want %d", service, gotFold[service], want)
+		}
 	}
 }
