@@ -750,8 +750,22 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 	if len(lines) == 0 {
 		return
 	}
+	s.deliverPlatformLines(ctx, agentID, lines)
+}
+
+// deliverPlatformLines routes platform-emitted lines through the
+// async ingest queue so they retry across backend outages, shed with
+// gap accounting, and drain at shutdown like agent batches — a
+// synchronous write here would block the agent Sync receive loop and
+// lose the event when ClickHouse is unavailable. Without an ingester
+// it falls back to a synchronous write.
+func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
+	if s.logIngester != nil {
+		s.logIngester.EnqueueLines(lines)
+		return
+	}
 	if err := s.logStore.WriteLogLines(ctx, lines); err != nil {
-		slog.Warn("write crash-loop event", "error", err, "agent_id", agentID)
+		slog.Warn("write platform log line", "error", err, "agent_id", agentID)
 	}
 }
 

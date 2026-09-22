@@ -1,11 +1,14 @@
 package controlplane
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/logs"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -58,5 +61,64 @@ func TestCrashLoopEventLineStableAcrossResends(t *testing.T) {
 	otherAlloc.AllocationId = "alloc-2"
 	if first.ID == crashLoopEventLine("agent-1", "env-1", otherAlloc).ID {
 		t.Fatalf("foreign allocation reused event identity %q", first.ID)
+	}
+}
+
+// recordingLogSink captures durable writes behind the async ingester.
+type recordingLogSink struct {
+	mu    sync.Mutex
+	lines []logs.LogLineInput
+}
+
+func (r *recordingLogSink) Enabled() bool { return true }
+
+func (r *recordingLogSink) WriteLogLines(_ context.Context, lines []logs.LogLineInput) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, lines...)
+	return nil
+}
+
+func (r *recordingLogSink) WriteGaps(_ context.Context, _ []logs.GapInput) error { return nil }
+
+// Crash-loop events must ride the durable ingest queue like agent
+// batches: a synchronous write in the status path would block the
+// agent Sync receive loop and lose the event during a backend outage.
+func TestCrashLoopLinesRouteThroughDurableQueue(t *testing.T) {
+	t.Parallel()
+
+	sink := &recordingLogSink{}
+	ingester := logs.NewAsyncIngester(sink, logs.AsyncIngesterConfig{QueueFlushes: 4, ShutdownGrace: 5 * time.Second})
+	s := &AgentService{logIngester: ingester}
+
+	cond := &agentv1.ServiceCondition{
+		AllocationId:             "alloc-1",
+		ServiceId:                "svc-1",
+		DesiredRolloutGeneration: 7,
+		Phase:                    "CrashLoop",
+		Restart: &platformv1.RestartObservation{
+			CrashLoop:                true,
+			RestartCount:             5,
+			WindowStartedAt:          timestamppb.New(time.Date(2026, 9, 22, 1, 2, 3, 0, time.UTC)),
+			AppliedRolloutGeneration: 7,
+		},
+	}
+	line := crashLoopEventLine("agent-1", "env-1", cond)
+	s.deliverPlatformLines(context.Background(), "agent-1", []logs.LogLineInput{line})
+
+	if stats := ingester.Stats(); stats.AcceptedLines != 1 {
+		t.Fatalf("crash-loop event bypassed the durable queue: %+v", stats)
+	}
+
+	// The queued event drains into the store with its stable identity.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ingester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.lines) != 1 || sink.lines[0].ID != line.ID {
+		t.Fatalf("queued event not delivered intact: %+v", sink.lines)
 	}
 }
