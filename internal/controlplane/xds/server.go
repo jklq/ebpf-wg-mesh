@@ -2,11 +2,11 @@ package xds
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
-
-	"fmt"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
@@ -68,9 +68,11 @@ type Server struct {
 	published time.Time
 	// streams maps stream IDs to node IDs so a node stays registered while
 	// any of its streams (ADS multiplexes types on one; SotW uses several)
-	// is open.
+	// is open. It also attributes Envoy's node-less follow-up requests.
 	streams map[int64]string
 	nodes   map[string]*nodeState
+
+	nodeStore NodeStore
 }
 
 type nodeState struct {
@@ -100,6 +102,15 @@ func NewServer(ctx context.Context) *Server {
 		FetchRequestFunc:  s.onFetchRequest,
 	})
 	return s
+}
+
+// SetNodeStore durably records subscribers at first contact so the drain
+// barrier can see them across replicas before they hold any config.
+func (s *Server) SetNodeStore(store NodeStore) {
+	if s == nil {
+		return
+	}
+	s.nodeStore = store
 }
 
 // GRPCServer returns a gRPC server with every xDS service registered.
@@ -161,27 +172,61 @@ func (s *Server) Status() Status {
 }
 
 func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryRequest) error {
-	if req == nil || req.Node == nil || req.Node.Id == "" {
+	if req == nil {
 		return nil
 	}
-	s.observe(streamID, req.Node, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
-	return nil
+	nodeID := strings.TrimSpace(req.GetNode().GetId())
+	if nodeID == "" {
+		// Envoy sends node only on the first request of a stream: attribute
+		// node-less ACKs and NACKs to the node that opened this stream
+		// instead of dropping the standard apply path.
+		s.mu.Lock()
+		nodeID = s.streams[streamID]
+		s.mu.Unlock()
+	}
+	if nodeID == "" {
+		return nil
+	}
+	fresh := s.observe(streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	return s.registerNode(nodeID, fresh)
 }
 
 func (s *Server) onFetchRequest(_ context.Context, req *discoveryv3.DiscoveryRequest) error {
-	if req == nil || req.Node == nil || req.Node.Id == "" {
+	if req == nil {
 		return nil
 	}
-	s.observe(0, req.Node, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	nodeID := strings.TrimSpace(req.GetNode().GetId())
+	if nodeID == "" {
+		return nil
+	}
+	fresh := s.observe(0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	return s.registerNode(nodeID, fresh)
+}
+
+// registerNode durably records a subscriber at first contact. It runs
+// before the request is answered — before the subscriber can hold any
+// config — because the drain barrier waits only for nodes it knows: a
+// subscriber missing from durable state must never be able to keep stale
+// routes while a rollout drains under it. Failure fails the request closed
+// rather than serving an untracked subscriber.
+func (s *Server) registerNode(nodeID string, fresh bool) error {
+	if !fresh || s.nodeStore == nil {
+		return nil
+	}
+	if err := s.nodeStore.UpsertNodeObservations(context.Background(), []NodeObservation{{NodeID: nodeID}}); err != nil {
+		return fmt.Errorf("register xds node %s: %w", nodeID, err)
+	}
 	return nil
 }
 
-func (s *Server) observe(streamID int64, node *corev3.Node, typeURL, version string, errDetail *rpcstatus.Status) {
+func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDetail *rpcstatus.Status) bool {
+	if nodeID == "" {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	nodeID := node.GetId()
-	state, ok := s.nodes[nodeID]
-	if !ok {
+	state, known := s.nodes[nodeID]
+	if !known {
 		state = &nodeState{applied: make(map[string]string)}
 		s.nodes[nodeID] = state
 		if s.current != nil {
@@ -208,11 +253,12 @@ func (s *Server) observe(streamID int64, node *corev3.Node, typeURL, version str
 			slog.Warn("xds subscriber NACKed snapshot",
 				"node", nodeID, "type", typeURL, "version", version, "error", errDetail.GetMessage())
 		}
-		return
+		return !known
 	}
 	if typeURL != "" && version != "" && s.current != nil && version == s.current.Version {
 		state.applied[typeURL] = version
 	}
+	return !known
 }
 
 func (s *Server) onStreamClosed(streamID int64, node *corev3.Node) {

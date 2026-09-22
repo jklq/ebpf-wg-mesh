@@ -369,6 +369,36 @@ func TestXDSFollowerServesPublicationWithoutLease(t *testing.T) {
 	}
 }
 
+func TestXDSRegistersSubscriberDurablyAtFirstContact(t *testing.T) {
+	t.Parallel()
+
+	store, _ := createHealthyBoundService(t, "demo.example.com", "10.0.0.10", 8080)
+	ctx := context.Background()
+
+	server := xds.NewServer(ctx)
+	server.SetNodeStore(store.routing)
+	publisher := testXDSPublisher(store, server, "replica-a")
+	if err := publisher.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	addr := serveXDSServer(t, server)
+	subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)
+
+	// No follow loop has run: the observation exists only if first contact
+	// registered it, which is what lets the drain barrier see a subscriber
+	// before it can hold routes to withdrawn allocations.
+	nodes, err := store.routing.ListNodeObservations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].NodeID != "envoy-1" || nodes[0].AppliedHash != "" {
+		t.Fatalf("first-contact observations = %+v, want envoy-1 registered with empty hash", nodes)
+	}
+	if converged, err := publisher.Converged(ctx); err != nil || converged {
+		t.Fatalf("Converged = %v, %v; want false while the subscriber has applied nothing", converged, err)
+	}
+}
+
 func TestXDSNodeObservationRetention(t *testing.T) {
 	t.Parallel()
 

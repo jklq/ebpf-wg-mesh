@@ -18,6 +18,9 @@ type Client struct {
 	nodeID string
 	conn   *grpc.ClientConn
 	stream discoveryv3.AggregatedDiscoveryService_StreamAggregatedResourcesClient
+	// sent marks that the stream has carried its first request: node only
+	// travels on the first request of a stream, like Envoy.
+	sent bool
 }
 
 // Dial opens an ADS stream to addr as nodeID. Callers may pass dial options
@@ -39,14 +42,24 @@ func Dial(ctx context.Context, addr, nodeID string, opts ...grpc.DialOption) (*C
 
 // Request sends one DiscoveryRequest. A nil errDetail ACKs version; a
 // non-nil one NACKs with Envoy semantics (version stays at the last ACKed).
+// Like Envoy, node travels only on the first request of the stream: the
+// harness must exercise the standard node-less ACK/NACK path.
 func (c *Client) Request(typeURL, version, nonce string, errDetail *rpcstatus.Status) error {
-	return c.stream.Send(&discoveryv3.DiscoveryRequest{
-		Node:          &corev3.Node{Id: c.nodeID},
+	var node *corev3.Node
+	if !c.sent {
+		node = &corev3.Node{Id: c.nodeID}
+	}
+	if err := c.stream.Send(&discoveryv3.DiscoveryRequest{
+		Node:          node,
 		TypeUrl:       typeURL,
 		VersionInfo:   version,
 		ResponseNonce: nonce,
 		ErrorDetail:   errDetail,
-	})
+	}); err != nil {
+		return err
+	}
+	c.sent = true
+	return nil
 }
 
 // Subscribe requests typeURL from scratch and returns the first response.

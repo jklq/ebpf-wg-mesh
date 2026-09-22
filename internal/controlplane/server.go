@@ -174,6 +174,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	// The xDS server outlives any single Run: streams span singleton
 	// takeovers, so its context is the process, not a run.
 	xdsServer := xds.NewServer(context.Background())
+	// Subscribers register durably at first contact, before any config is
+	// served, so the drain barrier sees them across replicas.
+	xdsServer.SetNodeStore(store.routing)
 	publisherID := strings.TrimSpace(cfg.AdvertiseAddr)
 	if publisherID == "" {
 		publisherID = strings.TrimSpace(cfg.InternalGRPC.Listen)

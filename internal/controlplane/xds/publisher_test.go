@@ -9,12 +9,9 @@ import (
 	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 )
-
-func node(id string) *corev3.Node {
-	return &corev3.Node{Id: id}
-}
 
 type fakeSource struct {
 	backends []Backend
@@ -312,7 +309,7 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	if err := publisher.Replicate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	server.observe(0, node("envoy-partial"), resourcev3.EndpointType, version, nil)
+	server.observe(0, "envoy-partial", resourcev3.EndpointType, version, nil)
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +317,7 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	// Once every required type is ACKed at the served version the node is
 	// fully applied.
 	for _, typeURL := range RequiredTypes {
-		server.observe(0, node("envoy-partial"), typeURL, version, nil)
+		server.observe(0, "envoy-partial", typeURL, version, nil)
 	}
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)
@@ -353,7 +350,8 @@ func TestPublisherConvergedRequiresEveryKnownNode(t *testing.T) {
 	}
 	version := server.Status().Version
 
-	// No observed nodes: unknown subscribers hold no config to drain around.
+	// No observed nodes: nothing has ever subscribed, so nothing can route
+	// to withdrawn endpoints.
 	if converged, err := publisher.Converged(ctx); err != nil || !converged {
 		t.Fatalf("Converged = %v, %v; want true with no nodes", converged, err)
 	}
@@ -385,4 +383,80 @@ func TestPublisherConvergedRequiresEveryKnownNode(t *testing.T) {
 	if converged, err := publisher.Converged(ctx); err != nil || !converged {
 		t.Fatalf("Converged = %v, %v; want true once all nodes applied", converged, err)
 	}
+}
+
+func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
+	t.Parallel()
+
+	backends := []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}}
+	pubs := &fakePublications{}
+	nodes := newFakeNodes()
+	publisher, server := testPublisherWithNodes(&fakeSource{backends: backends}, pubs, nodes)
+	ctx := context.Background()
+	if err := publisher.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	server.SetNodeStore(nodes)
+
+	// First contact durably registers the subscriber before any config can
+	// reach it — no flush cycle involved. Only then may it receive the
+	// snapshot that routes to live allocations.
+	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
+	if err := server.onFetchRequest(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	nodes.mu.Lock()
+	got, ok := nodes.nodes["envoy-fresh"]
+	nodes.mu.Unlock()
+	if !ok || got.AppliedHash != "" {
+		t.Fatalf("first contact observation = %+v (present=%t), want durable registration with empty hash", got, ok)
+	}
+
+	// A subscriber that has applied nothing is mid-apply: it must block the
+	// drain barrier rather than be ignored as unknown.
+	if converged, err := publisher.Converged(ctx); err != nil || converged {
+		t.Fatalf("Converged = %v, %v; want false while a fresh subscriber holds no applied version", converged, err)
+	}
+
+	// A node-less follow-up ACK (Envoy sends node only on the first
+	// request of a stream) must still update apply state.
+	if err := server.onStreamRequest(7, req); err != nil {
+		t.Fatal(err)
+	}
+	version := server.Status().Version
+	for _, typeURL := range RequiredTypes {
+		if err := server.onStreamRequest(7, &discoveryv3.DiscoveryRequest{TypeUrl: typeURL, VersionInfo: version}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server.mu.Lock()
+	node := server.nodes["envoy-fresh"]
+	server.mu.Unlock()
+	if node == nil || !((NodeStatus{Applied: node.applied}).FullyApplied(version)) {
+		t.Fatalf("node-less ACKs did not update apply state: %+v", node)
+	}
+}
+
+func TestServerRejectsUntrackableSubscribers(t *testing.T) {
+	t.Parallel()
+
+	// If a subscriber cannot be recorded durably, it must not be served:
+	// the drain barrier would otherwise pass under config it cannot see.
+	server := NewServer(context.Background())
+	server.SetNodeStore(failingNodes{})
+	err := server.onFetchRequest(context.Background(),
+		&discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-x"}, TypeUrl: resourcev3.EndpointType})
+	if err == nil {
+		t.Fatal("expected registration failure to fail the request closed")
+	}
+}
+
+type failingNodes struct{}
+
+func (failingNodes) UpsertNodeObservations(context.Context, []NodeObservation) error {
+	return errors.New("node store unavailable")
+}
+
+func (failingNodes) ListNodeObservations(context.Context) ([]NodeObservation, error) {
+	return nil, errors.New("node store unavailable")
 }

@@ -212,9 +212,10 @@ func (p *Publisher) Follow(ctx context.Context) error {
 // Converged reports whether every known Envoy has fully applied the current
 // publication. Rollouts must not destroy withdrawn allocations before this:
 // a disconnected or NACKing Envoy keeps routing to its last-known-good
-// endpoints until it applies the withdrawal. Nodes never observed are
-// unknown and hold no config worth waiting for; observed nodes with no
-// fully applied version are mid-apply and do block.
+// endpoints until it applies the withdrawal. Subscribers are registered
+// durably at first contact, before they can hold config, so anything that
+// can route to a withdrawn endpoint is known and blocks until it applies;
+// observed nodes with no fully applied version are mid-apply and block too.
 func (p *Publisher) Converged(ctx context.Context) (bool, error) {
 	if p == nil || p.nodes == nil {
 		return true, nil
@@ -234,6 +235,13 @@ func (p *Publisher) Converged(ctx context.Context) (bool, error) {
 	}
 	if hash == "" {
 		return true, nil
+	}
+	// Flush first: a locally observed subscriber must be durable before the
+	// barrier passes. Cross-replica flush lag can only delay drains (stale
+	// hashes block), and first-contact registration happens before any
+	// config is served, so nothing untracked can hold routes.
+	if err := p.flushNodeObservations(ctx); err != nil {
+		return false, err
 	}
 	nodes, err := p.nodes.ListNodeObservations(ctx)
 	if err != nil {
