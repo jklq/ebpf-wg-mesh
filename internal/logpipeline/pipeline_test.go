@@ -1,0 +1,350 @@
+package logpipeline
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func openTestSpool(t *testing.T, cfg SpoolConfig) *Spool {
+	t.Helper()
+	cfg.Dir = t.TempDir()
+	cfg.SyncWrites = false
+	s, err := OpenSpool(cfg)
+	if err != nil {
+		t.Fatalf("OpenSpool: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func TestSpoolAppendReadCommit(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for i, key := range []string{"a", "b", "a"} {
+		if err := s.Append(key, "id", now, []byte{byte(i)}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 3 || recs[0].Key != "a" || recs[1].Key != "b" || recs[2].Key != "a" {
+		t.Fatalf("unexpected records: %+v", recs)
+	}
+	if !recs[0].ObservedAt.Equal(now) {
+		t.Fatalf("timestamp not preserved: %v", recs[0].ObservedAt)
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	recs, _, err = s.Read(10)
+	if err != nil {
+		t.Fatalf("Read after commit: %v", err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("expected drained spool, got %d records", len(recs))
+	}
+	if stats := s.Stats(); stats.DroppedRecords != 0 || stats.CorruptRecords != 0 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestSpoolSurvivesRestartWithUncommittedReplay(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true})
+	if err != nil {
+		t.Fatalf("OpenSpool: %v", err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		if err := s.Append("alloc", "id", now, []byte{byte(i)}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(2)
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	reopened, err := OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	recs, _, err = reopened.Read(10)
+	if err != nil {
+		t.Fatalf("Read after reopen: %v", err)
+	}
+	if len(recs) != 3 || recs[0].Payload[0] != 2 {
+		t.Fatalf("expected replay of 3 uncommitted records, got %d", len(recs))
+	}
+}
+
+func TestSpoolEvictsOldestPastByteCapWithPerKeyDrops(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 900, MaxSegmentBytes: 300})
+	now := time.Now().UTC()
+	payload := make([]byte, 100)
+	for i := 0; i < 20; i++ {
+		key := "hot"
+		if i%5 == 0 {
+			key = "cold"
+		}
+		if err := s.Append(key, "id", now, payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	stats := s.Stats()
+	if stats.DroppedRecords == 0 {
+		t.Fatal("expected drops past the byte cap")
+	}
+	drops := s.DrainDrops()
+	if len(drops) == 0 {
+		t.Fatal("expected per-key drop accounting")
+	}
+	var total uint64
+	for _, count := range drops {
+		total += count
+	}
+	if total != stats.DroppedRecords {
+		t.Fatalf("drained %d drops but stats report %d", total, stats.DroppedRecords)
+	}
+	if s.DrainDrops() != nil {
+		t.Fatal("drain did not clear drop accounting")
+	}
+	// Unshipped survivors are still readable.
+	recs, _, err := s.Read(100)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) == 0 {
+		t.Fatal("expected surviving records after eviction")
+	}
+}
+
+func TestSpoolCommittedSegmentsVanishSilently(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 600, MaxSegmentBytes: 200})
+	now := time.Now().UTC()
+	payload := make([]byte, 80)
+	for i := 0; i < 4; i++ {
+		if err := s.Append("a", "id", now, payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(100)
+	if err != nil || len(recs) != 4 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	before := s.Stats()
+	for i := 0; i < 20; i++ {
+		if err := s.Append("a", "id", now, payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		if i%2 == 1 {
+			recs, cursor, err := s.Read(100)
+			if err != nil || len(recs) == 0 {
+				t.Fatalf("Read: %v %d", err, len(recs))
+			}
+			if err := s.Commit(cursor); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+		}
+	}
+	if stats := s.Stats(); stats.DroppedRecords != before.DroppedRecords {
+		t.Fatalf("shipped evictions must not count as drops: %+v", stats)
+	}
+}
+
+func TestSpoolTruncatesTornTail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := OpenSpool(SpoolConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("OpenSpool: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := s.Append("a", "id", now, []byte("whole")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// Simulate a crash mid-write: append a partial frame.
+	seg := filepath.Join(dir, "seg-0000000000.log")
+	f, err := os.OpenFile(seg, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("open segment: %v", err)
+	}
+	full := encodeRecord("a", "id", now, []byte("torn"))
+	if _, err := f.Write(full[:len(full)-3]); err != nil {
+		t.Fatalf("write torn tail: %v", err)
+	}
+	_ = f.Close()
+	reopened, err := OpenSpool(SpoolConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	recs, _, err := reopened.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 1 || string(recs[0].Payload) != "whole" {
+		t.Fatalf("torn tail corrupted recovery: %+v", recs)
+	}
+	if stats := reopened.Stats(); stats.CorruptRecords == 0 {
+		t.Fatal("expected the torn tail to count as corrupt")
+	}
+}
+
+func TestSpoolRewindToTimeReplaysRecentWindow(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{})
+	base := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 6; i++ {
+		ts := base.Add(time.Duration(i) * time.Second)
+		if err := s.Append("a", "id", ts, []byte{byte(i)}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(100)
+	if err != nil || len(recs) != 6 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if err := s.RewindToTime(base.Add(4 * time.Second)); err != nil {
+		t.Fatalf("RewindToTime: %v", err)
+	}
+	recs, _, err = s.Read(100)
+	if err != nil {
+		t.Fatalf("Read after rewind: %v", err)
+	}
+	if len(recs) != 2 || recs[0].Payload[0] != 4 {
+		t.Fatalf("expected replay of last 2 records, got %d", len(recs))
+	}
+}
+
+func TestLimiterBurstsThenRefills(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	l := newLimiter(10, 3, 16, func() time.Time { return now })
+	for i := 0; i < 3; i++ {
+		if !l.Allow("a") {
+			t.Fatalf("burst line %d denied", i)
+		}
+	}
+	if l.Allow("a") {
+		t.Fatal("expected denial past burst")
+	}
+	if got := l.DroppedSince("a"); got != 1 {
+		t.Fatalf("dropped = %d", got)
+	}
+	now = now.Add(time.Second)
+	allowed := 0
+	for i := 0; i < 11; i++ {
+		if l.Allow("a") {
+			allowed++
+		}
+	}
+	if allowed != 3 {
+		t.Fatalf("refill allowed %d, want burst-capped 3", allowed)
+	}
+	drops := l.DrainDrops()
+	if drops["a"] != 1+8 {
+		t.Fatalf("drained drops = %v", drops)
+	}
+	// Other keys are independent.
+	if !l.Allow("b") {
+		t.Fatal("independent key denied")
+	}
+}
+
+func TestLimiterUnlimitedWhenRateIsZero(t *testing.T) {
+	t.Parallel()
+	l := NewLimiter(0, 0)
+	for i := 0; i < 100; i++ {
+		if !l.Allow("a") {
+			t.Fatal("zero rate must allow everything")
+		}
+	}
+	if l.DrainDrops() != nil {
+		t.Fatal("unlimited limiter must not count drops")
+	}
+}
+
+func TestCursorRoundTrip(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 9, 1, 12, 30, 0, 123, time.UTC)
+	token := EncodeCursor(ts, "ag:a:b:c:1")
+	gotTS, gotID, err := DecodeCursor(token)
+	if err != nil {
+		t.Fatalf("DecodeCursor: %v", err)
+	}
+	if !gotTS.Equal(ts) || gotID != "ag:a:b:c:1" {
+		t.Fatalf("round trip failed: %v %q", gotTS, gotID)
+	}
+	if _, _, err := DecodeCursor("!!!"); err == nil {
+		t.Fatal("expected invalid token error")
+	}
+	if ts, id, err := DecodeCursor(""); err != nil || !ts.IsZero() || id != "" {
+		t.Fatalf("empty token must decode to start: %v %q %v", ts, id, err)
+	}
+}
+
+func TestTruncateLine(t *testing.T) {
+	t.Parallel()
+	short := "hello"
+	if got, truncated := TruncateLine(short); got != short || truncated {
+		t.Fatalf("short line mangled: %q %v", got, truncated)
+	}
+	long := make([]byte, MaxLogLineBytes+10)
+	for i := range long {
+		long[i] = 'x'
+	}
+	got, truncated := TruncateLine(string(long))
+	if !truncated || len(got) != MaxLogLineBytes {
+		t.Fatalf("long line: len=%d truncated=%v", len(got), truncated)
+	}
+}
+
+func TestNormalizeAttributes(t *testing.T) {
+	t.Parallel()
+	if NormalizeAttributes(nil) != nil {
+		t.Fatal("nil must stay nil")
+	}
+	if NormalizeAttributes(map[string]string{}) != nil {
+		t.Fatal("empty must become nil")
+	}
+	many := map[string]string{}
+	for i := 0; i < 100; i++ {
+		many[string(rune('a'+i%26))+string(rune('0'+i/26))] = "v"
+	}
+	if got := NormalizeAttributes(many); len(got) != MaxAttributesPerLine {
+		t.Fatalf("attributes not capped: %d", len(got))
+	}
+	if got := NormalizeAttributes(map[string]string{"": "v"}); got != nil {
+		t.Fatal("empty key must drop")
+	}
+	if NormalizeEvent("allocation.crash_loop") == "" || NormalizeEvent("has space") != "" {
+		t.Fatal("event normalization wrong")
+	}
+	if NormalizeDropReason("nope") != ReasonIngestOverflow {
+		t.Fatal("unknown reason must map to ingest_overflow")
+	}
+}
