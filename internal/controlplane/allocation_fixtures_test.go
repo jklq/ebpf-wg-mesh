@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,6 +105,21 @@ func observeAllocationHealthyForTest(ctx context.Context, store *persistence, al
 	})
 	return err
 }
+
+// markAllocationServingForTest drives allocations to serving without
+// activating the deployment, simulating an agent that serves traffic before
+// the control plane observes the rollout active.
+func markAllocationServingForTest(t *testing.T, store *persistence, serviceID, allocationIP string) {
+	t.Helper()
+	addressColumn, _ := testAllocationFamilyColumns(allocationIP)
+	if _, err := store.db.ExecContext(context.Background(),
+		fmt.Sprintf(`UPDATE allocation_assignments SET %s = $1, rollout_state = $3, updated_at = $2 WHERE service_id = $4`, addressColumn),
+		allocationIP, time.Now().UTC(), deliverycore.AllocationRolloutServing, serviceID,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testAllocationFamilyColumns(allocationIP string) (addressColumn, portsColumn string) {
 	if addr, err := netip.ParseAddr(strings.TrimSpace(allocationIP)); err == nil && addr.Is4() {
 		return "allocation_ipv4", "healthy_ipv4_ports"
@@ -132,8 +148,8 @@ func agentAllocationIDsForTest(ctx context.Context, store *persistence, agentID 
 	return ids, rows.Err()
 }
 func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_transitions(id,deployment_id,from_state,to_state,cause_kind,cause_id,reason_code,detail,spec_revision,image_digest,rollout_generation,occurred_at)
- SELECT $1,id,state,'active','system','','DEPLOYMENT_ACTIVE','Marked healthy for test',spec_revision,image_digest,rollout_generation,statement_timestamp() FROM deployments WHERE service_id=$2 AND is_current AND state<>'active'`, uuid.NewString(), serviceID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_transitions(id,deployment_id,from_state,to_state,cause_kind,cause_id,reason_code,detail,spec_revision,artifact_id,rollout_generation,occurred_at)
+ SELECT $1,id,state,'active','system','','DEPLOYMENT_ACTIVE','Marked healthy for test',spec_revision,artifact_id,rollout_generation,statement_timestamp() FROM deployments WHERE service_id=$2 AND is_current AND state<>'active'`, uuid.NewString(), serviceID); err != nil {
 		return err
 	}
 	rows, err := tx.QueryContext(ctx, `UPDATE deployments SET state='active',cause_kind='system',reason_code='DEPLOYMENT_ACTIVE',detail='Marked healthy for test',updated_at=statement_timestamp() WHERE service_id=$1 AND is_current RETURNING id`, serviceID)

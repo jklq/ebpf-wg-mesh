@@ -138,7 +138,7 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 	if err != nil {
 		return result, err
 	}
-	snapshot.ReusableImage = ok && current.ResolvedSpec != nil && strings.TrimSpace(current.ImageDigest) != ""
+	snapshot.ReusableImage = ok && current.ResolvedSpec != nil && strings.TrimSpace(current.ArtifactID) != ""
 	rollout, hasRollout, err := loadCurrentRolloutTx(ctx, tx, service)
 	if err != nil {
 		return result, err

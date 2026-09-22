@@ -43,7 +43,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("building deployment = %+v", building)
 	}
 
-	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 	scheduled := currentDeploymentForTest(t, store, ctx, service.ID)
@@ -217,7 +217,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		raceWG.Add(1)
 		go func() {
 			defer raceWG.Done()
-			raceErrs <- completeBuildForTest(ctx, store, "builder-race", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:race", "")
+			raceErrs <- completeBuildForTest(ctx, store, "builder-race", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:cececececececececececececececececececececececececececececececece", "")
 		}()
 		raceWG.Add(1)
 		go func() {

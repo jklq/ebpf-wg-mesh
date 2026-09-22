@@ -147,5 +147,12 @@ type Service struct {
 }
 
 type QueuedBuild struct {
+	// BuildID is the queued build, or the original build whose image was
+	// reused when Reused is true.
 	BuildID string
+	// DeploymentID is the deployment carrying this queue decision.
+	DeploymentID string
+	// Reused reports that no builder work was queued: the source already
+	// produced an image and it was scheduled directly.
+	Reused bool
 }

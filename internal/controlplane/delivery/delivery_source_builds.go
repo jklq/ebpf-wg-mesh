@@ -14,6 +14,7 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 	var result source.QueuedBuild
 	var service ServiceRecord
 	var build BuildRunRecord
+	var reused bool
 	err := d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		revision, err := d.store.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, binding.ID, commitSHA)
 		if err != nil {
@@ -33,21 +34,32 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 		if err != nil {
 			return err
 		}
-		build, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook})
+		var dep DeploymentRecord
+		build, dep, reused, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook})
 		if err != nil {
 			return err
 		}
-		result = source.QueuedBuild{BuildID: build.ID}
+		result = source.QueuedBuild{BuildID: build.ID, DeploymentID: dep.ID, Reused: reused}
+		if reused {
+			result.BuildID = dep.BuildID
+		}
 		return nil
 	})
 	if err != nil {
 		return source.QueuedBuild{}, err
 	}
-	d.logEmitter.EmitBuildf(ctx, logs.ServiceScope{
+	scope := logs.ServiceScope{
 		EnvironmentID:     service.EnvironmentID,
 		ServiceID:         service.ID,
 		RolloutGeneration: service.RolloutGeneration,
-	}, build.ID, logs.StageBuild,
+	}
+	if reused {
+		d.logEmitter.EmitBuildf(ctx, scope, result.BuildID, logs.StageBuild,
+			"Reusing previously built image for commit %s on ref %s", shortSHA(commitSHA), binding.TrackedRef,
+		)
+		return result, nil
+	}
+	d.logEmitter.EmitBuildf(ctx, scope, build.ID, logs.StageBuild,
 		"Queued build for commit %s on ref %s", shortSHA(build.CommitSHA), binding.TrackedRef,
 	)
 	return result, nil

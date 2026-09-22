@@ -1,0 +1,362 @@
+//go:build integration
+
+package controlplane
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/source"
+)
+
+func testDigest(nibble string) string {
+	return "sha256:" + strings.Repeat(nibble, 64)
+}
+
+func testPinnedRef(repository, nibble string) string {
+	return repository + "@" + testDigest(nibble)
+}
+
+// TestBuildCompletionRecordsImmutableArtifact proves every successful build
+// records the immutable artifact contract: source snapshot digest, commit
+// SHA, build recipe and builder version, image manifest digest, build
+// actor, and timestamps — and that the artifact, not an image string, is
+// the deployment's runtime identity.
+func TestBuildCompletionRecordsImmutableArtifact(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState: %v", err)
+	}
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	image := testPinnedRef("registry.example.test/platform/web", "1")
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image, ""); err != nil {
+		t.Fatalf("completeBuild: %v", err)
+	}
+
+	artifacts, err := testDelivery(store).ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil {
+		t.Fatalf("ListServiceArtifacts: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("artifacts = %d, want 1", len(artifacts))
+	}
+	artifact := artifacts[0]
+	if artifact.Kind != deliverycore.BuildArtifactBuild {
+		t.Fatalf("artifact kind = %q, want %q", artifact.Kind, deliverycore.BuildArtifactBuild)
+	}
+	if artifact.ServiceID != service.ID || artifact.BuildID != build.ID {
+		t.Fatalf("artifact identity = (%s, %s), want (%s, %s)", artifact.ServiceID, artifact.BuildID, service.ID, build.ID)
+	}
+	if artifact.SourceSnapshotDigest == "" || artifact.SourceSnapshotDigest != build.SourceSnapshotDigest {
+		t.Fatalf("artifact snapshot digest = %q, want build snapshot %q", artifact.SourceSnapshotDigest, build.SourceSnapshotDigest)
+	}
+	if artifact.CommitSHA != "commit-1" {
+		t.Fatalf("artifact commit = %q", artifact.CommitSHA)
+	}
+	if artifact.BuildRecipe.GetBuilder() != platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE ||
+		artifact.BuildRecipe.GetDockerfilePath() != "Dockerfile" || artifact.BuildRecipe.GetContextDir() != "." {
+		t.Fatalf("artifact build recipe = %+v", artifact.BuildRecipe)
+	}
+	if artifact.BuilderVersion != deliverycore.BuilderToolchainVersion || artifact.BuilderVersion == "" {
+		t.Fatalf("artifact builder version = %q", artifact.BuilderVersion)
+	}
+	if artifact.ImageRepository != "registry.example.test/platform/web" ||
+		artifact.ImageManifestDigest != testDigest("1") || artifact.ImageRef != image {
+		t.Fatalf("artifact image identity = (%q, %q, %q)", artifact.ImageRepository, artifact.ImageManifestDigest, artifact.ImageRef)
+	}
+	if artifact.SourceImageRef != "" {
+		t.Fatalf("build artifact must not record user image input, got %q", artifact.SourceImageRef)
+	}
+	if artifact.BuildActorKind != deliverycore.DeploymentCauseWebhook {
+		t.Fatalf("artifact build actor kind = %q, want %q", artifact.BuildActorKind, deliverycore.DeploymentCauseWebhook)
+	}
+	if artifact.CreatedAt.IsZero() {
+		t.Fatal("artifact created_at is unset")
+	}
+
+	completed, err := store.reads.BuildByID(ctx, build.ID)
+	if err != nil {
+		t.Fatalf("BuildByID: %v", err)
+	}
+	if completed.ArtifactID != artifact.ID || completed.ImageDigest != image {
+		t.Fatalf("completed build = artifact %q image %q, want %q %q", completed.ArtifactID, completed.ImageDigest, artifact.ID, image)
+	}
+	dep := currentDeploymentForTest(t, store, ctx, service.ID)
+	if dep.ArtifactID != artifact.ID || dep.ImageDigest != image || dep.Artifact == nil {
+		t.Fatalf("deployment identity = artifact %q image %q, want %q %q", dep.ArtifactID, dep.ImageDigest, artifact.ID, image)
+	}
+	if _, err := testDelivery(store).ListServiceArtifacts(ctx, testUser("stranger"), service.ID, 10); err == nil {
+		t.Fatal("ListServiceArtifacts allowed an unauthorized user")
+	}
+}
+
+// TestDirectImageTagMutationAfterResolveKeepsStoredDigest is the required
+// deploy-by-digest regression: a mutable tag resolves to a digest at deploy
+// time, and moving the tag afterwards never changes what runs.
+func TestDirectImageTagMutationAfterResolveKeepsStoredDigest(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := &registry.StaticResolver{Tags: map[string]string{
+		"example.test/web:stable": testDigest("a"),
+	}}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+
+	const tagInput = "example.test/web:stable"
+	service, err := delivery.CreateService(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID), "web",
+		directImageServiceSpec(tagInput, &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}), "node-1")
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+	pinnedA := testPinnedRef("example.test/web", "a")
+
+	artifacts, err := delivery.ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil || len(artifacts) != 1 {
+		t.Fatalf("artifacts after create = %v, %v", artifacts, err)
+	}
+	if artifacts[0].Kind != deliverycore.BuildArtifactDirectImage || artifacts[0].ImageRef != pinnedA {
+		t.Fatalf("direct-image artifact = %+v", artifacts[0])
+	}
+	if artifacts[0].SourceImageRef != tagInput || artifacts[0].BuildID != "" {
+		t.Fatalf("direct-image artifact must record %q as user input only, got %+v", tagInput, artifacts[0])
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != pinnedA {
+		t.Fatalf("deployment image = %q, want pinned %q", got, pinnedA)
+	}
+	state, err := desiredStateForAgent(ctx, store, "node-1")
+	if err != nil || len(state.GetServices()) != 1 {
+		t.Fatalf("desiredStateForAgent: %v, %v", state, err)
+	}
+	if got := state.GetServices()[0].GetSpec().GetImage(); got != pinnedA {
+		t.Fatalf("desired image = %q, want pinned %q", got, pinnedA)
+	}
+
+	// The registry tag moves. Nothing on the platform re-resolves it: the
+	// stored digest still runs.
+	resolver.Tags[tagInput] = testDigest("b")
+	state, err = desiredStateForAgent(ctx, store, "node-1")
+	if err != nil {
+		t.Fatalf("desiredStateForAgent after tag mutation: %v", err)
+	}
+	if got := state.GetServices()[0].GetSpec().GetImage(); got != pinnedA {
+		t.Fatalf("tag mutation changed the running image: got %q, want stored digest %q", got, pinnedA)
+	}
+
+	// A fresh release resolves the tag anew and pins the new digest; the
+	// superseded deployment keeps running its own stored digest.
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec(tagInput, &platformv1.ServiceRuntime{
+		Ports: runtimePortsFromInts([]int32{8080}), Env: map[string]string{"STAGE": "two"},
+	})); err != nil {
+		t.Fatalf("updateService: %v", err)
+	}
+	if _, err := delivery.ReleaseEnvironment(ctx, testUser("user-1"), service.EnvironmentID); err != nil {
+		t.Fatalf("ReleaseEnvironment: %v", err)
+	}
+	pinnedB := testPinnedRef("example.test/web", "b")
+	artifacts, err = delivery.ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil || len(artifacts) != 2 {
+		t.Fatalf("artifacts after release = %v, %v", artifacts, err)
+	}
+	if artifacts[0].ImageRef != pinnedB || artifacts[0].SourceImageRef != tagInput {
+		t.Fatalf("re-resolved artifact = %+v, want %q pinned to %q", artifacts[0], tagInput, pinnedB)
+	}
+	if artifacts[1].ImageRef != pinnedA {
+		t.Fatalf("original artifact was rewritten: %+v", artifacts[1])
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != pinnedB {
+		t.Fatalf("released deployment image = %q, want re-resolved %q", got, pinnedB)
+	}
+	state, err = desiredStateForAgent(ctx, store, "node-1")
+	if err != nil {
+		t.Fatalf("desiredStateForAgent after release: %v", err)
+	}
+	if got := state.GetServices()[0].GetSpec().GetImage(); got != pinnedB {
+		t.Fatalf("desired image after release = %q, want %q", got, pinnedB)
+	}
+}
+
+// TestSameSourceReusesBuiltImageWithCurrentVariables proves the skip-rebuild
+// contract: when the same source has already produced an image, no builder
+// work is queued and the existing image deploys with the service's current
+// variables instead of the original build's.
+func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState: %v", err)
+	}
+	build, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	image := testPinnedRef("registry.example.test/platform/web", "5")
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image, ""); err != nil {
+		t.Fatalf("completeBuild: %v", err)
+	}
+	artifacts, err := testDelivery(store).ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil || len(artifacts) != 1 {
+		t.Fatalf("artifacts after build = %v, %v", artifacts, err)
+	}
+
+	// The user changes variables; the source is unchanged.
+	updated := repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080}), Env: map[string]string{"STAGE": "two"}},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "octocat/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	)
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", updated); err != nil {
+		t.Fatalf("updateService: %v", err)
+	}
+
+	// The same commit is queued again (webhook redelivery). The build is
+	// skipped and the existing image rolls out.
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{})
+	if err != nil {
+		t.Fatalf("QueueSourceBuild: %v", err)
+	}
+	if !queued.Reused {
+		t.Fatalf("expected the built image to be reused, got %+v", queued)
+	}
+	if queued.BuildID != build.ID || queued.DeploymentID == "" {
+		t.Fatalf("reused queue result = %+v, want build %q", queued, build.ID)
+	}
+
+	var buildCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&buildCount); err != nil {
+		t.Fatal(err)
+	}
+	if buildCount != 1 {
+		t.Fatalf("build_runs rows = %d, want 1 (skip rebuild)", buildCount)
+	}
+	dep := currentDeploymentForTest(t, store, ctx, service.ID)
+	if dep.ID != queued.DeploymentID || dep.ArtifactID != artifacts[0].ID || dep.ImageDigest != image {
+		t.Fatalf("reused deployment = %+v, want artifact %q image %q", dep, artifacts[0].ID, image)
+	}
+	if dep.ReasonCode != "BUILD_REUSED" {
+		t.Fatalf("reused deployment reason = %q, want BUILD_REUSED", dep.ReasonCode)
+	}
+	if got := dep.ResolvedSpec.GetRuntime().GetEnv()["STAGE"]; got != "two" {
+		t.Fatalf("reused deployment runs with env STAGE=%q, want the current variables STAGE=two", got)
+	}
+	state, err := desiredStateForAgent(ctx, store, "node-1")
+	if err != nil || len(state.GetServices()) != 1 {
+		t.Fatalf("desiredStateForAgent: %v, %v", state, err)
+	}
+	if got := state.GetServices()[0].GetSpec().GetImage(); got != image {
+		t.Fatalf("desired image = %q, want reused %q", got, image)
+	}
+}
+
+func seedArtifactForRetentionTest(t *testing.T, store *persistence, ctx context.Context, serviceID, id, nibble string, created time.Time) {
+	t.Helper()
+	digest := testDigest(nibble)
+	if _, err := store.db.ExecContext(ctx, `
+		INSERT INTO build_artifacts(id, service_id, build_id, kind, source_snapshot_digest, commit_sha,
+			build_recipe_json, builder_version, image_repository, image_manifest_digest,
+			image_ref, source_image_ref, reuse_key, build_actor_kind, build_actor_id, created_at)
+		VALUES ($1, $2, NULL, 'direct_image', '', '', '{}', '', 'example.test/web', $3,
+			$4, '', '', 'user', 'user-1', $5)`,
+		id, serviceID, digest, "example.test/web@"+digest, created); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPruneBuildArtifactsKeepsRollbackMaterial proves retention: artifacts
+// any deployment, transition, rollout, or current pointer references
+// survive any age, recent artifacts are kept, and only aged-out
+// unreferenced artifacts beyond the newest keep-recent are deleted.
+func TestPruneBuildArtifactsKeepsRollbackMaterial(t *testing.T) {
+	t.Parallel()
+	store, ctx, _, _, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
+	now := time.Now().UTC()
+
+	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-first", "b", now.AddDate(0, 0, -42))
+	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-second", "c", now.AddDate(0, 0, -41))
+	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-newest", "d", now.AddDate(0, 0, -40))
+	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-referenced", "e", now.AddDate(0, 0, -43))
+	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-recent", "f", now.AddDate(0, 0, -1))
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE service_delivery_status SET current_artifact_id = $1 WHERE service_id = $2`,
+		"artifact-old-referenced", service.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := testDelivery(store).PruneBuildArtifacts(ctx, now.AddDate(0, 0, -30), 1)
+	if err != nil {
+		t.Fatalf("PruneBuildArtifacts: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("pruned %d artifacts, want the 2 oldest unreferenced", deleted)
+	}
+
+	rows, err := store.db.QueryContext(ctx, `SELECT id FROM build_artifacts WHERE service_id = $1`, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	remaining := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		remaining[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"artifact-old-newest":     true, // newest unreferenced old artifact kept per keep-recent
+		"artifact-old-referenced": true, // referenced by the current pointer: rollback material
+		"artifact-recent":         true, // inside the retention window
+	}
+	gone := []string{"artifact-old-first", "artifact-old-second"}
+	for id := range want {
+		if !remaining[id] {
+			t.Fatalf("retention deleted %s; remaining = %v", id, remaining)
+		}
+	}
+	for _, id := range gone {
+		if remaining[id] {
+			t.Fatalf("retention kept unreferenced aged artifact %s; remaining = %v", id, remaining)
+		}
+	}
+}
