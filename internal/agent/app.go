@@ -45,6 +45,11 @@ const (
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 	diskEnforcementInterval = 15 * time.Second
+	// reportRepublishQuietPeriod is the stream-quiet window after which
+	// deferred runtime reports are published. Batches interleave independent
+	// updates before allocation payloads, so eager per-message publication
+	// can emit a report that predates the batch's allocation changes.
+	reportRepublishQuietPeriod = 250 * time.Millisecond
 )
 
 var (
@@ -386,6 +391,21 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		}
 		authorityConfirmed = true
 	}
+	// Independent updates (node config, credentials, replicas) republish the
+	// runtime report at the next stream-quiet point rather than eagerly: a
+	// replaced session starts without observations, but batches interleave
+	// independent updates before allocation payloads, and a report that still
+	// lists a removed allocation is rejected mid-batch. Repeated scheduling
+	// coalesces; the observation-sequence dedupe collapses repeats.
+	reportRepublish := make(chan struct{}, 1)
+	scheduleReportRepublish := func() {
+		time.AfterFunc(reportRepublishQuietPeriod, func() {
+			select {
+			case reportRepublish <- struct{}{}:
+			default:
+			}
+		})
+	}
 	for {
 		select {
 		case <-sessionCtx.Done():
@@ -425,6 +445,13 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 					return a.followLiveOwner(err)
 				}
 				slog.Warn("refresh managed dashboard identity", "agent_id", a.cfg.Node.ID, "error", err)
+			}
+		case <-reportRepublish:
+			if handshake || !authorityConfirmed {
+				continue
+			}
+			if err := sendCurrentReport(); err != nil {
+				return err
 			}
 		case result := <-received:
 			if handshake {
@@ -502,11 +529,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 					return err
 				}
 				a.supervisor.ReconcileAcceptedDesired()
-				// A replaced session starts without observations; republish
-				// runtime status so allocations do not stay pending.
-				if err := sendCurrentReport(); err != nil {
-					return err
-				}
+				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_PullCredentials:
 				creds := payload.PullCredentials
 				if creds == nil {
@@ -522,11 +545,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				// Credentials may unblock image pulls for just-accepted
 				// allocations; reconcile to retry.
 				a.supervisor.ReconcileAcceptedDesired()
-				// A replaced session starts without observations; republish
-				// runtime status so allocations do not stay pending.
-				if err := sendCurrentReport(); err != nil {
-					return err
-				}
+				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_ReplicaEndpoints:
 				replicas := payload.ReplicaEndpoints
 				if replicas == nil {
@@ -539,11 +558,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if err := sendAck(); err != nil {
 					return err
 				}
-				// A replaced session starts without observations; republish
-				// runtime status so allocations do not stay pending.
-				if err := sendCurrentReport(); err != nil {
-					return err
-				}
+				a.supervisor.ReconcileAcceptedDesired()
+				scheduleReportRepublish()
 			default:
 				continue
 			}
