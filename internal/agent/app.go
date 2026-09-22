@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ type App struct {
 	meshAssignment       mesh.Assignment
 	stateStore           *localStateStore
 	supervisor           *workloadSupervisor
+	logShipper           *logShipper
 	healthStop           func(context.Context) error
 	controlPlaneAddr     string
 	deadOwners           map[string]time.Time
@@ -81,6 +83,10 @@ func (a *App) Close() error {
 	if a.runtime != nil {
 		_ = a.runtime.Close()
 	}
+	if a.logShipper != nil {
+		_ = a.logShipper.Close()
+		a.logShipper = nil
+	}
 	if a.mesh != nil {
 		_ = a.mesh.Close()
 	}
@@ -116,7 +122,41 @@ func (a *App) Run(ctx context.Context) error {
 		a.stateStore = nil
 		return fmt.Errorf("start workload supervision: %w", err)
 	}
+	shipper, err := newLogShipper(a.cfg.Node.ID, logShipConfigFromAgent(a.cfg))
+	if err != nil {
+		_ = store.Close()
+		a.stateStore = nil
+		return fmt.Errorf("open log spool: %w", err)
+	}
+	a.logShipper = shipper
+	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
+		runtimeWithLogs.SetLogSink(shipper)
+	}
+	go func() {
+		_ = shipper.Run(ctx)
+	}()
 	return a.runConnections(ctx)
+}
+
+func logShipConfigFromAgent(cfg config.AgentConfig) logShipConfig {
+	ship := cfg.Logs
+	rate := float64(ship.RatePerSec)
+	if rate <= 0 {
+		rate = 200
+	}
+	burst := ship.Burst
+	if burst <= 0 {
+		burst = 1000
+	}
+	return logShipConfig{
+		SpoolDir:      filepath.Join(cfg.Runtime.DataDir, "log-spool"),
+		SpoolMaxBytes: ship.SpoolMaxBytes,
+		RatePerSec:    rate,
+		Burst:         burst,
+		BatchSize:     ship.FlushBatchSize,
+		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,
+		ReplayWindow:  time.Duration(ship.ReplayWindowSeconds) * time.Second,
+	}
 }
 
 func (a *App) runConnections(ctx context.Context) error {
@@ -316,13 +356,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		return err
 	}
 	slog.Info("sent agent hello", "agent_id", a.cfg.Node.ID)
-	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
-		logSink := newStreamLogSink(sessionCtx, a.cfg.Node.ID, send)
-		runtimeWithLogs.SetLogSink(logSink)
-		defer func() {
-			runtimeWithLogs.SetLogSink(nil)
-			logSink.Close()
-		}()
+	if a.logShipper != nil {
+		a.logShipper.Attach(send)
+		defer a.logShipper.Detach()
 	}
 	go a.heartbeatLoop(sessionCtx, sessionID, send)
 	credentialTicker := time.NewTicker(credentialCheckInterval)
