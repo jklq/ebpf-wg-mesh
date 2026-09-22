@@ -60,6 +60,9 @@ func TestStartManagedIngressRunsEnvoyWithBootstrapConfig(t *testing.T) {
 	t.Cleanup(func() {
 		_ = managed.Close()
 	})
+	if err := managed.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
 
 	runArgs := runner.firstCommand("run")
 	if len(runArgs) == 0 {
