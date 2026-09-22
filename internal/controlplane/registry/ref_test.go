@@ -22,6 +22,8 @@ func TestParseReference(t *testing.T) {
 		{name: "namespaced", input: "ghcr.io/demo/echo:latest", repository: "ghcr.io/demo/echo", tag: "latest"},
 		{name: "registry port", input: "registry.example.test:5000/mesh/app:git-deadbeef", repository: "registry.example.test:5000/mesh/app", tag: "git-deadbeef"},
 		{name: "pinned", input: "example.test/web@" + digest, repository: "example.test/web", digest: digest},
+		{name: "digest whitespace normalized", input: "example.test/web@ " + digest, repository: "example.test/web", digest: digest},
+		{name: "repository whitespace before digest normalized", input: "example.test/web @" + digest, repository: "example.test/web", digest: digest},
 		{name: "tag and digest prefers digest", input: "example.test/web:v1@" + digest, repository: "example.test/web", digest: digest},
 		{name: "whitespace trimmed", input: "  nginx:1.27  ", repository: "docker.io/library/nginx", tag: "1.27"},
 		{name: "empty", input: "", wantErr: true},
@@ -67,5 +69,12 @@ func TestIsDigestPinned(t *testing.T) {
 		if IsDigestPinned(ref) {
 			t.Fatalf("IsDigestPinned(%q) = true, want false", ref)
 		}
+	}
+	repo, gotDigest, err := SplitPinnedReference("example.test/web@ " + pinned[strings.IndexByte(pinned, '@')+1:])
+	if err != nil {
+		t.Fatalf("SplitPinnedReference with digest whitespace: %v", err)
+	}
+	if repo != "example.test/web" || gotDigest != pinned[strings.IndexByte(pinned, '@')+1:] {
+		t.Fatalf("SplitPinnedReference whitespace form = %q@%q, want canonical", repo, gotDigest)
 	}
 }
