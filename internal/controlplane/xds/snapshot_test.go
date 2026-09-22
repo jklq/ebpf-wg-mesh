@@ -346,3 +346,23 @@ func keys[V any](m map[string]V) []string {
 	sort.Strings(out)
 	return out
 }
+
+func TestRequiredTypesOmitEndpointsWithoutEndpoints(t *testing.T) {
+	t.Parallel()
+
+	// Envoy opens EDS subscriptions only for the EDS clusters CDS announces.
+	// With no endpoints the drain barrier must not wait for an EDS ACK that
+	// can never arrive.
+	snap := mustBuild(t, BuildInput{ListenAddrs: []string{":8080"}})
+	if got := snap.RequiredTypes(); len(got) != 3 {
+		t.Fatalf("RequiredTypes without endpoints = %v, want LDS/CDS/RDS only", got)
+	}
+
+	snap = mustBuild(t, BuildInput{
+		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		ListenAddrs: []string{":8080"},
+	})
+	if got := snap.RequiredTypes(); len(got) != 4 {
+		t.Fatalf("RequiredTypes with endpoints = %v, want all four", got)
+	}
+}

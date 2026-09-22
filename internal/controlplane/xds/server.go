@@ -32,11 +32,11 @@ type NodeStatus struct {
 }
 
 // FullyApplied reports whether this node ACKed version across every
-// required type. A node mid-apply, holding an older version, or holding a
-// rejected response for any type is not fully applied: it may still route
-// to endpoints the current version withdrew.
-func (n NodeStatus) FullyApplied(version string) bool {
-	for _, typeURL := range RequiredTypes {
+// required type (see Snapshot.RequiredTypes). A node mid-apply, holding an
+// older version, or holding a rejected response for any type is not fully
+// applied: it may still route to endpoints the current version withdrew.
+func (n NodeStatus) FullyApplied(version string, required []string) bool {
+	for _, typeURL := range required {
 		if n.Applied[typeURL] != version {
 			return false
 		}
@@ -51,7 +51,10 @@ type Status struct {
 	Counts      Counts
 	PublishedAt time.Time
 	HasSnapshot bool
-	Nodes       map[string]NodeStatus
+	// RequiredTypes are the types a node must ACK to count as fully
+	// applied at this version.
+	RequiredTypes []string
+	Nodes         map[string]NodeStatus
 }
 
 // Server is the xDS management server. It serves the latest published
@@ -174,6 +177,7 @@ func (s *Server) Status() Status {
 		status.Counts = s.current.Counts
 		status.PublishedAt = s.published
 		status.HasSnapshot = true
+		status.RequiredTypes = s.current.RequiredTypes()
 	}
 	for nodeID, state := range s.nodes {
 		applied := make(map[string]string, len(state.applied))

@@ -127,8 +127,16 @@ func validateProductionXDSListen(cfg IngressConfig) error {
 	if err != nil {
 		return fmt.Errorf("controlplane.ingress.xdsListen must be host:port: %w", err)
 	}
-	if strings.TrimSpace(host) == "" {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
 		return errors.New("controlplane.ingress.xdsListen must bind an explicit host in production")
+	}
+	// The xDS transport is plaintext and unauthenticated until the fleet
+	// work adds mTLS: a wildcard bind would put the management API on every
+	// interface, where any reachable client can register node observations
+	// and block rollouts. Bind the isolated network explicitly.
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return errors.New("controlplane.ingress.xdsListen must not bind a wildcard address in production; the xDS transport is unauthenticated until mTLS")
 	}
 	return nil
 }

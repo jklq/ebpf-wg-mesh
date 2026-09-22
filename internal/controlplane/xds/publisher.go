@@ -342,7 +342,7 @@ func (p *Publisher) flushNodeObservations(ctx context.Context) error {
 	observations := make([]NodeObservation, 0, len(status.Nodes))
 	for nodeID, node := range status.Nodes {
 		applied := ""
-		if node.FullyApplied(status.Version) {
+		if node.FullyApplied(status.Version, status.RequiredTypes) {
 			applied = status.Version
 		}
 		observations = append(observations, NodeObservation{

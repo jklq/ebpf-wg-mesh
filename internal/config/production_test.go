@@ -144,9 +144,14 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 	})
 	t.Run("wildcard xds listen", func(t *testing.T) {
 		t.Parallel()
-		cfg := validMinimalProductionControlPlane(t)
-		cfg.Ingress.XDSListen = ":18000"
-		mustReject(t, FinalizeControlPlane(&cfg), "xdsListen must bind an explicit host")
+		for _, listen := range []string{":18000", "0.0.0.0:18000", "[::]:18000"} {
+			cfg := validMinimalProductionControlPlane(t)
+			cfg.Ingress.XDSListen = listen
+			// The plaintext unauthenticated xDS API must never bind every
+			// interface in production: any reachable client could register
+			// blocking node observations.
+			mustReject(t, FinalizeControlPlane(&cfg), "xdsListen")
+		}
 	})
 	t.Run("filesystem source storage", func(t *testing.T) {
 		t.Parallel()

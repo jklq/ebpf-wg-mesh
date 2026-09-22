@@ -316,7 +316,7 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 
 	// Once every required type is ACKed at the served version the node is
 	// fully applied.
-	for _, typeURL := range RequiredTypes {
+	for _, typeURL := range server.Status().RequiredTypes {
 		server.observe(0, "envoy-partial", typeURL, version, nil)
 	}
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
@@ -423,8 +423,9 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	if err := server.onStreamRequest(7, req); err != nil {
 		t.Fatal(err)
 	}
-	version := server.Status().Version
-	for _, typeURL := range RequiredTypes {
+	status := server.Status()
+	version := status.Version
+	for _, typeURL := range status.RequiredTypes {
 		if err := server.onStreamRequest(7, &discoveryv3.DiscoveryRequest{TypeUrl: typeURL, VersionInfo: version}); err != nil {
 			t.Fatal(err)
 		}
@@ -432,7 +433,7 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	server.mu.Lock()
 	node := server.nodes["envoy-fresh"]
 	server.mu.Unlock()
-	if node == nil || !((NodeStatus{Applied: node.applied}).FullyApplied(version)) {
+	if node == nil || !((NodeStatus{Applied: node.applied}).FullyApplied(version, status.RequiredTypes)) {
 		t.Fatalf("node-less ACKs did not update apply state: %+v", node)
 	}
 }
@@ -622,5 +623,33 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	}
 	if refreshes != 1 {
 		t.Fatalf("refreshes = %d, want 1 after registration succeeded", refreshes)
+	}
+}
+
+func TestPublisherConvergesWithoutEDSSubscription(t *testing.T) {
+	t.Parallel()
+
+	// A snapshot without endpoints (the last service was removed) leaves
+	// Envoy with no EDS cluster and therefore no EDS subscription to ACK.
+	// The drain barrier must still converge once the standing types apply.
+	pubs := &fakePublications{}
+	nodes := newFakeNodes()
+	publisher, server := testPublisherWithNodes(&fakeSource{}, pubs, nodes)
+	if err := publisher.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	version := server.Status().Version
+	server.observe(0, "envoy-neds", resourcev3.ListenerType, version, nil)
+	server.observe(0, "envoy-neds", resourcev3.ClusterType, version, nil)
+	server.observe(0, "envoy-neds", resourcev3.RouteType, version, nil)
+
+	if err := publisher.flushNodeObservations(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	nodes.mu.Lock()
+	got := nodes.nodes["envoy-neds"]
+	nodes.mu.Unlock()
+	if got.AppliedHash != version {
+		t.Fatalf("applied hash = %q, want %q without any EDS ACK", got.AppliedHash, version)
 	}
 }

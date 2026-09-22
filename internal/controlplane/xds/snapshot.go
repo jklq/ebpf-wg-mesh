@@ -73,13 +73,23 @@ type BuildInput struct {
 	ListenAddrs []string
 }
 
-// RequiredTypes are the xDS types every ingress subscriber must apply
-// before its version counts as fully applied.
-var RequiredTypes = []string{
-	resourcev3.ListenerType,
-	resourcev3.ClusterType,
-	resourcev3.RouteType,
-	resourcev3.EndpointType,
+// RequiredTypes reports the xDS types whose ACK the drain barrier requires
+// for this snapshot. CDS, LDS, and RDS always have standing Envoy
+// subscriptions — Envoy ACKs even empty responses — so they are always
+// required. EDS subscriptions exist only for the EDS clusters CDS
+// announces: when the snapshot carries no endpoints the dynamic clusters
+// are gone from CDS instead of being emptied at EDS, so requiring an EDS
+// ACK would wait forever for a request that never comes. A node that has
+// applied the current CDS cannot route to the withdrawn dynamic endpoints,
+// and a node that has not is unapplied regardless.
+func (s *Snapshot) RequiredTypes() []string {
+	types := []string{resourcev3.ListenerType, resourcev3.ClusterType, resourcev3.RouteType}
+	if s != nil && s.cache != nil {
+		if items := s.cache.Resources[cachev3.GetResponseType(resourcev3.EndpointType)].Items; len(items) > 0 {
+			types = append(types, resourcev3.EndpointType)
+		}
+	}
+	return types
 }
 
 // Build computes a versioned snapshot from control-plane state. Construction
