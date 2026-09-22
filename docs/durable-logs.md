@@ -58,7 +58,13 @@ Container output funnels through a per-allocation token bucket
 spool (agent default 256 MiB under the runtime data dir; builders use a
 per-attempt spool under the work dir, default 64 MiB). A ship loop
 forwards batches with retry and exponential backoff; the spool cursor
-commits only after acceptance. Nothing on this path blocks workload
+commits only after acceptance. Committed sealed segments stay for
+the replay window after their newest record: acknowledgement is
+queue admission on the control plane, so the retained copy is what
+reconnect replay re-sends when the backend acknowledged but did not
+durably ingest (server-side dedup collapses the overlap). Builders
+need no retention: their report RPC writes durably before it
+returns. Nothing on this path blocks workload
 reconciliation or build execution: log shipping failure costs only log
 latency and, past the spool cap, dropped lines.
 

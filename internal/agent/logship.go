@@ -105,6 +105,11 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 		Dir:        cfg.SpoolDir,
 		MaxBytes:   cfg.SpoolMaxBytes,
 		SyncWrites: true,
+		// Acknowledgement is queue admission at the control plane, so
+		// committed sealed segments stay for the replay window: a
+		// reconnect after a control-plane crash re-sends what the
+		// backend acknowledged but did not durably ingest.
+		Retention: cfg.ReplayWindow,
 	})
 	if err != nil {
 		return nil, err

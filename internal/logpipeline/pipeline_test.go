@@ -1,6 +1,7 @@
 package logpipeline
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -455,5 +456,75 @@ func TestStableEventID(t *testing.T) {
 	}
 	if StableEventID("allocation.crash_loop", "agent-1", "alloc-1", "7", "2026-09-22T03:00:00Z") == a {
 		t.Fatal("different observation window must produce a different ID")
+	}
+}
+
+// Committed sealed segments survive for the retention horizon as the
+// replay copy: agents are acknowledged at queue admission, so a
+// backend crash before durable ingest must leave a reconnect
+// something to re-send (server-side dedup absorbs the overlap).
+func TestSpoolRetainsCommittedSegmentsForReplay(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxSegmentBytes: 200, Retention: time.Hour})
+	now := time.Now().UTC()
+	payload := make([]byte, 80)
+	for i := 0; i < 20; i++ {
+		if err := s.Append("alloc-1", fmt.Sprintf("id-%02d", i), now, payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(100)
+	if err != nil || len(recs) != 20 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if stats := s.Stats(); stats.Segments < 2 {
+		t.Fatalf("expected sealed segments to retain, got %+v", stats)
+	}
+	// The reconnect replay window re-sends the acknowledged records.
+	if err := s.RewindForReplay(now.Add(-time.Minute)); err != nil {
+		t.Fatalf("RewindForReplay: %v", err)
+	}
+	recs, _, err = s.Read(100)
+	if err != nil || len(recs) != 20 {
+		t.Fatalf("committed records not replayable: %v %d", err, len(recs))
+	}
+}
+
+// Past the retention horizon, committed sealed segments collect so
+// the replay copy cannot grow without bound.
+func TestSpoolCollectsCommittedSegmentsAfterRetention(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxSegmentBytes: 200, Retention: 50 * time.Millisecond})
+	payload := make([]byte, 80)
+	for i := 0; i < 20; i++ {
+		if err := s.Append("alloc-1", fmt.Sprintf("id-%02d", i), time.Now().UTC(), payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(100)
+	if err != nil || len(recs) != 20 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	// The next commit collects the sealed segments once their newest
+	// record is older than the horizon.
+	if err := s.Append("alloc-1", "id-late", time.Now().UTC(), payload); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	recs, cursor, err = s.Read(100)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if stats := s.Stats(); stats.Segments != 1 {
+		t.Fatalf("committed segments not collected past retention: %+v", stats)
 	}
 }

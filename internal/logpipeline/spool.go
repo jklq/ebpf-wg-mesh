@@ -64,20 +64,28 @@ type SpoolConfig struct {
 	MaxSegmentBytes int64
 	// SyncWrites fsyncs every append. Disable only in tests.
 	SyncWrites bool
+	// Retention keeps committed sealed segments this long past their
+	// newest record so reconnect replay can re-send recently
+	// acknowledged records the backend may not have durably ingested
+	// (acknowledgement is queue admission on agents). Zero collects
+	// committed segments immediately.
+	Retention time.Duration
 }
 
 // Spool is a bounded disk-backed FIFO queue. Appends are durable
 // (with SyncWrites) and survive crashes; reads replay from the last
 // commit; commits advance the durable cursor and garbage-collect
-// fully shipped segments. When the byte cap is exceeded the oldest
+// fully shipped segments past the retention horizon. When the byte
+// cap is exceeded the oldest
 // segments are evicted and their unshipped records counted per key
 // so callers can report explicit read gaps.
 type Spool struct {
-	mu       sync.Mutex
-	dir      string
-	maxBytes int64
-	maxSeg   int64
-	sync     bool
+	mu        sync.Mutex
+	dir       string
+	maxBytes  int64
+	maxSeg    int64
+	sync      bool
+	retention time.Duration
 
 	activeID   uint64
 	active     *os.File
@@ -98,9 +106,10 @@ type Spool struct {
 }
 
 type segmentInfo struct {
-	id      uint64
-	size    int64
-	records int64
+	id             uint64
+	size           int64
+	records        int64
+	newestObserved time.Time
 }
 
 // OpenSpool opens or creates the spool in cfg.Dir, recovering segment
@@ -127,6 +136,7 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		maxBytes:     maxBytes,
 		maxSeg:       maxSeg,
 		sync:         cfg.SyncWrites,
+		retention:    cfg.Retention,
 		evicted:      make(map[string]uint64),
 		corruptDrops: make(map[string]uint64),
 	}
@@ -154,11 +164,11 @@ func (s *Spool) recover() error {
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
-		size, records, err := s.compactSegment(id)
+		size, records, newest, err := s.compactSegment(id)
 		if err != nil {
 			return err
 		}
-		s.segments = append(s.segments, segmentInfo{id: id, size: size, records: records})
+		s.segments = append(s.segments, segmentInfo{id: id, size: size, records: records, newestObserved: newest})
 		s.records += records
 		s.bytes += size
 		if id >= s.nextSeg {
@@ -188,25 +198,30 @@ func (s *Spool) recover() error {
 }
 
 // compactSegment drops corrupt records from one segment, truncates a
-// torn tail, and returns the resulting size and record count. Every
+// torn tail, and returns the resulting size, record count, and
+// newest record timestamp. Every
 // lost record is counted as an attributable drop where the damaged
 // frame still reveals its key.
-func (s *Spool) compactSegment(id uint64) (int64, int64, error) {
+func (s *Spool) compactSegment(id uint64) (int64, int64, time.Time, error) {
 	path := s.segmentPath(id)
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, fmt.Errorf("read spool segment %d: %w", id, err)
+		return 0, 0, time.Time{}, fmt.Errorf("read spool segment %d: %w", id, err)
 	}
 	var (
 		kept    []byte
 		records int64
+		newest  time.Time
 		rewrote bool
 	)
 	for off := int64(0); off < int64(len(raw)); {
-		_, nextOff, ok := decodeRecordAt(raw, off)
+		rec, nextOff, ok := decodeRecordAt(raw, off)
 		if ok {
 			kept = append(kept, raw[off:nextOff]...)
 			records++
+			if rec.ObservedAt.After(newest) {
+				newest = rec.ObservedAt
+			}
 			off = nextOff
 			continue
 		}
@@ -221,10 +236,10 @@ func (s *Spool) compactSegment(id uint64) (int64, int64, error) {
 	}
 	if rewrote {
 		if err := os.WriteFile(path, kept, spoolFileMode); err != nil {
-			return 0, 0, fmt.Errorf("compact spool segment %d: %w", id, err)
+			return 0, 0, time.Time{}, fmt.Errorf("compact spool segment %d: %w", id, err)
 		}
 	}
-	return int64(len(kept)), records, nil
+	return int64(len(kept)), records, newest, nil
 }
 
 // recordCorruptLocked counts one unreadable record as a loss. The key
@@ -293,6 +308,9 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 	s.activeSize += int64(len(encoded))
 	s.segments[len(s.segments)-1].size = s.activeSize
 	s.segments[len(s.segments)-1].records++
+	if observedAt.After(s.segments[len(s.segments)-1].newestObserved) {
+		s.segments[len(s.segments)-1].newestObserved = observedAt
+	}
 	s.records++
 	s.bytes += int64(len(encoded))
 	s.evictLocked()
@@ -360,8 +378,8 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 	return out, cursor, nil
 }
 
-// Commit advances the durable cursor past a shipped batch and deletes
-// fully shipped sealed segments.
+// Commit advances the durable cursor past a shipped batch and
+// collects fully shipped sealed segments past the retention horizon.
 func (s *Spool) Commit(c Cursor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -615,8 +633,12 @@ func (s *Spool) removeSegmentLocked(seg segmentInfo) {
 }
 
 // collectLocked deletes sealed segments fully behind the commit
-// cursor. Committed data was shipped; no drop is counted.
+// cursor once their newest record is older than the retention
+// horizon. Committed data was shipped, so no drop is counted; the
+// retained copy is what reconnect replay re-sends when the backend
+// acknowledged but did not durably ingest.
 func (s *Spool) collectLocked() {
+	cutoff := time.Now().Add(-s.retention)
 	for len(s.segments) > 0 {
 		oldest := s.segments[0]
 		if oldest.id == s.activeID {
@@ -626,6 +648,9 @@ func (s *Spool) collectLocked() {
 			return
 		}
 		if oldest.id == s.cursor.Segment && s.cursor.Offset < oldest.size {
+			return
+		}
+		if s.retention > 0 && !oldest.newestObserved.Before(cutoff) {
 			return
 		}
 		s.removeSegmentLocked(oldest)
