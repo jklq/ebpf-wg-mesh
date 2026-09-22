@@ -86,11 +86,15 @@ way with reason `corrupt_spool`, attributed best-effort from the
 damaged frame's key (frames whose key bytes are gone stay in the
 process counters only). Drop summaries carry the allocation as their
 identity; the service is derived from the allocation owner at ingest.
+Shed flushes keep producer summary identity in their owed gaps, so a
+replayed summary replaces the same gap row instead of double counting.
 Build spools are removed on clean completion and leftovers are
 garbage-collected at startup once 24 hours pass without a write
 (staleness follows the newest write in the spool, so a long-running
 attempt keeps its unshipped output); a retried attempt re-emits its
-own output from scratch. Close always flushes once before deciding the
+own output from scratch and never re-opens the previous attempt's
+spool — attempt spools are keyed by build ID and lease epoch. Close
+always flushes once before deciding the
 attempt drained, so limiter and overflow drops report even when the
 spool holds no records.
 
