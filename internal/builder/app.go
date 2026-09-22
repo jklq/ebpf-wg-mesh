@@ -168,6 +168,11 @@ func (a *App) Run(ctx context.Context) error {
 	} else if reclaimed > 0 {
 		slog.Info("reclaimed stale build workspaces", "count", reclaimed)
 	}
+	if reclaimed, err := gcStaleBuildLogSpools(a.buildLogSpoolBase(), staleBuildLogSpoolMaxAge); err != nil {
+		return fmt.Errorf("collect stale build log spools: %w", err)
+	} else if reclaimed > 0 {
+		slog.Info("collected stale build log spools", "count", reclaimed)
+	}
 	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
 		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
 		if err != nil {
@@ -281,13 +286,41 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	return nil
 }
 
+func (a *App) buildLogSpoolBase() string {
+	return filepath.Join(a.cfg.WorkDir, "log-spool")
+}
+
+func (a *App) buildLogShipConfig(buildID string) buildLogShipConfig {
+	ship := a.cfg.Logs
+	rate := float64(ship.RatePerSec)
+	if rate <= 0 {
+		rate = 200
+	}
+	burst := ship.Burst
+	if burst <= 0 {
+		burst = 1000
+	}
+	maxBytes := ship.SpoolMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultBuildLogSpoolMaxBytes
+	}
+	return buildLogShipConfig{
+		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID),
+		SpoolMaxBytes: maxBytes,
+		RatePerSec:    rate,
+		Burst:         burst,
+		BatchSize:     ship.FlushBatchSize,
+		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,
+	}
+}
+
 func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (string, error) {
 	archivePath, digest, err := a.downloadSourceSnapshot(ctx, job)
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(archivePath)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetLeaseEpoch())
+	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId()))
 	defer reporter.Close()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
