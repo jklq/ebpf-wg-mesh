@@ -413,9 +413,18 @@ func (s *Server) Run(ctx context.Context) error {
 		go func() { errCh <- s.ingress.Follow(runCtx) }()
 	}
 	// Per-replica as well: every replica ingests the agent streams it
-	// terminates.
+	// terminates. Its Run drains accepted batches before returning,
+	// and Run waits for that drain below: Close tears down the log
+	// store as soon as runDone closes.
+	var logIngestDone chan error
 	if s.logIngester != nil {
-		go func() { errCh <- s.logIngester.Run(runCtx) }()
+		done := make(chan error, 1)
+		logIngestDone = done
+		go func() {
+			err := s.logIngester.Run(runCtx)
+			errCh <- err
+			done <- err
+		}()
 	}
 	leaseDone := make(chan error, 1)
 	go func() {
@@ -438,6 +447,14 @@ func (s *Server) Run(ctx context.Context) error {
 	leaseErr := <-leaseDone
 	if result == nil {
 		result = leaseErr
+	}
+	// The shutdown drain flushes accepted log batches into the log
+	// store; Close closes that store right after runDone, so Run must
+	// not return until the drain finished.
+	if logIngestDone != nil {
+		if err := <-logIngestDone; result == nil {
+			result = err
+		}
 	}
 	return result
 }

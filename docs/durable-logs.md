@@ -98,7 +98,9 @@ ingest gaps per affected service and allocation.
 Shutdown drains the accepted backlog under a 15s grace deadline:
 the batch caught mid-retry, queued batches, and owed gap windows
 flush before the process exits,
-even when the run context is already canceled. Only a hard kill or an
+even when the run context is already canceled, and the server waits
+for the drain before closing the log store so every flush runs
+against a live backend. Only a hard kill or an
 expired grace loses the unflushed remainder, and that remainder is
 logged with full accounting rather than vanishing (producers
 additionally replay their unshipped spool window on reconnect).
