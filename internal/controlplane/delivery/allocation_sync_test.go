@@ -188,3 +188,26 @@ func TestIndependentVersionsChangeSeparately(t *testing.T) {
 		t.Fatal("replica change should change version")
 	}
 }
+
+func TestZeroContentRevisionBumpReturnsNoOpCursorDiff(t *testing.T) {
+	t.Parallel()
+	sync := newAllocSync()
+	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
+	// A peer-only change bumps desired_revision with identical allocation
+	// content. The bump must surface as an empty no-op diff so the send path
+	// advances the agent's accepted cursor in lockstep; an empty ok result
+	// would let the server advance its sent cursor alone, and the next diff
+	// would be rejected on its base revision.
+	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
+	diffs, target, ok := sync.diffsFrom("agent-1", 1)
+	if !ok || target != 2 || len(diffs) != 1 {
+		t.Fatalf("zero-content bump must return a covering no-op diff: %+v target=%d ok=%v", diffs, target, ok)
+	}
+	d := diffs[0]
+	if d.Base != 1 || d.Target != 2 {
+		t.Fatalf("no-op diff revisions = %d->%d, want 1->2", d.Base, d.Target)
+	}
+	if len(d.Starts)+len(d.Updates)+len(d.Stops)+len(d.VolumeStarts)+len(d.VolumeStops) != 0 {
+		t.Fatalf("no-op diff changed allocations: %+v", d)
+	}
+}

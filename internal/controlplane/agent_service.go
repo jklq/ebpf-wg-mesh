@@ -469,12 +469,17 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			needCheckpoint = true
 		}
 	} else {
-		// Cursor advanced; try incremental diffs, else checkpoint.
+		// Cursor advanced; the batch must carry allocation coverage from
+		// lastAlloc to current.Cursor. A revision that changes no allocation
+		// content (e.g., a peer-only bump still moves desired_revision) is
+		// retained and sent as an empty no-op diff that advances the agent's
+		// accepted cursor in lockstep. Returning the advanced cursor without
+		// delivering a covering allocation message would leave the agent on
+		// its old accepted cursor and the next diff would be rejected on its
+		// base revision. Anything the retained chain cannot cover falls back
+		// to a checkpoint.
 		if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, lastAlloc); ok && target == current.Cursor && len(stored) > 0 {
 			diffs = stored
-		} else if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, lastAlloc); ok && target == current.Cursor && len(stored) == 0 {
-			// No allocation content change despite cursor bump (e.g., peer-only
-			// bump still moves desired_revision). Treat as no allocation send.
 		} else {
 			slog.Info("diff history unavailable; sending checkpoint", "agent_id", agentID, "base", lastAlloc, "target", current.Cursor)
 			needCheckpoint = true

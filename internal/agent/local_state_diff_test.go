@@ -339,3 +339,42 @@ func TestDiffPreservesRecoveryQuarantine(t *testing.T) {
 		t.Fatalf("recovery did not exit once owned: %+v %v", summary, err)
 	}
 }
+
+func TestAcceptNoOpDiffAdvancesCursorBeforeNextDiff(t *testing.T) {
+	t.Parallel()
+	store := openTestLocalState(t)
+	if err := store.prepareStartup("cluster-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1, "keep")); err != nil {
+		t.Fatal(err)
+	}
+	// A revision that changes no allocation content (e.g., a peer-only bump
+	// of desired_revision) arrives as an empty diff. It must advance the
+	// accepted cursor without touching allocations so the next real diff,
+	// based on the advanced cursor, is accepted instead of rejected for a
+	// base mismatch.
+	changed, err := store.acceptAllocationDiff("cluster-a", "test-session", testDiff(1, 2, nil, nil, nil))
+	if err != nil || !changed {
+		t.Fatalf("accept no-op diff: changed=%v err=%v", changed, err)
+	}
+	desired, err := store.desiredState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.GetReconciliationCursor() != 2 {
+		t.Fatalf("cursor = %d, want 2", desired.GetReconciliationCursor())
+	}
+	if len(desired.GetServices()) != 1 || desired.GetServices()[0].GetAllocationId() != "keep" {
+		t.Fatalf("no-op diff changed allocations: %+v", desired.GetServices())
+	}
+	changed, err = store.acceptAllocationDiff("cluster-a", "test-session",
+		testDiff(2, 3, []*agentv1.DesiredService{testDiffService("next", 1, 1)}, nil, nil))
+	if err != nil || !changed {
+		t.Fatalf("follow-up diff on the advanced base was not accepted: changed=%v err=%v", changed, err)
+	}
+	summary, err := store.summary()
+	if err != nil || summary.ReconciliationCursor != 3 {
+		t.Fatalf("hello cursor not advanced: %+v %v", summary, err)
+	}
+}
