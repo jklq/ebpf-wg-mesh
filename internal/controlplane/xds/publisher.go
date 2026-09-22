@@ -2,6 +2,7 @@ package xds
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -14,10 +15,15 @@ type SnapshotSource interface {
 	WithLeaseGuard(context.Context, func() error) error
 }
 
-// Publication is the last version row written by the live owner.
+// Publication is the last version row written by the live owner. Inputs are
+// the canonical hash preimage: any replica can rebuild the exact snapshot
+// from them and serve it, which is what makes the xDS endpoint shared across
+// replicas instead of pinned to one owner's memory.
 type Publication struct {
 	Version   string
 	Hash      string
+	Inputs    []byte
+	Counts    Counts
 	Publisher string
 }
 
@@ -27,18 +33,41 @@ type Publication struct {
 // equals oldHash (empty matches an absent row) and reports whether it won.
 type PublicationStore interface {
 	LoadPublication(context.Context) (Publication, error)
-	CompareAndSwapPublication(ctx context.Context, oldHash, version, hash string, counts Counts, publisher string) (bool, error)
+	CompareAndSwapPublication(ctx context.Context, oldHash string, pub Publication) (bool, error)
+}
+
+// NodeObservation is one Envoy's durable apply state. AppliedHash is the
+// content hash the node has fully applied ("" until then). NACKs and
+// LastNACK retain the latest rejection for operators.
+type NodeObservation struct {
+	NodeID      string
+	AppliedHash string
+	NACKs       int64
+	LastNACK    string
+}
+
+// NodeStore persists per-node apply state across replicas and restarts so
+// the live owner can require real convergence before draining a withdrawn
+// allocation. Rows are never deleted implicitly: a disconnected Envoy keeps
+// serving its last-known-good config, so its withdrawals must wait for the
+// ACK to actually arrive. Availability policy for instances that never come
+// back is the fleet work.
+type NodeStore interface {
+	UpsertNodeObservations(ctx context.Context, observations []NodeObservation) error
+	ListNodeObservations(ctx context.Context) ([]NodeObservation, error)
 }
 
 const defaultPublishMinSyncInterval = 2 * time.Second
 
 // Publisher recomputes the xDS snapshot from control-plane state and serves
 // it on the attached Server. It implements the delivery.PlatformIngress
-// contract (Sync plus RequestSync), so every mutation that used to push Caddy
-// config now republishes xDS.
+// contract (Sync, RequestSync, Converged), so every mutation that used to
+// push Caddy config now republishes xDS and rollouts can wait for applied
+// withdrawals before draining.
 type Publisher struct {
 	source    SnapshotSource
 	pubs      PublicationStore
+	nodes     NodeStore
 	server    *Server
 	static    []StaticRoute
 	listen    []string
@@ -54,6 +83,7 @@ type Publisher struct {
 type PublisherConfig struct {
 	Source       SnapshotSource
 	Publications PublicationStore
+	Nodes        NodeStore
 	Server       *Server
 	Static       []StaticRoute
 	ListenAddrs  []string
@@ -63,7 +93,8 @@ type PublisherConfig struct {
 
 // NewPublisher builds a Publisher. A nil Server disables local serving (the
 // publication row is still maintained); a nil PublicationStore disables the
-// row (single-replica use).
+// row (single-replica use); a nil NodeStore disables durable node tracking
+// (Converged then reports true).
 func NewPublisher(cfg PublisherConfig) *Publisher {
 	minSync := cfg.MinSync
 	if minSync <= 0 {
@@ -72,6 +103,7 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 	return &Publisher{
 		source:    cfg.Source,
 		pubs:      cfg.Publications,
+		nodes:     cfg.Nodes,
 		server:    cfg.Server,
 		static:    append([]StaticRoute(nil), cfg.Static...),
 		listen:    append([]string(nil), cfg.ListenAddrs...),
@@ -149,6 +181,139 @@ func (p *Publisher) Run(ctx context.Context) error {
 	}
 }
 
+// Follow keeps this replica's server on the durable publication and records
+// node apply state. It runs on every replica, not just the live owner: after
+// a lease takeover or rolling replacement an Envoy must receive the current
+// snapshot from whichever xDS endpoint it reaches, and drain gating must see
+// ACKs wherever the subscriber landed.
+func (p *Publisher) Follow(ctx context.Context) error {
+	if p == nil {
+		<-ctx.Done()
+		return nil
+	}
+	tick := func() {
+		if err := p.Replicate(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("xds publication follow failed", "error", err)
+		}
+	}
+	tick()
+	ticker := time.NewTicker(p.minSync)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			tick()
+		}
+	}
+}
+
+// Converged reports whether every known Envoy has fully applied the current
+// publication. Rollouts must not destroy withdrawn allocations before this:
+// a disconnected or NACKing Envoy keeps routing to its last-known-good
+// endpoints until it applies the withdrawal. Nodes never observed are
+// unknown and hold no config worth waiting for; observed nodes with no
+// fully applied version are mid-apply and do block.
+func (p *Publisher) Converged(ctx context.Context) (bool, error) {
+	if p == nil || p.nodes == nil {
+		return true, nil
+	}
+	hash := ""
+	if p.server != nil {
+		if status := p.server.Status(); status.HasSnapshot {
+			hash = status.Hash
+		}
+	}
+	if hash == "" && p.pubs != nil {
+		pub, err := p.pubs.LoadPublication(ctx)
+		if err != nil {
+			return false, err
+		}
+		hash = pub.Hash
+	}
+	if hash == "" {
+		return true, nil
+	}
+	nodes, err := p.nodes.ListNodeObservations(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, node := range nodes {
+		if node.AppliedHash != hash {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// Replicate adopts the durable publication and flushes node apply state
+// once. Follow runs it on a floor interval.
+func (p *Publisher) Replicate(ctx context.Context) error {
+	if err := p.adoptPublication(ctx); err != nil {
+		return err
+	}
+	return p.flushNodeObservations(ctx)
+}
+
+// adoptPublication serves the durable publication when it is newer than
+// what this replica holds. Inputs are the hash preimage, so rebuilding is
+// byte-identical to the writer's build; a hash mismatch means tampered or
+// corrupt storage and must not be served.
+func (p *Publisher) adoptPublication(ctx context.Context) error {
+	if p.pubs == nil || p.server == nil {
+		return nil
+	}
+	pub, err := p.pubs.LoadPublication(ctx)
+	if err != nil {
+		return err
+	}
+	if pub.Hash == "" {
+		return nil
+	}
+	if status := p.server.Status(); status.HasSnapshot && status.Hash == pub.Hash {
+		return nil
+	}
+	snap, err := BuildFromInputs(pub.Inputs)
+	if err != nil {
+		return fmt.Errorf("published snapshot unusable: %w", err)
+	}
+	if snap.Hash != pub.Hash {
+		return fmt.Errorf("published inputs hash %s does not match row hash %s", snap.Hash, pub.Hash)
+	}
+	p.server.Publish(ctx, snap)
+	return nil
+}
+
+// flushNodeObservations persists what this replica's subscribers applied.
+// A node fully applied only reports its hash when every required type is at
+// the served version; the store keeps the previous hash otherwise, so a
+// node mid-apply or NACKing still reports the stale version it may route
+// with.
+func (p *Publisher) flushNodeObservations(ctx context.Context) error {
+	if p.nodes == nil || p.server == nil {
+		return nil
+	}
+	status := p.server.Status()
+	if !status.HasSnapshot {
+		return nil
+	}
+	observations := make([]NodeObservation, 0, len(status.Nodes))
+	for nodeID, node := range status.Nodes {
+		applied := ""
+		if node.FullyApplied(status.Version) {
+			applied = status.Version
+		}
+		observations = append(observations, NodeObservation{
+			NodeID: nodeID, AppliedHash: applied, NACKs: node.NACKs, LastNACK: node.LastNACK,
+		})
+	}
+	if len(observations) == 0 {
+		return nil
+	}
+	return p.nodes.UpsertNodeObservations(ctx, observations)
+}
+
 // publishLocked records the snapshot in the publication row (compare-and-swap
 // so racing owners converge) and serves it locally.
 func (p *Publisher) publishLocked(ctx context.Context, snap *Snapshot) error {
@@ -161,7 +326,10 @@ func (p *Publisher) publishLocked(ctx context.Context, snap *Snapshot) error {
 			if pub.Hash == snap.Hash {
 				break
 			}
-			won, err := p.pubs.CompareAndSwapPublication(ctx, pub.Hash, snap.Version, snap.Hash, snap.Counts, p.publisher)
+			won, err := p.pubs.CompareAndSwapPublication(ctx, pub.Hash, Publication{
+				Version: snap.Version, Hash: snap.Hash, Inputs: snap.Inputs,
+				Counts: snap.Counts, Publisher: p.publisher,
+			})
 			if err != nil {
 				return err
 			}

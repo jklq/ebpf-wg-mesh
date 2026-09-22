@@ -150,7 +150,7 @@ func (m *ManagedIngress) waitUntilReady(ctx context.Context) error {
 func writeLocalIngressBootstrapConfig(cfg LocalIngressConfig) (string, error) {
 	bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{
 		NodeID:       cfg.NodeID,
-		XDSAddress:   cfg.XDSServerAddr,
+		XDSAddresses: []string{cfg.XDSServerAddr},
 		AdminAddress: fmt.Sprintf("0.0.0.0:%d", envoyContainerAdminPort),
 	})
 	if err != nil {

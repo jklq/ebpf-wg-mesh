@@ -10,9 +10,12 @@ import (
 // BootstrapConfig describes one Envoy instance's static bootstrap. All
 // listeners, routes, clusters, and endpoints arrive over ADS; the bootstrap
 // carries only the node identity, the admin interface, and the xDS cluster.
+// XDSAddresses lists every control-plane replica's xDS endpoint: the xDS
+// endpoint is shared, so an Envoy whose replica dies or is replaced reaches
+// the live owner through the remaining addresses.
 type BootstrapConfig struct {
 	NodeID       string
-	XDSAddress   string
+	XDSAddresses []string
 	AdminAddress string
 }
 
@@ -24,9 +27,21 @@ func RenderBootstrap(cfg BootstrapConfig) (string, error) {
 	if nodeID == "" {
 		return "", fmt.Errorf("xds bootstrap node id is required")
 	}
-	xdsHost, xdsPort, err := splitHostPort(cfg.XDSAddress, "xds address")
-	if err != nil {
-		return "", err
+	var xdsEndpoints strings.Builder
+	for _, address := range cfg.XDSAddresses {
+		xdsHost, xdsPort, err := splitHostPort(address, "xds address")
+		if err != nil {
+			return "", err
+		}
+		xdsEndpoints.WriteString(fmt.Sprintf(`        - endpoint:
+            address:
+              socket_address:
+                address: %s
+                port_value: %d
+`, yamlScalar(xdsHost), xdsPort))
+	}
+	if xdsEndpoints.Len() == 0 {
+		return "", fmt.Errorf("xds bootstrap requires at least one xds address")
 	}
 	adminHost, adminPort, err := splitHostPort(cfg.AdminAddress, "admin address")
 	if err != nil {
@@ -68,15 +83,10 @@ static_resources:
       cluster_name: xds_cluster
       endpoints:
       - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: %s
-                port_value: %d
-`,
+%s`,
 		yamlScalar(nodeID),
 		yamlScalar(adminHost), adminPort,
-		yamlScalar(xdsHost), xdsPort,
+		xdsEndpoints.String(),
 	), nil
 }
 

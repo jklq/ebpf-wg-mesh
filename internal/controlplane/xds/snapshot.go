@@ -52,7 +52,10 @@ type Snapshot struct {
 	Version string
 	Hash    string
 	Counts  Counts
-	cache   *cachev3.Snapshot
+	// Inputs is the canonical hash preimage. Durable publication stores it
+	// so any replica can rebuild this exact snapshot with BuildFromInputs.
+	Inputs []byte
+	cache  *cachev3.Snapshot
 }
 
 // CacheSnapshot returns the underlying go-control-plane snapshot for serving.
@@ -70,6 +73,15 @@ type BuildInput struct {
 	ListenAddrs []string
 }
 
+// RequiredTypes are the xDS types every ingress subscriber must apply
+// before its version counts as fully applied.
+var RequiredTypes = []string{
+	resourcev3.ListenerType,
+	resourcev3.ClusterType,
+	resourcev3.RouteType,
+	resourcev3.EndpointType,
+}
+
 // Build computes a versioned snapshot from control-plane state. Construction
 // is fully deterministic: sorted domains, sorted endpoints, fixed resource
 // names. Domains without a valid endpoint are omitted, so only ready,
@@ -77,11 +89,33 @@ type BuildInput struct {
 // whole build (operator config error: retain last-known-good instead of
 // serving nothing); malformed backends are skipped.
 func Build(input BuildInput) (*Snapshot, error) {
-	listeners, ports, err := buildListeners(input.ListenAddrs)
+	canonical, err := canonicalize(input)
 	if err != nil {
 		return nil, err
 	}
+	raw, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("marshal canonical snapshot input: %w", err)
+	}
+	return buildCanonical(canonical, raw)
+}
 
+// BuildFromInputs rebuilds the exact snapshot a publisher computed from its
+// canonical inputs (the hash preimage), so every replica can serve the
+// durable publication without recomputing from live state it does not hold.
+// The inputs come from storage and are treated as untrusted: anything
+// malformed fails closed.
+func BuildFromInputs(raw []byte) (*Snapshot, error) {
+	var canonical canonicalInput
+	if err := json.Unmarshal(raw, &canonical); err != nil {
+		return nil, fmt.Errorf("unmarshal canonical snapshot input: %w", err)
+	}
+	return buildCanonical(canonical, raw)
+}
+
+// canonicalize normalizes control-plane state into the hash preimage:
+// sorted domains and endpoints, filtered malformed backends, fixed order.
+func canonicalize(input BuildInput) (canonicalInput, error) {
 	grouped := GroupBackends(input.Backends)
 	sort.Slice(grouped, func(i, j int) bool { return grouped[i].Hosts[0] < grouped[j].Hosts[0] })
 
@@ -112,8 +146,6 @@ func Build(input BuildInput) (*Snapshot, error) {
 	type staticEntry struct {
 		hosts    []string
 		upstream string
-		host     string
-		port     uint32
 	}
 	var statics []staticEntry
 	for _, route := range input.Static {
@@ -126,11 +158,10 @@ func Build(input BuildInput) (*Snapshot, error) {
 		if err != nil || strings.TrimSpace(host) == "" {
 			continue
 		}
-		port, err := parsePort(portStr)
-		if err != nil {
+		if _, err := parsePort(portStr); err != nil {
 			continue
 		}
-		statics = append(statics, staticEntry{hosts: hosts, upstream: upstream, host: host, port: port})
+		statics = append(statics, staticEntry{hosts: hosts, upstream: upstream})
 	}
 	sort.Slice(statics, func(i, j int) bool {
 		if statics[i].upstream != statics[j].upstream {
@@ -155,10 +186,53 @@ func Build(input BuildInput) (*Snapshot, error) {
 			Upstream: static.upstream,
 		})
 	}
-	raw, err := json.Marshal(canonical)
+	return canonical, nil
+}
+
+// buildCanonical renders the served resources from canonical inputs. The
+// hash is taken over the exact input bytes so a rebuild from published
+// inputs reproduces byte-identical resources and version.
+func buildCanonical(canonical canonicalInput, raw []byte) (*Snapshot, error) {
+	listeners, ports, err := buildListeners(canonical.Listeners)
 	if err != nil {
-		return nil, fmt.Errorf("marshal canonical snapshot input: %w", err)
+		return nil, err
 	}
+
+	type domainEndpoints struct {
+		domain    string
+		endpoints []netip.AddrPort
+	}
+	domains := make([]domainEndpoints, 0, len(canonical.Domains))
+	for _, entry := range canonical.Domains {
+		item := domainEndpoints{domain: entry.Name}
+		for _, raw := range entry.Endpoints {
+			addrPort, err := netip.ParseAddrPort(raw)
+			if err != nil || !addrPort.IsValid() {
+				return nil, fmt.Errorf("snapshot input endpoint %q is invalid", raw)
+			}
+			item.endpoints = append(item.endpoints, addrPort)
+		}
+		domains = append(domains, item)
+	}
+	type staticEntry struct {
+		hosts    []string
+		upstream string
+		host     string
+		port     uint32
+	}
+	statics := make([]staticEntry, 0, len(canonical.Statics))
+	for _, entry := range canonical.Statics {
+		host, portStr, err := net.SplitHostPort(entry.Upstream)
+		if err != nil || strings.TrimSpace(host) == "" {
+			return nil, fmt.Errorf("snapshot input upstream %q is invalid", entry.Upstream)
+		}
+		port, err := parsePort(portStr)
+		if err != nil {
+			return nil, err
+		}
+		statics = append(statics, staticEntry{hosts: entry.Hosts, upstream: entry.Upstream, host: host, port: port})
+	}
+
 	sum := sha256.Sum256(raw)
 	version := hex.EncodeToString(sum[:])
 
@@ -231,6 +305,7 @@ func Build(input BuildInput) (*Snapshot, error) {
 	return &Snapshot{
 		Version: version,
 		Hash:    version,
+		Inputs:  append([]byte(nil), raw...),
 		Counts: Counts{
 			Listeners: len(listeners),
 			Clusters:  len(clusters),

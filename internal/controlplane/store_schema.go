@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 27
+const currentSchemaVersion = 28
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -664,11 +664,19 @@ var currentSchema = []string{
 			id BOOL PRIMARY KEY,
 			version STRING NOT NULL,
 			hash STRING NOT NULL,
+			inputs BYTES NOT NULL DEFAULT '',
 			listeners INT8 NOT NULL DEFAULT 0,
 			clusters INT8 NOT NULL DEFAULT 0,
 			endpoints INT8 NOT NULL DEFAULT 0,
 			domains INT8 NOT NULL DEFAULT 0,
 			publisher STRING NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE TABLE xds_node_observations (
+			node_id STRING PRIMARY KEY,
+			applied_hash STRING NOT NULL DEFAULT '',
+			nacks INT8 NOT NULL DEFAULT 0,
+			last_nack STRING NOT NULL DEFAULT '',
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
 }

@@ -85,6 +85,39 @@ func TestBuildIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
+	t.Parallel()
+
+	snap, err := Build(testInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Inputs) == 0 {
+		t.Fatal("Build must record its canonical inputs")
+	}
+	// A replica that never saw the live state rebuilds the exact snapshot
+	// from the published hash preimage.
+	rebuilt, err := BuildFromInputs(snap.Inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.Version != snap.Version || rebuilt.Hash != snap.Hash || rebuilt.Counts != snap.Counts {
+		t.Fatalf("rebuilt %+v, want version %s counts %+v", rebuilt, snap.Version, snap.Counts)
+	}
+	if !bytes.Equal(rebuilt.Inputs, snap.Inputs) {
+		t.Fatal("rebuilt snapshot must carry identical inputs")
+	}
+	if !bytes.Equal(snapshotBytes(t, rebuilt), snapshotBytes(t, snap)) {
+		t.Fatal("rebuilt snapshot resources differ")
+	}
+
+	for _, raw := range [][]byte{nil, {}, []byte("not json"), []byte(`{"domains":[{"name":"x","endpoints":["nope"]}]}`)} {
+		if _, err := BuildFromInputs(raw); err == nil {
+			t.Fatalf("BuildFromInputs(%q): expected error", raw)
+		}
+	}
+}
+
 func TestBuildGoldenVersion(t *testing.T) {
 	t.Parallel()
 

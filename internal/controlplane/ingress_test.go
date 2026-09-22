@@ -28,6 +28,7 @@ func testXDSPublisher(store *persistence, server *xds.Server, publisherID string
 	return xds.NewPublisher(xds.PublisherConfig{
 		Source:       store.routing,
 		Publications: store.routing,
+		Nodes:        store.routing,
 		Server:       server,
 		ListenAddrs:  []string{":8080"},
 		PublisherID:  publisherID,
@@ -303,18 +304,24 @@ func TestXDSPublicationRowCompareAndSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub != (xds.Publication{}) {
+	if pub.Version != "" || pub.Hash != "" || pub.Publisher != "" || len(pub.Inputs) != 0 {
 		t.Fatalf("expected no publication, got %+v", pub)
 	}
-	won, err := store.routing.CompareAndSwapPublication(ctx, "", "v1", "h1", xds.Counts{Listeners: 1}, "replica-a")
+	won, err := store.routing.CompareAndSwapPublication(ctx, "", xds.Publication{
+		Version: "v1", Hash: "h1", Inputs: []byte(`{"v":1}`), Counts: xds.Counts{Listeners: 1}, Publisher: "replica-a",
+	})
 	if err != nil || !won {
 		t.Fatalf("initial insert won=%v err=%v", won, err)
 	}
-	won, err = store.routing.CompareAndSwapPublication(ctx, "", "v2", "h2", xds.Counts{}, "replica-b")
+	won, err = store.routing.CompareAndSwapPublication(ctx, "", xds.Publication{
+		Version: "v2", Hash: "h2", Publisher: "replica-b",
+	})
 	if err != nil || won {
 		t.Fatalf("stale insert won=%v err=%v, want loss", won, err)
 	}
-	won, err = store.routing.CompareAndSwapPublication(ctx, "h1", "v2", "h2", xds.Counts{Endpoints: 3}, "replica-b")
+	won, err = store.routing.CompareAndSwapPublication(ctx, "h1", xds.Publication{
+		Version: "v2", Hash: "h2", Inputs: []byte(`{"v":2}`), Counts: xds.Counts{Endpoints: 3}, Publisher: "replica-b",
+	})
 	if err != nil || !won {
 		t.Fatalf("CAS update won=%v err=%v", won, err)
 	}
@@ -322,8 +329,86 @@ func TestXDSPublicationRowCompareAndSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub.Version != "v2" || pub.Hash != "h2" || pub.Publisher != "replica-b" {
+	if pub.Version != "v2" || pub.Hash != "h2" || pub.Publisher != "replica-b" || string(pub.Inputs) != `{"v":2}` {
 		t.Fatalf("publication = %+v", pub)
+	}
+}
+
+func TestXDSFollowerServesPublicationWithoutLease(t *testing.T) {
+	t.Parallel()
+
+	store, _ := createHealthyBoundService(t, "demo.example.com", "10.0.0.10", 8080)
+	ctx := context.Background()
+
+	serverA := xds.NewServer(ctx)
+	publisherA := testXDSPublisher(store, serverA, "replica-a")
+	if err := publisherA.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	published := serverA.Status()
+
+	// Replica B never held the live state and never ran the publish loop. It
+	// still serves the durable publication, so an Envoy that fails over to
+	// it after a takeover or rolling replacement converges immediately.
+	serverB := xds.NewServer(ctx)
+	publisherB := testXDSPublisher(store, serverB, "replica-b")
+	if err := publisherB.Replicate(ctx); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	status := serverB.Status()
+	if !status.HasSnapshot || status.Version != published.Version {
+		t.Fatalf("follower served %+v, want version %s", status, published.Version)
+	}
+	addrB := serveXDSServer(t, serverB)
+	eds := subscribeType(t, addrB, "envoy-1", resourcev3.EndpointType)
+	if eds.GetVersionInfo() != published.Version {
+		t.Fatalf("follower EDS version %s, want %s", eds.GetVersionInfo(), published.Version)
+	}
+	if endpoints := endpointsFromEDS(t, eds); len(endpoints) != 1 || endpoints[0] != "10.0.0.10:8080" {
+		t.Fatalf("follower EDS endpoints = %v", endpoints)
+	}
+}
+
+func TestXDSNodeObservationRetention(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	// A node fully applies v2, then regresses to mid-apply (restart, NACK,
+	// or reconnect before re-applying): the stale hash it may route with
+	// must be retained until a full apply lands again.
+	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
+		{NodeID: "envoy-1", AppliedHash: "v2", NACKs: 1, LastNACK: "bad eds"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
+		{NodeID: "envoy-1", AppliedHash: ""},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := store.routing.ListNodeObservations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].AppliedHash != "v2" || nodes[0].NACKs != 1 || nodes[0].LastNACK != "bad eds" {
+		t.Fatalf("observations = %+v, want retained v2 with NACK", nodes)
+	}
+
+	// A disconnected Envoy keeps its row: it keeps routing with its
+	// last-known-good config until its ACK actually arrives.
+	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
+		{NodeID: "envoy-2", AppliedHash: "v2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err = store.routing.ListNodeObservations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("observations = %+v, want both nodes retained", nodes)
 	}
 }
 

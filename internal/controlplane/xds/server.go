@@ -31,6 +31,19 @@ type NodeStatus struct {
 	LastNACK string
 }
 
+// FullyApplied reports whether this node ACKed version across every
+// required type. A node mid-apply, holding an older version, or holding a
+// rejected response for any type is not fully applied: it may still route
+// to endpoints the current version withdrew.
+func (n NodeStatus) FullyApplied(version string) bool {
+	for _, typeURL := range RequiredTypes {
+		if n.Applied[typeURL] != version {
+			return false
+		}
+	}
+	return true
+}
+
 // Status is a point-in-time view of the served snapshot and its adoption.
 type Status struct {
 	Version     string

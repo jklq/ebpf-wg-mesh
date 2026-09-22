@@ -10,7 +10,7 @@ func TestRenderBootstrap(t *testing.T) {
 
 	out, err := RenderBootstrap(BootstrapConfig{
 		NodeID:       "localteststack-envoy",
-		XDSAddress:   "host.docker.internal:18000",
+		XDSAddresses: []string{"host.docker.internal:18000", "10.0.0.2:18000"},
 		AdminAddress: "127.0.0.1:19000",
 	})
 	if err != nil {
@@ -21,6 +21,7 @@ func TestRenderBootstrap(t *testing.T) {
 		"cluster_name: xds_cluster",
 		"address: host.docker.internal",
 		"port_value: 18000",
+		"address: 10.0.0.2",
 		"address: 127.0.0.1",
 		"port_value: 19000",
 		"transport_api_version: V3",
@@ -32,6 +33,11 @@ func TestRenderBootstrap(t *testing.T) {
 			t.Fatalf("bootstrap missing %q:\n%s", want, out)
 		}
 	}
+	// Both xDS endpoints land in the cluster: an Envoy whose replica dies
+	// reaches the live owner through the surviving address.
+	if got := strings.Count(out, "        - endpoint:"); got != 2 {
+		t.Fatalf("xds cluster endpoints = %d, want 2:\n%s", got, out)
+	}
 	if strings.Contains(out, "static_resources:\n  listeners:") || strings.Contains(out, "route_config_name") {
 		t.Fatal("bootstrap must not carry static listeners or routes; those arrive over ADS")
 	}
@@ -42,10 +48,11 @@ func TestRenderBootstrapRejectsBadInput(t *testing.T) {
 
 	for _, cfg := range []BootstrapConfig{
 		{},
-		{NodeID: "envoy", XDSAddress: "no-port", AdminAddress: "127.0.0.1:19000"},
-		{NodeID: "envoy", XDSAddress: "host:0", AdminAddress: "127.0.0.1:19000"},
-		{NodeID: "envoy", XDSAddress: "host:18000", AdminAddress: ":19000"},
-		{NodeID: "", XDSAddress: "host:18000", AdminAddress: "127.0.0.1:19000"},
+		{NodeID: "envoy", XDSAddresses: []string{"no-port"}, AdminAddress: "127.0.0.1:19000"},
+		{NodeID: "envoy", XDSAddresses: []string{"host:0"}, AdminAddress: "127.0.0.1:19000"},
+		{NodeID: "envoy", XDSAddresses: []string{"host:18000", "bad"}, AdminAddress: "127.0.0.1:19000"},
+		{NodeID: "envoy", XDSAddresses: []string{"host:18000"}, AdminAddress: ":19000"},
+		{NodeID: "", XDSAddresses: []string{"host:18000"}, AdminAddress: "127.0.0.1:19000"},
 	} {
 		if _, err := RenderBootstrap(cfg); err == nil {
 			t.Fatalf("config %+v: expected error", cfg)

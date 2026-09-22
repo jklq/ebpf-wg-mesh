@@ -181,6 +181,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	ingress := xds.NewPublisher(xds.PublisherConfig{
 		Source:       store.routing,
 		Publications: store.routing,
+		Nodes:        store.routing,
 		Server:       xdsServer,
 		Static:       staticRoutes,
 		ListenAddrs:  cfg.Ingress.ListenAddrs,
@@ -399,6 +400,12 @@ func (s *Server) Run(ctx context.Context) error {
 	// Per-replica, not singleton work: every replica re-issues its own
 	// server leaf after a CA rotation finishes.
 	go func() { s.serverCertificateRefreshLoop(runCtx); errCh <- nil }()
+	// Also per-replica: every replica serves Envoy from the durable
+	// publication and records subscriber apply state, so the xDS endpoint
+	// survives lease takeover and rolling replacement of a replica.
+	if s.ingress != nil {
+		go func() { errCh <- s.ingress.Follow(runCtx) }()
+	}
 	leaseDone := make(chan error, 1)
 	go func() {
 		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
