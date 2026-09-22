@@ -641,6 +641,10 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 			if !desiredConfigurationEqual(&previousState, clean) {
 				return fmt.Errorf("desired state changed without advancing reconciliation cursor %d", acceptedCursor)
 			}
+			// Node configuration is independently versioned: a same-cursor
+			// repair checkpoint carries the latest node configuration and
+			// applies it below.
+			changed = previousState.GetNodeConfigVersion() != clean.GetNodeConfigVersion()
 		} else {
 			changed = true
 		}
@@ -1456,7 +1460,12 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left.GeneratedAt, right.GeneratedAt = nil, nil
 	left.SessionId, right.SessionId = "", ""
 	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
-	// NodeConfigVersion is derived from NodeConfig; compare content, not hash.
+	// Node configuration is an independently versioned stream, not part of
+	// the cursor-versioned allocation configuration: it may legitimately
+	// change at the same reconciliation cursor (a repair checkpoint delivers
+	// the latest). Its integrity is bound by the content-hash version checked
+	// in validateDesiredState, not by the allocation cursor.
+	left.NodeConfig, right.NodeConfig = nil, nil
 	left.NodeConfigVersion, right.NodeConfigVersion = "", ""
 	// Configuration is a set of allocations and volumes; wire order is not
 	// semantic (checkpoints follow assignment order, diff merges do not).

@@ -378,3 +378,71 @@ func TestAcceptNoOpDiffAdvancesCursorBeforeNextDiff(t *testing.T) {
 		t.Fatalf("hello cursor not advanced: %+v %v", summary, err)
 	}
 }
+
+func TestAcceptSameCursorCheckpointUpdatesNodeConfiguration(t *testing.T) {
+	t.Parallel()
+	store := openTestLocalState(t)
+	if err := store.prepareStartup("cluster-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 4, "keep")); err != nil {
+		t.Fatal(err)
+	}
+	// Node configuration is an independently versioned stream: a same-cursor
+	// recovery or inventory repair checkpoint carries the latest node
+	// configuration and must apply it instead of rejecting the repair as a
+	// same-cursor mutation and closing the session in a reconnect loop.
+	updated := testDesiredState(1, 4, "keep")
+	updated.NodeConfig = &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24", WireguardListenPort: 51821}
+	updated.NodeConfigVersion = reconciliation.HashNodeConfig(updated.GetNodeConfig())
+	changed, err := store.acceptDesired("cluster-a", "test-session", updated)
+	if err != nil {
+		t.Fatalf("same-cursor repair with changed node configuration rejected: %v", err)
+	}
+	if !changed {
+		t.Fatal("node configuration update was not applied as a change")
+	}
+	desired, err := store.desiredState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.GetNodeConfig().GetWireguardListenPort() != 51821 {
+		t.Fatalf("node configuration not updated: %+v", desired.GetNodeConfig())
+	}
+	if desired.GetReconciliationCursor() != 4 {
+		t.Fatalf("cursor = %d, want 4", desired.GetReconciliationCursor())
+	}
+	// A duplicate of the same checkpoint stays idempotent.
+	if changed, err := store.acceptDesired("cluster-a", "test-session", updated); err != nil || changed {
+		t.Fatalf("duplicate checkpoint should be idempotent: changed=%v err=%v", changed, err)
+	}
+	// The allocation guard still holds: cursor-versioned content may not
+	// change without advancing the cursor.
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 4, "keep", "extra")); err == nil {
+		t.Fatal("same-cursor mutation of allocations accepted")
+	}
+	// The follow-up diff chains from the unchanged cursor.
+	changed, err = store.acceptAllocationDiff("cluster-a", "test-session",
+		testDiff(4, 5, []*agentv1.DesiredService{testDiffService("next", 1, 1)}, nil, nil))
+	if err != nil || !changed {
+		t.Fatalf("follow-up diff after same-cursor repair rejected: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestDesiredConfigurationEqualIgnoresNodeConfig(t *testing.T) {
+	t.Parallel()
+	// The cursor versions allocations and volumes; node configuration is
+	// independently versioned by content hash and must not make an otherwise
+	// identical same-cursor checkpoint compare unequal.
+	left := testDesiredState(1, 5, "alloc-a")
+	right := testDesiredState(1, 5, "alloc-a")
+	right.NodeConfig = &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.9.0/24", WireguardListenPort: 51821}
+	right.NodeConfigVersion = "other-version"
+	if !desiredConfigurationEqual(left, right) {
+		t.Fatal("independently versioned node config compares unequal at the same cursor")
+	}
+	right.Services[0].DesiredSpecRevision = 2
+	if desiredConfigurationEqual(left, right) {
+		t.Fatal("mutated allocation content compares equal")
+	}
+}
