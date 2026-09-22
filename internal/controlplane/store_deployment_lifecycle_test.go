@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"sync"
 	"testing"
@@ -19,7 +20,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	t.Parallel()
 
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Add lifecycle", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Add lifecycle", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +162,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	t.Parallel()
 
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Race commit", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Race commit", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 

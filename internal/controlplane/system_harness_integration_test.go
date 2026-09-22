@@ -340,7 +340,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 		if err != nil {
 			return err
 		}
-		revision, err := store.source.UpsertSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
+		revision, err := store.source.ObserveSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -350,7 +350,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 			CommitMessage:                "fixture " + commitSHA,
 			CommitAuthor:                 "system-test",
 			ObservedAt:                   time.Now().UTC(),
-		})
+		}, source.BuildTransition{TrackedHead: true})
 		if err != nil {
 			return err
 		}

@@ -12,6 +12,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -249,7 +250,7 @@ func TestBuildLeaseSplitOwnershipFencing(t *testing.T) {
 func TestBuildCancelPreventsLateCompletionPublish(t *testing.T) {
 	t.Parallel()
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel-lease", "Cancel me", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel-lease", "Cancel me", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-cancel-lease")

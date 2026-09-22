@@ -484,6 +484,76 @@ func TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild(t *testin
 	}
 }
 
+// TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence is the
+// out-of-order regression for revisions that were never seen before: a
+// delayed webhook for an older commit records it as history, but recording
+// must not make it the freshest state. It may neither supersede the newer
+// revision's queued build nor block the next real push, and it never
+// demands build work of its own.
+func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-1: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "compile error"); err != nil {
+		t.Fatalf("completeBuild commit-1: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	build2, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-2: %v", err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	// A delayed webhook for an older commit that was never observed before
+	// records it with its push transition (before=commit-parent). The
+	// record is history only: it must not become the freshest state just
+	// because it arrived last.
+	lateTransition := source.BuildTransition{PreviousCommit: "commit-parent"}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-late", "", "", lateTransition); err != nil {
+		t.Fatalf("seedReadySourceState commit-late: %v", err)
+	}
+	redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-late", source.SourceSnapshotRecord{}, lateTransition)
+	if err != nil || !redelivered.Superseded || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
+		t.Fatalf("unseen late revision = %+v, %v, want superseded no-op", redelivered, err)
+	}
+	if build, err := store.reads.BuildByID(ctx, build2.ID); err != nil || build.State != deliverycore.BuildStateQueued {
+		t.Fatalf("newer build = %+v, %v, want queued", build, err)
+	}
+	var buildCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&buildCount); err != nil {
+		t.Fatal(err)
+	}
+	if buildCount != 2 {
+		t.Fatalf("build_runs rows = %d, want 2 (no work for the late revision)", buildCount)
+	}
+
+	// The next real push (before=commit-2) lands even though the stale
+	// observation arrived after it: a refused observation must not fence
+	// out the tracked ref's actual successor.
+	nextTransition := source.BuildTransition{PreviousCommit: "commit-2"}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-3", "", "", nextTransition); err != nil {
+		t.Fatalf("seedReadySourceState commit-3: %v", err)
+	}
+	next, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-3", source.SourceSnapshotRecord{}, nextTransition)
+	if err != nil || next.Superseded || next.BuildID == "" {
+		t.Fatalf("next real push = %+v, %v, want queued build", next, err)
+	}
+}
+
 func seedArtifactForRetentionTest(t *testing.T, store *persistence, ctx context.Context, serviceID, id, nibble string, created time.Time) {
 	t.Helper()
 	digest := testDigest(nibble)

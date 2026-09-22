@@ -147,17 +147,30 @@ type Service struct {
 }
 
 // BuildTransition proves a build request's currency against the binding's
-// observed history. Only current requests are served: those whose commit
-// is the binding's latest observed revision, those that advance from it
-// (PreviousCommit — a push payload's "before", including force-pushes
-// back to an older commit), and tracked-head syncs that just fetched the
-// ref head (TrackedHead). A redelivered or retried older revision carries
-// no proof and is refused: it must never supersede queued newer work or
-// regress the rollout. Moving backward on purpose is the rollback and
-// exact-redeploy actions' job.
+// proven head commit. Only current requests are served: those whose commit
+// is the head, those that advance from it (PreviousCommit — a push
+// payload's "before", including force-pushes back to an older commit), and
+// tracked-head syncs that just fetched the ref head (TrackedHead). A
+// redelivered or retried older revision carries no proof and is refused: it
+// must never supersede queued newer work or regress the rollout. Moving
+// backward on purpose is the rollback and exact-redeploy actions' job.
 type BuildTransition struct {
 	PreviousCommit string
 	TrackedHead    bool
+}
+
+// ProvesCurrent reports whether a request carrying t proves itself current
+// against the binding's proven head commit: it is the head, it advances
+// from the head, the caller just fetched the tracked head, or no head has
+// been established yet and this request establishes it. Recording an
+// observation never speaks for currency by itself — arrival order is not
+// push order, and a delayed observation of an unseen older commit must not
+// become the head.
+func (t BuildTransition) ProvesCurrent(revisionCommit, headCommit string) bool {
+	return headCommit == "" ||
+		headCommit == revisionCommit ||
+		t.TrackedHead ||
+		(t.PreviousCommit != "" && t.PreviousCommit == headCommit)
 }
 
 type QueuedBuild struct {
