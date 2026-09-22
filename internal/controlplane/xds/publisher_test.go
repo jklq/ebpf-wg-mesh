@@ -494,7 +494,7 @@ func TestPublisherRefreshNeverServesMovedPastPublication(t *testing.T) {
 		ListenAddrs: []string{":8080"},
 	})
 	pubs := &movingPublications{
-		first: Publication{		Version: stale.Version, Inputs: stale.Inputs},
+		first: Publication{Version: stale.Version, Inputs: stale.Inputs},
 		moved: Publication{Version: current.Version, Inputs: current.Inputs},
 	}
 	server := NewServer(context.Background())

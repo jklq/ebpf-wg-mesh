@@ -25,10 +25,10 @@ type PublicationStore interface {
 }
 
 type NodeObservation struct {
-	NodeID        string
+	NodeID         string
 	AppliedVersion string
-	NACKs         int64
-	LastNACK      string
+	NACKs          int64
+	LastNACK       string
 }
 
 type NodeStore interface {

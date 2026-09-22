@@ -56,12 +56,12 @@ type Server struct {
 	cache cachev3.SnapshotCache
 	xds   serverv3.Server
 
-	mu        sync.Mutex
-	current   *Snapshot
-	published time.Time
-	streams   map[int64]string
+	mu         sync.Mutex
+	current    *Snapshot
+	published  time.Time
+	streams    map[int64]string
 	streamCtxs map[int64]context.Context
-	nodes     map[string]*nodeState
+	nodes      map[string]*nodeState
 
 	nodeStore    NodeStore
 	firstContact func(context.Context) error
