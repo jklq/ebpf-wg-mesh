@@ -128,6 +128,13 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 	if maxSeg <= 0 {
 		maxSeg = defaultSpoolMaxSegmentBytes
 	}
+	// The segment size is the rotation unit of the byte cap: a
+	// segment larger than the cap would let one active file blow past
+	// MaxBytes before eviction — which needs a sealed segment — can
+	// run.
+	if maxSeg > maxBytes {
+		maxSeg = maxBytes
+	}
 	if err := os.MkdirAll(cfg.Dir, spoolDirMode); err != nil {
 		return nil, fmt.Errorf("create log spool dir: %w", err)
 	}

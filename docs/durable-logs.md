@@ -66,7 +66,9 @@ durably ingest (server-side dedup collapses the overlap). Builders
 need no retention: their report RPC writes durably before it
 returns. Nothing on this path blocks workload
 reconciliation or build execution: log shipping failure costs only log
-latency and, past the spool cap, dropped lines.
+latency and, past the spool cap, dropped lines. The cap also clamps
+the spool segment size, so a small configured cap still bounds one
+active file instead of overshooting until rotation.
 
 Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted

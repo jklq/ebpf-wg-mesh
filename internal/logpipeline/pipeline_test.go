@@ -459,6 +459,27 @@ func TestStableEventID(t *testing.T) {
 	}
 }
 
+// A cap below the default segment size must still bound the spool:
+// the segment size clamps to the cap so rotation and eviction keep
+// one active file from blowing past MaxBytes.
+func TestSpoolSmallCapBoundsActiveSegment(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 1000})
+	payload := make([]byte, 100)
+	for i := 0; i < 20; i++ {
+		if err := s.Append("hot", fmt.Sprintf("id-%02d", i), time.Now().UTC(), payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	stats := s.Stats()
+	if stats.Bytes > 1000 {
+		t.Fatalf("spool exceeded its cap: %+v", stats)
+	}
+	if stats.DroppedRecords == 0 {
+		t.Fatal("cap shedding must count as drops")
+	}
+}
+
 // Committed sealed segments survive for the retention horizon as the
 // replay copy: agents are acknowledged at queue admission, so a
 // backend crash before durable ingest must leave a reconnect
