@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -79,7 +78,7 @@ func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, 
 		return ResolvedImage{}, err
 	}
 	if challenge, ok := bearerChallenge(err); ok {
-		token, tokenErr := r.anonymousToken(ctx, challenge, path)
+		token, tokenErr := r.anonymousToken(ctx, challenge, host, path)
 		if tokenErr != nil {
 			return ResolvedImage{}, tokenErr
 		}
@@ -238,10 +237,15 @@ func parseAuthChallenge(params string) bearerChallengeValues {
 	return values
 }
 
-func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChallengeValues, repository string) (string, error) {
-	tokenURL, err := url.Parse(challenge.realm)
-	if err != nil || !tokenURL.IsAbs() || (tokenURL.Scheme != "https" && tokenURL.Scheme != "http") {
-		return "", fmt.Errorf("registry auth realm %q is not a valid token URL", challenge.realm)
+// anonymousToken fetches an anonymous pull token from a Bearer
+// challenge's realm. The realm is validated against the registry that
+// issued the challenge first (see tokenRealmURL), and the fetch follows
+// no redirects: one compromised hop must not walk the control plane
+// toward internal URLs.
+func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChallengeValues, registryHost, repository string) (string, error) {
+	tokenURL, err := tokenRealmURL(ctx, challenge.realm, registryHost)
+	if err != nil {
+		return "", err
 	}
 	query := tokenURL.Query()
 	if challenge.service != "" {
@@ -254,7 +258,11 @@ func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChall
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
 	req.Header.Set("User-Agent", "ebpf-wg-mesh-deploy-by-digest/1")
-	resp, err := r.client.Do(req)
+	client := *r.client
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("registry auth realm redirect refused")
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
