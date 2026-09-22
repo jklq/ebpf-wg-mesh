@@ -46,16 +46,21 @@ func (d *Delivery) createScheduledService(ctx context.Context, scope authz.Envir
 }
 
 func (d *Delivery) CreateService(ctx context.Context, user authz.User, environmentID, name string, spec *platformv1.ServiceSpec, agentID string) (ServiceRecord, error) {
-	d.schedulerMu.Lock()
-	defer d.schedulerMu.Unlock()
 	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
+	// Registry resolution runs outside the scheduler lock, like every
+	// other pre-resolution: a slow or unreachable registry must not stall
+	// unrelated scheduler-serialized mutations (see ReleaseEnvironment).
+	// The resolution pins the caller's immutable spec input and needs no
+	// lock-held pre-read.
 	pre, err := d.preResolveDirectImage(ctx, spec)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	s := d.store
 	var rec ServiceRecord
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
