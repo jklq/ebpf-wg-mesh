@@ -72,8 +72,11 @@ reconnect replay re-sends when the backend acknowledged but did not
 durably ingest (server-side dedup collapses the overlap). Builders
 need no retention: their report RPC writes durably before it
 returns. Nothing on this path blocks workload
-reconciliation or build execution: log shipping failure costs only log
-latency and, past the spool cap, dropped lines. The cap also clamps
+reconciliation: agent log shipping failure costs only log
+latency and, past the spool cap, dropped lines. Builds are held to a
+stricter rule because completion is a durable claim about the
+transcript: without a log pipeline the build does not run, and a
+reporter that never gets its output accepted fails the build. The cap also clamps
 the spool segment size, so a small configured cap still bounds one
 active file instead of overshooting until rotation.
 
@@ -81,7 +84,10 @@ Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted
 as an explicit gap row. Shutdown drains the counters into pending
 drop summaries persisted next to the spool, so they report after the
-restart. Pending summaries coalesce by identity — counts sum and the
+restart. Builders persist theirs next to the attempt spool and a
+retried attempt takes them over: it re-emits its own output from
+scratch but can never recreate the lines a dead attempt dropped, so
+their gap accounting survives across the retry. Pending summaries coalesce by identity — counts sum and the
 covered window widens — so a sustained outage holds one entry per
 identity instead of one per flush interval, and a failed send folds
 its taken summaries back into the pending set. Spool records lost to crash corruption are counted the same
@@ -96,7 +102,8 @@ garbage-collected at startup once 24 hours pass without a write
 (staleness follows the newest write in the spool, so a long-running
 attempt keeps its unshipped output); a retried attempt re-emits its
 own output from scratch and never re-opens the previous attempt's
-spool — attempt spools are keyed by build ID and lease epoch. Close
+spool records — attempt spools are keyed by build ID and lease epoch.
+Close
 always flushes once before deciding the
 attempt drained, so limiter and overflow drops report even when the
 spool holds no records. A build never completes successfully with
