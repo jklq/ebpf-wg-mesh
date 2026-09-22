@@ -103,6 +103,27 @@ func TestApplyNodeConfigKeepsPreviousAssignmentWhenUpdateFails(t *testing.T) {
 	}
 }
 
+func TestCumulativeAckFencesToConfirmedSessionEpoch(t *testing.T) {
+	t.Parallel()
+
+	// Fresh agent: pull credentials arrive before the first checkpoint, so
+	// the store's accepted allocation epoch is still zero while the session
+	// runs under the confirmed authority epoch. The cumulative ack must echo
+	// the confirmed epoch or the control plane rejects it as outside the
+	// session authority and initial sync cannot complete.
+	summary := localStateSummary{ReconciliationCursor: 0, CredentialsVersion: "creds-v1"}
+	ack := cumulativeAck("node-1", "session-1", summary, 7)
+	if ack.GetAuthorityEpoch() != 7 {
+		t.Fatalf("ack authority epoch = %d, want confirmed session epoch 7", ack.GetAuthorityEpoch())
+	}
+	if ack.GetReconciliationCursor() != 0 || ack.GetCredentialsVersion() != "creds-v1" {
+		t.Fatalf("ack lost cumulative position: %+v", ack)
+	}
+	if ack.GetAgentId() != "node-1" || ack.GetSessionId() != "session-1" {
+		t.Fatalf("ack lost session identity: %+v", ack)
+	}
+}
+
 func TestNextReconnectDelayBoundsReconnectStorms(t *testing.T) {
 	t.Parallel()
 

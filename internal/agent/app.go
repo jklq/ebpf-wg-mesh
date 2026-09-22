@@ -212,6 +212,20 @@ func (a *App) runSession(ctx context.Context) error {
 	return fmt.Errorf("no reachable control-plane replica: %w", errors.Join(failures...))
 }
 
+// cumulativeAck builds the cumulative sync acknowledgement. The authority
+// epoch fences the message to the session's confirmed authority rather than
+// to the store's accepted allocation epoch: streams that do not move
+// allocation state (credentials, node config, replicas) are acknowledged
+// before the first checkpoint or diff advances the accepted epoch, and the
+// control plane rejects any ack outside its session authority.
+func cumulativeAck(agentID, sessionID string, summary localStateSummary, confirmedEpoch uint64) *agentv1.DesiredStateAcknowledgement {
+	return &agentv1.DesiredStateAcknowledgement{
+		AgentId: agentID, SessionId: sessionID,
+		AuthorityEpoch: confirmedEpoch, ReconciliationCursor: summary.ReconciliationCursor,
+		NodeConfigVersion: summary.NodeConfigVersion, CredentialsVersion: summary.CredentialsVersion, ReplicasVersion: summary.ReplicasVersion,
+	}
+}
+
 func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCredentials, certNotAfter time.Time, clusterID, addr string) error {
 	sessionCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -336,6 +350,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	}()
 	var lastSentSequence uint64
 	authorityConfirmed := false
+	// Newest authority epoch whose stamped payloads this session confirmed.
+	confirmedEpoch := summary.AuthorityEpoch
 	handshake := true
 	sendCurrentReport := func() error {
 		report, err := a.supervisor.CurrentReport()
@@ -358,12 +374,13 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			return err
 		}
 		return send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
-			Acknowledgement: &agentv1.DesiredStateAcknowledgement{AgentId: a.cfg.Node.ID, SessionId: sessionID,
-				AuthorityEpoch: summary.AuthorityEpoch, ReconciliationCursor: summary.ReconciliationCursor,
-				NodeConfigVersion: summary.NodeConfigVersion, CredentialsVersion: summary.CredentialsVersion, ReplicasVersion: summary.ReplicasVersion},
+			Acknowledgement: cumulativeAck(a.cfg.Node.ID, sessionID, summary, confirmedEpoch),
 		}})
 	}
-	confirmAuthority := func() {
+	confirmAuthority := func(epoch uint64) {
+		if epoch > confirmedEpoch {
+			confirmedEpoch = epoch
+		}
 		if !authorityConfirmed {
 			a.sessionEstablishedAt = time.Now()
 		}
@@ -379,7 +396,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		case <-handshakeTimer.C:
 			if handshake {
 				handshake = false
-				confirmAuthority()
+				confirmAuthority(summary.AuthorityEpoch)
 				slog.Info("no sync batch; assuming unchanged reconnect", "agent_id", a.cfg.Node.ID)
 				if err := sendCurrentReport(); err != nil {
 					return err
@@ -440,6 +457,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if _, err := a.supervisor.AcceptDesired(clusterID, sessionID, state); err != nil {
 					return fmt.Errorf("accept desired state: %w", err)
 				}
+				confirmAuthority(state.GetAuthorityEpoch())
 				if err := sendAck(); err != nil {
 					return err
 				}
@@ -450,7 +468,6 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 					return err
 				}
 				a.supervisor.ReconcileAcceptedDesired()
-				confirmAuthority()
 				slog.Info("accepted checkpoint", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
 				if err := sendCurrentReport(); err != nil {
 					return err
@@ -463,11 +480,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if _, err := a.supervisor.AcceptDiff(clusterID, sessionID, diff); err != nil {
 					return fmt.Errorf("accept allocation diff: %w", err)
 				}
+				confirmAuthority(diff.GetAuthorityEpoch())
 				if err := sendAck(); err != nil {
 					return err
 				}
 				a.supervisor.ReconcileAcceptedDesired()
-				confirmAuthority()
 				slog.Info("accepted diff", "agent_id", a.cfg.Node.ID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
 				if err := sendCurrentReport(); err != nil {
 					return err
@@ -480,11 +497,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if _, err := a.supervisor.AcceptNodeConfig(clusterID, sessionID, update); err != nil {
 					return fmt.Errorf("accept node config: %w", err)
 				}
+				confirmAuthority(update.GetAuthorityEpoch())
 				if err := sendAck(); err != nil {
 					return err
 				}
 				a.supervisor.ReconcileAcceptedDesired()
-				confirmAuthority()
 			case *agentv1.AgentServerMessage_PullCredentials:
 				creds := payload.PullCredentials
 				if creds == nil {
@@ -493,13 +510,13 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if _, err := a.supervisor.AcceptCredentials(clusterID, sessionID, creds); err != nil {
 					return fmt.Errorf("accept pull credentials: %w", err)
 				}
+				confirmAuthority(creds.GetAuthorityEpoch())
 				if err := sendAck(); err != nil {
 					return err
 				}
 				// Credentials may unblock image pulls for just-accepted
 				// allocations; reconcile to retry.
 				a.supervisor.ReconcileAcceptedDesired()
-				confirmAuthority()
 			case *agentv1.AgentServerMessage_ReplicaEndpoints:
 				replicas := payload.ReplicaEndpoints
 				if replicas == nil {
@@ -508,10 +525,10 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if _, err := a.supervisor.AcceptReplicas(clusterID, sessionID, replicas); err != nil {
 					return fmt.Errorf("accept replica endpoints: %w", err)
 				}
+				confirmAuthority(replicas.GetAuthorityEpoch())
 				if err := sendAck(); err != nil {
 					return err
 				}
-				confirmAuthority()
 			default:
 				continue
 			}
