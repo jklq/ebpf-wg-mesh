@@ -94,6 +94,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("pick ingress admin port: %v", err)
 	}
+	xdsPort, err := pickLoopbackPort()
+	if err != nil {
+		log.Fatalf("pick xds port: %v", err)
+	}
 	clickHousePort, err := pickLoopbackPort()
 	if err != nil {
 		log.Fatalf("pick clickhouse port: %v", err)
@@ -105,7 +109,9 @@ func main() {
 	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
 		StateDir:      filepath.Join(stateDir, "local-ingress"),
 		DockerNetwork: stackCfg.DockerNetwork,
-		ContainerName: "localteststack-caddy",
+		ContainerName: "localteststack-envoy",
+		NodeID:        "localteststack-envoy",
+		XDSServerAddr: fmt.Sprintf("host.docker.internal:%d", xdsPort),
 		PublicHost:    stackCfg.IngressHost,
 		PublicPort:    stackCfg.IngressPort,
 		AdminPort:     ingressAdminPort,
@@ -185,12 +191,11 @@ func main() {
 		},
 		StateDir: stateDir,
 		Ingress: config.IngressConfig{
-			AdminURL:              ingress.AdminURL(),
-			AdminListen:           ":2019",
-			AllowNonLoopbackAdmin: true,
-			ListenAddrs:           []string{fmt.Sprintf(":%d", stackCfg.IngressPort)},
-			DisableAutomaticHTTPS: true,
-			PublicAddr:            stackCfg.IngressHost,
+			// The Envoy container dials xDS over the docker bridge, so the
+			// loopback-only default cannot apply here.
+			XDSListen:   fmt.Sprintf("0.0.0.0:%d", xdsPort),
+			ListenAddrs: []string{fmt.Sprintf(":%d", stackCfg.IngressPort)},
+			PublicAddr:  stackCfg.IngressHost,
 			StaticRoutes: []config.StaticIngressRouteConfig{{
 				Hosts:    []string{stackCfg.IngressHost},
 				Upstream: fmt.Sprintf("host.docker.internal:%d", consolePort),

@@ -8,7 +8,7 @@ Minimal PaaS control plane and agent prototype with a WireGuard/eBPF private fab
 - `cmd/agent`: node agent that opens an mTLS gRPC stream to the control plane
 - `cmd/builder`: build worker that claims jobs, materializes source snapshots, runs `buildctl`, and reports status
 - `console`: TanStack Start app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
-- `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, Caddy admin sync
+- `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, xDS snapshot authority (`internal/controlplane/xds`)
 - `internal/agent`: desired-state loop, local reconcile runtime, containerd runtime, status reporting
 - `internal/mesh`: mesh bootstrap that wraps the WireGuard and eBPF implementation
 - `api/proto`: protobuf definitions and generated gRPC bindings
@@ -17,7 +17,7 @@ Minimal PaaS control plane and agent prototype with a WireGuard/eBPF private fab
 
 What the code does today. Target invariants live in [docs/todo/README.md](docs/todo/README.md); do not extend the current shapes called out as going away.
 
-Today every agent receives an environment-scoped identity catalog and WireGuard peers only for other nodes that share a hosted environment, while the agent wire format is still a full per-node desired-state snapshot (not start/update/stop diffs) and public ingress is still a single Caddy driven through the admin API.
+Today every agent receives an environment-scoped identity catalog and WireGuard peers only for other nodes that share a hosted environment, while the agent wire format is still a full per-node desired-state snapshot (not start/update/stop diffs). Public ingress is a single Envoy instance driven by the control plane as xDS authority; the fleet and availability policy are still open.
 
 The stream contract, durable acknowledgements, removal scope and authority-expiration assumptions are defined in [Agent reconciliation](docs/agent-reconciliation.md).
 
@@ -26,7 +26,7 @@ The stream contract, durable acknowledgements, removal scope and authority-expir
 - A missing database with discovered managed resources, or any corrupt database, enters recovery. Corrupt data is quarantined, unknown resources are reported in the hello inventory, and destructive pruning remains disabled until an authenticated full snapshot establishes their ownership or authoritative absence. Without a prior cluster binding, every discovered resource must be claimed before the fence is lifted.
 - Policy is fail-closed and identity-based: a workload-pool deny plus exact allows. Those allows are scoped to the environments the node currently hosts, including remote allocations in those environments. The target delivers identity policy independently of the full snapshot and gives Envoy instances only the backends they route rather than the mesh catalog.
 - WireGuard is overlay transport and eBPF is identity policy. Peering is scoped to nodes that share an environment, excluding self, retired, and revoked peers; each peer's AllowedIPs are that peer's overlay IPv4 and IPv6 prefixes. The target adds peers between those nodes and the Envoy instances that publish their services once the fleet lands.
-- Public ingress is currently one Caddy instance. The control plane replaces Caddy config through the admin API. The target is an Envoy fleet: the control plane serves a versioned xDS snapshot and ACK/NACK is the apply protocol. Do not extend Caddy as the production data plane.
+- Public ingress is a single Envoy instance. The control plane serves a versioned xDS snapshot (LDS/CDS/EDS/RDS) derived from CockroachDB; Envoy ACK/NACK is the apply protocol and a NACK never withdraws the last-known-good snapshot. Snapshot versions are content hashes, so replicas racing to compute one converge. The target is a fleet with an availability policy; until then Envoy subscribes to the live owner.
 - Overlay dual-stack is live: every allocation gets IPv4 and IPv6, both are routed in AllowedIPs, and both are enforced by the same `network_identity`. The agent's `advertise_addr` remains its IPv6 host identity; the independently advertised WireGuard `IP:port` endpoint may use IPv4 or IPv6 underlay.
 - The console is the current product-facing caller of `platform.v1.PlatformService`. A public API, when it exists, must use the same application services.
 - Agent-facing and console-facing internal gRPC are protected by mTLS with distinct caller identities.
@@ -46,16 +46,16 @@ Control-plane replicas coordinate singleton reconcilers through a fenced Cockroa
 
 Agents accept a comma-separated `AGENT_CONTROLPLANE_ADDRESSES` (or `--controlplane-addresses`) seed list. Each agent start replaces the durable seed set with that config; successful enrollment, dashboard-certificate, and sync responses replace the durable replica view independently. Agents use the union only to find a reachable replica; a non-owner replica returns a live-owner redirect so the agent pins and reconnects to the leaseholder. A dead owner is quarantined briefly so a redirect cannot immediately re-pin it, and that cooldown is not extended by later redirects. Bootstrap enrollment is retry-safe for the same agent key after a lost response.
 
-Every replica for one database must currently mount the same read-write `CONTROLPLANE_STATE_DIR`. That directory contains the shared internal PKI, registry identity, and revocation data. Startup binds the mount to the database using a persistent storage marker and fails if a replica is pointed at node-local or replacement storage. That shared-disk contract is scheduled to go away once a key provider lands. Source snapshots are content-addressed objects in operator-provided S3-compatible storage (`CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER=s3` with `..._S3_ENDPOINT`, `..._S3_REGION`, and `..._S3_BUCKET`); the filesystem provider (`CONTROLPLANE_SOURCE_ARCHIVES_DIR`) is development-only and rejected in production. Every replica must currently point at the same Caddy admin target; when Envoy lands, that becomes a shared xDS snapshot identity.
+Every replica for one database must currently mount the same read-write `CONTROLPLANE_STATE_DIR`. That directory contains the shared internal PKI, registry identity, and revocation data. Startup binds the mount to the database using a persistent storage marker and fails if a replica is pointed at node-local or replacement storage. That shared-disk contract is scheduled to go away once a key provider lands. Source snapshots are content-addressed objects in operator-provided S3-compatible storage (`CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER=s3` with `..._S3_ENDPOINT`, `..._S3_REGION`, and `..._S3_BUCKET`); the filesystem provider (`CONTROLPLANE_SOURCE_ARCHIVES_DIR`) is development-only and rejected in production. Every replica computes the same xDS snapshot identity from shared state; only the live owner publishes it.
 
 Common bootstrap inputs:
 
-- control plane: listen addresses, advertised replica addresses (`CONTROLPLANE_REPLICA_ADDRESSES`), this replica's dial address (`CONTROLPLANE_ADVERTISE_ADDR`, required when more than one replica address is set), single-use agent-bound bootstrap token(s) (`agent_id=token`), DB URL, state dir, ingress admin URL, managed console service settings
+- control plane: listen addresses, advertised replica addresses (`CONTROLPLANE_REPLICA_ADDRESSES`), this replica's dial address (`CONTROLPLANE_ADVERTISE_ADDR`, required when more than one replica address is set), single-use agent-bound bootstrap token(s) (`agent_id=token`), DB URL, state dir, xDS listen address, managed console service settings
 - agent: control-plane seed address(es), control-plane CA, bootstrap token, data dir
 
-### Ingress admin security (current Caddy)
+### xDS security posture
 
-Until the Envoy fleet cutover, the rendered Caddy admin listener and the control-plane admin URL default to `127.0.0.1:2019`. Non-loopback admin listeners or URLs are rejected unless `CONTROLPLANE_INGRESS_ALLOW_NON_LOOPBACK_ADMIN=1` (or `--ingress-allow-non-loopback-admin`) is set explicitly. When opting in, set the rendered listener with `CONTROLPLANE_INGRESS_ADMIN_LISTEN` and protect the admin transport with network isolation and authenticated TLS; the control plane does not add Caddy admin credentials. The local Docker test stack opts in because its loopback-published port must bind inside the Caddy container.
+The control plane serves the xDS management API on `CONTROLPLANE_INGRESS_XDS_LISTEN` (or `--ingress-xds-listen`), defaulting to `127.0.0.1:18000`; production requires an explicit host. The transport is currently plaintext without client authentication, so the listener must be network-isolated to the Envoy instances until xDS mTLS lands with the fleet work. The local Docker test stack binds all interfaces because the Envoy container dials xDS over the Docker bridge. TLS termination for public traffic arrives with the domain/certificate lifecycle (2.8), which pushes materials over SDS; until then Envoy serves plaintext.
 
 ### Deployment and health semantics
 

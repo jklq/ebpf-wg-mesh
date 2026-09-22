@@ -5,7 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/xds"
 	"errors"
 	"fmt"
 	"testing"
@@ -19,7 +19,10 @@ type rolloutIngressProbe struct {
 	store     *persistence
 	err       error
 	syncCalls int
-	snapshots [][]routing.Backend
+	snapshots [][]xds.Backend
+	// notConverged simulates subscribers that have not applied the latest
+	// synced state yet (zero value: converged).
+	notConverged bool
 }
 
 func (p *rolloutIngressProbe) Sync(ctx context.Context) error {
@@ -33,6 +36,10 @@ func (p *rolloutIngressProbe) Sync(ctx context.Context) error {
 }
 
 func (*rolloutIngressProbe) RequestSync() {}
+
+func (p *rolloutIngressProbe) Converged(context.Context) (bool, error) {
+	return !p.notConverged, nil
+}
 
 func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
@@ -58,7 +65,7 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	}
 	markRolloutAllocationReady(t, store, target[0])
 
-	probe := &rolloutIngressProbe{store: store, err: errors.New("caddy unavailable")}
+	probe := &rolloutIngressProbe{store: store, err: errors.New("xds unavailable")}
 	delivery := newTestDelivery(store, nil, probe, nil)
 	reconciler := NewRolloutReconciler(delivery, time.Second)
 	fixedNow := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
@@ -508,4 +515,55 @@ func assertDesiredIntent(t *testing.T, store *persistence, alloc deliverycore.Al
 
 func contains(value, substring string) bool {
 	return substring == "" || len(value) >= len(substring) && (value == substring || contains(value[1:], substring))
+}
+
+func TestRollingReplacementRetainsAllocationUntilIngressApplies(t *testing.T) {
+	store, _, service := createHealthyRollingService(t, 1, 1)
+	ctx := context.Background()
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "web.example.com", service.ID, 8080); err != nil {
+		t.Fatalf("createDomainBinding: %v", err)
+	}
+	old := allocationForGeneration(t, store, service.ID, 1)[0]
+
+	next := rollingTestSpec("example.test/web:b", 1, 1)
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", next); err != nil {
+		t.Fatalf("updateService: %v", err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("releaseEnvironment: %v", err)
+	}
+	target := allocationForGeneration(t, store, service.ID, 2)
+	markRolloutAllocationReady(t, store, target[0])
+
+	// The withdrawal is published but subscribers (a disconnected or NACKing
+	// Envoy) have not applied it: the old allocation must keep running, not
+	// drain and get destroyed under live traffic.
+	probe := &rolloutIngressProbe{store: store, notConverged: true}
+	fixedNow := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+	delivery := newTestDelivery(store, nil, probe, nil)
+	delivery.rolloutNow = func() time.Time { return fixedNow }
+	if err := NewRolloutReconciler(delivery, time.Second).Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile with pending ingress apply: %v", err)
+	}
+	old = allocationByID(t, store, service.ID, old.ID)
+	if old.RolloutState != deliverycore.AllocationRolloutWithdrawing || old.DrainDeadline.Valid {
+		t.Fatalf("old allocation drained before subscribers applied the withdrawal: %+v", old)
+	}
+
+	// Once every known subscriber has applied the current version the drain
+	// proceeds with its deadline.
+	probe.notConverged = false
+	restartedDelivery := newTestDelivery(store, nil, probe, nil)
+	restartedDelivery.rolloutNow = func() time.Time { return fixedNow }
+	if err := NewRolloutReconciler(restartedDelivery, time.Second).Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile after ingress applied: %v", err)
+	}
+	old = allocationByID(t, store, service.ID, old.ID)
+	if old.RolloutState != deliverycore.AllocationRolloutDraining || !old.DrainDeadline.Valid {
+		t.Fatalf("expected drain after ingress convergence: %+v", old)
+	}
+	wantDeadline := fixedNow.Add(time.Duration(next.GetRollingStrategy().GetDrainingSeconds()) * time.Second)
+	if !old.DrainDeadline.Time.Equal(wantDeadline) {
+		t.Fatalf("drain deadline = %v, want %v", old.DrainDeadline.Time, wantDeadline)
+	}
 }

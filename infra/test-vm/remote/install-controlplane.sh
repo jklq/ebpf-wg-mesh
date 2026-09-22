@@ -10,7 +10,7 @@ PUBLIC_ADDR=${PUBLIC_ADDR:-platform.local}
 # vm-user is an operator: e2e probes call operator-only RPCs such as ListAgents.
 BOOTSTRAP_USER=${BOOTSTRAP_USER:-vm-user:vm@example.com+operator}
 SERVICE_NAME=${SERVICE_NAME:-ebpf-wg-mesh-controlplane}
-INGRESS_ADMIN_URL=${INGRESS_ADMIN_URL:-http://127.0.0.1:2019/load}
+XDS_LISTEN=${XDS_LISTEN:-127.0.0.1:18000}
 REPLICA_ADDRESSES=${REPLICA_ADDRESSES:-}
 ADVERTISE_ADDR=${ADVERTISE_ADDR:-}
 
@@ -54,7 +54,7 @@ Requires=ebpf-wg-mesh-cockroach.service
 
 [Service]
 Type=simple
-ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -replica-addresses "${REPLICA_ADDRESSES}" -advertise-addr "${ADVERTISE_ADDR}" -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-admin-url ${INGRESS_ADMIN_URL} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
+ExecStart=${CONTROLPLANE_BIN} -profile development -internal-listen ${INTERNAL_LISTEN} -replica-addresses "${REPLICA_ADDRESSES}" -advertise-addr "${ADVERTISE_ADDR}" -agent-bootstrap-tokens ${AGENT_BOOTSTRAP_TOKENS} -db-url postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable -state-dir ${STATE_DIR} -ingress-xds-listen ${XDS_LISTEN} -ingress-public-addr ${PUBLIC_ADDR} -bootstrap-user ${BOOTSTRAP_USER}
 Restart=always
 RestartSec=3
 

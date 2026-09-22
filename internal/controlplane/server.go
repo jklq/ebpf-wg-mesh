@@ -18,10 +18,10 @@ import (
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
-	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"ebof-wg-mesh/internal/controlplane/xds"
 
 	"connectrpc.com/connect"
 
@@ -53,7 +53,10 @@ type Server struct {
 	authority       *identity.TLSAuthority
 	internalGRPC    *grpc.Server
 	internalHTTP    *http.Server
-	ingress         *routing.IngressSyncer
+	ingress         *xds.Publisher
+	xdsServer       *xds.Server
+	xdsGRPC         *grpc.Server
+	xdsLn           net.Listener
 	dashboard       *ManagedDashboardReconciler
 	registry        *registry.Policy
 	registryAuth    *registry.Auth
@@ -161,22 +164,36 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	logEmitter := logs.NewLogEmitter(logStore)
 	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)
-	ingressOpts := []routing.IngressSyncerOption{
-		routing.WithIngressListenAddrs(cfg.Ingress.ListenAddrs),
-		routing.WithIngressAdminListen(cfg.Ingress.AdminListen),
-		routing.WithIngressAutomaticHTTPSDisabled(cfg.Ingress.DisableAutomaticHTTPS),
+	staticRoutes := make([]xds.StaticRoute, 0, len(cfg.Ingress.StaticRoutes))
+	for _, route := range cfg.Ingress.StaticRoutes {
+		staticRoutes = append(staticRoutes, xds.StaticRoute{
+			Hosts:    append([]string(nil), route.Hosts...),
+			Upstream: route.Upstream,
+		})
 	}
-	if len(cfg.Ingress.StaticRoutes) > 0 {
-		staticRoutes := make([]routing.IngressStaticRoute, 0, len(cfg.Ingress.StaticRoutes))
-		for _, route := range cfg.Ingress.StaticRoutes {
-			staticRoutes = append(staticRoutes, routing.IngressStaticRoute{
-				Hosts:    append([]string(nil), route.Hosts...),
-				Upstream: route.Upstream,
-			})
-		}
-		ingressOpts = append(ingressOpts, routing.WithIngressStaticRoutes(staticRoutes))
+	// The xDS server outlives any single Run: streams span singleton
+	// takeovers, so its context is the process, not a run.
+	xdsServer := xds.NewServer(context.Background())
+	// Subscribers register durably at first contact, before any config is
+	// served, so the drain barrier sees them across replicas.
+	xdsServer.SetNodeStore(store.routing)
+	publisherID := strings.TrimSpace(cfg.AdvertiseAddr)
+	if publisherID == "" {
+		publisherID = strings.TrimSpace(cfg.InternalGRPC.Listen)
 	}
-	ingress := routing.NewIngressSyncer(cfg.Ingress.AdminURL, store.routing, ingressOpts...)
+	ingress := xds.NewPublisher(xds.PublisherConfig{
+		Source:       store.routing,
+		Publications: store.routing,
+		Nodes:        store.routing,
+		Server:       xdsServer,
+		Static:       staticRoutes,
+		ListenAddrs:  cfg.Ingress.ListenAddrs,
+		PublisherID:  publisherID,
+	})
+	// The same first contact refreshes from the durable publication, so a
+	// fresh subscriber on a lagging replica cannot receive withdrawn
+	// config that the drain barrier believes gone.
+	xdsServer.SetFirstContactHook(ingress.Refresh)
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
 	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
@@ -240,11 +257,18 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		Handler:   dualProtocolHandler(internal, newConnectHandler(internalAuth, connectPlatformService{platformService}, connectOpsService{opsService})),
 		TLSConfig: authority.HTTPConfig(),
 	}
+	xdsLn, err := net.Listen("tcp", cfg.Ingress.XDSListen)
+	if err != nil {
+		_ = internalLn.Close()
+		return nil, fmt.Errorf("listen xds: %w", err)
+	}
+	xdsGRPC := xdsServer.GRPCServer()
 	var registryLn net.Listener
 	var registryHTTP *http.Server
 	if registryAuth != nil {
 		registryLn, err = net.Listen("tcp", cfg.Registry.AuthListen)
 		if err != nil {
+			_ = xdsLn.Close()
 			_ = internalLn.Close()
 			return nil, fmt.Errorf("listen registry auth: %w", err)
 		}
@@ -271,6 +295,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		authority:       authority,
 		internalGRPC:    internal,
 		ingress:         ingress,
+		xdsServer:       xdsServer,
+		xdsGRPC:         xdsGRPC,
+		xdsLn:           xdsLn,
 		dashboard:       dashboard,
 		registry:        policy,
 		registryAuth:    registryAuth,
@@ -291,6 +318,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if listen := strings.TrimSpace(cfg.Health.Listen); listen != "" {
 		_, shutdown, err := health.ListenAndServe(ctx, listen, server.readyReport)
 		if err != nil {
+			_ = xdsLn.Close()
 			_ = internalLn.Close()
 			if registryLn != nil {
 				_ = registryLn.Close()
@@ -357,6 +385,11 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		errCh <- serveInternalHTTP(s.internalHTTP, s.internalLn)
 	}()
+	if s.xdsGRPC != nil && s.xdsLn != nil {
+		go func() {
+			errCh <- s.xdsGRPC.Serve(s.xdsLn)
+		}()
+	}
 	if s.registryHTTP != nil && s.registryLn != nil {
 		go func() {
 			err := s.registryHTTP.Serve(s.registryLn)
@@ -374,6 +407,12 @@ func (s *Server) Run(ctx context.Context) error {
 	// Per-replica, not singleton work: every replica re-issues its own
 	// server leaf after a CA rotation finishes.
 	go func() { s.serverCertificateRefreshLoop(runCtx); errCh <- nil }()
+	// Also per-replica: every replica serves Envoy from the durable
+	// publication and records subscriber apply state, so the xDS endpoint
+	// survives lease takeover and rolling replacement of a replica.
+	if s.ingress != nil {
+		go func() { errCh <- s.ingress.Follow(runCtx) }()
+	}
 	leaseDone := make(chan error, 1)
 	go func() {
 		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
@@ -591,6 +630,12 @@ func (s *Server) Close() error {
 	if s.internalLn != nil {
 		_ = s.internalLn.Close()
 	}
+	if s.xdsGRPC != nil {
+		s.xdsGRPC.Stop()
+	}
+	if s.xdsLn != nil {
+		_ = s.xdsLn.Close()
+	}
 	if s.registryHTTP != nil {
 		err := s.registryHTTP.Close()
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -624,6 +669,22 @@ func (s *Server) RegistryAuthAddr() string {
 		return ""
 	}
 	return s.registryLn.Addr().String()
+}
+
+// XDSAddr is the address Envoy instances subscribe to.
+func (s *Server) XDSAddr() string {
+	if s == nil || s.xdsLn == nil {
+		return ""
+	}
+	return s.xdsLn.Addr().String()
+}
+
+// XDSServer exposes the xDS management server for status inspection.
+func (s *Server) XDSServer() *xds.Server {
+	if s == nil {
+		return nil
+	}
+	return s.xdsServer
 }
 
 func (s *Server) RegistryAuthBundlePath() string {

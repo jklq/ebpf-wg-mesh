@@ -39,8 +39,8 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	if len(cfg.InternalGRPC.TLS.ServerNames) == 0 {
 		t.Fatal("expected default internal server names")
 	}
-	if got := cfg.Ingress.AdminListen; got != "127.0.0.1:2019" {
-		t.Fatalf("expected loopback Caddy admin listener, got %q", got)
+	if got := cfg.Ingress.XDSListen; got != "127.0.0.1:18000" {
+		t.Fatalf("expected loopback xDS listener, got %q", got)
 	}
 	if got, want := cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile, filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt"); got != want {
 		t.Fatalf("unexpected default client certificate revocation file %q, want %q", got, want)
@@ -74,7 +74,7 @@ func TestFinalizeControlPlaneRequiresAdvertiseAddrForMultipleReplicas(t *testing
 	}
 }
 
-func TestFinalizeControlPlaneRejectsNonLoopbackCaddyAdminWithoutOptIn(t *testing.T) {
+func TestFinalizeControlPlaneValidatesXDSListen(t *testing.T) {
 	t.Parallel()
 
 	base := ControlPlaneConfig{
@@ -84,17 +84,16 @@ func TestFinalizeControlPlaneRejectsNonLoopbackCaddyAdminWithoutOptIn(t *testing
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
 		Ingress: IngressConfig{
-			AdminURL:    "http://10.0.0.2:2019/load",
-			AdminListen: ":2019",
+			XDSListen: "not-an-addr",
 		},
 	}
 
 	if err := FinalizeControlPlane(&base); err == nil {
-		t.Fatal("expected non-loopback Caddy admin configuration to be rejected")
+		t.Fatal("expected malformed xDS listen address to be rejected")
 	}
-	base.Ingress.AllowNonLoopbackAdmin = true
+	base.Ingress.XDSListen = "0.0.0.0:18000"
 	if err := FinalizeControlPlane(&base); err != nil {
-		t.Fatalf("expected explicit non-loopback opt-in to pass: %v", err)
+		t.Fatalf("expected explicit xDS listen address to pass: %v", err)
 	}
 }
 

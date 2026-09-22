@@ -78,3 +78,6 @@ type blockedRolloutIngress struct{ err error }
 
 func (p *blockedRolloutIngress) RequestSync()               {}
 func (p *blockedRolloutIngress) Sync(context.Context) error { return p.err }
+func (p *blockedRolloutIngress) Converged(context.Context) (bool, error) {
+	return p.err == nil, nil
+}

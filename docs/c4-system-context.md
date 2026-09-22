@@ -46,7 +46,7 @@ flowchart LR
 - The console signs a 30-second user assertion for each platform RPC and sends it over mTLS. The control plane verifies its signature, issuer, audience, expiry, and subject, then authorizes the operation from user-ID memberships and roles without storing a duplicate user profile.
 - GitHub repository access is linked to a project. Repository inspection and deployment require that project-specific grant rather than any installation grant visible to the platform.
 - Projects own access and grouping; every deployable resource and private network belongs to one environment.
-- Envoy is external to the platform system boundary because the control plane is the xDS authority rather than owning the proxy process. Current code still drives a single Caddy via the admin API until that cutover.
+- Envoy is external to the platform system boundary because the control plane is the xDS authority rather than owning the proxy process. A single Envoy subscribes to the live owner today; the fleet lands separately.
 - xDS to Envoy is authenticated. There is no unauthenticated proxy admin API on the public network.
 - BuildKit and the container registry are separate external runtime dependencies used by the builder path.
 - Registry token minting and ACL decisions are embedded in the control plane. The external registry verifies signed access locally from the persisted control-plane trust certificate; no separate credential-broker service is required.

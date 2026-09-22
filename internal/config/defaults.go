@@ -62,11 +62,8 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 			cfg.Logs.ClickHouse.MaxIdleConns = cfg.Logs.ClickHouse.MaxOpenConns
 		}
 	}
-	if cfg.Ingress.AdminURL == "" {
-		cfg.Ingress.AdminURL = "http://127.0.0.1:2019/load"
-	}
-	if cfg.Ingress.AdminListen == "" {
-		cfg.Ingress.AdminListen = "127.0.0.1:2019"
+	if cfg.Ingress.XDSListen == "" {
+		cfg.Ingress.XDSListen = "127.0.0.1:18000"
 	}
 	if len(cfg.Ingress.ListenAddrs) == 0 {
 		cfg.Ingress.ListenAddrs = []string{":80", ":443"}
