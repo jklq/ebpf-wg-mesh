@@ -4,6 +4,8 @@ package controlplane
 
 import (
 	"context"
+	"time"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"testing"
@@ -100,6 +102,72 @@ func TestManagedDashboardSameAgentSyncRequiresNewGenerationObservation(t *testin
 	}
 	if got.DesiredSpecRevision != updated.SpecRevision || got.DesiredRolloutGeneration != updated.RolloutGeneration {
 		t.Fatalf("desired generation was not updated: allocation=%+v service=%+v", got, updated)
+	}
+}
+
+// TestManagedEnsureResolvesOutsideSchedulerLock proves managed
+// reconciliation resolves changed-spec images outside the scheduler
+// lock: a slow or unreachable registry must not stall unrelated
+// scheduler-serialized mutations while the sync waits on its pin.
+func TestManagedEnsureResolvesOutsideSchedulerLock(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	trusted := agentHello("trusted-dashboard-node")
+	if _, err := upsertTestAgent(t, store, ctx, trusted); err != nil {
+		t.Fatal(err)
+	}
+	store.reserveAgents(trusted.AgentId)
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const slowTag = "example.test/dashboard:2"
+	resolver := &blockingTagResolver{
+		StaticResolver: registry.StaticResolver{Tags: map[string]string{
+			"example.test/dashboard:1": testDigest("a"),
+			slowTag:                    testDigest("b"),
+		}},
+		block:   slowTag,
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+	if _, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId); err != nil {
+		t.Fatal(err)
+	}
+
+	ensured := make(chan error, 1)
+	go func() {
+		_, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec(slowTag, nil), trusted.AgentId)
+		ensured <- err
+	}()
+	select {
+	case <-resolver.entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("managed ensure never reached the registry")
+	}
+
+	proceed := make(chan error, 1)
+	go func() {
+		proceed <- delivery.ReconcileFleetCapacity(ctx)
+	}()
+	select {
+	case err := <-proceed:
+		if err != nil {
+			close(resolver.unblock)
+			t.Fatalf("concurrent ReconcileFleetCapacity: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(resolver.unblock)
+		t.Fatal("scheduler mutation stalled behind registry resolution")
+	}
+	close(resolver.unblock)
+
+	if err := <-ensured; err != nil {
+		t.Fatalf("EnsureManagedService: %v", err)
 	}
 }
 

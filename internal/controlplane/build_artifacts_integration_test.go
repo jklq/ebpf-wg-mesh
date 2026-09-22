@@ -439,6 +439,76 @@ func TestReleaseEnvironmentResolvesOutsideSchedulerLock(t *testing.T) {
 	}
 }
 
+// TestCreateServiceResolvesOutsideSchedulerLock proves service creation
+// resolves direct-image tags outside the scheduler lock as well: a slow
+// or unreachable registry must not stall unrelated scheduler work while
+// a create waits on its pin.
+func TestCreateServiceResolvesOutsideSchedulerLock(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, projects[0].ID)
+
+	const slowTag = "example.test/slow:1"
+	resolver := &blockingTagResolver{
+		StaticResolver: registry.StaticResolver{Tags: map[string]string{
+			"example.test/a:1": testDigest("a"),
+			slowTag:            testDigest("c"),
+		}},
+		block:   slowTag,
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+
+	created := make(chan error, 1)
+	go func() {
+		_, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-slow",
+			directImageServiceSpec(slowTag, &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})}), "node-1")
+		created <- err
+	}()
+	select {
+	case <-resolver.entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("create never reached the registry")
+	}
+
+	proceed := make(chan error, 1)
+	go func() {
+		_, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-fast",
+			directImageServiceSpec("example.test/a:1", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}), "node-1")
+		proceed <- err
+	}()
+	select {
+	case err := <-proceed:
+		if err != nil {
+			close(resolver.unblock)
+			t.Fatalf("concurrent CreateService: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(resolver.unblock)
+		t.Fatal("scheduler mutation stalled behind registry resolution")
+	}
+	close(resolver.unblock)
+
+	if err := <-created; err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+}
+
 // blockingTagResolver hangs on one tag until released, simulating a slow
 // or unreachable registry during resolution.
 type blockingTagResolver struct {

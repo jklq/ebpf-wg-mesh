@@ -16,12 +16,12 @@ import (
 )
 
 func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, trustedAgentID string) (ServiceRecord, []string, error) {
-	d.schedulerMu.Lock()
-	defer d.schedulerMu.Unlock()
-	// Registry I/O happens outside the product transaction and only when
-	// the spec's image input is about to deploy: an unchanged spec keeps its
-	// stored artifact and reconciliation never blocks on the registry. A
-	// spec racing the pre-read retries with a fresh resolution.
+	// Registry I/O happens outside the product transaction and outside
+	// the scheduler lock, and only when the spec's image input is about to
+	// deploy: an unchanged spec keeps its stored artifact and
+	// reconciliation never blocks on the registry or stalls other
+	// scheduler-serialized mutations. A spec racing the pre-read retries
+	// with a fresh resolution.
 	var rec ServiceRecord
 	var affectedAgentIDs []string
 	var errEnsure error
@@ -49,6 +49,11 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 }
 
 func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, trustedAgentID string, pre resolvedDirectImage) (ServiceRecord, []string, error) {
+	// The scheduler lock serializes the mutation phase only; the managed
+	// pre-read and registry resolution run outside it (see
+	// EnsureManagedService).
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	s := d.store
 	var rec ServiceRecord
 	var affectedAgentIDs []string
