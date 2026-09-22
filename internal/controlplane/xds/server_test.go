@@ -2,10 +2,13 @@ package xds
 
 import (
 	"context"
+	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
@@ -281,4 +284,75 @@ func TestServerHoldsStreamsUntilFirstPublish(t *testing.T) {
 	if got := client.recv().GetVersionInfo(); got != snap.Version {
 		t.Fatalf("version = %s, want %s", got, snap.Version)
 	}
+}
+
+// TestServerCancelsFirstContactWorkOnStreamClose pins the resource bound the
+// finding asks for: durable registration and the pre-serve refresh run under
+// the stream's context, so a client disconnecting mid-registration aborts the
+// database work instead of leaving it running against a stalled backend.
+func TestServerCancelsFirstContactWorkOnStreamClose(t *testing.T) {
+	t.Parallel()
+
+	nodes := &blockingNodes{started: make(chan struct{}), cancelled: make(chan error, 1)}
+	server, listener := testServer(t)
+	server.SetNodeStore(nodes)
+	server.Publish(context.Background(), mustBuild(t, testInput()))
+
+	client := dialADS(t, listener, "envoy-blocked")
+	client.send(resourcev3.ListenerType, "", "", nil)
+	select {
+	case <-nodes.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first-contact registration never started")
+	}
+
+	// Drop the whole connection (CloseSend alone leaves the stream context
+	// alive): the transport cancels the stream context and the blocked
+	// registration must unwind with it.
+	if err := client.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-nodes.cancelled:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("registration ended with %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked first-contact work outlived its stream")
+	}
+}
+
+// TestServerRejectsRequestsWithoutStreamContext: a stream request with no
+// opened stream has no cancellable lifetime and must fail closed rather than
+// run first-contact work that a disconnect could orphan.
+func TestServerRejectsRequestsWithoutStreamContext(t *testing.T) {
+	t.Parallel()
+
+	server := NewServer(context.Background())
+	server.SetNodeStore(failingNodes{})
+	err := server.onStreamRequest(7, &discoveryv3.DiscoveryRequest{
+		Node:    &corev3.Node{Id: "envoy-x"},
+		TypeUrl: resourcev3.EndpointType,
+	})
+	if err == nil {
+		t.Fatal("expected a request on an untracked stream to fail closed")
+	}
+}
+
+type blockingNodes struct {
+	started   chan struct{}
+	cancelled chan error
+	once      sync.Once
+}
+
+func (b *blockingNodes) UpsertNodeObservations(ctx context.Context, _ []NodeObservation) error {
+	b.once.Do(func() { close(b.started) })
+	<-ctx.Done()
+	err := ctx.Err()
+	b.cancelled <- err
+	return err
+}
+
+func (b *blockingNodes) ListNodeObservations(context.Context) ([]NodeObservation, error) {
+	return nil, nil
 }

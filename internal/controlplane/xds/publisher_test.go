@@ -309,7 +309,7 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	if err := publisher.Replicate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	server.observe(0, "envoy-partial", resourcev3.EndpointType, version, nil)
+	server.observe(context.Background(), 0, "envoy-partial", resourcev3.EndpointType, version, nil)
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	// Once every required type is ACKed at the served version the node is
 	// fully applied.
 	for _, typeURL := range server.Status().RequiredTypes {
-		server.observe(0, "envoy-partial", typeURL, version, nil)
+		server.observe(context.Background(), 0, "envoy-partial", typeURL, version, nil)
 	}
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)
@@ -420,6 +420,9 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 
 	// A node-less follow-up ACK (Envoy sends node only on the first
 	// request of a stream) must still update apply state.
+	if err := server.onStreamOpen(ctx, 7, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := server.onStreamRequest(7, req); err != nil {
 		t.Fatal(err)
 	}
@@ -639,9 +642,9 @@ func TestPublisherConvergesWithoutEDSSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 	version := server.Status().Version
-	server.observe(0, "envoy-neds", resourcev3.ListenerType, version, nil)
-	server.observe(0, "envoy-neds", resourcev3.ClusterType, version, nil)
-	server.observe(0, "envoy-neds", resourcev3.RouteType, version, nil)
+	server.observe(context.Background(), 0, "envoy-neds", resourcev3.ListenerType, version, nil)
+	server.observe(context.Background(), 0, "envoy-neds", resourcev3.ClusterType, version, nil)
+	server.observe(context.Background(), 0, "envoy-neds", resourcev3.RouteType, version, nil)
 
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)

@@ -73,7 +73,11 @@ type Server struct {
 	// any of its streams (ADS multiplexes types on one; SotW uses several)
 	// is open. It also attributes Envoy's node-less follow-up requests.
 	streams map[int64]string
-	nodes   map[string]*nodeState
+	// streamCtxs carries each stream's gRPC context so first-contact work
+	// (durable registration, pre-serve refresh) is cancelled when the
+	// client disconnects instead of outliving it against a stalled backend.
+	streamCtxs map[int64]context.Context
+	nodes      map[string]*nodeState
 
 	nodeStore    NodeStore
 	firstContact func(context.Context) error
@@ -96,8 +100,9 @@ type nodeState struct {
 // what lets a fresh Envoy converge after control-plane restart.
 func NewServer(ctx context.Context) *Server {
 	s := &Server{
-		streams: make(map[int64]string),
-		nodes:   make(map[string]*nodeState),
+		streams:    make(map[int64]string),
+		streamCtxs: make(map[int64]context.Context),
+		nodes:      make(map[string]*nodeState),
 	}
 	s.cache = cachev3.NewSnapshotCache(true, cachev3.IDHash{}, xdslog.LoggerFuncs{
 		DebugFunc: func(format string, args ...interface{}) { slog.Debug(fmt.Sprintf(format, args...)) },
@@ -106,6 +111,7 @@ func NewServer(ctx context.Context) *Server {
 		ErrorFunc: func(format string, args ...interface{}) { slog.Error(fmt.Sprintf(format, args...)) },
 	})
 	s.xds = serverv3.NewServer(ctx, s.cache, serverv3.CallbackFuncs{
+		StreamOpenFunc:    s.onStreamOpen,
 		StreamRequestFunc: s.onStreamRequest,
 		StreamClosedFunc:  s.onStreamClosed,
 		FetchRequestFunc:  s.onFetchRequest,
@@ -193,24 +199,41 @@ func (s *Server) Status() Status {
 	return status
 }
 
+// onStreamOpen captures the stream's gRPC context, which the transport
+// cancels the moment the client disconnects — including while a request
+// callback is still blocked in first-contact work.
+func (s *Server) onStreamOpen(ctx context.Context, streamID int64, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamCtxs[streamID] = ctx
+	return nil
+}
+
 func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryRequest) error {
 	if req == nil {
 		return nil
 	}
 	nodeID := strings.TrimSpace(req.GetNode().GetId())
+	s.mu.Lock()
+	ctx := s.streamCtxs[streamID]
 	if nodeID == "" {
 		// Envoy sends node only on the first request of a stream: attribute
 		// node-less ACKs and NACKs to the node that opened this stream
 		// instead of dropping the standard apply path.
-		s.mu.Lock()
 		nodeID = s.streams[streamID]
-		s.mu.Unlock()
+	}
+	s.mu.Unlock()
+	if ctx == nil {
+		// Every stream request belongs to a stream opened through
+		// onStreamOpen; without that stream context, first-contact work
+		// could not be cancelled on disconnect. Fail closed.
+		return fmt.Errorf("xds request on untracked stream %d", streamID)
 	}
 	if nodeID == "" {
 		return nil
 	}
-	s.observe(streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
-	return s.atFirstContact(context.Background(), nodeID)
+	s.observe(ctx, streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	return s.atFirstContact(ctx, nodeID)
 }
 
 func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryRequest) error {
@@ -221,7 +244,7 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 	if nodeID == "" {
 		return nil
 	}
-	s.observe(0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	s.observe(ctx, 0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
 	return s.atFirstContact(ctx, nodeID)
 }
 
@@ -259,7 +282,7 @@ func (s *Server) atFirstContact(ctx context.Context, nodeID string) error {
 	return nil
 }
 
-func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDetail *rpcstatus.Status) {
+func (s *Server) observe(ctx context.Context, streamID int64, nodeID, typeURL, version string, errDetail *rpcstatus.Status) {
 	if nodeID == "" {
 		return
 	}
@@ -272,7 +295,7 @@ func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDet
 		if s.current != nil {
 			// A (re)connecting Envoy converges immediately on the current
 			// snapshot instead of waiting for the next publication.
-			if err := s.cache.SetSnapshot(context.Background(), nodeID, s.current.CacheSnapshot()); err != nil {
+			if err := s.cache.SetSnapshot(ctx, nodeID, s.current.CacheSnapshot()); err != nil {
 				slog.Warn("xds seed snapshot failed", "node", nodeID, "error", err)
 			}
 		}
@@ -304,6 +327,7 @@ func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDet
 func (s *Server) onStreamClosed(streamID int64, node *corev3.Node) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.streamCtxs, streamID)
 	nodeID := ""
 	if node != nil {
 		nodeID = node.GetId()
