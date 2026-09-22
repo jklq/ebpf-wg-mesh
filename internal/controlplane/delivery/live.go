@@ -38,13 +38,13 @@ type AgentSession struct {
 	AcceptedEpoch  int64
 	AcceptedCursor int64
 	// Independently versioned streams (content hashes, empty when none).
-	OfferedNodeConfig    string
-	AcceptedNodeConfig   string
-	OfferedCredentials   string
-	AcceptedCredentials  string
-	OfferedReplicas      string
-	AcceptedReplicas     string
-	Reconciled           bool
+	OfferedNodeConfig   string
+	AcceptedNodeConfig  string
+	OfferedCredentials  string
+	AcceptedCredentials string
+	OfferedReplicas     string
+	AcceptedReplicas    string
+	Reconciled          bool
 }
 
 type liveEval struct {

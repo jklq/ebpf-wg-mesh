@@ -230,7 +230,7 @@ func stripForDiff(state *agentv1.DesiredNodeState) *agentv1.DesiredNodeState {
 		return &agentv1.DesiredNodeState{}
 	}
 	out := &agentv1.DesiredNodeState{
-		AgentId:             state.GetAgentId(),
+		AgentId:              state.GetAgentId(),
 		ReconciliationCursor: state.GetReconciliationCursor(),
 	}
 	for _, v := range state.GetVolumes() {
@@ -413,7 +413,7 @@ func InventoriesMatch(hello []*agentv1.ServiceCondition, current []*agentv1.Desi
 func (d storedDiff) ToProto(agentID string) *agentv1.AllocationDiff {
 	out := &agentv1.AllocationDiff{
 		AgentId: agentID, BaseRevision: d.Base, TargetRevision: d.Target,
-		Stops: append([]string(nil), d.Stops...),
+		Stops:       append([]string(nil), d.Stops...),
 		VolumeStops: append([]string(nil), d.VolumeStops...),
 	}
 	for _, svc := range d.Starts {

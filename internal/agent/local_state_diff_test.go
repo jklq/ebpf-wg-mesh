@@ -212,7 +212,7 @@ func TestNodeConfigCredentialsReplicasVersionedSeparately(t *testing.T) {
 		AgentId: "node-1", ClusterId: "cluster-a", SessionId: "test-session",
 		AuthorityEpoch: 1, AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
 		CredentialsVersion: "deadbeef",
-		Credentials: []*agentv1.AllocationCredential{{AllocationId: "a", Username: "u", Password: "p2"}},
+		Credentials:        []*agentv1.AllocationCredential{{AllocationId: "a", Username: "u", Password: "p2"}},
 	}
 	if _, err := store.acceptPullCredentials("cluster-a", "test-session", bad); err == nil {
 		t.Fatal("version mismatch accepted")
