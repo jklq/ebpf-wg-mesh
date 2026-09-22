@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -62,6 +63,11 @@ const manifestAcceptTypes = "application/vnd.docker.distribution.manifest.v2+jso
 // The registry host itself is user-controlled input too, so it must be a
 // public destination unless the operator allowlisted it as an internal
 // registry the control plane may reach (see permittedRegistryDestination).
+// That check alone is not enough: DNS rebinding — the host answering the
+// check with a public address and the later connection with a private one —
+// would swap the address after validation, so the resolver's transport
+// re-validates at every dial and connects to the approved address directly
+// (see approvedDialTransport).
 type HTTPResolver struct {
 	client *http.Client
 	// allowedPrivateHosts are registry hosts (host[:port]) the operator
@@ -73,6 +79,9 @@ type HTTPResolver struct {
 // NewHTTPResolver builds a registry resolver over client, or a default
 // 15-second client when nil. The client is copied so the resolver can
 // enforce its no-redirect policy without touching the caller's client.
+// The transport is cloned and pinned through approvedDialTransport so
+// every connection — registry or token realm — is validated and pinned
+// at dial time.
 func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPResolver {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -81,7 +90,76 @@ func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPRes
 	owned.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("registry redirect refused")
 	}
+	owned.Transport = approvedDialTransport(client.Transport, allowedPrivateHosts)
 	return &HTTPResolver{client: &owned, allowedPrivateHosts: allowedPrivateHosts}
+}
+
+// approvedDialTransport returns base's transport with a dialer that
+// resolves registry hosts itself, validates the address it is about to
+// dial, and connects to that exact address. The request-time destination
+// check sees one DNS answer; the connection would see another (DNS
+// rebinding), so validation must happen at the dial and the approved
+// address must be pinned — otherwise a host that answers the check with
+// a public address and the dial with a private one walks the control
+// plane into internal services. TLS server name and certificate
+// validation keep using the request hostname; only the connection target
+// is pinned. Operator-allowlisted private registries dial as declared.
+// RoundTrippers that never dial (test stubs) pass through unchanged.
+func approvedDialTransport(base http.RoundTripper, allowedPrivateHosts []string) http.RoundTripper {
+	transport, ok := base.(*http.Transport)
+	if base == nil {
+		transport = http.DefaultTransport.(*http.Transport)
+		ok = true
+	}
+	if !ok {
+		return base
+	}
+	clone := transport.Clone()
+	next := clone.DialContext
+	if next == nil {
+		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+		next = d.DialContext
+	}
+	clone.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialApprovedAddress(ctx, network, addr, allowedPrivateHosts, next)
+	}
+	return clone
+}
+
+// dialApprovedAddress validates addr at every dial and pins the approved
+// address: the connection is made to the checked IP directly, so no
+// second resolution can swap in an unverified one between check and
+// connect. Resolution failures fail closed.
+func dialApprovedAddress(ctx context.Context, network, addr string, allowedPrivateHosts []string, next func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if registryHostAllowed(addr, allowedPrivateHosts) || registryHostAllowed(hostnameOf(addr), allowedPrivateHosts) {
+		// An operator-declared internal registry: dial it as configured.
+		return next(ctx, network, addr)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("registry dial address %q is invalid: %w", addr, err)
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return nil, fmt.Errorf("registry dial address %q resolves to a prohibited private destination; list it in CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES if the control plane should reach it", addr)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if prohibitedIP(ip) {
+			return nil, fmt.Errorf("registry dial address %q resolves to a prohibited private destination; list it in CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES if the control plane should reach it", addr)
+		}
+		return next(ctx, network, addr)
+	}
+	addrs, err := lookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("registry dial host %q cannot be verified: %w", addr, err)
+	}
+	for _, candidate := range addrs {
+		if prohibitedIP(candidate.IP) {
+			continue
+		}
+		return next(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+	}
+	return nil, fmt.Errorf("registry dial address %q resolves to a prohibited private destination; list it in CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES if the control plane should reach it", addr)
 }
 
 func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, error) {
