@@ -17,6 +17,13 @@ var errGitHubWorkDeferred = errors.New("github work deferred")
 
 var errUnknownWorkKind = errors.New("unknown source work kind")
 
+// errSourcePushPredecessorPending defers a revision_observed item whose
+// push transition names a predecessor that is not observed yet: the
+// successor webhook arrived before its predecessor's. The work loop
+// requeues it (bounded retry with backoff) until the predecessor advances
+// the binding head and the successor can prove currency.
+var errSourcePushPredecessorPending = errors.New("source push predecessor not observed yet")
+
 type GitHubCoordinator struct {
 	store      Store
 	work       *durablework.Store
@@ -369,6 +376,12 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 		return err
 	}
 	if queued.Superseded {
+		if queued.PendingPredecessor {
+			// Early successor, not a stale redelivery: keep the work item
+			// alive so the successor is re-evaluated after its predecessor
+			// lands. Completing it here would drop the push forever.
+			return errSourcePushPredecessorPending
+		}
 		slog.InfoContext(ctx, "github revision superseded by newer observed commit; skipping", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
 		return nil
 	}

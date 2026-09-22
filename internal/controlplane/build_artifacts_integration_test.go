@@ -519,16 +519,18 @@ func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
 	}
 
 	// A delayed webhook for an older commit that was never observed before
-	// records it with its push transition (before=commit-parent). The
+	// records it with its push transition (before=commit-1). The
 	// record is history only: it must not become the freshest state just
-	// because it arrived last.
-	lateTransition := source.BuildTransition{PreviousCommit: "commit-parent"}
+	// because it arrived last. Its push transition names commit-1 —
+	// observed and no longer the proven head — so the staleness is
+	// provable and the request is dropped outright, not requeued.
+	lateTransition := source.BuildTransition{PreviousCommit: "commit-1"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-late", "", "", lateTransition); err != nil {
 		t.Fatalf("seedReadySourceState commit-late: %v", err)
 	}
 	redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-late", source.SourceSnapshotRecord{}, lateTransition)
-	if err != nil || !redelivered.Superseded || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
-		t.Fatalf("unseen late revision = %+v, %v, want superseded no-op", redelivered, err)
+	if err != nil || !redelivered.Superseded || redelivered.PendingPredecessor || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
+		t.Fatalf("unseen late revision = %+v, %v, want superseded no-op without requeue", redelivered, err)
 	}
 	if build, err := store.reads.BuildByID(ctx, build2.ID); err != nil || build.State != deliverycore.BuildStateQueued {
 		t.Fatalf("newer build = %+v, %v, want queued", build, err)
@@ -551,6 +553,63 @@ func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
 	next, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-3", source.SourceSnapshotRecord{}, nextTransition)
 	if err != nil || next.Superseded || next.BuildID == "" {
 		t.Fatalf("next real push = %+v, %v, want queued build", next, err)
+	}
+}
+
+// TestSuccessorPushBeforePredecessorIsRequeuedThenBuilt: a webhook for a
+// successor push — its transition names a commit the binding has not
+// observed yet — can arrive before its predecessor's webhook is
+// processed. That request is early, not stale, and dropping it would lose
+// the push forever: the work item completes and nobody retries the
+// successor. QueueSourceBuild reports PendingPredecessor so the work
+// loop requeues instead of completing, and once the predecessor lands
+// and advances the proven head, the successor proves currency and builds.
+func TestSuccessorPushBeforePredecessorIsRequeuedThenBuilt(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	// The successor's webhook lands first: its push transition names
+	// commit-mid, which is not observed yet.
+	earlyTransition := source.BuildTransition{PreviousCommit: "commit-mid"}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-successor", "", "", earlyTransition); err != nil {
+		t.Fatalf("seedReadySourceState commit-successor: %v", err)
+	}
+	early, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-successor", source.SourceSnapshotRecord{}, earlyTransition)
+	if err != nil || !early.Superseded || !early.PendingPredecessor || early.BuildID != "" {
+		t.Fatalf("early successor = %+v, %v, want superseded with pending predecessor", early, err)
+	}
+	var buildCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&buildCount); err != nil {
+		t.Fatal(err)
+	}
+	if buildCount != 0 {
+		t.Fatalf("build_runs rows = %d, want 0 (the early successor creates no work yet)", buildCount)
+	}
+
+	// The predecessor lands and advances the proven head.
+	midTransition := source.BuildTransition{PreviousCommit: "commit-1"}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-mid", "", "", midTransition); err != nil {
+		t.Fatalf("seedReadySourceState commit-mid: %v", err)
+	}
+	mid, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-mid", source.SourceSnapshotRecord{}, midTransition)
+	if err != nil || mid.Superseded || mid.BuildID == "" {
+		t.Fatalf("predecessor = %+v, %v, want queued build", mid, err)
+	}
+
+	// The requeued successor now proves currency (before == head) and
+	// builds: the out-of-order pair converges on the real ref tip.
+	requeued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-successor", source.SourceSnapshotRecord{}, earlyTransition)
+	if err != nil || requeued.Superseded || requeued.BuildID == "" {
+		t.Fatalf("requeued successor = %+v, %v, want queued build", requeued, err)
 	}
 }
 

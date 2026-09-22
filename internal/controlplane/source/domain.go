@@ -184,6 +184,12 @@ type QueuedBuild struct {
 	Reused bool
 	// Superseded reports that the revision is not the binding's latest
 	// observed commit and no work was created: an out-of-order or
-	// redelivered revision must never regress the rollout.
-	Superseded bool
+	// redelivered revision must never regress the rollout. Superseded
+	// reports that no work was created because the request is not
+	// current. PendingPredecessor refines it: the request's push
+	// transition names a predecessor the binding has not observed yet,
+	// so the request is early rather than stale and should be requeued
+	// until the predecessor advances the head.
+	Superseded         bool
+	PendingPredecessor bool
 }
