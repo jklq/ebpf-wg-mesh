@@ -2582,6 +2582,54 @@ func (*AgentClientMessage_LogBatch) isAgentClientMessage_Payload() {}
 
 func (*AgentClientMessage_Acknowledgement) isAgentClientMessage_Payload() {}
 
+// Terminates one server batch on the Sync stream. A batch is applied as a
+// unit: the agent withholds status publication until this marker, so an
+// intermediate inventory is never validated against the batch's final
+// assignments. Carries no state and is not acknowledged.
+type SyncBatchEnd struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncBatchEnd) Reset() {
+	*x = SyncBatchEnd{}
+	mi := &file_agent_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncBatchEnd) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncBatchEnd) ProtoMessage() {}
+
+func (x *SyncBatchEnd) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncBatchEnd.ProtoReflect.Descriptor instead.
+func (*SyncBatchEnd) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *SyncBatchEnd) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type AgentServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -2591,6 +2639,7 @@ type AgentServerMessage struct {
 	//	*AgentServerMessage_NodeConfigUpdate
 	//	*AgentServerMessage_PullCredentials
 	//	*AgentServerMessage_ReplicaEndpoints
+	//	*AgentServerMessage_BatchEnd
 	Payload       isAgentServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2598,7 +2647,7 @@ type AgentServerMessage struct {
 
 func (x *AgentServerMessage) Reset() {
 	*x = AgentServerMessage{}
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2610,7 +2659,7 @@ func (x *AgentServerMessage) String() string {
 func (*AgentServerMessage) ProtoMessage() {}
 
 func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2623,7 +2672,7 @@ func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentServerMessage.ProtoReflect.Descriptor instead.
 func (*AgentServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{25}
+	return file_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *AgentServerMessage) GetPayload() isAgentServerMessage_Payload {
@@ -2678,6 +2727,15 @@ func (x *AgentServerMessage) GetReplicaEndpoints() *ReplicaEndpoints {
 	return nil
 }
 
+func (x *AgentServerMessage) GetBatchEnd() *SyncBatchEnd {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_BatchEnd); ok {
+			return x.BatchEnd
+		}
+	}
+	return nil
+}
+
 type isAgentServerMessage_Payload interface {
 	isAgentServerMessage_Payload()
 }
@@ -2702,6 +2760,10 @@ type AgentServerMessage_ReplicaEndpoints struct {
 	ReplicaEndpoints *ReplicaEndpoints `protobuf:"bytes,5,opt,name=replica_endpoints,json=replicaEndpoints,proto3,oneof"`
 }
 
+type AgentServerMessage_BatchEnd struct {
+	BatchEnd *SyncBatchEnd `protobuf:"bytes,6,opt,name=batch_end,json=batchEnd,proto3,oneof"`
+}
+
 func (*AgentServerMessage_DesiredState) isAgentServerMessage_Payload() {}
 
 func (*AgentServerMessage_AllocationDiff) isAgentServerMessage_Payload() {}
@@ -2711,6 +2773,8 @@ func (*AgentServerMessage_NodeConfigUpdate) isAgentServerMessage_Payload() {}
 func (*AgentServerMessage_PullCredentials) isAgentServerMessage_Payload() {}
 
 func (*AgentServerMessage_ReplicaEndpoints) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_BatchEnd) isAgentServerMessage_Payload() {}
 
 var File_agent_proto protoreflect.FileDescriptor
 
@@ -2960,13 +3024,17 @@ const file_agent_proto_rawDesc = "" +
 	"\rstatus_report\x18\x03 \x01(\v2\x16.agent.v1.StatusReportH\x00R\fstatusReport\x121\n" +
 	"\tlog_batch\x18\x04 \x01(\v2\x12.agent.v1.LogBatchH\x00R\blogBatch\x12Q\n" +
 	"\x0facknowledgement\x18\x05 \x01(\v2%.agent.v1.DesiredStateAcknowledgementH\x00R\x0facknowledgementB\t\n" +
-	"\apayload\"\x88\x03\n" +
+	"\apayload\"-\n" +
+	"\fSyncBatchEnd\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\xbf\x03\n" +
 	"\x12AgentServerMessage\x12A\n" +
 	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredState\x12C\n" +
 	"\x0fallocation_diff\x18\x02 \x01(\v2\x18.agent.v1.AllocationDiffH\x00R\x0eallocationDiff\x12J\n" +
 	"\x12node_config_update\x18\x03 \x01(\v2\x1a.agent.v1.NodeConfigUpdateH\x00R\x10nodeConfigUpdate\x12H\n" +
 	"\x10pull_credentials\x18\x04 \x01(\v2\x1b.agent.v1.PullCredentialSetH\x00R\x0fpullCredentials\x12I\n" +
-	"\x11replica_endpoints\x18\x05 \x01(\v2\x1a.agent.v1.ReplicaEndpointsH\x00R\x10replicaEndpointsB\t\n" +
+	"\x11replica_endpoints\x18\x05 \x01(\v2\x1a.agent.v1.ReplicaEndpointsH\x00R\x10replicaEndpoints\x125\n" +
+	"\tbatch_end\x18\x06 \x01(\v2\x16.agent.v1.SyncBatchEndH\x00R\bbatchEndB\t\n" +
 	"\apayload*m\n" +
 	"\x10AllocationIntent\x12!\n" +
 	"\x1dALLOCATION_INTENT_UNSPECIFIED\x10\x00\x12\x19\n" +
@@ -2993,7 +3061,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_agent_proto_goTypes = []any{
 	(AllocationIntent)(0),                      // 0: agent.v1.AllocationIntent
 	(SnapshotScope)(0),                         // 1: agent.v1.SnapshotScope
@@ -3022,44 +3090,45 @@ var file_agent_proto_goTypes = []any{
 	(*LogEntry)(nil),                           // 24: agent.v1.LogEntry
 	(*LogBatch)(nil),                           // 25: agent.v1.LogBatch
 	(*AgentClientMessage)(nil),                 // 26: agent.v1.AgentClientMessage
-	(*AgentServerMessage)(nil),                 // 27: agent.v1.AgentServerMessage
-	(*timestamppb.Timestamp)(nil),              // 28: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil),     // 29: platform.v1.ResolvedServiceSpec
-	(*platformv1.RestartObservation)(nil),      // 30: platform.v1.RestartObservation
-	(platformv1.ServiceLogType)(0),             // 31: platform.v1.ServiceLogType
+	(*SyncBatchEnd)(nil),                       // 27: agent.v1.SyncBatchEnd
+	(*AgentServerMessage)(nil),                 // 28: agent.v1.AgentServerMessage
+	(*timestamppb.Timestamp)(nil),              // 29: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil),     // 30: platform.v1.ResolvedServiceSpec
+	(*platformv1.RestartObservation)(nil),      // 31: platform.v1.RestartObservation
+	(platformv1.ServiceLogType)(0),             // 32: platform.v1.ServiceLogType
 }
 var file_agent_proto_depIdxs = []int32{
 	3,  // 0: agent.v1.AgentHello.runtime_resources:type_name -> agent.v1.RuntimeResource
 	22, // 1: agent.v1.AgentHello.allocations:type_name -> agent.v1.ServiceCondition
-	28, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	29, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
 	7,  // 3: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
 	9,  // 4: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
-	29, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	30, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
 	13, // 6: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
-	30, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
+	31, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
 	0,  // 8: agent.v1.DesiredService.intent:type_name -> agent.v1.AllocationIntent
-	28, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
+	29, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
 	11, // 10: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
 	12, // 11: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	28, // 12: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	29, // 12: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
 	8,  // 13: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
 	1,  // 14: agent.v1.DesiredNodeState.scope:type_name -> agent.v1.SnapshotScope
-	28, // 15: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
+	29, // 15: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
 	12, // 16: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
 	12, // 17: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
 	11, // 18: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
-	28, // 19: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
-	28, // 20: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
+	29, // 19: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
+	29, // 20: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
 	16, // 21: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
-	28, // 22: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
+	29, // 22: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
 	8,  // 23: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
-	28, // 24: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
-	28, // 25: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
-	30, // 26: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	29, // 24: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
+	29, // 25: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
+	31, // 26: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
 	21, // 27: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
 	22, // 28: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	28, // 29: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	31, // 30: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	29, // 29: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	32, // 30: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
 	24, // 31: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
 	2,  // 32: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
 	10, // 33: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
@@ -3071,17 +3140,18 @@ var file_agent_proto_depIdxs = []int32{
 	18, // 39: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
 	17, // 40: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
 	19, // 41: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
-	4,  // 42: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	6,  // 43: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	26, // 44: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	5,  // 45: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	5,  // 46: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	27, // 47: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	45, // [45:48] is the sub-list for method output_type
-	42, // [42:45] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	27, // 42: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
+	4,  // 43: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	6,  // 44: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	26, // 45: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	5,  // 46: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	5,  // 47: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	28, // 48: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	46, // [46:49] is the sub-list for method output_type
+	43, // [43:46] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -3096,12 +3166,13 @@ func file_agent_proto_init() {
 		(*AgentClientMessage_LogBatch)(nil),
 		(*AgentClientMessage_Acknowledgement)(nil),
 	}
-	file_agent_proto_msgTypes[25].OneofWrappers = []any{
+	file_agent_proto_msgTypes[26].OneofWrappers = []any{
 		(*AgentServerMessage_DesiredState)(nil),
 		(*AgentServerMessage_AllocationDiff)(nil),
 		(*AgentServerMessage_NodeConfigUpdate)(nil),
 		(*AgentServerMessage_PullCredentials)(nil),
 		(*AgentServerMessage_ReplicaEndpoints)(nil),
+		(*AgentServerMessage_BatchEnd)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3109,7 +3180,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   26,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

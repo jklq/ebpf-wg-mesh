@@ -425,9 +425,9 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 }
 
 // sendSyncBatch loads current state, reconciles inventory on first send, and
-// emits a single fenced batch: node config, credentials, allocations
-// (checkpoint or ordered diffs), then replicas. It returns the new sent
-// position (unchanged when nothing was sent).
+// emits a single fenced batch — node config, credentials, allocations
+// (checkpoint or ordered diffs), then replicas — terminated by a batch-end
+// marker. It returns the new sent position (unchanged when nothing was sent).
 func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, lastAlloc int64, lastNode, lastCreds, lastReplicas string, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (deliverycore.SyncVersions, error) {
 	sent := deliverycore.SyncVersions{Cursor: lastAlloc, NodeConfig: lastNode, Credentials: lastCreds, Replicas: lastReplicas}
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
@@ -554,6 +554,14 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		}); err != nil {
 			return sent, err
 		}
+	}
+	// Close the batch: the agent withholds status publication until this
+	// marker, so a batch that pauses mid-stream can never surface an
+	// intermediate inventory between its messages.
+	if err := stream.Send(&agentv1.AgentServerMessage{
+		Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}},
+	}); err != nil {
+		return sent, err
 	}
 	return current, nil
 }

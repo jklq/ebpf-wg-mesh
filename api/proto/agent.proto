@@ -303,6 +303,14 @@ message AgentClientMessage {
   }
 }
 
+// Terminates one server batch on the Sync stream. A batch is applied as a
+// unit: the agent withholds status publication until this marker, so an
+// intermediate inventory is never validated against the batch's final
+// assignments. Carries no state and is not acknowledged.
+message SyncBatchEnd {
+  string session_id = 1;
+}
+
 message AgentServerMessage {
   oneof payload {
     DesiredNodeState desired_state = 1;
@@ -310,6 +318,7 @@ message AgentServerMessage {
     NodeConfigUpdate node_config_update = 3;
     PullCredentialSet pull_credentials = 4;
     ReplicaEndpoints replica_endpoints = 5;
+    SyncBatchEnd batch_end = 6;
   }
 }
 

@@ -28,6 +28,7 @@ type syncPosition struct {
 	nodeConfig  string
 	credentials string
 	replicas    string
+	batches     int
 }
 
 func (p *syncPosition) observe(t *testing.T, msg *agentv1.AgentServerMessage) {
@@ -63,6 +64,8 @@ func (p *syncPosition) observe(t *testing.T, msg *agentv1.AgentServerMessage) {
 		replicas := msg.GetReplicaEndpoints()
 		p.epoch = replicas.GetAuthorityEpoch()
 		p.replicas = replicas.GetReplicasVersion()
+	case msg.GetBatchEnd() != nil:
+		p.batches++
 	default:
 		t.Fatalf("unknown sync message payload: %T", msg.GetPayload())
 	}
@@ -368,6 +371,14 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	if len(noop.GetStarts())+len(noop.GetUpdates())+len(noop.GetStops())+len(noop.GetVolumeStarts())+len(noop.GetVolumeStops()) != 0 {
 		t.Fatalf("peer-only diff changed allocations: %+v", noop)
+	}
+	// The batch closes with its end marker: status publication is gated on
+	// it, so a paused batch can never publish an intermediate inventory.
+	batchesBefore := track.batches
+	end := recvSyncMessage(t, messages, 30*time.Second)
+	track.observe(t, end)
+	if track.batches == batchesBefore {
+		t.Fatalf("peer-only batch must close with a batch-end marker, got %T", end.GetPayload())
 	}
 	drainSyncQuiet(t, messages, time.Second, track)
 

@@ -327,6 +327,9 @@ func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
 		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update}}); err != nil {
 			return err
 		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: hello.GetHello().GetSessionId()}}}); err != nil {
+			return err
+		}
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
@@ -411,6 +414,9 @@ func TestSyncSessionDefersReportUntilBatchApplied(t *testing.T) {
 		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff}}); err != nil {
 			return err
 		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
@@ -465,8 +471,8 @@ func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
 	// diff but before the stop — is rejected by the control plane against the
 	// final assignments and closes the stream. The second diff follows just
 	// after the first acknowledgement so the reconcile notification reaches
-	// the session loop mid-batch; the quiet point is the only publication
-	// window.
+	// the session loop mid-batch; the batch-end marker is the only
+	// publication gate.
 	authority := newTestTLSAuthority(t)
 	messages := make(chan *agentv1.AgentClientMessage, 16)
 	var clusterIdentity string
@@ -506,6 +512,9 @@ func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
 		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: second}}); err != nil {
 			return err
 		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
@@ -538,6 +547,98 @@ func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatalf("timeout waiting for status report after diff replay (acks=%d)", acks)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionHoldsReportThroughMidBatchPause(t *testing.T) {
+	t.Parallel()
+
+	// A batch that pauses mid-stream must not publish. The quiet window is
+	// measured from each processed message, so when delivery stalls between
+	// the credentials update and the allocation diff the deferred republish
+	// fires with the diff still in flight: publishing there emits the
+	// pre-diff inventory, which the control plane rejects for a removed
+	// allocation and closes the stream. Publication must wait for the
+	// batch-end marker that follows the diff.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		creds := &agentv1.PullCredentialSet{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			Credentials:    []*agentv1.AllocationCredential{{AllocationId: "alloc-1", Username: "user", Password: "pass"}},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		creds.CredentialsVersion = reconciliation.HashCredentials(creds.GetCredentials())
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds}}); err != nil {
+			return err
+		}
+		// Pause past the quiet window with the batch's allocation diff still
+		// in flight: the deferred republish fires inside this gap.
+		time.Sleep(2*reportRepublishQuietPeriod + 100*time.Millisecond)
+		diff := &agentv1.AllocationDiff{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			BaseRevision: 5, TargetRevision: 6, Stops: []string{"alloc-1"},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	acks := 0
+	sawReport := false
+	deadline := time.After(15 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			switch msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				acks++
+			case *agentv1.AgentClientMessage_StatusReport:
+				if acks < 2 {
+					t.Fatalf("status report published after %d of 2 acks; a paused batch must withhold publication until its batch end", acks)
+				}
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for status report after the paused batch (acks=%d)", acks)
 		}
 	}
 	sessionCancel()

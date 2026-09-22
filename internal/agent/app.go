@@ -358,6 +358,10 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	// Newest authority epoch whose stamped payloads this session confirmed.
 	confirmedEpoch := summary.AuthorityEpoch
 	handshake := true
+	// batchOpen marks a server batch whose batch-end marker has not arrived:
+	// its remaining messages are still in flight and their state is not
+	// accepted yet.
+	batchOpen := false
 	sendCurrentReport := func() error {
 		report, err := a.supervisor.CurrentReport()
 		if err != nil || report == nil {
@@ -404,14 +408,20 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		}
 		authorityConfirmed = true
 	}
-	// Reports are published at stream-quiet points only: mid-batch the persisted
-	// report trails the accepted diffs, and an intermediate inventory is rejected
-	// by the control plane against its final assignments. Every processed message
-	// defers a republish so the report follows once the stream settles. Repeated
-	// scheduling coalesces; the observation-sequence dedupe collapses repeats.
+	// Reports are published at stream-quiet points and never inside an open
+	// batch: mid-batch the persisted report trails the accepted diffs, and an
+	// intermediate inventory is rejected by the control plane against its
+	// final assignments. Every processed message restarts the quiet window,
+	// and the server's batch-end marker closes the batch and starts the final
+	// window. Repeated scheduling coalesces; the observation-sequence dedupe
+	// collapses repeats.
 	reportRepublish := make(chan struct{}, 1)
+	var republishTimer *time.Timer
 	scheduleReportRepublish := func() {
-		time.AfterFunc(reportRepublishQuietPeriod, func() {
+		if republishTimer != nil {
+			republishTimer.Stop()
+		}
+		republishTimer = time.AfterFunc(reportRepublishQuietPeriod, func() {
 			select {
 			case reportRepublish <- struct{}{}:
 			default:
@@ -462,6 +472,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if handshake || !authorityConfirmed {
 				continue
 			}
+			if batchOpen {
+				// A batch is still streaming; its batch-end marker
+				// reschedules the republish once the batch is applied.
+				continue
+			}
 			if err := sendCurrentReport(); err != nil {
 				return err
 			}
@@ -487,6 +502,18 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if result.message == nil {
 				continue
 			}
+			if end := result.message.GetBatchEnd(); end != nil {
+				if end.GetSessionId() != sessionID {
+					return fmt.Errorf("batch end for foreign session %q", end.GetSessionId())
+				}
+				batchOpen = false
+				scheduleReportRepublish()
+				continue
+			}
+			// Every state message opens or extends a batch; publication
+			// waits for the batch-end marker, so a paused batch can never
+			// publish its intermediate inventory between messages.
+			batchOpen = true
 			switch payload := result.message.Payload.(type) {
 			case *agentv1.AgentServerMessage_DesiredState:
 				state := payload.DesiredState

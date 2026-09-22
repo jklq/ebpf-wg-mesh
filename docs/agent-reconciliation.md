@@ -46,7 +46,11 @@ cannot authorize cleanup on another node. Every delivered message also names
 its stream and carries an authority expiry, and a single grant covers a whole
 batch (node config, credentials, allocations, replicas) with one deadline.
 Batches send policy/peers first (fail closed), then credentials, then
-allocations, then replica discovery.
+allocations, then replica discovery, and end with an explicit batch-end
+marker. The agent withholds status publication until that marker: reports
+reflect accepted state only after the whole batch is applied, so an
+intermediate inventory is never validated against the batch's final
+assignments.
 
 The agent validates identity, stream, scope, completeness, configuration,
 expiry, epoch and cursor/version. It persists the highest observed
