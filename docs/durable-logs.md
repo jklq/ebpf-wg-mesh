@@ -88,7 +88,8 @@ reads; past the owed-gap key cap shed windows fold into service-level
 aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as
 ingest gaps per affected service and allocation.
 Shutdown drains the accepted backlog under a 15s grace deadline:
-queued batches and owed gap windows flush before the process exits,
+the batch caught mid-retry, queued batches, and owed gap windows
+flush before the process exits,
 even when the run context is already canceled. Only a hard kill or an
 expired grace loses the unflushed remainder, and that remainder is
 logged with full accounting rather than vanishing (producers

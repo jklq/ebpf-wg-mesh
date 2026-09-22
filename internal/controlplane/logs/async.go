@@ -271,7 +271,7 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			a.drainShutdown(ctx)
+			a.drainShutdown(ctx, pendingFlush{})
 			return nil
 		case flush := <-a.queue:
 			a.coalesce(&flush)
@@ -281,7 +281,11 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 			}
 			if err := a.flushWithRetry(ctx, flush); err != nil {
 				if ctx.Err() != nil {
-					a.drainShutdown(ctx)
+					// The dequeued batch was never accepted and its
+					// attached gaps already left the owed maps: hand
+					// the in-flight flush to the drain so shutdown
+					// does not drop accepted data mid-retry.
+					a.drainShutdown(ctx, flush)
 					return nil
 				}
 				return err
@@ -290,21 +294,16 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 	}
 }
 
-// drainShutdown flushes everything already accepted — queued
-// batches, owed gap windows, and anything arriving during the drain
-// — under a grace deadline decoupled from the canceled run context.
-// Whatever survives the grace expires is logged with full accounting
-// instead of vanishing.
-func (a *AsyncIngester) drainShutdown(ctx context.Context) {
+// drainShutdown flushes everything already accepted — the in-flight
+// batch handed over from Run, queued batches, owed gap windows, and
+// anything arriving during the drain — under a grace deadline
+// decoupled from the canceled run context. Whatever survives the
+// grace expires is logged with full accounting instead of vanishing.
+func (a *AsyncIngester) drainShutdown(ctx context.Context, inFlight pendingFlush) {
 	graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.shutdownGrace)
 	defer cancel()
+	flush := inFlight
 	for {
-		var flush pendingFlush
-		select {
-		case next := <-a.queue:
-			flush = next
-		default:
-		}
 		a.coalesce(&flush)
 		a.attachOwed(&flush)
 		if len(flush.lines) == 0 && len(flush.gaps) == 0 {
@@ -321,6 +320,7 @@ func (a *AsyncIngester) drainShutdown(ctx context.Context) {
 				"error", err)
 			return
 		}
+		flush = pendingFlush{}
 	}
 }
 

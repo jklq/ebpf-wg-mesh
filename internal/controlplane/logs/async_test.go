@@ -344,3 +344,50 @@ func TestAsyncIngesterDrainsAcceptedBacklogOnShutdown(t *testing.T) {
 		t.Fatal("shed batches must surface as gap rows at shutdown")
 	}
 }
+
+// Shutdown must also keep the batch currently being retried: when the
+// run context ends mid-outage, the dequeued flush and its attached
+// gap windows are handed to the drain instead of vanishing with the
+// canceled retry.
+func TestAsyncIngesterDrainsInFlightRetryOnShutdown(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true, failLines: errors.New("clickhouse is down"), failUntil: time.Now().Add(250 * time.Millisecond)}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 8, ShutdownGrace: 10 * time.Second})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ingester.Run(ctx) }()
+
+	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3))
+	// Cancel only once the batch is dequeued and its first write has
+	// failed: the flush is now in flight inside flushWithRetry.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		store.mu.Lock()
+		attempts := store.flushes
+		store.mu.Unlock()
+		if attempts >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no write attempt for the queued batch")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not exit after cancel")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.lines) != 3 {
+		t.Fatalf("shutdown dropped the in-flight batch: delivered %d of 3 lines", len(store.lines))
+	}
+}
