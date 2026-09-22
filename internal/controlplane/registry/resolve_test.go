@@ -136,6 +136,42 @@ func TestManifestURLForRoutesDockerHubToDistributionEndpoint(t *testing.T) {
 	}
 }
 
+func TestHTTPResolverRefusesManifestRedirects(t *testing.T) {
+	t.Parallel()
+
+	// The manifest HEAD and its GET fallback both go through one request
+	// path; cover each entry into it.
+	for name, refuseHead := range map[string]bool{
+		"manifest redirect":     false,
+		"get fallback redirect": true,
+	} {
+		t.Run(name, func(t *testing.T) {
+			probed := false
+			internal := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				probed = true
+			}))
+			t.Cleanup(internal.Close)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && refuseHead {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				http.Redirect(w, r, internal.URL+"/internal", http.StatusFound)
+			}))
+			t.Cleanup(server.Close)
+
+			resolver := NewHTTPResolver(server.Client())
+			_, err := resolver.Resolve(context.Background(), strings.TrimPrefix(server.URL, "http://")+"/demo/echo:latest")
+			if err == nil || !strings.Contains(err.Error(), "redirect refused") {
+				t.Fatalf("Resolve = %v, want redirect refusal", err)
+			}
+			if probed {
+				t.Fatal("manifest redirect reached the internal destination")
+			}
+		})
+	}
+}
+
 func TestStaticResolver(t *testing.T) {
 	t.Parallel()
 

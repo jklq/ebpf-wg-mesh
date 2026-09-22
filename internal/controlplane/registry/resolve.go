@@ -50,17 +50,30 @@ const manifestAcceptTypes = "application/vnd.docker.distribution.manifest.v2+jso
 // anonymous access. Direct images must be publicly pullable: 2.6 carries
 // no private-registry credentials, and a Basic challenge fails closed with
 // an actionable error instead of hanging a deploy on auth it cannot do.
+//
+// Registry traffic never follows redirects: a Location header from a
+// user-chosen registry is attacker-controlled input just like a Bearer
+// realm, and following one would let the registry walk the control plane
+// toward internal URLs. Real registries serve manifest HEAD/GET from the
+// canonical endpoint directly (redirects are a blob-CDN concern, and this
+// resolver never fetches blobs), so refusal fails closed without breaking
+// legitimate resolution.
 type HTTPResolver struct {
 	client *http.Client
 }
 
 // NewHTTPResolver builds a registry resolver over client, or a default
-// 15-second client when nil.
+// 15-second client when nil. The client is copied so the resolver can
+// enforce its no-redirect policy without touching the caller's client.
 func NewHTTPResolver(client *http.Client) *HTTPResolver {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &HTTPResolver{client: client}
+	owned := *client
+	owned.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("registry redirect refused")
+	}
+	return &HTTPResolver{client: &owned}
 }
 
 func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, error) {
@@ -181,6 +194,10 @@ func (r *HTTPResolver) manifestDigest(ctx context.Context, manifestURL, token st
 	}
 }
 
+// manifestRequest performs one manifest HEAD or GET against the
+// registry's canonical endpoint. Redirects are refused by the resolver's
+// client (see NewHTTPResolver): a manifest redirect must not hand the
+// registry a reachable path to internal services.
 func (r *HTTPResolver) manifestRequest(ctx context.Context, method, manifestURL, token string) (digest string, status int, wwwAuthenticate string, err error) {
 	req, err := http.NewRequestWithContext(ctx, method, manifestURL, nil)
 	if err != nil {
@@ -239,9 +256,9 @@ func parseAuthChallenge(params string) bearerChallengeValues {
 
 // anonymousToken fetches an anonymous pull token from a Bearer
 // challenge's realm. The realm is validated against the registry that
-// issued the challenge first (see tokenRealmURL), and the fetch follows
-// no redirects: one compromised hop must not walk the control plane
-// toward internal URLs.
+// issued the challenge first (see tokenRealmURL), and like all registry
+// traffic the fetch follows no redirects (see NewHTTPResolver): one
+// compromised hop must not walk the control plane toward internal URLs.
 func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChallengeValues, registryHost, repository string) (string, error) {
 	tokenURL, err := tokenRealmURL(ctx, challenge.realm, registryHost)
 	if err != nil {
@@ -258,11 +275,7 @@ func (r *HTTPResolver) anonymousToken(ctx context.Context, challenge bearerChall
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
 	req.Header.Set("User-Agent", "ebpf-wg-mesh-deploy-by-digest/1")
-	client := *r.client
-	client.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return errors.New("registry auth realm redirect refused")
-	}
-	resp, err := client.Do(req)
+	resp, err := r.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
