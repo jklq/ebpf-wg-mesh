@@ -578,3 +578,45 @@ func TestSpoolCollectsCommittedSegmentsAfterRetention(t *testing.T) {
 		t.Fatalf("committed segments not collected past retention: %+v", stats)
 	}
 }
+
+func TestSpoolDoesNotEvictInFlightBatch(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 900, MaxSegmentBytes: 300})
+	now := time.Now().UTC()
+	payload := make([]byte, 100)
+	if err := s.Append("flight", "in-flight", now, payload); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	records, cursor, err := s.Read(1)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != "in-flight" {
+		t.Fatalf("unexpected batch: %+v", records)
+	}
+	// Overflow the spool while the batch is in flight: eviction must
+	// skip the pinned segment even though older data normally goes
+	// first — the batch may already be delivered, and evicting it
+	// would report a false gap and fail the commit.
+	for i := 0; i < 20; i++ {
+		if err := s.Append("hot", fmt.Sprintf("id-%02d", i), now, payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	evicted, _ := s.DrainDrops()
+	if evicted["flight"] != 0 {
+		t.Fatalf("in-flight batch must not count as evicted drops: %v", evicted)
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit under eviction pressure: %v", err)
+	}
+	rest, _, err := s.Read(1000)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	for _, rec := range rest {
+		if rec.ID == "in-flight" {
+			t.Fatal("committed record must not be read again")
+		}
+	}
+}

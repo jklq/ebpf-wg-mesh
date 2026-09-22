@@ -95,6 +95,11 @@ type Spool struct {
 	segments []segmentInfo
 	cursor   Cursor
 
+	// inflight pins the segments spanned by the outstanding Read
+	// batch. Callers Commit or Release the batch before reading the
+	// next one.
+	inflight map[uint64]struct{}
+
 	records        int64
 	bytes          int64
 	evicted        map[string]uint64
@@ -110,6 +115,7 @@ type segmentInfo struct {
 	size           int64
 	records        int64
 	newestObserved time.Time
+	pins           int
 }
 
 // OpenSpool opens or creates the spool in cfg.Dir, recovering segment
@@ -146,6 +152,7 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		retention:    cfg.Retention,
 		evicted:      make(map[string]uint64),
 		corruptDrops: make(map[string]uint64),
+		inflight:     make(map[uint64]struct{}),
 	}
 	if err := s.recover(); err != nil {
 		return nil, err
@@ -336,6 +343,7 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 		return nil, s.cursor, nil
 	}
 	var out []Record
+	spanned := make(map[uint64]struct{})
 	cursor := s.cursor
 	for len(out) < maxRecords {
 		raw, segID, err := s.readSegmentLocked(cursor.Segment)
@@ -380,19 +388,51 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 			continue
 		}
 		out = append(out, rec)
+		spanned[cursor.Segment] = struct{}{}
 		cursor.Offset = nextOff
+	}
+	s.releaseInflightLocked()
+	for id := range spanned {
+		s.pinLocked(id)
 	}
 	return out, cursor, nil
 }
 
-// Commit advances the durable cursor past a shipped batch and
-// collects fully shipped sealed segments past the retention horizon.
+// pinLocked pins one segment against eviction for the outstanding
+// batch.
+func (s *Spool) pinLocked(id uint64) {
+	for i := range s.segments {
+		if s.segments[i].id == id {
+			s.segments[i].pins++
+			s.inflight[id] = struct{}{}
+			return
+		}
+	}
+}
+
+// releaseInflightLocked drops the outstanding batch's eviction pins.
+func (s *Spool) releaseInflightLocked() {
+	for id := range s.inflight {
+		for i := range s.segments {
+			if s.segments[i].id == id {
+				s.segments[i].pins--
+				break
+			}
+		}
+	}
+	s.inflight = make(map[uint64]struct{})
+}
+
+// Commit advances the durable cursor past a shipped batch,
+// releases its eviction pin, and collects fully shipped sealed
+// segments past the retention horizon.
 func (s *Spool) Commit(c Cursor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return errors.New("log spool is closed")
 	}
+	defer s.releaseInflightLocked()
 	if c.Segment < s.cursor.Segment ||
 		(c.Segment == s.cursor.Segment && c.Offset < s.cursor.Offset) {
 		return fmt.Errorf("log spool commit moved backwards: %+v after %+v", c, s.cursor)
@@ -403,6 +443,15 @@ func (s *Spool) Commit(c Cursor) error {
 	}
 	s.collectLocked()
 	return nil
+}
+
+// Release gives the outstanding batch back without shipping it: the
+// records stay unshipped for the next Read and the eviction pin is
+// dropped. Every Read must be paired with either Commit or Release.
+func (s *Spool) Release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseInflightLocked()
 }
 
 // RewindForReplay moves the durable cursor back to the first record
@@ -564,19 +613,35 @@ func (s *Spool) rotateLocked() error {
 	return nil
 }
 
-// evictLocked deletes the oldest segments while the spool exceeds
-// its byte cap. Fully shipped segments vanish silently; unshipped
-// records are counted per key as drops.
+// evictLocked deletes the oldest unpinned segments while the spool
+// exceeds its byte cap. Fully shipped segments vanish silently;
+// unshipped records are counted per key as drops. Segments pinned by
+// an in-flight batch are never evicted: the batch may already be
+// delivered, and evicting it would report a false gap and fail the
+// commit.
 func (s *Spool) evictLocked() {
 	for s.bytes > s.maxBytes && len(s.segments) > 1 {
-		oldest := s.segments[0]
+		idx := -1
+		for i, seg := range s.segments {
+			if seg.pins == 0 {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			// Every segment is pinned by the in-flight batch. Hold
+			// eviction until it commits or releases; the overshoot
+			// is bounded by one batch.
+			return
+		}
+		oldest := s.segments[idx]
 		if oldest.id == s.activeID {
 			// Single-segment overflow: seal it so the writer keeps
 			// a live active segment, then evict the sealed data.
 			if err := s.rotateLocked(); err != nil {
 				return
 			}
-			oldest = s.segments[0]
+			oldest = s.segments[idx]
 		}
 		drops, dropBytes := s.unshippedCountsLocked(oldest)
 		for key, count := range drops {

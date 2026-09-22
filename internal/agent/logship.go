@@ -307,6 +307,7 @@ func (s *logShipper) flush() {
 	if err != nil {
 		slog.Warn("send container log batch failed", "agent_id", s.agentID, "error", err)
 		s.restorePending(taken)
+		s.spool.Release()
 		return
 	}
 	if err := s.spool.Commit(cursor); err != nil {

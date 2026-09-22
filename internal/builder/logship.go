@@ -320,6 +320,7 @@ func (r *buildLogReporter) flush() {
 	})
 	if err != nil {
 		r.restorePending(taken)
+		r.spool.Release()
 		if status.Code(err) == codes.PermissionDenied {
 			r.orphaned.Store(true)
 			slog.Warn("build log reporter orphaned by lease loss", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
