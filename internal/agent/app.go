@@ -363,6 +363,19 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		if err != nil || report == nil {
 			return err
 		}
+		summary, err := a.supervisor.Summary()
+		if err != nil {
+			return err
+		}
+		// Publish only reports that reflect the accepted allocation position.
+		// Batches apply several diffs in sequence, and the persisted report
+		// trails the accepts until the next reconcile: an intermediate report
+		// is rejected by the control plane against the final assignments and
+		// closes the session. The reconcile notification delivers the
+		// refreshed report once its content catches up.
+		if report.GetAuthorityEpoch() != summary.AuthorityEpoch || report.GetReconciliationCursor() != summary.ReconciliationCursor {
+			return nil
+		}
 		if report.GetObservationSequence() <= lastSentSequence {
 			return nil
 		}
@@ -391,12 +404,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		}
 		authorityConfirmed = true
 	}
-	// Independent updates (node config, credentials, replicas) republish the
-	// runtime report at the next stream-quiet point rather than eagerly: a
-	// replaced session starts without observations, but batches interleave
-	// independent updates before allocation payloads, and a report that still
-	// lists a removed allocation is rejected mid-batch. Repeated scheduling
-	// coalesces; the observation-sequence dedupe collapses repeats.
+	// Reports are published at stream-quiet points only: mid-batch the persisted
+	// report trails the accepted diffs, and an intermediate inventory is rejected
+	// by the control plane against its final assignments. Every processed message
+	// defers a republish so the report follows once the stream settles. Repeated
+	// scheduling coalesces; the observation-sequence dedupe collapses repeats.
 	reportRepublish := make(chan struct{}, 1)
 	scheduleReportRepublish := func() {
 		time.AfterFunc(reportRepublishQuietPeriod, func() {
@@ -426,9 +438,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if handshake || !authorityConfirmed {
 				continue
 			}
-			if err := sendCurrentReport(); err != nil {
-				return err
-			}
+			// Defer to the quiet point: a batch may still be streaming and is
+			// fully applied before the refreshed report is published.
+			scheduleReportRepublish()
 		case <-credentialTicker.C:
 			if handshake {
 				continue
@@ -496,9 +508,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				}
 				a.supervisor.ReconcileAcceptedDesired()
 				slog.Info("accepted checkpoint", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-				if err := sendCurrentReport(); err != nil {
-					return err
-				}
+				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_AllocationDiff:
 				diff := payload.AllocationDiff
 				if diff == nil {
@@ -513,9 +523,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				}
 				a.supervisor.ReconcileAcceptedDesired()
 				slog.Info("accepted diff", "agent_id", a.cfg.Node.ID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
-				if err := sendCurrentReport(); err != nil {
-					return err
-				}
+				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_NodeConfigUpdate:
 				update := payload.NodeConfigUpdate
 				if update == nil {

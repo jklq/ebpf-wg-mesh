@@ -275,6 +275,26 @@ func newSyncSessionApp(t *testing.T, authority *identity.TLSAuthority) (*App, cr
 	}
 	app.stateStore = store
 	app.supervisor = supervisor
+	// Settle the start-up reconcile and drain its report notification so the
+	// session tests observe only batch-driven publications.
+	settleDeadline := time.Now().Add(5 * time.Second)
+	for {
+		if report, err := app.supervisor.CurrentReport(); err == nil && report != nil {
+			break
+		}
+		if time.Now().After(settleDeadline) {
+			t.Fatal("start-up report was not recorded")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	for {
+		select {
+		case <-app.supervisor.ReportNotifications():
+			continue
+		case <-time.After(50 * time.Millisecond):
+		}
+		break
+	}
 	return app, creds, certNotAfter, clusterIdentity
 }
 
@@ -426,6 +446,98 @@ func TestSyncSessionDefersReportUntilBatchApplied(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatalf("timeout waiting for deferred status report (acks=%d)", acks)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
+	t.Parallel()
+
+	// The server replays several retained diffs as one batch. The agent must
+	// publish the runtime report only once the whole batch is applied and
+	// acknowledged: a report for the intermediate state — after the earlier
+	// diff but before the stop — is rejected by the control plane against the
+	// final assignments and closes the stream. The second diff follows just
+	// after the first acknowledgement so the reconcile notification reaches
+	// the session loop mid-batch; the quiet point is the only publication
+	// window.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		forward := func(msg *agentv1.AgentClientMessage) {
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+		first := testDiff(5, 6, nil, []*agentv1.DesiredService{testDiffService("alloc-1", 2, 1)}, nil)
+		first.ClusterId, first.SessionId = clusterIdentity, sessionID
+		second := testDiff(6, 7, nil, nil, []string{"alloc-1"})
+		second.ClusterId, second.SessionId = clusterIdentity, sessionID
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: first}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			forward(msg)
+			if msg.GetAcknowledgement() != nil {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: second}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			forward(msg)
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	acks := 0
+	sawReport := false
+	deadline := time.After(10 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			switch msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				acks++
+			case *agentv1.AgentClientMessage_StatusReport:
+				if acks < 2 {
+					t.Fatalf("status report published after %d acks; every diff in the batch must be applied and acknowledged first", acks)
+				}
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for status report after diff replay (acks=%d)", acks)
 		}
 	}
 	sessionCancel()
