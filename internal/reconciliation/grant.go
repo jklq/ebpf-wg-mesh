@@ -98,6 +98,52 @@ func HashReplicas(addresses []string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// HashObservationOverlay versions the observation-derived overlay of desired
+// services: internal hosts and restart observations rebuild from live control
+// plane observations (health, sessions) and may change at the same
+// reconciliation cursor. Both peers compute it from DesiredService content, so
+// a reconnect can detect drift and repair it with a same-cursor checkpoint.
+// It covers exactly the fields excluded from the cursor-versioned allocation
+// comparison on the agent.
+func HashObservationOverlay(services []*agentv1.DesiredService) string {
+	ordered := append([]*agentv1.DesiredService(nil), services...)
+	slices.SortFunc(ordered, func(a, b *agentv1.DesiredService) int {
+		return strings.Compare(a.GetAllocationId(), b.GetAllocationId())
+	})
+	h := sha256.New()
+	for _, svc := range ordered {
+		h.Write([]byte(svc.GetAllocationId()))
+		h.Write([]byte{0})
+		hosts := append([]*agentv1.InternalHost(nil), svc.GetInternalHosts()...)
+		slices.SortFunc(hosts, func(a, b *agentv1.InternalHost) int {
+			if n := strings.Compare(a.GetHostname(), b.GetHostname()); n != 0 {
+				return n
+			}
+			if n := strings.Compare(a.GetIpv4(), b.GetIpv4()); n != 0 {
+				return n
+			}
+			return strings.Compare(a.GetIpv6(), b.GetIpv6())
+		})
+		for _, host := range hosts {
+			h.Write([]byte(host.GetHostname()))
+			h.Write([]byte{0})
+			h.Write([]byte(host.GetIpv4()))
+			h.Write([]byte{0})
+			h.Write([]byte(host.GetIpv6()))
+			h.Write([]byte{0})
+		}
+		if obs := svc.GetRestartObservation(); obs != nil {
+			raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(obs)
+			if err != nil {
+				return ""
+			}
+			h.Write(raw)
+		}
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func hashBytes(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

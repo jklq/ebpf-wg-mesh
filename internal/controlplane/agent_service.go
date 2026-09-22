@@ -395,10 +395,11 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 	helloInventory := hello.GetAllocations()
 	helloInit := hello.GetInitializationState()
 	helloEpoch := hello.GetAcceptedAuthorityEpoch()
+	helloOverlay := hello.GetAcceptedObservationOverlayVersion()
 	first := true
 	for {
 		slog.Info("checking desired state", "agent_id", agentID)
-		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, lastAlloc, lastNode, lastCreds, lastReplicas, helloInventory, helloInit, helloEpoch, first)
+		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, lastAlloc, lastNode, lastCreds, lastReplicas, helloInventory, helloInit, helloEpoch, helloOverlay, first)
 		if err != nil {
 			return err
 		}
@@ -428,7 +429,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 // emits a single fenced batch — node config, credentials, allocations
 // (checkpoint or ordered diffs), then replicas — terminated by a batch-end
 // marker. It returns the new sent position (unchanged when nothing was sent).
-func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, lastAlloc int64, lastNode, lastCreds, lastReplicas string, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (deliverycore.SyncVersions, error) {
+func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, lastAlloc int64, lastNode, lastCreds, lastReplicas string, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, helloOverlay string, first bool) (deliverycore.SyncVersions, error) {
 	sent := deliverycore.SyncVersions{Cursor: lastAlloc, NodeConfig: lastNode, Credentials: lastCreds, Replicas: lastReplicas}
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
@@ -447,6 +448,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		Credentials: creds.GetCredentialsVersion(),
 		Replicas:    deliverycore.HashReplicas(s.replicaAddresses),
 	}
+	currentOverlay := reconciliation.HashObservationOverlay(state.GetServices())
 	if current.Cursor < lastAlloc {
 		return sent, status.Error(codes.FailedPrecondition, "agent cursor is ahead of control plane; recovery required")
 	}
@@ -462,6 +464,15 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		// Takeover advances the epoch; the checkpoint carries the new
 		// authority even when allocation content is unchanged.
 		slog.Info("authority epoch changed; sending checkpoint", "agent_id", agentID, "hello_epoch", helloEpoch, "epoch", epoch)
+		needCheckpoint = true
+	} else if first && helloOverlay != currentOverlay {
+		// Observation-derived fields (internal hosts, restart observations)
+		// drift without a desired_revision bump. A ready reconnect echoes the
+		// accepted observation overlay version and gets a repair checkpoint
+		// when it trails; the checkpoint covers the overlay in full even when
+		// the cursor also advanced and retained diffs would reach only their
+		// changed services.
+		slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID)
 		needCheckpoint = true
 	} else if current.Cursor == lastAlloc {
 		if first && !deliverycore.InventoriesMatch(helloInventory, state.GetServices()) {

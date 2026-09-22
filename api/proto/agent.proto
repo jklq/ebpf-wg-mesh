@@ -21,8 +21,11 @@ message AgentHello {
   // Last durable control-plane position accepted by the agent. These fields
   // describe local inventory; the connection does not own that state.
   // reconciliation_cursor is the accepted per-node allocation revision
-  // (monotonic). The other accepted_*_version fields are content-hash versions
-  // for independently delivered streams; empty means none accepted.
+  // (monotonic). The other accepted_*_version fields are content-hash
+  // versions of accepted content; empty means none accepted. The observation
+  // overlay version covers the observation-derived fields of accepted
+  // services (internal hosts, restart observations), which can drift at the
+  // same reconciliation cursor and are repaired with a checkpoint.
   uint64 accepted_authority_epoch = 11;
   int64 reconciliation_cursor = 12;
   bool recovery_mode = 13;
@@ -36,6 +39,7 @@ message AgentHello {
   string accepted_node_config_version = 21;
   string accepted_credentials_version = 22;
   string accepted_replicas_version = 23;
+  string accepted_observation_overlay_version = 24;
 }
 
 message RuntimeResource {

@@ -446,3 +446,77 @@ func TestDesiredConfigurationEqualIgnoresNodeConfig(t *testing.T) {
 		t.Fatal("mutated allocation content compares equal")
 	}
 }
+
+func TestDesiredConfigurationEqualIgnoresObservationOverlay(t *testing.T) {
+	t.Parallel()
+	// The observation overlay (internal hosts, restart observations) derives
+	// from live control-plane observations and may change at the same
+	// reconciliation cursor; a repair checkpoint must not compare unequal
+	// because of it.
+	left := testDesiredState(1, 5, "alloc-a")
+	right := testDesiredState(1, 5, "alloc-a")
+	right.Services[0].InternalHosts = []*agentv1.InternalHost{{Hostname: "alloc-a.mesh.internal", Ipv4: "10.0.0.7"}}
+	right.Services[0].RestartObservation = &platformv1.RestartObservation{RestartCount: 2}
+	if !desiredConfigurationEqual(left, right) {
+		t.Fatal("observation overlay compares unequal at the same cursor")
+	}
+	right.Services[0].DesiredSpecRevision = 2
+	if desiredConfigurationEqual(left, right) {
+		t.Fatal("mutated allocation content compares equal")
+	}
+}
+
+func TestAcceptSameCursorCheckpointUpdatesObservationOverlay(t *testing.T) {
+	t.Parallel()
+	store := openTestLocalState(t)
+	if err := store.prepareStartup("cluster-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	baseline := testDesiredState(1, 4, "keep")
+	if _, err := store.acceptDesired("cluster-a", "test-session", baseline); err != nil {
+		t.Fatal(err)
+	}
+	baselineOverlay := reconciliation.HashObservationOverlay(baseline.GetServices())
+	if summary, err := store.summary(); err != nil || summary.ObservationOverlayVersion != baselineOverlay {
+		t.Fatalf("summary overlay = %q want %q: %v", summary.ObservationOverlayVersion, baselineOverlay, err)
+	}
+	// Observation-derived fields drift without a revision bump (a health
+	// change altered internal hosts); a reconnect repair checkpoint carries
+	// the refreshed overlay at the same cursor and must apply it instead of
+	// rejecting the repair as a same-cursor mutation.
+	updated := testDesiredState(1, 4, "keep")
+	updated.Services[0].InternalHosts = []*agentv1.InternalHost{{Hostname: "keep.mesh.internal", Ipv4: "10.0.0.9"}}
+	changed, err := store.acceptDesired("cluster-a", "test-session", updated)
+	if err != nil {
+		t.Fatalf("same-cursor repair with changed observation overlay rejected: %v", err)
+	}
+	if !changed {
+		t.Fatal("observation overlay update was not applied as a change")
+	}
+	desired, err := store.desiredState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hosts := desired.GetServices()[0].GetInternalHosts(); len(hosts) != 1 || hosts[0].GetIpv4() != "10.0.0.9" {
+		t.Fatalf("observation overlay not updated: %+v", hosts)
+	}
+	updatedOverlay := reconciliation.HashObservationOverlay(updated.GetServices())
+	if summary, err := store.summary(); err != nil || summary.ObservationOverlayVersion != updatedOverlay {
+		t.Fatalf("summary overlay after repair = %q want %q: %v", summary.ObservationOverlayVersion, updatedOverlay, err)
+	}
+	// A duplicate of the same checkpoint stays idempotent.
+	if changed, err := store.acceptDesired("cluster-a", "test-session", updated); err != nil || changed {
+		t.Fatalf("duplicate checkpoint should be idempotent: changed=%v err=%v", changed, err)
+	}
+	// The allocation guard still holds: cursor-versioned content may not
+	// change without advancing the cursor.
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 4, "keep", "extra")); err == nil {
+		t.Fatal("same-cursor mutation of allocations accepted")
+	}
+	// The follow-up diff chains from the unchanged cursor.
+	changed, err = store.acceptAllocationDiff("cluster-a", "test-session",
+		testDiff(4, 5, []*agentv1.DesiredService{testDiffService("next", 1, 1)}, nil, nil))
+	if err != nil || !changed {
+		t.Fatalf("follow-up diff after same-cursor repair rejected: changed=%v err=%v", changed, err)
+	}
+}

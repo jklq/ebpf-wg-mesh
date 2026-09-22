@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -316,6 +317,9 @@ func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
 		}
 		if hello.GetHello() == nil {
 			return errors.New("expected agent hello")
+		}
+		if want := reconciliation.HashObservationOverlay(testDesiredState(1, 5, "alloc-1").GetServices()); hello.GetHello().GetAcceptedObservationOverlayVersion() != want {
+			return fmt.Errorf("hello observation overlay version = %q, want %q", hello.GetHello().GetAcceptedObservationOverlayVersion(), want)
 		}
 		nodeConfig := &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24"}
 		update := &agentv1.NodeConfigUpdate{

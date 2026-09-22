@@ -95,18 +95,19 @@ type replicaDiscoveryState struct {
 }
 
 type localStateSummary struct {
-	LocalStoreID         string
-	Allocations          []*agentv1.ServiceCondition
-	Initialization       initializationState
-	AgentIdentity        string
-	ClusterIdentity      string
-	AuthorityEpoch       uint64
-	ReconciliationCursor int64
-	NodeConfigVersion    string
-	CredentialsVersion   string
-	ReplicasVersion      string
-	RuntimeResources     []RuntimeResource
-	QuarantinedStore     string
+	LocalStoreID              string
+	Allocations               []*agentv1.ServiceCondition
+	Initialization            initializationState
+	AgentIdentity             string
+	ClusterIdentity           string
+	AuthorityEpoch            uint64
+	ReconciliationCursor      int64
+	NodeConfigVersion         string
+	CredentialsVersion        string
+	ReplicasVersion           string
+	ObservationOverlayVersion string
+	RuntimeResources          []RuntimeResource
+	QuarantinedStore          string
 }
 
 type localStateStore struct {
@@ -643,8 +644,11 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 			}
 			// Node configuration is independently versioned: a same-cursor
 			// repair checkpoint carries the latest node configuration and
-			// applies it below.
-			changed = previousState.GetNodeConfigVersion() != clean.GetNodeConfigVersion()
+			// applies it below. The observation overlay (internal hosts,
+			// restart observations) derives from live control-plane state the
+			// same way and is repaired by the same checkpoint.
+			changed = previousState.GetNodeConfigVersion() != clean.GetNodeConfigVersion() ||
+				reconciliation.HashObservationOverlay(previousState.GetServices()) != reconciliation.HashObservationOverlay(clean.GetServices())
 		} else {
 			changed = true
 		}
@@ -1393,6 +1397,13 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 		result.NodeConfigVersion = string(meta.Get(nodeConfigVersionKey))
 		result.CredentialsVersion = string(meta.Get(credentialsVersionKey))
 		result.ReplicasVersion = string(meta.Get(replicasVersionKey))
+		if raw := tx.Bucket(localDesiredBucket).Get(desiredStateKey); len(raw) > 0 {
+			var desired agentv1.DesiredNodeState
+			if err := proto.Unmarshal(raw, &desired); err != nil {
+				return err
+			}
+			result.ObservationOverlayVersion = reconciliation.HashObservationOverlay(desired.GetServices())
+		}
 		if err := tx.Bucket(localAllocationsBucket).ForEach(func(_, value []byte) error {
 			var a localAllocationState
 			if err := json.Unmarshal(value, &a); err != nil {
@@ -1467,6 +1478,17 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	// in validateDesiredState, not by the allocation cursor.
 	left.NodeConfig, right.NodeConfig = nil, nil
 	left.NodeConfigVersion, right.NodeConfigVersion = "", ""
+	// The observation overlay (internal hosts, restart observations) derives
+	// from live control-plane observations and may likewise change at the same
+	// cursor. Its integrity rides the fenced allocation payloads; reconnect
+	// drift is detected via the observation overlay version in the hello and
+	// repaired with a same-cursor checkpoint.
+	for _, svc := range left.GetServices() {
+		svc.InternalHosts, svc.RestartObservation = nil, nil
+	}
+	for _, svc := range right.GetServices() {
+		svc.InternalHosts, svc.RestartObservation = nil, nil
+	}
 	// Configuration is a set of allocations and volumes; wire order is not
 	// semantic (checkpoints follow assignment order, diff merges do not).
 	canonicalizeDesiredState(left)

@@ -133,23 +133,27 @@ type AgentHello struct {
 	// Last durable control-plane position accepted by the agent. These fields
 	// describe local inventory; the connection does not own that state.
 	// reconciliation_cursor is the accepted per-node allocation revision
-	// (monotonic). The other accepted_*_version fields are content-hash versions
-	// for independently delivered streams; empty means none accepted.
-	AcceptedAuthorityEpoch     uint64              `protobuf:"varint,11,opt,name=accepted_authority_epoch,json=acceptedAuthorityEpoch,proto3" json:"accepted_authority_epoch,omitempty"`
-	ReconciliationCursor       int64               `protobuf:"varint,12,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
-	RecoveryMode               bool                `protobuf:"varint,13,opt,name=recovery_mode,json=recoveryMode,proto3" json:"recovery_mode,omitempty"`
-	RuntimeResources           []*RuntimeResource  `protobuf:"bytes,14,rep,name=runtime_resources,json=runtimeResources,proto3" json:"runtime_resources,omitempty"`
-	ClusterId                  string              `protobuf:"bytes,15,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	LocalStoreId               string              `protobuf:"bytes,16,opt,name=local_store_id,json=localStoreId,proto3" json:"local_store_id,omitempty"`
-	InitializationState        string              `protobuf:"bytes,17,opt,name=initialization_state,json=initializationState,proto3" json:"initialization_state,omitempty"`
-	Allocations                []*ServiceCondition `protobuf:"bytes,18,rep,name=allocations,proto3" json:"allocations,omitempty"`
-	SessionIncarnation         uint64              `protobuf:"varint,19,opt,name=session_incarnation,json=sessionIncarnation,proto3" json:"session_incarnation,omitempty"`
-	WireguardEndpoint          string              `protobuf:"bytes,20,opt,name=wireguard_endpoint,json=wireguardEndpoint,proto3" json:"wireguard_endpoint,omitempty"`
-	AcceptedNodeConfigVersion  string              `protobuf:"bytes,21,opt,name=accepted_node_config_version,json=acceptedNodeConfigVersion,proto3" json:"accepted_node_config_version,omitempty"`
-	AcceptedCredentialsVersion string              `protobuf:"bytes,22,opt,name=accepted_credentials_version,json=acceptedCredentialsVersion,proto3" json:"accepted_credentials_version,omitempty"`
-	AcceptedReplicasVersion    string              `protobuf:"bytes,23,opt,name=accepted_replicas_version,json=acceptedReplicasVersion,proto3" json:"accepted_replicas_version,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// (monotonic). The other accepted_*_version fields are content-hash
+	// versions of accepted content; empty means none accepted. The observation
+	// overlay version covers the observation-derived fields of accepted
+	// services (internal hosts, restart observations), which can drift at the
+	// same reconciliation cursor and are repaired with a checkpoint.
+	AcceptedAuthorityEpoch            uint64              `protobuf:"varint,11,opt,name=accepted_authority_epoch,json=acceptedAuthorityEpoch,proto3" json:"accepted_authority_epoch,omitempty"`
+	ReconciliationCursor              int64               `protobuf:"varint,12,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
+	RecoveryMode                      bool                `protobuf:"varint,13,opt,name=recovery_mode,json=recoveryMode,proto3" json:"recovery_mode,omitempty"`
+	RuntimeResources                  []*RuntimeResource  `protobuf:"bytes,14,rep,name=runtime_resources,json=runtimeResources,proto3" json:"runtime_resources,omitempty"`
+	ClusterId                         string              `protobuf:"bytes,15,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	LocalStoreId                      string              `protobuf:"bytes,16,opt,name=local_store_id,json=localStoreId,proto3" json:"local_store_id,omitempty"`
+	InitializationState               string              `protobuf:"bytes,17,opt,name=initialization_state,json=initializationState,proto3" json:"initialization_state,omitempty"`
+	Allocations                       []*ServiceCondition `protobuf:"bytes,18,rep,name=allocations,proto3" json:"allocations,omitempty"`
+	SessionIncarnation                uint64              `protobuf:"varint,19,opt,name=session_incarnation,json=sessionIncarnation,proto3" json:"session_incarnation,omitempty"`
+	WireguardEndpoint                 string              `protobuf:"bytes,20,opt,name=wireguard_endpoint,json=wireguardEndpoint,proto3" json:"wireguard_endpoint,omitempty"`
+	AcceptedNodeConfigVersion         string              `protobuf:"bytes,21,opt,name=accepted_node_config_version,json=acceptedNodeConfigVersion,proto3" json:"accepted_node_config_version,omitempty"`
+	AcceptedCredentialsVersion        string              `protobuf:"bytes,22,opt,name=accepted_credentials_version,json=acceptedCredentialsVersion,proto3" json:"accepted_credentials_version,omitempty"`
+	AcceptedReplicasVersion           string              `protobuf:"bytes,23,opt,name=accepted_replicas_version,json=acceptedReplicasVersion,proto3" json:"accepted_replicas_version,omitempty"`
+	AcceptedObservationOverlayVersion string              `protobuf:"bytes,24,opt,name=accepted_observation_overlay_version,json=acceptedObservationOverlayVersion,proto3" json:"accepted_observation_overlay_version,omitempty"`
+	unknownFields                     protoimpl.UnknownFields
+	sizeCache                         protoimpl.SizeCache
 }
 
 func (x *AgentHello) Reset() {
@@ -339,6 +343,13 @@ func (x *AgentHello) GetAcceptedCredentialsVersion() string {
 func (x *AgentHello) GetAcceptedReplicasVersion() string {
 	if x != nil {
 		return x.AcceptedReplicasVersion
+	}
+	return ""
+}
+
+func (x *AgentHello) GetAcceptedObservationOverlayVersion() string {
+	if x != nil {
+		return x.AcceptedObservationOverlayVersion
 	}
 	return ""
 }
@@ -2780,7 +2791,7 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xe2\b\n" +
+	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xb3\t\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
@@ -2808,7 +2819,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x12wireguard_endpoint\x18\x14 \x01(\tR\x11wireguardEndpoint\x12?\n" +
 	"\x1caccepted_node_config_version\x18\x15 \x01(\tR\x19acceptedNodeConfigVersion\x12@\n" +
 	"\x1caccepted_credentials_version\x18\x16 \x01(\tR\x1aacceptedCredentialsVersion\x12:\n" +
-	"\x19accepted_replicas_version\x18\x17 \x01(\tR\x17acceptedReplicasVersion\"r\n" +
+	"\x19accepted_replicas_version\x18\x17 \x01(\tR\x17acceptedReplicasVersion\x12O\n" +
+	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\"r\n" +
 	"\x0fRuntimeResource\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
