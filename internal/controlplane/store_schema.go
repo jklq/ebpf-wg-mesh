@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 26
+const currentSchemaVersion = 27
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -660,4 +660,15 @@ var currentSchema = []string{
 	`CREATE UNIQUE INDEX idx_platform_signing_keys_scope_state
 			ON platform_signing_keys(scope, state)`,
 	`CREATE INDEX idx_platform_signing_keys_wrapping ON platform_signing_keys(wrapping_key_id)`,
+	`CREATE TABLE xds_publications (
+			id BOOL PRIMARY KEY,
+			version STRING NOT NULL,
+			hash STRING NOT NULL,
+			listeners INT8 NOT NULL DEFAULT 0,
+			clusters INT8 NOT NULL DEFAULT 0,
+			endpoints INT8 NOT NULL DEFAULT 0,
+			domains INT8 NOT NULL DEFAULT 0,
+			publisher STRING NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
 }

@@ -5,7 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/routing"
+	"ebof-wg-mesh/internal/controlplane/xds"
 	"errors"
 	"fmt"
 	"testing"
@@ -19,7 +19,7 @@ type rolloutIngressProbe struct {
 	store     *persistence
 	err       error
 	syncCalls int
-	snapshots [][]routing.Backend
+	snapshots [][]xds.Backend
 }
 
 func (p *rolloutIngressProbe) Sync(ctx context.Context) error {
@@ -58,7 +58,7 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 	}
 	markRolloutAllocationReady(t, store, target[0])
 
-	probe := &rolloutIngressProbe{store: store, err: errors.New("caddy unavailable")}
+	probe := &rolloutIngressProbe{store: store, err: errors.New("xds unavailable")}
 	delivery := newTestDelivery(store, nil, probe, nil)
 	reconciler := NewRolloutReconciler(delivery, time.Second)
 	fixedNow := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)

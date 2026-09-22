@@ -173,7 +173,7 @@ func runCrossReplicaNotificationScenario(
 	if err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("generate ingress binding through live owner: %w", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, fmt.Sprintf("grep -Fq %s /var/lib/ebpf-wg-mesh/ingress-probe/latest.json && grep -Fq %s /var/lib/ebpf-wg-mesh/ingress-probe/latest.json", shellQuote(binding.GetHostname()), shellQuote(allocationEndpoint(status.GetAllocation())))); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, fmt.Sprintf("grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json && grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json", shellQuote(binding.GetHostname()), shellQuote(allocationEndpoint(status.GetAllocation())))); err != nil {
 		return crossReplicaFixture{}, fmt.Errorf("wait for primary ingress publication: %w", err)
 	}
 
@@ -255,7 +255,7 @@ func waitForSingletonLease(ctx context.Context, keyPath, host, previousHolder st
 }
 
 func ingressRequestCount(ctx context.Context, keyPath, host string) (int64, error) {
-	output, err := runRemoteCommand(ctx, keyPath, host, "test -f /var/lib/ebpf-wg-mesh/ingress-probe/requests.log && wc -l < /var/lib/ebpf-wg-mesh/ingress-probe/requests.log")
+	output, err := runRemoteCommand(ctx, keyPath, host, "test -f /var/lib/ebpf-wg-mesh/xds-probe/requests.log && wc -l < /var/lib/ebpf-wg-mesh/xds-probe/requests.log")
 	if err != nil {
 		return 0, err
 	}
@@ -271,7 +271,7 @@ func ingressRequestCount(ctx context.Context, keyPath, host string) (int64, erro
 
 func waitForIngressTakeover(ctx context.Context, keyPath, host string, previousCount int64, hostname string) error {
 	command := fmt.Sprintf(
-		"test $(wc -l < /var/lib/ebpf-wg-mesh/ingress-probe/requests.log) -gt %d && grep -Fq %s /var/lib/ebpf-wg-mesh/ingress-probe/latest.json",
+		"test $(wc -l < /var/lib/ebpf-wg-mesh/xds-probe/requests.log) -gt %d && grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json",
 		previousCount,
 		shellQuote(hostname),
 	)

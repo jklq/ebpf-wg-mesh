@@ -34,6 +34,8 @@ const (
 	replicaControlPlaneService = "ebpf-wg-mesh-controlplane-replica"
 	primaryControlPlanePort    = "9443"
 	replicaControlPlanePort    = "9444"
+	primaryXDSPort             = "18000"
+	replicaXDSPort             = "18001"
 	testVMWireGuardPort        = "51820"
 
 	// prepareHostCommand makes a disposable test host deterministic. Scheduled
@@ -266,6 +268,7 @@ func main() {
 	binaries := map[string]string{
 		"controlplane": filepath.Join(binDir, "controlplane"),
 		"agent":        filepath.Join(binDir, "agent"),
+		"xds-probe":    filepath.Join(binDir, "xds-probe"),
 	}
 	infof("building Linux binaries")
 	if err := buildBinaries(ctx, repoRoot, binaries); err != nil {
@@ -385,12 +388,18 @@ func main() {
 	if err := copyFile(ctx, sshKeyPath, binaries["controlplane"], controlplane.PublicIPv4, "/opt/ebpf-wg-mesh/controlplane"); err != nil {
 		failf("copy controlplane binary: %v", err)
 	}
-	infof("installing ingress admin probe on %s", controlplane.Name)
-	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-ingress-probe.sh"), nil); err != nil {
-		failf("install ingress probe: %v", err)
+	infof("copying xds-probe binary to %s", controlplane.Name)
+	if err := copyFile(ctx, sshKeyPath, binaries["xds-probe"], controlplane.PublicIPv4, "/opt/ebpf-wg-mesh/xds-probe"); err != nil {
+		failf("copy xds-probe binary: %v", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-ingress-probe && ss -ltn '( sport = :2019 )' | grep -q LISTEN"); err != nil {
-		failf("wait for ingress probe readiness: %v", err)
+	infof("installing xds probe on %s", controlplane.Name)
+	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-xds-probe.sh"), map[string]string{
+		"XDS_ADDRS": "127.0.0.1:" + primaryXDSPort + ",127.0.0.1:" + replicaXDSPort,
+	}); err != nil {
+		failf("install xds probe: %v", err)
+	}
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-xds-probe"); err != nil {
+		failf("wait for xds probe readiness: %v", err)
 	}
 
 	infof("installing primary controlplane replica on %s", controlplane.Name)
@@ -404,13 +413,14 @@ func main() {
 		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
 		"SERVICE_NAME":           primaryControlPlaneService,
 		"INTERNAL_LISTEN":        "0.0.0.0:" + primaryControlPlanePort,
+		"XDS_LISTEN":             "127.0.0.1:" + primaryXDSPort,
 		"REPLICA_ADDRESSES":      controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
 		"ADVERTISE_ADDR":         controlplane.PublicIPv4 + ":" + primaryControlPlanePort,
 	}); err != nil {
 		failf("install primary controlplane replica: %v", err)
 	}
 	infof("waiting for primary controlplane readiness on %s", controlplane.Name)
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+primaryControlPlaneService+" && test -f /var/lib/ebpf-wg-mesh/controlplane/pki/server.crt && ss -ltn '( sport = :"+primaryControlPlanePort+" )' | grep -q LISTEN"); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+primaryControlPlaneService+" && test -f /var/lib/ebpf-wg-mesh/controlplane/pki/server.crt && ss -ltn '( sport = :"+primaryControlPlanePort+" )' | grep -q LISTEN && ss -ltn '( sport = :"+primaryXDSPort+" )' | grep -q LISTEN"); err != nil {
 		failf("wait for primary controlplane readiness: %v", err)
 	}
 	primaryLease, err := waitForSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4, "")
@@ -425,12 +435,13 @@ func main() {
 		"AGENT_BOOTSTRAP_TOKENS": strings.Join(bootstrapBindings, ","),
 		"SERVICE_NAME":           replicaControlPlaneService,
 		"INTERNAL_LISTEN":        "0.0.0.0:" + replicaControlPlanePort,
+		"XDS_LISTEN":             "127.0.0.1:" + replicaXDSPort,
 		"REPLICA_ADDRESSES":      controlplane.PublicIPv4 + ":" + primaryControlPlanePort + "," + controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
 		"ADVERTISE_ADDR":         controlplane.PublicIPv4 + ":" + replicaControlPlanePort,
 	}); err != nil {
 		failf("install second controlplane replica: %v", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+replicaControlPlaneService+" && ss -ltn '( sport = :"+replicaControlPlanePort+" )' | grep -q LISTEN"); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet "+replicaControlPlaneService+" && ss -ltn '( sport = :"+replicaControlPlanePort+" )' | grep -q LISTEN && ss -ltn '( sport = :"+replicaXDSPort+" )' | grep -q LISTEN"); err != nil {
 		failf("wait for second controlplane readiness: %v", err)
 	}
 	leaseWithBothReplicas, err := readSingletonLease(ctx, sshKeyPath, controlplane.PublicIPv4)
@@ -541,7 +552,7 @@ func main() {
 		if err := waitForIngressTakeover(ctx, sshKeyPath, controlplane.PublicIPv4, ingressRequestsBeforeTakeover, fixture.Hostname); err != nil {
 			failf("wait for ingress convergence after takeover: %v", err)
 		}
-		infof("second controlplane took singleton lease holder=%s token=%d and republished ingress", replicaLease.Holder, replicaLease.Token)
+		infof("second controlplane took singleton lease holder=%s token=%d and republished xds", replicaLease.Holder, replicaLease.Token)
 
 		if err := cleanupCrossReplicaFixture(ctx, controlplane.PublicIPv4+":"+replicaControlPlanePort, identity, fixture); err != nil {
 			failf("clean up cross-replica fixture: %v", err)

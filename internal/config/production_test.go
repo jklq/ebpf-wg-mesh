@@ -45,7 +45,7 @@ func TestFinalizeAcceptsValidMinimalProductionConfigs(t *testing.T) {
 		"database=durable",
 		"source_storage=durable",
 		"envelope_keys=durable",
-		"ingress_admin=loopback",
+		"ingress_xds=loopback",
 	} {
 		if !strings.Contains(contract, part) {
 			t.Fatalf("startup contract %q missing %q", contract, part)
@@ -142,13 +142,11 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.SecretKeys.KeyringPath = "var/controlplane/secret-keys/keys.json"
 		mustReject(t, FinalizeControlPlane(&cfg), "secretKeys.keyringPath must not use ephemeral storage")
 	})
-	t.Run("unprotected remote caddy admin", func(t *testing.T) {
+	t.Run("wildcard xds listen", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.Ingress.AdminURL = "http://10.0.0.2:2019/load"
-		cfg.Ingress.AdminListen = "10.0.0.2:2019"
-		cfg.Ingress.AllowNonLoopbackAdmin = true
-		mustReject(t, FinalizeControlPlane(&cfg), "remote Caddy administration")
+		cfg.Ingress.XDSListen = ":18000"
+		mustReject(t, FinalizeControlPlane(&cfg), "xdsListen must bind an explicit host")
 	})
 	t.Run("filesystem source storage", func(t *testing.T) {
 		t.Parallel()
@@ -171,11 +169,11 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.Ingress.PublicAddr = "platform.local"
 		mustReject(t, FinalizeControlPlane(&cfg), "complete public DNS name")
 	})
-	t.Run("incomplete public certificates", func(t *testing.T) {
+	t.Run("malformed xds listen", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.Ingress.DisableAutomaticHTTPS = true
-		mustReject(t, FinalizeControlPlane(&cfg), "public certificates incomplete")
+		cfg.Ingress.XDSListen = "not-an-addr"
+		mustReject(t, FinalizeControlPlane(&cfg), "xdsListen must be host:port")
 	})
 	t.Run("missing health listen", func(t *testing.T) {
 		t.Parallel()
@@ -225,11 +223,8 @@ func TestDevelopmentProfileAllowsLocalConveniences(t *testing.T) {
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
 		Ingress: IngressConfig{
-			PublicAddr:            "platform.local",
-			DisableAutomaticHTTPS: true,
-			AllowNonLoopbackAdmin: true,
-			AdminURL:              "http://10.0.0.2:2019/load",
-			AdminListen:           "10.0.0.2:2019",
+			PublicAddr: "platform.local",
+			XDSListen:  "0.0.0.0:18000",
 		},
 		Dashboard: ManagedDashboardConfig{
 			DevUsers: []BootstrapUser{{ID: "dev", Email: "dev@example.test"}},

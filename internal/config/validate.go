@@ -61,7 +61,7 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
 	}
-	if err := validateCaddyAdmin(cfg.Ingress); err != nil {
+	if err := validateXDSListen(cfg.Ingress); err != nil {
 		return err
 	}
 	for _, addr := range cfg.Ingress.ListenAddrs {
@@ -577,29 +577,12 @@ func validateAbsoluteHTTPSURL(field string, raw string) error {
 	return nil
 }
 
-func validateCaddyAdmin(cfg IngressConfig) error {
-	if err := validateAbsoluteURL("controlplane.ingress.adminUrl", cfg.AdminURL); err != nil {
-		return err
+func validateXDSListen(cfg IngressConfig) error {
+	if strings.TrimSpace(cfg.XDSListen) == "" {
+		return errors.New("controlplane.ingress.xdsListen is required")
 	}
-	adminURL, err := url.Parse(cfg.AdminURL)
-	if err != nil {
-		return err
-	}
-	if adminURL.Scheme != "http" && adminURL.Scheme != "https" {
-		return errors.New("controlplane.ingress.adminUrl must use http or https")
-	}
-	if cfg.AllowNonLoopbackAdmin {
-		return nil
-	}
-	if !isLoopbackHost(adminURL.Hostname()) {
-		return errors.New("controlplane.ingress.adminUrl must target loopback unless allowNonLoopbackAdmin is enabled")
-	}
-	host, _, err := net.SplitHostPort(cfg.AdminListen)
-	if err != nil {
-		return fmt.Errorf("controlplane.ingress.adminListen must be host:port: %w", err)
-	}
-	if !isLoopbackHost(host) {
-		return errors.New("controlplane.ingress.adminListen must bind loopback unless allowNonLoopbackAdmin is enabled")
+	if _, _, err := net.SplitHostPort(cfg.XDSListen); err != nil {
+		return fmt.Errorf("controlplane.ingress.xdsListen must be host:port: %w", err)
 	}
 	return nil
 }

@@ -73,7 +73,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		},
 		Logs:      config.LogCaptureConfig{ClickHouse: config.ClickHouseConfig{URL: opts.clickhouseURL}},
 		StateDir:  deliverycore.FirstNonEmpty(opts.stateDir, stateDir),
-		Ingress:   config.IngressConfig{PublicAddr: "platform.local", AdminURL: deliverycore.FirstNonEmpty(opts.ingressAdminURL, "http://127.0.0.1:9/load")},
+		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: systemTestDashboardID},
 		Bootstrap: opts.bootstrap,
 		Registry:  opts.registry,
@@ -157,7 +157,6 @@ type systemControlPlaneOptions struct {
 	databaseURL     string
 	stateDir        string
 	clickhouseURL   string
-	ingressAdminURL string
 	bootstrap       config.BootstrapConfig
 	bootstrapTokens []config.AgentBootstrapToken
 	registry        config.RegistryConfig

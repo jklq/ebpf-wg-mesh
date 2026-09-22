@@ -5,29 +5,101 @@ package controlplane
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
-	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	cachev3 "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
+	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
+	"google.golang.org/protobuf/proto"
+
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/routing"
-	"ebof-wg-mesh/internal/testutil"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/xds"
 )
 
-func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
-	t.Parallel()
+func testXDSPublisher(store *persistence, server *xds.Server, publisherID string) *xds.Publisher {
+	return xds.NewPublisher(xds.PublisherConfig{
+		Source:       store.routing,
+		Publications: store.routing,
+		Server:       server,
+		ListenAddrs:  []string{":8080"},
+		PublisherID:  publisherID,
+	})
+}
 
+func serveXDSServer(t *testing.T, server *xds.Server) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := server.GRPCServer()
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(grpcServer.Stop)
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener.Addr().String()
+}
+
+func subscribeType(t *testing.T, addr, nodeID, typeURL string) *discoveryv3.DiscoveryResponse {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := xds.Dial(ctx, addr, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	resp, err := client.Subscribe(ctx, typeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func edsEndpointCount(t *testing.T, snap *xds.Snapshot) int {
+	t.Helper()
+	items := snap.CacheSnapshot().Resources[cachev3.GetResponseType(resourcev3.EndpointType)].Items
+	count := 0
+	for name, item := range items {
+		cla, ok := item.Resource.(*endpointv3.ClusterLoadAssignment)
+		if !ok {
+			t.Fatalf("EDS item %s has type %T", name, item.Resource)
+		}
+		for _, locality := range cla.GetEndpoints() {
+			count += len(locality.GetLbEndpoints())
+		}
+	}
+	return count
+}
+
+func endpointsFromEDS(t *testing.T, resp *discoveryv3.DiscoveryResponse) []string {
+	t.Helper()
+	var out []string
+	for _, resource := range resp.GetResources() {
+		cla := &endpointv3.ClusterLoadAssignment{}
+		if err := resource.UnmarshalTo(cla); err != nil {
+			t.Fatalf("unmarshal ClusterLoadAssignment: %v", err)
+		}
+		for _, locality := range cla.GetEndpoints() {
+			for _, endpoint := range locality.GetLbEndpoints() {
+				socket := endpoint.GetEndpoint().GetAddress().GetSocketAddress()
+				out = append(out, net.JoinHostPort(socket.GetAddress(), fmt.Sprint(socket.GetPortValue())))
+			}
+		}
+	}
+	return out
+}
+
+func createHealthyBoundService(t *testing.T, hostname, allocationIP string, targetPort int32) (*persistence, string) {
+	t.Helper()
 	store := openTestStore(t)
-
 	ctx := context.Background()
 	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
 		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
@@ -45,85 +117,63 @@ func TestIngressRenderIncludesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "demo.example.com", service.ID, 8080); err != nil {
+	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), hostname, service.ID, targetPort); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
+	if err := store.markAllocationHealthyForTest(ctx, service.ID, allocationIP, targetPort); err != nil {
 		t.Fatal(err)
+	}
+	return store, service.ID
+}
+
+func TestXDSPublisherRoutesHealthyDomains(t *testing.T) {
+	t.Parallel()
+
+	store, _ := createHealthyBoundService(t, "demo.example.com", "10.0.0.10", 8080)
+	ctx := context.Background()
+
+	server := xds.NewServer(ctx)
+	publisher := testXDSPublisher(store, server, "replica-a")
+	if err := publisher.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	status := server.Status()
+	if !status.HasSnapshot {
+		t.Fatal("expected a published snapshot")
+	}
+	pub, err := store.routing.LoadPublication(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub.Version != status.Version || pub.Hash == "" || pub.Publisher != "replica-a" {
+		t.Fatalf("publication row = %+v, status version %s", pub, status.Version)
 	}
 
-	syncer := routing.NewIngressSyncer("http://127.0.0.1:2019/load", store.routing)
-	cfg, err := syncer.Render(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	routes := cfg.Apps.HTTP.Servers["srv0"].Routes
-	if len(routes) != 1 {
-		t.Fatalf("expected 1 route, got %d", len(routes))
-	}
-	hosts := routes[0].Match[0].Host
-	if len(hosts) != 1 || hosts[0] != "demo.example.com" {
-		t.Fatalf("unexpected ingress host match %+v", hosts)
-	}
-	if got := routes[0].Handle[0].Upstreams[0].Dial; got != "10.0.0.10:8080" {
-		t.Fatalf("expected healthy IPv4 upstream, got %q", got)
-	}
-
-	allocs, err := store.reads.ListAllocationsByServiceID(ctx, service.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, alloc := range allocs {
-		obs, ok := fixtureLive(store).Observation(alloc.ID, alloc.DesiredRolloutGeneration)
-		if !ok {
-			continue
-		}
-		obs.HealthyIPv4Ports = nil
-		if _, err := fixtureLive(store).RecordObservation(obs); err != nil {
-			t.Fatal(err)
+	addr := serveXDSServer(t, server)
+	// Every type converges on the same content version: a rollout never
+	// publishes partially.
+	for _, typeURL := range []string{
+		resourcev3.ListenerType, resourcev3.ClusterType,
+		resourcev3.RouteType, resourcev3.EndpointType,
+	} {
+		resp := subscribeType(t, addr, "envoy-1", typeURL)
+		if resp.GetVersionInfo() != status.Version {
+			t.Fatalf("type %s: version %s, want %s", typeURL, resp.GetVersionInfo(), status.Version)
 		}
 	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "fd00:200:1::10", 8080); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err = syncer.Render(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg.Apps.HTTP.Servers["srv0"].Routes[0].Handle[0].Upstreams[0].Dial; got != "[fd00:200:1::10]:8080" {
-		t.Fatalf("expected healthy IPv6 fallback upstream, got %q", got)
+	eds := subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)
+	endpoints := endpointsFromEDS(t, eds)
+	if len(endpoints) != 1 || endpoints[0] != "10.0.0.10:8080" {
+		t.Fatalf("EDS endpoints = %v, want [10.0.0.10:8080]", endpoints)
 	}
 }
 
-func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
+func TestXDSRequiresReportedHealthyTargetPort(t *testing.T) {
 	t.Parallel()
 
-	store := openTestStore(t)
-	ctx := context.Background()
-	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
-	if err != nil || len(projects) != 1 {
-		t.Fatalf("listProjects: %v", err)
-	}
-	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
-		t.Fatal(err)
-	}
-	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "demo.example.com", service.ID, 8080); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "attacker.example", 9090); err != nil {
-		t.Fatal(err)
-	}
+	store, _ := createHealthyBoundService(t, "demo.example.com", "attacker.example", 9090)
 
-	backends, err := store.routing.HealthyIngressBackends(ctx)
+	backends, err := store.routing.HealthyIngressBackends(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,330 +182,149 @@ func TestIngressRenderRequiresReportedHealthyTargetPort(t *testing.T) {
 	}
 }
 
-func TestIngressRenderIncludesStaticRoutesAheadOfDynamicBackends(t *testing.T) {
+func TestXDSRemovesDrainingBackendsBeforeShutdown(t *testing.T) {
 	t.Parallel()
 
-	store := openTestStore(t)
-
+	store, serviceID := createHealthyBoundService(t, "demo.example.com", "10.0.0.10", 8080)
 	ctx := context.Background()
-	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
-	}); err != nil {
-		t.Fatal(err)
+
+	server := xds.NewServer(ctx)
+	publisher := testXDSPublisher(store, server, "replica-a")
+	if err := publisher.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
-	if err != nil || len(projects) != 1 {
-		t.Fatalf("listProjects: %v", err)
-	}
-	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
-		t.Fatal(err)
-	}
-	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "echo.localtest.me", service.ID, 8080); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
-		t.Fatal(err)
+	v1 := server.Status().Version
+	addr := serveXDSServer(t, server)
+	if got := endpointsFromEDS(t, subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)); len(got) != 1 {
+		t.Fatalf("serving EDS endpoints = %v, want one", got)
 	}
 
-	syncer := routing.NewIngressSyncer(
-		"http://127.0.0.1:2019/load",
-		store.routing,
-		routing.WithIngressStaticRoutes([]routing.IngressStaticRoute{{
-			Hosts:    []string{"platform.localtest.me", "mesh.dev.example.test"},
-			Upstream: "host.docker.internal:41235",
-		}}),
-		routing.WithIngressListenAddrs([]string{":8080"}),
-		routing.WithIngressAdminListen(":2019"),
-		routing.WithIngressAutomaticHTTPSDisabled(true),
-	)
-	cfg, err := syncer.Render(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Admin == nil || cfg.Admin.Listen != ":2019" {
-		t.Fatalf("unexpected admin config %+v", cfg.Admin)
-	}
-	server := cfg.Apps.HTTP.Servers["srv0"]
-	if len(server.Listen) != 1 || server.Listen[0] != ":8080" {
-		t.Fatalf("unexpected listen addrs %+v", server.Listen)
-	}
-	if server.AutomaticHTTPS == nil || !server.AutomaticHTTPS.Disable {
-		t.Fatalf("expected automatic https disabled, got %+v", server.AutomaticHTTPS)
-	}
-	if len(server.Routes) != 2 {
-		t.Fatalf("expected 2 routes, got %d", len(server.Routes))
-	}
-	staticHosts := server.Routes[0].Match[0].Host
-	if strings.Join(staticHosts, ",") != "mesh.dev.example.test,platform.localtest.me" {
-		t.Fatalf("unexpected static route hosts %+v", staticHosts)
-	}
-	if got := server.Routes[0].Handle[0].Upstreams[0].Dial; got != "host.docker.internal:41235" {
-		t.Fatalf("unexpected static upstream %q", got)
-	}
-	dynamicHosts := server.Routes[1].Match[0].Host
-	if len(dynamicHosts) != 1 || dynamicHosts[0] != "echo.localtest.me" {
-		t.Fatalf("unexpected dynamic route hosts %+v", dynamicHosts)
-	}
-}
-
-func TestIngressSyncSerializesConcurrentPushes(t *testing.T) {
-	t.Parallel()
-
-	store := openTestStore(t)
-
-	ctx := context.Background()
-	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
-	if err != nil || len(projects) != 1 {
-		t.Fatalf("listProjects: %v", err)
-	}
-	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
-		t.Fatal(err)
-	}
-
-	serviceA, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-a", serviceSpec(), "node-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "a.example.com", serviceA.ID, 8080); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.markAllocationHealthyForTest(ctx, serviceA.ID, "10.0.0.10", 8080); err != nil {
-		t.Fatal(err)
-	}
-
-	syncer := routing.NewIngressSyncer("http://caddy.invalid/load", store.routing)
-	transport := &blockingIngressTransport{
-		firstStarted: make(chan struct{}),
-		releaseFirst: make(chan struct{}),
-	}
-	routing.WithHTTPClient(&http.Client{Transport: transport})(syncer)
-
-	firstErrCh := make(chan error, 1)
-	go func() {
-		firstErrCh <- syncer.Sync(ctx)
-	}()
-
-	<-transport.firstStarted
-
-	serviceB, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web-b", serviceSpec(), "node-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "b.example.com", serviceB.ID, 8080); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.markAllocationHealthyForTest(ctx, serviceB.ID, "10.0.0.11", 8080); err != nil {
-		t.Fatal(err)
-	}
-
-	secondErrCh := make(chan error, 1)
-	go func() {
-		secondErrCh <- syncer.Sync(ctx)
-	}()
-
-	close(transport.releaseFirst)
-
-	if err := <-firstErrCh; err != nil {
-		t.Fatalf("first Sync: %v", err)
-	}
-	if err := <-secondErrCh; err != nil {
-		t.Fatalf("second Sync: %v", err)
-	}
-	if transport.overlap.Load() != 0 {
-		t.Fatal("expected ingress pushes to be serialized")
-	}
-	if len(transport.requests) != 2 {
-		t.Fatalf("expected 2 ingress pushes, got %d", len(transport.requests))
-	}
-	if transport.requests[0].method != http.MethodPost || !strings.HasSuffix(transport.requests[0].url, "/load") {
-		t.Fatalf("expected first push to POST /load, got %s %s", transport.requests[0].method, transport.requests[0].url)
-	}
-	if transport.requests[1].method != http.MethodPatch || !strings.HasSuffix(transport.requests[1].url, "/config/apps/http/servers/srv0/routes") {
-		t.Fatalf("expected second push to PATCH routes, got %s %s", transport.requests[1].method, transport.requests[1].url)
-	}
-	firstRoutes := ingressRouteCount(t, transport.requests[0].body)
-	secondRoutes := ingressRouteCount(t, transport.requests[1].body)
-	if firstRoutes != 1 {
-		t.Fatalf("expected first push to contain 1 route, got %d", firstRoutes)
-	}
-	if secondRoutes != 2 {
-		t.Fatalf("expected second push to contain 2 routes, got %d", secondRoutes)
-	}
-}
-
-func TestIngressRequestSyncCoalescesBurst(t *testing.T) {
-	t.Parallel()
-
-	store := openTestStore(t)
-
-	ctx := context.Background()
-	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
-	if err != nil || len(projects) != 1 {
-		t.Fatalf("listProjects: %v", err)
-	}
-	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
-		t.Fatal(err)
-	}
-	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), "node-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.10", 8080); err != nil {
-		t.Fatal(err)
-	}
-
-	syncer := routing.NewIngressSyncer("http://caddy.invalid/load", store.routing)
-	routing.WithMinSyncInterval(20 * time.Millisecond)(syncer)
-	transport := &blockingIngressTransport{
-		firstStarted: make(chan struct{}),
-		releaseFirst: make(chan struct{}),
-	}
-	routing.WithHTTPClient(&http.Client{Transport: transport})(syncer)
-
-	runCtx, cancelRun := context.WithCancel(ctx)
-	runDone := make(chan error, 1)
-	go func() { runDone <- syncer.Run(runCtx) }()
-	t.Cleanup(func() {
-		cancelRun()
-		if err := <-runDone; err != nil {
-			t.Errorf("Run: %v", err)
+	// The replacement is ready and the predecessor starts draining while its
+	// container still exists: EDS must drop it before destructive shutdown.
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
+			SET rollout_state = $1, updated_at = statement_timestamp()
+			WHERE service_id = $2`, deliverycore.AllocationRolloutDraining, serviceID); err != nil {
+			return err
 		}
-	})
-	<-transport.firstStarted
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("user-1"), "web.example.com", service.ID, 8080); err != nil {
-		t.Fatalf("createDomainBinding: %v", err)
-	}
-	syncer.RequestSync()
-	syncer.RequestSync()
-	syncer.RequestSync()
-	close(transport.releaseFirst)
-
-	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: time.Second}, func(ctx context.Context) (bool, error) {
-		return transport.calls.Load() == 2, nil
+		return recordServiceAssignmentsAndRollout(ctx, tx, serviceID)
 	}); err != nil {
-		t.Fatalf("wait for coalesced ingress pushes: %v", err)
+		t.Fatal(err)
 	}
-	time.Sleep(2 * syncer.MinSyncInterval())
-	if got := transport.calls.Load(); got != 2 {
-		t.Fatalf("expected exactly 2 ingress pushes, got %d", got)
+	if err := publisher.Sync(ctx); err != nil {
+		t.Fatalf("Sync after drain: %v", err)
+	}
+	v2 := server.Status().Version
+	if v2 == v1 {
+		t.Fatal("draining transition must publish a new version")
+	}
+	if got := endpointsFromEDS(t, subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)); len(got) != 0 {
+		t.Fatalf("draining EDS endpoints = %v, want none", got)
+	}
+	var remaining int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM allocation_assignments WHERE service_id = $1`, serviceID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining == 0 {
+		t.Fatal("draining allocation was destroyed before EDS removal")
 	}
 }
 
-func TestIngressSyncSkipsUnchangedConfig(t *testing.T) {
+func TestXDSSplitOwnershipConverges(t *testing.T) {
+	t.Parallel()
+
+	store, _ := createHealthyBoundService(t, "demo.example.com", "10.0.0.10", 8080)
+	ctx := context.Background()
+
+	serverA := xds.NewServer(ctx)
+	serverB := xds.NewServer(ctx)
+	publisherA := testXDSPublisher(store, serverA, "replica-a")
+	publisherB := testXDSPublisher(store, serverB, "replica-b")
+
+	// Racing owners compute identical bytes and converge on one version;
+	// the loser adopts the row instead of rewriting it.
+	if err := publisherA.Sync(ctx); err != nil {
+		t.Fatalf("Sync A: %v", err)
+	}
+	if err := publisherB.Sync(ctx); err != nil {
+		t.Fatalf("Sync B: %v", err)
+	}
+	versionA, versionB := serverA.Status().Version, serverB.Status().Version
+	if versionA == "" || versionA != versionB {
+		t.Fatalf("versions diverged: A=%s B=%s", versionA, versionB)
+	}
+	pub, err := store.routing.LoadPublication(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub.Version != versionA || pub.Publisher != "replica-a" {
+		t.Fatalf("publication row = %+v, want winner replica-a at %s", pub, versionA)
+	}
+	addrA, addrB := serveXDSServer(t, serverA), serveXDSServer(t, serverB)
+	marshal := proto.MarshalOptions{Deterministic: true}
+	for _, typeURL := range []string{resourcev3.ListenerType, resourcev3.ClusterType, resourcev3.RouteType, resourcev3.EndpointType} {
+		respA := subscribeType(t, addrA, "envoy-1", typeURL)
+		respB := subscribeType(t, addrB, "envoy-1", typeURL)
+		rawA, err := marshal.Marshal(respA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rawB, err := marshal.Marshal(respB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Nonces differ per stream; versions and resources must not.
+		respA.Nonce, respB.Nonce = "", ""
+		rawA, _ = marshal.Marshal(respA)
+		rawB, _ = marshal.Marshal(respB)
+		if string(rawA) != string(rawB) {
+			t.Fatalf("type %s: racing replicas served different bytes", typeURL)
+		}
+	}
+
+	// A stale owner that has not observed takeover is fenced: no publish,
+	// no row write, last-known-good retained.
+	fenced := context.WithValue(ctx, leaseContextKey{}, leaseClaim{name: SingletonLeaseName, holder: "dead-owner", token: -1})
+	if err := publisherB.Sync(fenced); err == nil {
+		t.Fatal("expected a fenced owner to fail Sync")
+	}
+	if got := serverB.Status().Version; got != versionB {
+		t.Fatalf("fenced owner changed served version to %s", got)
+	}
+}
+
+func TestXDSPublicationRowCompareAndSwap(t *testing.T) {
 	t.Parallel()
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
-	}); err != nil {
+
+	pub, err := store.routing.LoadPublication(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	syncer := routing.NewIngressSyncer("http://caddy.invalid/load", store.routing)
-	transport := &blockingIngressTransport{
-		firstStarted: make(chan struct{}),
-		releaseFirst: make(chan struct{}),
+	if pub != (xds.Publication{}) {
+		t.Fatalf("expected no publication, got %+v", pub)
 	}
-	routing.WithHTTPClient(&http.Client{Transport: transport})(syncer)
-	close(transport.releaseFirst)
-
-	if err := syncer.Sync(ctx); err != nil {
-		t.Fatalf("first Sync: %v", err)
+	won, err := store.routing.CompareAndSwapPublication(ctx, "", "v1", "h1", xds.Counts{Listeners: 1}, "replica-a")
+	if err != nil || !won {
+		t.Fatalf("initial insert won=%v err=%v", won, err)
 	}
-	if err := syncer.Sync(ctx); err != nil {
-		t.Fatalf("second Sync: %v", err)
+	won, err = store.routing.CompareAndSwapPublication(ctx, "", "v2", "h2", xds.Counts{}, "replica-b")
+	if err != nil || won {
+		t.Fatalf("stale insert won=%v err=%v, want loss", won, err)
 	}
-	if got := transport.calls.Load(); got != 1 {
-		t.Fatalf("expected unchanged config to skip the second push, got %d", got)
+	won, err = store.routing.CompareAndSwapPublication(ctx, "h1", "v2", "h2", xds.Counts{Endpoints: 3}, "replica-b")
+	if err != nil || !won {
+		t.Fatalf("CAS update won=%v err=%v", won, err)
 	}
-}
-
-type recordedIngressPush struct {
-	method string
-	url    string
-	body   []byte
-}
-
-type blockingIngressTransport struct {
-	firstStarted chan struct{}
-	releaseFirst chan struct{}
-	calls        atomic.Int32
-	inFlight     atomic.Int32
-	overlap      atomic.Int32
-	mu           sync.Mutex
-	requests     []recordedIngressPush
-}
-
-func (t *blockingIngressTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.inFlight.Add(1) > 1 {
-		t.overlap.Store(1)
-	}
-	defer t.inFlight.Add(-1)
-
-	body, err := io.ReadAll(req.Body)
+	pub, err = store.routing.LoadPublication(ctx)
 	if err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
-	t.mu.Lock()
-	t.requests = append(t.requests, recordedIngressPush{
-		method: req.Method,
-		url:    req.URL.String(),
-		body:   append([]byte(nil), body...),
-	})
-	t.mu.Unlock()
-
-	if t.calls.Add(1) == 1 {
-		close(t.firstStarted)
-		<-t.releaseFirst
+	if pub.Version != "v2" || pub.Hash != "h2" || pub.Publisher != "replica-b" {
+		t.Fatalf("publication = %+v", pub)
 	}
-
-	return &http.Response{
-		StatusCode: 200,
-		Body:       io.NopCloser(strings.NewReader("ok")),
-		Header:     make(http.Header),
-	}, nil
-}
-
-func ingressRouteCount(t *testing.T, body []byte) int {
-	t.Helper()
-
-	var routes []json.RawMessage
-	if err := json.Unmarshal(body, &routes); err == nil && json.Valid(body) && len(body) > 0 && body[0] == '[' {
-		return len(routes)
-	}
-
-	var cfg struct {
-		Apps struct {
-			HTTP struct {
-				Servers map[string]struct {
-					Routes []json.RawMessage `json:"routes"`
-				} `json:"servers"`
-			} `json:"http"`
-		} `json:"apps"`
-	}
-	if err := json.Unmarshal(body, &cfg); err != nil {
-		t.Fatalf("json.Unmarshal ingress body: %v", err)
-	}
-	server, ok := cfg.Apps.HTTP.Servers["srv0"]
-	if !ok {
-		t.Fatal("expected srv0 server in ingress body")
-	}
-	return len(server.Routes)
 }
 
 func agentHello(id string) *agentv1.AgentHello {

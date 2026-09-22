@@ -117,10 +117,14 @@ Preserve the existing digest-pinned build completion and deployment-action behav
 ## 2.7a xDS control plane and Caddy cutover
 
 Was: 5.2 (split)
-Status: open
+Status: in review
 Depends on: none. One Caddy is currently a product outage and the wrong apply protocol.
 
 Design-partner minimum.
+
+Implemented: `internal/controlplane/xds` is the xDS authority. `Build` derives LDS/CDS/EDS/RDS deterministically from CockroachDB-backed healthy backends plus static routes; the version is the hex SHA-256 of the canonical inputs, so replicas racing to compute it produce identical bytes and converge on one publication-row winner via compare-and-swap under the singleton lease guard. Snapshots are consistency-checked before serving, so a rollout never publishes partially. Only ready, non-draining `serving` allocations are routed (multiple replicas per service); draining flips the allocation out of EDS while the container still exists, and the rolling reconciler already waits for ingress convergence before drain. The ADS server tracks per-node applied versions and NACKs, seeds (re)connecting nodes with the current snapshot, and retains last-known-good on NACK. Caddy is removed from the production path, localteststack (now `envoyproxy/envoy:v1.36-latest` with an ADS-only bootstrap), and the VM harness (now an `xds-probe` subscribing to both replicas). One-time proof against real Envoy v1.36: subscribe, ACK on all four types with zero NACKs, traffic routed for bare and host:port Host forms, unknown hosts 404. Tests cover snapshot determinism (plus a golden version), NACK retention, delayed apply, restart resubscribe, split-ownership convergence with byte-identical service, draining removal before shutdown, and publication-row CAS.
+
+Remaining: SDS is served but empty until 2.8 pushes certificates (Envoy serves plaintext until then). The xDS transport is plaintext without client auth and must be network-isolated until mTLS lands with the fleet work. Envoy subscribes to the live owner; fleet tracking, availability policy, per-instance health, and config diff are 2.7b. No console ingress-status UI and no status RPC; see `docs/frontend-handoff/2.7a.md`.
 
 Prompt:
 

@@ -4,18 +4,16 @@ package controlplane
 
 import (
 	"context"
-	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
+
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/testutil"
 )
@@ -157,25 +155,11 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 		deadTok = "restart-dead-token"
 		liveTok = "restart-live-token"
 	)
-	var (
-		mu         sync.Mutex
-		syncBodies int
-	)
-	caddy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		mu.Lock()
-		syncBodies++
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(caddy.Close)
-
 	dbURL := createTestDatabase(t)
 	stateDir := t.TempDir()
 	opts := systemControlPlaneOptions{
-		databaseURL:     dbURL,
-		stateDir:        stateDir,
-		ingressAdminURL: caddy.URL + "/load",
+		databaseURL: dbURL,
+		stateDir:    stateDir,
 		bootstrap: config.BootstrapConfig{Users: []config.BootstrapUser{
 			{ID: "user-1", Email: "user@example.com", Projects: []string{"ha"}},
 		}},
@@ -277,31 +261,22 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	if err := second.server.ingress.Sync(ctx); err != nil {
 		t.Fatalf("startup-equivalent ingress Sync: %v", err)
 	}
-	rendered, err := second.server.ingress.Render(ctx)
-	if err != nil {
-		t.Fatal(err)
+	status := second.server.XDSServer().Status()
+	if !status.HasSnapshot {
+		t.Fatal("expected a published xDS snapshot after restart")
+	}
+	eds := subscribeType(t, second.server.XDSAddr(), "restart-envoy", resourcev3.EndpointType)
+	if eds.GetVersionInfo() != status.Version {
+		t.Fatalf("EDS version %s, want published %s", eds.GetVersionInfo(), status.Version)
 	}
 	found := false
-	for _, route := range rendered.Apps.HTTP.Servers["srv0"].Routes {
-		if len(route.Match) == 0 {
-			continue
-		}
-		for _, host := range route.Match[0].Host {
-			if host == "restart.example.com" {
-				found = true
-				if len(route.Handle) == 0 || !strings.Contains(route.Handle[0].Upstreams[0].Dial, ":8080") {
-					t.Fatalf("ingress backend missing after restart: %+v", route)
-				}
-			}
+	for _, endpoint := range endpointsFromEDS(t, eds) {
+		if strings.HasSuffix(endpoint, ":8080") {
+			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("rendered ingress after restart missing restart.example.com: %+v", rendered)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if syncBodies == 0 {
-		t.Fatal("expected at least one ingress Sync against the admin endpoint")
+		t.Fatalf("ingress backend missing after restart: %v", endpointsFromEDS(t, eds))
 	}
 }
 

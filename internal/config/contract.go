@@ -72,7 +72,7 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 			{Name: "logs", Class: dependencyClassForURL(cfg.Logs.ClickHouse.URL)},
 			{Name: "source_storage", Class: dependencyClassForSourceArchives(cfg.SourceArchives)},
 			{Name: "envelope_keys", Class: dependencyClassForSecretKeys(cfg.SecretKeys)},
-			{Name: "ingress_admin", Class: dependencyClassForAdmin(cfg.Ingress)},
+			{Name: "ingress_xds", Class: dependencyClassForAdmin(cfg.Ingress)},
 		},
 	}
 }
