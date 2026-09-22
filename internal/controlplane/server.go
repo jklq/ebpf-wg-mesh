@@ -165,12 +165,12 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if logStore != nil {
 		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	}
-	logEmitter := logs.NewLogEmitter(logStore)
 	logIngester := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
 		QueueFlushes: cfg.Logs.IngestQueueFlushes,
 		RatePerSec:   float64(cfg.Logs.IngestRatePerSec),
 		Burst:        cfg.Logs.IngestBurst,
 	})
+	logEmitter := logs.NewLogEmitter(logStore, logIngester)
 	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)
 	staticRoutes := make([]xds.StaticRoute, 0, len(cfg.Ingress.StaticRoutes))

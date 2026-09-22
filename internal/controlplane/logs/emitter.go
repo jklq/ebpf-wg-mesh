@@ -31,6 +31,9 @@ type ServiceScope struct {
 
 type LogEmitter struct {
 	store Writer
+	// async queues synthetic lines for durable write with retry and
+	// shutdown drain; nil writes synchronously.
+	async *AsyncIngester
 }
 
 type Writer interface {
@@ -55,8 +58,8 @@ func (e *LogEmitter) EmitBuildDrops(ctx context.Context, scope ServiceScope, bui
 	return e.store.WriteGaps(ctx, gaps)
 }
 
-func NewLogEmitter(store Writer) *LogEmitter {
-	return &LogEmitter{store: store}
+func NewLogEmitter(store Writer, async *AsyncIngester) *LogEmitter {
+	return &LogEmitter{store: store, async: async}
 }
 
 func (e *LogEmitter) Enabled() bool {
@@ -175,12 +178,19 @@ func (e *LogEmitter) EmitDeployf(ctx context.Context, scope ServiceScope, alloca
 	e.EmitDeploy(ctx, scope, allocationID, buildID, stage, fmt.Sprintf(format, args...))
 }
 
-func (e *LogEmitter) emit(ctx context.Context, in LogLineInput) {
+func (e *LogEmitter) emit(_ context.Context, in LogLineInput) {
 	if !e.Enabled() {
 		return
 	}
-	if err := e.store.WriteLogLines(ctx, []LogLineInput{in}); err != nil {
-		slog.WarnContext(ctx, "write synthetic log line",
+	if e.async != nil {
+		// Queue the event like an agent batch: retry across backend
+		// outages, shed with gap accounting past the queue cap, and
+		// drain at shutdown instead of dying with the request.
+		e.async.EnqueueLines([]LogLineInput{in})
+		return
+	}
+	if err := e.store.WriteLogLines(context.Background(), []LogLineInput{in}); err != nil {
+		slog.Warn("write synthetic log line",
 			"error", err,
 			"service_id", in.ServiceID,
 			"log_type", string(in.LogType),

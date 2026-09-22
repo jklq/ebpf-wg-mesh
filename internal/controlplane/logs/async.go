@@ -12,12 +12,13 @@ import (
 )
 
 const (
-	defaultIngestQueueFlushes = 512
-	defaultIngestRatePerSec   = 2000.0
-	defaultIngestBurst        = 10000
-	maxIngestOwedGaps         = 4096
-	maxIngestCoalescedLines   = 5000
-	reporterControlPlane      = "controlplane"
+	defaultIngestQueueFlushes  = 512
+	defaultIngestRatePerSec    = 2000.0
+	defaultIngestBurst         = 10000
+	maxIngestOwedGaps          = 4096
+	maxIngestCoalescedLines    = 5000
+	defaultIngestShutdownGrace = 15 * time.Second
+	reporterControlPlane       = "controlplane"
 )
 
 // AsyncIngesterConfig bounds the control-plane log ingest path.
@@ -30,6 +31,9 @@ type AsyncIngesterConfig struct {
 	// from abusive or buggy agents. Defaults to 2000/s and 10000.
 	RatePerSec float64
 	Burst      int
+	// ShutdownGrace bounds how long shutdown drains the accepted
+	// backlog into the store before giving up. Defaults to 15s.
+	ShutdownGrace time.Duration
 }
 
 // IngesterStats reports ingest health and lifetime counters.
@@ -76,6 +80,8 @@ type AsyncIngester struct {
 	lastFlush   time.Time
 	lastError   string
 	lastErrorAt time.Time
+
+	shutdownGrace time.Duration
 }
 
 type pendingFlush struct {
@@ -165,13 +171,18 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 	if burst <= 0 {
 		burst = defaultIngestBurst
 	}
+	grace := cfg.ShutdownGrace
+	if grace <= 0 {
+		grace = defaultIngestShutdownGrace
+	}
 	return &AsyncIngester{
-		store:    store,
-		queue:    make(chan pendingFlush, queueFlushes),
-		limiter:  logpipeline.NewLimiter(rate, burst),
-		backoff:  &logpipeline.Backoff{},
-		owed:     make(map[owedGapKey]*owedGap),
-		owedFold: make(map[owedGapKey]*owedGap),
+		store:         store,
+		queue:         make(chan pendingFlush, queueFlushes),
+		limiter:       logpipeline.NewLimiter(rate, burst),
+		backoff:       &logpipeline.Backoff{},
+		owed:          make(map[owedGapKey]*owedGap),
+		owedFold:      make(map[owedGapKey]*owedGap),
+		shutdownGrace: grace,
 	}
 }
 
@@ -221,7 +232,21 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 		a.shedLines.Add(count)
 	}
 	a.acceptedLines.Add(uint64(len(kept)))
-	flush := pendingFlush{lines: kept, gaps: gaps}
+	a.enqueue(pendingFlush{lines: kept, gaps: gaps})
+}
+
+// EnqueueLines queues platform-emitted lines for durable write under
+// the same bounded contract as agent batches: never blocks, sheds
+// with gap accounting past the queue cap, retries across outages.
+func (a *AsyncIngester) EnqueueLines(lines []LogLineInput) {
+	if a == nil || a.store == nil || !a.store.Enabled() || len(lines) == 0 {
+		return
+	}
+	a.acceptedLines.Add(uint64(len(lines)))
+	a.enqueue(pendingFlush{lines: lines})
+}
+
+func (a *AsyncIngester) enqueue(flush pendingFlush) {
 	select {
 	case a.queue <- flush:
 	default:
@@ -229,10 +254,14 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 	}
 }
 
-// Run flushes queued batches until ctx ends. Flushes retry with
-// backoff across a ClickHouse outage; only shutdown drops the
-// backlog, and agents replay their recent window on reconnect. Run
-// always blocks until ctx ends, even when disabled, so hosting
+// Run flushes queued batches until ctx ends, then drains the
+// accepted backlog under a grace deadline so shutdown does not
+// discard data the Sync loop already acknowledged. Flushes retry with
+// backoff across a ClickHouse outage; only a hard kill or a grace
+// expiry drops the backlog, which agents then replay from their
+// recent spool window or which surfaces in the loud shutdown
+// accounting. Run always blocks until ctx ends, even when disabled,
+// so hosting
 // servers never observe an early clean return as a shutdown signal.
 func (a *AsyncIngester) Run(ctx context.Context) error {
 	if a == nil || a.store == nil || !a.store.Enabled() {
@@ -242,6 +271,7 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			a.drainShutdown(ctx)
 			return nil
 		case flush := <-a.queue:
 			a.coalesce(&flush)
@@ -251,10 +281,45 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 			}
 			if err := a.flushWithRetry(ctx, flush); err != nil {
 				if ctx.Err() != nil {
+					a.drainShutdown(ctx)
 					return nil
 				}
 				return err
 			}
+		}
+	}
+}
+
+// drainShutdown flushes everything already accepted — queued
+// batches, owed gap windows, and anything arriving during the drain
+// — under a grace deadline decoupled from the canceled run context.
+// Whatever survives the grace expires is logged with full accounting
+// instead of vanishing.
+func (a *AsyncIngester) drainShutdown(ctx context.Context) {
+	graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.shutdownGrace)
+	defer cancel()
+	for {
+		var flush pendingFlush
+		select {
+		case next := <-a.queue:
+			flush = next
+		default:
+		}
+		a.coalesce(&flush)
+		a.attachOwed(&flush)
+		if len(flush.lines) == 0 && len(flush.gaps) == 0 {
+			return
+		}
+		if err := a.flushWithRetry(graceCtx, flush); err != nil {
+			slog.Error("log ingest shutdown drain dropped accepted data",
+				"lines", len(flush.lines),
+				"gaps", len(flush.gaps),
+				"accepted_lines", a.acceptedLines.Load(),
+				"flushed_lines", a.flushedLines.Load(),
+				"shed_lines", a.shedLines.Load(),
+				"gaps_lost", a.gapsLost.Load(),
+				"error", err)
+			return
 		}
 	}
 }

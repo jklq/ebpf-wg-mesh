@@ -300,3 +300,47 @@ func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
 		}
 	}
 }
+
+// Shutdown must not discard batches the Sync loop already accepted:
+// Run drains the queued backlog and owed gap windows under a grace
+// deadline even when its context is already canceled.
+func TestAsyncIngesterDrainsAcceptedBacklogOnShutdown(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 1, ShutdownGrace: 5 * time.Second})
+
+	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3))
+	for i := 0; i < 4; i++ {
+		ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", fmt.Sprintf("alloc-%d", i), 2))
+	}
+	stats := ingester.Stats()
+	if stats.ShedLines == 0 {
+		t.Fatal("expected queue overflow to shed batches")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ingester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var total uint64
+	for _, in := range store.lines {
+		total++
+		_ = in
+	}
+	for _, gap := range store.gaps {
+		total += gap.DroppedCount
+	}
+	// 3 accepted lines in the queued flush + 8 shed lines surfaced as
+	// owed gaps must all reach the store.
+	if total != 11 {
+		t.Fatalf("shutdown delivered %d of 11 accepted lines (lines %d)", total, len(store.lines))
+	}
+	if len(store.gaps) == 0 {
+		t.Fatal("shed batches must surface as gap rows at shutdown")
+	}
+}
