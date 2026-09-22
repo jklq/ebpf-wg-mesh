@@ -102,17 +102,19 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, user authz.User, s
 }
 
 func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, environmentID string) ([]ReleasedService, error) {
-	d.schedulerMu.Lock()
-	defer d.schedulerMu.Unlock()
 	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
 		return nil, err
 	}
-	// Direct-image tags resolve outside the product transaction: registry
-	// calls must never hold product locks. Only the services this release
-	// selects are resolved, so an unchanged service's stale tag cannot
-	// block unrelated pending changes. A spec racing the pre-read retries
-	// with a fresh map.
+	// Direct-image tags resolve outside the product transaction and
+	// outside the scheduler lock: registry calls must never hold product
+	// locks, and a slow or unreachable registry must not stall other
+	// scheduler-serialized mutations (rollout, failover, agent status,
+	// deployment actions) while pins are fetched. Only the services this
+	// release selects are resolved, so an unchanged service's stale tag
+	// cannot block unrelated pending changes. A spec racing the pre-read
+	// retries with a fresh map: the release transaction re-verifies each
+	// input before using its pre-resolved digest.
 	var services []ReleasedService
 	var errRelease error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -136,6 +138,10 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 }
 
 func (d *Delivery) releaseEnvironmentTx(ctx context.Context, scope authz.Environment, resolved map[string]resolvedDirectImage) ([]ReleasedService, error) {
+	// The scheduler lock serializes the mutation phase only; resolution
+	// and pre-reads run outside it (see ReleaseEnvironment).
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	var services []ReleasedService
 	var (
 		serviceIDs             []string
