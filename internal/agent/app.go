@@ -502,6 +502,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 					return err
 				}
 				a.supervisor.ReconcileAcceptedDesired()
+				// A replaced session starts without observations; republish
+				// runtime status so allocations do not stay pending.
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
 			case *agentv1.AgentServerMessage_PullCredentials:
 				creds := payload.PullCredentials
 				if creds == nil {
@@ -517,6 +522,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				// Credentials may unblock image pulls for just-accepted
 				// allocations; reconcile to retry.
 				a.supervisor.ReconcileAcceptedDesired()
+				// A replaced session starts without observations; republish
+				// runtime status so allocations do not stay pending.
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
 			case *agentv1.AgentServerMessage_ReplicaEndpoints:
 				replicas := payload.ReplicaEndpoints
 				if replicas == nil {
@@ -527,6 +537,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				}
 				confirmAuthority(replicas.GetAuthorityEpoch())
 				if err := sendAck(); err != nil {
+					return err
+				}
+				// A replaced session starts without observations; republish
+				// runtime status so allocations do not stay pending.
+				if err := sendCurrentReport(); err != nil {
 					return err
 				}
 			default:

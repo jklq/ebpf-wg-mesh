@@ -3,12 +3,20 @@ package agent
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 	"ebof-wg-mesh/internal/mesh"
+	"ebof-wg-mesh/internal/reconciliation"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type recordingMesh struct {
@@ -175,5 +183,153 @@ func TestRuntimeEventReconcileLoop(t *testing.T) {
 	case <-done:
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("runtime event loop did not stop")
+	}
+}
+
+type syncFuncServer struct {
+	agentv1.UnimplementedAgentControlServer
+	sync func(agentv1.AgentControl_SyncServer) error
+}
+
+func (s *syncFuncServer) Sync(stream agentv1.AgentControl_SyncServer) error { return s.sync(stream) }
+
+func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
+	t.Parallel()
+
+	// A reconnect whose batch carries only an independent-stream update
+	// (node config, credentials, or replicas) must still republish the
+	// agent's runtime report: the live view drops the previous session's
+	// observations when the session is replaced, and heartbeats alone leave
+	// allocations pending until runtime happens to emit another report.
+	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
+		StateDir: t.TempDir(),
+		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
+			ServerNames:             []string{"localhost"},
+			ServerCertValidityHours: 24,
+			ClientCertValidityHours: 6,
+		}},
+	}, signkeystest.New(t))
+	if err != nil {
+		t.Fatalf("NewTLSAuthority: %v", err)
+	}
+	enrollAddr := startEnrollServer(t, authority, func(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
+		return authority.Enroll(ctx, req)
+	})
+
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(authority.HTTPConfig())))
+	agentv1.RegisterAgentControlServer(syncServer, &syncFuncServer{sync: func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		nodeConfig := &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24"}
+		update := &agentv1.NodeConfigUpdate{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			NodeConfigVersion: reconciliation.HashNodeConfig(nodeConfig), NodeConfig: nodeConfig,
+			AuthorityEpoch: 1, SessionId: hello.GetHello().GetSessionId(),
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	}})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = syncServer.Serve(ln) }()
+	t.Cleanup(func() {
+		syncServer.Stop()
+		_ = ln.Close()
+	})
+
+	privateKey, err := mesh.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey: %v", err)
+	}
+	app := &App{
+		cfg: config.AgentConfig{
+			Node: config.NodeConfig{ID: "node-1"},
+			ControlPlane: config.ControlPlaneClientConfig{
+				Addresses: []string{enrollAddr},
+				TLS: config.ClientTLSConfig{
+					CAFile:         writeTrustBundleFile(t, authority),
+					ServerName:     "localhost",
+					BootstrapToken: "bootstrap-token",
+				},
+			},
+			Mesh:    config.MeshConfig{WireGuard: config.WireGuard{InterfaceName: "wg0", PrivateKey: privateKey}},
+			Runtime: config.RuntimeConfig{DataDir: t.TempDir()},
+		},
+	}
+	creds, certNotAfter, clusterIdentity, err := app.clientCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("clientCredentials: %v", err)
+	}
+
+	store := openTestLocalState(t)
+	if err := store.prepareStartup(clusterIdentity, nil); err != nil {
+		t.Fatal(err)
+	}
+	desired := testDesiredState(1, 5, "alloc-1")
+	desired.ClusterId = clusterIdentity
+	if _, err := store.acceptDesired(clusterIdentity, "test-session", desired); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &supervisorTestRuntime{inventory: []RuntimeResource{{AllocationID: "alloc-1", RuntimeID: "runtime-alloc-1"}}}
+	supervisor := newWorkloadSupervisor("node-1", runtime, store, func(context.Context, *agentv1.AssignedNodeConfig) error { return nil })
+	supervisorCtx, supervisorCancel := context.WithCancel(context.Background())
+	defer supervisorCancel()
+	if err := supervisor.Start(supervisorCtx, clusterIdentity); err != nil {
+		t.Fatalf("start supervisor: %v", err)
+	}
+	app.stateStore = store
+	app.supervisor = supervisor
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() {
+		sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, ln.Addr().String())
+	}()
+
+	sawAck, sawReport := false, false
+	deadline := time.After(10 * time.Second)
+	for !sawAck || !sawReport {
+		select {
+		case msg := <-messages:
+			switch payload := msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				if payload.Acknowledgement.GetAuthorityEpoch() != 1 {
+					t.Fatalf("ack authority epoch = %d, want session epoch 1", payload.Acknowledgement.GetAuthorityEpoch())
+				}
+				sawAck = true
+			case *agentv1.AgentClientMessage_StatusReport:
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout: ack=%v report=%v; the independent update must republish runtime status", sawAck, sawReport)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
 	}
 }
