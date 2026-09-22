@@ -73,19 +73,29 @@ process counters only). Drop summaries carry the allocation as their
 identity; the service is derived from the allocation owner at ingest.
 Build spools are removed on clean completion and leftovers are
 garbage-collected at startup; a retried attempt re-emits its own
-output from scratch.
+output from scratch. Close always flushes once before deciding the
+attempt drained, so limiter and overflow drops report even when the
+spool holds no records.
 
 ## Control-plane ingest
 
 Batches enter a bounded in-memory queue (default 512 batches) behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
 buggy or hostile agent cannot starve ClickHouse. The flush loop retries
-with backoff across a backend outage; only process shutdown drops the
-backlog (producers then replay their unshipped spool). Queue overflow
+with backoff across a backend outage. Queue overflow
 sheds whole batches with owed gap rows so the loss still surfaces in
 reads; past the owed-gap key cap shed windows fold into service-level
 aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as
 ingest gaps per affected service and allocation.
+Shutdown drains the accepted backlog under a 15s grace deadline:
+queued batches and owed gap windows flush before the process exits,
+even when the run context is already canceled. Only a hard kill or an
+expired grace loses the unflushed remainder, and that remainder is
+logged with full accounting rather than vanishing (producers
+additionally replay their unshipped spool window on reconnect).
+Platform events (build/deploy lifecycle, crash loops) ride the same
+bounded queue: retry across outages, shed with gap accounting, drain
+at shutdown.
 Ingest is per replica: each replica flushes the agent streams it
 terminates, and the agent Sync loop never waits on ClickHouse.
 
