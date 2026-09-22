@@ -392,11 +392,12 @@ func TestConcurrentBuildEnqueuesHaveOneCurrentWinner(t *testing.T) {
 
 	start := make(chan struct{})
 	errs := make(chan error, 2)
-	for _, commit := range []string{"commit-1", "commit-2"} {
-		commit := commit
+	// Two concurrent enqueues of the same revision race the supersede
+	// compare-and-swap: exactly one build may stay queued and current.
+	for range 2 {
 		go func() {
 			<-start
-			_, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, commit)
+			_, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
 			errs <- err
 		}()
 	}

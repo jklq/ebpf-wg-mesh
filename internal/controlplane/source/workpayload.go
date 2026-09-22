@@ -33,6 +33,7 @@ type WorkPayload struct {
 	ProviderScopeExternalID      string `json:"provider_scope_external_id,omitempty"`
 	TrackedRef                   string `json:"tracked_ref,omitempty"`
 	CommitSHA                    string `json:"commit_sha,omitempty"`
+	PreviousCommitSHA            string `json:"previous_commit_sha,omitempty"`
 	CommitMessage                string `json:"commit_message,omitempty"`
 	CommitAuthor                 string `json:"commit_author,omitempty"`
 }
@@ -109,13 +110,15 @@ func ProviderAccessChangedParams(installationID int64) durablework.EnqueueParams
 
 // RevisionObservedParams builds the enqueue params for one observed
 // repository commit. Duplicate deliveries of the same commit converge on
-// one active record.
-func RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, commitMessage, commitAuthor string) durablework.EnqueueParams {
+// one active record; PreviousCommitSHA carries the push payload's
+// "before" so the build can prove its currency against observed history.
+func RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor string) durablework.EnqueueParams {
 	payload, _ := EncodeWorkPayload(WorkPayload{
 		Provider:                     "github",
 		ProviderRepositoryExternalID: strings.TrimSpace(repositoryExternalID),
 		TrackedRef:                   strings.TrimSpace(trackedRef),
 		CommitSHA:                    strings.TrimSpace(commitSHA),
+		PreviousCommitSHA:            strings.TrimSpace(previousCommitSHA),
 		CommitMessage:                strings.TrimSpace(commitMessage),
 		CommitAuthor:                 strings.TrimSpace(commitAuthor),
 	})

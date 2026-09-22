@@ -63,7 +63,7 @@ func TestSourceWorkParamBuilders(t *testing.T) {
 	if access.DedupKey != "provider_access_changed:github:9" || access.ResourceType != "github_installation" || access.ResourceID != "9" {
 		t.Fatalf("access params = %+v", access)
 	}
-	revision := RevisionObservedParams("42", "main", "abc123", "msg", "author")
+	revision := RevisionObservedParams("42", "main", "abc123", "before1", "msg", "author")
 	if revision.DedupKey != "revision_observed:github:42:main:abc123" || revision.ResourceType != "github_repository" || revision.ResourceID != "42" {
 		t.Fatalf("revision params = %+v", revision)
 	}

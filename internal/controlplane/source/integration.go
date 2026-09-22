@@ -41,7 +41,7 @@ type Store interface {
 }
 
 type Delivery interface {
-	QueueSourceBuild(context.Context, SourceBindingRecord, string, SourceSnapshotRecord) (QueuedBuild, error)
+	QueueSourceBuild(context.Context, SourceBindingRecord, string, SourceSnapshotRecord, BuildTransition) (QueuedBuild, error)
 	RecoverExpiredBuilds(context.Context) error
 }
 
