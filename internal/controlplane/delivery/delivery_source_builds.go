@@ -10,7 +10,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
-func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBindingRecord, commitSHA string, pendingSnapshot source.SourceSnapshotRecord) (source.QueuedBuild, error) {
+func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBindingRecord, commitSHA string, pendingSnapshot source.SourceSnapshotRecord, transition source.BuildTransition) (source.QueuedBuild, error) {
 	var result source.QueuedBuild
 	var service ServiceRecord
 	var build BuildRunRecord
@@ -35,7 +35,7 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 			return err
 		}
 		var dep DeploymentRecord
-		build, dep, reused, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook})
+		build, dep, reused, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook}, transition)
 		if errors.Is(err, errSourceRevisionSuperseded) {
 			// A late webhook or retried older revision creates no work:
 			// the binding has moved on to a newer commit. Deliberate

@@ -248,7 +248,7 @@ func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
-	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{})
+	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-parent"})
 	if err != nil {
 		t.Fatalf("QueueSourceBuild: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 
 	// A redelivered older revision must not supersede the newer build
 	// that is still queued.
-	redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{})
+	redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-parent"})
 	if err != nil || !redelivered.Superseded || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
 		t.Fatalf("redelivered older revision = %+v, %v, want superseded no-op", redelivered, err)
 	}
@@ -400,7 +400,7 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 
 	// After commit-2 is deployed, its reuse of commit-1's image must not
 	// roll the service back.
-	redelivered, err = testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{})
+	redelivered, err = testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-parent"})
 	if err != nil || !redelivered.Superseded {
 		t.Fatalf("redelivered older revision after deploy = %+v, %v, want superseded no-op", redelivered, err)
 	}
@@ -410,6 +410,70 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 	artifacts, err := testDelivery(store).ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
 	if err != nil || len(artifacts) != 2 {
 		t.Fatalf("artifacts = %v, %v; want exactly the two built images", artifacts, err)
+	}
+	var buildCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&buildCount); err != nil {
+		t.Fatal(err)
+	}
+	if buildCount != 2 {
+		t.Fatalf("build_runs rows = %d, want 2 (no work for the late revision)", buildCount)
+	}
+
+	// An ordered push transition may deliberately move backward: a
+	// force-push of commit-1 over commit-2 carries before=commit-2 and
+	// proves its currency, so commit-1's artifact rolls out again.
+	forced, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-2"})
+	if err != nil || !forced.Reused || forced.BuildID != build1.ID {
+		t.Fatalf("force-push transition = %+v, %v, want reuse of %q", forced, err, build1.ID)
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != image1 {
+		t.Fatalf("force-push rolled out %q, want the ordered target %q", got, image1)
+	}
+}
+
+// TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild is the
+// late-webhook regression without a reusable image: a redelivered older
+// revision whose build never produced an artifact must not retire the
+// newer revision's queued build or queue stale work in its place.
+func TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-1: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_FAILED, "commit-1", "", "compile error"); err != nil {
+		t.Fatalf("completeBuild commit-1: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	build2, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-2: %v", err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	for _, transition := range []source.BuildTransition{
+		{PreviousCommit: "commit-parent"},
+		{},
+	} {
+		redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, transition)
+		if err != nil || !redelivered.Superseded || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
+			t.Fatalf("redelivered older revision %+v = %+v, %v, want superseded no-op", transition, redelivered, err)
+		}
+	}
+	if build, err := store.reads.BuildByID(ctx, build2.ID); err != nil || build.State != deliverycore.BuildStateQueued {
+		t.Fatalf("newer build = %+v, %v, want queued", build, err)
 	}
 	var buildCount int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&buildCount); err != nil {
@@ -509,9 +573,6 @@ func TestRepeatedBuildsOfSameImageKeepOwnProvenance(t *testing.T) {
 	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
 		t.Fatalf("seedReadySourceState commit-1: %v", err)
 	}
-	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
-		t.Fatalf("seedReadySourceState commit-2: %v", err)
-	}
 	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
 	if err != nil {
 		t.Fatalf("enqueueBuildForTest commit-1: %v", err)
@@ -520,6 +581,9 @@ func TestRepeatedBuildsOfSameImageKeepOwnProvenance(t *testing.T) {
 	image := testPinnedRef("registry.example.test/platform/web", "9")
 	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image, ""); err != nil {
 		t.Fatalf("completeBuild commit-1: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
 	}
 	build2, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2")
 	if err != nil {

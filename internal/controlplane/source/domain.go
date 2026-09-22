@@ -146,6 +146,20 @@ type Service struct {
 	Deleted bool
 }
 
+// BuildTransition proves a build request's currency against the binding's
+// observed history. Only current requests are served: those whose commit
+// is the binding's latest observed revision, those that advance from it
+// (PreviousCommit — a push payload's "before", including force-pushes
+// back to an older commit), and tracked-head syncs that just fetched the
+// ref head (TrackedHead). A redelivered or retried older revision carries
+// no proof and is refused: it must never supersede queued newer work or
+// regress the rollout. Moving backward on purpose is the rollback and
+// exact-redeploy actions' job.
+type BuildTransition struct {
+	PreviousCommit string
+	TrackedHead    bool
+}
+
 type QueuedBuild struct {
 	// BuildID is the queued build, or the original build whose image was
 	// reused when Reused is true.

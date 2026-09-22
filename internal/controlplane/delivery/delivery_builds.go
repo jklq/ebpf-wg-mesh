@@ -468,9 +468,8 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 	return rec, err
 }
 
-// errSourceRevisionSuperseded reports an enqueue request for a revision that
-// is no longer the binding's latest observed commit. Such requests create no
-// work at all.
+// errSourceRevisionSuperseded reports a build request that cannot prove it
+// is current against the binding's observed history. No work is created.
 var errSourceRevisionSuperseded = errors.New("source revision superseded by a newer observed revision")
 
 // supersedeQueuedBuildsTx retires still-queued builds so only the newest
@@ -491,12 +490,12 @@ func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, 
 // enqueueBuildFromSourceStateTx queues a build for verified source state, or
 // skips the build when the same source already produced an image: the
 // existing artifact rolls out with the service's current spec instead of
-// rebuilding. Reuse is only served for the binding's latest observed
-// revision; a redelivered or retried older revision is refused with
-// errSourceRevisionSuperseded before it can regress the rollout or supersede
-// queued newer work. Reuse returns an empty build, the scheduled deployment,
-// and reused=true.
-func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, DeploymentRecord, bool, error) {
+// rebuilding. Only current requests are served (see source.BuildTransition):
+// a redelivered or retried older revision is refused with
+// errSourceRevisionSuperseded before it can supersede queued newer work or
+// regress the rollout. Reuse returns an empty build, the scheduled
+// deployment, and reused=true.
+func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor, transition source.BuildTransition) (BuildRunRecord, DeploymentRecord, bool, error) {
 	s := d.store
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
@@ -519,21 +518,28 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	}
 
 	now := time.Now().UTC()
-	artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe)
+	// Freshness fence: before anything is superseded or created, the
+	// request must prove it is current — its revision is the binding's
+	// latest observed commit, it advances from that commit (an ordered
+	// push transition such as a force-push back to an older commit), or
+	// the caller just fetched the commit as the tracked head. A
+	// redelivered or retried older revision carries no proof and is
+	// refused: it must never supersede queued newer work or regress the
+	// rollout. Moving backward on purpose is the rollback and
+	// exact-redeploy actions' job.
+	latest, err := s.sourceStore.LatestSourceRevisionByBindingIDTx(ctx, tx, revision.SourceBindingID)
 	if err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-	if ok {
-		// Reuse deploys an image, so it only serves the binding's latest
-		// observed revision: a redelivered or retried older revision must
-		// never regress the rollout or supersede queued newer work.
-		latest, err := s.sourceStore.LatestSourceRevisionByBindingIDTx(ctx, tx, revision.SourceBindingID)
-		if err != nil {
-			return BuildRunRecord{}, DeploymentRecord{}, false, err
-		}
-		if latest.ID != revision.ID {
-			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
-		}
+	current := transition.TrackedHead ||
+		latest.ID == revision.ID ||
+		(transition.PreviousCommit != "" && transition.PreviousCommit == latest.CommitSHA)
+	if !current {
+		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
+	}
+	artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe)
+	if err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	if err := supersedeQueuedBuildsTx(ctx, tx, service.ID, now); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err

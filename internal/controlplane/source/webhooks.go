@@ -279,6 +279,7 @@ func (p *GitHubWebhookProcessor) ProcessPushEvent(ctx context.Context, raw []byt
 	var payload struct {
 		Ref        string `json:"ref"`
 		After      string `json:"after"`
+		Before     string `json:"before"`
 		Deleted    bool   `json:"deleted"`
 		HeadCommit struct {
 			Message string `json:"message"`
@@ -316,6 +317,7 @@ func (p *GitHubWebhookProcessor) ProcessPushEvent(ctx context.Context, raw []byt
 		fmt.Sprintf("%d", payload.Repository.ID),
 		branch,
 		payload.After,
+		payload.Before,
 		strings.TrimSpace(payload.HeadCommit.Message),
 		commitAuthor,
 	); err != nil {
