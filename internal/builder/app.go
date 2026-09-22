@@ -290,7 +290,7 @@ func (a *App) buildLogSpoolBase() string {
 	return filepath.Join(a.cfg.WorkDir, "log-spool")
 }
 
-func (a *App) buildLogShipConfig(buildID string) buildLogShipConfig {
+func (a *App) buildLogShipConfig(buildID string, leaseEpoch int64) buildLogShipConfig {
 	ship := a.cfg.Logs
 	burst := ship.Burst
 	if burst <= 0 {
@@ -301,7 +301,7 @@ func (a *App) buildLogShipConfig(buildID string) buildLogShipConfig {
 		maxBytes = defaultBuildLogSpoolMaxBytes
 	}
 	return buildLogShipConfig{
-		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID),
+		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID, leaseEpoch),
 		SpoolMaxBytes: maxBytes,
 		// A non-positive rate disables producer limiting; zero is a
 		// deliberate operator choice, not an unset default.
@@ -318,7 +318,7 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 		return "", err
 	}
 	defer os.Remove(archivePath)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId()))
+	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
 	defer reporter.Close()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)

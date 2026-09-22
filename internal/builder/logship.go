@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -399,9 +400,11 @@ func sanitizeBuildSpoolName(buildID string) string {
 }
 
 // buildLogSpoolDir returns the per-attempt spool directory for one
-// build under the builder's spool base.
-func buildLogSpoolDir(baseDir, buildID string) string {
-	return filepath.Join(baseDir, sanitizeBuildSpoolName(buildID))
+// build attempt, keyed by build ID and lease epoch: a build reclaimed
+// under a new lease starts from a fresh spool instead of re-opening
+// the previous attempt's records.
+func buildLogSpoolDir(baseDir, buildID string, leaseEpoch int64) string {
+	return filepath.Join(baseDir, sanitizeBuildSpoolName(buildID)+"-e"+strconv.FormatInt(leaseEpoch, 10))
 }
 
 // gcStaleBuildLogSpools deletes per-attempt spool directories with

@@ -8,16 +8,19 @@ import (
 	"testing"
 	"time"
 
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/logpipeline"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func testBuildLogShipConfig(t *testing.T, buildID string) (buildLogShipConfig, string) {
 	t.Helper()
-	dir := buildLogSpoolDir(t.TempDir(), buildID)
+	dir := buildLogSpoolDir(t.TempDir(), buildID, 1)
 	return buildLogShipConfig{
 		SpoolDir:      dir,
 		SpoolMaxBytes: 1 << 20,
@@ -259,6 +262,67 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 	}
 }
 
+// A crashed attempt leaves its spool behind. The same build
+// reclaimed under a new lease epoch must start from a fresh spool
+// instead of re-emitting the previous attempt's records under the
+// new lease.
+func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
+	t.Parallel()
+
+	if buildLogSpoolDir("/base", "build-1", 1) == buildLogSpoolDir("/base", "build-1", 2) {
+		t.Fatal("spool dir must be keyed by lease epoch")
+	}
+	base := t.TempDir()
+	staleID := logpipeline.BuilderLineID("builder-1", "build-1", 1, 1)
+	now := time.Now().UTC()
+	payload, err := proto.Marshal(&platformv1.BuildLogLine{
+		ObservedAt: timestamppb.New(now),
+		Stream:     "stdout",
+		Sequence:   1,
+		Line:       "stale",
+		LineId:     staleID,
+	})
+	if err != nil {
+		t.Fatalf("marshal stale line: %v", err)
+	}
+	oldDir := buildLogSpoolDir(base, "build-1", 1)
+	oldSpool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: oldDir, MaxBytes: 1 << 20, SyncWrites: true})
+	if err != nil {
+		t.Fatalf("open old spool: %v", err)
+	}
+	if err := oldSpool.Append("stdout", staleID, now, payload); err != nil {
+		t.Fatalf("append old spool: %v", err)
+	}
+	if err := oldSpool.Close(); err != nil {
+		t.Fatalf("close old spool: %v", err)
+	}
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
+	cfg, _ := testBuildLogShipConfig(t, "build-1")
+	cfg.SpoolDir = buildLogSpoolDir(base, "build-1", 2)
+	cfg.FlushInterval = time.Hour
+	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 2, cfg)
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "fresh"})
+	reporter.Close()
+
+	requests := client.ReportRequests()
+	if len(requests) != 1 {
+		t.Fatalf("expected 1 report request, got %d", len(requests))
+	}
+	lines := requests[0].GetLines()
+	if len(lines) != 1 {
+		t.Fatalf("new lease re-emitted the previous attempt's output: %+v", lines)
+	}
+	if lines[0].GetLineId() == staleID {
+		t.Fatalf("new lease reported a stale-epoch line: %q", lines[0].GetLineId())
+	}
+	// The crashed attempt's spool survives untouched for garbage
+	// collection.
+	if _, err := os.Stat(oldDir); err != nil {
+		t.Fatalf("previous attempt spool must survive for GC: %v", err)
+	}
+}
+
 func TestBuildLogShipConfigZeroRateDisablesLimiting(t *testing.T) {
 	t.Parallel()
 
@@ -266,7 +330,7 @@ func TestBuildLogShipConfigZeroRateDisablesLimiting(t *testing.T) {
 		WorkDir: t.TempDir(),
 		Logs:    config.BuilderLogShippingConfig{RatePerSec: 0, Burst: 1000},
 	}}
-	ship := app.buildLogShipConfig("build-1")
+	ship := app.buildLogShipConfig("build-1", 1)
 	if ship.RatePerSec != 0 {
 		t.Fatalf("zero rate must disable producer limiting, got %v", ship.RatePerSec)
 	}
