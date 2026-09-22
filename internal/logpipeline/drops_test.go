@@ -82,3 +82,39 @@ func TestDropSetTakeRestoreKeepsAccountingExact(t *testing.T) {
 		t.Fatalf("restore lost the later window end, got %v", got)
 	}
 }
+
+func TestDropSetSummaryIDStableAcrossGrowthAndRetry(t *testing.T) {
+	t.Parallel()
+
+	set := NewDropSet()
+	key := DropKey{AllocationID: "alloc-1", Reason: ReasonRateLimited}
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	set.Add(key, 3, base, base)
+
+	original := set.Summaries()[0].GetSummaryId()
+	if original == "" {
+		t.Fatal("summary must carry a stable identity")
+	}
+
+	// A failed send restores the summary and later drops grow it. The
+	// identity must survive the growth, or at-least-once retries
+	// double-count server-side.
+	taken := set.Take()
+	set.Add(key, 4, base.Add(time.Minute), base.Add(time.Minute))
+	set.Restore(taken)
+
+	grown := set.Summaries()[0]
+	if grown.GetSummaryId() != original {
+		t.Fatalf("summary identity changed across retry: %q vs %q", grown.GetSummaryId(), original)
+	}
+	if grown.GetDroppedCount() != 7 {
+		t.Fatalf("restore lost counts, got %d", grown.GetDroppedCount())
+	}
+
+	// A fresh lineage after a confirmed send gets its own identity.
+	set.Take()
+	set.Add(key, 2, base.Add(2*time.Minute), base.Add(2*time.Minute))
+	if fresh := set.Summaries()[0].GetSummaryId(); fresh == original {
+		t.Fatal("fresh lineage must not reuse a sent summary identity")
+	}
+}

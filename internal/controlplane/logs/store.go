@@ -136,7 +136,11 @@ type GapInput struct {
 	DroppedCount uint64
 	Reason       string
 	Reporter     string
-	ExpiresAt    time.Time
+	// SummaryID is the producer's stable identity for a coalesced
+	// drop lineage. When set, it keys the gap row so retried reports
+	// replace their row even after their totals grew.
+	SummaryID string
+	ExpiresAt time.Time
 }
 
 func logStoreSchema() []string {
@@ -544,7 +548,7 @@ func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 			gap.DroppedCount,
 			logpipeline.NormalizeDropReason(gap.Reason),
 			normalizeReporter(gap.Reporter),
-			gapIdentity(gap.ServiceID, gap.AllocationID, gap.BuildID, string(logType), gap.Stream, gap.Reason, gap.Reporter, windowStart, windowEnd, gap.DroppedCount),
+			gapIdentity(gap.ServiceID, gap.AllocationID, gap.BuildID, string(logType), gap.Stream, gap.Reason, gap.Reporter, gap.SummaryID, windowStart, windowEnd, gap.DroppedCount),
 			now,
 			expiresAt.UTC(),
 		)
@@ -619,11 +623,23 @@ func clampRetentionDays(projectDays, platformDefault int) int {
 	return platformDefault
 }
 
-func gapIdentity(serviceID, allocationID, buildID, logType, stream, reason, reporter string, windowStart, windowEnd time.Time, count uint64) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%d",
+// gapIdentity keys one gap row for ReplacingMergeTree dedup. Gaps
+// carrying a stable producer summary ID key on that ID plus the drop
+// identity: retries of the same coalesced lineage replace their row
+// even after the reported totals or window grew. Internally derived
+// gaps have no producer ID and are immutable per event, so they key
+// on their full content.
+func gapIdentity(serviceID, allocationID, buildID, logType, stream, reason, reporter, summaryID string, windowStart, windowEnd time.Time, count uint64) string {
+	payload := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%d",
 		serviceID, allocationID, buildID, logType, stream,
 		logpipeline.NormalizeDropReason(reason), reporter,
-		windowStart.UnixNano(), windowEnd.UnixNano(), count)))
+		windowStart.UnixNano(), windowEnd.UnixNano(), count)
+	if summaryID != "" {
+		payload = fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00sid\x00%s",
+			serviceID, allocationID, buildID, logType, stream,
+			logpipeline.NormalizeDropReason(reason), reporter, summaryID)
+	}
+	sum := sha256.Sum256([]byte(payload))
 	return "gap:" + hex.EncodeToString(sum[:16])
 }
 
@@ -827,6 +843,7 @@ func dropSummariesToGaps(drops []*platformv1.LogDropSummary, reporter string) []
 			DroppedCount: drop.GetDroppedCount(),
 			Reason:       drop.GetReason(),
 			Reporter:     reporter,
+			SummaryID:    drop.GetSummaryId(),
 		})
 	}
 	return gaps

@@ -8077,16 +8077,21 @@ func (x *ListServiceLogsResponse) GetGaps() []*ServiceLogGap {
 // LogDropSummary reports lines a producer dropped before delivery so the
 // control plane can persist them as explicit read gaps.
 type LogDropSummary struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceId     string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	AllocationId  string                 `protobuf:"bytes,2,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
-	BuildId       string                 `protobuf:"bytes,3,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	LogType       ServiceLogType         `protobuf:"varint,4,opt,name=log_type,json=logType,proto3,enum=platform.v1.ServiceLogType" json:"log_type,omitempty"`
-	Stream        string                 `protobuf:"bytes,5,opt,name=stream,proto3" json:"stream,omitempty"`
-	DroppedCount  uint64                 `protobuf:"varint,6,opt,name=dropped_count,json=droppedCount,proto3" json:"dropped_count,omitempty"`
-	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
-	WindowStart   *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=window_start,json=windowStart,proto3" json:"window_start,omitempty"`
-	WindowEnd     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=window_end,json=windowEnd,proto3" json:"window_end,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId    string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	AllocationId string                 `protobuf:"bytes,2,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	BuildId      string                 `protobuf:"bytes,3,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	LogType      ServiceLogType         `protobuf:"varint,4,opt,name=log_type,json=logType,proto3,enum=platform.v1.ServiceLogType" json:"log_type,omitempty"`
+	Stream       string                 `protobuf:"bytes,5,opt,name=stream,proto3" json:"stream,omitempty"`
+	DroppedCount uint64                 `protobuf:"varint,6,opt,name=dropped_count,json=droppedCount,proto3" json:"dropped_count,omitempty"`
+	Reason       string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	WindowStart  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=window_start,json=windowStart,proto3" json:"window_start,omitempty"`
+	WindowEnd    *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=window_end,json=windowEnd,proto3" json:"window_end,omitempty"`
+	// Stable identity of this coalesced drop lineage, minted by the
+	// producer and preserved across retries and count/window growth,
+	// so at-least-once reports replace their gap row instead of
+	// double-counting.
+	SummaryId     string `protobuf:"bytes,10,opt,name=summary_id,json=summaryId,proto3" json:"summary_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8182,6 +8187,13 @@ func (x *LogDropSummary) GetWindowEnd() *timestamppb.Timestamp {
 		return x.WindowEnd
 	}
 	return nil
+}
+
+func (x *LogDropSummary) GetSummaryId() string {
+	if x != nil {
+		return x.SummaryId
+	}
+	return ""
 }
 
 type ListServiceDeploymentsRequest struct {
@@ -10666,7 +10678,7 @@ const file_platform_proto_rawDesc = "" +
 	"\x17ListServiceLogsResponse\x121\n" +
 	"\x05lines\x18\x01 \x03(\v2\x1b.platform.v1.ServiceLogLineR\x05lines\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12.\n" +
-	"\x04gaps\x18\x03 \x03(\v2\x1a.platform.v1.ServiceLogGapR\x04gaps\"\xf6\x02\n" +
+	"\x04gaps\x18\x03 \x03(\v2\x1a.platform.v1.ServiceLogGapR\x04gaps\"\x95\x03\n" +
 	"\x0eLogDropSummary\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12#\n" +
@@ -10678,7 +10690,10 @@ const file_platform_proto_rawDesc = "" +
 	"\x06reason\x18\a \x01(\tR\x06reason\x12=\n" +
 	"\fwindow_start\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vwindowStart\x129\n" +
 	"\n" +
-	"window_end\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\twindowEnd\"T\n" +
+	"window_end\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\twindowEnd\x12\x1d\n" +
+	"\n" +
+	"summary_id\x18\n" +
+	" \x01(\tR\tsummaryId\"T\n" +
 	"\x1dListServiceDeploymentsRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x14\n" +

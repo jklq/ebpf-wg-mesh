@@ -16,6 +16,7 @@ import (
 	"ebof-wg-mesh/internal/logpipeline"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -338,6 +339,7 @@ type persistedDrop struct {
 	Reason       string    `json:"reason"`
 	WindowStart  time.Time `json:"window_start"`
 	WindowEnd    time.Time `json:"window_end"`
+	SummaryID    string    `json:"summary_id"`
 }
 
 // loadPendingDrops reads drop summaries persisted by an earlier
@@ -356,13 +358,17 @@ func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
 	}
 	pending := logpipeline.NewDropSet()
 	for _, row := range rows {
-		pending.Add(logpipeline.DropKey{
-			ServiceID:    row.ServiceID,
-			AllocationID: row.AllocationID,
+		pending.Restore([]*platformv1.LogDropSummary{{
+			ServiceId:    row.ServiceID,
+			AllocationId: row.AllocationID,
 			LogType:      platformv1.ServiceLogType(row.LogType),
 			Stream:       row.Stream,
+			DroppedCount: row.DroppedCount,
 			Reason:       row.Reason,
-		}, row.DroppedCount, row.WindowStart, row.WindowEnd)
+			WindowStart:  timestamppb.New(row.WindowStart),
+			WindowEnd:    timestamppb.New(row.WindowEnd),
+			SummaryId:    row.SummaryID,
+		}})
 	}
 	return pending, nil
 }
@@ -383,6 +389,7 @@ func (s *logShipper) persistPendingLocked() {
 			Reason:       summary.GetReason(),
 			WindowStart:  summary.GetWindowStart().AsTime(),
 			WindowEnd:    summary.GetWindowEnd().AsTime(),
+			SummaryID:    summary.GetSummaryId(),
 		})
 	}
 	raw, err := json.Marshal(rows)

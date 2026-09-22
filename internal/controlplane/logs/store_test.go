@@ -181,14 +181,32 @@ func TestGapIdentityIsStable(t *testing.T) {
 	t.Parallel()
 
 	window := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	first := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", window, window, 5)
-	second := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", window, window, 5)
+	// Internally derived gaps are immutable per event: identical
+	// content must produce identical IDs for retry dedup.
+	first := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", "", window, window, 5)
+	second := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", "", window, window, 5)
 	if first != second {
 		t.Fatal("identical windows must produce identical gap IDs for retry dedup")
 	}
-	other := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", window, window, 6)
+	other := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", "", window, window, 6)
 	if first == other {
-		t.Fatal("distinct windows must not share a gap ID")
+		t.Fatal("distinct content must not share a gap ID")
+	}
+
+	// Producer summaries carry a stable identity: a retried report
+	// whose coalesced totals or window grew must replace its row
+	// instead of double-counting the loss.
+	grown := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", "sid-1", window, window, 5)
+	retried := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", "sid-1", window, window.Add(time.Minute), 8)
+	if grown != retried {
+		t.Fatal("expanded retry of the same summary must keep its gap ID")
+	}
+	distinct := gapIdentity("svc", "alloc", "", "runtime", "stdout", logpipeline.ReasonRateLimited, "agent-1", "sid-2", window, window, 5)
+	if grown == distinct {
+		t.Fatal("distinct summary lineages must not share a gap ID")
+	}
+	if grown == first {
+		t.Fatal("ID-keyed and content-keyed gaps must not collide")
 	}
 }
 

@@ -937,6 +937,11 @@ message LogDropSummary {
   string reason = 7;
   google.protobuf.Timestamp window_start = 8;
   google.protobuf.Timestamp window_end = 9;
+  // Stable identity of this coalesced drop lineage, minted by the
+  // producer and preserved across retries and count/window growth,
+  // so at-least-once reports replace their gap row instead of
+  // double-counting.
+  string summary_id = 10;
 }
 
 message ListServiceDeploymentsRequest {

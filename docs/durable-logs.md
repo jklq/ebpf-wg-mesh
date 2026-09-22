@@ -129,8 +129,11 @@ terminates, and the agent Sync loop never waits on ClickHouse.
 A gap row records `allocation_id`/`build_id`, log type, stream, window,
 `dropped_count`, a bounded reason (`rate_limited`, `spool_overflow`,
 `ingest_overflow`, `corrupt_spool`), and the reporter. Gap identity
-derives from the window contents so retried reports collapse instead of
-double counting. Reads return the gaps overlapping the queried range
+keys on the producer's stable summary ID when the gap carries one:
+retried reports of the same coalesced drop lineage collapse onto one
+row even after their totals or window grew, so retries never double
+count. Internally derived gaps are immutable per event and key on
+their full content. Reads return the gaps overlapping the queried range
 alongside lines, and every shed point counts drops — a dropped window
 is always an explicit gap, never silently closed. Gap attribution is
 derived from the allocation (or build) owner, never from producer
