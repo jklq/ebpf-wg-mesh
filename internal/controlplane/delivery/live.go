@@ -707,6 +707,25 @@ type SyncVersions struct {
 	Replicas    string
 }
 
+// offerHistoryLimit bounds each per-stream offered-version history. A
+// cumulative acknowledgement can lag several batches behind the sent
+// position (built and in flight while newer batches are granted), so
+// validation retains the most recent offers. An acknowledgement lagging
+// further than this window fails validation and the session reconnects; it
+// can never accept wrong state.
+const offerHistoryLimit = 64
+
+func appendOffered(history []string, version string) []string {
+	if version == "" {
+		return history
+	}
+	history = append(history, version)
+	if len(history) > offerHistoryLimit {
+		history = history[len(history)-offerHistoryLimit:]
+	}
+	return history
+}
+
 func (l *Live) Grant(agentID, sessionID string, epoch uint64, offered SyncVersions) error {
 	if l == nil {
 		return ErrNotLiveOwner
@@ -722,15 +741,9 @@ func (l *Live) Grant(agentID, sessionID string, epoch uint64, offered SyncVersio
 	}
 	session.OfferedEpoch = int64(epoch)
 	session.OfferedCursor = offered.Cursor
-	if offered.NodeConfig != "" {
-		session.OfferedNodeConfig = append(session.OfferedNodeConfig, offered.NodeConfig)
-	}
-	if offered.Credentials != "" {
-		session.OfferedCredentials = append(session.OfferedCredentials, offered.Credentials)
-	}
-	if offered.Replicas != "" {
-		session.OfferedReplicas = append(session.OfferedReplicas, offered.Replicas)
-	}
+	session.OfferedNodeConfig = appendOffered(session.OfferedNodeConfig, offered.NodeConfig)
+	session.OfferedCredentials = appendOffered(session.OfferedCredentials, offered.Credentials)
+	session.OfferedReplicas = appendOffered(session.OfferedReplicas, offered.Replicas)
 	return nil
 }
 
@@ -752,8 +765,9 @@ func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, accepted Syn
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
 	// Hash versions are not ordered; an ack must match a version offered in
-	// this session (in-flight acks may lag the newest grant) or repeat a
-	// previously accepted version (idempotent duplicate).
+	// this session (in-flight acks may lag the newest grant, bounded by the
+	// offer history window) or repeat a previously accepted version
+	// (idempotent duplicate).
 	if accepted.NodeConfig != "" && accepted.NodeConfig != session.AcceptedNodeConfig && !slices.Contains(session.OfferedNodeConfig, accepted.NodeConfig) {
 		return fmt.Errorf("stale node-config acknowledgement")
 	}

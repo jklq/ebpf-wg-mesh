@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -657,6 +658,34 @@ func TestAcknowledgeAcceptsInFlightBatchVersions(t *testing.T) {
 	// A regressing duplicate of the first batch stays rejected.
 	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 5, NodeConfig: "cfg-1", Credentials: "creds-1", Replicas: "reps-1"}); err == nil {
 		t.Fatal("regressing duplicate acknowledgement accepted")
+	}
+}
+
+func TestAcknowledgementOfferHistoryIsBounded(t *testing.T) {
+	l := startLive(t)
+	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	// Repeated content-carrying batches must not grow the per-stream offered
+	// version history with the deployment churn of a long-lived session.
+	total := offerHistoryLimit + 1
+	for i := 1; i <= total; i++ {
+		if err := l.Grant("agent", "s1", 3, SyncVersions{Cursor: int64(i), NodeConfig: fmt.Sprintf("cfg-%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := l.sessions["agent"]
+	if len(session.OfferedNodeConfig) > offerHistoryLimit {
+		t.Fatalf("offered version history holds %d entries, want at most %d", len(session.OfferedNodeConfig), offerHistoryLimit)
+	}
+	// The evicted oldest offer fails validation (its lagging ack closes the
+	// session and reconnects); it must not accept wrong state silently.
+	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 1, NodeConfig: "cfg-1"}); err == nil {
+		t.Fatal("acknowledgement for an evicted offered version accepted")
+	}
+	// The retained window still validates in-flight and latest acks.
+	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: int64(total), NodeConfig: fmt.Sprintf("cfg-%d", total)}); err != nil {
+		t.Fatalf("latest offered version rejected: %v", err)
 	}
 }
 
