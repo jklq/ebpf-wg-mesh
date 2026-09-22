@@ -77,6 +77,7 @@ type AsyncIngester struct {
 	mu          sync.Mutex
 	owed        map[owedGapKey]*owedGap
 	owedFold    map[owedGapKey]*owedGap
+	drainDone   bool
 	lastFlush   time.Time
 	lastError   string
 	lastErrorAt time.Time
@@ -188,10 +189,12 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 
 // EnqueueAgentBatch converts one validated batch and queues it for
 // durable write. It never blocks and never fails: overload sheds
-// with gap accounting.
-func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatch) {
+// with gap accounting. It returns false only once the shutdown drain
+// finished, when nothing can flush anymore and the caller should
+// fall back to a synchronous write or rely on producer replay.
+func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatch) bool {
 	if a == nil || a.store == nil || !a.store.Enabled() || batch == nil {
-		return
+		return true
 	}
 	inputs, gaps := convertAgentBatch(agentID, batch)
 	now := time.Now().UTC()
@@ -231,27 +234,80 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 		})
 		a.shedLines.Add(count)
 	}
+	if !a.enqueue(pendingFlush{lines: kept, gaps: gaps}) {
+		a.rejectFlush(kept, gaps)
+		return false
+	}
 	a.acceptedLines.Add(uint64(len(kept)))
-	a.enqueue(pendingFlush{lines: kept, gaps: gaps})
+	return true
 }
 
 // EnqueueLines queues platform-emitted lines for durable write under
 // the same bounded contract as agent batches: never blocks, sheds
 // with gap accounting past the queue cap, retries across outages.
-func (a *AsyncIngester) EnqueueLines(lines []LogLineInput) {
+// It returns false only once the shutdown drain finished.
+func (a *AsyncIngester) EnqueueLines(lines []LogLineInput) bool {
 	if a == nil || a.store == nil || !a.store.Enabled() || len(lines) == 0 {
-		return
+		return true
+	}
+	if !a.enqueue(pendingFlush{lines: lines}) {
+		a.rejectFlush(lines, nil)
+		return false
 	}
 	a.acceptedLines.Add(uint64(len(lines)))
-	a.enqueue(pendingFlush{lines: lines})
+	return true
 }
 
-func (a *AsyncIngester) enqueue(flush pendingFlush) {
+// rejectFlush accounts a flush that arrived after the shutdown
+// drain: nothing can persist it as rows anymore, so the loss lands
+// in the loud accounting — producers replay their retained spool
+// window on reconnect and synchronous fallbacks may still write
+// while the store closes.
+func (a *AsyncIngester) rejectFlush(lines []LogLineInput, gaps []GapInput) {
+	count := uint64(len(lines))
+	for _, gap := range gaps {
+		count += gap.DroppedCount
+	}
+	a.gapsLost.Add(count)
+	slog.Warn("log ingest rejected after shutdown drain",
+		"lines", len(lines), "gaps", len(gaps),
+		"accepted_lines", a.acceptedLines.Load(),
+		"flushed_lines", a.flushedLines.Load(),
+		"gaps_lost", a.gapsLost.Load())
+}
+
+// enqueue admits one flush under the admission lock so sealing the
+// queue at drain end is atomic with admission: a flush is either
+// visible to the drain or rejected, never lost in between.
+func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.drainDone {
+		return false
+	}
 	select {
 	case a.queue <- flush:
 	default:
-		a.shedFlush(flush)
+		a.shedFlushLocked(flush)
 	}
+	return true
+}
+
+// sealAdmission closes the queue against further admissions and
+// returns whatever raced in since the drain last found it empty, so
+// the caller flushes that residue before giving up.
+func (a *AsyncIngester) sealAdmission() pendingFlush {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.drainDone = true
+	var flush pendingFlush
+	select {
+	case next := <-a.queue:
+		flush = next
+	default:
+	}
+	a.attachOwedLocked(&flush)
+	return flush
 }
 
 // Run flushes queued batches until ctx ends, then drains the
@@ -297,8 +353,11 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 // drainShutdown flushes everything already accepted — the in-flight
 // batch handed over from Run, queued batches, owed gap windows, and
 // anything arriving during the drain — under a grace deadline
-// decoupled from the canceled run context. Whatever survives the
-// grace expires is logged with full accounting instead of vanishing.
+// decoupled from the canceled run context. It ends by sealing
+// admission atomically with its final emptiness check, so a batch
+// racing the seal either flushes here or is rejected and accounted,
+// never silently dropped. Whatever survives the grace expires is
+// logged with full accounting instead of vanishing.
 func (a *AsyncIngester) drainShutdown(ctx context.Context, inFlight pendingFlush) {
 	graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.shutdownGrace)
 	defer cancel()
@@ -307,9 +366,15 @@ func (a *AsyncIngester) drainShutdown(ctx context.Context, inFlight pendingFlush
 		a.coalesce(&flush)
 		a.attachOwed(&flush)
 		if len(flush.lines) == 0 && len(flush.gaps) == 0 {
-			return
+			flush = a.sealAdmission()
+			if len(flush.lines) == 0 && len(flush.gaps) == 0 {
+				return
+			}
 		}
 		if err := a.flushWithRetry(graceCtx, flush); err != nil {
+			leftover := a.sealAdmission()
+			flush.lines = append(flush.lines, leftover.lines...)
+			flush.gaps = append(flush.gaps, leftover.gaps...)
 			slog.Error("log ingest shutdown drain dropped accepted data",
 				"lines", len(flush.lines),
 				"gaps", len(flush.gaps),
@@ -344,12 +409,11 @@ func (a *AsyncIngester) Stats() IngesterStats {
 	}
 }
 
-// shedFlush converts a queue-overflowed flush into owed gap rows so
-// the loss still surfaces in reads.
-func (a *AsyncIngester) shedFlush(flush pendingFlush) {
+// shedFlushLocked converts a queue-overflowed flush into owed gap
+// rows so the loss still surfaces in reads. The admission lock must
+// be held.
+func (a *AsyncIngester) shedFlushLocked(flush pendingFlush) {
 	now := time.Now().UTC()
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	counts := make(map[owedGapKey]uint64)
 	for _, in := range flush.lines {
 		counts[owedGapKey{
@@ -403,6 +467,10 @@ func (a *AsyncIngester) coalesce(flush *pendingFlush) {
 func (a *AsyncIngester) attachOwed(flush *pendingFlush) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.attachOwedLocked(flush)
+}
+
+func (a *AsyncIngester) attachOwedLocked(flush *pendingFlush) {
 	if len(a.owed) == 0 && len(a.owedFold) == 0 {
 		return
 	}

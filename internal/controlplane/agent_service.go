@@ -397,11 +397,14 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if err := s.store.validateAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
 				return status.Errorf(codes.PermissionDenied, "log batch ownership: %v", err)
 			}
-			if s.logIngester != nil {
-				s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch)
-			} else if s.logStore != nil {
-				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
-					return status.Errorf(codes.Internal, "log batch: %v", err)
+			if s.logIngester == nil || !s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch) {
+				// No queue, or the shutdown drain already sealed it:
+				// fall back to a synchronous write while the store
+				// is still up.
+				if s.logStore != nil {
+					if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
+						return status.Errorf(codes.Internal, "log batch: %v", err)
+					}
 				}
 			}
 		}
@@ -757,11 +760,11 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 // async ingest queue so they retry across backend outages, shed with
 // gap accounting, and drain at shutdown like agent batches — a
 // synchronous write here would block the agent Sync receive loop and
-// lose the event when ClickHouse is unavailable. Without an ingester
-// it falls back to a synchronous write.
+// lose the event when ClickHouse is unavailable. Without an ingester,
+// or once the shutdown drain sealed the queue, it falls back to a
+// synchronous write.
 func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
-	if s.logIngester != nil {
-		s.logIngester.EnqueueLines(lines)
+	if s.logIngester != nil && s.logIngester.EnqueueLines(lines) {
 		return
 	}
 	if err := s.logStore.WriteLogLines(ctx, lines); err != nil {

@@ -100,7 +100,11 @@ the batch caught mid-retry, queued batches, and owed gap windows
 flush before the process exits,
 even when the run context is already canceled, and the server waits
 for the drain before closing the log store so every flush runs
-against a live backend. Only a hard kill or an
+against a live backend. gRPC streams stop before the drain, and
+admission seals atomically with the drain's final emptiness check: a
+batch racing the seal either flushes in the drain or is rejected and
+loudly accounted — and the producer's retained replay window
+re-sends it on reconnect. Only a hard kill or an
 expired grace loses the unflushed remainder, and that remainder is
 logged with full accounting rather than vanishing (producers
 additionally replay their unshipped spool window on reconnect).

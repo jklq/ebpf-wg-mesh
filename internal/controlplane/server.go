@@ -620,6 +620,14 @@ func (s *Server) Close() error {
 	if runCancel != nil {
 		runCancel()
 	}
+	if s.internalGRPC != nil {
+		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP.
+		// Stop the gRPC server before the shutdown waits below for two
+		// reasons: active Sync streams are torn down so the log ingest
+		// drain is not racing new batch admissions, and the later HTTP
+		// Shutdown does not wait the full deadline for streams to go idle.
+		s.internalGRPC.Stop()
+	}
 	if runStarted {
 		<-runDone
 	}
@@ -630,12 +638,6 @@ func (s *Server) Close() error {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errs = append(errs, err)
 		}
-	}
-	if s.internalGRPC != nil {
-		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP.
-		// Stop the gRPC server first so active Sync streams are torn down;
-		// otherwise HTTP Shutdown waits the full deadline for them to go idle.
-		s.internalGRPC.Stop()
 	}
 	if s.internalHTTP != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

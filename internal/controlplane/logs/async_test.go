@@ -391,3 +391,85 @@ func TestAsyncIngesterDrainsInFlightRetryOnShutdown(t *testing.T) {
 		t.Fatalf("shutdown dropped the in-flight batch: delivered %d of 3 lines", len(store.lines))
 	}
 }
+
+// Once the shutdown drain finished, arrivals are rejected and loudly
+// accounted — never silently accepted into a dead queue — so callers
+// fall back to synchronous writes or producer replay.
+func TestAsyncIngesterRejectsArrivalsAfterDrain(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 8})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ingester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 2)) {
+		t.Fatal("batch admitted after the shutdown drain")
+	}
+	if ingester.EnqueueLines([]LogLineInput{{ID: "sy:1"}}) {
+		t.Fatal("platform line admitted after the shutdown drain")
+	}
+	stats := ingester.Stats()
+	if stats.AcceptedLines != 0 {
+		t.Fatalf("rejected lines counted as accepted: %+v", stats)
+	}
+	if stats.GapsLost != 3 {
+		t.Fatalf("rejected lines lost without accounting: %+v", stats)
+	}
+}
+
+// Producers racing the shutdown drain never lose accounting: every
+// offered line is either admitted and flushed by the drain (as a
+// line or an owed gap row) or rejected and counted — never silently
+// dropped between the drain's last look and the seal.
+func TestAsyncIngesterAccountsForEveryLineAcrossShutdown(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{
+		QueueFlushes:  64,
+		RatePerSec:    1e9,
+		Burst:         100000,
+		ShutdownGrace: 10 * time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- ingester.Run(ctx) }()
+
+	const producers, batches = 8, 25
+	var wg sync.WaitGroup
+	for p := 0; p < producers; p++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < batches; i++ {
+				ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1))
+			}
+		}()
+	}
+	time.Sleep(5 * time.Millisecond)
+	cancel()
+	wg.Wait()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	stats := ingester.Stats()
+	offered := uint64(producers * batches)
+	if stats.AcceptedLines+stats.GapsLost != offered {
+		t.Fatalf("accounting lost lines: offered %d, %+v", offered, stats)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var gapLines uint64
+	for _, gap := range store.gaps {
+		gapLines += gap.DroppedCount
+	}
+	if uint64(len(store.lines))+gapLines != stats.AcceptedLines {
+		t.Fatalf("admitted lines did not all reach the store: stored %d lines + %d gap lines, %+v",
+			len(store.lines), gapLines, stats)
+	}
+}
