@@ -1,7 +1,11 @@
 // Command xds-probe subscribes to control-plane xDS endpoints the way an
 // Envoy instance would and records what it observes for the VM harness:
-// every response is appended to requests.log and the union of hostnames,
-// endpoints, and versions across all endpoints lands in latest.json.
+// every response is appended to requests.log and the union of the hostnames
+// and endpoints each reachable endpoint currently advertises lands in
+// latest.json. SotW responses carry the complete resource set for their type,
+// so a withdrawal replaces the endpoint's set instead of accumulating; an
+// endpoint whose subscription drops stops contributing entirely, and versions
+// are kept per endpoint as last-seen diagnostics.
 package main
 
 import (
@@ -59,9 +63,16 @@ type probe struct {
 	cfg probeConfig
 
 	mu        sync.Mutex
-	hostnames map[string]struct{}
-	endpoints map[string]struct{}
-	versions  map[string]map[string]string
+	resources map[string]map[string]observedResources // addr -> resource type -> set carried by the latest response
+	versions  map[string]map[string]string            // addr -> resource type -> version of the latest response
+}
+
+// observedResources is the complete resource set of one DiscoveryResponse for
+// one endpoint: state-of-the-world responses replace the previous set, so a
+// withdrawal shrinks it.
+type observedResources struct {
+	hostnames []string
+	endpoints []string
 }
 
 func main() {
@@ -96,8 +107,7 @@ func run(ctx context.Context, cfg probeConfig) error {
 	}
 	p := &probe{
 		cfg:       cfg,
-		hostnames: make(map[string]struct{}),
-		endpoints: make(map[string]struct{}),
+		resources: make(map[string]map[string]observedResources),
 		versions:  make(map[string]map[string]string),
 	}
 	var wg sync.WaitGroup
@@ -117,7 +127,9 @@ func run(ctx context.Context, cfg probeConfig) error {
 func (p *probe) follow(ctx context.Context, addr string) {
 	backoff := time.Second
 	for {
-		if err := p.subscribeOnce(ctx, addr); err != nil && ctx.Err() == nil {
+		err := p.subscribeOnce(ctx, addr)
+		p.forget(addr)
+		if err != nil && ctx.Err() == nil {
 			log.Printf("xds-probe %s: %v; resubscribing", addr, err)
 		}
 		select {
@@ -157,22 +169,15 @@ func (p *probe) subscribeOnce(ctx context.Context, addr string) error {
 func (p *probe) observe(addr string, resp *discoveryv3.DiscoveryResponse) {
 	hostnames, endpoints := extractResources(resp)
 	p.mu.Lock()
-	for _, hostname := range hostnames {
-		p.hostnames[hostname] = struct{}{}
+	if p.resources[addr] == nil {
+		p.resources[addr] = make(map[string]observedResources)
 	}
-	for _, endpoint := range endpoints {
-		p.endpoints[endpoint] = struct{}{}
-	}
+	p.resources[addr][shortType(resp.GetTypeUrl())] = observedResources{hostnames: hostnames, endpoints: endpoints}
 	if p.versions[addr] == nil {
 		p.versions[addr] = make(map[string]string)
 	}
 	p.versions[addr][shortType(resp.GetTypeUrl())] = resp.GetVersionInfo()
-	snapshot := probeSnapshot{
-		Hostnames: sortedKeys(p.hostnames),
-		Endpoints: sortedKeys(p.endpoints),
-		Versions:  copyVersions(p.versions),
-		UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	}
+	snapshot := p.snapshotLocked()
 	// File writes stay under the mutex: concurrent subscribers share one
 	// requests.log and one latest.json staging file.
 	line := fmt.Sprintf("%s %s %s resources=%d\n", addr, shortType(resp.GetTypeUrl()), resp.GetVersionInfo(), len(resp.GetResources()))
@@ -183,6 +188,47 @@ func (p *probe) observe(addr string, resp *discoveryv3.DiscoveryResponse) {
 		log.Printf("xds-probe %s: write latest.json: %v", addr, err)
 	}
 	p.mu.Unlock()
+}
+
+// forget drops an endpoint's resource sets when its subscription ends and
+// recomputes the snapshot. A disconnected endpoint can neither confirm nor
+// withdraw anything, so its last response must not keep presenting withdrawn
+// resources as published (which would let presence checks pass on stale data).
+// Versions stay behind as last-seen diagnostics.
+func (p *probe) forget(addr string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.resources[addr] == nil {
+		return
+	}
+	delete(p.resources, addr)
+	if err := writeLatest(filepath.Join(p.cfg.dir, "latest.json"), p.snapshotLocked()); err != nil {
+		log.Printf("xds-probe %s: write latest.json: %v", addr, err)
+	}
+}
+
+// snapshotLocked unions the current per-endpoint resource sets: a resource is
+// present exactly while the latest response of that type from a reachable
+// endpoint carries it.
+func (p *probe) snapshotLocked() probeSnapshot {
+	hostnames := make(map[string]struct{})
+	endpoints := make(map[string]struct{})
+	for _, perType := range p.resources {
+		for _, resources := range perType {
+			for _, hostname := range resources.hostnames {
+				hostnames[hostname] = struct{}{}
+			}
+			for _, endpoint := range resources.endpoints {
+				endpoints[endpoint] = struct{}{}
+			}
+		}
+	}
+	return probeSnapshot{
+		Hostnames: sortedKeys(hostnames),
+		Endpoints: sortedKeys(endpoints),
+		Versions:  copyVersions(p.versions),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
 }
 
 type probeSnapshot struct {
