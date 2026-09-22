@@ -78,7 +78,10 @@ Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted
 as an explicit gap row. Shutdown drains the counters into pending
 drop summaries persisted next to the spool, so they report after the
-restart. Spool records lost to crash corruption are counted the same
+restart. Pending summaries coalesce by identity — counts sum and the
+covered window widens — so a sustained outage holds one entry per
+identity instead of one per flush interval, and a failed send folds
+its taken summaries back into the pending set. Spool records lost to crash corruption are counted the same
 way with reason `corrupt_spool`, attributed best-effort from the
 damaged frame's key (frames whose key bytes are gone stay in the
 process counters only). Drop summaries carry the allocation as their
@@ -107,12 +110,13 @@ flush before the process exits,
 even when the run context is already canceled, and the server waits
 for the drain before closing the log store so every flush runs
 against a live backend. gRPC streams stop before the drain, and
-admission seals atomically with the drain's final emptiness check: a
+admission seals atomically with the drain's final pull: a
 batch racing the seal either flushes in the drain or is rejected and
 loudly accounted — and the producer's retained replay window
 re-sends it on reconnect. Only a hard kill or an
-expired grace loses the unflushed remainder, and that remainder is
-logged with full accounting rather than vanishing (producers
+expired grace loses the unflushed remainder, and every leftover line
+and gap count lands in the loud shutdown accounting rather than
+vanishing (producers
 additionally replay their unshipped spool window on reconnect).
 Platform events (build/deploy lifecycle, crash loops) ride the same
 bounded queue: retry across outages, shed with gap accounting, drain
