@@ -457,8 +457,6 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 			t.Errorf("close ClickHouse: %v", err)
 		}
 	})
-	runner := localteststack.ExecDockerRunner{}
-
 	const (
 		agentID = "outage-agent"
 		token   = "outage-bootstrap"
@@ -497,11 +495,11 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 
 	// Stop the backend: the Sync stream must stay healthy and ingest
 	// must not fail the stream.
-	if _, err := runner.Run(ctx, "stop", containerName); err != nil {
+	if err := managed.Stop(ctx); err != nil {
 		t.Fatalf("stop clickhouse: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = runner.Run(context.Background(), "start", containerName)
+		_ = managed.Start(context.Background())
 	})
 	duringMarker := "outage-during-" + now.Format("150405")
 	sendDurableBatch(t, stream, agentID, []*agentv1.LogEntry{
@@ -515,7 +513,7 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 	}
 
 	// Restart: the queued line flushes exactly once.
-	if _, err := runner.Run(ctx, "start", containerName); err != nil {
+	if err := managed.Start(ctx); err != nil {
 		t.Fatalf("start clickhouse: %v", err)
 	}
 	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 90 * time.Second, Interval: time.Second}, func(ctx context.Context) (bool, error) {
