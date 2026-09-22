@@ -560,3 +560,67 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 		t.Fatalf("first contact served %+v, want durable publication %s", status, published.Version)
 	}
 }
+
+// flakyNodes fails its first upserts and then delegates: a transient store
+// outage must not leave a node served untracked.
+type flakyNodes struct {
+	*fakeNodes
+	failures int
+}
+
+func (f *flakyNodes) UpsertNodeObservations(ctx context.Context, observations []NodeObservation) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("node store unavailable")
+	}
+	return f.fakeNodes.UpsertNodeObservations(ctx, observations)
+}
+
+func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	published := mustBuild(t, BuildInput{
+		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		ListenAddrs: []string{":8080"},
+	})
+	pubs := &fakePublications{pub: Publication{
+		Version: published.Version, Hash: published.Hash, Inputs: published.Inputs,
+	}}
+	server := NewServer(context.Background())
+	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
+	nodes := &flakyNodes{fakeNodes: newFakeNodes(), failures: 1}
+	refreshes := 0
+	server.SetNodeStore(nodes)
+	server.SetFirstContactHook(func(ctx context.Context) error {
+		refreshes++
+		return publisher.Refresh(ctx)
+	})
+
+	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-x"}, TypeUrl: resourcev3.EndpointType}
+	// First attempt hits a store outage: fail closed, but the node must not
+	// be considered handled — the next request has to run the full
+	// register-then-refresh sequence again instead of trusting memory.
+	if err := server.onFetchRequest(context.Background(), req); err == nil {
+		t.Fatal("expected registration failure to fail the request closed")
+	}
+	if err := server.onFetchRequest(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	nodes.mu.Lock()
+	got, ok := nodes.nodes["envoy-x"]
+	nodes.mu.Unlock()
+	if !ok || got.AppliedHash != "" {
+		t.Fatalf("retried registration = %+v (present=%t), want durable row", got, ok)
+	}
+	if refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1 (the failed attempt must not mark the node served)", refreshes)
+	}
+
+	// Once registered, later requests skip the sequence.
+	if err := server.onFetchRequest(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1 after registration succeeded", refreshes)
+	}
+}

@@ -81,6 +81,11 @@ type nodeState struct {
 	applied  map[string]string
 	nacks    int64
 	lastNACK string
+	// registered marks that durable registration and the pre-serve
+	// refresh have succeeded for this node. Every request retries them
+	// until then: a failed first attempt must not leave later requests
+	// served untracked or stale.
+	registered bool
 }
 
 // NewServer builds an xDS server with no snapshot published yet. Streams
@@ -200,8 +205,8 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 	if nodeID == "" {
 		return nil
 	}
-	fresh := s.observe(streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
-	return s.atFirstContact(nodeID, fresh, context.Background())
+	s.observe(streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	return s.atFirstContact(context.Background(), nodeID)
 }
 
 func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryRequest) error {
@@ -212,8 +217,8 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 	if nodeID == "" {
 		return nil
 	}
-	fresh := s.observe(0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
-	return s.atFirstContact(nodeID, fresh, ctx)
+	s.observe(0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
+	return s.atFirstContact(ctx, nodeID)
 }
 
 // atFirstContact durably registers a subscriber and refreshes from the
@@ -221,10 +226,15 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 // before any config can reach the subscriber — registration first, so the
 // drain barrier cannot miss it; refresh second, so it cannot receive
 // content older than the row and hold routes the barrier believes gone.
-// Failure fails the request closed rather than serving an untracked or
-// stale subscriber.
-func (s *Server) atFirstContact(nodeID string, fresh bool, ctx context.Context) error {
-	if !fresh {
+// They repeat on every request until they succeed once: concurrent first
+// contacts and failed attempts must not leave a request served untracked
+// or stale. Failure fails the request closed.
+func (s *Server) atFirstContact(ctx context.Context, nodeID string) error {
+	s.mu.Lock()
+	state := s.nodes[nodeID]
+	registered := state != nil && state.registered
+	s.mu.Unlock()
+	if registered {
 		return nil
 	}
 	if s.nodeStore != nil {
@@ -237,17 +247,22 @@ func (s *Server) atFirstContact(nodeID string, fresh bool, ctx context.Context) 
 			return fmt.Errorf("refresh before serving xds node %s: %w", nodeID, err)
 		}
 	}
+	s.mu.Lock()
+	if state := s.nodes[nodeID]; state != nil {
+		state.registered = true
+	}
+	s.mu.Unlock()
 	return nil
 }
 
-func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDetail *rpcstatus.Status) bool {
+func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDetail *rpcstatus.Status) {
 	if nodeID == "" {
-		return false
+		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state, known := s.nodes[nodeID]
-	if !known {
+	state, ok := s.nodes[nodeID]
+	if !ok {
 		state = &nodeState{applied: make(map[string]string)}
 		s.nodes[nodeID] = state
 		if s.current != nil {
@@ -274,12 +289,12 @@ func (s *Server) observe(streamID int64, nodeID, typeURL, version string, errDet
 			slog.Warn("xds subscriber NACKed snapshot",
 				"node", nodeID, "type", typeURL, "version", version, "error", errDetail.GetMessage())
 		}
-		return !known
+		return
 	}
 	if typeURL != "" && version != "" && s.current != nil && version == s.current.Version {
 		state.applied[typeURL] = version
 	}
-	return !known
+
 }
 
 func (s *Server) onStreamClosed(streamID int64, node *corev3.Node) {
