@@ -502,7 +502,7 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
 	}
 
@@ -552,7 +552,7 @@ func TestCompleteBuildStoresRolloutBuildLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
 	}
 
@@ -611,7 +611,7 @@ func TestListServiceDeploymentsReturnsPersistedBuildAndDirectImageHistory(t *tes
 	if err != nil {
 		t.Fatalf("create repo service: %v", err)
 	}
-	if err := seedReadySourceStateWithMetadata(t, store, repoService, "commit-1", "Fix deploy history", "Alice"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, repoService, "commit-1", "Fix deploy history", "Alice", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
 	}
 	build, err := enqueueBuildForTest(ctx, store, "user-1", repoService.ID, "commit-1")
@@ -697,7 +697,7 @@ func TestListServiceDeploymentsIncludesFailedBuildAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Break deploy history", "Alice"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Break deploy history", "Alice", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
 	}
 
@@ -756,7 +756,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Fix deploy history", "Alice", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatalf("seedReadySourceStateWithMetadata: %v", err)
 	}
 
@@ -788,7 +788,7 @@ func TestEnqueueBuildAllowsRepeatedSameCommitAttempts(t *testing.T) {
 }
 
 func seedReadySourceState(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA string) error {
-	return seedReadySourceStateWithMetadata(t, store, service, commitSHA, "", "")
+	return seedReadySourceStateWithMetadata(t, store, service, commitSHA, "", "", source.BuildTransition{TrackedHead: true})
 }
 
 func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.ServiceRecord) {
@@ -822,7 +822,7 @@ func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.S
 	return store, projects[0].ID, service
 }
 
-func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string) error {
+func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string, transition source.BuildTransition) error {
 	t.Helper()
 	archive := []byte("snapshot-" + commitSHA)
 	digest, objectKey, err := store.source.StoreSourceArchive(context.Background(), archive)
@@ -847,7 +847,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 		if err != nil {
 			return err
 		}
-		revision, err := store.source.UpsertSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
+		revision, err := store.source.ObserveSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
 			Provider:                     binding.Provider,
@@ -857,7 +857,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 			CommitMessage:                commitMessage,
 			CommitAuthor:                 commitAuthor,
 			ObservedAt:                   time.Now().UTC(),
-		})
+		}, transition)
 		if err != nil {
 			return err
 		}

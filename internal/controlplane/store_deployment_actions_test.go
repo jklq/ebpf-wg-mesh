@@ -239,7 +239,7 @@ func TestDeploymentActionRestartReplacesOnlySelectedAllocation(t *testing.T) {
 func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 	t.Parallel()
 	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel", "Cancel me", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel", "Cancel me", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-cancel")
@@ -444,7 +444,7 @@ func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t
 func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	t.Parallel()
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-retry", "Retry me", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-retry", "Retry me", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-retry")

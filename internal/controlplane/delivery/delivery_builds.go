@@ -520,22 +520,26 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	now := time.Now().UTC()
 	// Freshness fence: before anything is superseded or created, the
 	// request must prove it is current — its revision is the binding's
-	// latest observed commit, it advances from that commit (an ordered
-	// push transition such as a force-push back to an older commit), or
-	// the caller just fetched the commit as the tracked head. A
-	// redelivered or retried older revision carries no proof and is
-	// refused: it must never supersede queued newer work or regress the
-	// rollout. Moving backward on purpose is the rollback and
-	// exact-redeploy actions' job.
-	latest, err := s.sourceStore.LatestSourceRevisionByBindingIDTx(ctx, tx, revision.SourceBindingID)
+	// proven head commit, it advances from that head (an ordered push
+	// transition such as a force-push back to an older commit), or the
+	// caller just fetched the commit as the tracked head (see
+	// source.BuildTransition). A redelivered or retried older revision
+	// carries no proof and is refused: it must never supersede queued
+	// newer work or regress the rollout. Moving backward on purpose is
+	// the rollback and exact-redeploy actions' job. Arrival order is not
+	// push order, so currency is proven against the head established by
+	// proven transitions, never against "latest observed".
+	head, err := s.sourceStore.SourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID)
 	if err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-	current := transition.TrackedHead ||
-		latest.ID == revision.ID ||
-		(transition.PreviousCommit != "" && transition.PreviousCommit == latest.CommitSHA)
-	if !current {
+	if !transition.ProvesCurrent(revision.CommitSHA, head) {
 		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
+	}
+	if head != revision.CommitSHA {
+		if err := s.sourceStore.SetSourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID, revision.CommitSHA); err != nil {
+			return BuildRunRecord{}, DeploymentRecord{}, false, err
+		}
 	}
 	artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe)
 	if err != nil {

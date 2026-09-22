@@ -34,7 +34,7 @@ type Store interface {
 	ServiceSnapshot(context.Context, string) (Service, error)
 	EnvironmentAutoDeploy(context.Context, string) (bool, error)
 	UpsertSourceBinding(context.Context, SourceBindingRecord) (SourceBindingRecord, error)
-	UpsertSourceRevision(context.Context, SourceRevisionRecord) (SourceRevisionRecord, error)
+	ObserveSourceRevision(context.Context, SourceRevisionRecord, BuildTransition) (SourceRevisionRecord, error)
 	SourceSnapshotByRevisionID(context.Context, string) (SourceSnapshotRecord, error)
 	StoreSourceArchive(context.Context, []byte) (string, string, error)
 	StoreSourceArchiveFromReader(context.Context, io.Reader, int64) (string, string, int64, error)

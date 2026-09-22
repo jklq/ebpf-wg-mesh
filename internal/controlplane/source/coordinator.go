@@ -275,7 +275,7 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
 			if binding.AccessState == SourceAccessStateAvailable {
-				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor); err != nil {
+				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, BuildTransition{PreviousCommit: payload.PreviousCommitSHA}); err != nil {
 					return err
 				}
 			}
@@ -301,7 +301,7 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 // honor the environment auto-deploy switch: when it is off the revision is
 // recorded and held for a manual release instead of building.
 func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool, transition BuildTransition) error {
-	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor)
+	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor, transition)
 	if err != nil {
 		return err
 	}
@@ -318,8 +318,8 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 	return c.queueBoundRevisionBuild(ctx, binding, revision, transition)
 }
 
-func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string) (SourceRevisionRecord, error) {
-	return c.store.UpsertSourceRevision(ctx, SourceRevisionRecord{
+func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, transition BuildTransition) (SourceRevisionRecord, error) {
+	return c.store.ObserveSourceRevision(ctx, SourceRevisionRecord{
 		SourceBindingID:              binding.ID,
 		ServiceID:                    binding.ServiceID,
 		Provider:                     binding.Provider,
@@ -329,7 +329,7 @@ func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding Sou
 		CommitMessage:                strings.TrimSpace(commitMessage),
 		CommitAuthor:                 strings.TrimSpace(commitAuthor),
 		ObservedAt:                   time.Now().UTC(),
-	})
+	}, transition)
 }
 
 func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding SourceBindingRecord, revision SourceRevisionRecord, transition BuildTransition) error {

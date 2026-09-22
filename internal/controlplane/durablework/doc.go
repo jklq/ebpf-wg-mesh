@@ -76,7 +76,7 @@
 //  2. Content-addressed writes converge. StoreSourceArchive keys bytes by
 //     digest, so a duplicate store after death writes the same bytes under
 //     the same key instead of corrupting state.
-//  3. The product mutation is the atomic commit point. UpsertSourceRevision,
+//  3. The product mutation is the atomic commit point. ObserveSourceRevision,
 //     UpsertSourceSnapshot, the build row, and the deployment transition
 //     commit in one product transaction inside QueueSourceBuild. Death before
 //     the commit leaves no product trace and the retry re-runs cleanly;
