@@ -1,8 +1,15 @@
 # Authoritative agent reconciliation
 
-The stream has one delivery mode: complete desired snapshots. There is no diff
-history, command replay, or resume protocol. Reconnecting sends a fresh hello and
-receives a complete snapshot even if the accepted cursor has not changed.
+The stream uses checkpoint-plus-diff (2.10). The control plane remains
+authoritative for placement. After reconciling the allocation inventory and
+accepted cursor in hello, it sends only bounded start, update, and stop
+changes ordered by the monotonic per-node allocation revision
+(`desired_revision`). A checkpoint (full `DesiredNodeState`) establishes or
+repairs the desired set on initialization, recovery, compaction, cursor
+mismatch, or epoch change, but an unchanged reconnect sends nothing for
+allocations. Node config, pull credentials, and replica discovery are
+independently versioned content hashes, not allocation changes; 2.11/2.12
+split node config further using the same seam.
 
 ## Identity and sessions
 
@@ -10,7 +17,8 @@ mTLS authenticates the agent ID and the cluster trust root. The cluster ID is th
 SHA-256 fingerprint of the enrolled CA PEM (with surrounding whitespace removed).
 Hello carries both identities, a durable local-store UUID, initialization state
 (`uninitialized`, `ready`, or `recovery`), a random stream ID, a durable increasing
-session incarnation, the last accepted epoch/cursor, allocation desired/applied
+session incarnation, the last accepted epoch/cursor plus the accepted
+node-config, credentials, and replicas versions, allocation desired/applied
 generations and runtime phases, and independently discovered runtime identities.
 
 The server binds an enrollment to its first local-store UUID. Another store
@@ -28,49 +36,65 @@ with separate storage. Copying or clearing identity metadata is not recovery.
 Automatic trust-root rotation or identity rebinding is not supported by this
 protocol.
 
-## Snapshot acceptance and removal
+## Checkpoint and diff acceptance
 
 The server reads the cursor, epoch, node/network configuration, identities,
 volumes and allocations in one database transaction. Only a successful read
-produces `complete = true`, with scope `AGENT`. The authenticated cluster ID and
-agent ID identify the scope; a snapshot cannot authorize cleanup on another node.
-Every delivered snapshot also names its stream and carries an authority expiry.
+produces a checkpoint with `complete = true` and scope `AGENT`. The
+authenticated cluster ID and agent ID identify the scope; a checkpoint or diff
+cannot authorize cleanup on another node. Every delivered message also names
+its stream and carries an authority expiry, and a single grant covers a whole
+batch (node config, credentials, allocations, replicas) with one deadline.
+Batches send policy/peers first (fail closed), then credentials, then
+allocations, then replica discovery.
 
-The agent validates identity, stream, scope, completeness, configuration, expiry,
-epoch and cursor. It persists the highest observed authenticated epoch separately
-from the last accepted epoch/cursor: learning a newer epoch from a rejected
-snapshot still fences older authority after restart. Within one epoch, cursors
-must not decrease; different configuration at the same cursor is rejected.
-Duplicate configuration is accepted idempotently. Credentials and transport
-metadata may be renewed without inventing a new configuration cursor.
+The agent validates identity, stream, scope, completeness, configuration,
+expiry, epoch and cursor/version. It persists the highest observed
+authenticated epoch separately from the last accepted epoch/cursor: learning a
+newer epoch from a rejected message still fences older authority after
+restart. Allocation cursors must not decrease; a diff whose base does not
+equal the accepted cursor needs a checkpoint. Duplicate checkpoints and diffs
+are accepted idempotently. Checkpoints and diffs must not carry registry
+credentials on the wire; credentials arrive in `PullCredentialSet` and are
+merged only for the runtime.
 
-Acceptance uses two local transactions. First the complete candidate, including
-its cursor and credentials, is durably staged. Staging changes neither the
-accepted position nor any runtime-visible configuration. Then the agent prepares
-the accepted snapshot, cursor, credentials and allocation operation records in a
-second transaction and checks the grant again as its final acceptance decision.
-This check is the acceptance **linearization point**: the exact candidate is
-already durable, and authority must still be valid. A persistence stall or
-process pause before that check cannot admit an expired candidate.
+Acceptance uses two local transactions for checkpoints, diffs, and node
+config. First the complete candidate is durably staged. Staging changes
+neither the accepted position nor any runtime-visible configuration. Then the
+agent prepares the merged state, cursor/version, and allocation operation
+records in a second transaction and checks the grant again as its final
+acceptance decision. This check is the acceptance **linearization point**: the
+exact candidate is already durable, and authority must still be valid. A
+persistence stall or process pause before that check cannot admit an expired
+candidate. Credentials and replicas use a single transaction with the grant
+check as the final statement; they never authorize removal.
 
 The second transaction atomically publishes that decision. Its commit and the
 acknowledgement may finish after expiry, just as runtime work for an already
-accepted snapshot may finish later; they do not make a new authority decision.
-There is no bound assumed on disk latency. Runtime reconciliation cannot see the
-candidate until publication commits, and acknowledgement follows that commit.
-A failed write or expired decision sends no acknowledgement and retains the
-previous accepted snapshot and cursor. Startup discards any candidate without a
-committed decision, even if its grant is still valid. If publication commits but
-its acknowledgement is lost, reconnect and a duplicate snapshot recover without
-replaying commands. Acceptance is serialized with runtime reconciliation so an
-older reconcile cannot start work after a newer removal has been accepted.
+accepted state may finish later; they do not make a new authority decision.
+There is no bound assumed on disk latency. Runtime reconciliation cannot see
+the candidate until publication commits, and acknowledgement follows that
+commit. Acknowledgements carry the cumulative accepted cursor plus all stream
+versions. A failed write or expired decision sends no acknowledgement and
+retains the previous accepted state. Startup discards any candidate without a
+committed decision, even if its grant is still valid. If publication commits
+but its acknowledgement is lost, reconnect recovers: an unchanged cursor
+sends nothing, a retained cursor replays diffs, and a compacted cursor falls
+back to a checkpoint. Acceptance is serialized with runtime reconciliation so
+an older reconcile cannot start work after a newer removal has been accepted.
 
-Omission requests removal only in an accepted complete agent scope. Missing,
-partial, invalid, expired or stale snapshots cannot clear existing desired state.
-Unowned resources discovered during recovery remain protected until ownership is
-established. Runtime progress, health and release are observations, never implied
-by an acceptance acknowledgement. Acknowledgements update acceptance position;
-they do not advance observation sequence or applied generations.
+Omission requests removal only in an accepted complete checkpoint scope. In
+diffs, omission is not removal; only explicit stops remove. Missing, partial,
+invalid, expired or stale messages cannot clear existing desired state.
+Unowned resources discovered during recovery remain protected until ownership
+is established. Runtime progress, health and release are observations, never
+implied by an acceptance acknowledgement. Acknowledgements update acceptance
+position; they do not advance observation sequence or applied generations.
+
+Diff history is bounded (32 entries / 1 MiB per node, 256 KiB / 100
+allocations per payload). Oversized changes and compacted cursors fall back
+to a checkpoint. Failover resets history; the new owner sends checkpoints
+until agents re-establish, then resumes diffs.
 
 ## Authority expiration and takeover
 
@@ -109,12 +133,18 @@ storage. Workload replacement policy remains a separate prerequisite.
 ## Verification
 
 `internal/agent/reconciliation_test.go` covers removal under duplicates, delayed
-snapshots, stale sessions, reconnects, scope rejection, epoch persistence, sticky
+messages, stale sessions, reconnects, scope rejection, epoch persistence, sticky
 identity recovery and a failure after transaction writes have begun. It also
 advances the clock across takeover between staging and the acceptance decision,
-checks that neither removal nor resurrection changes the accepted snapshot,
-credentials, cursor or allocation operations, and restarts with an unaccepted
-candidate to verify that it cannot become runtime-visible.
+checks that neither removal nor resurrection changes the accepted state, cursor
+or allocation operations, and restarts with an unaccepted candidate to verify
+that it cannot become runtime-visible. `internal/agent/local_state_diff_test.go`
+covers diff start/update/stop, idempotent duplicates, gaps, stale-epoch diffs,
+checkpoint baselines, independent node/credential/replica versions, and recovery
+quarantine under diffs. `internal/controlplane/delivery/allocation_sync_test.go`
+covers diff computation, credential stripping, ordered bounded history,
+compaction fallback, failover fallback, oversized fallback, inventory matching,
+and independent version hashing.
 `internal/reconciliation/grant_test.go` checks isolated-agent expiry at both clock
 skew extremes and takeover boundaries. The database integration tests in
 `internal/controlplane/agent_authority_integration_test.go` wait through a real
@@ -122,5 +152,5 @@ grant deadline, test paused former senders, and reject delayed hellos, stale
 acknowledgements and fresh-store identity reuse. Live TLS and control-plane
 restart tests exercise both sides of the stream.
 
-This is a clean schema/protocol cutover: control-plane schema 13 and local-store
-format 2. Older persisted formats are refused; there is no compatibility mode.
+This is a clean schema/protocol cutover: control-plane schema 26 and local-store
+format 3. Older persisted formats are refused; there is no compatibility mode.

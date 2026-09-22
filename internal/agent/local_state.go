@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	localStateFormatVersion uint64 = 2
+	localStateFormatVersion uint64 = 3
 	localStateFileName             = "agent-state.db"
 )
 
@@ -48,6 +48,11 @@ var (
 	cursorKey              = []byte("reconciliation_cursor")
 	desiredStateKey        = []byte("accepted_state")
 	stagedDesiredStateKey  = []byte("staged_state")
+	stagedDiffKey          = []byte("staged_diff")
+	stagedNodeConfigKey    = []byte("staged_node_config")
+	nodeConfigVersionKey   = []byte("node_config_version")
+	credentialsVersionKey  = []byte("credentials_version")
+	replicasVersionKey     = []byte("replicas_version")
 	statusReportKey        = []byte("status_report")
 	reportEpochKey         = []byte("report_authority_epoch")
 	reportCursorKey        = []byte("report_reconciliation_cursor")
@@ -97,6 +102,9 @@ type localStateSummary struct {
 	ClusterIdentity      string
 	AuthorityEpoch       uint64
 	ReconciliationCursor int64
+	NodeConfigVersion    string
+	CredentialsVersion   string
+	ReplicasVersion      string
 	RuntimeResources     []RuntimeResource
 	QuarantinedStore     string
 }
@@ -193,10 +201,12 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 				return err
 			}
 		}
-		// A staged snapshot has no acceptance decision. A crash must never
-		// promote it, even if its grant was valid when persistence started.
-		if err := tx.Bucket(localDesiredBucket).Delete(stagedDesiredStateKey); err != nil {
-			return err
+		// Staged candidates have no acceptance decision. A crash must never
+		// promote them, even if the grant was valid when persistence started.
+		for _, key := range [][]byte{stagedDesiredStateKey, stagedDiffKey, stagedNodeConfigKey} {
+			if err := tx.Bucket(localDesiredBucket).Delete(key); err != nil {
+				return err
+			}
 		}
 		rawVersion := meta.Get(formatVersionKey)
 		if len(rawVersion) != 0 && len(rawVersion) != 8 {
@@ -246,7 +256,6 @@ func (s *localStateStore) validateRecords() error {
 		if strings.TrimSpace(agentID) == "" {
 			return errors.New("local agent identity is empty")
 		}
-		desiredAllocations := make(map[string]struct{})
 		if raw := tx.Bucket(localDesiredBucket).Get(desiredStateKey); len(raw) > 0 {
 			var desired agentv1.DesiredNodeState
 			if err := proto.Unmarshal(raw, &desired); err != nil {
@@ -258,16 +267,17 @@ func (s *localStateStore) validateRecords() error {
 			if desired.GetAgentId() != agentID || desired.GetAuthorityEpoch() != readUint64(meta.Get(authorityEpochKey)) || desired.GetReconciliationCursor() != readInt64(meta.Get(cursorKey)) {
 				return errors.New("accepted desired state does not match local identity or reconciliation position")
 			}
-			for _, service := range desired.GetServices() {
-				desiredAllocations[service.GetAllocationId()] = struct{}{}
+			if desired.GetNodeConfigVersion() != string(meta.Get(nodeConfigVersionKey)) {
+				return errors.New("accepted node config version does not match local version")
 			}
 		} else if readUint64(meta.Get(authorityEpochKey)) != 0 || readInt64(meta.Get(cursorKey)) != 0 {
 			return errors.New("local reconciliation position exists without desired state")
 		}
+		// Credentials are independently versioned and may arrive before their
+		// checkpoint; they are not validated against current desired here.
 		if err := tx.Bucket(localCredentialsBucket).ForEach(func(key, value []byte) error {
-			allocationID := string(key)
-			if _, ok := desiredAllocations[allocationID]; !ok {
-				return fmt.Errorf("pull credential references unknown allocation %q", allocationID)
+			if err := validateRuntimeID("allocation ID", string(key)); err != nil {
+				return err
 			}
 			var credential pullCredential
 			if err := json.Unmarshal(value, &credential); err != nil {
@@ -587,7 +597,7 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 	if err := proto.Unmarshal(staged, incoming); err != nil {
 		return false, fmt.Errorf("decode desired candidate: %w", err)
 	}
-	clean, credentials := splitDesiredCredentials(incoming)
+	clean, _ := splitDesiredCredentials(incoming)
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(clean)
 	if err != nil {
 		return false, fmt.Errorf("encode desired state: %w", err)
@@ -642,7 +652,9 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 		if err := putInt64(meta, cursorKey, incoming.GetReconciliationCursor()); err != nil {
 			return err
 		}
-		if err := replaceCredentials(tx.Bucket(localCredentialsBucket), credentials); err != nil {
+		// 2.10: checkpoints carry node config but never credentials;
+		// credentials arrive in PullCredentialSet and are left untouched.
+		if err := meta.Put(nodeConfigVersionKey, []byte(incoming.GetNodeConfigVersion())); err != nil {
 			return err
 		}
 		if err := updateDesiredAllocations(tx.Bucket(localAllocationsBucket), clean); err != nil {
@@ -672,6 +684,432 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 	return changed && err == nil, err
 }
 
+func (s *localStateStore) acceptAllocationDiff(clusterID, sessionID string, diff *agentv1.AllocationDiff) (bool, error) {
+	if err := s.requireClusterIdentity(clusterID); err != nil {
+		return false, err
+	}
+	if diff != nil {
+		if err := s.db.View(func(tx *bbolt.Tx) error {
+			if diff.GetAgentId() != string(tx.Bucket(localMetaBucket).Get(agentIdentityKey)) {
+				return errors.New("diff agent identity does not match local identity")
+			}
+			return nil
+		}); err != nil {
+			return false, err
+		}
+		if diff.GetClusterId() != clusterID {
+			return false, errors.New("diff cluster identity does not match authenticated cluster")
+		}
+		if sessionID == "" || diff.GetSessionId() != sessionID {
+			return false, errors.New("allocation diff belongs to another session")
+		}
+		if err := s.observeAuthorityEpoch(diff.GetAuthorityEpoch()); err != nil {
+			return false, err
+		}
+	}
+	if err := validateAllocationDiff(diff); err != nil {
+		return false, err
+	}
+	staged, err := s.stageDiff(sessionID, diff)
+	if err != nil {
+		return false, err
+	}
+	return s.acceptStagedDiff(clusterID, sessionID, staged)
+}
+
+func (s *localStateStore) stageDiff(sessionID string, diff *agentv1.AllocationDiff) ([]byte, error) {
+	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(diff)
+	if err != nil {
+		return nil, fmt.Errorf("encode diff candidate: %w", err)
+	}
+	err = s.db.Update(func(tx *bbolt.Tx) error {
+		if err := reconciliation.ValidateCommand(diff, sessionID, s.now()); err != nil {
+			return err
+		}
+		return tx.Bucket(localDesiredBucket).Put(stagedDiffKey, encoded)
+	})
+	return encoded, err
+}
+
+func (s *localStateStore) acceptStagedDiff(clusterID, sessionID string, staged []byte) (bool, error) {
+	diff := &agentv1.AllocationDiff{}
+	if err := proto.Unmarshal(staged, diff); err != nil {
+		return false, fmt.Errorf("decode diff candidate: %w", err)
+	}
+	changed := false
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		if !bytes.Equal(tx.Bucket(localDesiredBucket).Get(stagedDiffKey), staged) {
+			return errors.New("diff candidate is not staged")
+		}
+		meta := tx.Bucket(localMetaBucket)
+		if diff.GetAgentId() != string(meta.Get(agentIdentityKey)) {
+			return fmt.Errorf("diff agent %q does not match local identity %q", diff.GetAgentId(), meta.Get(agentIdentityKey))
+		}
+		if err := validateClusterIdentity(meta, clusterID); err != nil {
+			return err
+		}
+		if string(meta.Get(clusterIdentityKey)) == "" {
+			if clusterID == "" {
+				return errors.New("authenticated cluster identity is unavailable")
+			}
+			if err := meta.Put(clusterIdentityKey, []byte(clusterID)); err != nil {
+				return err
+			}
+		}
+		acceptedEpoch := readUint64(meta.Get(authorityEpochKey))
+		acceptedCursor := readInt64(meta.Get(cursorKey))
+		if diff.GetAuthorityEpoch() < max(acceptedEpoch, readUint64(meta.Get(highestEpochKey))) {
+			return fmt.Errorf("stale authority epoch %d", diff.GetAuthorityEpoch())
+		}
+		if diff.GetTargetRevision() <= acceptedCursor {
+			if diff.GetTargetRevision() == acceptedCursor {
+				// Duplicate of already-applied diff; idempotent, no re-apply.
+				if err := tx.Bucket(localDesiredBucket).Delete(stagedDiffKey); err != nil {
+					return err
+				}
+				return reconciliation.ValidateCommand(diff, sessionID, s.now())
+			}
+			return fmt.Errorf("stale diff target %d follows %d", diff.GetTargetRevision(), acceptedCursor)
+		}
+		if diff.GetBaseRevision() != acceptedCursor {
+			return fmt.Errorf("diff base %d does not match accepted cursor %d; checkpoint required", diff.GetBaseRevision(), acceptedCursor)
+		}
+		desired := tx.Bucket(localDesiredBucket)
+		previousRaw := desired.Get(desiredStateKey)
+		if len(previousRaw) == 0 {
+			return errors.New("allocation diff requires an accepted checkpoint first")
+		}
+		var previous agentv1.DesiredNodeState
+		if err := proto.Unmarshal(previousRaw, &previous); err != nil {
+			return fmt.Errorf("decode accepted desired state: %w", err)
+		}
+		merged, err := applyDiffToState(&previous, diff)
+		if err != nil {
+			return err
+		}
+		if err := validateDesiredState(merged); err != nil {
+			return fmt.Errorf("merged diff state: %w", err)
+		}
+		encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(merged)
+		if err != nil {
+			return fmt.Errorf("encode merged desired state: %w", err)
+		}
+		if err := desired.Put(desiredStateKey, encoded); err != nil {
+			return err
+		}
+		if err := putUint64(meta, authorityEpochKey, diff.GetAuthorityEpoch()); err != nil {
+			return err
+		}
+		if err := putInt64(meta, cursorKey, diff.GetTargetRevision()); err != nil {
+			return err
+		}
+		if err := updateDesiredAllocations(tx.Bucket(localAllocationsBucket), merged); err != nil {
+			return err
+		}
+		if initializationState(meta.Get(initStateKey)) == initializationUninitialized {
+			if err := meta.Put(initStateKey, []byte(initializationReady)); err != nil {
+				return err
+			}
+		}
+		if initializationState(meta.Get(initStateKey)) == initializationRecovery {
+			established, err := recoveryOwnershipEstablished(tx.Bucket(localInventoryBucket), merged)
+			if err != nil {
+				return err
+			}
+			if established {
+				if err := meta.Put(initStateKey, []byte(initializationReady)); err != nil {
+					return err
+				}
+			}
+		}
+		changed = true
+		if err := desired.Delete(stagedDiffKey); err != nil {
+			return err
+		}
+		return reconciliation.ValidateCommand(diff, sessionID, s.now())
+	})
+	return changed && err == nil, err
+}
+
+// applyDiffToState merges starts/updates/stops into previous. Starts and
+// updates upsert; stops delete idempotently. Node config and version are
+// preserved; only the allocation cursor/epoch advance.
+func applyDiffToState(previous *agentv1.DesiredNodeState, diff *agentv1.AllocationDiff) (*agentv1.DesiredNodeState, error) {
+	if previous == nil {
+		return nil, errors.New("previous desired state is nil")
+	}
+	merged := proto.Clone(previous).(*agentv1.DesiredNodeState)
+	merged.AuthorityEpoch = diff.GetAuthorityEpoch()
+	merged.ReconciliationCursor = diff.GetTargetRevision()
+	merged.GeneratedAt = diff.GetGeneratedAt()
+	merged.SessionId = diff.GetSessionId()
+	merged.AuthorityNotAfter = diff.GetAuthorityNotAfter()
+	services := make(map[string]*agentv1.DesiredService, len(merged.GetServices()))
+	for _, svc := range merged.GetServices() {
+		services[svc.GetAllocationId()] = svc
+	}
+	for _, id := range diff.GetStops() {
+		delete(services, id)
+	}
+	for _, svc := range diff.GetStarts() {
+		services[svc.GetAllocationId()] = proto.Clone(svc).(*agentv1.DesiredService)
+	}
+	for _, svc := range diff.GetUpdates() {
+		services[svc.GetAllocationId()] = proto.Clone(svc).(*agentv1.DesiredService)
+	}
+	merged.Services = merged.Services[:0]
+	for _, svc := range services {
+		merged.Services = append(merged.Services, svc)
+	}
+	volumes := make(map[string]*agentv1.DesiredVolume, len(merged.GetVolumes()))
+	for _, v := range merged.GetVolumes() {
+		volumes[v.GetVolumeId()] = v
+	}
+	for _, id := range diff.GetVolumeStops() {
+		delete(volumes, id)
+	}
+	for _, v := range diff.GetVolumeStarts() {
+		volumes[v.GetVolumeId()] = proto.Clone(v).(*agentv1.DesiredVolume)
+	}
+	merged.Volumes = merged.Volumes[:0]
+	for _, v := range volumes {
+		merged.Volumes = append(merged.Volumes, v)
+	}
+	return merged, nil
+}
+
+func (s *localStateStore) acceptNodeConfigUpdate(clusterID, sessionID string, update *agentv1.NodeConfigUpdate) (bool, error) {
+	if err := s.requireClusterIdentity(clusterID); err != nil {
+		return false, err
+	}
+	if update == nil {
+		return false, errors.New("node config update is nil")
+	}
+	if err := s.db.View(func(tx *bbolt.Tx) error {
+		if update.GetAgentId() != string(tx.Bucket(localMetaBucket).Get(agentIdentityKey)) {
+			return errors.New("node config agent identity does not match local identity")
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	if update.GetClusterId() != clusterID {
+		return false, errors.New("node config cluster identity does not match authenticated cluster")
+	}
+	if sessionID == "" || update.GetSessionId() != sessionID {
+		return false, errors.New("node config belongs to another session")
+	}
+	if err := s.observeAuthorityEpoch(update.GetAuthorityEpoch()); err != nil {
+		return false, err
+	}
+	if update.GetNodeConfig() == nil || strings.TrimSpace(update.GetNodeConfigVersion()) == "" {
+		return false, errors.New("node config update requires config and version")
+	}
+	if want := reconciliation.HashNodeConfig(update.GetNodeConfig()); want != update.GetNodeConfigVersion() {
+		return false, errors.New("node config version does not match config")
+	}
+	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(update)
+	if err != nil {
+		return false, fmt.Errorf("encode node config candidate: %w", err)
+	}
+	if err := s.db.Update(func(tx *bbolt.Tx) error {
+		if err := reconciliation.ValidateCommand(update, sessionID, s.now()); err != nil {
+			return err
+		}
+		return tx.Bucket(localDesiredBucket).Put(stagedNodeConfigKey, encoded)
+	}); err != nil {
+		return false, err
+	}
+	changed := false
+	err = s.db.Update(func(tx *bbolt.Tx) error {
+		if !bytes.Equal(tx.Bucket(localDesiredBucket).Get(stagedNodeConfigKey), encoded) {
+			return errors.New("node config candidate is not staged")
+		}
+		meta := tx.Bucket(localMetaBucket)
+		if update.GetAgentId() != string(meta.Get(agentIdentityKey)) {
+			return errors.New("node config agent identity does not match local identity")
+		}
+		if err := validateClusterIdentity(meta, clusterID); err != nil {
+			return err
+		}
+		if string(meta.Get(clusterIdentityKey)) == "" {
+			if clusterID == "" {
+				return errors.New("authenticated cluster identity is unavailable")
+			}
+			if err := meta.Put(clusterIdentityKey, []byte(clusterID)); err != nil {
+				return err
+			}
+		}
+		if update.GetAuthorityEpoch() < max(readUint64(meta.Get(authorityEpochKey)), readUint64(meta.Get(highestEpochKey))) {
+			return fmt.Errorf("stale authority epoch %d", update.GetAuthorityEpoch())
+		}
+		if string(meta.Get(nodeConfigVersionKey)) == update.GetNodeConfigVersion() {
+			if err := tx.Bucket(localDesiredBucket).Delete(stagedNodeConfigKey); err != nil {
+				return err
+			}
+			return reconciliation.ValidateCommand(update, sessionID, s.now())
+		}
+		desired := tx.Bucket(localDesiredBucket)
+		previousRaw := desired.Get(desiredStateKey)
+		if len(previousRaw) == 0 {
+			return errors.New("node config update requires an accepted checkpoint first")
+		}
+		var previous agentv1.DesiredNodeState
+		if err := proto.Unmarshal(previousRaw, &previous); err != nil {
+			return fmt.Errorf("decode accepted desired state: %w", err)
+		}
+		previous.NodeConfig = proto.Clone(update.GetNodeConfig()).(*agentv1.AssignedNodeConfig)
+		previous.NodeConfigVersion = update.GetNodeConfigVersion()
+		if err := validateDesiredState(&previous); err != nil {
+			return fmt.Errorf("merged node config state: %w", err)
+		}
+		merged, err := proto.MarshalOptions{Deterministic: true}.Marshal(&previous)
+		if err != nil {
+			return err
+		}
+		if err := desired.Put(desiredStateKey, merged); err != nil {
+			return err
+		}
+		if err := meta.Put(nodeConfigVersionKey, []byte(update.GetNodeConfigVersion())); err != nil {
+			return err
+		}
+		changed = true
+		if err := desired.Delete(stagedNodeConfigKey); err != nil {
+			return err
+		}
+		return reconciliation.ValidateCommand(update, sessionID, s.now())
+	})
+	return changed && err == nil, err
+}
+
+func (s *localStateStore) acceptPullCredentials(clusterID, sessionID string, creds *agentv1.PullCredentialSet) (bool, error) {
+	if err := s.requireClusterIdentity(clusterID); err != nil {
+		return false, err
+	}
+	if creds == nil {
+		return false, errors.New("pull credentials are nil")
+	}
+	if strings.TrimSpace(creds.GetAgentId()) == "" {
+		return false, errors.New("pull credentials agent_id is required")
+	}
+	if creds.GetClusterId() != clusterID {
+		return false, errors.New("pull credentials cluster identity does not match authenticated cluster")
+	}
+	if sessionID == "" || creds.GetSessionId() != sessionID {
+		return false, errors.New("pull credentials belong to another session")
+	}
+	if err := s.observeAuthorityEpoch(creds.GetAuthorityEpoch()); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(creds.GetCredentialsVersion()) == "" {
+		return false, errors.New("pull credentials version is required")
+	}
+	if want := reconciliation.HashCredentials(creds.GetCredentials()); want != creds.GetCredentialsVersion() {
+		return false, errors.New("pull credentials version does not match credentials")
+	}
+	for _, c := range creds.GetCredentials() {
+		if err := validateRuntimeID("allocation ID", c.GetAllocationId()); err != nil {
+			return false, err
+		}
+	}
+	changed := false
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		if creds.GetAgentId() != string(meta.Get(agentIdentityKey)) {
+			return errors.New("pull credentials agent identity does not match local identity")
+		}
+		if err := validateClusterIdentity(meta, clusterID); err != nil {
+			return err
+		}
+		if string(meta.Get(clusterIdentityKey)) == "" && clusterID != "" {
+			if err := meta.Put(clusterIdentityKey, []byte(clusterID)); err != nil {
+				return err
+			}
+		}
+		if creds.GetAuthorityEpoch() < max(readUint64(meta.Get(authorityEpochKey)), readUint64(meta.Get(highestEpochKey))) {
+			return fmt.Errorf("stale authority epoch %d", creds.GetAuthorityEpoch())
+		}
+		if string(meta.Get(credentialsVersionKey)) == creds.GetCredentialsVersion() {
+			return reconciliation.ValidateCommand(creds, sessionID, s.now())
+		}
+		mapped := make(map[string]pullCredential, len(creds.GetCredentials()))
+		for _, c := range creds.GetCredentials() {
+			mapped[c.GetAllocationId()] = pullCredential{Username: c.GetUsername(), Password: c.GetPassword()}
+		}
+		if err := replaceCredentials(tx.Bucket(localCredentialsBucket), mapped); err != nil {
+			return err
+		}
+		if err := meta.Put(credentialsVersionKey, []byte(creds.GetCredentialsVersion())); err != nil {
+			return err
+		}
+		changed = true
+		return reconciliation.ValidateCommand(creds, sessionID, s.now())
+	})
+	return changed && err == nil, err
+}
+
+func (s *localStateStore) acceptReplicaEndpoints(clusterID, sessionID string, replicas *agentv1.ReplicaEndpoints) (bool, error) {
+	if err := s.requireClusterIdentity(clusterID); err != nil {
+		return false, err
+	}
+	if replicas == nil {
+		return false, errors.New("replica endpoints are nil")
+	}
+	if strings.TrimSpace(replicas.GetAgentId()) == "" {
+		return false, errors.New("replica endpoints agent_id is required")
+	}
+	if replicas.GetClusterId() != clusterID {
+		return false, errors.New("replica endpoints cluster identity does not match authenticated cluster")
+	}
+	if sessionID == "" || replicas.GetSessionId() != sessionID {
+		return false, errors.New("replica endpoints belong to another session")
+	}
+	if err := s.observeAuthorityEpoch(replicas.GetAuthorityEpoch()); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(replicas.GetReplicasVersion()) == "" {
+		return false, errors.New("replica endpoints version is required")
+	}
+	if want := reconciliation.HashReplicas(replicas.GetReplicaAddresses()); want != replicas.GetReplicasVersion() {
+		return false, errors.New("replica endpoints version does not match addresses")
+	}
+	changed := false
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		if replicas.GetAgentId() != string(meta.Get(agentIdentityKey)) {
+			return errors.New("replica endpoints agent identity does not match local identity")
+		}
+		if err := validateClusterIdentity(meta, clusterID); err != nil {
+			return err
+		}
+		if string(meta.Get(clusterIdentityKey)) == "" && clusterID != "" {
+			if err := meta.Put(clusterIdentityKey, []byte(clusterID)); err != nil {
+				return err
+			}
+		}
+		if replicas.GetAuthorityEpoch() < max(readUint64(meta.Get(authorityEpochKey)), readUint64(meta.Get(highestEpochKey))) {
+			return fmt.Errorf("stale authority epoch %d", replicas.GetAuthorityEpoch())
+		}
+		if string(meta.Get(replicasVersionKey)) == replicas.GetReplicasVersion() {
+			return reconciliation.ValidateCommand(replicas, sessionID, s.now())
+		}
+		discovery, err := readReplicaDiscovery(meta)
+		if err != nil {
+			return err
+		}
+		discovery.Replicas = normalizeAddresses(replicas.GetReplicaAddresses())
+		if err := writeReplicaDiscovery(meta, discovery); err != nil {
+			return err
+		}
+		if err := meta.Put(replicasVersionKey, []byte(replicas.GetReplicasVersion())); err != nil {
+			return err
+		}
+		changed = true
+		return reconciliation.ValidateCommand(replicas, sessionID, s.now())
+	})
+	return changed && err == nil, err
+}
+
 func validateDesiredState(state *agentv1.DesiredNodeState) error {
 	if state.GetClusterId() == "" {
 		return errors.New("desired state cluster_id is required")
@@ -691,6 +1129,12 @@ func validateDesiredState(state *agentv1.DesiredNodeState) error {
 	if state.GetNodeConfig() == nil {
 		return errors.New("desired state node_config is required")
 	}
+	if strings.TrimSpace(state.GetNodeConfigVersion()) == "" {
+		return errors.New("desired state node_config_version is required")
+	}
+	if want := reconciliation.HashNodeConfig(state.GetNodeConfig()); want != state.GetNodeConfigVersion() {
+		return errors.New("desired state node_config_version does not match node config")
+	}
 	services := make(map[string]struct{}, len(state.GetServices()))
 	for _, service := range state.GetServices() {
 		allocationID := service.GetAllocationId()
@@ -704,6 +1148,9 @@ func validateDesiredState(state *agentv1.DesiredNodeState) error {
 		if strings.TrimSpace(service.GetServiceId()) == "" || service.GetDesiredSpecRevision() <= 0 || service.GetDesiredRolloutGeneration() <= 0 {
 			return fmt.Errorf("desired allocation %q has incomplete identity or generation", allocationID)
 		}
+		if service.GetRegistryUsername() != "" || service.GetRegistryPassword() != "" {
+			return fmt.Errorf("desired allocation %q must not carry registry credentials on the wire", allocationID)
+		}
 	}
 	volumes := make(map[string]struct{}, len(state.GetVolumes()))
 	for _, volume := range state.GetVolumes() {
@@ -715,6 +1162,91 @@ func validateDesiredState(state *agentv1.DesiredNodeState) error {
 			return fmt.Errorf("duplicate desired volume %q", volumeID)
 		}
 		volumes[volumeID] = struct{}{}
+	}
+	return nil
+}
+
+func validateAllocationDiff(diff *agentv1.AllocationDiff) error {
+	if diff == nil {
+		return errors.New("allocation diff is nil")
+	}
+	if strings.TrimSpace(diff.GetAgentId()) == "" {
+		return errors.New("allocation diff agent_id is required")
+	}
+	if diff.GetClusterId() == "" {
+		return errors.New("allocation diff cluster_id is required")
+	}
+	if diff.GetAuthorityEpoch() == 0 {
+		return errors.New("allocation diff authority_epoch must be greater than zero")
+	}
+	if diff.GetTargetRevision() <= diff.GetBaseRevision() || diff.GetBaseRevision() < 0 {
+		return errors.New("allocation diff revisions must advance")
+	}
+	seen := make(map[string]struct{})
+	for _, svc := range diff.GetStarts() {
+		id := svc.GetAllocationId()
+		if err := validateRuntimeID("allocation ID", id); err != nil {
+			return err
+		}
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("duplicate diff allocation %q", id)
+		}
+		seen[id] = struct{}{}
+		if strings.TrimSpace(svc.GetServiceId()) == "" || svc.GetDesiredSpecRevision() <= 0 || svc.GetDesiredRolloutGeneration() <= 0 {
+			return fmt.Errorf("diff start %q has incomplete identity or generation", id)
+		}
+		if svc.GetRegistryUsername() != "" || svc.GetRegistryPassword() != "" {
+			return fmt.Errorf("diff start %q must not carry registry credentials", id)
+		}
+	}
+	for _, svc := range diff.GetUpdates() {
+		id := svc.GetAllocationId()
+		if err := validateRuntimeID("allocation ID", id); err != nil {
+			return err
+		}
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("duplicate diff allocation %q", id)
+		}
+		seen[id] = struct{}{}
+		if strings.TrimSpace(svc.GetServiceId()) == "" || svc.GetDesiredSpecRevision() <= 0 || svc.GetDesiredRolloutGeneration() <= 0 {
+			return fmt.Errorf("diff update %q has incomplete identity or generation", id)
+		}
+		if svc.GetRegistryUsername() != "" || svc.GetRegistryPassword() != "" {
+			return fmt.Errorf("diff update %q must not carry registry credentials", id)
+		}
+	}
+	stops := make(map[string]struct{}, len(diff.GetStops()))
+	for _, id := range diff.GetStops() {
+		if err := validateRuntimeID("allocation ID", id); err != nil {
+			return err
+		}
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("duplicate diff allocation %q", id)
+		}
+		if _, dup := stops[id]; dup {
+			return fmt.Errorf("duplicate diff stop %q", id)
+		}
+		seen[id] = struct{}{}
+		stops[id] = struct{}{}
+	}
+	volumeSeen := make(map[string]struct{})
+	for _, v := range diff.GetVolumeStarts() {
+		if err := validateRuntimeID("volume ID", v.GetVolumeId()); err != nil {
+			return err
+		}
+		if _, dup := volumeSeen[v.GetVolumeId()]; dup {
+			return fmt.Errorf("duplicate diff volume %q", v.GetVolumeId())
+		}
+		volumeSeen[v.GetVolumeId()] = struct{}{}
+	}
+	for _, id := range diff.GetVolumeStops() {
+		if err := validateRuntimeID("volume ID", id); err != nil {
+			return err
+		}
+		if _, dup := volumeSeen[id]; dup {
+			return fmt.Errorf("duplicate diff volume %q", id)
+		}
+		volumeSeen[id] = struct{}{}
 	}
 	return nil
 }
@@ -852,6 +1384,9 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 		result.ClusterIdentity = string(meta.Get(clusterIdentityKey))
 		result.AuthorityEpoch = readUint64(meta.Get(authorityEpochKey))
 		result.ReconciliationCursor = readInt64(meta.Get(cursorKey))
+		result.NodeConfigVersion = string(meta.Get(nodeConfigVersionKey))
+		result.CredentialsVersion = string(meta.Get(credentialsVersionKey))
+		result.ReplicasVersion = string(meta.Get(replicasVersionKey))
 		if err := tx.Bucket(localAllocationsBucket).ForEach(func(_, value []byte) error {
 			var a localAllocationState
 			if err := json.Unmarshal(value, &a); err != nil {
@@ -885,7 +1420,6 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 
 func splitDesiredCredentials(state *agentv1.DesiredNodeState) (*agentv1.DesiredNodeState, map[string]pullCredential) {
 	clean := proto.Clone(state).(*agentv1.DesiredNodeState)
-	clean.ReplicaAddresses = nil
 	credentials := make(map[string]pullCredential)
 	for _, service := range clean.GetServices() {
 		if service.GetRegistryUsername() != "" || service.GetRegistryPassword() != "" {
@@ -906,7 +1440,8 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left.GeneratedAt, right.GeneratedAt = nil, nil
 	left.SessionId, right.SessionId = "", ""
 	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
-	left.ReplicaAddresses, right.ReplicaAddresses = nil, nil
+	// NodeConfigVersion is derived from NodeConfig; compare content, not hash.
+	left.NodeConfigVersion, right.NodeConfigVersion = "", ""
 	return proto.Equal(left, right)
 }
 

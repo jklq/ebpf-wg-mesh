@@ -16,15 +16,15 @@ import (
 
 type agentSessions interface {
 	Serving() bool
-	Grant(string, string, uint64, int64) error
-	Acknowledge(string, string, uint64, int64) error
+	Grant(string, string, uint64, deliverycore.SyncVersions) error
+	Acknowledge(string, string, uint64, deliverycore.SyncVersions) error
 }
 
-func (s *fleetPersistence) grantAgentCommand(ctx context.Context, agentID, sessionID string, epoch uint64, cursor int64) (time.Time, error) {
+func (s *fleetPersistence) grantAgentCommand(ctx context.Context, agentID, sessionID string, epoch uint64, offered deliverycore.SyncVersions) (time.Time, error) {
 	if s.sessions == nil {
 		return time.Time{}, deliverycore.ErrNotLiveOwner
 	}
-	if err := s.sessions.Grant(agentID, sessionID, epoch, cursor); err != nil {
+	if err := s.sessions.Grant(agentID, sessionID, epoch, offered); err != nil {
 		if errors.Is(err, deliverycore.ErrStaleAgentSession) {
 			return time.Time{}, errors.New("agent session superseded")
 		}
@@ -39,7 +39,7 @@ func (s *fleetPersistence) grantAgentCommand(ctx context.Context, agentID, sessi
 		if uint64(current) != epoch {
 			return errors.New("authority epoch changed; reconnect required")
 		}
-		if cursor < 0 {
+		if offered.Cursor < 0 {
 			return errors.New("invalid desired-state cursor")
 		}
 		now, err := dbtx.DatabaseTime(ctx, tx)
@@ -86,11 +86,40 @@ func (s *fleetPersistence) acknowledgeAgentDesired(ctx context.Context, ack *age
 	if ack.GetAuthorityEpoch() != epoch {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
-	return s.sessions.Acknowledge(ack.GetAgentId(), ack.GetSessionId(), ack.GetAuthorityEpoch(), ack.GetReconciliationCursor())
+	return s.sessions.Acknowledge(ack.GetAgentId(), ack.GetSessionId(), ack.GetAuthorityEpoch(), deliverycore.SyncVersions{
+		Cursor:      ack.GetReconciliationCursor(),
+		NodeConfig:  ack.GetNodeConfigVersion(),
+		Credentials: ack.GetCredentialsVersion(),
+		Replicas:    ack.GetReplicasVersion(),
+	})
 }
 
 func stampAgentCommand(state *agentv1.DesiredNodeState, sessionID string, epoch uint64, deadline time.Time) {
 	state.SessionId = sessionID
 	state.AuthorityEpoch = epoch
 	state.AuthorityNotAfter = timestamppb.New(deadline)
+}
+
+func stampAllocationDiff(diff *agentv1.AllocationDiff, sessionID string, epoch uint64, deadline time.Time) {
+	diff.SessionId = sessionID
+	diff.AuthorityEpoch = epoch
+	diff.AuthorityNotAfter = timestamppb.New(deadline)
+}
+
+func stampNodeConfigUpdate(update *agentv1.NodeConfigUpdate, sessionID string, epoch uint64, deadline time.Time) {
+	update.SessionId = sessionID
+	update.AuthorityEpoch = epoch
+	update.AuthorityNotAfter = timestamppb.New(deadline)
+}
+
+func stampPullCredentials(creds *agentv1.PullCredentialSet, sessionID string, epoch uint64, deadline time.Time) {
+	creds.SessionId = sessionID
+	creds.AuthorityEpoch = epoch
+	creds.AuthorityNotAfter = timestamppb.New(deadline)
+}
+
+func stampReplicaEndpoints(replicas *agentv1.ReplicaEndpoints, sessionID string, epoch uint64, deadline time.Time) {
+	replicas.SessionId = sessionID
+	replicas.AuthorityEpoch = epoch
+	replicas.AuthorityNotAfter = timestamppb.New(deadline)
 }

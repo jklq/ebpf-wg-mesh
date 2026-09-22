@@ -172,10 +172,14 @@ Harden the existing ClickHouse log path for multi-tenant production use. Preserv
 
 ## 2.10 Incremental per-node allocation sync
 
-Status: open
+Status: in review
 Depends on: none. Replaces the complete per-node snapshot as the steady-state wire format while preserving the durable acceptance and recovery invariants already implemented.
 
 Agents already persist their accepted node snapshot, allocation generations, runtime identities, pending operations, and observation cursor. They reconcile before connecting, report inventory in hello, accept only complete agent-scoped snapshots under fenced authority, and avoid restarting matching healthy allocations. The remaining problem is that every change and reconnect still sends the complete per-node configuration. This item and 2.11–2.12 remove that coupling, and they get harder the longer other code assumes the snapshot.
+
+Implemented: checkpoint-plus-diff with per-node allocation revision (desired_revision), bounded ordered start/update/stop diffs, inventory-reconciled hello, no-resend unchanged reconnect, checkpoint establish/repair on init/recovery/compaction/mismatch/epoch-change, preserved staging/publication, agent-scoped removal (omission only in checkpoints, explicit stops in diffs), expiry/epoch fencing, session takeover, recovery quarantine, idempotent cumulative acks, and no-restart for matching healthy allocations. Node config, pull credentials (cached, 1h reuse), and replica discovery are independently versioned content hashes with separate fenced messages. History capped at 32 entries/1 MiB per node, 256 KiB/100 allocations per payload, with checkpoint fallback. Local-store format 3; wire credentials forbidden. Unit tests cover the six required scenarios.
+
+Remaining: privileged-Linux packet-level verification of no-restart under diff churn; integration updates for full Sync stream tests that still expect snapshot-only payloads (to be fixed from CI).
 
 Prompt:
 

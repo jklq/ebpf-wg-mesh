@@ -23,7 +23,33 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	if err := d.resolveSealedEnv(ctx, state); err != nil {
 		return nil, err
 	}
+	// 2.10: credentials travel in PullCredentialSet, never in allocation
+	// checkpoints or diffs. Node config carries its independent version.
+	for _, svc := range state.GetServices() {
+		svc.RegistryUsername = ""
+		svc.RegistryPassword = ""
+	}
+	state.NodeConfigVersion = HashNodeConfig(state.GetNodeConfig())
+	if d.allocSync != nil {
+		d.allocSync.recordCurrent(agentID, state)
+	}
 	return state, nil
+}
+
+// AllocationDiffsFrom returns retained incremental diffs from base to the
+// latest recorded revision for agentID. ok=false means send a checkpoint.
+func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*agentv1.AllocationDiff, target int64, ok bool) {
+	if d == nil || d.allocSync == nil {
+		return nil, 0, false
+	}
+	stored, target, ok := d.allocSync.diffsFrom(agentID, base)
+	if !ok {
+		return nil, target, false
+	}
+	for _, s := range stored {
+		diffs = append(diffs, s.ToProto(agentID))
+	}
+	return diffs, target, true
 }
 
 func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.DesiredVolume, error) {

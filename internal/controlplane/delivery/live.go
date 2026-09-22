@@ -26,17 +26,25 @@ type liveObsKey struct {
 }
 
 type AgentSession struct {
-	AgentID        string
-	SessionID      string
-	Sequence       uint64
-	LastContact    time.Time
-	Ready          bool
-	Reachable      bool
-	OfferedEpoch   int64
+	AgentID      string
+	SessionID    string
+	Sequence     uint64
+	LastContact  time.Time
+	Ready        bool
+	Reachable    bool
+	OfferedEpoch int64
+	// Allocation cursor (monotonic per-node revision).
 	OfferedCursor  int64
 	AcceptedEpoch  int64
 	AcceptedCursor int64
-	Reconciled     bool
+	// Independently versioned streams (content hashes, empty when none).
+	OfferedNodeConfig    string
+	AcceptedNodeConfig   string
+	OfferedCredentials   string
+	AcceptedCredentials  string
+	OfferedReplicas      string
+	AcceptedReplicas     string
+	Reconciled           bool
 }
 
 type liveEval struct {
@@ -161,12 +169,18 @@ func (d *Delivery) BecomeLive(ctx context.Context) error {
 	if d == nil || d.live == nil {
 		return nil
 	}
+	if d.allocSync != nil {
+		d.allocSync.reset()
+	}
 	return d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch)
 }
 
 func (d *Delivery) ResignLive() {
 	if d != nil && d.live != nil {
 		d.live.resign()
+	}
+	if d != nil && d.allocSync != nil {
+		d.allocSync.reset()
 	}
 }
 
@@ -181,13 +195,21 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	}
 	owned := false
 	if !d.live.Serving() {
+		if d.allocSync != nil {
+			d.allocSync.reset()
+		}
 		if err := d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch); err != nil {
 			return err
 		}
 		owned = true
 	}
 	if owned {
-		defer d.live.resign()
+		defer func() {
+			d.live.resign()
+			if d.allocSync != nil {
+				d.allocSync.reset()
+			}
+		}()
 	}
 
 	ticker := time.NewTicker(time.Second)
@@ -380,6 +402,26 @@ func (l *Live) BeginSession(agentID, sessionID string, inventory []string, assig
 	}
 	l.resetTimerLocked(agentID)
 	l.touchLiveLocked()
+	return nil
+}
+
+// InitSessionVersions seeds the accepted per-stream versions from hello so
+// cumulative acks for unchanged streams validate. Offered stays empty until
+// the first grant in this session.
+func (l *Live) InitSessionVersions(agentID, sessionID string, accepted SyncVersions) error {
+	if l == nil {
+		return ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	session, ok := l.sessions[strings.TrimSpace(agentID)]
+	if !ok || session.SessionID != strings.TrimSpace(sessionID) {
+		return ErrStaleAgentSession
+	}
+	session.AcceptedCursor = accepted.Cursor
+	session.AcceptedNodeConfig = accepted.NodeConfig
+	session.AcceptedCredentials = accepted.Credentials
+	session.AcceptedReplicas = accepted.Replicas
 	return nil
 }
 
@@ -651,7 +693,17 @@ func (l *Live) Admitted(agentID string) bool {
 	return exists && session.Reachable && session.Ready && session.Reconciled
 }
 
-func (l *Live) Grant(agentID, sessionID string, epoch uint64, cursor int64) error {
+// SyncVersions carries the per-stream offered/accepted positions for one
+// agent session: monotonic allocation cursor plus content-hash versions for
+// the independently delivered streams.
+type SyncVersions struct {
+	Cursor      int64
+	NodeConfig  string
+	Credentials string
+	Replicas    string
+}
+
+func (l *Live) Grant(agentID, sessionID string, epoch uint64, offered SyncVersions) error {
 	if l == nil {
 		return ErrNotLiveOwner
 	}
@@ -665,11 +717,20 @@ func (l *Live) Grant(agentID, sessionID string, epoch uint64, cursor int64) erro
 		return ErrStaleAgentSession
 	}
 	session.OfferedEpoch = int64(epoch)
-	session.OfferedCursor = cursor
+	session.OfferedCursor = offered.Cursor
+	if offered.NodeConfig != "" {
+		session.OfferedNodeConfig = offered.NodeConfig
+	}
+	if offered.Credentials != "" {
+		session.OfferedCredentials = offered.Credentials
+	}
+	if offered.Replicas != "" {
+		session.OfferedReplicas = offered.Replicas
+	}
 	return nil
 }
 
-func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, cursor int64) error {
+func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, accepted SyncVersions) error {
 	if l == nil {
 		return ErrNotLiveOwner
 	}
@@ -679,14 +740,35 @@ func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, cursor int64
 	if !ok || session.SessionID != sessionID {
 		return ErrStaleAgentSession
 	}
+	cursor := accepted.Cursor
 	if cursor < 0 || session.OfferedEpoch != int64(epoch) || session.OfferedCursor < cursor {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
 	if session.AcceptedEpoch > int64(epoch) || (session.AcceptedEpoch == int64(epoch) && session.AcceptedCursor > cursor) {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
+	// Hash versions are not ordered; an ack must match the offered version
+	// or repeat a previously accepted version (idempotent duplicate).
+	if accepted.NodeConfig != "" && accepted.NodeConfig != session.OfferedNodeConfig && accepted.NodeConfig != session.AcceptedNodeConfig {
+		return fmt.Errorf("stale node-config acknowledgement")
+	}
+	if accepted.Credentials != "" && accepted.Credentials != session.OfferedCredentials && accepted.Credentials != session.AcceptedCredentials {
+		return fmt.Errorf("stale credentials acknowledgement")
+	}
+	if accepted.Replicas != "" && accepted.Replicas != session.OfferedReplicas && accepted.Replicas != session.AcceptedReplicas {
+		return fmt.Errorf("stale replicas acknowledgement")
+	}
 	session.AcceptedEpoch = int64(epoch)
 	session.AcceptedCursor = cursor
+	if accepted.NodeConfig != "" {
+		session.AcceptedNodeConfig = accepted.NodeConfig
+	}
+	if accepted.Credentials != "" {
+		session.AcceptedCredentials = accepted.Credentials
+	}
+	if accepted.Replicas != "" {
+		session.AcceptedReplicas = accepted.Replicas
+	}
 	return nil
 }
 

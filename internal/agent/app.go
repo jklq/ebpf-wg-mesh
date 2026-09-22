@@ -264,10 +264,14 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
 	}
-	handshakeExpire := time.AfterFunc(replicaRPCTimeout, func() {
-		cancel(errHandshakeTimeout)
-	})
-	defer handshakeExpire.Stop()
+	// 2.10: an unchanged reconnect sends no server messages. When no batch
+	// arrives within the handshake window, optimistically confirm authority
+	// (same epoch) and publish the current observation. A takeover always
+	// sends a checkpoint promptly, so the optimistic report only runs when
+	// the epoch is unchanged; a stale-epoch report is rejected and the
+	// stream reconnects.
+	handshakeTimer := time.NewTimer(replicaRPCTimeout)
+	defer handshakeTimer.Stop()
 	if err := send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
 			AgentId:                 a.cfg.Node.ID,
@@ -288,6 +292,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			Allocations:             summary.Allocations,
 			AcceptedAuthorityEpoch:  summary.AuthorityEpoch,
 			ReconciliationCursor:    summary.ReconciliationCursor,
+			AcceptedNodeConfigVersion: summary.NodeConfigVersion,
+			AcceptedCredentialsVersion: summary.CredentialsVersion,
+			AcceptedReplicasVersion: summary.ReplicasVersion,
 			RecoveryMode:            summary.Initialization == initializationRecovery,
 			RuntimeResources:        runtimeResources,
 		}},
@@ -345,6 +352,23 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		lastSentSequence = report.GetObservationSequence()
 		return nil
 	}
+	sendAck := func() error {
+		summary, err := a.supervisor.Summary()
+		if err != nil {
+			return err
+		}
+		return send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
+			Acknowledgement: &agentv1.DesiredStateAcknowledgement{AgentId: a.cfg.Node.ID, SessionId: sessionID,
+				AuthorityEpoch: summary.AuthorityEpoch, ReconciliationCursor: summary.ReconciliationCursor,
+				NodeConfigVersion: summary.NodeConfigVersion, CredentialsVersion: summary.CredentialsVersion, ReplicasVersion: summary.ReplicasVersion},
+		}})
+	}
+	confirmAuthority := func() {
+		if !authorityConfirmed {
+			a.sessionEstablishedAt = time.Now()
+		}
+		authorityConfirmed = true
+	}
 	for {
 		select {
 		case <-sessionCtx.Done():
@@ -352,6 +376,15 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				return cause
 			}
 			return nil
+		case <-handshakeTimer.C:
+			if handshake {
+				handshake = false
+				confirmAuthority()
+				slog.Info("no sync batch; assuming unchanged reconnect", "agent_id", a.cfg.Node.ID)
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
+			}
 		case <-a.supervisor.ReportNotifications():
 			if handshake || !authorityConfirmed {
 				continue
@@ -379,7 +412,12 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		case result := <-received:
 			if handshake {
 				handshake = false
-				handshakeExpire.Stop()
+				if !handshakeTimer.Stop() {
+					select {
+					case <-handshakeTimer.C:
+					default:
+					}
+				}
 			}
 			if result.err != nil {
 				if cause := handshakeCause(sessionCtx); cause != nil {
@@ -393,38 +431,89 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if result.message == nil {
 				continue
 			}
-			state := result.message.GetDesiredState()
-			if state == nil {
-				continue
-			}
-			if err := a.stateStore.setReplicaAddresses(state.GetReplicaAddresses()); err != nil {
-				return fmt.Errorf("persist control-plane replica addresses: %w", err)
-			}
-			if _, err := a.supervisor.AcceptDesired(clusterID, sessionID, state); err != nil {
-				return fmt.Errorf("accept desired state: %w", err)
-			}
-			if err := send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
-				Acknowledgement: &agentv1.DesiredStateAcknowledgement{AgentId: a.cfg.Node.ID, SessionId: sessionID,
-					AuthorityEpoch: state.GetAuthorityEpoch(), ReconciliationCursor: state.GetReconciliationCursor()},
-			}}); err != nil {
-				return err
-			}
-			if err := a.refreshManagedDashboardIdentity(sessionCtx, client, state); err != nil {
+			switch payload := result.message.Payload.(type) {
+			case *agentv1.AgentServerMessage_DesiredState:
+				state := payload.DesiredState
+				if state == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptDesired(clusterID, sessionID, state); err != nil {
+					return fmt.Errorf("accept desired state: %w", err)
+				}
+				if err := sendAck(); err != nil {
+					return err
+				}
+				if desired, err := a.stateStore.desiredState(); err != nil {
+					return fmt.Errorf("load desired state for dashboard identity: %w", err)
+				} else if err := a.refreshManagedDashboardIdentity(sessionCtx, client, desired); err != nil {
+					a.supervisor.ReconcileAcceptedDesired()
+					return err
+				}
 				a.supervisor.ReconcileAcceptedDesired()
-				return err
-			}
-			a.supervisor.ReconcileAcceptedDesired()
-			if !authorityConfirmed {
-				a.sessionEstablishedAt = time.Now()
-			}
-			authorityConfirmed = true
-			slog.Info("accepted desired state", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-			// Always publish the current observation after (re)connecting, even when
-			// the accepted desired configuration is unchanged. The control plane ages
-			// observations, so a reconnect that skips this leaves allocations stale
-			// until a runtime change happens to produce a fresh report.
-			if err := sendCurrentReport(); err != nil {
-				return err
+				confirmAuthority()
+				slog.Info("accepted checkpoint", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
+			case *agentv1.AgentServerMessage_AllocationDiff:
+				diff := payload.AllocationDiff
+				if diff == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptDiff(clusterID, sessionID, diff); err != nil {
+					return fmt.Errorf("accept allocation diff: %w", err)
+				}
+				if err := sendAck(); err != nil {
+					return err
+				}
+				a.supervisor.ReconcileAcceptedDesired()
+				confirmAuthority()
+				slog.Info("accepted diff", "agent_id", a.cfg.Node.ID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
+			case *agentv1.AgentServerMessage_NodeConfigUpdate:
+				update := payload.NodeConfigUpdate
+				if update == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptNodeConfig(clusterID, sessionID, update); err != nil {
+					return fmt.Errorf("accept node config: %w", err)
+				}
+				if err := sendAck(); err != nil {
+					return err
+				}
+				a.supervisor.ReconcileAcceptedDesired()
+				confirmAuthority()
+			case *agentv1.AgentServerMessage_PullCredentials:
+				creds := payload.PullCredentials
+				if creds == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptCredentials(clusterID, sessionID, creds); err != nil {
+					return fmt.Errorf("accept pull credentials: %w", err)
+				}
+				if err := sendAck(); err != nil {
+					return err
+				}
+				// Credentials may unblock image pulls for just-accepted
+				// allocations; reconcile to retry.
+				a.supervisor.ReconcileAcceptedDesired()
+				confirmAuthority()
+			case *agentv1.AgentServerMessage_ReplicaEndpoints:
+				replicas := payload.ReplicaEndpoints
+				if replicas == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptReplicas(clusterID, sessionID, replicas); err != nil {
+					return fmt.Errorf("accept replica endpoints: %w", err)
+				}
+				if err := sendAck(); err != nil {
+					return err
+				}
+				confirmAuthority()
+			default:
+				continue
 			}
 		}
 	}

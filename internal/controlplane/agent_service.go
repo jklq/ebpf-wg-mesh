@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -39,6 +40,17 @@ type AgentService struct {
 	registry                *registry.Policy
 	replicaAddresses        []string
 	liveOwner               LiveOwner
+
+	credMu    sync.Mutex
+	credCache map[string]cachedPullCredential
+	credNow   func() time.Time
+}
+
+type cachedPullCredential struct {
+	username string
+	password string
+	mintedAt time.Time
+	image    string
 }
 
 type LiveOwner interface {
@@ -84,6 +96,7 @@ type agentDelivery interface {
 	EndAgentSession(context.Context, string, string) error
 	ReconcileFleetCapacity(context.Context) error
 	DesiredStateForAgent(context.Context, string) (*agentv1.DesiredNodeState, error)
+	AllocationDiffsFrom(string, int64) ([]*agentv1.AllocationDiff, int64, bool)
 	RegisterAgent(context.Context, *agentv1.AgentHello) (bool, error)
 }
 
@@ -277,7 +290,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 
 	sendErr := make(chan error, 1)
 	go func() {
-		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, notifyCh, ownerChanged)
+		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, hello, notifyCh, ownerChanged)
 	}()
 	s.notifier.Notify(hello.AgentId)
 
@@ -373,47 +386,25 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, notifyCh, ownerChanged <-chan struct{}) error {
-	var lastCursor int64 = -1
-	var lastReplicas []string
+func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
+	// 2.10: initialize from hello so an unchanged reconnect sends nothing.
+	lastAlloc := hello.GetReconciliationCursor()
+	lastNode := hello.GetAcceptedNodeConfigVersion()
+	lastCreds := hello.GetAcceptedCredentialsVersion()
+	lastReplicas := hello.GetAcceptedReplicasVersion()
+	helloInventory := hello.GetAllocations()
+	helloInit := hello.GetInitializationState()
+	helloEpoch := hello.GetAcceptedAuthorityEpoch()
+	first := true
 	for {
 		slog.Info("checking desired state", "agent_id", agentID)
-		nextCursor, nextReplicas, err := sendLatestDesiredState(ctx, agentID, lastCursor, lastReplicas, func() (*agentv1.DesiredNodeState, error) {
-			state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
-			if err != nil {
-				return nil, err
-			}
-			if state.GetAuthorityEpoch() != epoch {
-				return nil, errors.New("snapshot authority changed; reconnect required")
-			}
-			if err := s.attachRegistryPullCredentials(ctx, agentID, state); err != nil {
-				return nil, err
-			}
-			state.ReplicaAddresses = append([]string(nil), s.replicaAddresses...)
-			return state, nil
-		}, func(state *agentv1.DesiredNodeState) error {
-			if state == nil {
-				return errors.New("desired state is missing")
-			}
-			deadline, err := s.store.grantAgentCommand(ctx, agentID, sessionID, epoch, state.GetReconciliationCursor())
-			if err != nil {
-				return err
-			}
-			stampAgentCommand(state, sessionID, epoch, deadline)
-			// Echo the hello's verified cluster identity so a CA rotation
-			// mid-stream does not invalidate the session. The authoritative
-			// identity is established at hello and enrollment; agents adopt
-			// the new identity on certificate renewal.
-			state.ClusterId = clusterID
-			return stream.Send(&agentv1.AgentServerMessage{
-				Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
-			})
-		})
+		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, lastAlloc, lastNode, lastCreds, lastReplicas, helloInventory, helloInit, helloEpoch, first)
 		if err != nil {
-			return status.Errorf(codes.Internal, "desired state: %v", err)
+			return err
 		}
-		lastCursor = nextCursor
-		lastReplicas = nextReplicas
+		lastAlloc, lastNode, lastCreds, lastReplicas = next.Cursor, next.NodeConfig, next.Credentials, next.Replicas
+		first = false
+		helloInventory = nil
 		select {
 		case <-ctx.Done():
 			return nil
@@ -431,6 +422,135 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 			return status.Error(codes.Unavailable, "live owner changed; reconnect required")
 		}
 	}
+}
+
+// sendSyncBatch loads current state, reconciles inventory on first send, and
+// emits a single fenced batch: node config, credentials, allocations
+// (checkpoint or ordered diffs), then replicas. It returns the new sent
+// position (unchanged when nothing was sent).
+func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, lastAlloc int64, lastNode, lastCreds, lastReplicas string, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (deliverycore.SyncVersions, error) {
+	sent := deliverycore.SyncVersions{Cursor: lastAlloc, NodeConfig: lastNode, Credentials: lastCreds, Replicas: lastReplicas}
+	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
+	if err != nil {
+		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
+	}
+	if state.GetAuthorityEpoch() != epoch {
+		return sent, status.Error(codes.Internal, "snapshot authority changed; reconnect required")
+	}
+	creds, err := s.pullCredentialsForAgent(ctx, agentID, state)
+	if err != nil {
+		return sent, status.Errorf(codes.Internal, "pull credentials: %v", err)
+	}
+	current := deliverycore.SyncVersions{
+		Cursor:      state.GetReconciliationCursor(),
+		NodeConfig:  state.GetNodeConfigVersion(),
+		Credentials: creds.GetCredentialsVersion(),
+		Replicas:    deliverycore.HashReplicas(s.replicaAddresses),
+	}
+	if current.Cursor < lastAlloc {
+		return sent, status.Error(codes.FailedPrecondition, "agent cursor is ahead of control plane; recovery required")
+	}
+	needCheckpoint := false
+	var diffs []*agentv1.AllocationDiff
+	if first && helloInit != "ready" {
+		// Initialization or recovery establishes the desired set with a
+		// checkpoint, even when the cursor matches. Diffs require a prior
+		// checkpoint baseline.
+		slog.Info("establishing desired set with checkpoint", "agent_id", agentID, "init", helloInit)
+		needCheckpoint = true
+	} else if first && helloEpoch != epoch {
+		// Takeover advances the epoch; the checkpoint carries the new
+		// authority even when allocation content is unchanged.
+		slog.Info("authority epoch changed; sending checkpoint", "agent_id", agentID, "hello_epoch", helloEpoch, "epoch", epoch)
+		needCheckpoint = true
+	} else if current.Cursor == lastAlloc {
+		if first && !deliverycore.InventoriesMatch(helloInventory, state.GetServices()) {
+			slog.Info("allocation inventory mismatch; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
+			needCheckpoint = true
+		}
+	} else {
+		// Cursor advanced; try incremental diffs, else checkpoint.
+		if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, lastAlloc); ok && target == current.Cursor && len(stored) > 0 {
+			diffs = stored
+		} else if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, lastAlloc); ok && target == current.Cursor && len(stored) == 0 {
+			// No allocation content change despite cursor bump (e.g., peer-only
+			// bump still moves desired_revision). Treat as no allocation send.
+		} else {
+			slog.Info("diff history unavailable; sending checkpoint", "agent_id", agentID, "base", lastAlloc, "target", current.Cursor)
+			needCheckpoint = true
+		}
+	}
+	needNode := current.NodeConfig != lastNode
+	needCreds := current.Credentials != lastCreds
+	needReplicas := current.Replicas != lastReplicas
+	needAlloc := needCheckpoint || len(diffs) > 0
+	if !needAlloc && !needNode && !needCreds && !needReplicas {
+		slog.Info("desired state unchanged", "agent_id", agentID, "cursor", current.Cursor)
+		return sent, nil
+	}
+	// Single grant covers the whole batch with one expiry.
+	deadline, err := s.store.grantAgentCommand(ctx, agentID, sessionID, epoch, current)
+	if err != nil {
+		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
+	}
+	// Order: policy/peers first (fail closed), then credentials, then
+	// allocations, then replica discovery.
+	if needNode && !needCheckpoint {
+		update := &agentv1.NodeConfigUpdate{
+			AgentId: agentID, NodeConfigVersion: current.NodeConfig,
+			NodeConfig: state.GetNodeConfig(), ClusterId: clusterID,
+		}
+		stampNodeConfigUpdate(update, sessionID, epoch, deadline)
+		if err := stream.Send(&agentv1.AgentServerMessage{
+			Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update},
+		}); err != nil {
+			return sent, err
+		}
+	}
+	if needCreds {
+		creds.ClusterId = clusterID
+		stampPullCredentials(creds, sessionID, epoch, deadline)
+		if err := stream.Send(&agentv1.AgentServerMessage{
+			Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds},
+		}); err != nil {
+			return sent, err
+		}
+	}
+	if needCheckpoint {
+		stampAgentCommand(state, sessionID, epoch, deadline)
+		state.ClusterId = clusterID
+		slog.Info("sending checkpoint", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
+		if err := stream.Send(&agentv1.AgentServerMessage{
+			Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
+		}); err != nil {
+			return sent, err
+		}
+	} else {
+		for _, diff := range diffs {
+			diff.ClusterId = clusterID
+			stampAllocationDiff(diff, sessionID, epoch, deadline)
+			slog.Info("sending diff", "agent_id", agentID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
+			if err := stream.Send(&agentv1.AgentServerMessage{
+				Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff},
+			}); err != nil {
+				return sent, err
+			}
+		}
+	}
+	if needReplicas {
+		replicas := &agentv1.ReplicaEndpoints{
+			AgentId: agentID, ReplicasVersion: current.Replicas,
+			ReplicaAddresses: append([]string(nil), s.replicaAddresses...),
+			ClusterId:        clusterID,
+		}
+		stampReplicaEndpoints(replicas, sessionID, epoch, deadline)
+		if err := stream.Send(&agentv1.AgentServerMessage{
+			Payload: &agentv1.AgentServerMessage_ReplicaEndpoints{ReplicaEndpoints: replicas},
+		}); err != nil {
+			return sent, err
+		}
+	}
+	return current, nil
 }
 
 func (s *AgentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agentv1.EnrollResponse {
@@ -542,60 +662,99 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 	}
 }
 
-func (s *AgentService) attachRegistryPullCredentials(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) error {
+// pullCredentialCacheTTL reuses minted pull credentials across syncs so the
+// credentials version stays stable. It is well within the 48h pull TTL.
+const pullCredentialCacheTTL = time.Hour
+
+func (s *AgentService) credTime() time.Time {
+	if s != nil && s.credNow != nil {
+		return s.credNow().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// pullCredentialsForAgent mints (with cache) the independently versioned pull
+// credentials for this agent's current desired services. Only platform images
+// receive entries; external images need no credentials.
+func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) (*agentv1.PullCredentialSet, error) {
+	out := &agentv1.PullCredentialSet{AgentId: agentID}
 	if s == nil || s.registry == nil || !s.registry.Enabled() || state == nil {
-		return nil
+		out.CredentialsVersion = deliverycore.HashCredentials(nil)
+		return out, nil
 	}
-	for _, service := range state.GetServices() {
+	now := s.credTime()
+	current := make(map[string]string, len(state.GetServices()))
+	for _, svc := range state.GetServices() {
+		current[svc.GetAllocationId()] = svc.GetSpec().GetImage()
+	}
+	s.credMu.Lock()
+	if s.credCache == nil {
+		s.credCache = make(map[string]cachedPullCredential)
+	}
+	// Prune removed allocations for this agent and bound total size.
+	for key, entry := range s.credCache {
+		agent, alloc, _, ok := splitCredCacheKey(key)
+		if !ok {
+			delete(s.credCache, key)
+			continue
+		}
+		if agent != agentID {
+			continue
+		}
+		if _, ok := current[alloc]; !ok {
+			delete(s.credCache, key)
+			continue
+		}
+		_ = entry
+	}
+	if len(s.credCache) > 10000 {
+		s.credCache = make(map[string]cachedPullCredential)
+	}
+	s.credMu.Unlock()
+
+	for _, svc := range state.GetServices() {
+		image := svc.GetSpec().GetImage()
+		if image == "" {
+			continue
+		}
+		key := credCacheKey(agentID, svc.GetAllocationId(), image)
+		s.credMu.Lock()
+		cached, ok := s.credCache[key]
+		s.credMu.Unlock()
+		if ok && cached.image == image && now.Sub(cached.mintedAt) < pullCredentialCacheTTL {
+			if cached.username != "" || cached.password != "" {
+				out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{
+					AllocationId: svc.GetAllocationId(), Username: cached.username, Password: cached.password,
+				})
+			}
+			continue
+		}
 		username, password, err := s.registry.CredentialsForPull(ctx,
-			agentID+"-"+service.GetAllocationId(), service.GetEnvironmentId(), service.GetServiceId(), service.GetSpec().GetImage(),
-		)
+			agentID+"-"+svc.GetAllocationId(), svc.GetEnvironmentId(), svc.GetServiceId(), image)
 		if err != nil {
-			return fmt.Errorf("mint pull credential for service %s: %w", service.GetServiceId(), err)
+			return nil, fmt.Errorf("mint pull credential for service %s: %w", svc.GetServiceId(), err)
 		}
-		service.RegistryUsername = username
-		service.RegistryPassword = password
+		s.credMu.Lock()
+		s.credCache[key] = cachedPullCredential{username: username, password: password, mintedAt: now, image: image}
+		s.credMu.Unlock()
+		if username != "" || password != "" {
+			out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{
+				AllocationId: svc.GetAllocationId(), Username: username, Password: password,
+			})
+		}
 	}
-	return nil
+	out.CredentialsVersion = deliverycore.HashCredentials(out.GetCredentials())
+	return out, nil
 }
 
-func sendLatestDesiredState(
-	ctx context.Context,
-	agentID string,
-	lastCursor int64,
-	lastReplicas []string,
-	load func() (*agentv1.DesiredNodeState, error),
-	send func(*agentv1.DesiredNodeState) error,
-) (int64, []string, error) {
-	_ = ctx
-	for {
-		state, err := load()
-		if err != nil {
-			return lastCursor, lastReplicas, err
-		}
-		replicas := append([]string(nil), state.GetReplicaAddresses()...)
-		if state.GetReconciliationCursor() == lastCursor && replicaAddressesEqual(replicas, lastReplicas) {
-			slog.Info("desired state unchanged", "agent_id", agentID, "cursor", state.GetReconciliationCursor())
-			return lastCursor, lastReplicas, nil
-		}
-		slog.Info("sending desired state", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.Services), "volumes", len(state.Volumes))
-		if err := send(state); err != nil {
-			return lastCursor, lastReplicas, err
-		}
-		slog.Info("desired state sent", "agent_id", agentID, "cursor", state.GetReconciliationCursor())
-		lastCursor = state.GetReconciliationCursor()
-		lastReplicas = replicas
-	}
+func credCacheKey(agentID, allocationID, image string) string {
+	return agentID + "\x00" + allocationID + "\x00" + image
 }
 
-func replicaAddressesEqual(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
+func splitCredCacheKey(key string) (agentID, allocationID, image string, ok bool) {
+	parts := strings.SplitN(key, "\x00", 3)
+	if len(parts) != 3 {
+		return "", "", "", false
 	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return parts[0], parts[1], parts[2], true
 }

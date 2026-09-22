@@ -158,55 +158,6 @@ func TestLeaseOwnerWatchCoalescesTransitionsAndCloses(t *testing.T) {
 	}
 }
 
-func TestSendLatestDesiredStateDrainsNewerRevisions(t *testing.T) {
-	t.Parallel()
-	states := []*agentv1.DesiredNodeState{
-		{ReconciliationCursor: 2},
-		{ReconciliationCursor: 3, Services: []*agentv1.DesiredService{{AllocationId: "alloc-1", ServiceId: "svc-1", DesiredSpecRevision: 1, DesiredRolloutGeneration: 2}}},
-		{ReconciliationCursor: 3},
-	}
-	var loads int
-	var sent []int64
-	lastRevision, lastReplicas, err := sendLatestDesiredState(context.Background(), "agent-1", 1, nil,
-		func() (*agentv1.DesiredNodeState, error) {
-			if loads >= len(states) {
-				return states[len(states)-1], nil
-			}
-			state := states[loads]
-			loads++
-			return state, nil
-		},
-		func(state *agentv1.DesiredNodeState) error {
-			sent = append(sent, state.GetReconciliationCursor())
-			return nil
-		})
-	if err != nil {
-		t.Fatalf("sendLatestDesiredState: %v", err)
-	}
-	if lastRevision != 3 || lastReplicas != nil || len(sent) != 2 || sent[0] != 2 || sent[1] != 3 {
-		t.Fatalf("last revision=%d replicas=%v sent=%v", lastRevision, lastReplicas, sent)
-	}
-}
-
-func TestSendLatestDesiredStateResendsWhenReplicaAddressesChange(t *testing.T) {
-	t.Parallel()
-	state := &agentv1.DesiredNodeState{ReconciliationCursor: 3, ReplicaAddresses: []string{"replica-a:9443", "replica-b:9443"}}
-	var sent [][]string
-	lastRevision, lastReplicas, err := sendLatestDesiredState(context.Background(), "agent-1", 3, []string{"replica-a:9443"},
-		func() (*agentv1.DesiredNodeState, error) { return state, nil },
-		func(state *agentv1.DesiredNodeState) error {
-			sent = append(sent, append([]string(nil), state.GetReplicaAddresses()...))
-			return nil
-		})
-	if err != nil {
-		t.Fatalf("sendLatestDesiredState: %v", err)
-	}
-	want := "replica-a:9443,replica-b:9443"
-	if lastRevision != 3 || strings.Join(lastReplicas, ",") != want || len(sent) != 1 || strings.Join(sent[0], ",") != want {
-		t.Fatalf("last revision=%d replicas=%v sent=%v", lastRevision, lastReplicas, sent)
-	}
-}
-
 func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.T) {
 	t.Parallel()
 	cfg := config.RegistryConfig{
@@ -225,25 +176,33 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 		{AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)}},
 		{AllocationId: "allocation-2", ServiceId: "service-2", EnvironmentId: "environment-2", Spec: &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"}},
 	}}
-	if err := service.attachRegistryPullCredentials(context.Background(), "agent-1", state); err != nil {
+	creds, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	if err != nil {
 		t.Fatal(err)
 	}
-	managed := state.Services[0]
-	if managed.GetRegistryUsername() == "" || managed.GetRegistryPassword() == "" {
+	if creds.GetCredentialsVersion() == "" {
+		t.Fatal("credentials version is empty")
+	}
+	if len(creds.GetCredentials()) != 1 || creds.GetCredentials()[0].GetAllocationId() != "allocation-1" {
+		t.Fatalf("unexpected credentials %+v", creds.GetCredentials())
+	}
+	managed := creds.GetCredentials()[0]
+	if managed.GetUsername() == "" || managed.GetPassword() == "" {
 		t.Fatal("platform image did not receive pull credentials")
 	}
-	granted := tokenAccessForCredential(t, auth, cfg.TokenService, managed.GetRegistryUsername(), managed.GetRegistryPassword(), "repository:mesh/project-1/environment-1/build-1/service-1:pull")
+	granted := tokenAccessForCredential(t, auth, cfg.TokenService, managed.GetUsername(), managed.GetPassword(), "repository:mesh/project-1/environment-1/build-1/service-1:pull")
 	if len(granted) != 1 || granted[0].Name != "mesh/project-1/environment-1/build-1/service-1" || !slices.Equal(granted[0].Actions, []string{"pull"}) {
 		t.Fatalf("unexpected pull scope %+v", granted)
 	}
-	if denied := tokenAccessForCredential(t, auth, cfg.TokenService, managed.GetRegistryUsername(), managed.GetRegistryPassword(), "repository:mesh/project-1/environment-1/build-1/service-1:push"); len(denied) != 0 {
+	if denied := tokenAccessForCredential(t, auth, cfg.TokenService, managed.GetUsername(), managed.GetPassword(), "repository:mesh/project-1/environment-1/build-1/service-1:push"); len(denied) != 0 {
 		t.Fatalf("pull credential granted push: %+v", denied)
 	}
-	if external := state.Services[1]; external.GetRegistryUsername() != "" || external.GetRegistryPassword() != "" {
-		t.Fatal("external direct image received platform registry credentials")
+	// Allocation messages must not carry credentials on the wire.
+	if state.Services[0].GetRegistryUsername() != "" || state.Services[0].GetRegistryPassword() != "" {
+		t.Fatal("checkpoint still carries pull credentials")
 	}
 	foreign := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{AllocationId: "allocation-3", EnvironmentId: "environment-2", ServiceId: "service-2", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("b", 64)}}}}
-	if err := service.attachRegistryPullCredentials(context.Background(), "agent-1", foreign); err == nil {
+	if _, err := service.pullCredentialsForAgent(context.Background(), "agent-1", foreign); err == nil {
 		t.Fatal("expected a sibling platform repository to be rejected")
 	}
 }

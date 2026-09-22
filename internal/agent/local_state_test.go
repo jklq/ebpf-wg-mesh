@@ -12,6 +12,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/reconciliation"
 
 	"go.etcd.io/bbolt"
 )
@@ -24,14 +25,21 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 		t.Fatal(err)
 	}
 	desired := testDesiredState(4, 12, "alloc-1")
-	desired.Services[0].RegistryUsername = "pull-user"
-	desired.Services[0].RegistryPassword = "pull-secret"
 	changed, err := store.acceptDesired("cluster-a", "test-session", desired)
 	if err != nil {
 		t.Fatalf("accept desired: %v", err)
 	}
 	if !changed {
 		t.Fatal("first accepted desired state was not marked changed")
+	}
+	creds := &agentv1.PullCredentialSet{
+		AgentId: "node-1", ClusterId: "cluster-a", SessionId: "test-session",
+		AuthorityEpoch: 4, AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		Credentials: []*agentv1.AllocationCredential{{AllocationId: "alloc-1", Username: "pull-user", Password: "pull-secret"}},
+	}
+	creds.CredentialsVersion = reconciliation.HashCredentials(creds.GetCredentials())
+	if _, err := store.acceptPullCredentials("cluster-a", "test-session", creds); err != nil {
+		t.Fatalf("accept credentials: %v", err)
 	}
 
 	restored, err := store.desiredState()
@@ -61,22 +69,10 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 		t.Fatalf("state database mode = %o, want 600", got)
 	}
 
+	// Wire checkpoints must not carry credentials; they arrive separately.
 	desired.Services[0].RegistryPassword = "renewed-secret"
-	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
-	if err != nil {
-		t.Fatalf("renew credential: %v", err)
-	}
-	if changed {
-		t.Fatal("credential renewal manufactured an allocation change")
-	}
-
-	desired.ReplicaAddresses = []string{"replica-a:9443"}
-	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
-	if err != nil {
-		t.Fatalf("accept desired with replica metadata: %v", err)
-	}
-	if changed {
-		t.Fatal("replica metadata manufactured an allocation change")
+	if _, err := store.acceptDesired("cluster-a", "test-session", desired); err == nil {
+		t.Fatal("checkpoint with wire credentials was accepted")
 	}
 }
 
@@ -572,5 +568,6 @@ func testDesiredState(epoch uint64, cursor int64, allocationIDs ...string) *agen
 			Spec: &platformv1.ResolvedServiceSpec{Image: "example.test/image@sha256:abc", Runtime: &platformv1.ServiceRuntime{}},
 		})
 	}
+	state.NodeConfigVersion = reconciliation.HashNodeConfig(state.GetNodeConfig())
 	return state
 }
