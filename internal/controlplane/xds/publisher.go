@@ -258,39 +258,72 @@ func (p *Publisher) Converged(ctx context.Context) (bool, error) {
 // Replicate adopts the durable publication and flushes node apply state
 // once. Follow runs it on a floor interval.
 func (p *Publisher) Replicate(ctx context.Context) error {
-	if err := p.adoptPublication(ctx); err != nil {
+	if err := p.Refresh(ctx); err != nil {
 		return err
 	}
 	return p.flushNodeObservations(ctx)
 }
 
-// adoptPublication serves the durable publication when it is newer than
-// what this replica holds. Inputs are the hash preimage, so rebuilding is
-// byte-identical to the writer's build; a hash mismatch means tampered or
-// corrupt storage and must not be served.
-func (p *Publisher) adoptPublication(ctx context.Context) error {
-	if p.pubs == nil || p.server == nil {
+// Refresh adopts the durable publication into the local server. It is
+// serialized with Sync (a follow tick or first-contact refresh can never
+// overwrite newer locally published content) and rechecks the row after
+// building, so an adoption never serves a publication the row has already
+// moved past.
+func (p *Publisher) Refresh(ctx context.Context) error {
+	if p == nil || p.pubs == nil || p.server == nil {
 		return nil
 	}
+	p.pushMu.Lock()
+	defer p.pushMu.Unlock()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		done, err := p.adoptPublicationLocked(ctx)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		lastErr = fmt.Errorf("publication moved during adoption")
+	}
+	return lastErr
+}
+
+// adoptPublicationLocked makes one adoption attempt. done reports that the
+// local server serves the durable publication; a moved row retries.
+func (p *Publisher) adoptPublicationLocked(ctx context.Context) (done bool, err error) {
 	pub, err := p.pubs.LoadPublication(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if pub.Hash == "" {
-		return nil
+		return true, nil
 	}
 	if status := p.server.Status(); status.HasSnapshot && status.Hash == pub.Hash {
-		return nil
+		return true, nil
 	}
 	snap, err := BuildFromInputs(pub.Inputs)
 	if err != nil {
-		return fmt.Errorf("published snapshot unusable: %w", err)
+		return false, fmt.Errorf("published snapshot unusable: %w", err)
 	}
 	if snap.Hash != pub.Hash {
-		return fmt.Errorf("published inputs hash %s does not match row hash %s", snap.Hash, pub.Hash)
+		return false, fmt.Errorf("published inputs hash %s does not match row hash %s", snap.Hash, pub.Hash)
+	}
+	// The row may have moved while the snapshot rebuilt: publishing the
+	// stale build would serve withdrawn configuration from a lagging
+	// replica. Retry against the moved row instead.
+	recheck, err := p.pubs.LoadPublication(ctx)
+	if err != nil {
+		return false, err
+	}
+	if recheck.Hash != snap.Hash {
+		return false, nil
+	}
+	if status := p.server.Status(); status.HasSnapshot && status.Hash == snap.Hash {
+		return true, nil
 	}
 	p.server.Publish(ctx, snap)
-	return nil
+	return true, nil
 }
 
 // flushNodeObservations persists what this replica's subscribers applied.

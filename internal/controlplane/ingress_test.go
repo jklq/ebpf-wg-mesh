@@ -369,6 +369,36 @@ func TestXDSFollowerServesPublicationWithoutLease(t *testing.T) {
 	}
 }
 
+func TestXDSFirstContactServesCurrentPublication(t *testing.T) {
+	t.Parallel()
+
+	store, _ := createHealthyBoundService(t, "demo.example.com", "10.0.0.10", 8080)
+	ctx := context.Background()
+
+	serverA := xds.NewServer(ctx)
+	publisherA := testXDSPublisher(store, serverA, "replica-a")
+	if err := publisherA.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	published := serverA.Status()
+
+	// Replica B is lagging: it never ran its follow tick. A fresh
+	// subscriber must still receive the current durable publication at
+	// first contact — never the stale local cache — or it could hold
+	// routes to withdrawn allocations the drain barrier believes gone.
+	serverB := xds.NewServer(ctx)
+	publisherB := testXDSPublisher(store, serverB, "replica-b")
+	serverB.SetFirstContactHook(publisherB.Refresh)
+	addrB := serveXDSServer(t, serverB)
+	eds := subscribeType(t, addrB, "envoy-1", resourcev3.EndpointType)
+	if eds.GetVersionInfo() != published.Version {
+		t.Fatalf("first contact EDS version %s, want current publication %s", eds.GetVersionInfo(), published.Version)
+	}
+	if endpoints := endpointsFromEDS(t, eds); len(endpoints) != 1 || endpoints[0] != "10.0.0.10:8080" {
+		t.Fatalf("first contact EDS endpoints = %v", endpoints)
+	}
+}
+
 func TestXDSRegistersSubscriberDurablyAtFirstContact(t *testing.T) {
 	t.Parallel()
 

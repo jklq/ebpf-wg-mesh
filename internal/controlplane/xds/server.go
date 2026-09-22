@@ -72,7 +72,8 @@ type Server struct {
 	streams map[int64]string
 	nodes   map[string]*nodeState
 
-	nodeStore NodeStore
+	nodeStore    NodeStore
+	firstContact func(context.Context) error
 }
 
 type nodeState struct {
@@ -111,6 +112,18 @@ func (s *Server) SetNodeStore(store NodeStore) {
 		return
 	}
 	s.nodeStore = store
+}
+
+// SetFirstContactHook installs the refresh that runs at first contact,
+// after durable registration and before the request is answered: a fresh
+// subscriber must never receive content older than the durable
+// publication, or it could hold routes to withdrawn endpoints that the
+// drain barrier then misses.
+func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
+	if s == nil {
+		return
+	}
+	s.firstContact = hook
 }
 
 // GRPCServer returns a gRPC server with every xDS service registered.
@@ -188,10 +201,10 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 		return nil
 	}
 	fresh := s.observe(streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
-	return s.registerNode(nodeID, fresh)
+	return s.atFirstContact(nodeID, fresh, context.Background())
 }
 
-func (s *Server) onFetchRequest(_ context.Context, req *discoveryv3.DiscoveryRequest) error {
+func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryRequest) error {
 	if req == nil {
 		return nil
 	}
@@ -200,21 +213,29 @@ func (s *Server) onFetchRequest(_ context.Context, req *discoveryv3.DiscoveryReq
 		return nil
 	}
 	fresh := s.observe(0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
-	return s.registerNode(nodeID, fresh)
+	return s.atFirstContact(nodeID, fresh, ctx)
 }
 
-// registerNode durably records a subscriber at first contact. It runs
-// before the request is answered — before the subscriber can hold any
-// config — because the drain barrier waits only for nodes it knows: a
-// subscriber missing from durable state must never be able to keep stale
-// routes while a rollout drains under it. Failure fails the request closed
-// rather than serving an untracked subscriber.
-func (s *Server) registerNode(nodeID string, fresh bool) error {
-	if !fresh || s.nodeStore == nil {
+// atFirstContact durably registers a subscriber and refreshes from the
+// durable publication before the request is answered. Both steps run
+// before any config can reach the subscriber — registration first, so the
+// drain barrier cannot miss it; refresh second, so it cannot receive
+// content older than the row and hold routes the barrier believes gone.
+// Failure fails the request closed rather than serving an untracked or
+// stale subscriber.
+func (s *Server) atFirstContact(nodeID string, fresh bool, ctx context.Context) error {
+	if !fresh {
 		return nil
 	}
-	if err := s.nodeStore.UpsertNodeObservations(context.Background(), []NodeObservation{{NodeID: nodeID}}); err != nil {
-		return fmt.Errorf("register xds node %s: %w", nodeID, err)
+	if s.nodeStore != nil {
+		if err := s.nodeStore.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: nodeID}}); err != nil {
+			return fmt.Errorf("register xds node %s: %w", nodeID, err)
+		}
+	}
+	if s.firstContact != nil {
+		if err := s.firstContact(ctx); err != nil {
+			return fmt.Errorf("refresh before serving xds node %s: %w", nodeID, err)
+		}
 	}
 	return nil
 }

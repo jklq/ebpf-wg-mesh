@@ -460,3 +460,103 @@ func (failingNodes) UpsertNodeObservations(context.Context, []NodeObservation) e
 func (failingNodes) ListNodeObservations(context.Context) ([]NodeObservation, error) {
 	return nil, errors.New("node store unavailable")
 }
+
+// movingPublications returns one publication on the first load and another
+// afterwards: the durable row moved while an adoption was in flight.
+type movingPublications struct {
+	first Publication
+	moved Publication
+	loads int
+	mu    sync.Mutex
+}
+
+func (f *movingPublications) LoadPublication(context.Context) (Publication, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.loads++
+	if f.loads == 1 {
+		return f.first, nil
+	}
+	return f.moved, nil
+}
+
+func (f *movingPublications) CompareAndSwapPublication(_ context.Context, _ string, _ Publication) (bool, error) {
+	return false, nil
+}
+
+func TestPublisherRefreshNeverServesMovedPastPublication(t *testing.T) {
+	t.Parallel()
+
+	stale := mustBuild(t, BuildInput{
+		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		ListenAddrs: []string{":8080"},
+	})
+	current := mustBuild(t, BuildInput{
+		Backends:    []Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}},
+		ListenAddrs: []string{":8080"},
+	})
+	pubs := &movingPublications{
+		first: Publication{Version: stale.Version, Hash: stale.Hash, Inputs: stale.Inputs},
+		moved: Publication{Version: current.Version, Hash: current.Hash, Inputs: current.Inputs},
+	}
+	server := NewServer(context.Background())
+	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
+
+	// The adoption races a fresh publication. It must end on the moved
+	// row's version and never serve the stale build in between: a lagging
+	// replica serving withdrawn config would stall or fool the drain gate.
+	if err := publisher.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := server.Status()
+	if !status.HasSnapshot || status.Version != current.Version {
+		t.Fatalf("served %+v, want moved publication %s", status, current.Version)
+	}
+}
+
+type recordingNodeStore struct {
+	*fakeNodes
+	events *[]string
+}
+
+func (f *recordingNodeStore) UpsertNodeObservations(ctx context.Context, observations []NodeObservation) error {
+	*f.events = append(*f.events, "register")
+	return f.fakeNodes.UpsertNodeObservations(ctx, observations)
+}
+
+func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) {
+	t.Parallel()
+
+	// A lagging follower holds no snapshot yet while the durable row
+	// already carries the current publication.
+	published := mustBuild(t, BuildInput{
+		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		ListenAddrs: []string{":8080"},
+	})
+	pubs := &fakePublications{pub: Publication{
+		Version: published.Version, Hash: published.Hash, Inputs: published.Inputs,
+	}}
+	server := NewServer(context.Background())
+	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
+
+	var events []string
+	server.SetNodeStore(&recordingNodeStore{fakeNodes: newFakeNodes(), events: &events})
+	server.SetFirstContactHook(func(ctx context.Context) error {
+		events = append(events, "refresh")
+		return publisher.Refresh(ctx)
+	})
+
+	// First contact must register durably (so the drain barrier sees this
+	// subscriber even if its check races this request) and then serve the
+	// durable publication, never the stale local cache.
+	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
+	if err := server.onFetchRequest(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0] != "register" || events[1] != "refresh" {
+		t.Fatalf("first-contact events = %v, want [register refresh]", events)
+	}
+	if status := server.Status(); !status.HasSnapshot || status.Version != published.Version {
+		t.Fatalf("first contact served %+v, want durable publication %s", status, published.Version)
+	}
+}

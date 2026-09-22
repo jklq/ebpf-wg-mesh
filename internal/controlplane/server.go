@@ -190,6 +190,10 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		ListenAddrs:  cfg.Ingress.ListenAddrs,
 		PublisherID:  publisherID,
 	})
+	// The same first contact refreshes from the durable publication, so a
+	// fresh subscriber on a lagging replica cannot receive withdrawn
+	// config that the drain barrier believes gone.
+	xdsServer.SetFirstContactHook(ingress.Refresh)
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
 	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
