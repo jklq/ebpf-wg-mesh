@@ -60,6 +60,9 @@ type observedIngress struct{ changed bool }
 
 func (i *observedIngress) RequestSync()               { i.changed = true }
 func (i *observedIngress) Sync(context.Context) error { return nil }
+func (i *observedIngress) Converged(context.Context) (bool, error) {
+	return true, nil
+}
 func (d *testDeliveryHarness) recordStatusReport(ctx context.Context, id string, report *agentv1.StatusReport) (bool, []string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 8; attempt++ {
