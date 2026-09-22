@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,10 +23,14 @@ const (
 	defaultShipBatchSize     = 100
 	defaultShipFlushInterval = time.Second
 	defaultShipReplayWindow  = 5 * time.Minute
+	// pendingDropsFile durably holds unreported drop summaries next
+	// to the spool so drop accounting survives a restart.
+	pendingDropsFile = "pending-drops.json"
 )
 
 // logShipConfig bounds one agent log shipper. Zero values select
-// defaults.
+// defaults, except RatePerSec: a non-positive rate disables
+// producer limiting.
 type logShipConfig struct {
 	SpoolDir      string
 	SpoolMaxBytes int64
@@ -52,14 +59,17 @@ type logShipStats struct {
 // disk-backed spool, and a ship loop forwards batches over the
 // current Sync stream with retry. It outlives any single session:
 // while detached the spool absorbs output, and on attach the recent
-// window replays so a reconnect loses nothing the spool still holds.
-// Retried lines reuse their stable IDs and collapse server-side.
-// Every shed line is counted per allocation and reported as an
-// explicit read gap.
+// window replays alongside everything unshipped so a reconnect
+// loses nothing the spool still holds. Retried lines reuse their
+// stable IDs and collapse server-side. Every shed line is counted
+// per allocation and reported as an explicit read gap; pending
+// drop summaries persist next to the spool so shutdown and restart
+// keep the accounting.
 type logShipper struct {
-	agentID string
-	spool   *logpipeline.Spool
-	limiter *logpipeline.Limiter
+	agentID  string
+	spoolDir string
+	spool    *logpipeline.Spool
+	limiter  *logpipeline.Limiter
 
 	batchSize     int
 	flushInterval time.Duration
@@ -99,8 +109,13 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 	if err != nil {
 		return nil, err
 	}
+	pending, err := loadPendingDrops(cfg.SpoolDir)
+	if err != nil {
+		slog.Warn("load pending log drop summaries", "agent_id", agentID, "error", err)
+	}
 	return &logShipper{
 		agentID:       agentID,
+		spoolDir:      cfg.SpoolDir,
 		spool:         spool,
 		limiter:       logpipeline.NewLimiter(cfg.RatePerSec, cfg.Burst),
 		batchSize:     cfg.BatchSize,
@@ -108,6 +123,7 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 		replayWindow:  cfg.ReplayWindow,
 		meta:          make(map[string]allocMeta),
 		overflow:      make(map[string]uint64),
+		pending:       pending,
 	}, nil
 }
 
@@ -162,8 +178,8 @@ func (s *logShipper) countOverflow(key string, count uint64) {
 }
 
 // Attach connects the ship loop to a session's send function and
-// replays the recent window for at-least-once delivery across
-// reconnects.
+// replays the recent window plus everything unshipped for
+// at-least-once delivery across reconnects.
 func (s *logShipper) Attach(send func(*agentv1.AgentClientMessage) error) {
 	if s == nil {
 		return
@@ -171,7 +187,7 @@ func (s *logShipper) Attach(send func(*agentv1.AgentClientMessage) error) {
 	s.mu.Lock()
 	s.send = send
 	s.mu.Unlock()
-	if err := s.spool.RewindToTime(time.Now().Add(-s.replayWindow)); err != nil {
+	if err := s.spool.RewindForReplay(time.Now().Add(-s.replayWindow)); err != nil {
 		slog.Warn("rewind log spool", "agent_id", s.agentID, "error", err)
 	}
 }
@@ -203,11 +219,18 @@ func (s *logShipper) Run(ctx context.Context) error {
 	}
 }
 
-// Close closes the underlying spool.
+// Close drains drop counters into durable pending summaries and
+// closes the spool. Unshipped records and pending drop summaries
+// survive the restart: records replay from the durable cursor and
+// summaries ship with the first batch.
 func (s *logShipper) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.collectDrops(time.Now().UTC())
+	s.mu.Lock()
+	s.persistPendingLocked()
+	s.mu.Unlock()
 	return s.spool.Close()
 }
 
@@ -285,20 +308,109 @@ func (s *logShipper) flush() {
 	if len(pending) > 0 && len(s.pending) >= len(pending) {
 		s.pending = append([]*platformv1.LogDropSummary(nil), s.pending[len(pending):]...)
 	}
+	s.persistPendingLocked()
 	s.mu.Unlock()
 }
 
+// persistedDrop is the durable form of one pending drop summary.
+type persistedDrop struct {
+	ServiceID    string    `json:"service_id"`
+	AllocationID string    `json:"allocation_id"`
+	LogType      int32     `json:"log_type"`
+	Stream       string    `json:"stream"`
+	DroppedCount uint64    `json:"dropped_count"`
+	Reason       string    `json:"reason"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+}
+
+// loadPendingDrops reads drop summaries persisted by an earlier
+// process so shutdown-time accounting reports after the restart.
+func loadPendingDrops(dir string) ([]*platformv1.LogDropSummary, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, pendingDropsFile))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var rows []persistedDrop
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, err
+	}
+	pending := make([]*platformv1.LogDropSummary, 0, len(rows))
+	for _, row := range rows {
+		pending = append(pending, &platformv1.LogDropSummary{
+			ServiceId:    row.ServiceID,
+			AllocationId: row.AllocationID,
+			LogType:      platformv1.ServiceLogType(row.LogType),
+			Stream:       row.Stream,
+			DroppedCount: row.DroppedCount,
+			Reason:       row.Reason,
+			WindowStart:  timestamppb.New(row.WindowStart),
+			WindowEnd:    timestamppb.New(row.WindowEnd),
+		})
+	}
+	return pending, nil
+}
+
+// persistPendingLocked snapshots the pending drop summaries next to
+// the spool. The snapshot is advisory: retried summaries collapse
+// server-side by gap identity, so a stale copy only re-reports.
+func (s *logShipper) persistPendingLocked() {
+	rows := make([]persistedDrop, 0, len(s.pending))
+	for _, summary := range s.pending {
+		rows = append(rows, persistedDrop{
+			ServiceID:    summary.GetServiceId(),
+			AllocationID: summary.GetAllocationId(),
+			LogType:      int32(summary.GetLogType()),
+			Stream:       summary.GetStream(),
+			DroppedCount: summary.GetDroppedCount(),
+			Reason:       summary.GetReason(),
+			WindowStart:  summary.GetWindowStart().AsTime(),
+			WindowEnd:    summary.GetWindowEnd().AsTime(),
+		})
+	}
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		slog.Warn("encode pending log drop summaries", "agent_id", s.agentID, "error", err)
+		return
+	}
+	tmp, err := os.CreateTemp(s.spoolDir, ".drops-*.json")
+	if err != nil {
+		slog.Warn("stage pending log drop summaries", "agent_id", s.agentID, "error", err)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		slog.Warn("write pending log drop summaries", "agent_id", s.agentID, "error", err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		slog.Warn("write pending log drop summaries", "agent_id", s.agentID, "error", err)
+		return
+	}
+	if err := os.Rename(tmpName, filepath.Join(s.spoolDir, pendingDropsFile)); err != nil {
+		_ = os.Remove(tmpName)
+		slog.Warn("commit pending log drop summaries", "agent_id", s.agentID, "error", err)
+	}
+}
+
 // collectDrops drains limiter, spool, and overflow counters into the
-// pending gap summaries reported with the next batch.
+// pending gap summaries reported with the next batch, then durably
+// snapshots them so shutdown or crash keeps the accounting.
 func (s *logShipper) collectDrops(now time.Time) {
 	windowStart := now.Add(-s.flushInterval)
 	limited := s.limiter.DrainDrops()
-	spooled := s.spool.DrainDrops()
+	evicted, corrupt := s.spool.DrainDrops()
 	s.mu.Lock()
 	overflow := s.overflow
 	s.overflow = make(map[string]uint64)
 	s.mu.Unlock()
-	if len(limited) == 0 && len(spooled) == 0 && len(overflow) == 0 {
+	if len(limited) == 0 && len(evicted) == 0 && len(corrupt) == 0 && len(overflow) == 0 {
 		return
 	}
 	s.mu.Lock()
@@ -308,8 +420,13 @@ func (s *logShipper) collectDrops(now time.Time) {
 			s.pending = append(s.pending, summary)
 		}
 	}
-	for key, count := range spooled {
+	for key, count := range evicted {
 		if summary := s.summaryLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now); summary != nil {
+			s.pending = append(s.pending, summary)
+		}
+	}
+	for key, count := range corrupt {
+		if summary := s.summaryLocked(key, count, logpipeline.ReasonCorruptSpool, windowStart, now); summary != nil {
 			s.pending = append(s.pending, summary)
 		}
 	}
@@ -318,16 +435,20 @@ func (s *logShipper) collectDrops(now time.Time) {
 			s.pending = append(s.pending, summary)
 		}
 	}
+	s.persistPendingLocked()
 }
 
-// summaryLocked attributes one drop count to its service. Counts
-// without a known service cannot surface in reads and stay in the
-// shipper counters only.
+// summaryLocked attributes one drop count to its allocation. The
+// service ID is advisory: the control plane derives authoritative
+// service attribution from the allocation owner, so counts surface
+// even when local metadata is gone after a restart. Counts without
+// a recoverable key cannot appear in reads and stay in the shipper
+// counters only.
 func (s *logShipper) summaryLocked(key string, count uint64, reason string, windowStart, windowEnd time.Time) *platformv1.LogDropSummary {
-	meta, ok := s.meta[key]
-	if !ok || meta.serviceID == "" {
+	if key == "" {
 		return nil
 	}
+	meta := s.meta[key]
 	return &platformv1.LogDropSummary{
 		ServiceId:    meta.serviceID,
 		AllocationId: key,

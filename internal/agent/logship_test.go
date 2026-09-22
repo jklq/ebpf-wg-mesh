@@ -9,6 +9,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/logpipeline"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -305,5 +306,95 @@ func TestLogShipperSurvivesRestart(t *testing.T) {
 			t.Fatal("crashed line was not recovered from the spool")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestLogShipperPersistsDropAccountingAcrossShutdown(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      dir,
+		RatePerSec:    1,
+		Burst:         2,
+		BatchSize:     10,
+		FlushInterval: time.Hour, // Never flush before shutdown.
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	for i := uint64(1); i <= 10; i++ {
+		shipper.AppendLog(testEntry("alloc-1", "svc-1", "flood", i))
+	}
+	// Shutdown without ever shipping: the rate-limited lines must
+	// survive as durable pending drop summaries.
+	if err := shipper.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      dir,
+		RatePerSec:    10000,
+		Burst:         10000,
+		BatchSize:     10,
+		FlushInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	sender := &recordingSender{}
+	reopened.Attach(sender.send)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = reopened.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		sender.mu.Lock()
+		var dropped uint64
+		for _, batch := range sender.batches {
+			for _, drop := range batch.GetDrops() {
+				dropped += drop.GetDroppedCount()
+			}
+		}
+		sender.mu.Unlock()
+		if dropped >= 8 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("shutdown drop accounting lost, got %d dropped", dropped)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	var reason, alloc string
+	var dropped uint64
+	for _, batch := range sender.batches {
+		for _, drop := range batch.GetDrops() {
+			reason, alloc = drop.GetReason(), drop.GetAllocationId()
+			dropped += drop.GetDroppedCount()
+		}
+	}
+	if reason != logpipeline.ReasonRateLimited || alloc != "alloc-1" || dropped != 8 {
+		t.Fatalf("drop summary wrong: reason=%q alloc=%q dropped=%d", reason, alloc, dropped)
+	}
+}
+
+func TestLogShipConfigFromAgentZeroRateDisablesLimiting(t *testing.T) {
+	t.Parallel()
+
+	ship := logShipConfigFromAgent(config.AgentConfig{
+		Logs: config.AgentLogShippingConfig{RatePerSec: 0, Burst: 1000},
+	})
+	if ship.RatePerSec != 0 {
+		t.Fatalf("zero rate must disable producer limiting, got %v", ship.RatePerSec)
+	}
+	limiter := logpipeline.NewLimiter(ship.RatePerSec, ship.Burst)
+	for i := 0; i < 100; i++ {
+		if !limiter.Allow("alloc-1") {
+			t.Fatal("zero rate must allow every line")
+		}
 	}
 }

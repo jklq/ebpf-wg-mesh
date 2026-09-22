@@ -30,7 +30,8 @@ const (
 )
 
 // buildLogShipConfig bounds one build attempt's log reporter. Zero
-// values select defaults.
+// values select defaults, except RatePerSec: a non-positive rate
+// disables producer limiting.
 type buildLogShipConfig struct {
 	SpoolDir      string
 	SpoolMaxBytes int64
@@ -317,12 +318,12 @@ func (r *buildLogReporter) flush() {
 func (r *buildLogReporter) collectDrops(now time.Time) {
 	windowStart := now.Add(-r.flushInterval)
 	limited := r.limiter.DrainDrops()
-	spooled := r.spool.DrainDrops()
+	evicted, corrupt := r.spool.DrainDrops()
 	r.mu.Lock()
 	overflow := r.overflow
 	r.overflow = make(map[string]uint64)
 	r.mu.Unlock()
-	if len(limited) == 0 && len(spooled) == 0 && len(overflow) == 0 {
+	if len(limited) == 0 && len(evicted) == 0 && len(corrupt) == 0 && len(overflow) == 0 {
 		return
 	}
 	r.mu.Lock()
@@ -330,8 +331,11 @@ func (r *buildLogReporter) collectDrops(now time.Time) {
 	for _, count := range limited {
 		r.pending = append(r.pending, r.summary("", count, logpipeline.ReasonRateLimited, windowStart, now))
 	}
-	for stream, count := range spooled {
+	for stream, count := range evicted {
 		r.pending = append(r.pending, r.summary(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now))
+	}
+	for stream, count := range corrupt {
+		r.pending = append(r.pending, r.summary(stream, count, logpipeline.ReasonCorruptSpool, windowStart, now))
 	}
 	for stream, count := range overflow {
 		r.pending = append(r.pending, r.summary(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now))

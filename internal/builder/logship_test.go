@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/logpipeline"
 
 	"google.golang.org/grpc/codes"
@@ -239,5 +240,24 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 	}
 	if got, err := gcStaleBuildLogSpools(filepath.Join(base, "missing"), staleBuildLogSpoolMaxAge); err != nil || got != 0 {
 		t.Fatalf("missing base must be a no-op: %d %v", got, err)
+	}
+}
+
+func TestBuildLogShipConfigZeroRateDisablesLimiting(t *testing.T) {
+	t.Parallel()
+
+	app := &App{cfg: config.BuilderConfig{
+		WorkDir: t.TempDir(),
+		Logs:    config.BuilderLogShippingConfig{RatePerSec: 0, Burst: 1000},
+	}}
+	ship := app.buildLogShipConfig("build-1")
+	if ship.RatePerSec != 0 {
+		t.Fatalf("zero rate must disable producer limiting, got %v", ship.RatePerSec)
+	}
+	limiter := logpipeline.NewLimiter(ship.RatePerSec, ship.Burst)
+	for i := 0; i < 100; i++ {
+		if !limiter.Allow("build-1") {
+			t.Fatal("zero rate must allow every line")
+		}
 	}
 }

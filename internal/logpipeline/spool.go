@@ -89,7 +89,8 @@ type Spool struct {
 
 	records        int64
 	bytes          int64
-	dropped        map[string]uint64
+	evicted        map[string]uint64
+	corruptDrops   map[string]uint64
 	droppedRecords uint64
 	droppedBytes   uint64
 	corrupt        uint64
@@ -104,7 +105,8 @@ type segmentInfo struct {
 
 // OpenSpool opens or creates the spool in cfg.Dir, recovering segment
 // files and the durable cursor. Torn tail writes from a crash are
-// truncated; mid-file corrupt records are compacted out and counted.
+// truncated; corrupt records are compacted out and counted as
+// attributable drops under their best-effort recovered key.
 func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 	if cfg.Dir == "" {
 		return nil, errors.New("log spool directory is required")
@@ -121,11 +123,12 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		return nil, fmt.Errorf("create log spool dir: %w", err)
 	}
 	s := &Spool{
-		dir:      cfg.Dir,
-		maxBytes: maxBytes,
-		maxSeg:   maxSeg,
-		sync:     cfg.SyncWrites,
-		dropped:  make(map[string]uint64),
+		dir:          cfg.Dir,
+		maxBytes:     maxBytes,
+		maxSeg:       maxSeg,
+		sync:         cfg.SyncWrites,
+		evicted:      make(map[string]uint64),
+		corruptDrops: make(map[string]uint64),
 	}
 	if err := s.recover(); err != nil {
 		return nil, err
@@ -185,30 +188,80 @@ func (s *Spool) recover() error {
 }
 
 // compactSegment drops corrupt records from one segment, truncates a
-// torn tail, and returns the resulting size and record count.
+// torn tail, and returns the resulting size and record count. Every
+// lost record is counted as an attributable drop where the damaged
+// frame still reveals its key.
 func (s *Spool) compactSegment(id uint64) (int64, int64, error) {
 	path := s.segmentPath(id)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, 0, fmt.Errorf("read spool segment %d: %w", id, err)
 	}
-	records, validThrough, corrupt := scanRecords(raw)
-	if corrupt == 0 && int64(len(raw)) == validThrough {
-		return int64(len(raw)), records, nil
+	var (
+		kept    []byte
+		records int64
+		rewrote bool
+	)
+	for off := int64(0); off < int64(len(raw)); {
+		_, nextOff, ok := decodeRecordAt(raw, off)
+		if ok {
+			kept = append(kept, raw[off:nextOff]...)
+			records++
+			off = nextOff
+			continue
+		}
+		s.recordCorruptLocked(raw, off)
+		rewrote = true
+		skip := skipLength(raw, off)
+		if skip <= 0 {
+			// Torn tail: the partial frame ends the segment.
+			break
+		}
+		off += int64(skip)
 	}
-	// Rewrite the valid prefix, skipping corrupt mid-file records.
-	kept := rewriteValidPrefix(raw, validThrough)
-	if err := os.WriteFile(path, kept, spoolFileMode); err != nil {
-		return 0, 0, fmt.Errorf("compact spool segment %d: %w", id, err)
-	}
-	s.corrupt += corrupt
-	// A torn tail loses at most one partial record; count it once.
-	if int64(len(raw)) > validThrough {
-		s.corrupt++
-		s.dropped[""]++
-		s.droppedRecords++
+	if rewrote {
+		if err := os.WriteFile(path, kept, spoolFileMode); err != nil {
+			return 0, 0, fmt.Errorf("compact spool segment %d: %w", id, err)
+		}
 	}
 	return int64(len(kept)), records, nil
+}
+
+// recordCorruptLocked counts one unreadable record as a loss. The key
+// is recovered best-effort from the damaged frame so the loss can
+// surface as an attributable corrupt_spool gap; frames whose key
+// bytes are gone count under the empty key and stay in stats only.
+func (s *Spool) recordCorruptLocked(raw []byte, off int64) {
+	s.corrupt++
+	s.droppedRecords++
+	s.corruptDrops[bestEffortRecordKey(raw, off)]++
+}
+
+// bestEffortRecordKey extracts the record key from a damaged frame
+// without trusting it for data: torn tails and checksum failures
+// usually leave the leading key field intact.
+func bestEffortRecordKey(raw []byte, off int64) string {
+	if off < 0 || off >= int64(len(raw)) {
+		return ""
+	}
+	bodyLen, n := binary.Uvarint(raw[off:])
+	if n <= 0 || bodyLen > 256<<20 {
+		return ""
+	}
+	start := off + int64(n)
+	end := start + int64(bodyLen)
+	if end > int64(len(raw)) {
+		end = int64(len(raw))
+	}
+	if start >= end {
+		return ""
+	}
+	body := raw[start:end]
+	keyLen, n := binary.Uvarint(body)
+	if n <= 0 || keyLen > 1<<10 || uint64(len(body)-n) < keyLen {
+		return ""
+	}
+	return string(body[n : n+int(keyLen)])
 }
 
 func (s *Spool) segmentPath(id uint64) string {
@@ -287,7 +340,7 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 		rec, nextOff, ok := decodeRecordAt(raw, cursor.Offset)
 		if !ok {
 			// Mid-file corruption after open: skip the record and
-			// count it once under the unknown key.
+			// count it once as an attributable drop.
 			skip := skipLength(raw, cursor.Offset)
 			if skip <= 0 {
 				next, hasNext := s.segmentAfterLocked(cursor.Segment)
@@ -297,10 +350,8 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 				cursor = Cursor{Segment: next, Offset: 0}
 				continue
 			}
+			s.recordCorruptLocked(raw, cursor.Offset)
 			cursor.Offset += int64(skip)
-			s.corrupt++
-			s.dropped[""]++
-			s.droppedRecords++
 			continue
 		}
 		out = append(out, rec)
@@ -329,10 +380,13 @@ func (s *Spool) Commit(c Cursor) error {
 	return nil
 }
 
-// RewindToTime moves the durable cursor to the first record with
-// timestamp at or after t, so a reconnect replays the recent window
-// and retried lines deduplicate server-side by line ID.
-func (s *Spool) RewindToTime(t time.Time) error {
+// RewindForReplay moves the durable cursor back to the first record
+// with timestamp at or after t, so a reconnect re-sends recent
+// records the backend may not have durably ingested and retried
+// lines deduplicate server-side by line ID. It never moves the
+// cursor forward: records after the durable cursor were never
+// accepted and always replay, however old.
+func (s *Spool) RewindForReplay(t time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -340,6 +394,9 @@ func (s *Spool) RewindToTime(t time.Time) error {
 	}
 	target := t.UnixNano()
 	for _, seg := range s.segments {
+		if seg.id > s.cursor.Segment {
+			return nil
+		}
 		raw, err := os.ReadFile(s.segmentPath(seg.id))
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -359,8 +416,15 @@ func (s *Spool) RewindToTime(t time.Time) error {
 				continue
 			}
 			if rec.ObservedAt.UnixNano() >= target {
-				s.cursor = Cursor{Segment: seg.id, Offset: off}
-				return s.persistCursorLocked()
+				pos := Cursor{Segment: seg.id, Offset: off}
+				if pos.Segment < s.cursor.Segment ||
+					(pos.Segment == s.cursor.Segment && pos.Offset <= s.cursor.Offset) {
+					s.cursor = pos
+					return s.persistCursorLocked()
+				}
+				// The window starts past unshipped records; the
+				// cursor must not skip them.
+				return nil
 			}
 			off = nextOff
 		}
@@ -411,17 +475,23 @@ func (s *Spool) pendingLocked() int64 {
 	return pending
 }
 
-// DrainDrops returns per-key evicted counts since the last drain and
-// clears them. The empty key holds corrupt or unattributable drops.
-func (s *Spool) DrainDrops() map[string]uint64 {
+// DrainDrops returns per-key drop counts accumulated since the last
+// drain and clears them. Evicted counts unshipped records lost to
+// the byte cap (spool_overflow); corrupt counts records lost to
+// unreadable frames (corrupt_spool). The empty key holds losses
+// whose record key could not be recovered.
+func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.dropped) == 0 {
-		return nil
+	if len(s.evicted) > 0 {
+		evicted = s.evicted
+		s.evicted = make(map[string]uint64)
 	}
-	out := s.dropped
-	s.dropped = make(map[string]uint64)
-	return out
+	if len(s.corruptDrops) > 0 {
+		corrupt = s.corruptDrops
+		s.corruptDrops = make(map[string]uint64)
+	}
+	return evicted, corrupt
 }
 
 // Close flushes and closes the spool.
@@ -485,7 +555,7 @@ func (s *Spool) evictLocked() {
 		}
 		drops, dropBytes := s.unshippedCountsLocked(oldest)
 		for key, count := range drops {
-			s.dropped[key] += count
+			s.evicted[key] += count
 			s.droppedRecords += count
 		}
 		s.droppedBytes += dropBytes
@@ -780,45 +850,4 @@ func skipLength(raw []byte, off int64) int {
 		return -1
 	}
 	return int(total)
-}
-
-// scanRecords walks raw counting valid records, the valid prefix
-// length, and corrupt records. A torn tail stops the scan.
-func scanRecords(raw []byte) (records int64, validThrough int64, corrupt uint64) {
-	var off int64
-	for off < int64(len(raw)) {
-		_, nextOff, ok := decodeRecordAt(raw, off)
-		if !ok {
-			if skipLength(raw, off) > 0 {
-				corrupt++
-				off += int64(skipLength(raw, off))
-				continue
-			}
-			break
-		}
-		records++
-		off = nextOff
-	}
-	return records, off, corrupt
-}
-
-// rewriteValidPrefix copies the valid records below validThrough,
-// skipping corrupt mid-file frames.
-func rewriteValidPrefix(raw []byte, validThrough int64) []byte {
-	var out []byte
-	var off int64
-	for off < validThrough {
-		_, nextOff, ok := decodeRecordAt(raw, off)
-		if !ok {
-			skip := skipLength(raw, off)
-			if skip <= 0 {
-				break
-			}
-			off += int64(skip)
-			continue
-		}
-		out = append(out, raw[off:nextOff]...)
-		off = nextOff
-	}
-	return out
 }

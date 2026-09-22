@@ -291,7 +291,8 @@ type AgentConfig struct {
 }
 
 // AgentLogShippingConfig bounds the agent's durable log pipeline.
-// Zero values select documented defaults.
+// Zero values select documented defaults, except RatePerSec: zero
+// disables producer limiting (validation rejects negatives).
 type AgentLogShippingConfig struct {
 	// SpoolMaxBytes caps the disk spool under the runtime data dir.
 	// Past the cap the oldest unshipped lines shed with explicit gap
@@ -299,7 +300,8 @@ type AgentLogShippingConfig struct {
 	SpoolMaxBytes int64
 	// RatePerSec and Burst bound accepted lines per allocation per
 	// second. Past the limit lines shed with explicit gap rows.
-	// Defaults to 200/s with bursts of 1000.
+	// Defaults to 200/s with bursts of 1000; zero RatePerSec
+	// disables producer limiting entirely.
 	RatePerSec int
 	Burst      int
 	// FlushBatchSize and FlushIntervalSeconds pace Sync stream
@@ -339,13 +341,16 @@ type BuilderConfig struct {
 }
 
 // BuilderLogShippingConfig bounds the builder's durable build-log
-// pipeline. Zero values select documented defaults.
+// pipeline. Zero values select documented defaults, except
+// RatePerSec: zero disables producer limiting (validation rejects
+// negatives).
 type BuilderLogShippingConfig struct {
 	// SpoolMaxBytes caps the per-attempt disk spool under the
 	// builder work dir. Defaults to 64 MiB.
 	SpoolMaxBytes int64
 	// RatePerSec and Burst bound accepted lines per build per
-	// second. Defaults to 200/s with bursts of 1000.
+	// second. Defaults to 200/s with bursts of 1000; zero RatePerSec
+	// disables producer limiting entirely.
 	RatePerSec int
 	Burst      int
 	// FlushBatchSize and FlushIntervalSeconds pace ReportBuildLogs

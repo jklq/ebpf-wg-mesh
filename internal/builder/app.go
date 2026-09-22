@@ -292,10 +292,6 @@ func (a *App) buildLogSpoolBase() string {
 
 func (a *App) buildLogShipConfig(buildID string) buildLogShipConfig {
 	ship := a.cfg.Logs
-	rate := float64(ship.RatePerSec)
-	if rate <= 0 {
-		rate = 200
-	}
 	burst := ship.Burst
 	if burst <= 0 {
 		burst = 1000
@@ -307,7 +303,9 @@ func (a *App) buildLogShipConfig(buildID string) buildLogShipConfig {
 	return buildLogShipConfig{
 		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID),
 		SpoolMaxBytes: maxBytes,
-		RatePerSec:    rate,
+		// A non-positive rate disables producer limiting; zero is a
+		// deliberate operator choice, not an unset default.
+		RatePerSec:    float64(ship.RatePerSec),
 		Burst:         burst,
 		BatchSize:     ship.FlushBatchSize,
 		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,

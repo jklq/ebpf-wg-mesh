@@ -108,18 +108,21 @@ func TestSpoolEvictsOldestPastByteCapWithPerKeyDrops(t *testing.T) {
 	if stats.DroppedRecords == 0 {
 		t.Fatal("expected drops past the byte cap")
 	}
-	drops := s.DrainDrops()
-	if len(drops) == 0 {
+	evicted, corrupt := s.DrainDrops()
+	if corrupt != nil {
+		t.Fatalf("evictions must not count as corruption: %v", corrupt)
+	}
+	if len(evicted) == 0 {
 		t.Fatal("expected per-key drop accounting")
 	}
 	var total uint64
-	for _, count := range drops {
+	for _, count := range evicted {
 		total += count
 	}
 	if total != stats.DroppedRecords {
 		t.Fatalf("drained %d drops but stats report %d", total, stats.DroppedRecords)
 	}
-	if s.DrainDrops() != nil {
+	if evicted, _ := s.DrainDrops(); evicted != nil {
 		t.Fatal("drain did not clear drop accounting")
 	}
 	// Unshipped survivors are still readable.
@@ -209,9 +212,53 @@ func TestSpoolTruncatesTornTail(t *testing.T) {
 	if stats := reopened.Stats(); stats.CorruptRecords == 0 {
 		t.Fatal("expected the torn tail to count as corrupt")
 	}
+	// The damaged frame still reveals its key, so the loss is
+	// attributable as a corrupt_spool drop.
+	evicted, corrupt := reopened.DrainDrops()
+	if evicted != nil {
+		t.Fatalf("torn tail must not count as eviction: %v", evicted)
+	}
+	if corrupt["a"] != 1 {
+		t.Fatalf("torn tail loss not attributed to its key: %v", corrupt)
+	}
 }
 
-func TestSpoolRewindToTimeReplaysRecentWindow(t *testing.T) {
+func TestSpoolCompactsMidFileCorruptionWithKeyAttribution(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	r1 := encodeRecord("k1", "id-1", now, []byte("one"))
+	r2 := encodeRecord("k2", "id-2", now, []byte("two"))
+	r3 := encodeRecord("k3", "id-3", now, []byte("three"))
+	r2[len(r2)-1] ^= 0xff // Flip a checksum byte mid-file.
+	segment := append(append(append([]byte(nil), r1...), r2...), r3...)
+	if err := os.WriteFile(filepath.Join(dir, "seg-0000000000.log"), segment, 0o600); err != nil {
+		t.Fatalf("write segment: %v", err)
+	}
+	s, err := OpenSpool(SpoolConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("OpenSpool: %v", err)
+	}
+	defer s.Close()
+	recs, _, err := s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 2 || recs[0].Key != "k1" || recs[1].Key != "k3" {
+		t.Fatalf("corrupt frame broke recovery: %+v", recs)
+	}
+	if stats := s.Stats(); stats.CorruptRecords != 1 || stats.DroppedRecords != 1 {
+		t.Fatalf("corrupt frame not counted once: %+v", stats)
+	}
+	evicted, corrupt := s.DrainDrops()
+	if evicted != nil {
+		t.Fatalf("corruption must not count as eviction: %v", evicted)
+	}
+	if corrupt["k2"] != 1 {
+		t.Fatalf("corrupt frame loss not attributed to its key: %v", corrupt)
+	}
+}
+
+func TestSpoolRewindForReplayReplaysRecentWindow(t *testing.T) {
 	t.Parallel()
 	s := openTestSpool(t, SpoolConfig{})
 	base := time.Now().UTC().Truncate(time.Second)
@@ -228,8 +275,8 @@ func TestSpoolRewindToTimeReplaysRecentWindow(t *testing.T) {
 	if err := s.Commit(cursor); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	if err := s.RewindToTime(base.Add(4 * time.Second)); err != nil {
-		t.Fatalf("RewindToTime: %v", err)
+	if err := s.RewindForReplay(base.Add(4 * time.Second)); err != nil {
+		t.Fatalf("RewindForReplay: %v", err)
 	}
 	recs, _, err = s.Read(100)
 	if err != nil {
@@ -237,6 +284,50 @@ func TestSpoolRewindToTimeReplaysRecentWindow(t *testing.T) {
 	}
 	if len(recs) != 2 || recs[0].Payload[0] != 4 {
 		t.Fatalf("expected replay of last 2 records, got %d", len(recs))
+	}
+}
+
+func TestSpoolRewindForReplayNeverSkipsUncommitted(t *testing.T) {
+	s := openTestSpool(t, SpoolConfig{})
+	base := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 6; i++ {
+		ts := base.Add(time.Duration(i) * time.Second)
+		if err := s.Append("a", "id", ts, []byte{byte(i)}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	// Ship and commit only the first two records; the rest are old
+	// but were never accepted by the backend.
+	recs, cursor, err := s.Read(2)
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	// The window starts past every unshipped record: the cursor
+	// must not advance over them.
+	if err := s.RewindForReplay(base.Add(10 * time.Second)); err != nil {
+		t.Fatalf("RewindForReplay: %v", err)
+	}
+	recs, _, err = s.Read(100)
+	if err != nil {
+		t.Fatalf("Read after rewind: %v", err)
+	}
+	if len(recs) != 4 || recs[0].Payload[0] != 2 {
+		t.Fatalf("rewind skipped unshipped records: got %d", len(recs))
+	}
+	// The window starting inside the unshipped range must not skip
+	// the older unshipped records either.
+	if err := s.RewindForReplay(base.Add(4 * time.Second)); err != nil {
+		t.Fatalf("RewindForReplay: %v", err)
+	}
+	recs, _, err = s.Read(100)
+	if err != nil {
+		t.Fatalf("Read after second rewind: %v", err)
+	}
+	if len(recs) != 4 {
+		t.Fatalf("rewind moved forward over unshipped records: got %d", len(recs))
 	}
 }
 

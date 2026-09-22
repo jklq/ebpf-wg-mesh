@@ -140,10 +140,6 @@ func (a *App) Run(ctx context.Context) error {
 
 func logShipConfigFromAgent(cfg config.AgentConfig) logShipConfig {
 	ship := cfg.Logs
-	rate := float64(ship.RatePerSec)
-	if rate <= 0 {
-		rate = 200
-	}
 	burst := ship.Burst
 	if burst <= 0 {
 		burst = 1000
@@ -151,7 +147,9 @@ func logShipConfigFromAgent(cfg config.AgentConfig) logShipConfig {
 	return logShipConfig{
 		SpoolDir:      filepath.Join(cfg.Runtime.DataDir, "log-spool"),
 		SpoolMaxBytes: ship.SpoolMaxBytes,
-		RatePerSec:    rate,
+		// A non-positive rate disables producer limiting; zero is a
+		// deliberate operator choice, not an unset default.
+		RatePerSec:    float64(ship.RatePerSec),
 		Burst:         burst,
 		BatchSize:     ship.FlushBatchSize,
 		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,
