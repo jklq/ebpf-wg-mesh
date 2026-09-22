@@ -10,7 +10,7 @@ import (
 // repositoryComponentPattern mirrors the Docker distribution name-component
 // grammar: lowercase alphanumeric runs joined by single dots, single or
 // double underscores, or runs of dashes.
-var repositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[.]|__|[-]+)[a-z0-9]+)*$`)
+var repositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:__|[._]|[-]+)[a-z0-9]+)*$`)
 
 // ParsedReference is a normalized OCI image reference. Repository always
 // carries an explicit host (default docker.io, with the library/ prefix
