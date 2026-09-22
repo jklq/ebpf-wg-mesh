@@ -536,3 +536,68 @@ func TestNewBuildLogReporterRefusesBrokenSpoolDir(t *testing.T) {
 		t.Fatal("no reporter without a spool")
 	}
 }
+
+func TestBuildLogReporterInheritsPriorAttemptDropSummaries(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	now := time.Now().UTC()
+
+	// Attempt 1 drops lines under a dead control plane and dies with
+	// the accounting still pending.
+	failing := &recordingBuilderServiceClient{
+		calls:     make(chan struct{}, 8),
+		reportErr: errors.New("ingest down"),
+	}
+	cfg1 := buildLogShipConfig{
+		SpoolDir:      buildLogSpoolDir(base, "build-1", 1),
+		SpoolMaxBytes: 1 << 20,
+		RatePerSec:    1,
+		Burst:         1,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+		CloseTimeout:  50 * time.Millisecond,
+	}
+	reporter1, err := newBuildLogReporter(context.Background(), failing, "builder-1", "build-1", "svc-1", 1, cfg1)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		reporter1.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "flood"})
+	}
+	if err := reporter1.Close(); err == nil {
+		t.Fatal("expected abandoned delivery for attempt 1")
+	}
+	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.PendingDropsFile)); err != nil {
+		t.Fatalf("drop summaries must persist beside the attempt spool: %v", err)
+	}
+
+	// Attempt 2 (new epoch) takes over the dead attempt's accounting:
+	// it re-emits its own output but can never recreate the lines
+	// attempt 1 dropped, so their gap must surface from here.
+	cfg2 := cfg1
+	cfg2.SpoolDir = buildLogSpoolDir(base, "build-1", 2)
+	cfg2.RatePerSec = 100000
+	cfg2.Burst = 100000
+	cfg2.FlushInterval = 10 * time.Millisecond
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
+	reporter2, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 2, cfg2)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
+	defer reporter2.Close()
+	reporter2.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "rerun"})
+	waitForBuilderReportCall(t, client.calls)
+
+	requests := client.ReportRequests()
+	var inherited uint64
+	for _, drop := range requests[0].GetDrops() {
+		inherited += drop.GetDroppedCount()
+	}
+	if inherited != 4 {
+		t.Fatalf("expected the 4 dropped lines of attempt 1, got %d in %+v", inherited, requests[0].GetDrops())
+	}
+	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.PendingDropsFile)); !os.IsNotExist(err) {
+		t.Fatalf("taken-over summaries must be consumed: %v", err)
+	}
+}

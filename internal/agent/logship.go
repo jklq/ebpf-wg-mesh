@@ -2,11 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +13,6 @@ import (
 	"ebof-wg-mesh/internal/logpipeline"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -330,47 +326,15 @@ func (s *logShipper) restorePending(taken []*platformv1.LogDropSummary) {
 	s.persistPendingLocked()
 }
 
-// persistedDrop is the durable form of one pending drop summary.
-type persistedDrop struct {
-	ServiceID    string    `json:"service_id"`
-	AllocationID string    `json:"allocation_id"`
-	LogType      int32     `json:"log_type"`
-	Stream       string    `json:"stream"`
-	DroppedCount uint64    `json:"dropped_count"`
-	Reason       string    `json:"reason"`
-	WindowStart  time.Time `json:"window_start"`
-	WindowEnd    time.Time `json:"window_end"`
-	SummaryID    string    `json:"summary_id"`
-}
-
 // loadPendingDrops reads drop summaries persisted by an earlier
 // process so shutdown-time accounting reports after the restart.
 func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, pendingDropsFile))
-	if os.IsNotExist(err) {
-		return logpipeline.NewDropSet(), nil
-	}
+	rows, err := logpipeline.LoadDrops(dir)
 	if err != nil {
 		return nil, err
 	}
-	var rows []persistedDrop
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, err
-	}
 	pending := logpipeline.NewDropSet()
-	for _, row := range rows {
-		pending.Restore([]*platformv1.LogDropSummary{{
-			ServiceId:    row.ServiceID,
-			AllocationId: row.AllocationID,
-			LogType:      platformv1.ServiceLogType(row.LogType),
-			Stream:       row.Stream,
-			DroppedCount: row.DroppedCount,
-			Reason:       row.Reason,
-			WindowStart:  timestamppb.New(row.WindowStart),
-			WindowEnd:    timestamppb.New(row.WindowEnd),
-			SummaryId:    row.SummaryID,
-		}})
-	}
+	pending.Restore(rows)
 	return pending, nil
 }
 
@@ -378,46 +342,8 @@ func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
 // the spool. The snapshot is advisory: retried summaries collapse
 // server-side by gap identity, so a stale copy only re-reports.
 func (s *logShipper) persistPendingLocked() {
-	summaries := s.pending.Summaries()
-	rows := make([]persistedDrop, 0, len(summaries))
-	for _, summary := range summaries {
-		rows = append(rows, persistedDrop{
-			ServiceID:    summary.GetServiceId(),
-			AllocationID: summary.GetAllocationId(),
-			LogType:      int32(summary.GetLogType()),
-			Stream:       summary.GetStream(),
-			DroppedCount: summary.GetDroppedCount(),
-			Reason:       summary.GetReason(),
-			WindowStart:  summary.GetWindowStart().AsTime(),
-			WindowEnd:    summary.GetWindowEnd().AsTime(),
-			SummaryID:    summary.GetSummaryId(),
-		})
-	}
-	raw, err := json.Marshal(rows)
-	if err != nil {
-		slog.Warn("encode pending log drop summaries", "agent_id", s.agentID, "error", err)
-		return
-	}
-	tmp, err := os.CreateTemp(s.spoolDir, ".drops-*.json")
-	if err != nil {
-		slog.Warn("stage pending log drop summaries", "agent_id", s.agentID, "error", err)
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		slog.Warn("write pending log drop summaries", "agent_id", s.agentID, "error", err)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		slog.Warn("write pending log drop summaries", "agent_id", s.agentID, "error", err)
-		return
-	}
-	if err := os.Rename(tmpName, filepath.Join(s.spoolDir, pendingDropsFile)); err != nil {
-		_ = os.Remove(tmpName)
-		slog.Warn("commit pending log drop summaries", "agent_id", s.agentID, "error", err)
+	if err := logpipeline.SaveDrops(s.spoolDir, s.pending.Summaries()); err != nil {
+		slog.Warn("persist pending log drop summaries", "agent_id", s.agentID, "error", err)
 	}
 }
 

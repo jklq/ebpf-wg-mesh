@@ -127,8 +127,71 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		pending:       logpipeline.NewDropSet(),
 		overflow:      make(map[string]uint64),
 	}
+	// Drop summaries of dead attempts of this build are taken over
+	// first and snapshotted before their files go away: a retried
+	// attempt re-emits its output from scratch but can never
+	// recreate lines the dead attempt dropped, so their gap
+	// accounting must survive into this attempt's reports.
+	consumed := loadAttemptDrops(filepath.Dir(cfg.SpoolDir), buildID, cfg.SpoolDir, reporter.pending)
+	reporter.persistPendingLocked()
+	for _, dir := range consumed {
+		_ = os.Remove(filepath.Join(dir, logpipeline.PendingDropsFile))
+	}
 	go reporter.run()
 	return reporter, nil
+}
+
+// loadAttemptDrops folds the persisted drop summaries of this
+// attempt's spool directory and of earlier attempts of the same
+// build into pending, returning the sibling directories whose
+// summaries were taken over.
+func loadAttemptDrops(baseDir, buildID, ownDir string, pending *logpipeline.DropSet) []string {
+	if rows, err := logpipeline.LoadDrops(ownDir); err != nil {
+		slog.Warn("load pending build log drops", "build_id", buildID, "error", err)
+	} else {
+		pending.Restore(rows)
+	}
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil
+	}
+	prefix := sanitizeBuildSpoolName(buildID) + "-e"
+	var consumed []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		dir := filepath.Join(baseDir, entry.Name())
+		if filepath.Clean(dir) == filepath.Clean(ownDir) {
+			continue
+		}
+		rows, err := logpipeline.LoadDrops(dir)
+		if err != nil {
+			slog.Warn("load inherited build log drops", "build_id", buildID, "dir", dir, "error", err)
+			continue
+		}
+		inherited := make([]*platformv1.LogDropSummary, 0, len(rows))
+		for _, row := range rows {
+			if row.GetBuildId() == buildID {
+				inherited = append(inherited, row)
+			}
+		}
+		if len(inherited) == 0 {
+			continue
+		}
+		pending.Restore(inherited)
+		consumed = append(consumed, dir)
+	}
+	return consumed
+}
+
+// persistPendingLocked snapshots the pending drop summaries next to
+// the attempt spool so a dead attempt's accounting survives into the
+// retry. Callers hold r.mu.
+func (r *buildLogReporter) persistPendingLocked() {
+	if err := logpipeline.SaveDrops(r.spoolDir, r.pending.Summaries()); err != nil {
+		slog.Warn("persist pending build log drops", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+	}
 }
 
 // Report rate-limits and spools one build output line. It never
@@ -334,6 +397,9 @@ func (r *buildLogReporter) flush() {
 		r.restorePending(taken)
 		return
 	}
+	r.mu.Lock()
+	r.persistPendingLocked()
+	r.mu.Unlock()
 }
 
 // restorePending merges unsent summaries back into the pending set
@@ -343,6 +409,7 @@ func (r *buildLogReporter) restorePending(taken []*platformv1.LogDropSummary) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pending.Restore(taken)
+	r.persistPendingLocked()
 }
 
 // collectDrops drains limiter, spool, and overflow counters into the
@@ -374,6 +441,7 @@ func (r *buildLogReporter) collectDrops(now time.Time) {
 	for stream, count := range overflow {
 		r.notePendingLocked(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
 	}
+	r.persistPendingLocked()
 }
 
 // notePendingLocked coalesces one drop window into the pending entry

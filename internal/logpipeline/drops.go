@@ -4,6 +4,10 @@ import (
 	"cmp"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -173,4 +177,100 @@ func compareDropKeys(a, b DropKey) int {
 		strings.Compare(a.Stream, b.Stream),
 		strings.Compare(a.Reason, b.Reason),
 	)
+}
+
+// PendingDropsFile durably holds unreported drop summaries next to
+// the producer's spool so they report after a restart — or, for
+// builders, after a retried attempt takes them over.
+const PendingDropsFile = "pending-drops.json"
+
+// persistedDrop is the durable form of one pending drop summary.
+type persistedDrop struct {
+	ServiceID    string    `json:"service_id"`
+	AllocationID string    `json:"allocation_id"`
+	BuildID      string    `json:"build_id"`
+	LogType      int32     `json:"log_type"`
+	Stream       string    `json:"stream"`
+	DroppedCount uint64    `json:"dropped_count"`
+	Reason       string    `json:"reason"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	SummaryID    string    `json:"summary_id"`
+}
+
+// LoadDrops reads drop summaries persisted by an earlier process so
+// shutdown-time accounting reports after the restart. A missing file
+// yields no summaries.
+func LoadDrops(dir string) ([]*platformv1.LogDropSummary, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, PendingDropsFile))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var rows []persistedDrop
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, err
+	}
+	out := make([]*platformv1.LogDropSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, &platformv1.LogDropSummary{
+			ServiceId:    row.ServiceID,
+			AllocationId: row.AllocationID,
+			BuildId:      row.BuildID,
+			LogType:      platformv1.ServiceLogType(row.LogType),
+			Stream:       row.Stream,
+			DroppedCount: row.DroppedCount,
+			Reason:       row.Reason,
+			WindowStart:  timestamppb.New(row.WindowStart),
+			WindowEnd:    timestamppb.New(row.WindowEnd),
+			SummaryId:    row.SummaryID,
+		})
+	}
+	return out, nil
+}
+
+// SaveDrops snapshots drop summaries next to the spool. The snapshot
+// is advisory: retried summaries collapse server-side by gap
+// identity, so a stale copy only re-reports.
+func SaveDrops(dir string, summaries []*platformv1.LogDropSummary) error {
+	rows := make([]persistedDrop, 0, len(summaries))
+	for _, summary := range summaries {
+		rows = append(rows, persistedDrop{
+			ServiceID:    summary.GetServiceId(),
+			AllocationID: summary.GetAllocationId(),
+			BuildID:      summary.GetBuildId(),
+			LogType:      int32(summary.GetLogType()),
+			Stream:       summary.GetStream(),
+			DroppedCount: summary.GetDroppedCount(),
+			Reason:       summary.GetReason(),
+			WindowStart:  summary.GetWindowStart().AsTime(),
+			WindowEnd:    summary.GetWindowEnd().AsTime(),
+			SummaryID:    summary.GetSummaryId(),
+		})
+	}
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("encode pending log drop summaries: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".drops-*.json")
+	if err != nil {
+		return fmt.Errorf("stage pending log drop summaries: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write pending log drop summaries: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close pending log drop summaries: %w", err)
+	}
+	if err := os.Rename(tmpName, filepath.Join(dir, PendingDropsFile)); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("commit pending log drop summaries: %w", err)
+	}
+	return nil
 }
