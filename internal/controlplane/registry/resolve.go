@@ -73,7 +73,7 @@ func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, 
 		return ResolvedImage{Repository: parsed.Repository, ManifestDigest: parsed.Digest, Ref: parsed.PinnedRef()}, nil
 	}
 	host, path, _ := strings.Cut(parsed.Repository, "/")
-	manifestURL := registryScheme(host) + "://" + host + "/v2/" + path + "/manifests/" + parsed.Tag
+	manifestURL := manifestURLFor(parsed.Repository, parsed.Tag)
 	digest, err := r.manifestDigest(ctx, manifestURL, "")
 	if unauthorizedScopeError(err) {
 		return ResolvedImage{}, err
@@ -103,6 +103,27 @@ func registryScheme(host string) string {
 		return "http"
 	}
 	return "https"
+}
+
+// registryEndpoint maps a repository host to its OCI Distribution API
+// endpoint. Docker Hub's API lives at registry-1.docker.io: docker.io is
+// web content and serves no /v2/ routes, so ordinary Docker Hub tags
+// must not resolve against it.
+func registryEndpoint(host string) string {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "docker.io", "index.docker.io", "registry-1.docker.io":
+		return "registry-1.docker.io"
+	default:
+		return host
+	}
+}
+
+// manifestURLFor builds the manifest endpoint URL for a normalized
+// repository and a tag or digest reference.
+func manifestURLFor(repository, reference string) string {
+	host, path, _ := strings.Cut(repository, "/")
+	endpoint := registryEndpoint(host)
+	return registryScheme(endpoint) + "://" + endpoint + "/v2/" + path + "/manifests/" + reference
 }
 
 // bearerAuthError carries a parsed Bearer challenge from a 401 response.
