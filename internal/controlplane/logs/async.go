@@ -294,20 +294,23 @@ func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
 }
 
 // sealAdmission closes the queue against further admissions and
-// returns whatever raced in since the drain last found it empty, so
-// the caller flushes that residue before giving up.
-func (a *AsyncIngester) sealAdmission() pendingFlush {
+// returns every flush that raced in since the drain last found the
+// queue empty, oldest first. The seal and the pull share the
+// admission lock, so a racing batch either lands in the returned set
+// or is rejected and accounted by enqueue — never lost in between.
+func (a *AsyncIngester) sealAdmission() []pendingFlush {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.drainDone = true
-	var flush pendingFlush
-	select {
-	case next := <-a.queue:
-		flush = next
-	default:
+	var rest []pendingFlush
+	for {
+		select {
+		case next := <-a.queue:
+			rest = append(rest, next)
+		default:
+			return rest
+		}
 	}
-	a.attachOwedLocked(&flush)
-	return flush
 }
 
 // Run flushes queued batches until ctx ends, then drains the
@@ -354,39 +357,64 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 // batch handed over from Run, queued batches, owed gap windows, and
 // anything arriving during the drain — under a grace deadline
 // decoupled from the canceled run context. It ends by sealing
-// admission atomically with its final emptiness check, so a batch
-// racing the seal either flushes here or is rejected and accounted,
-// never silently dropped. Whatever survives the grace expires is
-// logged with full accounting instead of vanishing.
+// admission atomically with the final pull, so a batch racing the
+// seal either flushes here or is rejected and accounted, never
+// silently dropped. If the grace expires first, every line and gap
+// count still held lands in the loud shutdown accounting instead of
+// vanishing.
 func (a *AsyncIngester) drainShutdown(ctx context.Context, inFlight pendingFlush) {
 	graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.shutdownGrace)
 	defer cancel()
-	flush := inFlight
+	remaining := []pendingFlush{inFlight}
+	sealed := false
 	for {
+		if len(remaining) == 0 {
+			if sealed {
+				return
+			}
+			remaining = a.sealAdmission()
+			sealed = true
+			continue
+		}
+		flush := remaining[0]
+		remaining = remaining[1:]
 		a.coalesce(&flush)
 		a.attachOwed(&flush)
 		if len(flush.lines) == 0 && len(flush.gaps) == 0 {
-			flush = a.sealAdmission()
-			if len(flush.lines) == 0 && len(flush.gaps) == 0 {
-				return
-			}
+			continue
 		}
 		if err := a.flushWithRetry(graceCtx, flush); err != nil {
-			leftover := a.sealAdmission()
-			flush.lines = append(flush.lines, leftover.lines...)
-			flush.gaps = append(flush.gaps, leftover.gaps...)
-			slog.Error("log ingest shutdown drain dropped accepted data",
-				"lines", len(flush.lines),
-				"gaps", len(flush.gaps),
-				"accepted_lines", a.acceptedLines.Load(),
-				"flushed_lines", a.flushedLines.Load(),
-				"shed_lines", a.shedLines.Load(),
-				"gaps_lost", a.gapsLost.Load(),
-				"error", err)
+			if !sealed {
+				remaining = append(remaining, a.sealAdmission()...)
+			}
+			a.accountDrainedLoss(append([]pendingFlush{flush}, remaining...))
 			return
 		}
-		flush = pendingFlush{}
 	}
+}
+
+// accountDrainedLoss lands a drain that expired its grace in the
+// loud accounting: every held line and gap count is added to
+// GapsLost and logged in full, so abandoning the accepted backlog is
+// observable instead of silent.
+func (a *AsyncIngester) accountDrainedLoss(flushes []pendingFlush) {
+	var lines, gapRows, gapLines uint64
+	for _, flush := range flushes {
+		lines += uint64(len(flush.lines))
+		gapRows += uint64(len(flush.gaps))
+		for _, gap := range flush.gaps {
+			gapLines += gap.DroppedCount
+		}
+	}
+	a.gapsLost.Add(lines + gapLines)
+	slog.Error("log ingest shutdown drain dropped accepted data",
+		"lines", lines,
+		"gaps", gapRows,
+		"gap_lines", gapLines,
+		"accepted_lines", a.acceptedLines.Load(),
+		"flushed_lines", a.flushedLines.Load(),
+		"shed_lines", a.shedLines.Load(),
+		"gaps_lost", a.gapsLost.Load())
 }
 
 // Stats reports a point-in-time snapshot.

@@ -473,3 +473,67 @@ func TestAsyncIngesterAccountsForEveryLineAcrossShutdown(t *testing.T) {
 			len(store.lines), gapLines, stats)
 	}
 }
+
+// The shutdown seal must hand the drain every queued flush, not just
+// the first: each was accepted by the Sync loop and cannot be
+// abandoned without accounting.
+func TestAsyncIngesterSealAdmissionReturnsEveryQueuedFlush(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 8})
+	for i := 0; i < 3; i++ {
+		ingester.EnqueueLines([]LogLineInput{{ID: fmt.Sprintf("sy:%d", i)}})
+	}
+	left := ingester.sealAdmission()
+	if len(left) != 3 {
+		t.Fatalf("seal returned %d of 3 queued flushes", len(left))
+	}
+	if ingester.EnqueueLines([]LogLineInput{{ID: "sy:late"}}) {
+		t.Fatal("flush admitted after the shutdown seal")
+	}
+	stats := ingester.Stats()
+	if stats.GapsLost != 1 {
+		t.Fatalf("post-seal arrival lost without accounting: %+v", stats)
+	}
+}
+
+// When the shutdown grace expires during a backend outage, every
+// accepted batch still held — the in-flight write and every queued
+// flush behind it — lands in the loud accounting instead of
+// vanishing without a gap or count.
+func TestAsyncIngesterAccountsAbandonedBacklogWhenGraceExpires(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true, failLines: errors.New("clickhouse is down")}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{
+		QueueFlushes:  8,
+		RatePerSec:    1e9,
+		Burst:         100000,
+		ShutdownGrace: 100 * time.Millisecond,
+	})
+
+	// Three batches past the coalesce cap: the first two merge into
+	// the in-flight write, the third stays queued behind it.
+	for i := 0; i < 3; i++ {
+		lines := make([]LogLineInput, 2500)
+		for j := range lines {
+			lines[j] = LogLineInput{ID: fmt.Sprintf("sy:%d:%d", i, j)}
+		}
+		ingester.EnqueueLines(lines)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ingester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	stats := ingester.Stats()
+	if stats.GapsLost != 7500 {
+		t.Fatalf("shutdown abandoned backlog without accounting: %+v", stats)
+	}
+	if stats.FlushedLines != 0 {
+		t.Fatalf("outage must not report flushed lines: %+v", stats)
+	}
+}
