@@ -122,6 +122,20 @@ func TestHTTPResolverRejectsCredentialedRegistry(t *testing.T) {
 	}
 }
 
+func TestManifestURLForRoutesDockerHubToDistributionEndpoint(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ repository, reference, want string }{
+		{"docker.io/library/nginx", "1.27", "https://registry-1.docker.io/v2/library/nginx/manifests/1.27"},
+		{"index.docker.io/library/nginx", "latest", "https://registry-1.docker.io/v2/library/nginx/manifests/latest"},
+		{"example.test/web", "v1", "https://example.test/v2/web/manifests/v1"},
+		{"localhost:5000/web", "v1", "http://localhost:5000/v2/web/manifests/v1"},
+	} {
+		if got := manifestURLFor(tc.repository, tc.reference); got != tc.want {
+			t.Fatalf("manifestURLFor(%q, %q) = %q, want %q", tc.repository, tc.reference, got, tc.want)
+		}
+	}
+}
+
 func TestStaticResolver(t *testing.T) {
 	t.Parallel()
 
