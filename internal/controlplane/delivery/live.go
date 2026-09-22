@@ -38,11 +38,15 @@ type AgentSession struct {
 	AcceptedEpoch  int64
 	AcceptedCursor int64
 	// Independently versioned streams (content hashes, empty when none).
-	OfferedNodeConfig   string
+	// Offered versions accumulate over the session: batches can be granted
+	// back to back, and a cumulative acknowledgement may lag a later grant,
+	// so it must validate against the batch it acknowledges, not only the
+	// newest offer.
+	OfferedNodeConfig   []string
 	AcceptedNodeConfig  string
-	OfferedCredentials  string
+	OfferedCredentials  []string
 	AcceptedCredentials string
-	OfferedReplicas     string
+	OfferedReplicas     []string
 	AcceptedReplicas    string
 	Reconciled          bool
 }
@@ -719,13 +723,13 @@ func (l *Live) Grant(agentID, sessionID string, epoch uint64, offered SyncVersio
 	session.OfferedEpoch = int64(epoch)
 	session.OfferedCursor = offered.Cursor
 	if offered.NodeConfig != "" {
-		session.OfferedNodeConfig = offered.NodeConfig
+		session.OfferedNodeConfig = append(session.OfferedNodeConfig, offered.NodeConfig)
 	}
 	if offered.Credentials != "" {
-		session.OfferedCredentials = offered.Credentials
+		session.OfferedCredentials = append(session.OfferedCredentials, offered.Credentials)
 	}
 	if offered.Replicas != "" {
-		session.OfferedReplicas = offered.Replicas
+		session.OfferedReplicas = append(session.OfferedReplicas, offered.Replicas)
 	}
 	return nil
 }
@@ -747,15 +751,16 @@ func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, accepted Syn
 	if session.AcceptedEpoch > int64(epoch) || (session.AcceptedEpoch == int64(epoch) && session.AcceptedCursor > cursor) {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
-	// Hash versions are not ordered; an ack must match the offered version
-	// or repeat a previously accepted version (idempotent duplicate).
-	if accepted.NodeConfig != "" && accepted.NodeConfig != session.OfferedNodeConfig && accepted.NodeConfig != session.AcceptedNodeConfig {
+	// Hash versions are not ordered; an ack must match a version offered in
+	// this session (in-flight acks may lag the newest grant) or repeat a
+	// previously accepted version (idempotent duplicate).
+	if accepted.NodeConfig != "" && accepted.NodeConfig != session.AcceptedNodeConfig && !slices.Contains(session.OfferedNodeConfig, accepted.NodeConfig) {
 		return fmt.Errorf("stale node-config acknowledgement")
 	}
-	if accepted.Credentials != "" && accepted.Credentials != session.OfferedCredentials && accepted.Credentials != session.AcceptedCredentials {
+	if accepted.Credentials != "" && accepted.Credentials != session.AcceptedCredentials && !slices.Contains(session.OfferedCredentials, accepted.Credentials) {
 		return fmt.Errorf("stale credentials acknowledgement")
 	}
-	if accepted.Replicas != "" && accepted.Replicas != session.OfferedReplicas && accepted.Replicas != session.AcceptedReplicas {
+	if accepted.Replicas != "" && accepted.Replicas != session.AcceptedReplicas && !slices.Contains(session.OfferedReplicas, accepted.Replicas) {
 		return fmt.Errorf("stale replicas acknowledgement")
 	}
 	session.AcceptedEpoch = int64(epoch)

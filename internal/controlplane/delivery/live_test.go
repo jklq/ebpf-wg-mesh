@@ -630,6 +630,36 @@ func TestLiveExpiryUpdatesReachability(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeAcceptsInFlightBatchVersions(t *testing.T) {
+	l := startLive(t)
+	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Grant("agent", "s1", 3, SyncVersions{Cursor: 5, NodeConfig: "cfg-1", Credentials: "creds-1", Replicas: "reps-1"}); err != nil {
+		t.Fatal(err)
+	}
+	// A second batch is granted before the first cumulative acknowledgement
+	// is processed; the in-flight ack still names the first batch's versions
+	// and must not terminate the session.
+	if err := l.Grant("agent", "s1", 3, SyncVersions{Cursor: 6, NodeConfig: "cfg-2", Credentials: "creds-2", Replicas: "reps-2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 5, NodeConfig: "cfg-1", Credentials: "creds-1", Replicas: "reps-1"}); err != nil {
+		t.Fatalf("in-flight batch acknowledgement rejected: %v", err)
+	}
+	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 6, NodeConfig: "cfg-2", Credentials: "creds-2", Replicas: "reps-2"}); err != nil {
+		t.Fatalf("latest batch acknowledgement rejected: %v", err)
+	}
+	// A never-offered version stays rejected even at the accepted cursor.
+	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 6, NodeConfig: "cfg-9"}); err == nil {
+		t.Fatal("acknowledgement for a never-offered version accepted")
+	}
+	// A regressing duplicate of the first batch stays rejected.
+	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 5, NodeConfig: "cfg-1", Credentials: "creds-1", Replicas: "reps-1"}); err == nil {
+		t.Fatal("regressing duplicate acknowledgement accepted")
+	}
+}
+
 func TestLiveInventoryMustReconcileBeforeAdmission(t *testing.T) {
 	l := startLive(t)
 	if err := l.BeginSession("agent", "s1", nil, []string{"alloc-1"}, true); err != nil {
