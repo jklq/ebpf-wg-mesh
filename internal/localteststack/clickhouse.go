@@ -44,6 +44,7 @@ func StartManagedClickHouse(ctx context.Context, cfg LocalClickHouseConfig, runn
 	args := []string{
 		"run", "--detach", "--rm",
 		"--name", cfg.ContainerName,
+		"--memory", "768m", "--memory-swap", "768m",
 		"--ulimit", "nofile=262144:262144",
 		"--env", "CLICKHOUSE_SKIP_USER_SETUP=1",
 		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.NativePort, defaultLocalClickHouseNativePort),
