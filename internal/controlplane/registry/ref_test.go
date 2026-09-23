@@ -27,6 +27,7 @@ func TestParseReference(t *testing.T) {
 		{name: "registry port", input: "registry.example.test:5000/mesh/app:git-deadbeef", repository: "registry.example.test:5000/mesh/app", tag: "git-deadbeef"},
 		{name: "pinned", input: "example.test/web@" + digest, repository: "example.test/web", digest: digest},
 		{name: "digest whitespace normalized", input: "example.test/web@ " + digest, repository: "example.test/web", digest: digest},
+		{name: "uppercase digest hex normalized", input: "example.test/web@sha256:" + strings.Repeat("A1", 32), repository: "example.test/web", digest: "sha256:" + strings.Repeat("a1", 32)},
 		{name: "repository whitespace before digest normalized", input: "example.test/web @" + digest, repository: "example.test/web", digest: digest},
 		{name: "tag and digest prefers digest", input: "example.test/web:v1@" + digest, repository: "example.test/web", digest: digest},
 		{name: "whitespace trimmed", input: "  nginx:1.27  ", repository: "docker.io/library/nginx", tag: "1.27"},

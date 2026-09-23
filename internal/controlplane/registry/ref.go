@@ -64,11 +64,11 @@ func ParseReference(ref string) (ParsedReference, error) {
 	repository := trimmed
 	var digest string
 	if at := strings.LastIndexByte(trimmed, '@'); at >= 0 {
-		// Whitespace around the digest is normalized away so a pasted
-		// "repo@ sha256:..." can never smuggle interior whitespace into
-		// the stored runtime identity.
+		// Whitespace and hex case around the digest are normalized away so
+		// a pasted "repo@ sha256:..." or uppercase hex can never smuggle a
+		// non-canonical identity into the stored runtime reference.
 		repository = strings.TrimSpace(trimmed[:at])
-		digest = strings.TrimSpace(trimmed[at+1:])
+		digest = strings.ToLower(strings.TrimSpace(trimmed[at+1:]))
 		if repository == "" {
 			return ParsedReference{}, fmt.Errorf("image reference %q has no repository", ref)
 		}
@@ -114,7 +114,7 @@ func SplitPinnedReference(ref string) (repository, digest string, err error) {
 	if at <= 0 || at == len(trimmed)-1 {
 		return "", "", fmt.Errorf("image reference %q is not digest-pinned", ref)
 	}
-	repository, digest = strings.TrimSpace(trimmed[:at]), strings.TrimSpace(trimmed[at+1:])
+	repository, digest = strings.TrimSpace(trimmed[:at]), strings.ToLower(strings.TrimSpace(trimmed[at+1:]))
 	if repository == "" || digest == "" {
 		return "", "", fmt.Errorf("image reference %q is not digest-pinned", ref)
 	}
@@ -131,9 +131,10 @@ func IsDigestPinned(ref string) bool {
 	return err == nil
 }
 
-// ValidateManifestDigest requires a full sha256 digest: stops a truncated
-// or mistyped digest from pinning a deployment to an image that can never
-// be pulled.
+// ValidateManifestDigest requires a full sha256 digest in canonical
+// lowercase hex: stops a truncated or mistyped digest from pinning a
+// deployment to an image that can never be pulled (containerd rejects
+// non-canonical digests), and keeps stored runtime identities canonical.
 func ValidateManifestDigest(digest string) error {
 	const prefix = "sha256:"
 	hexPart, ok := strings.CutPrefix(strings.TrimSpace(digest), prefix)
@@ -144,10 +145,10 @@ func ValidateManifestDigest(digest string) error {
 		return errors.New("digest must contain a full 64-character sha256")
 	}
 	for _, ch := range hexPart {
-		if ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f' || ch >= 'A' && ch <= 'F' {
+		if ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f' {
 			continue
 		}
-		return errors.New("sha256 digest is not hexadecimal")
+		return errors.New("sha256 digest must be lowercase hexadecimal")
 	}
 	return nil
 }
