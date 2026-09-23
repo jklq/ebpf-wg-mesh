@@ -50,10 +50,10 @@ func (f *fakePublications) LoadPublication(context.Context) (Publication, error)
 	return f.pub, nil
 }
 
-func (f *fakePublications) CompareAndSwapPublication(_ context.Context, oldHash string, pub Publication) (bool, error) {
+func (f *fakePublications) CompareAndSwapPublication(_ context.Context, oldVersion string, pub Publication) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.pub.Hash != oldHash {
+	if f.pub.Version != oldVersion {
 		return false, nil
 	}
 	f.pub = pub
@@ -77,8 +77,8 @@ func (f *fakeNodes) UpsertNodeObservations(_ context.Context, observations []Nod
 	f.flushes++
 	for _, observation := range observations {
 		stored := f.nodes[observation.NodeID]
-		if observation.AppliedHash == "" {
-			observation.AppliedHash = stored.AppliedHash
+		if observation.AppliedVersion == "" {
+			observation.AppliedVersion = stored.AppliedVersion
 		}
 		f.nodes[observation.NodeID] = observation
 	}
@@ -160,15 +160,13 @@ func TestPublisherPublishesOncePerContent(t *testing.T) {
 func TestPublisherAdoptsRacingWinner(t *testing.T) {
 	t.Parallel()
 
-	// Another owner already published this exact content (deterministic
-	// bytes): adopt it without rewriting the row.
 	backends := []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}}
 	snap, err := Build(BuildInput{Backends: backends, ListenAddrs: []string{":8080"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := &fakeSource{backends: backends}
-	pubs := &fakePublications{pub: Publication{Version: snap.Version, Hash: snap.Hash, Inputs: snap.Inputs, Publisher: "replica-b"}}
+	pubs := &fakePublications{pub: Publication{Version: snap.Version, Inputs: snap.Inputs, Publisher: "replica-b"}}
 	publisher, server := testPublisher(source, pubs)
 
 	if err := publisher.Sync(context.Background()); err != nil {
@@ -253,11 +251,11 @@ func TestPublisherFollowAdoptsDurablePublication(t *testing.T) {
 	t.Parallel()
 
 	// The live owner computed and published this snapshot; this replica
-	// holds no live state at all (a fenced source would fail every Sync).
+	// holds no live state at all.
 	backends := []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}}
 	ownerSnap := mustBuild(t, BuildInput{Backends: backends, ListenAddrs: []string{":8080"}})
 	pubs := &fakePublications{pub: Publication{
-		Version: ownerSnap.Version, Hash: ownerSnap.Hash, Inputs: ownerSnap.Inputs, Publisher: "replica-b",
+		Version: ownerSnap.Version, Inputs: ownerSnap.Inputs, Publisher: "replica-b",
 	}}
 	source := &fakeSource{guardErr: errors.New("not the live owner")}
 	publisher, server := testPublisherWithNodes(source, pubs, nil)
@@ -271,7 +269,7 @@ func TestPublisherFollowAdoptsDurablePublication(t *testing.T) {
 	}
 
 	// The follower must refuse storage whose inputs do not match the row
-	// hash instead of serving a tampered snapshot.
+	// version instead of serving a tampered snapshot.
 	pubs.mu.Lock()
 	pubs.pub.Inputs = []byte(`{"tampered":true}`)
 	pubs.mu.Unlock()
@@ -297,15 +295,15 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	}
 	version := server.Status().Version
 
-	// A disconnected Envoy that never fully applied keeps its stale hash
+	// A disconnected Envoy that never fully applied keeps its stale version
 	// even after it disappears from the local server view.
-	nodes.nodes["envoy-stale"] = NodeObservation{NodeID: "envoy-stale", AppliedHash: "older"}
+	nodes.nodes["envoy-stale"] = NodeObservation{NodeID: "envoy-stale", AppliedVersion: "older"}
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	// A connected Envoy mid-apply (only EDS ACKed) must not report the new
-	// hash: it may still route with the old listeners and endpoints.
+	// version: it may still route with the old listeners and endpoints.
 	if err := publisher.Replicate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -324,11 +322,11 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	}
 	nodes.mu.Lock()
 	defer nodes.mu.Unlock()
-	if got := nodes.nodes["envoy-stale"].AppliedHash; got != "older" {
-		t.Fatalf("stale node hash = %q, want %q", got, "older")
+	if got := nodes.nodes["envoy-stale"].AppliedVersion; got != "older" {
+		t.Fatalf("stale node version = %q, want %q", got, "older")
 	}
-	if got := nodes.nodes["envoy-partial"].AppliedHash; got != version {
-		t.Fatalf("partial node hash = %q, want %q", got, version)
+	if got := nodes.nodes["envoy-partial"].AppliedVersion; got != version {
+		t.Fatalf("partial node version = %q, want %q", got, version)
 	}
 }
 
@@ -356,8 +354,8 @@ func TestPublisherConvergedRequiresEveryKnownNode(t *testing.T) {
 		t.Fatalf("Converged = %v, %v; want true with no nodes", converged, err)
 	}
 
-	// A NACKing or disconnected Envoy stuck on an older hash blocks drains.
-	if err := nodes.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: "envoy-1", AppliedHash: "older"}}); err != nil {
+	// A NACKing or disconnected Envoy stuck on an older version blocks drains.
+	if err := nodes.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: "envoy-1", AppliedVersion: "older"}}); err != nil {
 		t.Fatal(err)
 	}
 	if converged, err := publisher.Converged(ctx); err != nil || converged {
@@ -366,17 +364,17 @@ func TestPublisherConvergedRequiresEveryKnownNode(t *testing.T) {
 
 	// An observed node that never fully applied also blocks: it is mid-apply
 	// and may still route with whatever it holds.
-	if err := nodes.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: "envoy-2", AppliedHash: ""}}); err != nil {
+	if err := nodes.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: "envoy-2", AppliedVersion: ""}}); err != nil {
 		t.Fatal(err)
 	}
 	if converged, err := publisher.Converged(ctx); err != nil || converged {
 		t.Fatalf("Converged = %v, %v; want false while a node is mid-apply", converged, err)
 	}
 
-	// Every known node at the current hash converges.
+	// Every known node at the current version converges.
 	if err := nodes.UpsertNodeObservations(ctx, []NodeObservation{
-		{NodeID: "envoy-1", AppliedHash: version},
-		{NodeID: "envoy-2", AppliedHash: version},
+		{NodeID: "envoy-1", AppliedVersion: version},
+		{NodeID: "envoy-2", AppliedVersion: version},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -399,8 +397,8 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	server.SetNodeStore(nodes)
 
 	// First contact durably registers the subscriber before any config can
-	// reach it — no flush cycle involved. Only then may it receive the
-	// snapshot that routes to live allocations.
+	// reach it. Only then may it receive the snapshot that routes to live
+	// allocations.
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
 	if err := server.onFetchRequest(ctx, req); err != nil {
 		t.Fatal(err)
@@ -408,8 +406,8 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	nodes.mu.Lock()
 	got, ok := nodes.nodes["envoy-fresh"]
 	nodes.mu.Unlock()
-	if !ok || got.AppliedHash != "" {
-		t.Fatalf("first contact observation = %+v (present=%t), want durable registration with empty hash", got, ok)
+	if !ok || got.AppliedVersion != "" {
+		t.Fatalf("first contact observation = %+v (present=%t), want durable registration with empty version", got, ok)
 	}
 
 	// A subscriber that has applied nothing is mid-apply: it must block the
@@ -418,8 +416,7 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 		t.Fatalf("Converged = %v, %v; want false while a fresh subscriber holds no applied version", converged, err)
 	}
 
-	// A node-less follow-up ACK (Envoy sends node only on the first
-	// request of a stream) must still update apply state.
+	// A node-less follow-up ACK must still update apply state.
 	if err := server.onStreamOpen(ctx, 7, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -444,8 +441,7 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 func TestServerRejectsUntrackableSubscribers(t *testing.T) {
 	t.Parallel()
 
-	// If a subscriber cannot be recorded durably, it must not be served:
-	// the drain barrier would otherwise pass under config it cannot see.
+	// If a subscriber cannot be recorded durably, it must not be served.
 	server := NewServer(context.Background())
 	server.SetNodeStore(failingNodes{})
 	err := server.onFetchRequest(context.Background(),
@@ -465,8 +461,6 @@ func (failingNodes) ListNodeObservations(context.Context) ([]NodeObservation, er
 	return nil, errors.New("node store unavailable")
 }
 
-// movingPublications returns one publication on the first load and another
-// afterwards: the durable row moved while an adoption was in flight.
 type movingPublications struct {
 	first Publication
 	moved Publication
@@ -500,15 +494,14 @@ func TestPublisherRefreshNeverServesMovedPastPublication(t *testing.T) {
 		ListenAddrs: []string{":8080"},
 	})
 	pubs := &movingPublications{
-		first: Publication{Version: stale.Version, Hash: stale.Hash, Inputs: stale.Inputs},
-		moved: Publication{Version: current.Version, Hash: current.Hash, Inputs: current.Inputs},
+		first: Publication{Version: stale.Version, Inputs: stale.Inputs},
+		moved: Publication{Version: current.Version, Inputs: current.Inputs},
 	}
 	server := NewServer(context.Background())
 	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
 
 	// The adoption races a fresh publication. It must end on the moved
-	// row's version and never serve the stale build in between: a lagging
-	// replica serving withdrawn config would stall or fool the drain gate.
+	// row's version and never serve the stale build in between.
 	if err := publisher.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +531,7 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 		ListenAddrs: []string{":8080"},
 	})
 	pubs := &fakePublications{pub: Publication{
-		Version: published.Version, Hash: published.Hash, Inputs: published.Inputs,
+		Version: published.Version, Inputs: published.Inputs,
 	}}
 	server := NewServer(context.Background())
 	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
@@ -550,9 +543,8 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 		return publisher.Refresh(ctx)
 	})
 
-	// First contact must register durably (so the drain barrier sees this
-	// subscriber even if its check races this request) and then serve the
-	// durable publication, never the stale local cache.
+	// First contact must register durably and then serve the durable
+	// publication, never the stale local cache.
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
 	if err := server.onFetchRequest(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -565,8 +557,6 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 	}
 }
 
-// flakyNodes fails its first upserts and then delegates: a transient store
-// outage must not leave a node served untracked.
 type flakyNodes struct {
 	*fakeNodes
 	failures int
@@ -588,7 +578,7 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 		ListenAddrs: []string{":8080"},
 	})
 	pubs := &fakePublications{pub: Publication{
-		Version: published.Version, Hash: published.Hash, Inputs: published.Inputs,
+		Version: published.Version, Inputs: published.Inputs,
 	}}
 	server := NewServer(context.Background())
 	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
@@ -603,7 +593,7 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-x"}, TypeUrl: resourcev3.EndpointType}
 	// First attempt hits a store outage: fail closed, but the node must not
 	// be considered handled — the next request has to run the full
-	// register-then-refresh sequence again instead of trusting memory.
+	// register-then-refresh sequence again.
 	if err := server.onFetchRequest(context.Background(), req); err == nil {
 		t.Fatal("expected registration failure to fail the request closed")
 	}
@@ -613,7 +603,7 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	nodes.mu.Lock()
 	got, ok := nodes.nodes["envoy-x"]
 	nodes.mu.Unlock()
-	if !ok || got.AppliedHash != "" {
+	if !ok || got.AppliedVersion != "" {
 		t.Fatalf("retried registration = %+v (present=%t), want durable row", got, ok)
 	}
 	if refreshes != 1 {
@@ -632,9 +622,9 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 func TestPublisherConvergesWithoutEDSSubscription(t *testing.T) {
 	t.Parallel()
 
-	// A snapshot without endpoints (the last service was removed) leaves
-	// Envoy with no EDS cluster and therefore no EDS subscription to ACK.
-	// The drain barrier must still converge once the standing types apply.
+	// A snapshot without endpoints leaves Envoy with no EDS cluster and
+	// therefore no EDS subscription to ACK. The drain barrier must still
+	// converge once the standing types apply.
 	pubs := &fakePublications{}
 	nodes := newFakeNodes()
 	publisher, server := testPublisherWithNodes(&fakeSource{}, pubs, nodes)
@@ -652,7 +642,7 @@ func TestPublisherConvergesWithoutEDSSubscription(t *testing.T) {
 	nodes.mu.Lock()
 	got := nodes.nodes["envoy-neds"]
 	nodes.mu.Unlock()
-	if got.AppliedHash != version {
-		t.Fatalf("applied hash = %q, want %q without any EDS ACK", got.AppliedHash, version)
+	if got.AppliedVersion != version {
+		t.Fatalf("applied version = %q, want %q without any EDS ACK", got.AppliedVersion, version)
 	}
 }

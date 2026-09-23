@@ -54,7 +54,7 @@ func dialADS(t *testing.T, listener *bufconn.Listener, nodeID string) *adsClient
 	c := &adsClient{t: t, client: client, recvd: make(chan recvResult, 16)}
 	go func() {
 		for {
-			resp, err := client.Recv()
+			resp, err := client.stream.Recv()
 			c.recvd <- recvResult{resp: resp, err: err}
 			if err != nil {
 				return
@@ -145,8 +145,6 @@ func TestServerServesConsistentSnapshotOverADS(t *testing.T) {
 	client := dialADS(t, listener, "envoy-1")
 	defer client.close()
 
-	// A rollout must never publish partially: every type arrives at the same
-	// content version.
 	for _, typeURL := range []string{
 		resourcev3.ListenerType, resourcev3.ClusterType,
 		resourcev3.RouteType, resourcev3.EndpointType,
@@ -182,7 +180,6 @@ func TestServerNACKRetainsLastKnownGood(t *testing.T) {
 	if resp.GetVersionInfo() != snap.Version {
 		t.Fatalf("version = %s, want %s", resp.GetVersionInfo(), snap.Version)
 	}
-	// The client rejects the snapshot it cannot apply.
 	client.send(resourcev3.ListenerType, "", resp.GetNonce(), &rpcstatus.Status{
 		Code:    13,
 		Message: "invalid listener: test NACK",
@@ -203,8 +200,6 @@ func TestServerNACKRetainsLastKnownGood(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Last-known-good is retained: a fresh subscriber still converges on the
-	// published snapshot.
 	fresh := dialADS(t, listener, "envoy-2")
 	defer fresh.close()
 	fresh.send(resourcev3.ListenerType, "", "", nil)
@@ -226,7 +221,6 @@ func TestServerReseedsNodeAfterRestart(t *testing.T) {
 	client.send(resourcev3.ClusterType, resp.GetVersionInfo(), resp.GetNonce(), nil)
 	client.close()
 
-	// Publish while the node is gone, then reconnect with the same node ID.
 	changed := testInput()
 	changed.Backends = append(changed.Backends, Backend{Domain: "c.example.com", Upstream: "10.0.0.20:8080"})
 	v2 := mustBuild(t, changed)
@@ -255,7 +249,6 @@ func TestServerDelayedApplyConverges(t *testing.T) {
 		t.Fatalf("first version = %s, want %s", first.GetVersionInfo(), v1.Version)
 	}
 
-	// The client applies slowly: V2 publishes before the V1 ACK arrives.
 	changed := testInput()
 	changed.Backends = changed.Backends[:1]
 	v2 := mustBuild(t, changed)
@@ -286,10 +279,6 @@ func TestServerHoldsStreamsUntilFirstPublish(t *testing.T) {
 	}
 }
 
-// TestServerCancelsFirstContactWorkOnStreamClose pins the resource bound the
-// finding asks for: durable registration and the pre-serve refresh run under
-// the stream's context, so a client disconnecting mid-registration aborts the
-// database work instead of leaving it running against a stalled backend.
 func TestServerCancelsFirstContactWorkOnStreamClose(t *testing.T) {
 	t.Parallel()
 
@@ -306,9 +295,6 @@ func TestServerCancelsFirstContactWorkOnStreamClose(t *testing.T) {
 		t.Fatal("first-contact registration never started")
 	}
 
-	// Drop the whole connection (CloseSend alone leaves the stream context
-	// alive): the transport cancels the stream context and the blocked
-	// registration must unwind with it.
 	if err := client.client.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -322,9 +308,6 @@ func TestServerCancelsFirstContactWorkOnStreamClose(t *testing.T) {
 	}
 }
 
-// TestServerRejectsRequestsWithoutStreamContext: a stream request with no
-// opened stream has no cancellable lifetime and must fail closed rather than
-// run first-contact work that a disconnect could orphan.
 func TestServerRejectsRequestsWithoutStreamContext(t *testing.T) {
 	t.Parallel()
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,16 +29,11 @@ import (
 )
 
 const (
-	// RouteConfigName is the single RDS resource every ingress listener uses.
 	RouteConfigName = "ingress_routes"
-
-	// ClusterPrefix prefixes per-domain EDS clusters; EndpointsPrefix prefixes
-	// their ClusterLoadAssignments.
 	ClusterPrefix   = "backend/"
 	EndpointsPrefix = "endpoints/"
 )
 
-// Counts summarizes a snapshot for publication records and status views.
 type Counts struct {
 	Listeners int
 	Clusters  int
@@ -45,20 +41,15 @@ type Counts struct {
 	Domains   int
 }
 
-// Snapshot is a fully built, consistency-checked xDS snapshot with its
-// content version. The version is the hex SHA-256 of the canonical inputs,
-// so two replicas computing from the same state produce identical versions.
 type Snapshot struct {
 	Version string
-	Hash    string
 	Counts  Counts
-	// Inputs is the canonical hash preimage. Durable publication stores it
-	// so any replica can rebuild this exact snapshot with BuildFromInputs.
+	// Inputs is the canonical hash preimage stored so any replica can
+	// rebuild this exact snapshot with BuildFromInputs.
 	Inputs []byte
 	cache  *cachev3.Snapshot
 }
 
-// CacheSnapshot returns the underlying go-control-plane snapshot for serving.
 func (s *Snapshot) CacheSnapshot() *cachev3.Snapshot {
 	if s == nil {
 		return nil
@@ -66,22 +57,17 @@ func (s *Snapshot) CacheSnapshot() *cachev3.Snapshot {
 	return s.cache
 }
 
-// BuildInput is everything a snapshot derives from.
 type BuildInput struct {
 	Backends    []Backend
 	Static      []StaticRoute
 	ListenAddrs []string
 }
 
-// RequiredTypes reports the xDS types whose ACK the drain barrier requires
-// for this snapshot. CDS, LDS, and RDS always have standing Envoy
-// subscriptions — Envoy ACKs even empty responses — so they are always
-// required. EDS subscriptions exist only for the EDS clusters CDS
-// announces: when the snapshot carries no endpoints the dynamic clusters
-// are gone from CDS instead of being emptied at EDS, so requiring an EDS
-// ACK would wait forever for a request that never comes. A node that has
-// applied the current CDS cannot route to the withdrawn dynamic endpoints,
-// and a node that has not is unapplied regardless.
+// RequiredTypes reports the xDS types whose ACK the drain barrier requires.
+// CDS, LDS, and RDS always have standing Envoy subscriptions. EDS
+// subscriptions exist only for the EDS clusters CDS announces: with no
+// endpoints the dynamic clusters are gone from CDS, so requiring an EDS ACK
+// would wait forever.
 func (s *Snapshot) RequiredTypes() []string {
 	types := []string{resourcev3.ListenerType, resourcev3.ClusterType, resourcev3.RouteType}
 	if s != nil && s.cache != nil {
@@ -92,12 +78,9 @@ func (s *Snapshot) RequiredTypes() []string {
 	return types
 }
 
-// Build computes a versioned snapshot from control-plane state. Construction
-// is fully deterministic: sorted domains, sorted endpoints, fixed resource
-// names. Domains without a valid endpoint are omitted, so only ready,
-// non-draining allocations are ever routed. A bad listen address fails the
-// whole build (operator config error: retain last-known-good instead of
-// serving nothing); malformed backends are skipped.
+// Build computes a versioned snapshot from control-plane state. The version
+// is the hex SHA-256 of the canonical inputs. A bad listen address fails the
+// whole build; malformed backends are skipped.
 func Build(input BuildInput) (*Snapshot, error) {
 	canonical, err := canonicalize(input)
 	if err != nil {
@@ -110,11 +93,8 @@ func Build(input BuildInput) (*Snapshot, error) {
 	return buildCanonical(canonical, raw)
 }
 
-// BuildFromInputs rebuilds the exact snapshot a publisher computed from its
-// canonical inputs (the hash preimage), so every replica can serve the
-// durable publication without recomputing from live state it does not hold.
-// The inputs come from storage and are treated as untrusted: anything
-// malformed fails closed.
+// BuildFromInputs rebuilds the exact snapshot from its canonical inputs.
+// Inputs from storage are treated as untrusted: anything malformed fails closed.
 func BuildFromInputs(raw []byte) (*Snapshot, error) {
 	var canonical canonicalInput
 	if err := json.Unmarshal(raw, &canonical); err != nil {
@@ -123,24 +103,40 @@ func BuildFromInputs(raw []byte) (*Snapshot, error) {
 	return buildCanonical(canonical, raw)
 }
 
-// canonicalize normalizes control-plane state into the hash preimage:
-// sorted domains and endpoints, filtered malformed backends, fixed order.
-func canonicalize(input BuildInput) (canonicalInput, error) {
-	grouped := GroupBackends(input.Backends)
-	sort.Slice(grouped, func(i, j int) bool { return grouped[i].Hosts[0] < grouped[j].Hosts[0] })
+type domainEndpoints struct {
+	domain    string
+	endpoints []netip.AddrPort
+}
 
-	type domainEndpoints struct {
-		domain    string
-		endpoints []netip.AddrPort
+type staticEntry struct {
+	hosts    []string
+	upstream string
+	host     string
+	port     uint32
+}
+
+func canonicalize(input BuildInput) (canonicalInput, error) {
+	byDomain := map[string][]string{}
+	for _, b := range input.Backends {
+		domain := strings.ToLower(strings.TrimSpace(b.Domain))
+		if domain == "" {
+			continue
+		}
+		byDomain[domain] = append(byDomain[domain], b.Upstream)
 	}
+	domainKeys := make([]string, 0, len(byDomain))
+	for domain := range byDomain {
+		domainKeys = append(domainKeys, domain)
+	}
+	sort.Strings(domainKeys)
+
 	var domains []domainEndpoints
-	for _, group := range grouped {
-		domain := group.Hosts[0]
+	for _, domain := range domainKeys {
 		if sanitizeResourceName(domain) == "" {
 			continue
 		}
 		var endpoints []netip.AddrPort
-		for _, upstream := range NormalizeUpstreams(group.Upstreams) {
+		for _, upstream := range normalizeUpstreams(byDomain[domain]) {
 			addrPort, err := netip.ParseAddrPort(upstream)
 			if err != nil || !addrPort.IsValid() {
 				continue
@@ -153,13 +149,9 @@ func canonicalize(input BuildInput) (canonicalInput, error) {
 		domains = append(domains, domainEndpoints{domain: domain, endpoints: endpoints})
 	}
 
-	type staticEntry struct {
-		hosts    []string
-		upstream string
-	}
 	var statics []staticEntry
 	for _, route := range input.Static {
-		hosts := NormalizeHosts(route.Hosts)
+		hosts := normalizeHosts(route.Hosts)
 		upstream := strings.TrimSpace(route.Upstream)
 		if len(hosts) == 0 || upstream == "" {
 			continue
@@ -199,19 +191,12 @@ func canonicalize(input BuildInput) (canonicalInput, error) {
 	return canonical, nil
 }
 
-// buildCanonical renders the served resources from canonical inputs. The
-// hash is taken over the exact input bytes so a rebuild from published
-// inputs reproduces byte-identical resources and version.
 func buildCanonical(canonical canonicalInput, raw []byte) (*Snapshot, error) {
 	listeners, ports, err := buildListeners(canonical.Listeners)
 	if err != nil {
 		return nil, err
 	}
 
-	type domainEndpoints struct {
-		domain    string
-		endpoints []netip.AddrPort
-	}
 	domains := make([]domainEndpoints, 0, len(canonical.Domains))
 	for _, entry := range canonical.Domains {
 		item := domainEndpoints{domain: entry.Name}
@@ -223,12 +208,6 @@ func buildCanonical(canonical canonicalInput, raw []byte) (*Snapshot, error) {
 			item.endpoints = append(item.endpoints, addrPort)
 		}
 		domains = append(domains, item)
-	}
-	type staticEntry struct {
-		hosts    []string
-		upstream string
-		host     string
-		port     uint32
 	}
 	statics := make([]staticEntry, 0, len(canonical.Statics))
 	for _, entry := range canonical.Statics {
@@ -282,27 +261,24 @@ func buildCanonical(canonical canonicalInput, raw []byte) (*Snapshot, error) {
 		VirtualHosts: vhosts,
 	}
 
-	resources := map[resourcev3.Type][]cachetypes.Resource{}
-	addResources := func(typ resourcev3.Type, items []cachetypes.Resource) {
-		resources[typ] = items
-	}
 	listenerItems := make([]cachetypes.Resource, 0, len(listeners))
 	for i := range listeners {
 		listenerItems = append(listenerItems, &listeners[i])
 	}
-	addResources(resourcev3.ListenerType, listenerItems)
 	clusterItems := make([]cachetypes.Resource, 0, len(clusters))
 	for i := range clusters {
 		clusterItems = append(clusterItems, &clusters[i])
 	}
-	addResources(resourcev3.ClusterType, clusterItems)
-	routeItems := []cachetypes.Resource{routeConfig}
-	addResources(resourcev3.RouteType, routeItems)
 	endpointItems := make([]cachetypes.Resource, 0, len(endpoints))
 	for _, cla := range endpoints {
 		endpointItems = append(endpointItems, cla)
 	}
-	addResources(resourcev3.EndpointType, endpointItems)
+	resources := map[resourcev3.Type][]cachetypes.Resource{
+		resourcev3.ListenerType: listenerItems,
+		resourcev3.ClusterType:  clusterItems,
+		resourcev3.RouteType:    {routeConfig},
+		resourcev3.EndpointType: endpointItems,
+	}
 
 	cacheSnapshot, err := cachev3.NewSnapshot(version, resources)
 	if err != nil {
@@ -314,7 +290,6 @@ func buildCanonical(canonical canonicalInput, raw []byte) (*Snapshot, error) {
 
 	return &Snapshot{
 		Version: version,
-		Hash:    version,
 		Inputs:  append([]byte(nil), raw...),
 		Counts: Counts{
 			Listeners: len(listeners),
@@ -354,15 +329,50 @@ func normalizedListenAddrs(addrs []string) []string {
 	return out
 }
 
+func normalizeUpstreams(upstreams []string) []string {
+	out := make([]string, 0, len(upstreams))
+	seen := make(map[string]struct{}, len(upstreams))
+	for _, upstream := range upstreams {
+		upstream = strings.TrimSpace(upstream)
+		if upstream == "" {
+			continue
+		}
+		if _, ok := seen[upstream]; ok {
+			continue
+		}
+		seen[upstream] = struct{}{}
+		out = append(out, upstream)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func normalizeHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	seen := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		host = strings.TrimSpace(strings.ToLower(host))
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		out = append(out, host)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func buildListeners(addrs []string) ([]listenerv3.Listener, []uint32, error) {
-	normalized := normalizedListenAddrs(addrs)
-	if len(normalized) == 0 {
+	if len(addrs) == 0 {
 		return nil, nil, fmt.Errorf("xds requires at least one ingress listen address")
 	}
 	var listeners []listenerv3.Listener
 	var ports []uint32
 	seen := make(map[string]struct{})
-	for _, addr := range normalized {
+	for _, addr := range addrs {
 		if _, ok := seen[addr]; ok {
 			continue
 		}
@@ -533,8 +543,8 @@ func virtualHost(name string, domains []string, cluster string) *routev3.Virtual
 			Action: &routev3.Route_Route{
 				Route: &routev3.RouteAction{
 					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: cluster},
-					// No L7 timeout policy yet; a 15s default would break
-					// long-lived responses the previous proxy served fine.
+					// No L7 timeout policy: a 15s default would break
+					// long-lived responses.
 					Timeout: durationpb.New(0),
 				},
 			},
@@ -543,8 +553,7 @@ func virtualHost(name string, domains []string, cluster string) *routev3.Virtual
 }
 
 // matchDomains matches the bare hostname plus explicit host:port forms for
-// every listener port. Envoy does not strip ports from Host headers itself,
-// and browsers send the port on non-default listeners.
+// every listener port. Envoy does not strip ports from Host headers itself.
 func matchDomains(domain string, ports []uint32) []string {
 	seen := map[string]struct{}{domain: {}}
 	out := []string{domain}
