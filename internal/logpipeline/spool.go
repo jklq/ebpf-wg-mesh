@@ -306,16 +306,21 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 	if s.closed {
 		return errors.New("log spool is closed")
 	}
+	if s.active == nil {
+		return errors.New("log spool has no writable segment")
+	}
 	if s.activeSize+int64(len(encoded)) > s.maxSeg {
 		if err := s.rotateLocked(); err != nil {
 			return err
 		}
 	}
 	if _, err := s.active.Write(encoded); err != nil {
+		s.discardPartialAppendLocked()
 		return fmt.Errorf("append to log spool: %w", err)
 	}
 	if s.sync {
 		if err := s.active.Sync(); err != nil {
+			s.discardPartialAppendLocked()
 			return fmt.Errorf("sync log spool: %w", err)
 		}
 	}
@@ -329,6 +334,20 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 	s.bytes += int64(len(encoded))
 	s.evictLocked()
 	return nil
+}
+
+// discardPartialAppendLocked removes the bytes of a failed append from
+// the active segment so a torn frame can never hide later records
+// behind it. When the file cannot be repaired, the segment is sealed
+// and rotated: recovery keeps its readable prefix and every later
+// record lands in a fresh segment instead of behind the damage.
+func (s *Spool) discardPartialAppendLocked() {
+	if err := s.active.Truncate(s.activeSize); err == nil {
+		return
+	}
+	_ = s.active.Close()
+	s.active = nil
+	_ = s.rotateLocked()
 }
 
 // Read returns up to maxRecords starting at the durable cursor. The

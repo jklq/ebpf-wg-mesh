@@ -636,3 +636,75 @@ func TestSpoolDoesNotEvictInFlightBatch(t *testing.T) {
 		t.Fatal("committed record must not be read again")
 	}
 }
+
+func TestSpoolAppendRollsBackPartialFrames(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{})
+	now := time.Now().UTC()
+	if err := s.Append("a", "id-a", now, []byte("whole")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// Simulate a failed append that left a partial frame in the
+	// active segment and repair it exactly as Append does.
+	full := encodeRecord("b", "id-b", now, []byte("partial"))
+	if _, err := s.active.Write(full[:len(full)-3]); err != nil {
+		t.Fatalf("write partial frame: %v", err)
+	}
+	s.mu.Lock()
+	s.discardPartialAppendLocked()
+	s.mu.Unlock()
+	if err := s.Append("c", "id-c", now, []byte("after")); err != nil {
+		t.Fatalf("append after repair: %v", err)
+	}
+	recs, cursor, err := s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 2 || recs[0].Key != "a" || recs[1].Key != "c" {
+		t.Fatalf("partial frame hid later records: %+v", recs)
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	reopened, err := OpenSpool(SpoolConfig{Dir: s.dir})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	rest, _, err := reopened.Read(10)
+	if err != nil {
+		t.Fatalf("Read after reopen: %v", err)
+	}
+	if len(rest) != 0 {
+		t.Fatalf("committed records replayed: %+v", rest)
+	}
+	if stats := reopened.Stats(); stats.CorruptRecords != 0 {
+		t.Fatalf("rolled-back frame resurfaced as corruption: %+v", stats)
+	}
+}
+
+func TestSpoolAppendFailureSealsUnrepairableSegment(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{})
+	now := time.Now().UTC()
+	if err := s.Append("a", "id-a", now, []byte("whole")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// Make the active file unrepairable: appends fail and the partial
+	// frame cannot be rolled back, so the segment must be sealed and
+	// later records must land in a fresh one.
+	_ = s.active.Close()
+	if err := s.Append("b", "id-b", now, []byte("lost")); err == nil {
+		t.Fatal("append to a broken segment must fail")
+	}
+	if err := s.Append("c", "id-c", now, []byte("after")); err != nil {
+		t.Fatalf("append after sealing: %v", err)
+	}
+	recs, _, err := s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 2 || recs[0].Key != "a" || recs[1].Key != "c" {
+		t.Fatalf("sealed segment hid later records: %+v", recs)
+	}
+}
