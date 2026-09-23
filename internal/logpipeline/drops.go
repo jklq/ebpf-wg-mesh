@@ -264,12 +264,23 @@ func SaveDrops(dir string, summaries []*platformv1.LogDropSummary) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("write pending log drop summaries: %w", err)
 	}
+	// Drop summaries are the only record of rate-limited and overflowed
+	// lines: sync the snapshot and its directory entry before reporting
+	// it durable, like the spool cursor.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("sync pending log drop summaries: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("close pending log drop summaries: %w", err)
 	}
 	if err := os.Rename(tmpName, filepath.Join(dir, PendingDropsFile)); err != nil {
 		_ = os.Remove(tmpName)
+		return fmt.Errorf("commit pending log drop summaries: %w", err)
+	}
+	if err := syncDir(dir); err != nil {
 		return fmt.Errorf("commit pending log drop summaries: %w", err)
 	}
 	return nil
