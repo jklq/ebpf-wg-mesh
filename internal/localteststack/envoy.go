@@ -121,8 +121,8 @@ func (m *ManagedIngress) Close() error {
 	return removeContainer(context.Background(), m.runner, m.cfg.ContainerName)
 }
 
-// WaitReady blocks until Envoy's admin /ready returns 2xx. On timeout the
-// container logs are included in the error.
+// WaitReady blocks until Envoy's admin /ready returns 2xx. On failure it
+// removes the container and includes its logs in the error.
 func (m *ManagedIngress) WaitReady(ctx context.Context) error {
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d/ready", m.cfg.AdminPort)
 	err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second}, func(ctx context.Context) (bool, error) {
@@ -138,7 +138,10 @@ func (m *ManagedIngress) WaitReady(ctx context.Context) error {
 		return resp.StatusCode < 300, nil
 	})
 	if err != nil {
-		logs, _ := m.runner.Run(ctx, "logs", "--tail", "100", m.cfg.ContainerName)
+		logs, _ := m.runner.Run(context.Background(), "logs", "--tail", "100", m.cfg.ContainerName)
+		if closeErr := m.Close(); closeErr != nil {
+			return fmt.Errorf("%w\nenvoy container logs:\n%s\nremove envoy container: %v", err, logs, closeErr)
+		}
 		return fmt.Errorf("%w\nenvoy container logs:\n%s", err, logs)
 	}
 	return nil

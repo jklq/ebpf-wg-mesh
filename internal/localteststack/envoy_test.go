@@ -101,6 +101,22 @@ func TestStartManagedIngressRunsEnvoyWithBootstrapConfig(t *testing.T) {
 	}
 }
 
+func TestManagedIngressWaitReadyRemovesContainerOnFailure(t *testing.T) {
+	runner := &fakeIngressDockerRunner{}
+	managed := &ManagedIngress{
+		cfg:    LocalIngressConfig{ContainerName: "localteststack-envoy-test", AdminPort: 1},
+		runner: runner,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := managed.WaitReady(ctx); err == nil {
+		t.Fatal("expected readiness failure")
+	}
+	if !containsSequence(runner.firstCommand("rm"), []string{"rm", "--force", "localteststack-envoy-test"}) {
+		t.Fatalf("Envoy container was not removed: %v", runner.commands)
+	}
+}
+
 func containsVolumeMount(args []string, volumeSuffix, containerPath string) bool {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] != "--volume" {
