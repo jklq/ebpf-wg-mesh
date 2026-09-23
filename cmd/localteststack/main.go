@@ -41,83 +41,94 @@ type stackSummary struct {
 const consoleStartupTimeout = 2 * time.Minute
 
 func main() {
+	if err := run(); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	repoRoot, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("getwd: %v", err)
+		return fmt.Errorf("getwd: %v", err)
 	}
 	if n, err := localteststack.LoadDotEnvFile(filepath.Join(repoRoot, ".env")); err != nil {
-		log.Fatalf("load .env: %v", err)
+		return fmt.Errorf("load .env: %v", err)
 	} else if n > 0 {
 		log.Printf("loaded %d variable(s) from .env", n)
 	}
 	stackCfg, err := loadLocalStackConfig(os.Getenv)
 	if err != nil {
-		log.Fatalf("load localteststack config: %v", err)
+		return fmt.Errorf("load localteststack config: %v", err)
 	}
 	consoleDir := filepath.Join(repoRoot, "console")
 	artifactsDir := filepath.Join(consoleDir, "artifacts", "e2e-local")
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
-		log.Fatalf("mkdir artifacts: %v", err)
+		return fmt.Errorf("mkdir artifacts: %v", err)
 	}
 	_ = os.Remove(filepath.Join(artifactsDir, "stack.json"))
 
-	cockroach, err := testdb.Start("")
+	cockroach, err := testdb.StartEphemeral()
 	if err != nil {
-		log.Fatalf("start cockroach testserver: %v", err)
+		return fmt.Errorf("start cockroach testserver: %v", err)
 	}
 	defer cockroach.Stop()
 
 	cockroachURL := testdb.NormalizeURL(cockroach.PGURL())
 	if cockroachURL == nil {
-		log.Fatal("nil cockroach pg url")
+		return fmt.Errorf("nil cockroach pg url")
 	}
 	dbURL := cockroachURL.String()
 	stateDir := filepath.Join(os.TempDir(), fmt.Sprintf("ebpf-wg-mesh-localtest-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		log.Fatalf("mkdir state dir: %v", err)
+		return fmt.Errorf("mkdir state dir: %v", err)
 	}
 	defer os.RemoveAll(stateDir)
 	if removed, err := localteststack.CleanupStaleLocalteststackContainers(ctx, localteststack.ExecDockerRunner{}); err != nil {
-		log.Fatalf("cleanup stale localteststack containers: %v", err)
+		return fmt.Errorf("cleanup stale localteststack containers: %v", err)
 	} else if removed > 0 {
 		log.Printf("removed %d stale localteststack container(s) from a previous run", removed)
 	}
+	hostGateway, err := localteststack.ResolveDockerHostGateway(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve Docker host gateway: %w", err)
+	}
 	consoleListener, consolePort, err := reservePort(stackCfg.ConsoleBindAddress)
 	if err != nil {
-		log.Fatalf("reserve console port: %v", err)
+		return fmt.Errorf("reserve console port: %v", err)
 	}
 	defer consoleListener.Close()
 	ingressAdminPort, err := pickLoopbackPort()
 	if err != nil {
-		log.Fatalf("pick ingress admin port: %v", err)
+		return fmt.Errorf("pick ingress admin port: %v", err)
 	}
 	xdsPort, err := pickLoopbackPort()
 	if err != nil {
-		log.Fatalf("pick xds port: %v", err)
+		return fmt.Errorf("pick xds port: %v", err)
 	}
 	clickHousePort, err := pickLoopbackPort()
 	if err != nil {
-		log.Fatalf("pick clickhouse port: %v", err)
+		return fmt.Errorf("pick clickhouse port: %v", err)
 	}
 	registryPort, err := pickLoopbackPort()
 	if err != nil {
-		log.Fatalf("pick registry port: %v", err)
+		return fmt.Errorf("pick registry port: %v", err)
 	}
 	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
 		StateDir:      filepath.Join(stateDir, "local-ingress"),
 		DockerNetwork: stackCfg.DockerNetwork,
 		ContainerName: "localteststack-envoy",
 		NodeID:        "localteststack-envoy",
-		XDSServerAddr: fmt.Sprintf("host.docker.internal:%d", xdsPort),
+		XDSServerAddr: net.JoinHostPort(hostGateway, strconv.Itoa(xdsPort)),
 		PublicHost:    stackCfg.IngressHost,
 		PublicPort:    stackCfg.IngressPort,
 		AdminPort:     ingressAdminPort,
 	}, localteststack.ExecDockerRunner{})
 	if err != nil {
-		log.Fatalf("start managed local ingress: %v", err)
+		return fmt.Errorf("start managed local ingress: %v", err)
 	}
 	defer func() {
 		if err := ingress.Close(); err != nil {
@@ -133,7 +144,7 @@ func main() {
 		NativePort:    clickHousePort,
 	}, localteststack.ExecDockerRunner{})
 	if err != nil {
-		log.Fatalf("start managed local clickhouse: %v", err)
+		return fmt.Errorf("start managed local clickhouse: %v", err)
 	}
 	defer func() {
 		if err := clickHouse.Close(); err != nil {
@@ -143,11 +154,11 @@ func main() {
 	clickHouseURL := clickHouse.URL()
 	githubTokenEncryptionKey, err := randomSecret(32)
 	if err != nil {
-		log.Fatalf("generate GitHub token encryption key: %v", err)
+		return fmt.Errorf("generate GitHub token encryption key: %v", err)
 	}
 	agentBootstrapToken, err := randomSecret(32)
 	if err != nil {
-		log.Fatalf("generate agent bootstrap token: %v", err)
+		return fmt.Errorf("generate agent bootstrap token: %v", err)
 	}
 	bootstrapUsers := []config.BootstrapUser{{
 		ID:       "dev-user",
@@ -198,7 +209,7 @@ func main() {
 			PublicAddr:  stackCfg.IngressHost,
 			StaticRoutes: []config.StaticIngressRouteConfig{{
 				Hosts:    []string{stackCfg.IngressHost},
-				Upstream: fmt.Sprintf("host.docker.internal:%d", consolePort),
+				Upstream: net.JoinHostPort(hostGateway, strconv.Itoa(consolePort)),
 			}},
 			ControlPlaneHTTPUpstream: "127.0.0.1:8080",
 		},
@@ -269,7 +280,7 @@ func main() {
 		env, err := loader.Load(loadCtx)
 		cancel()
 		if err != nil {
-			log.Fatalf("%s", describeOnePasswordLoadError(err))
+			return fmt.Errorf("%s", describeOnePasswordLoadError(err))
 		}
 		overlayEnv = localteststack.MergeOverlayEnv(env, processOverlay)
 		log.Printf("loaded 1Password environment via SDK")
@@ -298,45 +309,25 @@ func main() {
 	)
 	if publicTunnelEnabled {
 		if len(missingGitHubKeys) > 0 {
-			log.Fatalf("public tunnel requires non-dev GitHub authentication; missing keys: %s", strings.Join(missingGitHubKeys, ", "))
+			return fmt.Errorf("public tunnel requires non-dev GitHub authentication; missing keys: %s", strings.Join(missingGitHubKeys, ", "))
 		}
 		if net.ParseIP(stackCfg.ConsoleBindAddress).IsLoopback() {
-			log.Fatalf("public tunnel requires an explicit non-loopback LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")
+			return fmt.Errorf("public tunnel requires an explicit non-loopback LOCALTESTSTACK_CONSOLE_BIND_ADDRESS")
 		}
 		consoleEnv["DASHBOARD_DEV_USERS"] = ""
 		if missingRuntimeKeys := missingCloudflareRuntimeKeys(cloudflareTunnelToken, cloudflareHostname); len(missingRuntimeKeys) > 0 {
-			log.Fatalf(
+			return fmt.Errorf(
 				"Cloudflare tunnel configuration is incomplete; set these env vars before starting again: %s. Cloudflare should already route %s to the local ingress origin %s",
 				strings.Join(missingRuntimeKeys, ", "),
 				cloudflareHostname,
 				ingressURL[:len(ingressURL)-1],
 			)
 		}
-		log.Printf(
-			"starting cloudflare tunnel for %s; Cloudflare should already route this hostname to the local ingress origin %s",
-			cloudflareHostname,
-			ingressURL[:len(ingressURL)-1],
-		)
-		publicURL, err := startCloudflareTunnel(ctx, cloudflareTunnelToken, cloudflareHostname)
-		if err != nil {
-			if startupInterrupted(ctx) {
-				return
-			}
-			log.Fatalf("%s", describeCloudflareStartupError(err, cloudflareHostname, cloudflareTunnelToken))
-		}
-		log.Printf("cloudflare tunnel ready: %s", publicURL.BaseURL)
-		publicBaseURL = publicURL.BaseURL
-		if publicURL.Close != nil {
-			defer func() {
-				if err := publicURL.Close(); err != nil {
-					log.Printf("close cloudflare tunnel: %v", err)
-				}
-			}()
-		}
+		publicBaseURL = "https://" + strings.Trim(cloudflareHostname, ".")
 	}
 	overlay, err = localteststack.ApplyEnvironmentOverlay(&cfg, consoleEnv, overlayEnv, publicBaseURL)
 	if err != nil {
-		log.Fatalf("apply 1Password environment overlay: %v", err)
+		return fmt.Errorf("apply 1Password environment overlay: %v", err)
 	}
 	if parsedPublicURL, err := url.Parse(overlay.PublicBaseURL); err == nil && parsedPublicURL.Host != "" && len(cfg.Ingress.StaticRoutes) > 0 {
 		cfg.Ingress.StaticRoutes[0].Hosts = appendUniqueStrings(cfg.Ingress.StaticRoutes[0].Hosts, parsedPublicURL.Host)
@@ -352,7 +343,7 @@ func main() {
 		log.Printf("github webhook url: %s", overlay.GitHubWebhookURL)
 	}
 	if startupInterrupted(ctx) {
-		return
+		return nil
 	}
 	registryHost := fmt.Sprintf("localhost:%d", registryPort)
 	cfg.Registry = config.RegistryConfig{
@@ -364,13 +355,13 @@ func main() {
 		CredentialTTLSeconds: 300,
 	}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
-		log.Fatalf("finalize controlplane config: %v", err)
+		return fmt.Errorf("finalize controlplane config: %v", err)
 	}
 	log.Print(config.ControlPlaneStartupContract(cfg).String())
 
 	server, err := controlplane.NewServer(ctx, cfg)
 	if err != nil {
-		log.Fatalf("create controlplane server: %v", err)
+		return fmt.Errorf("create controlplane server: %v", err)
 	}
 	defer server.Close()
 	// The control plane is the system of record for the secrets the console
@@ -378,11 +369,11 @@ func main() {
 	// the active values here.
 	userAssertionSecret, err := signingSecret(ctx, server, signkeys.ScopeUserAssertion)
 	if err != nil {
-		log.Fatalf("export user assertion secret: %v", err)
+		return fmt.Errorf("export user assertion secret: %v", err)
 	}
 	dashboardJWTSecret, err := signingSecret(ctx, server, signkeys.ScopeDashboardSession)
 	if err != nil {
-		log.Fatalf("export dashboard JWT secret: %v", err)
+		return fmt.Errorf("export dashboard JWT secret: %v", err)
 	}
 	consoleEnv["DASHBOARD_JWT_SECRET"] = dashboardJWTSecret
 	consoleEnv["DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET"] = userAssertionSecret
@@ -401,33 +392,33 @@ func main() {
 		_ = conn.Close()
 		return true, nil
 	}); err != nil {
-		log.Fatalf("wait for controlplane grpc listener: %v", err)
+		return fmt.Errorf("wait for controlplane grpc listener: %v", err)
 	}
 	// Envoy's /ready stays 503 until it has pulled LDS/CDS/RDS over xDS,
 	// so wait only after the control plane is serving.
 	if err := ingress.WaitReady(ctx); err != nil {
-		log.Fatalf("wait for local ingress readiness: %v", err)
+		return fmt.Errorf("wait for local ingress readiness: %v", err)
 	}
 	_, registryAuthPort, err := net.SplitHostPort(server.RegistryAuthAddr())
 	if err != nil {
-		log.Fatalf("resolve registry auth port: %v", err)
+		return fmt.Errorf("resolve registry auth port: %v", err)
 	}
 	registryAuthUpstreamPort, err := strconv.Atoi(registryAuthPort)
 	if err != nil {
-		log.Fatalf("parse registry auth port: %v", err)
+		return fmt.Errorf("parse registry auth port: %v", err)
 	}
 	registryAuthProxyPort, err := pickLoopbackPort()
 	if err != nil {
-		log.Fatalf("pick registry auth proxy port: %v", err)
+		return fmt.Errorf("pick registry auth proxy port: %v", err)
 	}
 	registryAuthProxy, err := localteststack.StartManagedRegistryAuthProxy(ctx, localteststack.LocalRegistryAuthProxyConfig{
 		ContainerName: "localteststack-registry-auth-proxy",
-		UpstreamHost:  "host.docker.internal",
+		UpstreamHost:  hostGateway,
 		UpstreamPort:  registryAuthUpstreamPort,
 		HostPort:      registryAuthProxyPort,
 	}, localteststack.ExecDockerRunner{})
 	if err != nil {
-		log.Fatalf("start registry auth proxy: %v", err)
+		return fmt.Errorf("start registry auth proxy: %v", err)
 	}
 	defer func() {
 		if err := registryAuthProxy.Close(); err != nil {
@@ -435,7 +426,7 @@ func main() {
 		}
 	}()
 	tokenRealm := registryAuthProxy.TokenRealmBaseURL() + registry.TokenPath
-	log.Printf("registry token realm: %s (proxy -> host.docker.internal:%d)", tokenRealm, registryAuthUpstreamPort)
+	log.Printf("registry token realm: %s (proxy -> %s:%d)", tokenRealm, hostGateway, registryAuthUpstreamPort)
 	managedRegistry, err := localteststack.StartManagedRegistry(ctx, localteststack.LocalRegistryConfig{
 		StateDir:       filepath.Join(stateDir, "local-registry"),
 		ContainerName:  "localteststack-registry",
@@ -446,7 +437,7 @@ func main() {
 		RootCertBundle: server.RegistryAuthBundlePath(),
 	}, localteststack.ExecDockerRunner{})
 	if err != nil {
-		log.Fatalf("start managed local registry: %v", err)
+		return fmt.Errorf("start managed local registry: %v", err)
 	}
 	defer func() {
 		if err := managedRegistry.Close(); err != nil {
@@ -457,24 +448,61 @@ func main() {
 
 	identity, err := server.EnsureDashboardClientIdentity(ctx, "dashboard-local")
 	if err != nil {
-		log.Fatalf("mint dashboard client identity: %v", err)
+		return fmt.Errorf("mint dashboard client identity: %v", err)
 	}
 
 	localAgent, localAgentErrCh, err := startLocalAgent(ctx, stackCfg, stateDir, controlPlaneURL, identity.CAPEM, agentBootstrapToken)
 	if err != nil {
-		log.Fatalf("start local agent: %v", err)
+		return fmt.Errorf("start local agent: %v", err)
 	}
 	defer localAgent.Close()
 	if err := waitForLocalAgent(ctx, server, localAgentID, localAgentErrCh); err != nil {
-		log.Fatalf("wait for local agent: %v", err)
+		return fmt.Errorf("wait for local agent: %v", err)
 	}
 	log.Printf("local agent ready: %s", localAgentID)
 	go monitorBackgroundComponent(ctx, stop, "local agent", localAgentErrCh)
 
+	consoleEnv["DASHBOARD_CONTROLPLANE_ADDRESS"] = server.InternalAddr()
+	consoleEnv["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = "localhost"
+	consoleEnv["DASHBOARD_CONTROLPLANE_CA_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CAPEM)
+	consoleEnv["DASHBOARD_CONTROLPLANE_CERT_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CertPEM)
+	consoleEnv["DASHBOARD_CONTROLPLANE_KEY_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.KeyPEM)
+	consoleProc, err := startConsole(ctx, consoleDir, consoleEnv, consolePort, stackCfg.ConsoleBindAddress, consoleListener)
+	if err != nil {
+		return fmt.Errorf("start console: %v", err)
+	}
+	defer stopConsoleProcess(consoleProc)
+	if err := waitForIngressDashboard(ctx, ingressURL+"healthz"); err != nil {
+		return fmt.Errorf("wait for ingress dashboard health: %v", err)
+	}
+
+	if publicTunnelEnabled {
+		log.Printf(
+			"starting cloudflare tunnel for %s; Cloudflare should already route this hostname to the local ingress origin %s",
+			cloudflareHostname,
+			ingressURL[:len(ingressURL)-1],
+		)
+		publicURL, err := startCloudflareTunnel(ctx, cloudflareTunnelToken, cloudflareHostname)
+		if err != nil {
+			if startupInterrupted(ctx) {
+				return nil
+			}
+			return fmt.Errorf("%s", describeCloudflareStartupError(err, cloudflareHostname, cloudflareTunnelToken))
+		}
+		log.Printf("cloudflare tunnel ready: %s", publicURL.BaseURL)
+		if publicURL.Close != nil {
+			defer func() {
+				if err := publicURL.Close(); err != nil {
+					log.Printf("close cloudflare tunnel: %v", err)
+				}
+			}()
+		}
+	}
+
 	var productFixture *productE2ESummary
 	if productE2EEnabled {
 		if strings.TrimSpace(overlay.PublicBaseURL) == "" {
-			log.Fatalf("local product e2e requires the public Cloudflare tunnel; set LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1 with CLOUDFLARE_TUNNEL_TOKEN and CLOUDFLARE_HOSTNAME")
+			return fmt.Errorf("local product e2e requires the public Cloudflare tunnel; set LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1 with CLOUDFLARE_TUNNEL_TOKEN and CLOUDFLARE_HOSTNAME")
 		}
 		log.Printf("running local product draft/release/domain fixture via public tunnel %s", overlay.PublicBaseURL)
 		result, err := runProductE2EScenario(
@@ -488,7 +516,7 @@ func main() {
 			dashboardJWTSecret,
 		)
 		if err != nil {
-			log.Fatalf("local product e2e: %v", err)
+			return fmt.Errorf("local product e2e: %v", err)
 		}
 		productFixture = &result
 		log.Printf("local product fixture ready: %s", result.RouteURL)
@@ -499,7 +527,7 @@ func main() {
 			productE2EUserID,
 			productE2EUserEmail,
 		); err != nil {
-			log.Fatalf("seed product e2e dashboard user: %v", err)
+			return fmt.Errorf("seed product e2e dashboard user: %v", err)
 		}
 		log.Printf("product e2e dashboard user seeded: %s", productE2EUserID)
 	}
@@ -507,18 +535,12 @@ func main() {
 	if overlay.GitHubEnabled {
 		localBuilder, localBuilderErrCh, err := startLocalBuilder(ctx, stateDir, controlPlaneURL, server)
 		if err != nil {
-			log.Fatalf("start local builder: %v", err)
+			return fmt.Errorf("start local builder: %v", err)
 		}
 		defer localBuilder.Close()
 		log.Printf("local builder ready: %s", localBuilderID)
 		go monitorBackgroundComponent(ctx, stop, "local builder", localBuilderErrCh)
 	}
-
-	consoleEnv["DASHBOARD_CONTROLPLANE_ADDRESS"] = server.InternalAddr()
-	consoleEnv["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = "localhost"
-	consoleEnv["DASHBOARD_CONTROLPLANE_CA_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CAPEM)
-	consoleEnv["DASHBOARD_CONTROLPLANE_CERT_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CertPEM)
-	consoleEnv["DASHBOARD_CONTROLPLANE_KEY_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.KeyPEM)
 
 	summary := stackSummary{
 		ControlPlaneURL:   controlPlaneURL,
@@ -534,16 +556,7 @@ func main() {
 		ProductE2E:        productFixture,
 	}
 	if err := writeSummary(filepath.Join(artifactsDir, "stack.json"), summary); err != nil {
-		log.Fatalf("write stack summary: %v", err)
-	}
-
-	consoleProc, err := startConsole(ctx, consoleDir, consoleEnv, consolePort, stackCfg.ConsoleBindAddress, consoleListener)
-	if err != nil {
-		log.Fatalf("start console: %v", err)
-	}
-	defer stopConsoleProcess(consoleProc)
-	if err := waitForIngressDashboard(ctx, ingressURL+"healthz"); err != nil {
-		log.Fatalf("wait for ingress dashboard health: %v", err)
+		return fmt.Errorf("write stack summary: %v", err)
 	}
 
 	runPlaywright := os.Getenv("LOCALTESTSTACK_RUN_PLAYWRIGHT") != "0"
@@ -552,13 +565,13 @@ func main() {
 			"DASHBOARD_E2E_BASE_URL": ingressURL[:len(ingressURL)-1],
 		})
 		if err != nil {
-			log.Fatalf("build playwright command: %v", err)
+			return fmt.Errorf("build playwright command: %v", err)
 		}
 		playwright.Dir = consoleDir
 		playwright.Stdout = os.Stdout
 		playwright.Stderr = os.Stderr
 		if err := playwright.Run(); err != nil {
-			log.Fatalf("run playwright: %v", err)
+			return fmt.Errorf("run playwright: %v", err)
 		}
 	} else {
 		log.Printf("ephemeral stack ready")
@@ -580,8 +593,9 @@ func main() {
 	select {
 	case err := <-runErrCh:
 		if err != nil {
-			log.Fatalf("controlplane exited: %v", err)
+			return fmt.Errorf("controlplane exited: %v", err)
 		}
 	default:
 	}
+	return nil
 }

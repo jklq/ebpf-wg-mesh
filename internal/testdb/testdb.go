@@ -18,6 +18,17 @@ func Start(version string) (testserver.TestServer, error) {
 	return testserver.NewTestServer(testserver.CustomVersionOpt(version))
 }
 
+// StartEphemeral keeps the local stack's short-lived database on disk so its
+// store does not reserve 20% of host memory. The test server removes its temp
+// directory when stopped.
+func StartEphemeral() (testserver.TestServer, error) {
+	return testserver.NewTestServer(
+		testserver.CustomVersionOpt(DefaultVersion),
+		testserver.StoreOnDiskOpt(),
+		testserver.CacheSizeOpt(0.02),
+	)
+}
+
 func NormalizeURL(source *url.URL) *url.URL {
 	if source == nil {
 		return nil

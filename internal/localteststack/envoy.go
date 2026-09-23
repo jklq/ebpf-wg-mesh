@@ -86,6 +86,7 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 	args := []string{
 		"run", "--detach", "--rm",
 		"--name", cfg.ContainerName,
+		"--memory", "256m", "--memory-swap", "256m",
 		"--network", cfg.DockerNetwork,
 		"--add-host", "host.docker.internal:host-gateway",
 		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.PublicPort, cfg.PublicPort),
