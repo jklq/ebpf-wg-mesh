@@ -1,11 +1,5 @@
 // Command xds-probe subscribes to control-plane xDS endpoints the way an
-// Envoy instance would and records what it observes for the VM harness:
-// every response is appended to requests.log and latest.json holds the union
-// of the hostnames and endpoints each reachable endpoint currently
-// advertises. State-of-the-world responses carry the complete resource set
-// for their type, so a withdrawal replaces the endpoint's set instead of
-// accumulating; an endpoint whose subscription drops stops contributing
-// entirely, so nothing in latest.json is backed only by a dead endpoint.
+// Envoy instance would and records what it observes for the VM harness.
 package main
 
 import (
@@ -67,9 +61,6 @@ type probe struct {
 	versions  map[string]map[string]string            // addr -> resource type -> version of the latest response
 }
 
-// observedResources is the complete resource set of one DiscoveryResponse for
-// one endpoint: state-of-the-world responses replace the previous set, so a
-// withdrawal shrinks it.
 type observedResources struct {
 	hostnames []string
 	endpoints []string
@@ -122,8 +113,6 @@ func run(ctx context.Context, cfg probeConfig) error {
 	return ctx.Err()
 }
 
-// follow holds one ADS subscription open, resubscribing across control-plane
-// restarts and takeovers the way Envoy would.
 func (p *probe) follow(ctx context.Context, addr string) {
 	backoff := time.Second
 	for {
@@ -178,8 +167,6 @@ func (p *probe) observe(addr string, resp *discoveryv3.DiscoveryResponse) {
 	}
 	p.versions[addr][shortType(resp.GetTypeUrl())] = resp.GetVersionInfo()
 	snapshot := p.snapshotLocked()
-	// File writes stay under the mutex: concurrent subscribers share one
-	// requests.log and one latest.json staging file.
 	line := fmt.Sprintf("%s %s %s resources=%d\n", addr, shortType(resp.GetTypeUrl()), resp.GetVersionInfo(), len(resp.GetResources()))
 	if err := appendLine(filepath.Join(p.cfg.dir, "requests.log"), line); err != nil {
 		log.Printf("xds-probe %s: append requests.log: %v", addr, err)
@@ -190,12 +177,6 @@ func (p *probe) observe(addr string, resp *discoveryv3.DiscoveryResponse) {
 	p.mu.Unlock()
 }
 
-// forget drops everything an endpoint contributed when its subscription
-// ends and recomputes the snapshot. A disconnected endpoint can neither
-// confirm nor withdraw anything, so its last response must not keep
-// presenting withdrawn resources as published (which would let presence
-// checks pass on stale data): its absence from the snapshot is also what
-// lets the harness prove snapshot contents are post-disconnect evidence.
 func (p *probe) forget(addr string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -209,9 +190,6 @@ func (p *probe) forget(addr string) {
 	}
 }
 
-// snapshotLocked unions the current per-endpoint resource sets: a resource is
-// present exactly while the latest response of that type from a reachable
-// endpoint carries it.
 func (p *probe) snapshotLocked() probeSnapshot {
 	hostnames := make(map[string]struct{})
 	endpoints := make(map[string]struct{})
@@ -266,8 +244,6 @@ func extractResources(resp *discoveryv3.DiscoveryResponse) (hostnames, endpoints
 			}
 		}
 	default:
-		// Clusters and listeners carry no probe-observed names; their
-		// versions are still recorded in the snapshot.
 	}
 	return hostnames, endpoints
 }

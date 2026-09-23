@@ -171,11 +171,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			Upstream: route.Upstream,
 		})
 	}
-	// The xDS server outlives any single Run: streams span singleton
-	// takeovers, so its context is the process, not a run.
 	xdsServer := xds.NewServer(context.Background())
-	// Subscribers register durably at first contact, before any config is
-	// served, so the drain barrier sees them across replicas.
 	xdsServer.SetNodeStore(store.routing)
 	publisherID := strings.TrimSpace(cfg.AdvertiseAddr)
 	if publisherID == "" {
@@ -190,9 +186,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		ListenAddrs:  cfg.Ingress.ListenAddrs,
 		PublisherID:  publisherID,
 	})
-	// The same first contact refreshes from the durable publication, so a
-	// fresh subscriber on a lagging replica cannot receive withdrawn
-	// config that the drain barrier believes gone.
 	xdsServer.SetFirstContactHook(ingress.Refresh)
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
@@ -404,12 +397,7 @@ func (s *Server) Run(ctx context.Context) error {
 			errCh <- s.reconciler.Run(runCtx)
 		}()
 	}
-	// Per-replica, not singleton work: every replica re-issues its own
-	// server leaf after a CA rotation finishes.
 	go func() { s.serverCertificateRefreshLoop(runCtx); errCh <- nil }()
-	// Also per-replica: every replica serves Envoy from the durable
-	// publication and records subscriber apply state, so the xDS endpoint
-	// survives lease takeover and rolling replacement of a replica.
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Follow(runCtx) }()
 	}

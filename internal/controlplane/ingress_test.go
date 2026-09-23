@@ -146,13 +146,12 @@ func TestXDSPublisherRoutesHealthyDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub.Version != status.Version || pub.Hash == "" || pub.Publisher != "replica-a" {
+	if pub.Version != status.Version || pub.Version == "" || pub.Publisher != "replica-a" {
 		t.Fatalf("publication row = %+v, status version %s", pub, status.Version)
 	}
 
 	addr := serveXDSServer(t, server)
-	// Every type converges on the same content version: a rollout never
-	// publishes partially.
+	// Every type converges on the same content version.
 	for _, typeURL := range []string{
 		resourcev3.ListenerType, resourcev3.ClusterType,
 		resourcev3.RouteType, resourcev3.EndpointType,
@@ -304,23 +303,23 @@ func TestXDSPublicationRowCompareAndSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub.Version != "" || pub.Hash != "" || pub.Publisher != "" || len(pub.Inputs) != 0 {
+	if pub.Version != "" || pub.Publisher != "" || len(pub.Inputs) != 0 {
 		t.Fatalf("expected no publication, got %+v", pub)
 	}
 	won, err := store.routing.CompareAndSwapPublication(ctx, "", xds.Publication{
-		Version: "v1", Hash: "h1", Inputs: []byte(`{"v":1}`), Counts: xds.Counts{Listeners: 1}, Publisher: "replica-a",
+		Version: "v1", Inputs: []byte(`{"v":1}`), Publisher: "replica-a",
 	})
 	if err != nil || !won {
 		t.Fatalf("initial insert won=%v err=%v", won, err)
 	}
 	won, err = store.routing.CompareAndSwapPublication(ctx, "", xds.Publication{
-		Version: "v2", Hash: "h2", Publisher: "replica-b",
+		Version: "v2", Publisher: "replica-b",
 	})
 	if err != nil || won {
 		t.Fatalf("stale insert won=%v err=%v, want loss", won, err)
 	}
-	won, err = store.routing.CompareAndSwapPublication(ctx, "h1", xds.Publication{
-		Version: "v2", Hash: "h2", Inputs: []byte(`{"v":2}`), Counts: xds.Counts{Endpoints: 3}, Publisher: "replica-b",
+	won, err = store.routing.CompareAndSwapPublication(ctx, "v1", xds.Publication{
+		Version: "v2", Inputs: []byte(`{"v":2}`), Publisher: "replica-b",
 	})
 	if err != nil || !won {
 		t.Fatalf("CAS update won=%v err=%v", won, err)
@@ -329,7 +328,7 @@ func TestXDSPublicationRowCompareAndSwap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub.Version != "v2" || pub.Hash != "h2" || pub.Publisher != "replica-b" || string(pub.Inputs) != `{"v":2}` {
+	if pub.Version != "v2" || pub.Publisher != "replica-b" || string(pub.Inputs) != `{"v":2}` {
 		t.Fatalf("publication = %+v", pub)
 	}
 }
@@ -348,8 +347,7 @@ func TestXDSFollowerServesPublicationWithoutLease(t *testing.T) {
 	published := serverA.Status()
 
 	// Replica B never held the live state and never ran the publish loop. It
-	// still serves the durable publication, so an Envoy that fails over to
-	// it after a takeover or rolling replacement converges immediately.
+	// still serves the durable publication.
 	serverB := xds.NewServer(ctx)
 	publisherB := testXDSPublisher(store, serverB, "replica-b")
 	if err := publisherB.Replicate(ctx); err != nil {
@@ -384,8 +382,7 @@ func TestXDSFirstContactServesCurrentPublication(t *testing.T) {
 
 	// Replica B is lagging: it never ran its follow tick. A fresh
 	// subscriber must still receive the current durable publication at
-	// first contact — never the stale local cache — or it could hold
-	// routes to withdrawn allocations the drain barrier believes gone.
+	// first contact — never the stale local cache.
 	serverB := xds.NewServer(ctx)
 	publisherB := testXDSPublisher(store, serverB, "replica-b")
 	serverB.SetFirstContactHook(publisherB.Refresh)
@@ -415,14 +412,13 @@ func TestXDSRegistersSubscriberDurablyAtFirstContact(t *testing.T) {
 	subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)
 
 	// No follow loop has run: the observation exists only if first contact
-	// registered it, which is what lets the drain barrier see a subscriber
-	// before it can hold routes to withdrawn allocations.
+	// registered it.
 	nodes, err := store.routing.ListNodeObservations(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) != 1 || nodes[0].NodeID != "envoy-1" || nodes[0].AppliedHash != "" {
-		t.Fatalf("first-contact observations = %+v, want envoy-1 registered with empty hash", nodes)
+	if len(nodes) != 1 || nodes[0].NodeID != "envoy-1" || nodes[0].AppliedVersion != "" {
+		t.Fatalf("first-contact observations = %+v, want envoy-1 registered with empty version", nodes)
 	}
 	if converged, err := publisher.Converged(ctx); err != nil || converged {
 		t.Fatalf("Converged = %v, %v; want false while the subscriber has applied nothing", converged, err)
@@ -435,16 +431,16 @@ func TestXDSNodeObservationRetention(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	// A node fully applies v2, then regresses to mid-apply (restart, NACK,
-	// or reconnect before re-applying): the stale hash it may route with
-	// must be retained until a full apply lands again.
+	// A node fully applies v2, then regresses to mid-apply: the stale
+	// version it may route with must be retained until a full apply lands
+	// again.
 	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
-		{NodeID: "envoy-1", AppliedHash: "v2", NACKs: 1, LastNACK: "bad eds"},
+		{NodeID: "envoy-1", AppliedVersion: "v2", NACKs: 1, LastNACK: "bad eds"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
-		{NodeID: "envoy-1", AppliedHash: ""},
+		{NodeID: "envoy-1", AppliedVersion: ""},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -452,14 +448,14 @@ func TestXDSNodeObservationRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) != 1 || nodes[0].AppliedHash != "v2" || nodes[0].NACKs != 1 || nodes[0].LastNACK != "bad eds" {
+	if len(nodes) != 1 || nodes[0].AppliedVersion != "v2" || nodes[0].NACKs != 1 || nodes[0].LastNACK != "bad eds" {
 		t.Fatalf("observations = %+v, want retained v2 with NACK", nodes)
 	}
 
 	// A disconnected Envoy keeps its row: it keeps routing with its
 	// last-known-good config until its ACK actually arrives.
 	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
-		{NodeID: "envoy-2", AppliedHash: "v2"},
+		{NodeID: "envoy-2", AppliedVersion: "v2"},
 	}); err != nil {
 		t.Fatal(err)
 	}

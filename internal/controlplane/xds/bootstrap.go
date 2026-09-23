@@ -7,21 +7,12 @@ import (
 	"strings"
 )
 
-// BootstrapConfig describes one Envoy instance's static bootstrap. All
-// listeners, routes, clusters, and endpoints arrive over ADS; the bootstrap
-// carries only the node identity, the admin interface, and the xDS cluster.
-// XDSAddresses lists every control-plane replica's xDS endpoint: the xDS
-// endpoint is shared, so an Envoy whose replica dies or is replaced reaches
-// the live owner through the remaining addresses.
 type BootstrapConfig struct {
 	NodeID       string
 	XDSAddresses []string
 	AdminAddress string
 }
 
-// RenderBootstrap renders an Envoy bootstrap YAML that subscribes to the
-// control-plane xDS authority over ADS. It fails closed on malformed input
-// rather than emitting a config Envoy would reject at startup.
 func RenderBootstrap(cfg BootstrapConfig) (string, error) {
 	nodeID := strings.TrimSpace(cfg.NodeID)
 	if nodeID == "" {

@@ -31,8 +31,6 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
 		return err
 	}
-	// TLS termination arrives with the domain/certificate lifecycle (2.8),
-	// which pushes materials over SDS. Until then Envoy serves plaintext.
 	if err := validateProductionXDSListen(cfg.Ingress); err != nil {
 		return err
 	}
@@ -131,10 +129,6 @@ func validateProductionXDSListen(cfg IngressConfig) error {
 	if host == "" {
 		return errors.New("controlplane.ingress.xdsListen must bind an explicit host in production")
 	}
-	// The xDS transport is plaintext and unauthenticated until the fleet
-	// work adds mTLS: a wildcard bind would put the management API on every
-	// interface, where any reachable client can register node observations
-	// and block rollouts. Bind the isolated network explicitly.
 	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
 		return errors.New("controlplane.ingress.xdsListen must not bind a wildcard address in production; the xDS transport is unauthenticated until mTLS")
 	}

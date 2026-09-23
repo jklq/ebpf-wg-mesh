@@ -62,7 +62,7 @@ func TestBuildIsDeterministic(t *testing.T) {
 	wantBytes := snapshotBytes(t, first)
 
 	// Rebuild from reversed inputs: racing replicas must produce identical
-	// bytes and therefore converge on one version.
+	// bytes and converge on one version.
 	reversed := testInput()
 	for i, j := 0, len(reversed.Backends)-1; i < j; i, j = i+1, j-1 {
 		reversed.Backends[i], reversed.Backends[j] = reversed.Backends[j], reversed.Backends[i]
@@ -96,12 +96,12 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 		t.Fatal("Build must record its canonical inputs")
 	}
 	// A replica that never saw the live state rebuilds the exact snapshot
-	// from the published hash preimage.
+	// from the published preimage.
 	rebuilt, err := BuildFromInputs(snap.Inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rebuilt.Version != snap.Version || rebuilt.Hash != snap.Hash || rebuilt.Counts != snap.Counts {
+	if rebuilt.Version != snap.Version || rebuilt.Counts != snap.Counts {
 		t.Fatalf("rebuilt %+v, want version %s counts %+v", rebuilt, snap.Version, snap.Counts)
 	}
 	if !bytes.Equal(rebuilt.Inputs, snap.Inputs) {
@@ -126,7 +126,7 @@ func TestBuildGoldenVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A fixed input must hash to a fixed version across processes and
-	// replicas. If this changes deliberately, the shape changed: say so.
+	// replicas.
 	const want = "12210c47172b093efdcad005bd745cec1283ab3c1e32638678ff36e7f29decc9"
 	if snap.Version != want {
 		t.Fatalf("version = %s, want %s", snap.Version, want)

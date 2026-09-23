@@ -403,6 +403,11 @@ func main() {
 	}); err != nil {
 		log.Fatalf("wait for controlplane grpc listener: %v", err)
 	}
+	// Envoy's /ready stays 503 until it has pulled LDS/CDS/RDS over xDS,
+	// so wait only after the control plane is serving.
+	if err := ingress.WaitReady(ctx); err != nil {
+		log.Fatalf("wait for local ingress readiness: %v", err)
+	}
 	_, registryAuthPort, err := net.SplitHostPort(server.RegistryAuthAddr())
 	if err != nil {
 		log.Fatalf("resolve registry auth port: %v", err)

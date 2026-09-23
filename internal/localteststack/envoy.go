@@ -16,9 +16,7 @@ import (
 const (
 	defaultLocalIngressImage     = "envoyproxy/envoy:v1.36-latest"
 	defaultLocalIngressAdminPort = 19000
-	// envoyContainerAdminPort is the admin listener inside the container,
-	// published on the loopback AdminPort for readiness and debugging.
-	envoyContainerAdminPort = 19000
+	envoyContainerAdminPort      = 19000
 )
 
 type LocalIngressConfig struct {
@@ -26,8 +24,6 @@ type LocalIngressConfig struct {
 	DockerNetwork string
 	ContainerName string
 	NodeID        string
-	// XDSServerAddr is the control-plane xDS address as dialed from inside
-	// the container (host.docker.internal:<xds-port>).
 	XDSServerAddr string
 	PublicHost    string
 	PublicPort    int
@@ -40,6 +36,9 @@ type ManagedIngress struct {
 	runner DockerRunner
 }
 
+// StartManagedIngress runs the Envoy container. Call WaitReady after the xDS
+// control plane is serving: Envoy's /ready stays 503 until it has pulled
+// LDS/CDS/RDS over ADS.
 func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner DockerRunner) (*ManagedIngress, error) {
 	if runner == nil {
 		runner = ExecDockerRunner{}
@@ -98,15 +97,9 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 	if _, err := runner.Run(ctx, args...); err != nil {
 		return nil, err
 	}
-	managed := &ManagedIngress{cfg: cfg, runner: runner}
-	if err := managed.waitUntilReady(ctx); err != nil {
-		_ = managed.Close()
-		return nil, err
-	}
-	return managed, nil
+	return &ManagedIngress{cfg: cfg, runner: runner}, nil
 }
 
-// AdminURL is the Envoy admin interface for readiness and debugging.
 func (m *ManagedIngress) AdminURL() string {
 	if m == nil {
 		return ""
@@ -128,9 +121,11 @@ func (m *ManagedIngress) Close() error {
 	return removeContainer(context.Background(), m.runner, m.cfg.ContainerName)
 }
 
-func (m *ManagedIngress) waitUntilReady(ctx context.Context) error {
+// WaitReady blocks until Envoy's admin /ready returns 2xx. On failure it
+// removes the container and includes its logs in the error.
+func (m *ManagedIngress) WaitReady(ctx context.Context) error {
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d/ready", m.cfg.AdminPort)
-	return testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second}, func(ctx context.Context) (bool, error) {
+	err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second}, func(ctx context.Context) (bool, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, readyURL, nil)
 		if err != nil {
 			return false, err
@@ -142,11 +137,16 @@ func (m *ManagedIngress) waitUntilReady(ctx context.Context) error {
 		defer resp.Body.Close()
 		return resp.StatusCode < 300, nil
 	})
+	if err != nil {
+		logs, _ := m.runner.Run(context.Background(), "logs", "--tail", "100", m.cfg.ContainerName)
+		if closeErr := m.Close(); closeErr != nil {
+			return fmt.Errorf("%w\nenvoy container logs:\n%s\nremove envoy container: %v", err, logs, closeErr)
+		}
+		return fmt.Errorf("%w\nenvoy container logs:\n%s", err, logs)
+	}
+	return nil
 }
 
-// writeLocalIngressBootstrapConfig renders the Envoy bootstrap: node
-// identity plus the xDS cluster. Listeners, routes, clusters, and endpoints
-// all arrive over ADS, so an Envoy with no snapshot yet serves nothing.
 func writeLocalIngressBootstrapConfig(cfg LocalIngressConfig) (string, error) {
 	bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{
 		NodeID:       cfg.NodeID,

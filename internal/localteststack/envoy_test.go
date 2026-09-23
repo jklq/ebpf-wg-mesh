@@ -60,6 +60,9 @@ func TestStartManagedIngressRunsEnvoyWithBootstrapConfig(t *testing.T) {
 	t.Cleanup(func() {
 		_ = managed.Close()
 	})
+	if err := managed.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
 
 	runArgs := runner.firstCommand("run")
 	if len(runArgs) == 0 {
@@ -95,6 +98,22 @@ func TestStartManagedIngressRunsEnvoyWithBootstrapConfig(t *testing.T) {
 		if _, err := StartManagedIngress(context.Background(), cfg, runner); err == nil {
 			t.Fatalf("config %+v: expected validation error", cfg)
 		}
+	}
+}
+
+func TestManagedIngressWaitReadyRemovesContainerOnFailure(t *testing.T) {
+	runner := &fakeIngressDockerRunner{}
+	managed := &ManagedIngress{
+		cfg:    LocalIngressConfig{ContainerName: "localteststack-envoy-test", AdminPort: 1},
+		runner: runner,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := managed.WaitReady(ctx); err == nil {
+		t.Fatal("expected readiness failure")
+	}
+	if !containsSequence(runner.firstCommand("rm"), []string{"rm", "--force", "localteststack-envoy-test"}) {
+		t.Fatalf("Envoy container was not removed: %v", runner.commands)
 	}
 }
 
