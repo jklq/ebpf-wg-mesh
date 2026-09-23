@@ -125,7 +125,10 @@ func (r *HTTPResolver) clientForTrustedRealm(authority string) *http.Client {
 // plane into internal services. TLS server name and certificate
 // validation keep using the request hostname; only the connection target
 // is pinned. Operator-allowlisted private registries dial as declared.
-// RoundTrippers that never dial (test stubs) pass through unchanged.
+// Proxying is cleared on the clone: an environment proxy resolves the
+// request target outside this guard, so registry traffic always connects
+// to the validated address itself. RoundTrippers that never dial (test
+// stubs) pass through unchanged.
 func approvedDialTransport(base http.RoundTripper, allowedPrivateHosts []string) http.RoundTripper {
 	transport, ok := base.(*http.Transport)
 	if base == nil {
@@ -136,6 +139,10 @@ func approvedDialTransport(base http.RoundTripper, allowedPrivateHosts []string)
 		return base
 	}
 	clone := transport.Clone()
+	// HTTP_PROXY/HTTPS_PROXY would hand the target hostname to a proxy
+	// that resolves it on the other side, bypassing the validation and
+	// pinning below (and any egress policy around the control plane).
+	clone.Proxy = nil
 	next := clone.DialContext
 	if next == nil {
 		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
@@ -210,6 +217,9 @@ func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, 
 	if err != nil {
 		return ResolvedImage{}, err
 	}
+	// Registry-provided digests are canonicalized like user input: the
+	// stored runtime identity must stay pullable.
+	digest = strings.ToLower(strings.TrimSpace(digest))
 	if err := ValidateManifestDigest(digest); err != nil {
 		return ResolvedImage{}, fmt.Errorf("registry %s returned an invalid manifest digest for %s: %w", host, ref, err)
 	}

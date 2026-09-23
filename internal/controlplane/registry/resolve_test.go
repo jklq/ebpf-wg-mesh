@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -272,6 +273,57 @@ func TestHTTPResolverAllowsOperatorApprovedPrivateRegistry(t *testing.T) {
 	}
 	if got.ManifestDigest != digest {
 		t.Fatalf("Resolve digest = %q, want %q", got.ManifestDigest, digest)
+	}
+}
+
+// TestHTTPResolverNeverProxiesRegistryTraffic proves an environment
+// proxy cannot bypass the dial guard: registry traffic connects to the
+// validated registry address itself, because a proxy would resolve the
+// target hostname on the far side, outside the validation and pinning.
+func TestHTTPResolverNeverProxiesRegistryTraffic(t *testing.T) {
+	registryDigest := "sha256:" + strings.Repeat("a1", 32)
+	proxiedDigest := "sha256:" + strings.Repeat("b2", 32)
+	proxyHits := 0
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits++
+		w.Header().Set("Docker-Content-Digest", proxiedDigest)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(proxy.Close)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Docker-Content-Digest", registryDigest)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(registry.Close)
+	registryHost := strings.TrimPrefix(registry.URL, "http://")
+
+	// The proxy sits at a public-looking hostname: the stub resolver
+	// sends the destination check and the guarded dial to the test's
+	// public answer, which the fake dial maps onto the local proxy. If
+	// the transport proxies, the request reaches it and comes back with
+	// the proxied digest; the guard must keep it out entirely.
+	stubLookup(t, "203.0.113.9")
+	_, proxyPort, err := net.SplitHostPort(strings.TrimPrefix(proxy.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &http.Transport{
+		Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: "proxy.example.test:" + proxyPort}),
+		DialContext: fakeHostDial(map[string]string{
+			registryHost:               strings.TrimPrefix(registry.URL, "http://"),
+			"203.0.113.9:" + proxyPort: strings.TrimPrefix(proxy.URL, "http://"),
+		}),
+	}}
+	resolver := NewHTTPResolver(client, []string{registryHost})
+	got, err := resolver.Resolve(context.Background(), registryHost+"/demo/echo:latest")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.ManifestDigest != registryDigest {
+		t.Fatalf("Resolve digest = %q, want the registry's %q", got.ManifestDigest, registryDigest)
+	}
+	if proxyHits != 0 {
+		t.Fatalf("registry traffic traversed the environment proxy (%d hits)", proxyHits)
 	}
 }
 
