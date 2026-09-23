@@ -98,7 +98,9 @@ identity instead of one per flush interval, and a failed send folds
 its taken summaries back into the pending set. Spool records lost to crash corruption are counted the same
 way with reason `corrupt_spool`, attributed best-effort from the
 damaged frame's key (frames whose key bytes are gone stay in the
-process counters only). Drop summaries carry the allocation as their
+process counters only), and compaction remaps the durable cursor
+through its rewrite so unshipped records after the damage are never
+skipped. Drop summaries carry the allocation as their
 identity; the service is derived from the allocation owner at ingest.
 Shed flushes keep producer summary identity in their owed gaps, so a
 replayed summary replaces the same gap row instead of double counting.

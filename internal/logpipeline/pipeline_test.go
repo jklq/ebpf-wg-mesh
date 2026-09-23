@@ -708,3 +708,39 @@ func TestSpoolAppendFailureSealsUnrepairableSegment(t *testing.T) {
 		t.Fatalf("sealed segment hid later records: %+v", recs)
 	}
 }
+
+func TestSpoolCompactionKeepsUnshippedRecordsAfterCorruption(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	r1 := encodeRecord("k1", "id-1", now, []byte("shipped"))
+	r2 := encodeRecord("k2", "id-2", now, []byte("two"))
+	r3 := encodeRecord("k3", "id-3", now, []byte("unshipped-after"))
+	r2[len(r2)-1] ^= 0xff // Flip a checksum byte before the cursor.
+	segment := append(append(append([]byte(nil), r1...), r2...), r3...)
+	if err := os.WriteFile(filepath.Join(dir, "seg-0000000000.log"), segment, 0o600); err != nil {
+		t.Fatalf("write segment: %v", err)
+	}
+	// The durable cursor claims the corrupt record shipped; the
+	// record after it did not and must survive compaction.
+	cursor := fmt.Sprintf(`{"segment":0,"offset":%d}`, len(r1)+len(r2))
+	if err := os.WriteFile(filepath.Join(dir, "cursor.json"), []byte(cursor), 0o600); err != nil {
+		t.Fatalf("write cursor: %v", err)
+	}
+	s, err := OpenSpool(SpoolConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("OpenSpool: %v", err)
+	}
+	defer s.Close()
+	recs, _, err := s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 1 || recs[0].Key != "k3" {
+		t.Fatalf("compaction let a stale cursor skip unshipped records: %+v", recs)
+	}
+	evicted, corrupt := s.DrainDrops()
+	if evicted != nil || corrupt["k2"] != 1 {
+		t.Fatalf("corrupt frame accounting: evicted=%v corrupt=%v", evicted, corrupt)
+	}
+}

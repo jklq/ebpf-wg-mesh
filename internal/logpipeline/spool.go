@@ -177,10 +177,21 @@ func (s *Spool) recover() error {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	cursor, err := s.loadCursor()
+	if err != nil {
+		return err
+	}
 	for _, id := range ids {
-		size, records, newest, err := s.compactSegment(id)
+		cursorOff := int64(-1)
+		if cursor.Segment == id {
+			cursorOff = cursor.Offset
+		}
+		size, records, newest, mapped, err := s.compactSegment(id, cursorOff)
 		if err != nil {
 			return err
+		}
+		if cursorOff >= 0 {
+			cursor.Offset = mapped
 		}
 		s.segments = append(s.segments, segmentInfo{id: id, size: size, records: records, newestObserved: newest})
 		s.records += records
@@ -188,10 +199,6 @@ func (s *Spool) recover() error {
 		if id >= s.nextSeg {
 			s.nextSeg = id + 1
 		}
-	}
-	cursor, err := s.loadCursor()
-	if err != nil {
-		return err
 	}
 	s.cursor = s.clampCursor(cursor)
 	if len(s.segments) == 0 {
@@ -212,25 +219,37 @@ func (s *Spool) recover() error {
 }
 
 // compactSegment drops corrupt records from one segment, truncates a
-// torn tail, and returns the resulting size, record count, and
-// newest record timestamp. Every
+// torn tail, and returns the resulting size, record count, newest
+// record timestamp, and the durable cursor offset remapped into the
+// compacted layout (the caller passes the saved offset of this
+// segment as cursorOff, or -1 when the cursor is elsewhere). The
+// remap keeps shipped and unshipped records on their proper sides:
+// compaction must never let the stale offset skip unshipped records.
+// Every
 // lost record is counted as an attributable drop where the damaged
 // frame still reveals its key.
-func (s *Spool) compactSegment(id uint64) (int64, int64, time.Time, error) {
+func (s *Spool) compactSegment(id uint64, cursorOff int64) (int64, int64, time.Time, int64, error) {
 	path := s.segmentPath(id)
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, time.Time{}, fmt.Errorf("read spool segment %d: %w", id, err)
+		return 0, 0, time.Time{}, 0, fmt.Errorf("read spool segment %d: %w", id, err)
 	}
 	var (
 		kept    []byte
 		records int64
 		newest  time.Time
 		rewrote bool
+		mapped  = int64(-1)
 	)
 	for off := int64(0); off < int64(len(raw)); {
 		rec, nextOff, ok := decodeRecordAt(raw, off)
 		if ok {
+			// A kept frame is shipped only when it ends at or before
+			// the saved cursor; a frame straddling the cursor is
+			// conservatively replayed (retries deduplicate).
+			if cursorOff >= 0 && mapped < 0 && nextOff > cursorOff {
+				mapped = int64(len(kept))
+			}
 			kept = append(kept, raw[off:nextOff]...)
 			records++
 			if rec.ObservedAt.After(newest) {
@@ -248,12 +267,15 @@ func (s *Spool) compactSegment(id uint64) (int64, int64, time.Time, error) {
 		}
 		off += int64(skip)
 	}
+	if cursorOff >= 0 && mapped < 0 {
+		mapped = int64(len(kept))
+	}
 	if rewrote {
 		if err := os.WriteFile(path, kept, spoolFileMode); err != nil {
-			return 0, 0, time.Time{}, fmt.Errorf("compact spool segment %d: %w", id, err)
+			return 0, 0, time.Time{}, 0, fmt.Errorf("compact spool segment %d: %w", id, err)
 		}
 	}
-	return int64(len(kept)), records, newest, nil
+	return int64(len(kept)), records, newest, mapped, nil
 }
 
 // recordCorruptLocked counts one unreadable record as a loss. The key
