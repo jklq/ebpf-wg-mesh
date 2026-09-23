@@ -13,6 +13,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/testutil"
@@ -700,4 +701,97 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 		t.Fatalf("unattributable drops survived scoping: %+v", unattributable.GetDrops())
 	}
 	_ = svcB
+}
+
+func TestDurableLogsGapPagination(t *testing.T) {
+	clickhouseURL := startTestClickHouse(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	const (
+		agentID = "gap-page-agent"
+		token   = "gap-page-bootstrap"
+	)
+	cp := startSystemControlPlane(t, systemControlPlaneOptions{
+		clickhouseURL: clickhouseURL,
+		bootstrap: config.BootstrapConfig{Users: []config.BootstrapUser{
+			{ID: "user-a", Email: "a@example.com", Projects: []string{"proj-a"}},
+		}},
+		bootstrapTokens: []config.AgentBootstrapToken{{AgentID: agentID, Token: token}},
+		withDashboard:   true,
+	})
+	cert := enrollAgentTLS(t, cp.server, agentID, token)
+	stream, streamCancel := openAgentSync(t, cp.server, cert, agentHello(agentID))
+	defer streamCancel()
+	_ = recvDesiredState(t, stream)
+
+	store := cp.server.store
+	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects: %v", err)
+	}
+	svc, err := createService(ctx, store, "user-a", productionEnvironmentID(t, store, projects[0].ID), "web", serviceSpec(), agentID)
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	allocID := allocationIDForService(t, store, svc.ID)
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+
+	// More distinct gap rows than one response may carry must stay
+	// fully reachable through the gap cursor.
+	const totalGaps = 520
+	inputs := make([]logs.GapInput, 0, totalGaps)
+	for i := 0; i < totalGaps; i++ {
+		window := base.Add(time.Duration(i) * time.Second)
+		inputs = append(inputs, logs.GapInput{
+			ServiceID:    svc.ID,
+			AllocationID: allocID,
+			LogType:      logs.LogTypeRuntime,
+			Stream:       "stdout",
+			WindowStart:  window,
+			WindowEnd:    window.Add(time.Second),
+			DroppedCount: 1,
+			Reason:       logpipeline.ReasonRateLimited,
+			SummaryID:    fmt.Sprintf("gap-page-%d", i),
+		})
+	}
+	if err := cp.server.logStore.WriteGaps(ctx, inputs); err != nil {
+		t.Fatalf("write gaps: %v", err)
+	}
+
+	userCtx := userContext(t, cp, ctx, "user-a")
+	var seen []time.Time
+	pages := 0
+	gapToken := ""
+	for {
+		resp, err := cp.dashboard.ListServiceLogs(userCtx, &platformv1.ListServiceLogsRequest{ServiceId: svc.ID, GapPageToken: gapToken})
+		if err != nil {
+			t.Fatalf("list gaps page %d: %v", pages, err)
+		}
+		pages++
+		for _, gap := range resp.GetGaps() {
+			seen = append(seen, gap.GetWindowStart().AsTime())
+		}
+		gapToken = resp.GetNextGapPageToken()
+		if gapToken == "" {
+			break
+		}
+		if pages > 10 {
+			t.Fatal("gap pagination did not terminate")
+		}
+	}
+	if pages != 2 {
+		t.Fatalf("want 2 gap pages of 500 rows, got %d", pages)
+	}
+	if len(seen) != totalGaps {
+		t.Fatalf("gap pagination lost rows: got %d of %d", len(seen), totalGaps)
+	}
+	for i := 1; i < len(seen); i++ {
+		if !seen[i].After(seen[i-1]) {
+			t.Fatalf("gap pages not oldest-first at %d: %v after %v", i, seen[i], seen[i-1])
+		}
+	}
+	if _, err := cp.dashboard.ListServiceLogs(userCtx, &platformv1.ListServiceLogsRequest{ServiceId: svc.ID, GapPageToken: "bogus"}); status.Code(err) != codes.Internal {
+		t.Fatalf("bogus gap page token must be rejected, got %v", err)
+	}
 }

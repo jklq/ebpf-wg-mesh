@@ -95,9 +95,10 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 		return nil, status.Errorf(codes.Internal, "list service logs: %v", err)
 	}
 	resp := &platformv1.ListServiceLogsResponse{
-		Lines:         make([]*platformv1.ServiceLogLine, 0, len(page.Lines)),
-		NextPageToken: page.NextPageToken,
-		Gaps:          make([]*platformv1.ServiceLogGap, 0, len(page.Gaps)),
+		Lines:            make([]*platformv1.ServiceLogLine, 0, len(page.Lines)),
+		NextPageToken:    page.NextPageToken,
+		NextGapPageToken: page.NextGapPageToken,
+		Gaps:             make([]*platformv1.ServiceLogGap, 0, len(page.Gaps)),
 	}
 	for _, line := range page.Lines {
 		resp.Lines = append(resp.Lines, toProtoServiceLogLine(line))

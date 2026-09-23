@@ -7644,7 +7644,10 @@ type ListServiceLogsRequest struct {
 	Search       string                 `protobuf:"bytes,8,opt,name=search,proto3" json:"search,omitempty"`
 	// Opaque forward cursor from a previous ListServiceLogsResponse.
 	// Empty starts from start_time. Lines return oldest first.
-	PageToken     string `protobuf:"bytes,9,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	PageToken string `protobuf:"bytes,9,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// Opaque forward cursor from ListServiceLogsResponse.next_gap_page_token.
+	// Empty starts from start_time. Gaps return oldest first (window_start).
+	GapPageToken  string `protobuf:"bytes,10,opt,name=gap_page_token,json=gapPageToken,proto3" json:"gap_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7738,6 +7741,13 @@ func (x *ListServiceLogsRequest) GetSearch() string {
 func (x *ListServiceLogsRequest) GetPageToken() string {
 	if x != nil {
 		return x.PageToken
+	}
+	return ""
+}
+
+func (x *ListServiceLogsRequest) GetGapPageToken() string {
+	if x != nil {
+		return x.GapPageToken
 	}
 	return ""
 }
@@ -8019,8 +8029,11 @@ type ListServiceLogsResponse struct {
 	// Opaque cursor for the next page. Empty when the range is exhausted.
 	NextPageToken string           `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	Gaps          []*ServiceLogGap `protobuf:"bytes,3,rep,name=gaps,proto3" json:"gaps,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Opaque cursor for the next gap page. Empty when the gap range is
+	// exhausted. Gaps and lines paginate independently.
+	NextGapPageToken string `protobuf:"bytes,4,opt,name=next_gap_page_token,json=nextGapPageToken,proto3" json:"next_gap_page_token,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ListServiceLogsResponse) Reset() {
@@ -8072,6 +8085,13 @@ func (x *ListServiceLogsResponse) GetGaps() []*ServiceLogGap {
 		return x.Gaps
 	}
 	return nil
+}
+
+func (x *ListServiceLogsResponse) GetNextGapPageToken() string {
+	if x != nil {
+		return x.NextGapPageToken
+	}
+	return ""
 }
 
 // LogDropSummary reports lines a producer dropped before delivery so the
@@ -10626,7 +10646,7 @@ const file_platform_proto_rawDesc = "" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x1d\n" +
 	"\n" +
 	"wait_index\x18\x02 \x01(\x03R\twaitIndex\x120\n" +
-	"\x14wait_timeout_seconds\x18\x03 \x01(\x05R\x12waitTimeoutSeconds\"\xee\x02\n" +
+	"\x14wait_timeout_seconds\x18\x03 \x01(\x05R\x12waitTimeoutSeconds\"\x94\x03\n" +
 	"\x16ListServiceLogsRequest\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12#\n" +
@@ -10639,7 +10659,9 @@ const file_platform_proto_rawDesc = "" +
 	"\bbuild_id\x18\a \x01(\tR\abuildId\x12\x16\n" +
 	"\x06search\x18\b \x01(\tR\x06search\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\t \x01(\tR\tpageToken\"\x8c\x05\n" +
+	"page_token\x18\t \x01(\tR\tpageToken\x12$\n" +
+	"\x0egap_page_token\x18\n" +
+	" \x01(\tR\fgapPageToken\"\x8c\x05\n" +
 	"\x0eServiceLogLine\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12%\n" +
@@ -10674,11 +10696,12 @@ const file_platform_proto_rawDesc = "" +
 	"\x06reason\x18\x06 \x01(\tR\x06reason\x12=\n" +
 	"\fwindow_start\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vwindowStart\x129\n" +
 	"\n" +
-	"window_end\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\twindowEnd\"\xa4\x01\n" +
+	"window_end\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\twindowEnd\"\xd3\x01\n" +
 	"\x17ListServiceLogsResponse\x121\n" +
 	"\x05lines\x18\x01 \x03(\v2\x1b.platform.v1.ServiceLogLineR\x05lines\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12.\n" +
-	"\x04gaps\x18\x03 \x03(\v2\x1a.platform.v1.ServiceLogGapR\x04gaps\"\x95\x03\n" +
+	"\x04gaps\x18\x03 \x03(\v2\x1a.platform.v1.ServiceLogGapR\x04gaps\x12-\n" +
+	"\x13next_gap_page_token\x18\x04 \x01(\tR\x10nextGapPageToken\"\x95\x03\n" +
 	"\x0eLogDropSummary\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12#\n" +

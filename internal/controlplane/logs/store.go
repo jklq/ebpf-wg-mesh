@@ -93,11 +93,13 @@ type ServiceLogGap struct {
 }
 
 // ServiceLogPage is one authorized read: lines oldest-first with a
-// forward cursor, plus the explicit gaps overlapping the range.
+// forward cursor, plus the explicit gaps overlapping the range. Gaps
+// paginate independently of lines.
 type ServiceLogPage struct {
-	Lines         []ServiceLog
-	Gaps          []ServiceLogGap
-	NextPageToken string
+	Lines            []ServiceLog
+	Gaps             []ServiceLogGap
+	NextPageToken    string
+	NextGapPageToken string
 }
 
 type LogLineInput struct {
@@ -698,6 +700,10 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 	if err != nil {
 		return page, fmt.Errorf("invalid page token: %w", err)
 	}
+	gapCursorTime, gapCursorID, err := logpipeline.DecodeCursor(req.GetGapPageToken())
+	if err != nil {
+		return page, fmt.Errorf("invalid gap page token: %w", err)
+	}
 	filters := []string{"service_id = ?"}
 	args := []any{req.GetServiceId()}
 	if allocationID := strings.TrimSpace(req.GetAllocationId()); allocationID != "" {
@@ -776,15 +782,19 @@ SELECT observed_at, project_id, environment_id, service_id, allocation_id, agent
 		page.NextPageToken = logpipeline.EncodeCursor(last.ObservedAt, last.LineID)
 		page.Lines = page.Lines[:limit]
 	}
-	gaps, err := s.listGaps(ctx, req)
+	gaps, nextGapToken, err := s.listGaps(ctx, req, gapCursorTime, gapCursorID)
 	if err != nil {
 		return page, err
 	}
 	page.Gaps = gaps
+	page.NextGapPageToken = nextGapToken
 	return page, nil
 }
 
-func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]ServiceLogGap, error) {
+// listGaps returns up to maxLogGapResults gap rows oldest-first with a
+// forward gap cursor, so every gap stays reachable even when the range
+// holds more rows than one response may carry.
+func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogsRequest, cursorTime time.Time, cursorID string) ([]ServiceLogGap, string, error) {
 	filters := []string{"service_id = ?"}
 	args := []any{req.GetServiceId()}
 	if allocationID := strings.TrimSpace(req.GetAllocationId()); allocationID != "" {
@@ -807,22 +817,29 @@ func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogs
 		filters = append(filters, "window_start <= ?")
 		args = append(args, end.AsTime().UTC())
 	}
-	args = append(args, maxLogGapResults)
+	if req.GetGapPageToken() != "" {
+		filters = append(filters, "(window_start, gap_id) > (?, ?)")
+		args = append(args, cursorTime, cursorID)
+	}
+	args = append(args, maxLogGapResults+1)
 	query := `
-SELECT allocation_id, build_id, log_type, stream, dropped_count, reason, window_start, window_end
+SELECT gap_id, allocation_id, build_id, log_type, stream, dropped_count, reason, window_start, window_end
   FROM service_log_gaps FINAL
  WHERE ` + strings.Join(filters, " AND ") + `
- ORDER BY window_start ASC
+ ORDER BY window_start ASC, gap_id ASC
  LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query clickhouse log gaps: %w", err)
+		return nil, "", fmt.Errorf("query clickhouse log gaps: %w", err)
 	}
 	defer rows.Close()
 	var gaps []ServiceLogGap
+	var gapIDs []string
 	for rows.Next() {
 		var gap ServiceLogGap
+		var gapID string
 		if err := rows.Scan(
+			&gapID,
 			&gap.AllocationID,
 			&gap.BuildID,
 			&gap.LogType,
@@ -832,14 +849,20 @@ SELECT allocation_id, build_id, log_type, stream, dropped_count, reason, window_
 			&gap.WindowStart,
 			&gap.WindowEnd,
 		); err != nil {
-			return nil, fmt.Errorf("scan clickhouse log gap: %w", err)
+			return nil, "", fmt.Errorf("scan clickhouse log gap: %w", err)
 		}
 		gaps = append(gaps, gap)
+		gapIDs = append(gapIDs, gapID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate clickhouse log gaps: %w", err)
+		return nil, "", fmt.Errorf("iterate clickhouse log gaps: %w", err)
 	}
-	return gaps, nil
+	var nextToken string
+	if len(gaps) > maxLogGapResults {
+		nextToken = logpipeline.EncodeCursor(gaps[maxLogGapResults-1].WindowStart, gapIDs[maxLogGapResults-1])
+		gaps = gaps[:maxLogGapResults]
+	}
+	return gaps, nextToken, nil
 }
 
 func dropSummariesToGaps(drops []*platformv1.LogDropSummary, reporter string) []GapInput {

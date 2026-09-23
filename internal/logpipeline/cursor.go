@@ -9,7 +9,8 @@ import (
 )
 
 // EncodeCursor builds an opaque forward page token from the last
-// returned line's ordering key.
+// returned record's ordering key: (observed_at, line_id) for lines,
+// (window_start, gap_id) for gaps.
 func EncodeCursor(observedAt time.Time, lineID string) string {
 	raw := make([]byte, 8+4+len(lineID))
 	binary.BigEndian.PutUint64(raw[:8], uint64(observedAt.UTC().UnixNano()))
