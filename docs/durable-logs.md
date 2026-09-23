@@ -78,12 +78,17 @@ stricter rule because completion is a durable claim about the
 transcript: without a log pipeline the build does not run, and a
 reporter that never gets its output accepted fails the build. The cap also clamps
 the spool segment size, so a small configured cap still bounds one
-active file instead of overshooting until rotation.
+active file instead of overshooting until rotation. A failed append
+rolls its partial frame back out of the segment so later records can
+never hide behind damaged bytes; when the file cannot be repaired the
+segment is sealed and rotated and its readable prefix survives
+recovery.
 
 Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted
 as an explicit gap row. Shutdown drains the counters into pending
-drop summaries persisted next to the spool, so they report after the
+drop summaries persisted next to the spool (file and directory synced
+before the snapshot counts as durable), so they report after the
 restart. Builders persist theirs next to the attempt spool and a
 retried attempt takes them over: it re-emits its own output from
 scratch but can never recreate the lines a dead attempt dropped, so
@@ -155,7 +160,10 @@ retried reports of the same coalesced drop lineage collapse onto one
 row even after their totals or window grew, so retries never double
 count. Internally derived gaps are immutable per event and key on
 their full content. Reads return the gaps overlapping the queried range
-alongside lines, and every shed point counts drops — a dropped window
+alongside lines, paginated with their own opaque cursor
+(`gap_page_token`/`next_gap_page_token`, oldest first by window) so a
+range with more rows than one response may carry keeps every gap
+reachable, and every shed point counts drops — a dropped window
 is always an explicit gap, never silently closed. Gap attribution is
 derived from the allocation (or build) owner, never from producer
 claims: a claimed service that does not own the allocation rejects
