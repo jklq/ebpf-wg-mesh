@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"sync"
+	"unicode/utf8"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/logpipeline"
@@ -73,6 +74,22 @@ func (w *containerLogWriter) appendLocked(p []byte) {
 func (w *containerLogWriter) emitLocked() {
 	line := w.buf
 	truncated := w.truncated
+	if truncated {
+		// The size cap can cut mid-rune; protobuf string fields
+		// reject invalid UTF-8 and would lose the whole line
+		// instead of just its tail. Trim back to the last rune
+		// boundary.
+		n := len(line)
+		for n > 0 && !utf8.RuneStart(line[n-1]) {
+			n--
+		}
+		if n > 0 && !utf8.FullRune(line[n-1:]) {
+			n--
+		} else {
+			n = len(line)
+		}
+		line = line[:n]
+	}
 	w.buf = nil
 	w.truncated = false
 	if w == nil || w.nextSequence == nil || w.sink == nil {

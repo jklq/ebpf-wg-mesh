@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/logpipeline"
@@ -104,5 +106,37 @@ func TestContainerLogWriterTruncatesOversizedLines(t *testing.T) {
 	}
 	if got := sink.entries[1].GetLine(); got != "next" || sink.entries[1].GetTruncated() {
 		t.Fatalf("following line corrupted: %q truncated=%v", got, sink.entries[1].GetTruncated())
+	}
+}
+
+func TestContainerLogWriterTruncatedLineStaysValidUTF8(t *testing.T) {
+	t.Parallel()
+
+	sink := &recordingLogSink{}
+	var seq uint64
+	writer := &containerLogWriter{
+		allocationID: "alloc-1",
+		stream:       "stdout",
+		nextSequence: func() uint64 {
+			seq++
+			return seq
+		},
+		sink: func() LogSink { return sink },
+	}
+	// A long multibyte line crosses the size cap mid-rune; the
+	// emitted prefix must stay valid UTF-8 or protobuf rejects the
+	// whole line instead of just its tail.
+	line := append([]byte{'x'}, bytes.Repeat([]byte("é"), logpipeline.MaxLogLineBytes)...)
+	if _, err := writer.Write(append(line, '\n')); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(sink.entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(sink.entries))
+	}
+	if got := sink.entries[0].GetLine(); !utf8.ValidString(got) {
+		t.Fatal("truncated line must stay valid UTF-8")
+	}
+	if !sink.entries[0].GetTruncated() {
+		t.Fatal("line must be flagged truncated")
 	}
 }
