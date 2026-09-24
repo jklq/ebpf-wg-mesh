@@ -918,3 +918,30 @@ func TestSpoolRejectOnFullReclaimsShippedSegments(t *testing.T) {
 		t.Fatalf("appended record missing: %+v", recs)
 	}
 }
+
+func TestSpoolRejectOnFullRotatesShippedActiveSegment(t *testing.T) {
+	t.Parallel()
+	// A cap below the default segment size clamps the segment to the
+	// cap: one shipped segment fills the spool and must rotate out
+	// to make room instead of rejecting forever.
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 400, RejectOnFull: true})
+	payload := make([]byte, 200)
+	now := time.Now().UTC()
+	if err := s.Append("alloc", "a", now, payload); err != nil {
+		t.Fatalf("Append a: %v", err)
+	}
+	recs, cursor, err := s.Read(10)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if err := s.Append("alloc", "b", now, payload); err != nil {
+		t.Fatalf("shipped active segment not reclaimed: %v", err)
+	}
+	recs, _, err = s.Read(10)
+	if err != nil || len(recs) != 1 || string(recs[0].ID) != "b" {
+		t.Fatalf("appended record missing: %v %+v", err, recs)
+	}
+}

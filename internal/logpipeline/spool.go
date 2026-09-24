@@ -362,10 +362,12 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 		return errors.New("log spool has no writable segment")
 	}
 	if s.rejectOnFull {
-		// Reclaim fully shipped segments sized for the incoming
-		// record first: capacity belongs to unshipped data, and a
-		// shipped segment must never leave room-worthy space idle.
-		for s.bytes+int64(len(encoded)) > s.maxBytes && len(s.segments) > 1 {
+		// Reclaim capacity sized for the incoming record first:
+		// capacity belongs to unshipped data, and even a shipped
+		// single-segment spool (a queue cap below the segment size
+		// clamps the segment to the cap) must rotate and make room
+		// instead of rejecting.
+		for s.bytes+int64(len(encoded)) > s.maxBytes {
 			if !s.evictOneLocked() {
 				break
 			}
@@ -836,7 +838,7 @@ func (s *Spool) evictOneLocked() bool {
 }
 
 func (s *Spool) evictLocked() {
-	for s.bytes > s.maxBytes && len(s.segments) > 1 {
+	for s.bytes > s.maxBytes {
 		if !s.evictOneLocked() {
 			// Every segment is pinned by the in-flight batch. Hold
 			// eviction until it commits or releases; the overshoot
