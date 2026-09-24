@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
@@ -27,6 +29,7 @@ type App struct {
 	meshAssignment       mesh.Assignment
 	stateStore           *localStateStore
 	supervisor           *workloadSupervisor
+	logShipper           *logShipper
 	healthStop           func(context.Context) error
 	controlPlaneAddr     string
 	deadOwners           map[string]time.Time
@@ -34,6 +37,10 @@ type App struct {
 }
 
 const (
+	// logBatchAckTimeout bounds how long one batch waits for the
+	// server's acceptance ack before the send fails and the batch
+	// retries (deduplicated server-side).
+	logBatchAckTimeout    = 30 * time.Second
 	initialReconnectDelay = time.Second
 	maxReconnectDelay     = 30 * time.Second
 	// stableSessionDuration is how long a session must stay connected for a
@@ -81,6 +88,10 @@ func (a *App) Close() error {
 	if a.runtime != nil {
 		_ = a.runtime.Close()
 	}
+	if a.logShipper != nil {
+		_ = a.logShipper.Close()
+		a.logShipper = nil
+	}
 	if a.mesh != nil {
 		_ = a.mesh.Close()
 	}
@@ -111,12 +122,47 @@ func (a *App) Run(ctx context.Context) error {
 	// The pinned identity adopted at enrollment, empty before the first
 	// enrollment. It survives CA rotations; the bundle on disk does not.
 	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
+	// Install the log sink before supervision restores workloads:
+	// containers started from stored desired state stream output
+	// immediately, and a nil sink would discard their boot logs.
+	shipper, err := newLogShipper(a.cfg.Node.ID, logShipConfigFromAgent(a.cfg))
+	if err != nil {
+		_ = store.Close()
+		a.stateStore = nil
+		return fmt.Errorf("open log spool: %w", err)
+	}
+	a.logShipper = shipper
+	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
+		runtimeWithLogs.SetLogSink(shipper)
+	}
 	if err := a.supervisor.Start(ctx, store.clusterIdentity()); err != nil {
 		_ = store.Close()
 		a.stateStore = nil
 		return fmt.Errorf("start workload supervision: %w", err)
 	}
+	go func() {
+		_ = shipper.Run(ctx)
+	}()
 	return a.runConnections(ctx)
+}
+
+func logShipConfigFromAgent(cfg config.AgentConfig) logShipConfig {
+	ship := cfg.Logs
+	burst := ship.Burst
+	if burst <= 0 {
+		burst = 1000
+	}
+	return logShipConfig{
+		SpoolDir:      filepath.Join(cfg.Runtime.DataDir, "log-spool"),
+		SpoolMaxBytes: ship.SpoolMaxBytes,
+		// A non-positive rate disables producer limiting; zero is a
+		// deliberate operator choice, not an unset default.
+		RatePerSec:    float64(ship.RatePerSec),
+		Burst:         burst,
+		BatchSize:     ship.FlushBatchSize,
+		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,
+		ReplayWindow:  time.Duration(ship.ReplayWindowSeconds) * time.Second,
+	}
 }
 
 func (a *App) runConnections(ctx context.Context) error {
@@ -267,6 +313,49 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		defer sendMu.Unlock()
 		return stream.Send(msg)
 	}
+	// Log batches are acknowledged per batch: sendLogs returns only
+	// once the server accepted the batch into its durable ingest path,
+	// so the shipper's spool commit can never outrun acceptance.
+	var batchSeq atomic.Uint64
+	var ackMu sync.Mutex
+	ackWaiters := make(map[uint64]chan struct{})
+	completeAck := func(id uint64) {
+		ackMu.Lock()
+		done, ok := ackWaiters[id]
+		delete(ackWaiters, id)
+		ackMu.Unlock()
+		if ok {
+			close(done)
+		}
+	}
+	sendLogs := func(msg *agentv1.AgentClientMessage) error {
+		batch := msg.GetLogBatch()
+		if batch == nil {
+			return send(msg)
+		}
+		id := batchSeq.Add(1)
+		batch.BatchId = id
+		done := make(chan struct{})
+		ackMu.Lock()
+		ackWaiters[id] = done
+		ackMu.Unlock()
+		defer func() {
+			ackMu.Lock()
+			delete(ackWaiters, id)
+			ackMu.Unlock()
+		}()
+		if err := send(msg); err != nil {
+			return err
+		}
+		select {
+		case <-done:
+			return nil
+		case <-time.After(logBatchAckTimeout):
+			return errors.New("log batch acceptance timed out")
+		case <-sessionCtx.Done():
+			return sessionCtx.Err()
+		}
+	}
 	summary, err := a.supervisor.Summary()
 	if err != nil {
 		return fmt.Errorf("read local inventory: %w", err)
@@ -316,13 +405,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		return err
 	}
 	slog.Info("sent agent hello", "agent_id", a.cfg.Node.ID)
-	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
-		logSink := newStreamLogSink(sessionCtx, a.cfg.Node.ID, send)
-		runtimeWithLogs.SetLogSink(logSink)
-		defer func() {
-			runtimeWithLogs.SetLogSink(nil)
-			logSink.Close()
-		}()
+	if a.logShipper != nil {
+		a.logShipper.Attach(sendLogs)
+		defer a.logShipper.Detach()
 	}
 	go a.heartbeatLoop(sessionCtx, sessionID, send)
 	credentialTicker := time.NewTicker(credentialCheckInterval)
@@ -491,6 +576,10 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				return result.err
 			}
 			if result.message == nil {
+				continue
+			}
+			if ack := result.message.GetLogBatchAck(); ack != nil {
+				completeAck(ack.GetBatchId())
 				continue
 			}
 			if end := result.message.GetBatchEnd(); end != nil {
