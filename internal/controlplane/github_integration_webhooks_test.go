@@ -695,4 +695,32 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 	if err != nil || head != "commit-public-release" {
 		t.Fatalf("proven head = %q, %v; the stale recreate push must not move it", head, err)
 	}
+
+	// A stale create push arriving before the binding has any recorded
+	// head must not establish one either: history-only observations never
+	// become the head that a later current push would have to chain
+	// against. (Clearing the head stands in for a binding that has not
+	// proven one yet.)
+	if _, err := store.db.ExecContext(ctx, `UPDATE source_bindings SET head_commit_sha = '' WHERE id = $1`, binding.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-orphan-create", zeroSHA, "Orphan create", "Octocat"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision(orphan create): %v", err)
+	}
+	processed, err = reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(orphan create) = %v, %v, want clean completion", processed, err)
+	}
+	head, err = store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "" {
+		t.Fatalf("proven head = %q, %v; a stale create event must never establish the head", head, err)
+	}
+	var recorded int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM source_revisions WHERE service_id = $1 AND commit_sha = 'commit-orphan-create'`, service.ID).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != 1 {
+		t.Fatalf("stale create history rows = %d, want the observation recorded without becoming the head", recorded)
+	}
 }
