@@ -37,7 +37,36 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 	if rec.CancelRequestedAt.Valid {
 		status.CancelRequestedAt = ts(rec.CancelRequestedAt.Time)
 	}
+	if rec.Artifact != nil {
+		status.Artifact = ToProtoBuildArtifact(rec.Artifact)
+	}
 	return status
+}
+
+// ToProtoBuildArtifact renders the immutable deploy-by-digest record. The
+// digest-pinned image_ref is the runtime identity; source_image_ref keeps
+// the user's original mutable input for display.
+func ToProtoBuildArtifact(rec *BuildArtifactRecord) *platformv1.BuildArtifact {
+	if rec == nil || rec.ID == "" {
+		return nil
+	}
+	return &platformv1.BuildArtifact{
+		Id:                   rec.ID,
+		ServiceId:            rec.ServiceID,
+		BuildId:              rec.BuildID,
+		Kind:                 rec.Kind,
+		SourceSnapshotDigest: rec.SourceSnapshotDigest,
+		CommitSha:            rec.CommitSHA,
+		BuildRecipe:          source.CloneBuildRecipe(rec.BuildRecipe),
+		BuilderVersion:       rec.BuilderVersion,
+		ImageRepository:      rec.ImageRepository,
+		ImageManifestDigest:  rec.ImageManifestDigest,
+		ImageRef:             rec.ImageRef,
+		SourceImageRef:       rec.SourceImageRef,
+		BuildActorKind:       rec.BuildActorKind,
+		BuildActorId:         rec.BuildActorID,
+		CreatedAt:            ts(rec.CreatedAt),
+	}
 }
 
 func ToProtoBuildAttempt(rec BuildAttemptRecord) *platformv1.BuildAttempt {

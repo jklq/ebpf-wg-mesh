@@ -20,14 +20,69 @@ func (s *SQLStore) UpsertSourceBinding(ctx context.Context, rec SourceBindingRec
 	return out, err
 }
 
-func (s *SQLStore) UpsertSourceRevision(ctx context.Context, rec SourceRevisionRecord) (SourceRevisionRecord, error) {
+func (s *SQLStore) ObserveSourceRevision(ctx context.Context, rec SourceRevisionRecord, transition BuildTransition) (SourceRevisionRecord, error) {
 	var out SourceRevisionRecord
 	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		out, err = s.UpsertSourceRevisionTx(ctx, tx, rec)
+		out, err = s.ObserveSourceRevisionTx(ctx, tx, rec, transition)
 		return err
 	})
 	return out, err
+}
+
+// ObserveSourceRevisionTx records an observed revision and, when the
+// observation proves itself current against the binding's proven head
+// commit (see BuildTransition.ProvesCurrent), advances the head to it.
+// Recording a stale observation is history only: arrival order is not push
+// order, so an out-of-order observation of an unseen older commit must
+// never become the head and unseat newer work.
+func (s *SQLStore) ObserveSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec SourceRevisionRecord, transition BuildTransition) (SourceRevisionRecord, error) {
+	created, err := s.UpsertSourceRevisionTx(ctx, tx, rec)
+	if err != nil {
+		return SourceRevisionRecord{}, err
+	}
+	head, err := s.SourceBindingHeadCommitTx(ctx, tx, rec.SourceBindingID)
+	if err != nil {
+		return SourceRevisionRecord{}, err
+	}
+	if head != created.CommitSHA && transition.ProvesCurrent(created.CommitSHA, head) {
+		if err := s.SetSourceBindingHeadCommitTx(ctx, tx, rec.SourceBindingID, created.CommitSHA); err != nil {
+			return SourceRevisionRecord{}, err
+		}
+	}
+	return created, nil
+}
+
+// SourceBindingHeadCommit returns the binding's proven head commit outside
+// a caller transaction, or "" when no observation has yet proven itself
+// current. Callers use it to observe the fetch basis before fetching the
+// tracked head (see BuildTransition.FetchedFromHead).
+func (s *SQLStore) SourceBindingHeadCommit(ctx context.Context, bindingID string) (string, error) {
+	return s.SourceBindingHeadCommitTx(ctx, s.db, bindingID)
+}
+
+// SourceBindingHeadCommitTx returns the binding's proven head commit, or
+// ” when no observation has yet proven itself current.
+func (s *SQLStore) SourceBindingHeadCommitTx(ctx context.Context, q Querier, bindingID string) (string, error) {
+	var head string
+	err := q.QueryRowContext(ctx,
+		`SELECT head_commit_sha FROM source_bindings WHERE id = $1`,
+		strings.TrimSpace(bindingID),
+	).Scan(&head)
+	if err != nil {
+		return "", err
+	}
+	return head, nil
+}
+
+// SetSourceBindingHeadCommitTx moves the binding's proven head to
+// commitSHA. Callers must have proven currency first.
+func (s *SQLStore) SetSourceBindingHeadCommitTx(ctx context.Context, q Querier, bindingID, commitSHA string) error {
+	_, err := q.ExecContext(ctx,
+		`UPDATE source_bindings SET head_commit_sha = $2, updated_at = $3 WHERE id = $1`,
+		strings.TrimSpace(bindingID), strings.TrimSpace(commitSHA), time.Now().UTC(),
+	)
+	return err
 }
 
 func (s *SQLStore) UpsertSourceBindingTx(ctx context.Context, tx *sql.Tx, rec SourceBindingRecord) (SourceBindingRecord, error) {
@@ -203,6 +258,9 @@ func (s *SQLStore) UpsertSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec S
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = now
 	}
+	// Re-observations keep their original observed_at (DO NOTHING):
+	// arrival order is not push order, and a redelivered webhook must
+	// not re-assert recency.
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO source_revisions(
 			id, source_binding_id, service_id, provider, provider_repository_external_id,
@@ -423,6 +481,14 @@ func (s *SQLStore) SourceRevisionByIDTx(ctx context.Context, q Querier, sourceRe
 	return rec, nil
 }
 
+// ServiceHasUnbuiltSourceRevisionTx reports whether the service's latest
+// observed revision has no build yet. It is a deliberately conservative
+// pending-work signal for manual release, not a currency check: an
+// observation that carries no transition proof (a push webhook without a
+// "before") is held here until release, and release builds the freshly
+// fetched tracked head — never the held commit — so a false positive costs
+// one redundant tracked-head sync, while a false negative would silently
+// drop a user's release.
 func (s *SQLStore) ServiceHasUnbuiltSourceRevisionTx(ctx context.Context, q Querier, serviceID string) (bool, error) {
 	var exists bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(
@@ -442,6 +508,8 @@ func (s *SQLStore) ServiceHasUnbuiltSourceRevisionTx(ctx context.Context, q Quer
 	return exists, nil
 }
 
+// ServicesWithUnbuiltSourceRevisionsTx is the environment-wide form of
+// ServiceHasUnbuiltSourceRevisionTx.
 func (s *SQLStore) ServicesWithUnbuiltSourceRevisionsTx(ctx context.Context, q Querier, environmentID string) ([]string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT s.id FROM services s
 		WHERE s.environment_id = $1

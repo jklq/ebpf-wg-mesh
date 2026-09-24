@@ -603,6 +603,7 @@ func (l *Live) rolloutSnapshot(serviceID string) (rolloutSnapshot, string, bool)
 			SpecRevision:        rollout.SpecRevision,
 			State:               rollout.State,
 			DesiredReplicaCount: int32(rollout.DesiredReplicaCount),
+			ArtifactID:          rollout.ArtifactID,
 			ImageDigest:         rollout.ImageDigest,
 			FailureReason:       rollout.FailureReason,
 			TargetAllocationID:  rollout.TargetAllocationID,

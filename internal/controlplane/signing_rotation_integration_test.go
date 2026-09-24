@@ -129,7 +129,7 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 	environmentID := environments.GetEnvironments()[0].GetId()
 	if _, err := cp1.dashboard.CreateService(userCtx, &platformv1.CreateServiceRequest{
 		EnvironmentId: environmentID,
-		Service: &platformv1.ServiceInput{Name: "web", Spec: directImageServiceSpec("example.test/rotation:1", &platformv1.ServiceRuntime{
+		Service: &platformv1.ServiceInput{Name: "web", Spec: directImageServiceSpec(pinnedImage("d"), &platformv1.ServiceRuntime{
 			CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080}),
 		})},
 	}); err != nil {

@@ -239,7 +239,7 @@ func TestDeploymentActionRestartReplacesOnlySelectedAllocation(t *testing.T) {
 func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 	t.Parallel()
 	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel", "Cancel me", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel", "Cancel me", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-cancel")
@@ -408,12 +408,13 @@ func TestDeploymentActionCancelDeployingRestoresServingGeneration(t *testing.T) 
 }
 
 func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t *testing.T) {
-	store, ctx, userID, _, service := setupPinnedImageServiceForDeployment(t, "nginx:latest")
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, "10.0.0.11", 8081); err != nil {
-		t.Fatal(err)
-	}
+	// Every deployment is digest-pinned now, so "no reusable fallback"
+	// means no previous successful deployment: the first rollout is
+	// serving traffic before the control plane observed it active.
+	store, ctx, userID, _, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
+	markAllocationServingForTest(t, store, service.ID, "10.0.0.11")
 	serving := mustRolloutAllocations(t, store, service.ID)[0]
-	updated := directImageServiceSpec("nginx:edge", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
+	updated := directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})
 	if _, _, err := updateService(ctx, store, userID, service.ID, "", updated); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +427,7 @@ func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t
 	}
 
 	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, cancelledTarget.ID,
-		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-unpinned", ""); err != nil {
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-unobserved", ""); err != nil {
 		t.Fatalf("cancel deploying rollout: %v", err)
 	}
 	got := allocationByID(t, store, service.ID, serving.ID)
@@ -443,7 +444,7 @@ func TestDeploymentActionCancelWithoutReusableFallbackDrainsServingAllocations(t
 func TestDeploymentActionRetryAndConcurrentIdempotency(t *testing.T) {
 	t.Parallel()
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-retry", "Retry me", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-retry", "Retry me", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-retry")

@@ -23,6 +23,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var githubPrivateKeyFile string
 	var replicaAddresses string
 	var advertiseAddr string
+	var directImageAllowedPrivateRegistries string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
 	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
@@ -57,6 +58,9 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.SecretKeys.KeyringPath, "secret-keys-keyring", "CONTROLPLANE_SECRET_KEYS_KEYRING", "", "provisioned master-key ring file; same contents on every replica, defaults under the state directory")
 	intFlag(fs, &cfg.Deletion.GracePeriodDays, "deletion-grace-period-days", "CONTROLPLANE_DELETION_GRACE_PERIOD_DAYS", 7, "how long deleted resources stay restorable")
 	intFlag(fs, &cfg.Deletion.GCIntervalSeconds, "deletion-gc-interval-seconds", "CONTROLPLANE_DELETION_GC_INTERVAL_SECONDS", 60, "how often expired tombstones are garbage-collected")
+	intFlag(fs, &cfg.BuildArtifacts.RetentionDays, "build-artifacts-retention-days", "CONTROLPLANE_BUILD_ARTIFACTS_RETENTION_DAYS", 30, "how long unreferenced build artifacts are retained")
+	intFlag(fs, &cfg.BuildArtifacts.KeepRecent, "build-artifacts-keep-recent", "CONTROLPLANE_BUILD_ARTIFACTS_KEEP_RECENT", 20, "aged-out unreferenced build artifacts kept per service regardless of age; artifacts inside the retention window are never pruned")
+	stringFlag(fs, &directImageAllowedPrivateRegistries, "direct-image-allowed-private-registries", "CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES", "", "comma-separated registry hosts (host[:port]) the control plane may resolve direct images from even on private networks")
 	stringFlag(fs, &cfg.Ingress.XDSListen, "ingress-xds-listen", "CONTROLPLANE_INGRESS_XDS_LISTEN", "127.0.0.1:18000", "xDS management API listen address for Envoy instances")
 	stringFlag(fs, &cfg.Ingress.PublicAddr, "ingress-public-addr", "CONTROLPLANE_INGRESS_PUBLIC_ADDR", "platform.local", "")
 	stringFlag(fs, &cfg.Ingress.ControlPlaneHTTPUpstream, "ingress-controlplane-upstream", "CONTROLPLANE_INGRESS_CONTROLPLANE_UPSTREAM", "127.0.0.1:8080", "")
@@ -124,6 +128,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	cfg.Profile = normalized
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
 	cfg.ReplicaAddresses = splitCommaList(replicaAddresses)
+	cfg.DirectImages.AllowedPrivateRegistryHosts = splitCommaList(directImageAllowedPrivateRegistries)
 	cfg.AdvertiseAddr = strings.TrimSpace(advertiseAddr)
 	cfg.InternalGRPC.TLS.BootstrapTokens, err = parseAgentBootstrapTokens(agentBootstrapTokens)
 	if err != nil {

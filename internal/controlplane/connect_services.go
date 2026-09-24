@@ -255,6 +255,11 @@ func (a connectPlatformService) ListServiceDeployments(ctx context.Context, req 
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) ListServiceArtifacts(ctx context.Context, req *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error) {
+	result, err := a.service.ListServiceArtifacts(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) ListAgents(ctx context.Context, req *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error) {
 	result, err := a.service.ListAgents(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

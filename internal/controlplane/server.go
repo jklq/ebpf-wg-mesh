@@ -215,6 +215,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
 	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
+	delivery.SetImageResolver(registry.NewHTTPResolver(nil, cfg.DirectImages.AllowedPrivateRegistryHosts))
 	var githubClient *source.GitHubClient
 	var githubCatalog *source.GitHubCatalog
 	var githubCoordinator *source.GitHubCoordinator
@@ -505,6 +506,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { errCh <- s.buildLeaseRepairLoop(ctx) }()
 	go func() { errCh <- s.journalCompactionLoop(ctx) }()
 	go func() { s.sourceArchiveRetentionLoop(ctx); errCh <- nil }()
+	go func() { s.buildArtifactRetentionLoop(ctx); errCh <- nil }()
 	go func() { errCh <- s.deletionGC(ctx) }()
 	select {
 	case <-ctx.Done():
@@ -608,6 +610,43 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 		}
 		if deleted > 0 {
 			slog.Info("source archive retention completed", "objects_deleted", deleted)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
+// buildArtifactRetentionLoop prunes unreferenced build artifacts past the
+// retention window. Artifacts any deployment, transition, rollout, or the
+// current pointer references are rollback material and never pruned; only
+// artifacts nothing references (a superseded image that never deployed) age
+// out, beyond the newest keep-recent per service.
+func (s *Server) buildArtifactRetentionLoop(ctx context.Context) {
+	prune := func() {
+		now, err := dbtx.DatabaseTime(ctx, s.store.db)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("build artifact retention database time failed", "error", err)
+			}
+			return
+		}
+		cutoff := now.AddDate(0, 0, -s.cfg.BuildArtifacts.RetentionDays)
+		deleted, err := s.delivery.PruneBuildArtifacts(ctx, cutoff, s.cfg.BuildArtifacts.KeepRecent)
+		if err != nil && ctx.Err() == nil {
+			slog.Warn("build artifact retention failed", "error", err)
+			return
+		}
+		if deleted > 0 {
+			slog.Info("build artifact retention completed", "artifacts_deleted", deleted)
 		}
 	}
 	prune()

@@ -46,9 +46,6 @@ func (s *persistence) listServices(ctx context.Context, scope authz.Environment,
 		if err != nil {
 			return nil, err
 		}
-		if out[i].ResolvedImage == "" && out[i].RolloutGeneration > 0 {
-			out[i].ResolvedImage = directImageRef(spec)
-		}
 		out[i].LatestBuild, err = s.latestBuildForServiceQuerier(ctx, s.db, out[i].LatestBuildID)
 		if err != nil {
 			return nil, err
@@ -101,9 +98,6 @@ func (s *persistence) serviceByRowQuerier(ctx context.Context, q ServiceQueryer,
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	if rec.ResolvedImage == "" && rec.RolloutGeneration > 0 {
-		rec.ResolvedImage = directImageRef(rec.Spec)
-	}
 	rec.LatestBuild, err = s.latestBuildForServiceQuerier(ctx, q, rec.LatestBuildID)
 	if err != nil {
 		return ServiceRecord{}, err
@@ -145,7 +139,8 @@ func (s *persistence) serviceByNameQuerier(ctx context.Context, q ServiceQueryer
 const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s.current_spec_revision,
 		        COALESCE(ds.current_rollout_generation, 0),
 		        COALESCE((SELECT a.agent_id FROM allocations a WHERE a.service_id = s.id AND a.rollout_state <> 'lost' ORDER BY CASE a.rollout_state WHEN 'serving' THEN 0 WHEN 'starting' THEN 1 ELSE 2 END, a.id LIMIT 1), ''),
-		        COALESCE(ds.current_resolved_image, ''), COALESCE(ds.last_successful_commit_sha, ''), COALESCE(ds.latest_build_id, ''),
+		        COALESCE(ds.current_artifact_id, ''), COALESCE((SELECT image_ref FROM build_artifacts WHERE id = ds.current_artifact_id), ''),
+		        COALESCE(ds.last_successful_commit_sha, ''), COALESCE(ds.latest_build_id, ''),
 		        s.desired_replica_count, COALESCE(ds.placement_message, ''), s.created_at, GREATEST(s.updated_at, ds.updated_at),
 		        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
 		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
@@ -166,6 +161,7 @@ func scanServiceRow(scanner interface{ Scan(...any) error }) (ServiceRecord, err
 		&rec.SpecRevision,
 		&rec.RolloutGeneration,
 		&rec.AllocatedAgentID,
+		&rec.ResolvedArtifactID,
 		&rec.ResolvedImage,
 		&rec.LastSuccessfulCommitSHA,
 		&rec.LatestBuildID,

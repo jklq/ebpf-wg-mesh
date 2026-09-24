@@ -146,6 +146,90 @@ type Service struct {
 	Deleted bool
 }
 
+// BuildTransition proves a build request's currency against the binding's
+// proven head commit. Only current requests are served: those whose commit
+// is the head, those that advance from it (PreviousCommit — a push
+// payload's "before", including force-pushes back to an older commit), and
+// tracked-head syncs that just fetched the ref head (TrackedHead) — but a
+// fetch speaks only for its own point in time (FetchedFromHead), so a
+// delayed sync can never undo a push that landed while it was in flight.
+// A redelivered or retried older revision carries no proof and is refused:
+// it must never supersede queued newer work or regress the rollout. Moving
+// backward on purpose is the rollback and exact-redeploy actions' job.
+type BuildTransition struct {
+	// History marks a known-stale observation that is recorded for
+	// history only. It can never prove currency and never establishes or
+	// advances the head — even when no head exists yet — so a late,
+	// out-of-order, or already-superseded event cannot become the head a
+	// later current push must chain against.
+	History        bool
+	PreviousCommit string
+	// TrackedHead marks a tracked-head sync: the caller fetched the ref
+	// head just now. FetchedFromHead is the proven head it observed before
+	// that fetch; the fetch proves the revision current only while that
+	// head still holds at apply time. Without that fence a fetch that
+	// began before a newer push would move the proven head backward and
+	// could supersede the newer push's queued build or roll the old commit
+	// out.
+	TrackedHead     bool
+	FetchedFromHead string
+}
+
+// ProvesCurrent reports whether a request carrying t proves itself current
+// against the binding's proven head commit: it is the head, it advances
+// from the head, or the caller fetched it as the tracked head over a basis
+// that still holds. With no head established yet, only a fetch (or a
+// request that claims no push chain at all) establishes it: a push must
+// chain to the proven head, and with none yet its chain anchors to
+// nothing — a delayed push would install a commit the ref has already
+// moved past and then even fence out the fetch that knows the real head.
+// Recording an observation never speaks for currency by itself — arrival
+// order is not push order, and a delayed observation of an unseen older
+// commit must not become the head.
+func (t BuildTransition) ProvesCurrent(revisionCommit, headCommit string) bool {
+	if t.History {
+		return false
+	}
+	if headCommit == revisionCommit {
+		return true
+	}
+	if t.TrackedHead {
+		return t.FetchedFromHead == headCommit
+	}
+	if headCommit == "" {
+		return t.PreviousCommit == ""
+	}
+	return t.PreviousCommit != "" && t.PreviousCommit == headCommit
+}
+
+// NoPushPredecessor reports whether a push payload's "before" carries no
+// predecessor to chain to: GitHub sends the all-zero SHA when a ref is
+// created or recreated. The binding's stored tip predates such a deletion,
+// so the zero SHA can never be observed and the transition must prove its
+// currency by fetching the tracked head instead (see BuildTransition).
+func NoPushPredecessor(previousCommitSHA string) bool {
+	sha := strings.TrimSpace(previousCommitSHA)
+	return sha == "" || strings.Trim(sha, "0") == ""
+}
+
 type QueuedBuild struct {
+	// BuildID is the queued build, or the original build whose image was
+	// reused when Reused is true.
 	BuildID string
+	// DeploymentID is the deployment carrying this queue decision.
+	DeploymentID string
+	// Reused reports that no builder work was queued: the source already
+	// produced an image and it was scheduled directly.
+	Reused bool
+	// Superseded reports that no work was created because the request is
+	// not current against the binding's proven head: an out-of-order or
+	// redelivered revision must never regress the rollout. ChainUnproven
+	// refines it: the request is a push whose predecessor chains to
+	// neither the proven head nor a fetched one. Staleness is not
+	// provable from that — a recreated-branch predecessor can be
+	// recorded without ever holding the head — so the tracked head must
+	// be reconciled before the push can be dismissed: the commit still
+	// current builds, and only that.
+	Superseded    bool
+	ChainUnproven bool
 }

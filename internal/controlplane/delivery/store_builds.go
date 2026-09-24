@@ -43,8 +43,8 @@ const (
 
 const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, COALESCE(builder_id, ''), owner_epoch, lease_expires_at,
 		attempt_count, attempt_limit, cancel_requested_at, deadline_at, last_heartbeat_at,
-		image_digest, failure_reason,
-	        COALESCE(source_revision_id, ''), COALESCE(source_snapshot_id, ''), source_snapshot_digest, target_rollout_generation, build_recipe_json,
+		COALESCE(artifact_id, ''), COALESCE((SELECT image_ref FROM build_artifacts WHERE id = build_runs.artifact_id), ''), failure_reason,
+	        COALESCE(source_revision_id, ''), COALESCE(source_snapshot_id, ''), source_snapshot_digest, build_actor_kind, build_actor_id, target_rollout_generation, build_recipe_json,
 	        queued_at, started_at, finished_at`
 
 func (s *persistence) latestBuildForServiceQuerier(ctx context.Context, q ServiceQueryer, buildID string) (*platformv1.BuildStatus, error) {
@@ -74,7 +74,17 @@ func (s *persistence) buildRunByIDQuerier(ctx context.Context, q ServiceQueryer,
 	err = q.QueryRowContext(ctx, `SELECT e.project_id, s.environment_id FROM services s
 		JOIN environments e ON e.id = s.environment_id WHERE s.id = $1`, rec.ServiceID).
 		Scan(&rec.ProjectID, &rec.EnvironmentID)
-	return rec, err
+	if err != nil {
+		return BuildRunRecord{}, err
+	}
+	if rec.ArtifactID != "" {
+		artifact, err := s.buildArtifactByIDQuerier(ctx, q, rec.ArtifactID)
+		if err != nil {
+			return BuildRunRecord{}, err
+		}
+		rec.Artifact = &artifact
+	}
+	return rec, nil
 }
 
 func sourceSnapshotMatchesRevision(snapshot source.SourceSnapshotRecord, revision source.SourceRevisionRecord) bool {

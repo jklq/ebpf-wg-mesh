@@ -47,15 +47,22 @@ func (s *persistence) listServiceDeployments(ctx context.Context, scope authz.Se
 		if err != nil {
 			return nil, err
 		}
-		if records[i].BuildID == "" {
-			continue
+		if records[i].BuildID != "" {
+			build, err := s.buildRunByIDQuerier(ctx, s.db, records[i].BuildID)
+			if err != nil {
+				return nil, err
+			}
+			buildCopy := build
+			records[i].Build = &buildCopy
 		}
-		build, err := s.buildRunByIDQuerier(ctx, s.db, records[i].BuildID)
-		if err != nil {
-			return nil, err
+		if records[i].ArtifactID != "" {
+			artifact, err := s.buildArtifactByIDQuerier(ctx, s.db, records[i].ArtifactID)
+			if err != nil {
+				return nil, err
+			}
+			artifactCopy := artifact
+			records[i].Artifact = &artifactCopy
 		}
-		buildCopy := build
-		records[i].Build = &buildCopy
 	}
 	return records, nil
 }

@@ -15,7 +15,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-const deploymentSelectColumns = `id, service_id, spec_revision, rollout_generation, build_id, image_digest,
+const deploymentSelectColumns = `id, service_id, spec_revision, rollout_generation, build_id, COALESCE(artifact_id, ''),
+	        COALESCE((SELECT image_ref FROM build_artifacts WHERE id = deployments.artifact_id), ''),
 	        state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
 	        sealed_versions_json, is_current, requested_by_user_id, created_at, updated_at`
 
@@ -130,6 +131,13 @@ func (s *persistence) attachLatestDeploymentQuerier(ctx context.Context, q Servi
 			return err
 		}
 	}
+	if dep.ArtifactID != "" {
+		artifact, err := s.buildArtifactByIDQuerier(ctx, q, dep.ArtifactID)
+		if err != nil {
+			return err
+		}
+		dep.Artifact = &artifact
+	}
 	rec.LatestDeployment = &dep
 	return nil
 }
@@ -142,7 +150,7 @@ func (s *persistence) insertDeploymentTx(
 	actor deploymentActor,
 	reasonCode, detail string,
 	specRevision, rolloutGeneration int64,
-	buildID, imageDigest, requestedByUserID string,
+	buildID, artifactID, requestedByUserID string,
 	now time.Time,
 ) (DeploymentRecord, error) {
 	if err := s.lockServiceTx(ctx, tx, serviceID); err != nil {
@@ -161,7 +169,7 @@ func (s *persistence) insertDeploymentTx(
 		SpecRevision:      specRevision,
 		RolloutGeneration: rolloutGeneration,
 		BuildID:           buildID,
-		ImageDigest:       imageDigest,
+		ArtifactID:        artifactID,
 		State:             state,
 		CauseKind:         normalizeDeploymentCauseKind(actor.Kind),
 		CauseID:           actor.ID,
@@ -200,19 +208,27 @@ func (s *persistence) insertDeploymentTx(
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO deployments(
-			id, service_id, spec_revision, rollout_generation, build_id, image_digest,
+			id, service_id, spec_revision, rollout_generation, build_id, artifact_id,
 			state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
 			sealed_versions_json, is_current, requested_by_user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, TRUE, $15, $16, $16)`,
-		rec.ID, rec.ServiceID, rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ImageDigest,
+		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12, $13, $14, TRUE, $15, $16, $16)`,
+		rec.ID, rec.ServiceID, rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ArtifactID,
 		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, resolvedSpecJSON, variableVersionsJSON,
 		sealedVersionsJSON, rec.RequestedByUserID, rec.CreatedAt,
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
 	journal.RecordDeployment(ctx, rec.ID)
-	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, "", rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ImageDigest, rec.RolloutGeneration, now); err != nil {
+	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, "", rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ArtifactID, rec.RolloutGeneration, now); err != nil {
 		return DeploymentRecord{}, err
+	}
+	if rec.ArtifactID != "" {
+		artifact, err := s.buildArtifactByIDQuerier(ctx, tx, rec.ArtifactID)
+		if err != nil {
+			return DeploymentRecord{}, err
+		}
+		rec.Artifact = &artifact
+		rec.ImageDigest = artifact.ImageRef
 	}
 	return rec, nil
 }
@@ -277,7 +293,7 @@ func (s *persistence) applyDeploymentTransitionTx(ctx context.Context, tx *sql.T
 		    SET spec_revision = $1,
 		        rollout_generation = $2,
 		        build_id = $3,
-		        image_digest = $4,
+		        artifact_id = NULLIF($4, ''),
 		        state = $5,
 		        cause_kind = $6,
 		        cause_id = $7,
@@ -285,14 +301,27 @@ func (s *persistence) applyDeploymentTransitionTx(ctx context.Context, tx *sql.T
 		        detail = $9,
 		        updated_at = $10
 		  WHERE id = $11`,
-		rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ImageDigest,
+		rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ArtifactID,
 		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.UpdatedAt, rec.ID,
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
 	journal.RecordDeployment(ctx, rec.ID)
-	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, fromState, rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ImageDigest, rec.RolloutGeneration, now); err != nil {
+	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, fromState, rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ArtifactID, rec.RolloutGeneration, now); err != nil {
 		return DeploymentRecord{}, err
+	}
+	if input.HasArtifactID {
+		if rec.ArtifactID == "" {
+			rec.Artifact = nil
+			rec.ImageDigest = ""
+		} else {
+			artifact, err := s.buildArtifactByIDQuerier(ctx, tx, rec.ArtifactID)
+			if err != nil {
+				return DeploymentRecord{}, err
+			}
+			rec.Artifact = &artifact
+			rec.ImageDigest = artifact.ImageRef
+		}
 	}
 	return rec, nil
 }
@@ -302,17 +331,17 @@ func (s *persistence) insertDeploymentTransitionTx(
 	tx *sql.Tx,
 	deploymentID, fromState, toState, causeKind, causeID, reasonCode, detail string,
 	specRevision int64,
-	imageDigest string,
+	artifactID string,
 	rolloutGeneration int64,
 	now time.Time,
 ) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO deployment_transitions(
 			id, deployment_id, from_state, to_state, cause_kind, cause_id, reason_code, detail,
-			spec_revision, image_digest, rollout_generation, occurred_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			spec_revision, artifact_id, rollout_generation, occurred_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11, $12)`,
 		uuid.NewString(), deploymentID, fromState, toState, causeKind, causeID, reasonCode, detail,
-		specRevision, imageDigest, rolloutGeneration, now,
+		specRevision, artifactID, rolloutGeneration, now,
 	)
 	return err
 }
@@ -437,6 +466,7 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 		&rec.SpecRevision,
 		&rec.RolloutGeneration,
 		&rec.BuildID,
+		&rec.ArtifactID,
 		&rec.ImageDigest,
 		&rec.State,
 		&rec.CauseKind,
@@ -486,7 +516,9 @@ func deploymentVariableVersions(spec *platformv1.ServiceSpec, specRevision int64
 func (s *persistence) loadDeploymentTransitions(ctx context.Context, q ServiceQueryer, deploymentID string) ([]DeploymentTransitionRecord, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT id, deployment_id, from_state, to_state, cause_kind, cause_id, reason_code, detail,
-		        spec_revision, image_digest, rollout_generation, occurred_at
+		        spec_revision, COALESCE(artifact_id, ''),
+		        COALESCE((SELECT image_ref FROM build_artifacts WHERE id = deployment_transitions.artifact_id), ''),
+		        rollout_generation, occurred_at
 		   FROM deployment_transitions
 		  WHERE deployment_id = $1
 		  ORDER BY occurred_at ASC, id ASC`,
@@ -509,6 +541,7 @@ func (s *persistence) loadDeploymentTransitions(ctx context.Context, q ServiceQu
 			&rec.ReasonCode,
 			&rec.Detail,
 			&rec.SpecRevision,
+			&rec.ArtifactID,
 			&rec.ImageDigest,
 			&rec.RolloutGeneration,
 			&rec.OccurredAt,

@@ -10,6 +10,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/durablework"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
@@ -63,6 +64,9 @@ type Dependencies struct {
 	// BuildScheduler tunes the lease-based build queue. Zero selects
 	// DefaultBuildSchedulerConfig.
 	BuildScheduler BuildSchedulerConfig
+	// ImageResolver pins direct-image tags at deploy time. Nil resolves
+	// digest-pinned references only and fails closed on mutable tags.
+	ImageResolver registry.ImageResolver
 }
 
 // DefaultDeletionGracePeriod keeps deleted resources restorable for a week.
@@ -74,6 +78,8 @@ type SourceStore interface {
 	SourceRevisionByIDTx(context.Context, source.Querier, string) (source.SourceRevisionRecord, error)
 	SourceSnapshotByRevisionIDTx(context.Context, source.Querier, string) (source.SourceSnapshotRecord, error)
 	LatestSourceRevisionByBindingIDTx(context.Context, source.Querier, string) (source.SourceRevisionRecord, error)
+	SourceBindingHeadCommitTx(context.Context, source.Querier, string) (string, error)
+	SetSourceBindingHeadCommitTx(context.Context, source.Querier, string, string) error
 	UpsertSourceSnapshotTx(context.Context, *sql.Tx, source.SourceSnapshotRecord) (source.SourceSnapshotRecord, error)
 	ServiceHasUnbuiltSourceRevisionTx(context.Context, source.Querier, string) (bool, error)
 	ServicesWithUnbuiltSourceRevisionsTx(context.Context, source.Querier, string) ([]string, error)
@@ -111,6 +117,7 @@ func New(deps Dependencies) *Delivery {
 	return &Delivery{
 		buildScheduler: scheduler,
 		allocSync:      newAllocSync(),
+		imageResolver:  deps.ImageResolver,
 		store: &persistence{
 			db:                       deps.DB,
 			mesh:                     deps.Mesh,

@@ -23,8 +23,8 @@ func TestDeploymentTransitionDecision(t *testing.T) {
 		{"stale agent", DeploymentStateReadiness, DeploymentStateStarting, DeploymentCauseAgent, false, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			before := DeploymentRecord{State: tc.from, SpecRevision: 3, ImageDigest: "old"}
-			input := deploymentTransitionInput{ToState: tc.to, Actor: deploymentActor{Kind: tc.actor}, IgnoreIfTerminal: tc.ignore, HasSpecRevision: true, SpecRevision: 4, HasImageDigest: true, ImageDigest: "new", Detail: "  ready  "}
+			before := DeploymentRecord{State: tc.from, SpecRevision: 3, ArtifactID: "old"}
+			input := deploymentTransitionInput{ToState: tc.to, Actor: deploymentActor{Kind: tc.actor}, IgnoreIfTerminal: tc.ignore, HasSpecRevision: true, SpecRevision: 4, HasArtifactID: true, ArtifactID: "new", Detail: "  ready  "}
 			after, changed, err := decideDeploymentTransition(before, input, now)
 			if changed != tc.changed || !errors.Is(err, tc.err) {
 				t.Fatalf("changed=%v err=%v", changed, err)
@@ -32,7 +32,7 @@ func TestDeploymentTransitionDecision(t *testing.T) {
 			if !changed && !reflect.DeepEqual(before, after) {
 				t.Fatal("ignored transition altered record")
 			}
-			if changed && (after.SpecRevision != 4 || after.ImageDigest != "new" || after.Detail != "ready" || !after.UpdatedAt.Equal(now) || after.ReasonCode != reasonDeploymentActive) {
+			if changed && (after.SpecRevision != 4 || after.ArtifactID != "new" || after.Detail != "ready" || !after.UpdatedAt.Equal(now) || after.ReasonCode != reasonDeploymentActive) {
 				t.Fatalf("transition: %+v", after)
 			}
 		})

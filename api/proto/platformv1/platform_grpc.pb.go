@@ -65,6 +65,7 @@ const (
 	PlatformService_GetServiceStatus_FullMethodName            = "/platform.v1.PlatformService/GetServiceStatus"
 	PlatformService_ListServiceLogs_FullMethodName             = "/platform.v1.PlatformService/ListServiceLogs"
 	PlatformService_ListServiceDeployments_FullMethodName      = "/platform.v1.PlatformService/ListServiceDeployments"
+	PlatformService_ListServiceArtifacts_FullMethodName        = "/platform.v1.PlatformService/ListServiceArtifacts"
 	PlatformService_ListAgents_FullMethodName                  = "/platform.v1.PlatformService/ListAgents"
 	PlatformService_ListBuildAttempts_FullMethodName           = "/platform.v1.PlatformService/ListBuildAttempts"
 )
@@ -118,6 +119,7 @@ type PlatformServiceClient interface {
 	GetServiceStatus(ctx context.Context, in *GetServiceStatusRequest, opts ...grpc.CallOption) (*ServiceStatus, error)
 	ListServiceLogs(ctx context.Context, in *ListServiceLogsRequest, opts ...grpc.CallOption) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(ctx context.Context, in *ListServiceDeploymentsRequest, opts ...grpc.CallOption) (*ListServiceDeploymentsResponse, error)
+	ListServiceArtifacts(ctx context.Context, in *ListServiceArtifactsRequest, opts ...grpc.CallOption) (*ListServiceArtifactsResponse, error)
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
 	ListBuildAttempts(ctx context.Context, in *ListBuildAttemptsRequest, opts ...grpc.CallOption) (*ListBuildAttemptsResponse, error)
 }
@@ -580,6 +582,16 @@ func (c *platformServiceClient) ListServiceDeployments(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *platformServiceClient) ListServiceArtifacts(ctx context.Context, in *ListServiceArtifactsRequest, opts ...grpc.CallOption) (*ListServiceArtifactsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListServiceArtifactsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListServiceArtifacts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAgentsResponse)
@@ -649,6 +661,7 @@ type PlatformServiceServer interface {
 	GetServiceStatus(context.Context, *GetServiceStatusRequest) (*ServiceStatus, error)
 	ListServiceLogs(context.Context, *ListServiceLogsRequest) (*ListServiceLogsResponse, error)
 	ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error)
+	ListServiceArtifacts(context.Context, *ListServiceArtifactsRequest) (*ListServiceArtifactsResponse, error)
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
 	ListBuildAttempts(context.Context, *ListBuildAttemptsRequest) (*ListBuildAttemptsResponse, error)
 	mustEmbedUnimplementedPlatformServiceServer()
@@ -795,6 +808,9 @@ func (UnimplementedPlatformServiceServer) ListServiceLogs(context.Context, *List
 }
 func (UnimplementedPlatformServiceServer) ListServiceDeployments(context.Context, *ListServiceDeploymentsRequest) (*ListServiceDeploymentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListServiceDeployments not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListServiceArtifacts(context.Context, *ListServiceArtifactsRequest) (*ListServiceArtifactsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListServiceArtifacts not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
@@ -1633,6 +1649,24 @@ func _PlatformService_ListServiceDeployments_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListServiceArtifacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListServiceArtifactsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListServiceArtifacts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListServiceArtifacts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListServiceArtifacts(ctx, req.(*ListServiceArtifactsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -1855,6 +1889,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListServiceDeployments",
 			Handler:    _PlatformService_ListServiceDeployments_Handler,
+		},
+		{
+			MethodName: "ListServiceArtifacts",
+			Handler:    _PlatformService_ListServiceArtifacts_Handler,
 		},
 		{
 			MethodName: "ListAgents",

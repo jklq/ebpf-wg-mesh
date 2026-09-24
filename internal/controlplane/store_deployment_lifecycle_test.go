@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"sync"
 	"testing"
@@ -19,7 +20,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 	t.Parallel()
 
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Add lifecycle", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Add lifecycle", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,7 +44,7 @@ func TestDeploymentLifecyclePersistsHappyPathAndHistory(t *testing.T) {
 		t.Fatalf("building deployment = %+v", building)
 	}
 
-	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:111", ""); err != nil {
+	if err := completeBuildForTest(ctx, store, "builder-1", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:1111111111111111111111111111111111111111111111111111111111111111", ""); err != nil {
 		t.Fatalf("completeBuild: %v", err)
 	}
 	scheduled := currentDeploymentForTest(t, store, ctx, service.ID)
@@ -161,7 +162,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 	t.Parallel()
 
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Race commit", "Ada"); err != nil {
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-1", "Race commit", "Ada", source.BuildTransition{TrackedHead: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,7 +218,7 @@ func TestDeploymentRacesWebhookUserBuilderAndAgent(t *testing.T) {
 		raceWG.Add(1)
 		go func() {
 			defer raceWG.Done()
-			raceErrs <- completeBuildForTest(ctx, store, "builder-race", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:race", "")
+			raceErrs <- completeBuildForTest(ctx, store, "builder-race", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", "registry.example.test/platform/web@sha256:cececececececececececececececececececececececececececececececece", "")
 		}()
 		raceWG.Add(1)
 		go func() {
