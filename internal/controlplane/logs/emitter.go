@@ -196,11 +196,22 @@ func (e *LogEmitter) emit(_ context.Context, in LogLineInput) {
 	if !e.Enabled() {
 		return
 	}
-	if e.async != nil && e.async.EnqueueLines([]LogLineInput{in}) {
-		// Queue the event like an agent batch: retry across backend
-		// outages, shed with gap accounting past the queue cap, and
-		// drain at shutdown instead of dying with the request.
-		return
+	if e.async != nil {
+		switch e.async.EnqueueLines([]LogLineInput{in}) {
+		case AdmitAccepted:
+			// Queue the event like an agent batch: retry across backend
+			// outages, shed with gap accounting past the queue cap, and
+			// drain at shutdown instead of dying with the request.
+			return
+		case AdmitRetry:
+			slog.Warn("synthetic log line not journaled",
+				"service_id", in.ServiceID,
+				"log_type", string(in.LogType),
+				"stage", in.Stage,
+			)
+			return
+		case AdmitClosed:
+		}
 	}
 	if err := e.store.WriteLogLines(context.Background(), []LogLineInput{in}); err != nil {
 		slog.Warn("write synthetic log line",
