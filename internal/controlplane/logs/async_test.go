@@ -568,6 +568,69 @@ func TestAsyncIngesterKeepsAbandonedBacklogForNextBoot(t *testing.T) {
 	waitForIngest(t, reopened, 7500)
 }
 
+func TestAsyncIngesterKeepsCorruptGapUntilStoreAcceptsIt(t *testing.T) {
+	dir := t.TempDir()
+	store := &fakeFlushStore{enabled: true, failGaps: errors.New("clickhouse is down")}
+	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
+	if !first.EnqueueLines([]LogLineInput{{ID: "line-1", ServiceID: "svc-1", Line: "lost"}}) {
+		t.Fatal("journal did not accept line")
+	}
+	if err := first.backlog.Close(); err != nil {
+		t.Fatalf("close journal: %v", err)
+	}
+	segments, err := filepath.Glob(filepath.Join(dir, "seg-*.log"))
+	if err != nil || len(segments) != 1 {
+		t.Fatalf("journal segments: %v %v", segments, err)
+	}
+	raw, err := os.ReadFile(segments[0])
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("read journal segment: %v", err)
+	}
+	raw[len(raw)-1] ^= 0xff
+	if err := os.WriteFile(segments[0], raw, 0o600); err != nil {
+		t.Fatalf("corrupt journal segment: %v", err)
+	}
+
+	failed := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir, ShutdownGrace: 100 * time.Millisecond})
+	pending := failed.backlog.PendingCorruptDrops()
+	if pending["ingest|svc-1:1"].Count != 1 || pending["ingest|svc-1:1"].ID == "" {
+		t.Fatalf("corrupt loss not recorded durably: %+v", pending)
+	}
+	failed.drainShutdown(context.Background())
+	if got := failed.backlog.PendingCorruptDrops()["ingest|svc-1:1"]; got != pending["ingest|svc-1:1"] {
+		t.Fatalf("failed gap write cleared loss: %+v", got)
+	}
+	if err := failed.backlog.Close(); err != nil {
+		t.Fatalf("close failed drain: %v", err)
+	}
+	store.mu.Lock()
+	store.failGaps = nil
+	store.mu.Unlock()
+	reopened := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
+	stop := runIngester(t, reopened)
+	defer stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		store.mu.Lock()
+		var gap GapInput
+		if len(store.gaps) > 0 {
+			gap = store.gaps[0]
+		}
+		store.mu.Unlock()
+		if gap.DroppedCount == 1 && gap.ServiceID == "svc-1" &&
+			len(reopened.backlog.PendingCorruptDrops()) == 0 {
+			if gap.SummaryID != pending["ingest|svc-1:1"].ID+":svc-1" {
+				t.Fatalf("corrupt gap identity changed across restart: %+v", gap)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("corrupt gap did not flush after restart: %+v", gap)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // A shed flush keeps producer gap identity: the owed row must carry
 // the summary's stable ID so a replayed summary replaces the same
 // gap row instead of double-counting the loss.

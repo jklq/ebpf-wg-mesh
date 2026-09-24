@@ -493,6 +493,11 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if result.message == nil {
 				continue
 			}
+			if result.message.GetLogBatchAck() != nil {
+				// Log delivery acknowledgements are outside the desired
+				// state batch and have no BatchEnd marker.
+				continue
+			}
 			if end := result.message.GetBatchEnd(); end != nil {
 				if end.GetSessionId() != sessionID {
 					return fmt.Errorf("batch end for foreign session %q", end.GetSessionId())
