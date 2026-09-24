@@ -140,10 +140,21 @@ func (a *App) Run(ctx context.Context) error {
 		a.stateStore = nil
 		return fmt.Errorf("start workload supervision: %w", err)
 	}
+	// Join the ship loop before Run returns. Close persists pending
+	// gap summaries, and it must not race a flush that has taken
+	// those summaries out for an in-flight send.
+	shipCtx, stopShip := context.WithCancel(ctx)
+	defer stopShip()
+	var shipping sync.WaitGroup
+	shipping.Add(1)
 	go func() {
-		_ = shipper.Run(ctx)
+		defer shipping.Done()
+		_ = shipper.Run(shipCtx)
 	}()
-	return a.runConnections(ctx)
+	err = a.runConnections(ctx)
+	stopShip()
+	shipping.Wait()
+	return err
 }
 
 func logShipConfigFromAgent(cfg config.AgentConfig) logShipConfig {
@@ -579,6 +590,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				continue
 			}
 			if ack := result.message.GetLogBatchAck(); ack != nil {
+				// Log acknowledgements have no state BatchEnd marker.
 				completeAck(ack.GetBatchId())
 				continue
 			}

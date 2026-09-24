@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"log/slog"
 	"strings"
 	"time"
@@ -92,8 +93,8 @@ type ServiceLogGap struct {
 	WindowEnd    time.Time
 }
 
-// ServiceLogPage is one authorized read: lines oldest-first with a
-// forward cursor, plus the explicit gaps overlapping the range. Gaps
+// ServiceLogPage is one authorized read: lines newest-first with an
+// older-page cursor, plus the explicit gaps overlapping the range. Gaps
 // paginate independently of lines.
 type ServiceLogPage struct {
 	Lines            []ServiceLog
@@ -356,18 +357,28 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 	now := time.Now().UTC()
 	type trimKey struct{ serviceID, allocationID, logType, stream string }
 	trimmedCounts := make(map[trimKey]uint64)
+	trimmedHashes := make(map[trimKey]hash.Hash)
 	for _, entry := range trimmed {
 		if entry == nil || strings.TrimSpace(entry.GetServiceId()) == "" {
 			continue
 		}
-		trimmedCounts[trimKey{
+		key := trimKey{
 			serviceID:    entry.GetServiceId(),
 			allocationID: entry.GetAllocationId(),
 			logType:      string(logTypeFromProto(entry.GetLogType())),
 			stream:       normalizeLogStream(entry.GetStream()),
-		}]++
+		}
+		trimmedCounts[key]++
+		if trimmedHashes[key] == nil {
+			trimmedHashes[key] = sha256.New()
+		}
+		// Line IDs survive retries. Include timestamp, sequence and
+		// content too so batches without IDs still get a stable key.
+		fmt.Fprintf(trimmedHashes[key], "%q|%d|%d|%q\n", entry.GetLineId(),
+			entry.GetObservedAt().AsTime().UnixNano(), entry.GetSequence(), entry.GetLine())
 	}
 	for key, count := range trimmedCounts {
+		summaryID := "trim:" + hex.EncodeToString(trimmedHashes[key].Sum(nil)[:16])
 		gaps = append(gaps, GapInput{
 			ServiceID:    key.serviceID,
 			AllocationID: key.allocationID,
@@ -378,6 +389,7 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 			DroppedCount: count,
 			Reason:       logpipeline.ReasonIngestOverflow,
 			Reporter:     agentID,
+			SummaryID:    summaryID,
 		})
 	}
 	return inputs, gaps
@@ -635,9 +647,6 @@ func clampRetentionDays(projectDays, platformDefault int) int {
 	if platformDefault <= 0 {
 		return 14
 	}
-	if platformDefault > MaxProjectRetentionDays {
-		return MaxProjectRetentionDays
-	}
 	return platformDefault
 }
 
@@ -681,7 +690,7 @@ func (s *LogStore) PurgeProjectLogs(ctx context.Context, projectID string) error
 	return nil
 }
 
-// ListServiceLogs returns one authorized page, oldest first, with the
+// ListServiceLogs returns one authorized page, newest first, with the
 // gaps overlapping the queried range. Callers must authorize the
 // service before calling.
 func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (ServiceLogPage, error) {
@@ -727,7 +736,7 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 		args = append(args, end.AsTime().UTC())
 	}
 	if req.GetPageToken() != "" {
-		filters = append(filters, "(observed_at, line_id) > (?, ?)")
+		filters = append(filters, "(observed_at, line_id) < (?, ?)")
 		args = append(args, cursorTime, cursorID)
 	}
 	if search := strings.TrimSpace(req.GetSearch()); search != "" {
@@ -739,7 +748,7 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 SELECT observed_at, project_id, environment_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line_id, line, log_type, build_id, stage, event, attributes, truncated
   FROM service_logs FINAL
  WHERE ` + strings.Join(filters, " AND ") + `
- ORDER BY observed_at ASC, line_id ASC
+ ORDER BY observed_at DESC, line_id DESC
  LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -791,8 +800,8 @@ SELECT observed_at, project_id, environment_id, service_id, allocation_id, agent
 	return page, nil
 }
 
-// listGaps returns up to maxLogGapResults gap rows oldest-first with a
-// forward gap cursor, so every gap stays reachable even when the range
+// listGaps returns up to maxLogGapResults gap rows newest-first with an
+// older-page cursor, so every gap stays reachable even when the range
 // holds more rows than one response may carry.
 func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogsRequest, cursorTime time.Time, cursorID string) ([]ServiceLogGap, string, error) {
 	filters := []string{"service_id = ?"}
@@ -818,7 +827,7 @@ func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogs
 		args = append(args, end.AsTime().UTC())
 	}
 	if req.GetGapPageToken() != "" {
-		filters = append(filters, "(window_start, gap_id) > (?, ?)")
+		filters = append(filters, "(window_start, gap_id) < (?, ?)")
 		args = append(args, cursorTime, cursorID)
 	}
 	args = append(args, maxLogGapResults+1)
@@ -826,7 +835,7 @@ func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogs
 SELECT gap_id, allocation_id, build_id, log_type, stream, dropped_count, reason, window_start, window_end
   FROM service_log_gaps FINAL
  WHERE ` + strings.Join(filters, " AND ") + `
- ORDER BY window_start ASC, gap_id ASC
+ ORDER BY window_start DESC, gap_id DESC
  LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

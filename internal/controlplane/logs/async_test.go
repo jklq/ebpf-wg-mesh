@@ -176,7 +176,7 @@ func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{QueueBytes: 3000})
 
 	for i := 0; i < 20 && ingester.Stats().ShedLines == 0; i++ {
-		if !ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3)) {
+		if ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3)) != AdmitAccepted {
 			t.Fatal("enqueue rejected before the drain seal")
 		}
 	}
@@ -200,6 +200,23 @@ func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
 	}
 	if store.gaps[0].Reason != logpipeline.ReasonIngestOverflow {
 		t.Fatalf("owed gap reason wrong: %+v", store.gaps)
+	}
+}
+
+// A journal that cannot store the batch or a gap for it must refuse
+// the batch. Accepting it would acknowledge lines whose only copy is
+// the producer's, and the caller must not fall through to ClickHouse.
+func TestAsyncIngesterRefusesBatchWhenJournalCannotRecordLoss(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := newTestIngester(t, store, AsyncIngesterConfig{QueueBytes: 1})
+	if got := ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)); got != AdmitRetry {
+		t.Fatalf("full journal returned %v, want retry", got)
+	}
+	stats := ingester.Stats()
+	if stats.AcceptedLines != 0 || stats.ShedLines != 0 || stats.GapsLost != 1 {
+		t.Fatalf("refused batch accounting: %+v", stats)
 	}
 }
 
@@ -427,10 +444,10 @@ func TestAsyncIngesterRejectsArrivalsAfterDrain(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 2)) {
+	if ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 2)) != AdmitClosed {
 		t.Fatal("batch admitted after the shutdown drain")
 	}
-	if ingester.EnqueueLines([]LogLineInput{{ID: "sy:1"}}) {
+	if ingester.EnqueueLines([]LogLineInput{{ID: "sy:1"}}) != AdmitClosed {
 		t.Fatal("platform line admitted after the shutdown drain")
 	}
 	stats := ingester.Stats()
@@ -568,6 +585,69 @@ func TestAsyncIngesterKeepsAbandonedBacklogForNextBoot(t *testing.T) {
 	waitForIngest(t, reopened, 7500)
 }
 
+func TestAsyncIngesterKeepsCorruptGapUntilStoreAcceptsIt(t *testing.T) {
+	dir := t.TempDir()
+	store := &fakeFlushStore{enabled: true, failGaps: errors.New("clickhouse is down")}
+	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
+	if first.EnqueueLines([]LogLineInput{{ID: "line-1", ServiceID: "svc-1", Line: "lost"}}) != AdmitAccepted {
+		t.Fatal("journal did not accept line")
+	}
+	if err := first.backlog.Close(); err != nil {
+		t.Fatalf("close journal: %v", err)
+	}
+	segments, err := filepath.Glob(filepath.Join(dir, "seg-*.log"))
+	if err != nil || len(segments) != 1 {
+		t.Fatalf("journal segments: %v %v", segments, err)
+	}
+	raw, err := os.ReadFile(segments[0])
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("read journal segment: %v", err)
+	}
+	raw[len(raw)-1] ^= 0xff
+	if err := os.WriteFile(segments[0], raw, 0o600); err != nil {
+		t.Fatalf("corrupt journal segment: %v", err)
+	}
+
+	failed := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir, ShutdownGrace: 100 * time.Millisecond})
+	pending := failed.backlog.PendingCorruptDrops()
+	if pending["ingest|svc-1:1"].Count != 1 || pending["ingest|svc-1:1"].ID == "" {
+		t.Fatalf("corrupt loss not recorded durably: %+v", pending)
+	}
+	failed.drainShutdown(context.Background())
+	if got := failed.backlog.PendingCorruptDrops()["ingest|svc-1:1"]; got != pending["ingest|svc-1:1"] {
+		t.Fatalf("failed gap write cleared loss: %+v", got)
+	}
+	if err := failed.backlog.Close(); err != nil {
+		t.Fatalf("close failed drain: %v", err)
+	}
+	store.mu.Lock()
+	store.failGaps = nil
+	store.mu.Unlock()
+	reopened := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
+	stop := runIngester(t, reopened)
+	defer stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		store.mu.Lock()
+		var gap GapInput
+		if len(store.gaps) > 0 {
+			gap = store.gaps[0]
+		}
+		store.mu.Unlock()
+		if gap.DroppedCount == 1 && gap.ServiceID == "svc-1" &&
+			len(reopened.backlog.PendingCorruptDrops()) == 0 {
+			if gap.SummaryID != pending["ingest|svc-1:1"].ID+":svc-1" {
+				t.Fatalf("corrupt gap identity changed across restart: %+v", gap)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("corrupt gap did not flush after restart: %+v", gap)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // A shed flush keeps producer gap identity: the owed row must carry
 // the summary's stable ID so a replayed summary replaces the same
 // gap row instead of double-counting the loss.
@@ -588,10 +668,10 @@ func TestAsyncIngesterShedProducerGapsKeepSummaryIdentity(t *testing.T) {
 		WindowEnd:    timestamppb.New(time.Now().UTC()),
 		SummaryId:    "sid-9",
 	}}
-	if !ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) {
+	if ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) != AdmitAccepted {
 		t.Fatal("first batch must be admitted")
 	}
-	if !ingester.EnqueueAgentBatch("agent-1", batch) {
+	if ingester.EnqueueAgentBatch("agent-1", batch) != AdmitAccepted {
 		t.Fatal("second batch must be accepted with shed gaps")
 	}
 
@@ -669,7 +749,7 @@ func TestDrainShutdownRejectsLateArrivalsAndKeepsBacklog(t *testing.T) {
 	a := newTestIngester(t, store, AsyncIngesterConfig{ShutdownGrace: 250 * time.Millisecond})
 	// The first batch queues; the drain reads it and blocks in
 	// the failing store.
-	if !a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) {
+	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) != AdmitAccepted {
 		t.Fatal("expected the batch to queue")
 	}
 	done := make(chan struct{})
@@ -680,10 +760,10 @@ func TestDrainShutdownRejectsLateArrivalsAndKeepsBacklog(t *testing.T) {
 	<-store.blocked
 	// While the drain retries, arrivals after the seal are rejected
 	// and accounted — never silently accepted and lost.
-	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-2", "alloc-2", 1)) {
+	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-2", "alloc-2", 1)) == AdmitAccepted {
 		t.Fatal("batch accepted after the drain sealed")
 	}
-	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-3", "alloc-3", 1)) {
+	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-3", "alloc-3", 1)) == AdmitAccepted {
 		t.Fatal("batch accepted after the drain sealed")
 	}
 	close(store.release)
@@ -809,7 +889,7 @@ func TestAsyncIngesterByteBudgetCountsAttributes(t *testing.T) {
 			Attributes:    map[string]string{"k": strings.Repeat("v", 1024)},
 		})
 	}
-	if ingester.EnqueueAgentBatch("agent-1", batch) != true {
+	if ingester.EnqueueAgentBatch("agent-1", batch) != AdmitAccepted {
 		t.Fatal("enqueue must accept-or-shed, never fail")
 	}
 	stats := ingester.Stats()
@@ -900,7 +980,7 @@ func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 		}}}
 	}
 	for _, id := range []string{"sum-1", "sum-2", "sum-3"} {
-		if !ingester.EnqueueAgentBatch("agent-1", summary(id)) {
+		if ingester.EnqueueAgentBatch("agent-1", summary(id)) != AdmitAccepted {
 			t.Fatal("enqueue must accept-or-shed, never fail")
 		}
 	}
@@ -986,7 +1066,7 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 			LineId:        logpipeline.AgentLineID("agent-1", "boot-1", "alloc-1", "stdout", uint64(i+1)),
 		})
 	}
-	if !first.EnqueueAgentBatch("agent-1", batch) {
+	if first.EnqueueAgentBatch("agent-1", batch) != AdmitAccepted {
 		t.Fatal("enqueue must accept-or-shed, never fail")
 	}
 	if first.Stats().ShedLines != 3 {
@@ -1024,7 +1104,7 @@ func TestAsyncIngesterSurfacesJournalCorruption(t *testing.T) {
 	store := &fakeFlushStore{enabled: true}
 	spoolDir := t.TempDir()
 	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir})
-	if !first.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3)) {
+	if first.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3)) != AdmitAccepted {
 		t.Fatal("enqueue must accept-or-shed, never fail")
 	}
 
