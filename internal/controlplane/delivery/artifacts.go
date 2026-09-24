@@ -240,8 +240,8 @@ func (s *persistence) insertDirectImageArtifactTx(ctx context.Context, tx *sql.T
 	return scanBuildArtifactRow(tx.QueryRowContext(ctx,
 		`SELECT `+buildArtifactSelectColumns+`
 		   FROM build_artifacts
-		  WHERE service_id = $1 AND image_ref = $2 AND kind = $3`,
-		rec.ServiceID, rec.ImageRef, BuildArtifactDirectImage,
+		  WHERE service_id = $1 AND image_ref = $2 AND kind = $3 AND source_image_ref = $4`,
+		rec.ServiceID, rec.ImageRef, BuildArtifactDirectImage, rec.SourceImageRef,
 	))
 }
 
