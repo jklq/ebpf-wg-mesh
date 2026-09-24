@@ -160,7 +160,48 @@ func prohibitedDestination(ctx context.Context, host string) (bool, error) {
 	return false, nil
 }
 
+// nonPublicRanges are the special-purpose networks that are not public
+// unicast and not covered by Go's IsPrivate: RFC 6598 shared address
+// space routes inside provider networks exactly like private address
+// space, and the remaining blocks are documentation, benchmarking,
+// protocol-assignment, and reserved. A registry resolving into any of
+// them reaches non-public infrastructure and must stay behind the
+// operator allowlist.
+var nonPublicRanges = parseNonPublicRanges(
+	"0.0.0.0/8",       // "this network" and protocol assignments (RFC 1122)
+	"100.64.0.0/10",   // shared address space, CGNAT (RFC 6598)
+	"192.0.0.0/24",    // IETF protocol assignments (RFC 6890)
+	"192.0.2.0/24",    // TEST-NET-1 (RFC 5737)
+	"198.51.100.0/24", // TEST-NET-2 (RFC 5737)
+	"203.0.113.0/24",  // TEST-NET-3 (RFC 5737)
+	"198.18.0.0/15",   // benchmarking (RFC 2544)
+	"240.0.0.0/4",     // reserved, includes broadcast (RFC 1112)
+	"100::/64",        // discard-only (RFC 6666)
+	"2001:2::/48",     // benchmarking (RFC 5180)
+	"2001:db8::/32",   // documentation (RFC 3849)
+)
+
+func parseNonPublicRanges(cidrs ...string) []*net.IPNet {
+	networks := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic(err)
+		}
+		networks = append(networks, network)
+	}
+	return networks
+}
+
 func prohibitedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	for _, network := range nonPublicRanges {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
