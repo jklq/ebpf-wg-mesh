@@ -167,6 +167,29 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	if len(foreignAlloc.GetEntries()) != 1 || foreignAlloc.GetEntries()[0].GetLine() != "kept-with-stale-sibling" {
 		t.Fatalf("stale allocation line must not reject the batch: %+v", foreignAlloc.GetEntries())
 	}
+	// Event metadata is a server-generated claim: agent-supplied
+	// event and attributes are cleared at the trust boundary.
+	events := &agentv1.LogBatch{
+		AgentId: agentID,
+		Entries: []*agentv1.LogEntry{{
+			ObservedAt:   timestamppb.Now(),
+			AllocationId: allocA,
+			Stream:       "stdout",
+			Line:         "event-spoof",
+			Event:        "allocation.crash_loop",
+			Attributes:   map[string]string{"restarts": "99"},
+			LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
+		}},
+	}
+	if err := store.fleet.scopeAgentLogBatch(ctx, agentID, events); err != nil {
+		t.Fatalf("scopeAgentLogBatch: %v", err)
+	}
+	if len(events.GetEntries()) != 1 {
+		t.Fatalf("owned event line must survive scoping: %+v", events.GetEntries())
+	}
+	if events.GetEntries()[0].GetEvent() != "" || len(events.GetEntries()[0].GetAttributes()) != 0 {
+		t.Fatalf("agent-supplied event metadata survived scoping: %+v", events.GetEntries()[0])
+	}
 
 	for _, userID := range []string{"user-a", "user-b"} {
 		resp, err := cp.dashboard.ListServiceLogs(userContext(t, cp, ctx, userID), &platformv1.ListServiceLogsRequest{ServiceId: map[string]string{"user-a": svcA.ID, "user-b": svcB.ID}[userID]})

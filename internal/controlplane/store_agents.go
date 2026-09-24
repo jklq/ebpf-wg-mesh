@@ -19,7 +19,9 @@ import (
 // allocation owner when present; empty claims (drop summaries whose
 // producer metadata is gone after a restart) are filled from the
 // owner, so a compromised or buggy agent cannot attribute output or
-// loss to another tenant. Lines referencing an allocation this agent
+// loss to another tenant. Agent-supplied event metadata is cleared
+// the same way: structured platform events are server-generated
+// only. Lines referencing an allocation this agent
 // does not own — including a stale one removed while its lines sat in
 // the durable spool — or claiming a mismatched owner are excluded
 // individually with a warning: one bad line must never reject the
@@ -28,6 +30,12 @@ import (
 // Entries and drop summaries without an allocation cannot be
 // attributed and are removed.
 func (s *fleetPersistence) scopeAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
+	for _, entry := range batch.GetEntries() {
+		// Event and attributes are claims about structured platform
+		// events, which only the control plane may synthesize.
+		entry.Event = ""
+		entry.Attributes = nil
+	}
 	wanted := make(map[string]struct{}, len(batch.GetEntries())+len(batch.GetDrops()))
 	for _, entry := range batch.GetEntries() {
 		if id := entry.GetAllocationId(); id != "" {
