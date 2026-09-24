@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 29
+const currentSchemaVersion = 30
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -65,7 +65,8 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL,
 			deleted_at TIMESTAMPTZ NULL,
 			deleted_by_user_id STRING NOT NULL DEFAULT '',
-			delete_expires_at TIMESTAMPTZ NULL
+			delete_expires_at TIMESTAMPTZ NULL,
+			log_retention_days INT NOT NULL DEFAULT 0
 		)`,
 	`CREATE INDEX idx_projects_delete_expires ON projects(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE UNIQUE INDEX idx_projects_owner_name

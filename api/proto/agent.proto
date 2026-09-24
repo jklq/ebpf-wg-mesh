@@ -290,11 +290,34 @@ message LogEntry {
   platform.v1.ServiceLogType log_type = 9;
   string build_id = 10;
   string stage = 11;
+  // Structured attributes for known platform events. Agents never derive
+  // these by parsing customer output; customer lines carry no attributes.
+  map<string, string> attributes = 12;
+  // True when line was truncated to the documented size limit.
+  bool truncated = 13;
+  // Platform event name for structured events (for example
+  // "allocation.crash_loop"). Empty for plain output lines.
+  string event = 14;
+  // Stable producer-assigned identity for ordering and reconnect
+  // deduplication. Retried batches reuse the same IDs.
+  string line_id = 15;
 }
 
 message LogBatch {
   string agent_id = 1;
   repeated LogEntry entries = 2;
+  // Lines dropped by the agent before this batch (rate limiting, spool
+  // overflow). The control plane persists these as explicit read gaps.
+  uint64 dropped_lines = 3;
+  repeated platform.v1.LogDropSummary drops = 4;
+  // Correlates the server's acceptance of this batch. The agent keeps
+  // the batch uncommitted until LogBatchAck for the same id arrives,
+  // so a batch lost before acceptance can never be skipped.
+  uint64 batch_id = 5;
+}
+
+message LogBatchAck {
+  uint64 batch_id = 1;
 }
 
 message AgentClientMessage {
@@ -323,6 +346,10 @@ message AgentServerMessage {
     PullCredentialSet pull_credentials = 4;
     ReplicaEndpoints replica_endpoints = 5;
     SyncBatchEnd batch_end = 6;
+    // Sent once a log batch is accepted (queued for durable ingest or
+    // durably written). The replay window still covers crash gaps
+    // between acceptance and durable ingest.
+    LogBatchAck log_batch_ack = 7;
   }
 }
 

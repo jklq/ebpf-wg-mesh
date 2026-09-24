@@ -87,16 +87,24 @@ func (s *PlatformService) ListServiceLogs(ctx context.Context, req *platformv1.L
 		}
 		return nil, status.Errorf(codes.Internal, "load service: %v", err)
 	}
-	lines, err := s.logStore.ListServiceLogs(ctx, req)
+	page, err := s.logStore.ListServiceLogs(ctx, req)
 	if err != nil {
 		if errors.Is(err, logs.ErrDisabled) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "list service logs: %v", err)
 	}
-	resp := &platformv1.ListServiceLogsResponse{Lines: make([]*platformv1.ServiceLogLine, 0, len(lines))}
-	for _, line := range lines {
+	resp := &platformv1.ListServiceLogsResponse{
+		Lines:            make([]*platformv1.ServiceLogLine, 0, len(page.Lines)),
+		NextPageToken:    page.NextPageToken,
+		NextGapPageToken: page.NextGapPageToken,
+		Gaps:             make([]*platformv1.ServiceLogGap, 0, len(page.Gaps)),
+	}
+	for _, line := range page.Lines {
 		resp.Lines = append(resp.Lines, toProtoServiceLogLine(line))
+	}
+	for _, gap := range page.Gaps {
+		resp.Gaps = append(resp.Gaps, toProtoServiceLogGap(gap))
 	}
 	return resp, nil
 }
