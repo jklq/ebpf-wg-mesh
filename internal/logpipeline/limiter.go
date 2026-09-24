@@ -99,7 +99,7 @@ func (l *Limiter) evictOldestLocked() {
 			victim, oldest, first = key, bucket.updated, false
 		}
 	}
-	if victim != "" {
+	if !first {
 		delete(l.buckets, victim)
 	}
 }
